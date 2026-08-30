@@ -19,8 +19,8 @@
 #     commit no longer exists on the branch, so publishers must omit it or
 #     cite the upstream equivalent, never print it as a live SHA;
 #   - remaps each fix-round base_sha in the external authorization and worktree
-#     recovery copy together, refusing divergent copies or a dropped base whose
-#     exact replacement snapshot is unknown;
+#     recovery copy together, refusing divergent copies, ambiguous same-subject
+#     mappings, or a dropped base whose exact replacement snapshot is unknown;
 #   - prints one `sha-reconcile:` summary line naming what changed.
 #
 # The rebase happens BEFORE the network push, so a rejected push can still
@@ -154,12 +154,35 @@ git_common_dir="$(git -C "$worktree_abs" rev-parse --path-format=absolute --git-
 state_flags=()
 [[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
 
+authorization_mapping_is_unambiguous() {
+	local base_sha="$1" map_json="$2" base_subject old_sha old_subject old_shas
+	base_subject="$(git -C "$worktree_abs" show -s --format=%s "$base_sha^{commit}" 2>/dev/null)" || {
+		printf 'worktree-push: could not read authorization base commit %s while checking its rebase mapping\n' "$base_sha" >&2
+		return 1
+	}
+	old_shas="$(jq -er 'keys[]' <<<"$map_json")" || {
+		printf 'worktree-push: could not enumerate the rebase map while checking authorization base %s\n' "$base_sha" >&2
+		return 1
+	}
+	while IFS= read -r old_sha; do
+		[[ "$old_sha" != "$base_sha" ]] || continue
+		old_subject="$(git -C "$worktree_abs" show -s --format=%s "$old_sha^{commit}" 2>/dev/null)" || {
+			printf 'worktree-push: could not read mapped commit %s while checking authorization base %s\n' "$old_sha" "$base_sha" >&2
+			return 1
+		}
+		if [[ "$old_subject" == "$base_subject" ]]; then
+			printf 'worktree-push: ambiguous authorization base %s: mapped commit %s has the same subject\n' "$base_sha" "$old_sha" >&2
+			return 1
+		fi
+	done <<<"$old_shas"
+}
+
 reconcile_round_authorizations() {
 	local map_json="$1" auth_dir auth round_id recovery base_sha new_sha
 	local auth_tmp recovery_tmp auth_backup recovery_backup
 	auth_dir="$git_common_dir/kendex/dev-round-authorizations"
 	[[ -d "$auth_dir" ]] || return 0
-	for auth in "$auth_dir/$issue-"*.json; do
+	for auth in "$auth_dir/$state_key-"*.json; do
 		[[ -e "$auth" || -L "$auth" ]] || continue
 		[[ -f "$auth" && ! -L "$auth" ]] || {
 			printf 'worktree-push: round authorization is not a regular file: %s\n' "$auth" >&2
@@ -171,17 +194,18 @@ reconcile_round_authorizations() {
 		}
 		new_sha="$(jq -r --arg base "$base_sha" '.[$base] // empty' <<<"$map_json")" || return 1
 		[[ -n "$new_sha" ]] || continue
+		authorization_mapping_is_unambiguous "$base_sha" "$map_json" || return 1
 		round_id="$(jq -r '.round_id // ""' "$auth")" || return 1
 		[[ "$round_id" =~ ^[A-Za-z0-9._-]+$ && "$round_id" != *..* ]] || {
 			printf 'worktree-push: invalid round id in authorization %s\n' "$auth" >&2
 			return 1
 		}
-		recovery="$worktree_abs/tmp/dev-round-$issue-$round_id.json"
+		recovery="$worktree_abs/tmp/dev-round-$state_key-$round_id.json"
 		[[ -f "$recovery" && ! -L "$recovery" ]] || {
 			printf 'worktree-push: recovery copy missing or not regular for %s: %s\n' "$auth" "$recovery" >&2
 			return 1
 		}
-		jq -e --slurpfile recovery "$recovery" --arg issue "$issue" \
+		jq -e --slurpfile recovery "$recovery" --arg issue "$state_key" \
 			--arg round "$round_id" --arg worktree "$worktree_abs" '
 			.schema_version == 1 and .issue == $issue and .round_id == $round
 			and .worktree == $worktree and ($recovery | length) == 1

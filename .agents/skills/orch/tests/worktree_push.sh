@@ -414,19 +414,31 @@ echo
 echo "=== the bare-numeric alias binds, not refuses ==="
 
 # Issue N stored under issue-N is the one accepted spelling difference: the
-# aliased state is this issue's record, and the push must reconcile it.
+# aliased state and authorization are this issue's records, and the push must
+# reconcile both through the resolved key.
 work="$TMP_ROOT/work-alias"
 rm -rf "$work" && mkdir -p "$work"
 # The sidecar is named by the RESOLVED key, so the alias and its issue-N
 # state share one recovery file in the worktree's git dir.
 alias_sidecar="$wt/.git/worktree-push-pending-map-issue-7.json"
 rm -f "$alias_sidecar"
+git -C "$wt" config user.email test@example.com
+git -C "$wt" config user.name Test
+git -C "$wt" commit -q --allow-empty -m alias-base
+alias_old="$(git -C "$wt" rev-parse HEAD)"
+"$ROUND_WRITE" --worktree "$wt" --issue issue-7 --round-id 5-5 --item 1 alias >/dev/null
+git -C "$wt" commit -q --allow-empty -m alias-restack
+alias_new="$(git -C "$wt" rev-parse HEAD)"
 (cd "$work" \
   && "$STATE" init issue-7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null \
-  && "$STATE" append issue-7 fixed_items "{\"description\":\"fix\",\"commit\":\"${OLD_A:0:7}\",\"source\":\"pr-review\"}")
-STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue 7
+  && "$STATE" append issue-7 fixed_items "{\"description\":\"fix\",\"commit\":\"${alias_old:0:7}\",\"source\":\"pr-review\"}")
+STUB_PUSH_STDOUT="rebase-map: $alias_old $alias_new" run_push "$work" --worktree "$wt" --issue 7
 assert_eq "$RUN_RC" "0" "a bare-numeric issue binds to its issue-N state instead of refusing"
-assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${NEW_A:0:7}" "the aliased record's fix SHA is rewritten"
+assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${alias_new:0:7}" "the aliased record's fix SHA is rewritten"
+alias_auth="$wt/.git/kendex/dev-round-authorizations/issue-7-5-5.json"
+alias_recovery="$wt/tmp/dev-round-issue-7-5-5.json"
+assert_eq "$(jq -r '.base_sha' "$alias_auth")" "$alias_new" "the aliased authorization follows the resolved state key"
+assert_eq "$(jq -r '.base_sha' "$alias_recovery")" "$alias_new" "the aliased recovery copy follows the resolved state key"
 [[ ! -f "$alias_sidecar" ]] && pass "the resolved-key sidecar is consumed after the write" || fail "the resolved-key sidecar is consumed after the write"
 
 # Spelling must not strand a map: a bare-numeric push with NO state yet
@@ -501,6 +513,37 @@ assert_eq "$RUN_RC" "1" "an ambiguous state key fails the call"
 assert_contains "$(cat "$run_err")" "ambiguous" "the refusal names the ambiguity"
 assert_eq "$(wc -l <"$ambig_args_log")" "0" "the push never runs against an ambiguous state"
 [[ ! -f "$alias_sidecar" ]] && pass "no sidecar is written when the push never ran" || fail "no sidecar is written when the push never ran"
+
+echo
+echo "=== duplicate subjects cannot advance an authorization base ==="
+
+duplicate_wt="$TMP_ROOT/duplicate-subject-wt"
+mkdir -p "$duplicate_wt"
+git -C "$duplicate_wt" init -q -b main
+git -C "$duplicate_wt" config user.email test@example.com
+git -C "$duplicate_wt" config user.name Test
+printf 'first\n' >"$duplicate_wt/first.txt"
+git -C "$duplicate_wt" add first.txt
+git -C "$duplicate_wt" commit -q -m 'same subject'
+duplicate_first="$(git -C "$duplicate_wt" rev-parse HEAD)"
+"$ROUND_WRITE" --worktree "$duplicate_wt" --issue KEN-DUPLICATE --round-id 1-1 --item 1 duplicate >/dev/null
+printf 'second\n' >"$duplicate_wt/second.txt"
+git -C "$duplicate_wt" add second.txt
+git -C "$duplicate_wt" commit -q -m 'same subject'
+duplicate_second="$(git -C "$duplicate_wt" rev-parse HEAD)"
+duplicate_state="$TMP_ROOT/duplicate-subject-state"
+mkdir -p "$duplicate_state"
+(cd "$duplicate_state" && "$STATE" init KEN-DUPLICATE --agent generalist \
+  --worktree "$duplicate_wt" --branch main >/dev/null)
+STUB_PUSH_STDOUT="rebase-map: $duplicate_first $duplicate_second
+rebase-map: $duplicate_second dropped" \
+  run_push "$duplicate_state" --worktree "$duplicate_wt" --issue KEN-DUPLICATE
+assert_eq "$RUN_RC" "1" "same-subject drop and survive mapping fails closed"
+assert_contains "$(cat "$run_err")" "ambiguous authorization base" \
+  "the refusal names the authorization mapping ambiguity"
+duplicate_auth="$duplicate_wt/.git/kendex/dev-round-authorizations/KEN-DUPLICATE-1-1.json"
+assert_eq "$(jq -r '.base_sha' "$duplicate_auth")" "$duplicate_first" \
+  "an ambiguous mapping does not advance the authorization base"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
