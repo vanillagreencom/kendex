@@ -330,6 +330,65 @@ else
   ok "no Bash 3.2-legal control line is flagged"
 fi
 
+# A carrier may EXTEND the set after the end marker — review-gate does, twice,
+# in the documented append form — and may not REPLACE it. `PATTERN=mapfile` one
+# line below the marker leaves every block byte-identical while the scan judges
+# something else entirely, so the comparison above cannot see it. This is a
+# static read of the text, not a run of it: the block is still never executed.
+APPEND_RE='^[0-9]+: PATTERN="\$PATTERN"'"$Q"'[^'"$Q"']*'"$Q"'$'
+for f in $CARRIERS; do
+  [ -f "$f" ] || continue
+  post=""
+  post_status=0
+  post="$(awk -v marker="$END" 'after { printf "%d: %s\n", NR, $0 } $0 == marker { after = 1 }' "$f")" ||
+    post_status=$?
+  if [ "$post_status" -ne 0 ]; then
+    bad "the lines after the marker in $f could not be read (awk exited $post_status)"
+    continue
+  fi
+  assigns=""
+  status=0
+  assigns="$(printf '%s\n' "$post" | grep -E '^[0-9]+: [[:blank:]]*PATTERN\+?=')" || status=$?
+  if [ "$status" -gt 1 ]; then
+    bad "the post-marker scan over $f could not run (grep exited $status)"
+    continue
+  fi
+  [ -n "$assigns" ] || continue
+  offenders=""
+  status=0
+  offenders="$(printf '%s\n' "$assigns" | grep -vE "$APPEND_RE")" || status=$?
+  if [ "$status" -gt 1 ]; then
+    bad "the post-marker scan over $f could not run (grep exited $status)"
+  elif [ -n "$offenders" ]; then
+    bad "$f assigns PATTERN after the marker in a form that is not the append" \
+      "$(printf '%s\n' "$offenders" | head -5)
+only PATTERN=\"\$PATTERN\"'...' may follow the block; anything else replaces the set"
+  else
+    ok "$f only extends the set after the marker"
+  fi
+done
+
+# And a render matches its source WHOLE, not only inside the block. Every
+# rendered tests/ and scripts/ file in this repo is byte-identical to its
+# source — the renderer injects into SKILL.md, not into code — so holding the
+# pair to that costs nothing and catches drift the block comparison cannot.
+for f in $CARRIER_SOURCES $EXCLUDED_SOURCES; do
+  skip=no
+  for u in $UNRENDERED; do [ "$u" = "$f" ] && skip=yes; done
+  [ "$skip" = yes ] && continue
+  r="$RENDER_PREFIX$f"
+  status=0
+  cmp -s "$f" "$r" || status=$?
+  if [ "$status" -gt 1 ]; then
+    bad "$f and $r could not be compared (cmp exited $status)"
+  elif [ "$status" -eq 1 ]; then
+    bad "$r differs from $f outside the shared block" \
+      "$(diff "$f" "$r" | head -10)"
+  else
+    ok "$r is byte-identical to $f"
+  fi
+done
+
 # The stated limit is a list, and these two checks keep it from going stale:
 # the block names shapes a scan cannot decide in both directions, and each
 # must still behave as the block says. Closing one is a contract change and
