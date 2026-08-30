@@ -13,15 +13,28 @@
 # which harness a pane runs. Both are reported as CONTEXT_USED_PCT: one
 # direction, and a rising number always means a fuller context.
 #
-# Only the BOTTOM of the screen is read, and the last match there wins. The
-# status line sits at the bottom; a model name beside a percentage anywhere
-# above it is prose or scrollback, and this fleet's panes carry both.
+# WHERE the status line sits is not a line count. Claude draws below it a
+# permission-mode row, a branch row, and ONE ROW PER RUNNING AGENT, so the
+# footer grows with the fleet — and the deepest footers belong to the
+# orchestrating lanes, the ones this measurement exists for. The whole
+# captured screen is read and the BOTTOM-MOST reading wins: anything above it
+# is an earlier render of the same lane, from before it compacted.
+#
+# A screen that outlived its harness is refused rather than measured, and
+# that refusal takes positive evidence, never distance: a pane whose
+# foreground process is the shell it exited to runs no harness, and its last
+# render would otherwise be reported as current forever.
 #
 # A lane is live while its claim's pane is (lib/lane-claims.sh). A pane that
 # cannot be captured — on another tmux server, or gone between the claim read
 # and here — is reported `unreadable` with no number: an unmeasured lane must
 # never read as an empty one.
 set -euo pipefail
+
+# Foreground processes that are not a harness. Positive evidence only: an
+# unrecognised process is measured, so a new harness or a launcher wrapper
+# drops no lane out of the report — only an exit back to the shell does.
+LANE_CONTEXT_SHELLS='sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh|nu|xonsh|elvish'
 
 # One record. $1 window, $2 pane id, $3 config dir, $4 account label,
 # $5 harness, $6 used percent, $7 status, $8 detail. Empty numeric or label
@@ -45,22 +58,24 @@ lane_context_emit() {
 # Read one context figure from a captured screen on stdin. Prints
 # `<harness>\t<used percent>`; exits 1 when the screen carries neither shape.
 #
-# Blank lines are dropped and only the last few survivors are matched: the
-# status line is the bottom of the screen, so anything with later output
-# below it is scrollback — a pane that exited to its shell, one showing a
-# pager, a transcript line about a lane's own context use. Read as current,
-# any of them reports a number the lane left behind.
+# Every line is offered and the LAST match wins. No window is taken off the
+# bottom: the footer under the status line is one row per running agent and
+# has no bound, so any count would lose exactly the busiest lanes.
 #
 # Matching is done on a lowercased copy of each line: a model name is a word,
-# and the harness spells it differently in different places. The codex shape
-# is tested first and consumes its line, so a screen carrying both never
-# takes the claude direction for a codex reading. Codex's status item is
-# user-configured and both directions ship, so both are matched and only
-# `left` is converted. A percentage over 100 is not a context figure and is
-# dropped rather than reported, whichever shape carried it.
+# and the harness spells it differently in different places. The claude shape
+# is the status line's own — the percentage follows the model name directly,
+# with only the model's version and its optional parenthetical between. Prose
+# about a lane's context use puts words there, and a session that has not
+# rendered a percentage yet carries none at all; neither is a reading. The
+# codex shape is tested first and consumes its line, so a screen carrying
+# both never takes the claude direction for a codex reading. Codex's status
+# item is user-configured and both directions ship, so both are matched and
+# only `left` is converted. A percentage over 100 is not a context figure and
+# is dropped rather than reported, whichever shape carried it.
 lane_context_parse() {
   local out
-  out="$(awk '/[^ \t]/' | tail -n 5 | awk '
+  out="$(awk '
     {
       low = tolower($0)
       if (match(low, /context:?[ \t]+[0-9]+%[ \t]+(left|used)/)) {
@@ -70,7 +85,7 @@ lane_context_parse() {
         if (s + 0 <= 100) { harness = "codex"; used = remaining ? 100 - (s + 0) : s + 0 }
         next
       }
-      if (match(low, /(opus|sonnet|haiku|fable)[^%]*[0-9]+%/)) {
+      if (match(low, /(opus|sonnet|haiku|fable)[ \t]+[0-9]+(\.[0-9]+)?([ \t]*\([^)]*\))?[ \t]+[0-9]+%/)) {
         s = substr(low, RSTART, RLENGTH)
         sub(/%$/, "", s)
         sub(/^.*[^0-9]/, "", s)
@@ -94,11 +109,18 @@ lane_context_parse() {
 # that key: a foreign claim whose number also exists here would be measured
 # against an unrelated local pane and emitted as ok. So the claim's server is
 # compared against this one, enumerated once, before anything is captured.
+# The same enumeration carries each pane's foreground process, which is what
+# says whether a harness is still drawing the screen about to be read.
 lane_context_collect() {
   local claims="$1" alias_fn="$2" cfg lane server pane screen parsed
-  local this_server detail
-  this_server="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null | head -n 1)"
-  this_server="${this_server%% *}"
+  local this_server detail cmd p_pid p_pane p_cmd
+  local -A pane_cmd=()
+  this_server=""
+  while read -r p_pid p_pane p_cmd; do
+    [[ -n "$p_pane" ]] || continue
+    [[ -n "$this_server" ]] || this_server="$p_pid"
+    pane_cmd["$p_pane"]="$p_cmd"
+  done < <(tmux list-panes -a -F '#{pid} #{pane_id} #{pane_current_command}' 2>/dev/null)
   {
     while IFS=$'\t' read -r cfg lane server pane; do
       [[ -n "$pane" ]] || continue
@@ -110,6 +132,12 @@ lane_context_collect() {
         [[ -n "$this_server" ]] || detail="no tmux server could be enumerated; no pane id resolves"
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
           "unreadable" "$detail"
+        continue
+      fi
+      cmd="${pane_cmd["$pane"]:-}"
+      if [[ "${cmd#-}" =~ ^($LANE_CONTEXT_SHELLS)$ ]]; then
+        lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
+          "no_status_line" "the pane has exited to its shell; any reading left on its screen is what the lane ended with"
         continue
       fi
       if ! screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)"; then
@@ -144,5 +172,5 @@ lane_context_render() {
              (if .context_used_pct == null then "-" else (.context_used_pct | tostring) + "%" end),
              .status ] | @tsv)
   ' <<<"$recs" | column -t -s "$(printf '\t')"
-  printf 'CONTEXT_USED_PCT: percent of the context window CONSUMED. A Codex lane prints what is LEFT; it is converted here.\n'
+  printf 'CONTEXT_USED_PCT: percent of the context window CONSUMED. A Codex lane prints what is LEFT or what is USED; only LEFT is converted here.\n'
 }

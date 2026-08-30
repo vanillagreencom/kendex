@@ -176,7 +176,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    **Restack cycle** — the base, not CI, is the blocker; never route a conflict into ci-fix:
 
-   1. **Out of the queue and unarmed before anything is pushed.** A queued PR rejects the push, and an arming that survives the restack fires on the new head as soon as its checks clear — before step 4 re-confirms the gate. From the same verdict JSON: `in_merge_queue` true → dequeue it (GraphQL `dequeuePullRequest` — its `id` input takes the PR node id); `auto_merge_enabled` true → disable auto-merge. Re-read both and confirm they are off; either still set → hand back rather than push.
+   1. **Unarmed, then out of the queue, before anything is pushed.** A queued PR rejects the push, and an arming that survives the restack fires on the new head as soon as its checks clear — before step 4 re-confirms the gate. The order is the one queue-wait's own guard enforces: disarm BEFORE dequeuing, because an armed PR re-enqueues itself the moment requirements go green and a bare dequeue can be raced straight back into the queue. From the verdict JSON: `auto_merge_enabled` true → disable auto-merge first; then `in_merge_queue` true → dequeue (GraphQL `dequeuePullRequest`, whose `id` input takes the PR node id — read it with `gh pr view [PR_NUMBER] --json id`; no verdict JSON carries it). Re-read both and confirm they are off; either still set → hand back rather than push.
    2. Bind `[WT_PATH]`, then run the guarded rebase:
 
       ```bash
@@ -197,7 +197,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    **Late-findings triage** — the findings, not CI, are the blocker:
 
-   1. On `cause: late_findings_dequeue_failed` first confirm the dequeue by hand (GraphQL `dequeuePullRequest` — its `id` input takes the PR node id) or disable auto-merge; the PR must be out of the queue before triage pushes.
+   1. On `cause: late_findings_dequeue_failed` first confirm the dequeue by hand, in the restack cycle's step 1 order and with the PR node id read the way it says: disable auto-merge, then `dequeuePullRequest`. The PR must be out of the queue before triage pushes.
    2. `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 5 step 1` with managed context — every new thread replied to and resolved.
    3. Triage may have pushed a new head: re-confirm the gate exactly as recovery step 2 above, then re-run `pr-merge [PR_NUMBER] --auto` and `queue-wait` with a fresh poll budget.
 

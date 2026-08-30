@@ -57,6 +57,20 @@ assert_contains() {
   fi
 }
 
+# Whole-line match, for the --help rows below. Both `conflicting` and
+# `base_conflict` occur in --help prose and in the cause list, so a substring
+# assertion on either word passes with the verdict's own row deleted.
+assert_matches() {
+  local haystack="$1" pattern="$2" name="$3"
+  if grep -qE -- "$pattern" <<<"$haystack"; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        wanted line matching: %s\n        in: %s\n' "$name" "$pattern" "$haystack"
+  fi
+}
+
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/seq"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 
@@ -257,10 +271,18 @@ out="$(run_queue_wait -- 1 1 20 --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_contains "$out" "conflicting" "the plain line names the verdict" "$err"
 assert_contains "$out" "restacked" "the plain line names the remedy" "$err"
 
-# The verdict is part of the contract the --help heredoc states.
+# The verdict is part of the contract the --help heredoc states, and that
+# contract is the routing table four other documents now delegate to: the
+# github README, orch's gates.md, merge-pr.md § 5 step 1 and pr-merge.sh all
+# point here rather than restating a verdict list. Anchored on the row, so
+# deleting the row cannot pass on the word appearing in the prose above it.
 help_out="$(run_queue_wait -- --help 2>/dev/null)"
-assert_contains "$help_out" "conflicting" "--help carries the conflicting verdict"
-assert_contains "$help_out" "base_conflict" "--help carries its cause"
+assert_matches "$help_out" '^  conflicting mergeable == "CONFLICTING": the head conflicts with the base\.$' \
+  "--help carries the conflicting verdict as a row of its routing table"
+assert_matches "$help_out" '^ +this outranks ejected and disarmed — the fix is a restack, not$' \
+  "the row states the ranking that keeps a conflict out of the recovery cycle"
+assert_matches "$help_out" '# only when known: base_conflict \|$' \
+  "--help carries its cause in the cause list, not only in prose"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

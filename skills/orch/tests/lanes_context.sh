@@ -9,10 +9,24 @@
 # the overseer to compact the emptiest lane in the fleet, so the direction is
 # what these cases pin.
 #
+# Where the status line SITS is pinned too, and by property rather than by
+# count. The claude screens below are real `tmux capture-pane` output from
+# this fleet (see case 1); the footer under a status line is one row per
+# running agent, so no line count reaches an orchestrating lane's. Three
+# cases hold that shut, each against a different mutation:
+#   case 1  a real six-row footer — dies the moment any bottom window
+#           narrower than that is taken off the screen
+#   case 14 a session with no percentage yet, under prose that names a model
+#           and one — dies if the claude shape is loosened back to accepting
+#           words between the model name and the percentage
+#   case 13 a pane that exited to its shell — dies if the liveness evidence
+#           is dropped, which is the only thing a window ever stood in for
+#
 # Covered:
-#   1. the claude shape reports its number as used
+#   1. the claude shape reports its number as used, wherever the footer puts
+#      the status line
 #   2. the codex shape is converted, not reported raw
-#   3. the bottom-most reading wins over one scrolled past
+#   3. the bottom-most reading wins over one repainted past
 #   4. a screen with neither shape is no_status_line, never 0
 #   5. a pane that cannot be captured is unreadable, never 0
 #   6. a percentage over 100 is not a context figure, in either shape
@@ -21,9 +35,11 @@
 #   9. the account column names the lane the pane runs under
 #  10. a claim on ANOTHER tmux server is unreadable, never a local pane's
 #      number under its name
-#  11. codex's other status item, `Context 14% used`, is taken as it stands
+#  11. codex's other status item, `Context 40% used`, is taken as it stands
 #  12. one line carrying both shapes reads as codex, not claude
-#  13. a reading with later output below it is scrollback, not a status line
+#  13. a pane that has exited to its shell is not measured from what it left
+#  14. a model and a percentage in prose is not a status line
+#  15. an unenumerable tmux server refuses every claim, not just foreign ones
 #
 # errexit is on: every case here either succeeds or is guarded, so an
 # unexpected non-zero is a broken fixture, not a finding to print past.
@@ -34,7 +50,13 @@ SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 LANES="$SCRIPTS_DIR/lanes"
 
 TMP_ROOT="$(mktemp -d)"
-cleanup() { kill "${FOREIGN_PID:-0}" 2>/dev/null || true; rm -rf -- "${TMP_ROOT:?}"; }
+# FOREIGN_PID is assigned well below this trap, and `kill 0` signals the whole
+# process group — the runner included. Guard on the variable, never on a
+# default that expands to a signal every process here would receive.
+cleanup() {
+  if [[ -n "${FOREIGN_PID:-}" ]]; then kill "$FOREIGN_PID" 2>/dev/null || true; fi
+  rm -rf -- "${TMP_ROOT:?}"
+}
 trap cleanup EXIT
 
 PASS=0
@@ -53,8 +75,8 @@ assert_contains() {
   else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        wanted: %s\n        in: %s\n' "$name" "$needle" "$hay"; fi
 }
 
-# Whole-line match. The table's legend repeats every word its header uses, so
-# a substring assertion on the header is satisfied by the footer alone.
+# Whole-line match. The legend repeats CONTEXT_USED_PCT, so a substring
+# assertion on the header's number column is satisfied by the footer alone.
 assert_line() {
   local hay="$1" re="$2" name="$3"
   if grep -qE -- "$re" <<<"$hay"; then pass "$name"
@@ -64,18 +86,33 @@ assert_line() {
 BIN="$TMP_ROOT/bin"; mkdir -p "$BIN"
 PANE_DIR="$TMP_ROOT/panes"; mkdir -p "$PANE_DIR"
 PANES="$TMP_ROOT/panes.txt"
+NO_SERVER="$TMP_ROOT/panes-none.txt"
+: > "$NO_SERVER"
 STATE="$TMP_ROOT/state"
 H="$TMP_ROOT/home"; mkdir -p "$H/.claude" "$H/.eclaude" "$H/.codex"
 
-# tmux stub: `list-panes` replays $TMUX_PANES_FILE, `capture-pane -t %N`
-# replays $PANE_DIR/N.screen. A pane with no screen file fails the capture,
-# the way a pane on another tmux server does.
+# tmux stub: `list-panes` replays $TMUX_PANES_FILE, whose rows are
+# `<server pid> <pane id> <foreground process>`, PROJECTED onto the -F format
+# the caller asked for — lane-claims asks for two fields and matches the line
+# whole, lane-context asks for three. A stub that answered both with the same
+# row would prune every claim in the store before the collector saw it.
+# `capture-pane -t %N` replays $PANE_DIR/N.screen; a pane with no screen file
+# fails the capture, the way a pane on another tmux server does.
 cat > "$BIN/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 case "${1:-}" in
   list-panes)
     [[ -f "${TMUX_PANES_FILE:-}" ]] || exit 0
-    cat "$TMUX_PANES_FILE"
+    fmt=""
+    args=("$@")
+    for i in "${!args[@]}"; do
+      [[ "${args[$i]}" == "-F" ]] && { fmt="${args[$((i + 1))]:-}"; break; }
+    done
+    if [[ "$fmt" == *pane_current_command* ]]; then
+      awk '{ print $1, $2, $3 }' "$TMUX_PANES_FILE"
+    else
+      awk '{ print $1, $2 }' "$TMUX_PANES_FILE"
+    fi
     ;;
   capture-pane)
     pane=""
@@ -115,54 +152,92 @@ screen() { # <pane number> <body>
   printf '%s\n' "$2" > "$PANE_DIR/$1.screen"
 }
 
-run_ctx() {
+run_ctx_on() { # <panes file> [args...]
+  local panes="$1"; shift
   LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$STATE" \
-    TMUX_PANES_FILE="$PANES" PANE_DIR="$PANE_DIR" \
+    TMUX_PANES_FILE="$panes" PANE_DIR="$PANE_DIR" \
     PATH="$BIN:$PATH" "$LANES" context "$@"
 }
 
+run_ctx() { run_ctx_on "$PANES" "$@"; }
+
 echo "=== lanes context ==="
 
-for n in 1 2 3 4 5 6 7 8 9; do printf '%s %%%s\n' "$LIVE_PID" "$n"; done > "$PANES"
+# Foreground process per pane. %9 is the one that exited to its shell.
+{
+  for n in 1 2 3 4 5 10; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
+  for n in 6 7 8; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
+  printf '%s %%9 fish\n' "$LIVE_PID"
+} > "$PANES"
 
-write_claim one   "%1" "$H/.claude"  "ken-101"
-write_claim two   "%2" "$H/.codex"   "ken-102"
-write_claim three "%3" "$H/.eclaude" "ken-103"
-write_claim four  "%4" "$H/.claude"  "ken-104"
-write_claim six   "%6" "$H/.codex"   "ken-106"
-write_claim seven "%7" "$H/.codex"   "ken-107"
-write_claim eight "%8" "$H/.codex"   "ken-108"
-write_claim nine  "%9" "$H/.claude"  "ken-109"
+write_claim one    "%1"  "$H/.claude"  "ken-101"
+write_claim two    "%2"  "$H/.codex"   "ken-102"
+write_claim three  "%3"  "$H/.eclaude" "ken-103"
+write_claim four   "%4"  "$H/.claude"  "ken-104"
+write_claim six    "%6"  "$H/.codex"   "ken-106"
+write_claim seven  "%7"  "$H/.codex"   "ken-107"
+write_claim eight  "%8"  "$H/.codex"   "ken-108"
+write_claim nine   "%9"  "$H/.claude"  "ken-109"
+write_claim eleven "%10" "$H/.claude"  "ken-111"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
-# cleanly: %1 is ken-101's, reading 41.
+# cleanly: %1 is ken-101's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
 
-screen 1 '> implement the thing
-  ⏵⏵ accept edits on                          Opus 5 41%'
+# 1. An ORCHESTRATING lane, captured live rather than written from memory:
+# tmux panes %16, %23 and %24 of server 2723552 on 2026-08-29 — %16 supplying
+# the screen, the other two their agent rows. Below the status line sit the
+# permission-mode row, the branch row, and one row per running agent: a
+# six-line non-blank footer here, and unbounded in general, since a lane
+# running more agents draws more rows. Any window narrower than the footer
+# loses exactly the lanes the overseer compaction rule exists for. Only the
+# box rules are trimmed, to keep this file narrow; nothing else is altered.
+screen 1 '  ⎿  Tip: Use /clear to start fresh when switching topics and free up context
+
+──────────────────────────────
+❯
+──────────────────────────────
+  kendex (🌳 ken-835*) Opus 5 35% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · PR #1841 · ← 1 agent
+
+  ● main
+  ◯ dev-ken835  Follow workflow: .agents/skills/dev/workflows/dev-...   7m 45s · ↓ 937.0k tokens
+  ◯ dev-ken-845  Follow workflow: .agents/skills/dev/workflo… 8m 45s · ↓ 364.8k tokens
+  ◯ dev-ken-844-c  Follow workflow: .agents/skills/dev/workflo… 4m 2s · ↓ 75.8k tokens'
 screen 2 '  Codex is working
   Context 86% left'
-screen 3 'Opus 5 92%
-some later output
-  ⏵⏵ accept edits on                          Opus 5 18%'
+# A repaint after a compaction leaves the previous render on the screen.
+screen 3 '  kendex (🌳 ken-103) Opus 5 92% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+● Compacted 113,518 tokens · ctrl+o to expand
+  kendex (🌳 ken-103) Opus 5 18% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 screen 4 'plain shell output with no harness status line'
 # %5 is claimed by nothing here; pane 5 has no screen file at all.
 screen 6 '  Codex is working
   Context 40% used'
 screen 7 '  Context 86% left · Opus 5 41%'
 screen 8 '  Context 140% left'
-screen 9 '  ⏵⏵ accept edits on                          Opus 5 41%
+screen 9 '  kendex (🌳 ken-109) Opus 5 41% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
 $ git status
 On branch ken-109
-nothing to commit, working tree clean
+working tree clean, nothing staged
 $ ls tmp
 dev-round-ken-109.json
 $ '
+# A session that has not rendered a percentage yet — the status line of tmux
+# pane %21, captured from the same server — under a transcript line naming a
+# model and a percentage in prose.
+screen 10 '● Opus 5 has used 35% of its window on this lane so far
+  scribd-brain Opus 5 (1M context) (S)
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 
 OUT="$(run_ctx --json)"
 
-# 1. The claude shape carries the share USED, and is reported as it stands.
-assert_eq "$(jq -r '.[] | select(.lane=="ken-101") | .context_used_pct' <<<"$OUT")" "41" \
-  "the claude status line reports its number as used"
+# 1. The claude shape carries the share USED, and is reported as it stands —
+# from under a footer no line count would have cleared.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-101") | .context_used_pct' <<<"$OUT")" "35" \
+  "the claude status line reports its number as used, under a six-row footer"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-101") | .harness' <<<"$OUT")" "claude" \
   "the matched shape names the harness, with nothing recorded in advance"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-101") | .status' <<<"$OUT")" "ok" \
@@ -176,10 +251,11 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-102") | .context_used_pct' <<<"$OUT
 assert_eq "$(jq -r '.[] | select(.lane=="ken-102") | .harness' <<<"$OUT")" "codex" \
   "the codex shape names the codex harness"
 
-# 3. A pane keeps its scrollback: the status line is the bottom-most reading,
-# and an earlier one is the same lane before it compacted.
+# 3. A pane keeps the render it repainted over: the status line is the
+# bottom-most reading, and an earlier one is the same lane before it
+# compacted.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-103") | .context_used_pct' <<<"$OUT")" "18" \
-  "the bottom-most reading wins over one scrolled past"
+  "the bottom-most reading wins over one repainted past"
 
 # 11. Codex's status item is user-configured and the binary ships both
 # spellings; a lane running the `used` one was measured by neither branch.
@@ -203,16 +279,27 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-108") | .status' <<<"$OUT")" "no_st
 assert_eq "$(jq -r '.[] | select(.lane=="ken-108") | .context_used_pct' <<<"$OUT")" "null" \
   "an out-of-range codex reading carries no number"
 
-# 13. A reading with later output BELOW it is scrollback — the pane has
-# exited to its shell. Reported ok, it holds a stale number forever.
+# 13. The pane exited to its shell. Its last render is still on the screen and
+# is not a measurement of anything: what refuses it is the foreground process
+# tmux reports, not how far up the screen the reading sits.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-109") | .status' <<<"$OUT")" "no_status_line" \
-  "a reading scrolled off the bottom is not a status line"
+  "a pane that exited to its shell is not measured from what it left"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-109") | .context_used_pct' <<<"$OUT")" "null" \
-  "a scrolled-off reading carries no number"
+  "an exited pane carries no number"
+assert_contains "$(jq -r '.[] | select(.lane=="ken-109") | .detail' <<<"$OUT")" "exited to its shell" \
+  "the refusal names the evidence it acted on"
+
+# 14. Prose names a model and a percentage with words between them; the
+# status line below it names a model and no percentage at all. Neither is a
+# reading, and the pane is live, so no distance rule separates them.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-111") | .status' <<<"$OUT")" "no_status_line" \
+  "a model and a percentage in prose is not a status line"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-111") | .context_used_pct' <<<"$OUT")" "null" \
+  "a session with no percentage yet carries no number, not the prose's"
 
 # 10. `capture-pane -t %N` answers from THIS server only, and pane ids restart
 # at %0 on each one. ken-110 claims %1 on another server; %1 here is ken-101's
-# pane, reading 41. Measured against it, the foreign lane reports 41 as its
+# pane, reading 35. Measured against it, the foreign lane reports 35 as its
 # own.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-110") | .status' <<<"$OUT")" "unreadable" \
   "a claim on another tmux server is unreadable"
@@ -236,6 +323,17 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-105") | .context_used_pct' <<<"$UNR
   "an uncapturable pane carries no number"
 rm -f "$STATE/claims/five.claim"
 
+# 15. Nothing enumerated at all is a different refusal from a pane on a server
+# this one can see but does not own: no pane id resolves, so measuring ANY
+# claim against a local screen would be the same fabrication. Without its own
+# fixture the branch is invisible — the foreign-server case above drives only
+# the mismatch arm.
+NOSRV="$(run_ctx_on "$NO_SERVER" --json)"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-101") | .status' <<<"$NOSRV")" "unreadable" \
+  "an unenumerable tmux server refuses a claim it would otherwise have measured"
+assert_contains "$(jq -r '.[] | select(.lane=="ken-101") | .detail' <<<"$NOSRV")" "no tmux server could be enumerated" \
+  "the empty-enumeration refusal names the enumeration, not a foreign server"
+
 # 6. A percent sign near a model name is not automatically a context figure.
 screen 4 'Opus 5 finished 140% of the plan'
 OVER="$(run_ctx --json)"
@@ -250,12 +348,14 @@ assert_line "$TABLE" \
   '^LANE[[:space:]]+PANE[[:space:]]+ACCOUNT[[:space:]]+HARNESS[[:space:]]+CONTEXT_USED_PCT[[:space:]]+STATUS[[:space:]]*$' \
   "the table header carries the number column, in order"
 assert_line "$TABLE" \
-  '^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+41%[[:space:]]+ok[[:space:]]*$' \
+  '^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+ok[[:space:]]*$' \
   "a table row carries the lane's number between its harness and its status"
 assert_line "$TABLE" \
   '^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*$' \
   "an unmeasured lane's number column is a dash, never a zero"
 assert_contains "$TABLE" "CONSUMED" "the table legend states which direction it reports"
+assert_contains "$TABLE" "LEFT or what is USED" \
+  "the legend names both codex spellings, and which one is converted"
 
 # 9. The account a lane runs under, resolved from the claim's config dir.
 assert_eq "$(jq -r '.[] | select(.lane=="ken-103") | .account' <<<"$OUT")" "eclaude" \

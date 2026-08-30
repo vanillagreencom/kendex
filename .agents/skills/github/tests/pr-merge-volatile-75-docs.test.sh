@@ -83,17 +83,32 @@ readme_src=$(sed -n '/^## Exit 75 recovery$/,/^## /p' "$REPO_ROOT/skills/github/
 assert_matches "$readme_src" 'exits 75 when the PR is queued or auto-merge is armed' \
   "README states the volatile 75 contract"
 # The verdict set grows (queue-wait gained `conflicting`), so the README
-# points at queue-wait's own table instead of restating it — a list here was
-# a fifth copy going stale on every addition. What it must still carry is the
-# refusal that keeps an unrouted verdict from being re-armed.
-assert_matches "$readme_src" 'queue-wait --help` § Verdicts' \
-  "README points at queue-wait's own verdict table rather than restating it"
-assert_matches "$readme_src" 'never re-arm a verdict whose entry does not call for a' \
-  "README refuses a re-arm on any verdict that table does not route to one"
-assert_matches "$readme_src" 'until it is restacked' \
-  "README routes a base conflict to a restack, never a re-arm or a CI repair"
+# points at the tables that already carry it instead of restating them — a
+# list here was a fifth copy going stale on every addition. Routing lives in
+# the workflow, semantics in the script's --help; both pointers are pinned,
+# and so are the sections they resolve to.
+assert_matches "$readme_src" 'merge-pr\.md` § 5 step 1' \
+  "README routes verdicts by the workflow table rather than restating them"
+assert_matches "$readme_src" 'queue-wait --help` § Verdicts is where' \
+  "README keeps queue-wait --help as the reference for what a verdict means"
 assert_matches "$readme_src" 'is a CI repair first' \
   "README requires the CI repair before re-arming an ejected head"
+assert_matches "$script_src" 'route every verdict by orch merge-pr\.md § 5 step 1' \
+  "the script's own note routes by the same table the README names"
+assert_matches "$script_src" 'repair what the cause names before re-arming' \
+  "the script's own note requires the repair before a re-arm, as the README does"
+
+# A pointer is worth what its target is. Both are anchored on the row or the
+# heading itself, so prose elsewhere in either file naming a verdict cannot
+# stand in for the section going missing.
+queue_wait_src=$(cat "$REPO_ROOT/skills/orch/scripts/queue-wait")
+assert_matches "$queue_wait_src" '^Verdicts \(the merge-pr § 5 step 1 routing table\):$' \
+  "queue-wait --help still carries the § Verdicts heading the README names"
+merge_pr_src=$(cat "$REPO_ROOT/skills/orch/workflows/merge-pr.md")
+assert_matches "$merge_pr_src" '^   \| `verdict` \| Meaning \| Action \|$' \
+  "merge-pr § 5 step 1 still carries the routing table the README routes to"
+assert_matches "$merge_pr_src" '^   \| `conflicting` \|.*\| Restack cycle below \|$' \
+  "that table routes the conflicting verdict, as a row and not as prose"
 assert_matches "$table" 'await-mergeable` is not that' \
   "the outcomes section states await-mergeable is not the ejection watcher"
 

@@ -89,11 +89,11 @@ git -C "$TMP_ROOT/repo" init -q
 git -C "$TMP_ROOT/repo" config user.email test@example.com
 git -C "$TMP_ROOT/repo" config user.name Test
 
-# Sequenced `gh` stub. Each poll of queue-wait makes exactly one
-# `gh pr view --json state,mergedAt` call and one queue-membership
-# `gh api graphql` call, so independent counters replay a per-poll script of
-# fixtures, routed by query content so guard traffic never shifts the queue
-# sequence:
+# Sequenced `gh` stub. Each poll makes one `gh pr view --json
+# state,mergedAt,mergeable` call, that field list matched EXACTLY by the
+# router below, and one queue-membership `gh api graphql` call; independent
+# counters replay a per-poll script of fixtures, routed by query content so
+# guard traffic never shifts the queue sequence:
 #   $STUB_SEQ_DIR/state-<n>.json   PR state for poll n
 #   $STUB_SEQ_DIR/queue-<n>.json   queue-membership GraphQL body for poll n
 #   $STUB_SEQ_DIR/threads-<n>.json reviewThreads body for guard probe n

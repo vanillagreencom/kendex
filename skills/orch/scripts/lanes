@@ -28,9 +28,11 @@
 #         so a caller can fail closed rather than launch into a wall.
 #   context  Print each LIVE WORK LANE's context use, read from its pane
 #         status line and nothing else: Claude prints `Opus 5 41%` (the
-#         percentage USED), Codex prints `Context 86% left` (the percentage
-#         REMAINING). Both are reported as CONTEXT_USED_PCT — the share
-#         CONSUMED. The lanes are the live claims below, one per pane.
+#         percentage USED), Codex prints either `Context 86% left` (the
+#         percentage REMAINING) or `Context 14% used`, and only the `left`
+#         spelling is converted. Both harnesses are reported as
+#         CONTEXT_USED_PCT — the share CONSUMED. The lanes are the live
+#         claims below, one per pane.
 #
 # Options:
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)

@@ -74,19 +74,19 @@ neither watcher is durable, and both live in sibling skills (install orch and
 review-gate beside this one):
 
 - `.agents/skills/orch/scripts/queue-wait <N>` polls to a bounded budget and
-  returns `ejected`/`disarmed` with its cause, or `queued` (run it again). A
+  returns a terminal verdict with its cause, or `queued` (run it again). A
   re-run carries no memory of the earlier run, so an ejection between two runs
   comes back as `not_queued`/`never_armed`.
 - `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
   pass that prints `disarmed … (re-arm)` lines.
 
-Route each verdict as `queue-wait --help` § Verdicts prescribes — that table
-is the route, and it grows; a verdict this README named would go stale in it.
-Two rules survive here: never re-arm a verdict whose entry does not call for a
-re-arm (a head GitHub reports in conflict with its base merges through
-nothing until it is restacked), and where an entry does, re-arm only after
-repairing what the `cause` names — a `merge_group_failed`/`check_failed`
-cause is a CI repair first, else the same head ejects again. Re-arm with
+Route each verdict by the table in
+`.agents/skills/orch/workflows/merge-pr.md` § 5 step 1 — it names the action
+for every verdict and grows with the verdict set, so a list here would be a
+copy going stale on each addition; `queue-wait --help` § Verdicts is where
+each verdict's meaning lives. Whatever the route, repair what the `cause`
+names before re-arming — a `merge_group_failed`/`check_failed` cause
+is a CI repair first, else the same head ejects again. Re-arm with
 `.agents/skills/github/scripts/github.sh pr-merge <N> --auto`.
 
 Where branch protection *is* enabled, the opposite problem appears: after a
