@@ -75,3 +75,19 @@ coproc cat
 x && coproc reader
 builtin mapfile -t lanes < f
 command readarray -t lanes < f
+declare +A cache
+declare -A	cache
+local	-A cache
+exec {fd}>out
+exec {fd}<>rw
+exec {fd}<&3
+exec {fd}>&2
+cat {fd}<in
+{fd}>out
+upper="${x^^[aeiou]}"
+lower="${x,[A-Z]}"
+all="${arr[@]^}"
+star="${arr[*],,}"
+run;coproc cat
+(coproc reader)
+cmd &>>log
