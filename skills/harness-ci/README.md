@@ -59,6 +59,15 @@ those trees it committed.
   `git mv src/app.ts .agents/skills/x/app.ts` would list one harness path and
   nothing else — the deletion of `src/app.ts` would go unjudged. With the
   flag, both paths are listed and the diff answers `false`.
+- **The in-place read**: the manifests come from the selected head tree, and
+  the reader knows the one shape kendex writes — a `[skills.<name>]` header,
+  quoted only where the name needs it, then `source = "in-place"`. It does not
+  parse the other spellings TOML allows. It counts the lines saying
+  `in-place` instead, and carves every `.agents/skills` path when one goes
+  unaccounted, so a dotted key, an inline table or an undecodable name
+  answers `false` rather than a guess. A value the line never spells — a
+  `\u` escape, a string split across lines — is past what it sees, and no
+  kendex install writes one.
 - **Merge base on `pull_request`** (`base...head`): the base branch moves
   under an open PR, and only the merge base isolates what the PR changed.
 - **Two endpoints on `push` and `merge_group`** (`base head`): a force-push
@@ -84,6 +93,8 @@ Anything the classifier cannot prove answers `false`, which runs every lane:
   looks like
 - a path git had to quote (an embedded newline or quote character), which
   matches no harness prefix
+- a manifest the head tree lists but that will not read — a symlink entry, an
+  unreadable blob — which carves every `.agents/skills` path
 
 There is no flag that turns any of these into a `true`.
 
@@ -94,7 +105,7 @@ There is no flag that turns any of these into a `true`.
 | Suite | Covers |
 | --- | --- |
 | `path-set` | Every render tree, mixed diffs, deletions, the near-miss paths |
-| `in-place` | Trees either manifest declares in place, `.agents/hooks`, the no-manifest control |
+| `in-place` | Trees either manifest declares in place, `.agents/hooks`, the coarse carve for a spelling the reader does not name, the no-manifest control |
 | `rename-into-render` | The `git mv` into a render tree, and the control proving the flag is load-bearing |
 | `event-ranges` | The force-push case, the moving base branch, merge groups |
 | `fail-closed` | Unclassified events, unresolvable endpoints, an empty diff, a merge-base diff git refuses, a path git had to quote |

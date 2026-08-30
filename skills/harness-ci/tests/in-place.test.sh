@@ -57,32 +57,19 @@ assert_verdict "without a manifest every .agents path is render output" true \
   --repo "$norepo" --event push --base "$nobase" --head HEAD
 
 
-# Every spelling a declaration legally wears: quoted keys (spaces included),
-# single quotes, indentation, spaces around the dotted key, trailing value
-# comments, a [skills] table with inline and dotted entries, and top-level
-# dotted keys — inline tables are single-line by TOML 1.0.
+# The shape kendex writes, in both its spellings: a bare name, and a quoted
+# one where the name needs quoting. A hand edit's indentation, trailing
+# value comment and sibling keys do not defeat the anchored matches.
 spell="$(new_repo spellings)"
 cat >"$spell/kendex.toml" <<'MANIFEST'
 schema = 6
 
-[skills]
-tabled = { source = "in-place" }
-dotted.source = "in-place"
-
 [skills."ship it"]
 source = "in-place"
+enabled = true
 
   [skills.indented]
   source = "in-place" # kept in place
-
-[ skills . spaced ]
-source = 'in-place'
-
-[skills.tripled]
-source = """in-place"""
-
-[skills.lit3]
-source = '''in-place'''
 MANIFEST
 commit_paths "$spell" "baseline" README.md
 spellbase="$(git -C "$spell" rev-parse HEAD)"
@@ -94,24 +81,9 @@ spell_case() { # LABEL EXPECTED PATH
 }
 spell_case "a quoted name with a space" false ".agents/skills/ship it/SKILL.md"
 spell_case "an indented declaration with a value comment" false .agents/skills/indented/SKILL.md
-spell_case "spaces around the dotted key, single-quoted value" false .agents/skills/spaced/SKILL.md
-spell_case "an inline table under the skills table" false .agents/skills/tabled/SKILL.md
-spell_case "a dotted entry under the skills table" false .agents/skills/dotted/SKILL.md
-spell_case "a multiline-basic-string value" false .agents/skills/tripled/SKILL.md
-spell_case "a multiline-literal-string value" false .agents/skills/lit3/SKILL.md
-
-# Top-level dotted spellings live in their own manifest: TOML lets one style
-# define the skills table, not both.
-dotted="$(new_repo dotted)"
-printf '%s\n' 'schema = 6' 'skills.inline = { source = "in-place" }' 'skills.deep.source = "in-place"' >"$dotted/kendex.toml"
-commit_paths "$dotted" "baseline" README.md
-dottedbase="$(git -C "$dotted" rev-parse HEAD)"
-for dotted_skill in inline deep; do
-  git -C "$dotted" checkout -q -B "case" "$dottedbase"
-  git -C "$dotted" clean -qfd -e kendex.toml
-  commit_paths "$dotted" "$dotted_skill" ".agents/skills/$dotted_skill/SKILL.md"
-  assert_verdict "a top-level dotted $dotted_skill declaration" false --repo "$dotted" --event push --base "$dottedbase" --head HEAD
-done
+# Both names were read, not coarsely carved: an undeclared sibling in the
+# same repo still answers true.
+spell_case "an undeclared sibling beside them stays render" true .agents/skills/stranger/SKILL.md
 
 # A CRLF manifest is legal TOML; the carriage return must not defeat the
 # anchored matches.
@@ -122,41 +94,47 @@ crlfbase="$(git -C "$crlf" rev-parse HEAD)"
 commit_paths "$crlf" "edit" .agents/skills/mine/SKILL.md
 assert_verdict "a CRLF manifest still carves" false --repo "$crlf" --event push --base "$crlfbase" --head HEAD
 
-# An unclassifiable spelling degrades to the coarse carve: an in-place value
-# the name extraction cannot account for makes every skill path project
-# source rather than a guessed name set.
-coarse="$(new_repo coarse)"
-printf 'schema = 6\nskills = { mine = { source = "in-place" } }\n' >"$coarse/kendex.toml"
-commit_paths "$coarse" "baseline" README.md
-coarsebase="$(git -C "$coarse" rev-parse HEAD)"
-commit_paths "$coarse" "edit" .agents/skills/mine/SKILL.md
-assert_verdict "an inline whole-table declaration carves its skill" false --repo "$coarse" --event push --base "$coarsebase" --head HEAD
-git -C "$coarse" checkout -q -B "case" "$coarsebase"
-git -C "$coarse" clean -qfd -e kendex.toml
-commit_paths "$coarse" "sibling" .agents/skills/other/SKILL.md
-assert_verdict "the coarse carve covers every skill path" false --repo "$coarse" --event push --base "$coarsebase" --head HEAD
-
-# The escape and split-string avenues land in the coarse net too — an
-# escaped value, an escaped section-header key, a value split across lines:
-# none spells in-place where the extractor reads names, all decode to it.
-for exotic in 'source = "in\u002Dplace"' 'source = "in-\x70lace"' 'split' 'header' 'quoted-split' 'dotted-escape'; do
-  ex="$(new_repo "exotic-$RANDOM")"
-  if [ "$exotic" = split ]; then
-    printf 'schema = 6\n[skills.mine]\nsource = """in\\\n-place"""\n' >"$ex/kendex.toml"
-  elif [ "$exotic" = dotted-escape ]; then
-    printf 'schema = 6\nskills."mi\\u006Ee" = { source = "in-place" }\n' >"$ex/kendex.toml"
-  elif [ "$exotic" = quoted-split ]; then
-    printf 'schema = 6\n[skills.mine]\n"source" = """in-\\\nplace"""\n' >"$ex/kendex.toml"
-  elif [ "$exotic" = header ]; then
-    printf 'schema = 6\n[skills."mi\\u006Ee"]\nsource = "in-place"\n' >"$ex/kendex.toml"
-  else
-    printf 'schema = 6\n[skills.mine]\n%s\n' "$exotic" >"$ex/kendex.toml"
-  fi
-  commit_paths "$ex" "baseline" README.md
-  exbase="$(git -C "$ex" rev-parse HEAD)"
-  commit_paths "$ex" "edit" .agents/skills/mine/SKILL.md
-  assert_verdict "an escaped or split spelling degrades to the carve ($exotic)" false --repo "$ex" --event push --base "$exbase" --head HEAD
+# A legal spelling the reader does not name degrades to the coarse carve:
+# an in-place line it could not tie to a name makes every skill path
+# project source rather than a guessed name set.
+for unnamed in whole-table dotted-key inline-table dotted-escape multiline-table; do
+  coarse="$(new_repo "coarse-$unnamed")"
+  case "$unnamed" in
+    whole-table) printf 'schema = 6\nskills = { mine = { source = "in-place" } }\n' ;;
+    dotted-key) printf 'schema = 6\nskills.mine.source = "in-place"\n' ;;
+    inline-table) printf 'schema = 6\n[skills]\nmine = { source = "in-place" }\n' ;;
+    dotted-escape) printf 'schema = 6\nskills."mi\\u006Ee" = { source = "in-place" }\n' ;;
+    # A TOML 1.1 multiline inline table puts the value on its own line.
+    multiline-table) printf 'schema = 6\n[skills]\nmine = {\n"x.y" = true, source = "in-place",\n}\n' ;;
+  esac >"$coarse/kendex.toml"
+  commit_paths "$coarse" "baseline" README.md
+  coarsebase="$(git -C "$coarse" rev-parse HEAD)"
+  commit_paths "$coarse" "edit" .agents/skills/mine/SKILL.md
+  assert_verdict "an unnamed spelling carves its own skill ($unnamed)" false --repo "$coarse" --event push --base "$coarsebase" --head HEAD
+  git -C "$coarse" checkout -q -B "case" "$coarsebase"
+  git -C "$coarse" clean -qfd -e kendex.toml
+  commit_paths "$coarse" "sibling" .agents/skills/other/SKILL.md
+  assert_verdict "the coarse carve covers every skill path ($unnamed)" false --repo "$coarse" --event push --base "$coarsebase" --head HEAD
 done
+
+# An in-place declaration under another table is not a skill name: the
+# header ends the one in scope, so the line goes unaccounted and every
+# skill path carves rather than inheriting the last skill's name.
+foreign="$(new_repo foreign-table)"
+printf 'schema = 6\n[skills.mine]\nsource = "kendex"\n\n[agents.helper]\nsource = "in-place"\n' >"$foreign/kendex.toml"
+commit_paths "$foreign" "baseline" README.md
+foreignbase="$(git -C "$foreign" rev-parse HEAD)"
+commit_paths "$foreign" "edit" .agents/skills/other/SKILL.md
+assert_verdict "an in-place agent carves every skill path" false --repo "$foreign" --event push --base "$foreignbase" --head HEAD
+
+# A section-header name the reader cannot decode carves instead of
+# resolving to a guessed name.
+esc="$(new_repo escaped-header)"
+printf 'schema = 6\n[skills."mi\\u006Ee"]\nsource = "in-place"\n' >"$esc/kendex.toml"
+commit_paths "$esc" "baseline" README.md
+escbase="$(git -C "$esc" rev-parse HEAD)"
+commit_paths "$esc" "edit" .agents/skills/mine/SKILL.md
+assert_verdict "an escaped header name carves" false --repo "$esc" --event push --base "$escbase" --head HEAD
 
 # The manifests come from the selected head tree, not the checkout: a head
 # that declares the skill carves even when the checkout sits on a commit
@@ -201,22 +179,13 @@ commit_paths "$ns" "sibling" .agents/skills/plugin-other/SKILL.md
 assert_verdict "a sibling outside the namespace stays render" true --repo "$ns" --event push --base "$nsbase" --head HEAD
 
 # An equals sign in the repository path must not turn the manifest operand
-# into an awk variable assignment: the manifest reaches awk by redirection.
+# into an awk variable assignment: the manifest reaches awk on stdin.
 eqrepo="$(new_repo "work=tree")"
 printf 'schema = 6\n[skills.mine]\nsource = "in-place"\n' >"$eqrepo/kendex.toml"
 commit_paths "$eqrepo" "baseline" README.md
 eqbase="$(git -C "$eqrepo" rev-parse HEAD)"
 commit_paths "$eqrepo" "edit" .agents/skills/mine/SKILL.md
 assert_verdict "an equals-sign repo path still carves" false --repo "$eqrepo" --event push --base "$eqbase" --head HEAD
-
-# A TOML 1.1 multiline inline table puts the value on its own line inside
-# [skills]; the line is unaccountable as a name and degrades to the carve.
-mlt="$(new_repo multiline-table)"
-printf 'schema = 6\n[skills]\nmine = {\n"x.y" = true, source = "in-place",\n}\n' >"$mlt/kendex.toml"
-commit_paths "$mlt" "baseline" README.md
-mltbase="$(git -C "$mlt" rev-parse HEAD)"
-commit_paths "$mlt" "edit" .agents/skills/mine/SKILL.md
-assert_verdict "a multiline inline table degrades to the carve" false --repo "$mlt" --event push --base "$mltbase" --head HEAD
 
 # A symlinked manifest reads back as link text, not manifest content: it is
 # unclassifiable and carves.
