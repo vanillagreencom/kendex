@@ -103,14 +103,21 @@ IDLE_PROMPT_RE='^❯|to submit message'
 # under LC_ALL=C, gawk under LC_ALL=C — where `[❯›]` matches any line opening
 # with an E2-lead character, which is most of a transcript.
 PANE_MARKER_RE='^❯|^›'
-# A Claude Code turn: the marker, an ASCII blank, then text. Its composer puts
-# U+00A0 after the marker instead, with or without an unsent draft, and its
-# dialogs indent their rows — so this is the one shape that can legitimately
-# be the LAST marker line on a screen, which is how a dialog screen carrying
-# no composer is told from a screen carrying one. Codex draws its turn, its
-# placeholder, its draft and its dialog rows all as `› ` and text, so its last
-# marker line is never a turn.
-CLAUDE_TURN_RE='^❯[[:blank:]]+[^[:space:]]'
+# The live input a lane is sitting at, as opposed to a turn it already took:
+# one signature per harness, both measured off a running session.
+#   Claude Code draws its composer as the marker then U+00A0, with or without
+#   an unsent draft, and indents its dialog rows, so only the composer reaches
+#   column 0 as live input.
+#   Codex draws its composer, its placeholder, its draft AND its selected
+#   dialog row all as the marker, a blank and text — the same shape as a turn —
+#   and always draws one of them below the transcript. So every Codex screen
+#   ends in a live-input marker line, and its marker alone is the signature.
+# The last marker line is the live input when it carries either signature, and
+# the turn the boundary sits on otherwise.
+# Byte escapes, never `\u`: bash leaves a `\u` escape unexpanded in the C
+# locale, which would hand awk a literal backslash-u and match nothing.
+CLAUDE_COMPOSER_RE=$'^\xe2\x9d\xaf\xc2\xa0'
+CODEX_MARKER_RE='^›'
 
 INTERVAL=240
 MAX_LOOPS=25
@@ -458,16 +465,14 @@ note_probe_unusable() {
 # scrollback, not the account's state now: after a reset the old banner stays
 # on the visible screen, and reporting it every pass buries the live lanes.
 #
-# The last marker line is the composer, or a dialog row that has replaced it,
-# UNLESS it is a Claude Code turn — the one turn shape that can legitimately
-# be last, since Claude indents its dialog rows and marks its composer with
-# U+00A0. So the boundary is that line when it is a Claude turn, and the
-# marker line before it otherwise.
+# The boundary is the last marker line, unless that line is the live input the
+# lane is sitting at — in which case it is the marker line before it.
 pane_below_last_turn() {
-  awk -v marker="$PANE_MARKER_RE" -v claude_turn="$CLAUDE_TURN_RE" '
+  awk -v marker="$PANE_MARKER_RE" -v composer="$CLAUDE_COMPOSER_RE" -v codex="$CODEX_MARKER_RE" '
     { line[NR] = $0; if ($0 ~ marker) { prev = last; last = NR } }
     END {
-      turn = (last > 0 && line[last] ~ claude_turn) ? last : prev
+      live = (last > 0 && (line[last] ~ composer || line[last] ~ codex))
+      turn = live ? prev : last
       for (i = turn + 1; i <= NR; i++) print line[i]
     }
   ' <<<"$1"

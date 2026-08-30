@@ -119,6 +119,20 @@ assert_contains "$(cat "$err")" "pgrep -P exited 2" \
 assert_eq "$(grep -c 'could not list the children' "$err")" "1" \
   "the probe note is printed once per run, not per pass" "$err"
 
+# ...and the status it names is the one that occurred, not a fixed one: pgrep
+# reports 2 for a syntax error and 3 for a fatal one, and a pgrep missing from
+# PATH leaves 127, so a note hardcoding any of them misdirects the overseer.
+new_case lane_probe_unusable_fatal
+printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"
+printf '3' > "$STUB_DIR/probe-fail-9002"
+err="$TMP_ROOT/e3ba"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_not_contains "$out" "EVENT lane-exited" "a fatal probe never manufactures an exit" "$err"
+assert_contains "$(cat "$err")" "pgrep -P exited 3" \
+  "the note names the fatal status, not the syntax-error one" "$err"
+assert_not_contains "$(cat "$err")" "pgrep -P exited 2" \
+  "the note never reports a status that did not occur" "$err"
+
 # The must-fail control for the case above: the same bare shell with nothing
 # under it — a lane typed at a prompt whose harness has quit
 new_case lane_exited_fish_prompt
@@ -178,7 +192,7 @@ new_case usage_limit
   printf '⏺ Working through the queue.\n'
   printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
   printf 'Run /usage-credits to raise it\n'
-  printf '❯ \n'
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3f"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
@@ -227,7 +241,7 @@ new_case usage_limit_stale_banner
   printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
   printf '❯ pick the round back up\n'
   printf '⏺ Teammate @dev-ken832-r3 finished\n'
-  printf '❯ \n'
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3f4"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
@@ -283,6 +297,42 @@ out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
   "a codex banner below the last turn is reported, the composer notwithstanding" "$err"
 
+# A Codex dialog screen draws no composer, and Codex does NOT indent the row
+# it has selected: that row keeps the marker at column 0, measured on a live
+# model picker, so the screen still ends in a live-input marker line and the
+# turn above it is the boundary. Only the unselected rows indent.
+new_case usage_limit_codex_dialog_stale_banner
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+{
+  printf 'Usage limit reached. Increase your limits to continue.\n'
+  printf '\xe2\x80\xba pick the round back up\n'
+  printf '\xe2\x80\xa2 Ran 3 commands\n'
+  printf '  Select Model and Effort\n'
+  printf '\xe2\x80\xba 1. gpt-5.6-sol (current)  Latest frontier agentic coding model.\n'
+  printf '  2. gpt-5.6-terra          Balanced agentic coding model for everyday work.\n'
+  printf '  Press enter to confirm or esc to go back\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3fd"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_not_contains "$out" "EVENT usage-limit" \
+  "a codex dialog row is live input, so the banner above the turn stays scrollback" "$err"
+
+# ...and its control: the banner below the turn on the same dialog screen
+new_case usage_limit_codex_dialog_live_banner
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+{
+  printf '\xe2\x80\xba pick the round back up\n'
+  printf '\xe2\x80\xa2 Ran 3 commands\n'
+  printf 'Usage limit reached. Increase your limits to continue.\n'
+  printf '  Select Model and Effort\n'
+  printf '\xe2\x80\xba 1. gpt-5.6-sol (current)  Latest frontier agentic coding model.\n'
+  printf '  2. gpt-5.6-terra          Balanced agentic coding model for everyday work.\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3fe"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
+  "a banner below the turn on a codex dialog screen is still the event" "$err"
+
 # ...and the must-fail control: the same codex screen with the banner ABOVE
 # the turn is scrollback, which the composer must not resurrect
 new_case usage_limit_codex_stale_banner
@@ -307,7 +357,7 @@ new_case usage_limit_after_turn
   printf '❯ pick the round back up\n'
   printf '⏺ Working through the queue.\n'
   printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
-  printf '❯ \n'
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3f5"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
@@ -331,10 +381,19 @@ new_case usage_limit_realistic_transcript
   printf '─────────────────────────────\n'
   printf '\xe2\x9d\xaf\xc2\xa0\n'
 } > "$STUB_DIR/pane-gh-2.txt"
+# Run it in BOTH locales. The byte-set degradation only happens on an awk
+# without multibyte support, so under the runner's own UTF-8 locale gawk
+# behaves identically either way and the case cannot fail on the defect it
+# names. Under LC_ALL=C it can, and does. The UTF-8 invocation stays as the
+# control that the case passes for the right reason rather than by locale.
 err="$TMP_ROOT/e3fc"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
   "transcript lines between the banner and the composer are not markers" "$err"
+err="$TMP_ROOT/e3fc2"
+out="$(run_watch LC_ALL=C LANG=C -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
+  "...and under a byte-oriented locale, where a marker class would degrade" "$err"
 
 # A dialog screen draws no composer at all: Claude replaces it with the
 # selection rows, which it indents, so the last marker line there is the user
@@ -355,6 +414,14 @@ assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
   "a stale banner never masks the live question on a dialog screen" "$err"
 assert_not_contains "$out" "EVENT usage-limit" \
   "the banner above the turn stays scrollback when no composer is drawn" "$err"
+# And in the C locale. The composer signature is spelled in escapes, and bash
+# leaves a `\u` escape unexpanded there, so a signature written that way stops
+# separating the composer from a turn on exactly this screen — invisibly to
+# any run under the runner's own UTF-8 locale.
+err="$TMP_ROOT/e3fa2"
+out="$(run_watch LC_ALL=C LANG=C -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
+  "...and under a byte-oriented locale, where an unexpanded escape would hide" "$err"
 
 # ...and its control: on the same dialog screen, a banner BELOW the turn is
 # the account spent right now, and it still outranks the question
@@ -373,7 +440,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
 
 # The must-fail control: a lane with no banner at all
 new_case usage_limit_healthy
-printf '⏺ All green, nothing blocking.\n❯ \n' > "$STUB_DIR/pane-gh-2.txt"
+printf '⏺ All green, nothing blocking.\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3h"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
@@ -462,7 +529,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT question a+b" \
 new_case idle_after_return
 {
   printf '⏺ Done: the PR is merged and the worktree is gone.\n'
-  printf '❯ \n'
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
   printf '  bypass permissions on\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4b"
@@ -485,7 +552,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
 new_case idle_after_return_wrapped_shell
 printf 'fish\n' > "$STUB_DIR/cmd-gh-2.txt"
 printf '2747883\n' > "$STUB_DIR/kids-9002.txt"
-printf '⏺ Done: the PR is merged.\n❯ \n' > "$STUB_DIR/pane-gh-2.txt"
+printf '⏺ Done: the PR is merged.\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4b7"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
@@ -493,7 +560,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
 
 # One pass is not enough: the screen between two tool calls reads the same
 new_case idle_after_return_debounce
-printf '⏺ Done.\n❯ \n' > "$STUB_DIR/pane-gh-2.txt"
+printf '⏺ Done.\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4b3"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
@@ -505,7 +572,7 @@ assert_not_contains "$out" "EVENT idle-after-return" "a single idle reading neve
 new_case idle_after_return_working
 {
   printf '✶ Germinating… (29m 16s \xc2\xb7 ↓ 58.7k tokens)\n'
-  printf '❯ \n'
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4b4"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
@@ -515,8 +582,8 @@ assert_not_contains "$out" "EVENT idle-after-return" "the token counter keeps a 
 
 # The other two working shapes: the interrupt hint and a foreground shell
 new_case idle_after_return_working_hints
-printf '⏺ Thinking (esc to interrupt)\n❯ \n' > "$STUB_DIR/pane-gh-1.txt"
-printf '⎿  (ctrl+b ctrl+b (twice) to run in background)\n❯ \n' > "$STUB_DIR/pane-gh-2.txt"
+printf '⏺ Thinking (esc to interrupt)\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-1.txt"
+printf '⎿  (ctrl+b ctrl+b (twice) to run in background)\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4b5"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
@@ -525,8 +592,8 @@ assert_not_contains "$out" "EVENT idle-after-return" "neither working hint reads
 
 # Idle then working is a lane that picked itself back up, not a return
 new_case idle_after_return_transient
-printf '⏺ Done.\n❯ \n' > "$STUB_DIR/pane-gh-2.1.txt"
-printf '✶ Germinating… (2m 4s \xc2\xb7 ↓ 5.0k tokens)\n❯ \n' > "$STUB_DIR/pane-gh-2.2.txt"
+printf '⏺ Done.\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.1.txt"
+printf '✶ Germinating… (2m 4s \xc2\xb7 ↓ 5.0k tokens)\n\xe2\x9d\xaf\xc2\xa0\n' > "$STUB_DIR/pane-gh-2.2.txt"
 err="$TMP_ROOT/e4b6"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \

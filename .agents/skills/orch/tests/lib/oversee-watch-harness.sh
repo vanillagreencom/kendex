@@ -177,11 +177,11 @@ EOF
 # pgrep stub, modelling the probe the watch actually runs: `pgrep -P <pid>`
 # prints kids-<pid>.txt and exits 0 when that file exists — the children of a
 # pane process — and exits 1 with nothing when it does not, the way procps and
-# BSD pgrep both report no match. probe-fail-<pid> makes it exit 2, one of the
-# statuses that is not an answer — pgrep documents 2 for a syntax error and 3
-# for a fatal one, and a pgrep missing from PATH leaves 127. Every call is
-# logged to pgrep.calls, so a case can hold the watch to one probe per
-# bare-shell lane per pass.
+# BSD pgrep both report no match. probe-fail-<pid> holds the status to exit
+# with instead, empty meaning 2 — the statuses that are not an answer, since
+# pgrep documents 2 for a syntax error and 3 for a fatal one, and a pgrep
+# missing from PATH leaves 127. Every call is logged to pgrep.calls, so a case
+# can hold the watch to one probe per bare-shell lane per pass.
 cat > "$TMP_ROOT/bin/pgrep" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -192,7 +192,10 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$ppid" ]] || exit 2
 printf '%s\n' "$ppid" >> "$STUB_DIR/pgrep.calls"
-[[ -f "$STUB_DIR/probe-fail-$ppid" ]] && exit 2
+if [[ -f "$STUB_DIR/probe-fail-$ppid" ]]; then
+  rc="$(cat "$STUB_DIR/probe-fail-$ppid")"
+  exit "${rc:-2}"
+fi
 [[ -f "$STUB_DIR/kids-$ppid.txt" ]] || exit 1
 cat "$STUB_DIR/kids-$ppid.txt"
 EOF
