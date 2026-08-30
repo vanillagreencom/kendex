@@ -52,6 +52,10 @@ _auth_ok() {
   if [[ "$tok" == op://* ]]; then
     return 1
   fi
+  if [[ "${STUB_TOKEN_ONLY:-0}" == "1" ]]; then
+    [[ "$tok" == "ghs_VALIDBOT123" ]]
+    return
+  fi
   [[ "${STUB_AUTH_OK:-1}" == "1" ]]
 }
 
@@ -226,6 +230,16 @@ assert_eq "$rc" "124" "auth timeout works without the timeout utility" "$stderr"
 assert_eq "$(jq -r .status <<<"$output")" "auth_timeout" \
   "no-utility auth timeout emits structured status" "$stderr"
 
+stderr="$TMP_ROOT/auth-leading-zero.err"
+set +e
+output=$(without_timeout_utility run_pr_view \
+  KENDEX_GITHUB_AUTH_TIMEOUT=08 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "auth timeout accepts a leading-zero decimal" "$stderr"
+assert_eq "$(jq -r .number <<<"$output")" "42" \
+  "leading-zero auth bound reaches gh" "$stderr"
+
 stderr="$TMP_ROOT/api-user-auth-timeout.err"
 set +e
 output=$(run_pr_view GH_TOKEN=ghs_VALIDBOT123 STUB_API_USER_SLEEP=1 KENDEX_GITHUB_AUTH_TIMEOUT=1 2>"$stderr")
@@ -260,6 +274,16 @@ assert_eq "$rc" "124" "gh pr view timeout works without the timeout utility" "$s
 assert_eq "$(jq -r .status <<<"$output")" "gh_timeout" \
   "no-utility gh timeout emits structured status" "$stderr"
 
+stderr="$TMP_ROOT/pr-view-leading-zero.err"
+set +e
+output=$(without_timeout_utility run_pr_view \
+  KENDEX_GITHUB_PR_VIEW_TIMEOUT=09 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "gh timeout accepts a leading-zero decimal" "$stderr"
+assert_eq "$(jq -r .number <<<"$output")" "42" \
+  "leading-zero gh bound returns PR JSON" "$stderr"
+
 rm -f "$TMP_ROOT/op.calls"
 stderr="$TMP_ROOT/inherited-gh-token-op.err"
 set +e
@@ -283,6 +307,16 @@ assert_eq "$(wc -l <"$TMP_ROOT/op.calls")" "1" "inherited op GITHUB_TOKEN attemp
 cat > "$TMP_ROOT/repo/.env.local" <<'ENVEOF'
 GH_BOT_TOKEN=op://vault/item/field
 ENVEOF
+
+stderr="$TMP_ROOT/op-leading-zero.err"
+set +e
+output=$(without_timeout_utility run_pr_view \
+  STUB_TOKEN_ONLY=1 STUB_OP_MODE=ok KENDEX_GITHUB_OP_TIMEOUT=08 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "0" "op timeout accepts a leading-zero decimal" "$stderr"
+assert_eq "$(jq -r .number <<<"$output")" "42" \
+  "leading-zero op bound reaches gh" "$stderr"
 
 stderr="$TMP_ROOT/op-fail.err"
 set +e

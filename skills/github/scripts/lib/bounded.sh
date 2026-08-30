@@ -6,9 +6,13 @@ kendex_github_run_bounded() {
   shift
 
   case "$seconds" in
-    0) "$@"; return ;;
     ''|*[!0-9]*) return 125 ;;
   esac
+  seconds=$((10#$seconds))
+  if [ "$seconds" -eq 0 ]; then
+    "$@"
+    return
+  fi
 
   local restore_monitor=0 pid ticks=0 max_ticks status=0 grace=0 target
   case "$-" in
