@@ -398,6 +398,9 @@ echo "a backslash-newline joins lines"
 # shellcheck disable=SC2016
 both 'git status && \\\ngit commit --no-verify -m x' 2 2 "a bypass on the continued line"
 both 'cargo fmt && \\\ngit commit -m x' 0 2 "a plain commit on the continued line"
+# Joined, the flag is the argv's own; left unjoined it carries a newline and
+# reads as neither flag nor command word.
+both 'git commit -m x \\\n--no-verify' 2 2 "a flag joined onto the argv"
 
 echo
 echo "git option boundaries hold"
@@ -441,6 +444,38 @@ assert_contains "$err" "'--no-verify' bypasses" "the env form names the flag it 
 both 'timeout 30 git commit -m x' 0 2 "a wrapped plain commit still defers"
 both 'nice git commit -m x' 0 2 "an unwrapped-option prefix still defers"
 both 'sudo -u dev git config core.hooksPath /dev/null && git commit -m x' 2 2 "a wrapped hooksPath write"
+
+echo
+echo "a construct the scanner does not model is not waved through"
+
+# Every gap in a hand-written scanner is a fail-open, so a command word this
+# lane left shell in takes the word-order rule rather than a guess: an append
+# assignment is no assignment to the tokenizer, and a dynamic file descriptor
+# stays a word ahead of its redirection.
+both 'PATH+=:/usr/bin git commit --no-verify -m x' 2 2 "an append assignment"
+both '{fd}>out git commit --no-verify -m x' 2 2 "a dynamic file descriptor"
+both 'PATH+=:/usr/bin git commit -m x' 0 2 "an append assignment with no bypass"
+
+# A quoted paren inside a substitution desynchronises the scan, and everything
+# after it is guesswork. The fallback runs on an unbalanced command whatever an
+# earlier one looked like — suppressing it there let this bypass through.
+# Double-quoted so the apostrophes inside survive; the $ is escaped so this
+# shell does not run the substitution the hook has to read as text.
+DESYNC="git commit --allow-empty -m x && echo \$(printf ')') && git commit --allow-empty --no-verify -m y"
+both "$DESYNC" 2 2 "a substitution closing on a quoted paren"
+
+run_hook "$ARMED" "$(payload "$DESYNC")" CHAIN_EXIT=0
+assert_contains "$err" "'--no-verify' bypasses" "the desynchronised command names the flag it saw"
+
+echo
+echo "a git global option owns its value"
+
+both 'git -ccore.hooksPath=/dev/null commit -m x' 2 2 "an attached -c injection"
+both 'git -C /tmp -c user.name=x commit -m y' 2 2 "a -c behind a -C with its path"
+both 'git -C -c commit -m x' 0 2 "a -c that is the -C path value"
+
+run_hook "$ARMED" "$(payload 'git -ccore.hooksPath=/dev/null commit -m x')" CHAIN_EXIT=0
+assert_contains "$err" "'-ccore.hooksPath=/dev/null' bypasses" "the attached form names the injection"
 
 echo
 echo "quoting and redirection hold the argv together"

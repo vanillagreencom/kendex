@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only the argv of a `git` invocation is judged, with heredoc bodies, comments, redirection targets, operands after --, and option values all read as text rather than flags. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a git commit argv that bypasses an armed hook (no-verify, -n) or injects git configuration that could (a global -c or --config-env option, a GIT_CONFIG_* assignment, a git config write of core.hooksPath); a command it cannot model — quoting that never closes, or a wrapper whose options hide the command word — falls back to word-order matching rather than passing unjudged, and a commit aimed at another repository is that repository's armed hook's to gate.
+# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a git commit argv that bypasses an armed hook (no-verify, -n) or injects git configuration that could (a global -c or --config-env option, a GIT_CONFIG_* assignment, a git config write of core.hooksPath); a command it cannot model — quoting that never closes, a command word with shell left in it, or a wrapper whose options hide the command word — falls back to word-order matching rather than passing unjudged, and a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 60
 # ---
 
@@ -23,10 +23,11 @@ INPUT=$(cat)
 # text, not flags.
 #
 # It fails closed where it can: a command it cannot model — quoting that never
-# closes, or a wrapper whose options hide the command word (`sudo -u dev`,
-# `timeout 30`) — takes the word-order rule instead, which may over-refuse.
-# `sh -c '...'`, git aliases, a wrapper outside the transparent list and the
-# inside of a `$(...)` stay invisible: git's hooks are the control.
+# closes, a command word with shell left in it (`PATH+=x`, `{fd}`, `$(...)`),
+# or a wrapper whose options hide the command word (`sudo -u dev`) — takes the
+# word-order rule instead, which may over-refuse. `sh -c '...'`, git aliases
+# and a wrapper outside the transparent list stay invisible: git's hooks are
+# the control.
 #
 # The payload is JSON, whose strings never span lines, so the analysis reads
 # the whole input and takes the first `"command"` key. Decoding and tokenizing
@@ -189,8 +190,7 @@ function scan(cmd,   n, i, ch, c2, start) {
       W = W ch; HAVEW = 1; i++; continue
     }
     if (ch == "<" || ch == ">") { i = redirect(cmd, i, n); continue }
-    # `&>` takes no IO number, so the word before it is an argument: flush it
-    # here, and redirect() sees nothing of its own to drop.
+    # `&>` takes no IO number: flush the argument before it here instead.
     if (ch == "&" && substr(cmd, i + 1, 1) == ">") { flush_word(); i = redirect(cmd, i + 1, n); continue }
     end_command()
     if (ch == "\n") i = heredoc_bodies(cmd, i, n)
@@ -201,7 +201,7 @@ function scan(cmd,   n, i, ch, c2, start) {
 
 # Judge one simple command: leading assignments, then transparent prefixes
 # (`if`, `sudo`, `env`, `timeout`, …), then the command word.
-function judge(   k, base, j, gstart, gend, subcmd, m, t, prefixed, p, c) {
+function judge(   k, base, j, subcmd, ginject, gmoves, m, t, prefixed, p, c) {
   k = 1; prefixed = 0
   while (k <= NTOK) {
     t = TOK[k]
@@ -216,43 +216,42 @@ function judge(   k, base, j, gstart, gend, subcmd, m, t, prefixed, p, c) {
   }
   if (k > NTOK) return
   base = basename(TOK[k])
-  # A wrapper whose options this lane cannot read (`sudo -u dev`, `timeout 30`)
-  # hides its command word, and no rule here tells an operand from a command:
-  # `sudo -u git` names an ordinary account. So the command stops being
-  # modelled and takes the word-order rule, which may over-refuse.
-  if (base != "git") {
-    if (base == "cd") MOVES = 1
-    if (!prefixed) return
+  # Two ways a command stops being modelled, and neither gets a guess: a
+  # command word with shell still in it (`PATH+=x`, `{fd}`, `$(...)`), and a
+  # wrapper whose options hide the command word — `sudo -u git` names an
+  # ordinary account, so that `git` is an operand. Both take word-order.
+  if (TOK[k] !~ /^[A-Za-z0-9_.\/-]+$/ || (base != "git" && prefixed)) {
     t = TOK[1]
     for (m = 2; m <= NTOK; m++) t = t " " TOK[m]
     fallback(t)
     return
   }
-  # Global options run until the first word that is not one; a global option
-  # taking a separate value carries that value with it.
-  j = k + 1; gstart = j; subcmd = ""
+  if (base != "git") {
+    if (base == "cd") MOVES = 1
+    return
+  }
+  # Global options run to the first word that is not one. One taking a separate
+  # value owns it, so the -c in `git -C -c commit` is the -C path and not a
+  # flag; -c and -C also take an attached value. They inject config only as
+  # GLOBAL options: after the subcommand `git commit -c` is --reedit-message.
+  j = k + 1; subcmd = ""; ginject = ""; gmoves = 0
   while (j <= NTOK) {
     t = TOK[j]
     if (substr(t, 1, 1) != "-") { subcmd = t; break }
-    if (t in GIT_GLOBAL_VALUE) { j += 2; continue }
-    j++
+    if (ginject == "" && (t == "-c" || t ~ /^-c./ || t ~ /^--config-env/)) ginject = t
+    if (t == "-C" || t ~ /^-C./ || t ~ /^--git-dir/ || t ~ /^--work-tree/) gmoves = 1
+    j += (t in GIT_GLOBAL_VALUE) ? 2 : 1
   }
-  gend = j - 1
-  # A core.hooksPath line disarms the hook before the commit reaches it; a read
-  # is refused with the write, and the key is matched in any case.
+  # A core.hooksPath line disarms the hook before the commit reaches it, and a
+  # read is refused with the write.
   if (subcmd == "config") {
     for (m = j + 1; m <= NTOK; m++) if (tolower(TOK[m]) ~ /hookspath/) setbypass(TOK[m])
     return
   }
   if (subcmd != "commit") return
   COMMIT = 1
-  # -c and --config-env are configuration only as GLOBAL options. After the
-  # subcommand, `git commit -c` is --reedit-message and injects nothing.
-  for (m = gstart; m <= gend; m++) {
-    t = TOK[m]
-    if (t == "-c" || t ~ /^--config-env/) setbypass(t)
-    if (t == "-C" || t ~ /^--git-dir/ || t ~ /^--work-tree/) MOVES = 1
-  }
+  if (ginject != "") setbypass(ginject)
+  if (gmoves) MOVES = 1
   # git allows any unique prefix of --no-verify, and -n alone or in a cluster
   # is the same flag; `--` ends the options, and an option value is not a flag.
   for (m = j + 1; m <= NTOK; m++) {
@@ -265,8 +264,7 @@ function judge(   k, base, j, gstart, gend, subcmd, m, t, prefixed, p, c) {
     }
     if (substr(t, 1, 1) != "-") continue
     # A cluster reads left to right: at the first value-taking option the rest
-    # of the token is that value, and only one ending the token takes the next
-    # token, so `-mnote` is a message while `-nm note` still refuses.
+    # of the token is that value, so `-mnote` is a message, `-nm note` refuses.
     for (p = 2; p <= length(t); p++) {
       c = substr(t, p, 1)
       if (index(SHORT_VALUE, c) > 0) { if (p == length(t)) m++; break }
@@ -274,9 +272,8 @@ function judge(   k, base, j, gstart, gend, subcmd, m, t, prefixed, p, c) {
     }
   }
 }
-# The rule this parser replaced, kept for the inputs it cannot model: quoting
-# that never closes, and a wrapper hiding its command word. Over-refusal is the
-# trade, and a bypass counts only where the command names git.
+# The rule this parser replaced, kept for every input it cannot model. Over-
+# refusal is the trade, and a bypass counts only where the command names git.
 function fallback(cmd,   words, g) {
   words = " " cmd " "
   gsub(/[^a-zA-Z0-9_=-]+/, " ", words)
@@ -310,7 +307,7 @@ END {
   cmd = jsonstring(rest)
   if (UNREADABLE) { print "unreadable=1"; exit }
   scan(cmd)
-  if (UNBALANCED && !COMMIT) fallback(cmd)
+  if (UNBALANCED) fallback(cmd)
   if (COMMIT) print "commit=1"
   if (MOVES) print "moves=1"
   if (COMMIT && BYPASS != "") print "bypass=" BYPASS

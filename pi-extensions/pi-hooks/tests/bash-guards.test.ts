@@ -259,6 +259,9 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		// after it goes unjudged in both fixtures.
 		await both("git status && \\\ngit commit --no-verify -m x", "refuse", "refuse");
 		await both("cargo fmt && \\\ngit commit -m x", "allow", "refuse");
+		// Joined, the flag is the argv's own; left unjoined it carries a newline
+		// and reads as neither flag nor command word.
+		await both("git commit -m x \\\n--no-verify", "refuse", "refuse");
 	});
 
 	test("git option boundaries hold", async () => {
@@ -322,6 +325,36 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("timeout 30 git commit -m x", "allow", "refuse");
 		await both("nice git commit -m x", "allow", "refuse");
 		await both("sudo -u dev git config core.hooksPath /dev/null && git commit -m x", "refuse", "refuse");
+	});
+
+	test("a construct the scanner does not model is not waved through", async () => {
+		// Every gap in a hand-written scanner is a fail-open, so a command word this
+		// gate left shell in takes the word-order rule rather than a guess: an
+		// append assignment is no assignment to the tokenizer, and a dynamic file
+		// descriptor stays a word ahead of its redirection.
+		await both("PATH+=:/usr/bin git commit --no-verify -m x", "refuse", "refuse");
+		await both("{fd}>out git commit --no-verify -m x", "refuse", "refuse");
+		await both("PATH+=:/usr/bin git commit -m x", "allow", "refuse");
+
+		// A quoted paren inside a substitution desynchronises the scan, and
+		// everything after it is guesswork. The fallback runs on an unbalanced
+		// command whatever an earlier one looked like — suppressing it there let
+		// this bypass through.
+		const desync = "git commit --allow-empty -m x && echo $(printf ')') && git commit --allow-empty --no-verify -m y";
+		await both(desync, "refuse", "refuse");
+		const named = await gate(armed, desync);
+		if (named.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(named.verdict.reason).toContain("'--no-verify' bypasses");
+	});
+
+	test("a git global option owns its value", async () => {
+		await both("git -ccore.hooksPath=/dev/null commit -m x", "refuse", "refuse");
+		await both("git -C /tmp -c user.name=x commit -m y", "refuse", "refuse");
+		await both("git -C -c commit -m x", "allow", "refuse");
+
+		const attached = await gate(armed, "git -ccore.hooksPath=/dev/null commit -m x");
+		if (attached.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(attached.verdict.reason).toContain("'-ccore.hooksPath=/dev/null' bypasses");
 	});
 
 	test("a command whose quoting never closes is judged, not skipped", async () => {
