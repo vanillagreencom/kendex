@@ -159,10 +159,18 @@ END {
 # a heading again — a second search is a second grammar, and it is the one
 # that puts entries under a fenced example.
 #
-# An unterminated fence leaves the parser unable to say where the section
-# starts or stops, so it exits 3 rather than reporting a document with no
-# [Unreleased] content: a stray ``` above the heading would otherwise make
-# every side parse to nothing and every hand-written line read as unchanged.
+# Two refusals, one reason: the parser exits nonzero rather than answer a
+# question it cannot answer, because every reader here treats "no content"
+# and "no section" alike and would report a document it never read as clean.
+#
+#   3  a fence never closed, so where the section starts or stops is unknown.
+#      A stray ``` above the heading would otherwise make every side parse to
+#      nothing and every hand-written line read as unchanged.
+#   4  a SECOND `## [Unreleased]` heading, so WHICH heading is the section is
+#      unknown. In content mode the duplicate emits nothing of its own, so an
+#      empty one reads as a clean record; in bounds mode both are emitted and
+#      a collator keeping the last one folds fragments under the wrong
+#      heading and then deletes the files they came from.
 GG_UNRELEASED_AWK='
 function lead(l,   i) { i = 0; while (i < 3 && substr(l, i + 1, 1) == " ") i++; return i }
 function heading_level(l,   i, n, c) {
@@ -197,7 +205,11 @@ function content(l) { if (inside && emit != "bounds") print l }
   if (lvl == 1 || lvl == 2) {
     if (inside && emit == "bounds") printf "end\t%d\n", NR
     inside = (lvl == 2 && tolower(heading_text(line)) == "[unreleased]")
-    if (inside && emit == "bounds") printf "unreleased\t%d\n", NR
+    if (inside) {
+      if (seen) { rc = 4; exit rc }
+      seen = 1
+      if (emit == "bounds") printf "unreleased\t%d\n", NR
+    }
     next
   }
   if (!inside) next
@@ -208,6 +220,9 @@ function content(l) { if (inside && emit != "bounds") print l }
   if (line ~ /[^ \t]/) print line
 }
 END {
+  # A body that bailed lands here too, and its status is the one to keep: an
+  # unclosed fence past the second heading must not rename that refusal.
+  if (rc) exit rc
   if (fence != "") exit 3
   if (inside && emit == "bounds") printf "end\t%d\n", NR + 1
 }

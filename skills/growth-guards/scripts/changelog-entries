@@ -335,6 +335,12 @@ else
         # refuses.
         [ "$ur_status" -ne 3 ] \
           || gg_collection_error "$(gg_shown "$RECORD") leaves a code fence unclosed in its $side copy — the [Unreleased] section cannot be located; close the fence"
+        # Exit 4 is the parser saying the document has two of the heading, so
+        # which one is the section is undecided. Both copies are read here, so
+        # this refuses the commit that INTRODUCES the second one and every
+        # commit after it until one goes.
+        [ "$ur_status" -ne 4 ] \
+          || gg_collection_error "$(gg_shown "$RECORD") carries more than one '## [Unreleased]' heading in its $side copy — which one is the section cannot be decided; keep one"
         [ "$ur_status" -eq 0 ] \
           || gg_collection_error "could not read the [Unreleased] section of the $side copy of $(gg_shown "$RECORD") (awk exit $ur_status)"
         LC_ALL=C sort -o "$GG_TMP/ur.$side" "$GG_TMP/ur.$side" \

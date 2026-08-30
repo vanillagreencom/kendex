@@ -198,6 +198,9 @@ LC_ALL=C awk -v emit=bounds "$GG_UNRELEASED_AWK" <"$RECORD" >"$TMP/bounds" || rc
 case "$rc" in
   0) : ;;
   3) die "$(gg_shown "$RECORD") leaves a code fence unclosed — the [Unreleased] section cannot be located; close the fence" ;;
+  # Which heading is the section decides where these fragments are published
+  # and they are deleted straight after, so an undecided answer stops the run.
+  4) die "$(gg_shown "$RECORD") carries more than one '## [Unreleased]' heading — which one is the section cannot be decided; keep one" ;;
   *) die "$(gg_shown "$RECORD") could not be read (awk exit $rc) — the collation could not run" ;;
 esac
 

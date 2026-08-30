@@ -274,6 +274,42 @@ git -C "$R" commit -qm "chore: carry the fenced record"
 run_ce
 [ "$RC" -eq 0 ] && ok "control: the same fenced document with nothing added passes" \
   || bad "control: the same fenced document with nothing added passes" "rc=$RC out=$OUT"
+# A SECOND canonical heading leaves the section undecided. This judge compares
+# CONTENT, and a duplicate emits none of its own, so an empty one would read as
+# a record nobody touched while the collator went on to publish under whichever
+# heading it saw last.
+new_repo recorddup
+printf -- '- A fragment.\n' | frag fixed ken-1.md
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n' >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm base
+run_ce
+[ "$RC" -eq 0 ] && ok "control: one heading is a record this judge reads" \
+  || bad "control: one heading is a record this judge reads" "rc=$RC out=$OUT"
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n\n## [Unreleased]\n' >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 2 ] && case "$OUT" in *"more than one '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "a second heading is exit 2, naming what cannot be decided" \
+  || bad "a second heading is exit 2, naming what cannot be decided" "rc=$RC out=$OUT"
+case "$OUT" in *"unchanged under [Unreleased]"*) bad "no run may call the record unchanged over a document it could not read" "$OUT" ;;
+  *) ok "and no run calls that record unchanged" ;; esac
+# The near-miss beside the real heading is not a duplicate: it is a different
+# heading, which the equality rule already settles.
+printf '# Changelog\n\n## [Unreleased]\n\n- One line.\n\n## [Unreleased] archive\n\n- Not the section.\n' >"$R/CHANGELOG.md"
+stage
+run_ce
+[ "$RC" -eq 0 ] && ok "control: a near-miss beside the real heading is no duplicate" \
+  || bad "control: a near-miss beside the real heading is no duplicate" "rc=$RC out=$OUT"
+# A fenced example of the heading is not one either, so the two rules agree
+# about what counts as a heading at all.
+printf '# Changelog\n\n## [Unreleased]\n\n```\n## [Unreleased]\n```\n\n- One line.\n' >"$R/CHANGELOG.md"
+stage
+git -C "$R" commit -qm "chore: carry the fenced example"
+run_ce
+[ "$RC" -eq 0 ] && ok "control: a fenced example of the heading is no duplicate" \
+  || bad "control: a fenced example of the heading is no duplicate" "rc=$RC out=$OUT"
+
 echo "=== the record is read the way a fragment is: text, or no verdict ==="
 new_repo recordtext
 printf -- '- A fragment.\n' | frag fixed ken-1.md

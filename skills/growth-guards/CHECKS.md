@@ -171,6 +171,12 @@ the parser unable to say where the section starts or stops, and a stray
 opening fence above the heading would otherwise make both sides parse to
 nothing and every hand-written line read as unchanged.
 
+A SECOND `## [Unreleased]` heading is exit 2 for the same reason: which one
+is the section is undecided. A duplicate carries no content of its own, so
+this comparison would call the record unchanged, while the collator splits
+the file at whichever heading it read last and deletes the fragments it
+published under it.
+
 The COMPARISON runs only when HEAD already carries the record: a repository
 writing its first one is not hand-editing a collated file.
 `GROWTH_GUARDS_CHANGELOG_COLLATE=1` in the environment declares the

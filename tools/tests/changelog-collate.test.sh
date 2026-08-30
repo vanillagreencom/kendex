@@ -457,6 +457,31 @@ untouched && ok "CHANGELOG.md is untouched by that refusal" \
 no_leftover && ok "no replacement file is left behind" \
   || bad "no replacement file is left behind" "$(ls "$R")"
 
+# A SECOND canonical heading is the same question from the other side: this
+# mode emits both, and a collator keeping whichever it read last would publish
+# the fragments under the wrong one and then delete the files they came from.
+reset
+fragment fixed ken-1.md '- A fragment.
+'
+printf '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n- Released.\n\n## [Unreleased]\n' | record_is
+run_collate
+[ "$RC" -eq 2 ] && case "$OUT" in *"more than one '## [Unreleased]' heading"*) true ;; *) false ;; esac \
+  && ok "a second [Unreleased] heading exits 2" \
+  || bad "a second [Unreleased] heading exits 2" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is untouched by that refusal" \
+  || bad "CHANGELOG.md is untouched by that refusal" "it changed"
+[ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "and the fragment it would have misplaced is still there" \
+  || bad "and the fragment it would have misplaced is still there" "$(ls -R "$R/changelog.d")"
+# The control: the same document with one heading collates, so the refusal is
+# the duplicate and not this shape failing outright.
+reset
+fragment fixed ken-1.md '- A fragment.
+'
+printf '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n- Released.\n' | record_is
+run_collate
+[ "$RC" -eq 0 ] && ok "control: the same document with one heading collates" \
+  || bad "control: the same document with one heading collates" "rc=$RC out=$OUT"
+
 # A heading that merely BEGINS with the canonical text is a different heading,
 # and this is the refusal that matters most: the collator folds fragments into
 # the bounds it is handed and then deletes the fragment files, so a prefix
