@@ -61,10 +61,10 @@ gg_path_matches() { # PATH PATTERN... — 0 when some pattern matches
 # or not that name carries a slash — naming one file is not naming the
 # directory it sits in.
 #
-# A root is what lets a lane say "everything else under here is refused", and
-# what lets it count depth from the root rather than from a path's immediate
-# parent: `*` crosses `/`, so a two-segment glob reaches three-segment paths
-# too, and a parent-only rule reads those as content it can place.
+# A root is what lets a lane say "everything else under here is refused". It
+# says nothing about depth — that is the pattern's own, in
+# gg_path_glob_section below. Deriving the two independently and reconciling
+# them by a count is what makes each new pattern shape a new defect.
 GG_PATH_GLOBS=""
 GG_PATH_GLOBS_SHOWN=""
 GG_PATH_ROOTS=""
@@ -111,6 +111,49 @@ gg_load_path_globs() { # RAW-LIST LABEL KEY — fills GG_PATH_GLOBS and _SHOWN
       *" $root "*) ;;
       *) GG_PATH_ROOTS="${GG_PATH_ROOTS:+$GG_PATH_ROOTS }$root" ;;
     esac
+  done
+}
+
+gg_path_segments() { # PATH — how many `/`-separated segments it has
+  local rest="$1" n=1
+  while [ "${rest#*/}" != "$rest" ]; do
+    rest="${rest#*/}"
+    n=$((n + 1))
+  done
+  printf '%s' "$n"
+}
+
+# Where a configured glob PLACES a path: the directory it sits in, taken only
+# from a pattern that reaches the same depth. A pattern is
+# <root...>/<section>/<name>, so its own last two segments say where the
+# section sits — and a path deeper or shallower than the pattern is not one
+# that pattern places, however readily `*` crossing `/` lets it match.
+#
+# The depth comes from the pattern rather than from a count applied after the
+# root. A two-glob pattern places a path at its own depth and not one a
+# directory deeper; a pattern whose section segment is literal narrows the
+# same tree to that one section and still places entries in it; a pattern
+# with a glob in the middle places whatever reaches ITS depth. A new pattern
+# shape is answered by the pattern, not by another rule beside this one.
+gg_path_glob_section() { # PATH — sets GG_PATH_SECTION, empty when nothing places it
+  local path="$1" pat want have dir
+  GG_PATH_SECTION=""
+  have="$(gg_path_segments "$path")"
+  # One segment is a bare file name: it sits in no directory, so no pattern
+  # can place it under a section.
+  [ "$have" -ge 2 ] || return 0
+  for pat in $GG_PATH_GLOBS; do
+    # $pat must expand unquoted to act as a glob.
+    # shellcheck disable=SC2254
+    case "$path" in
+      $pat) ;;
+      *) continue ;;
+    esac
+    want="$(gg_path_segments "$pat")"
+    [ "$want" -eq "$have" ] || continue
+    dir="${path%/*}"
+    GG_PATH_SECTION="${dir##*/}"
+    return 0
   done
 }
 

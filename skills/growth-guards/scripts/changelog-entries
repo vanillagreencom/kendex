@@ -204,38 +204,15 @@ while IFS= read -r -d '' rec; do
       continue
       ;;
   esac
-  # The section is the directory the fragment sits directly under, because
-  # that is the heading the collator writes it beneath — and the depth is
-  # counted from the ROOT its pattern roots at, never from the immediate
-  # parent. A two-segment glob reaches three-segment paths too, since `*`
-  # crosses `/`, and a parent-only rule reads one of those as an entry it can
-  # place whenever the last directory happens to name a section. Two segments
-  # past the root, exactly: one of section, one of name.
-  sec=""
-  under_root=0
-  for root in $GG_PATH_ROOTS; do
-    case "$f" in
-      "$root"/*) under_root=1 ;;
-      *) continue ;;
-    esac
-    rest="${f#"$root"/}"
-    case "$rest" in
-      */*/*) ;;
-      */*)
-        sec="${rest%%/*}"
-        break
-        ;;
-    esac
-  done
-  # A pattern carrying no glob roots nowhere and names one file, so no root
-  # claims it: the directory it sits in is its section, as the pattern's
-  # author spelled it.
-  if [ "$under_root" -eq 0 ]; then
-    dir="${f%/*}"
-    [ "$dir" = "$f" ] || sec="${dir##*/}"
-  fi
+  # Which section a fragment belongs to is the configured pattern's answer,
+  # in lib/configured-paths.sh: the pattern's own last two segments say where
+  # the section sits, so a path at another depth is not one that pattern
+  # places. Deriving a depth here as well is how a rule and a root come to
+  # disagree.
+  gg_path_glob_section "$f"
+  sec="$GG_PATH_SECTION"
   if [ -z "$sec" ] || [ "${SECTIONS#*" $sec "}" = "$SECTIONS" ]; then
-    refuse "$f" "names no section" "a fragment is <root>/<section>/<name>.md — one directory of section, one of name — section one of:${SECTIONS% }"
+    refuse "$f" "names no section" "a fragment sits where its pattern places it, <section>/<name> at that pattern's own depth — section one of:${SECTIONS% }"
     continue
   fi
   # The one path into a changelog blob, in lib/changelog-grammar.sh: it reads

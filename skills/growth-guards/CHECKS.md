@@ -94,13 +94,17 @@ must be
 
 - a real text file — a path git tracks as a symlink or a submodule gitlink,
   and a blob git would call binary, are refused, not skipped;
-- exactly two segments past its pattern's root — one directory of section,
-  one of name — under a Keep a Changelog section directory (`added`,
-  `changed`, `deprecated`, `removed`, `fixed`, `security`), because that
-  directory is the heading the collator writes it beneath. Depth is counted
-  from the root, never from the immediate parent: `*` crosses `/`, so
-  `changelog.d/*/*.md` reaches `changelog.d/archive/fixed/x.md` too, whose
-  parent names a real section and which nothing could route;
+- placed by a configured pattern: a pattern is `<root…>/<section>/<name>`,
+  so its own last two segments say where the section sits and its own depth
+  says which paths it places. The directory a placed path sits in must be a
+  Keep a Changelog section (`added`, `changed`, `deprecated`, `removed`,
+  `fixed`, `security`), because that directory is the heading the collator
+  writes it beneath. `*` crosses `/`, so `changelog.d/*/*.md` MATCHES a path
+  a directory deeper as readily as one at its own depth — it places only the
+  latter. `changelog.d/fixed/*.md` narrows the same tree to one section and
+  places entries in it; a pattern with a glob in the middle places whatever
+  reaches its depth. A new pattern shape is answered by the pattern rather
+  than by a rule beside it;
 - exactly one Markdown list item — the first non-blank line opens with a
   hyphen and a space and says something, and every later NON-BLANK line
   indents under it, so an indented second paragraph is part of the entry;

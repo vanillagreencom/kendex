@@ -272,8 +272,8 @@ run_ce
 [ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/archive/fixed/ken-3.md names no section"*) true ;; *) false ;; esac \
   && ok "a path two directories below the root is refused, though its parent names a section" \
   || bad "a path two directories below the root is refused" "rc=$RC out=$OUT"
-case "$OUT" in *"one directory of section, one of name"*) ok "and the remedy states the depth" ;;
-  *) bad "and the remedy states the depth" "$OUT" ;; esac
+case "$OUT" in *"at that pattern's own depth"*) ok "and the remedy states whose depth decides" ;;
+  *) bad "and the remedy states whose depth decides" "$OUT" ;; esac
 # The control: the same file one directory up is a fragment, so the refusal
 # above is the depth and not the name.
 git -C "$R" rm -rq --cached changelog.d/archive
@@ -434,6 +434,56 @@ LIST_RC=0
 LIST="$(cd "$R" && "$CE" --list 2>/dev/null)" || LIST_RC=$?
 [ "$LIST_RC" -eq 1 ] && [ -z "$LIST" ] && ok "a refused run lists nothing" \
   || bad "a refused run lists nothing" "rc=$LIST_RC list=$LIST"
+
+echo "=== the pattern says where the section sits, and at what depth ==="
+# One rule for every pattern shape: a pattern is <root...>/<section>/<name>,
+# so its own last two segments place a path and its own depth decides which
+# paths it places. A count applied after the root instead is what makes each
+# new pattern shape a new defect.
+new_repo shapes
+printf -- '- A proper entry.\n' | frag fixed x.md
+mkdir -p "$R/changelog.d/archive/fixed"
+printf -- '- Nested under a real section name.\n' >"$R/changelog.d/archive/fixed/y.md"
+stage
+# 1. The default: two globbed segments, rooted at changelog.d.
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/*/*.md'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/archive/fixed/y.md names no section"*) true ;; *) false ;; esac \
+  && ok "the two-glob pattern places changelog.d/fixed and refuses a path a directory deeper" \
+  || bad "the two-glob pattern refuses a path a directory deeper" "rc=$RC out=$OUT"
+case "$OUT" in *"changelog.d/fixed/x.md"*) bad "and places the entry at its own depth" "$OUT" ;;
+  *) ok "and places the entry at its own depth" ;; esac
+# 2. Narrowed to ONE section: the section segment is literal, and a valid
+#    entry under it is still placed — the shape the derived-root count broke.
+git -C "$R" rm -rq --cached changelog.d/archive
+rm -rf -- "${R:?}/changelog.d/archive"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/fixed/*.md'
+[ "$RC" -eq 0 ] && ok "a pattern narrowed to one section still places its entries" \
+  || bad "a pattern narrowed to one section still places its entries" "rc=$RC out=$OUT"
+mkdir -p "$R/changelog.d/fixed/deeper"
+printf -- '- Deeper still.\n' >"$R/changelog.d/fixed/deeper/z.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/fixed/*.md'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/deeper/z.md names no section"*) true ;; *) false ;; esac \
+  && ok "and refuses a path a directory deeper than it" \
+  || bad "and refuses a path a directory deeper than it" "rc=$RC out=$OUT"
+git -C "$R" rm -rq --cached changelog.d/fixed/deeper
+rm -rf -- "${R:?}/changelog.d/fixed/deeper"
+stage
+# 3. A glob in the MIDDLE: the section is literal and sits one deeper, so the
+#    pattern places four-segment paths and nothing else.
+mkdir -p "$R/changelog.d/team/fixed"
+printf -- '- Under a middle glob.\n' >"$R/changelog.d/team/fixed/w.md"
+stage
+run_ce_env 'GROWTH_GUARDS_CHANGELOG_PATHS=changelog.d/*/fixed/*.md'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/x.md is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
+  && ok "a pattern with a glob in the middle places paths at ITS depth, not two past its root" \
+  || bad "a pattern with a glob in the middle places paths at its depth" "rc=$RC out=$OUT"
+case "$OUT" in *"changelog.d/team/fixed/w.md"*) bad "and the four-segment path under it is placed" "$OUT" ;;
+  *) ok "and the four-segment path under it is placed" ;; esac
+git -C "$R" rm -rq --cached changelog.d/team
+rm -rf -- "${R:?}/changelog.d/team"
+stage
 
 echo "=== a matched path that is not changelog text is refused, never skipped ==="
 new_repo notext

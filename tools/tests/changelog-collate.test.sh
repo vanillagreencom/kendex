@@ -192,6 +192,49 @@ untouched && ok "CHANGELOG.md is untouched by that refusal" \
 [ -f "$R/changelog.d/fixed/ken-1.md" ] && ok "nor is the fragment beside it" \
   || bad "nor is the fragment beside it" "it is gone"
 
+echo "=== the pattern's own depth decides what the collation folds ==="
+# The collation folds exactly what the judge places, so every pattern shape
+# has to reach it: a narrowing pattern must still collate, and a path deeper
+# than its pattern must still stop the run rather than being folded in and
+# deleted.
+run_collate_shape() { # PATTERN — sets OUT and RC
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_PATHS="$1" "$COLLATE" 2>&1)" || RC=$?
+}
+reset
+fragment fixed ken-1.md '- An entry the release folds in.
+'
+run_collate_shape 'changelog.d/fixed/*.md'
+[ "$RC" -eq 0 ] && ok "a pattern narrowed to one section collates" \
+  || bad "a pattern narrowed to one section collates" "rc=$RC out=$OUT"
+case "$(cat "$R/CHANGELOG.md")" in *"An entry the release folds in."*) ok "and its entry lands under Fixed" ;;
+  *) bad "and its entry lands under Fixed" "$(cat "$R/CHANGELOG.md")" ;; esac
+reset
+fragment fixed ken-1.md '- A placeable fragment.
+'
+mkdir -p "$R/changelog.d/fixed/deeper"
+printf -- '- Deeper still.\n' >"$R/changelog.d/fixed/deeper/z.md"
+git -C "$R" add -A -- changelog.d
+run_collate_shape 'changelog.d/fixed/*.md'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/fixed/deeper/z.md names no section"*) true ;; *) false ;; esac \
+  && ok "a path deeper than that pattern stops the collation" \
+  || bad "a path deeper than that pattern stops the collation" "rc=$RC out=$OUT"
+untouched && ok "CHANGELOG.md is untouched by that refusal" \
+  || bad "CHANGELOG.md is untouched by that refusal" "it changed"
+[ -f "$R/changelog.d/fixed/deeper/z.md" ] && ok "and the deeper file is not deleted" \
+  || bad "and the deeper file is not deleted" "it is gone"
+# A glob in the middle places four-segment paths, and those collate.
+reset
+mkdir -p "$R/changelog.d/team/fixed"
+printf -- '- Under a middle glob.\n' >"$R/changelog.d/team/fixed/w.md"
+git -C "$R" add -A -- changelog.d
+run_collate_shape 'changelog.d/*/fixed/*.md'
+[ "$RC" -eq 0 ] && ok "a pattern with a glob in the middle collates what it places" \
+  || bad "a pattern with a glob in the middle collates what it places" "rc=$RC out=$OUT"
+case "$(cat "$R/CHANGELOG.md")" in *"Under a middle glob."*) ok "and that entry lands under Fixed too" ;;
+  *) bad "and that entry lands under Fixed too" "$(cat "$R/CHANGELOG.md")" ;; esac
+
 echo "=== a fragment is exactly one list item, or it is refused ==="
 reset
 fragment fixed empty.md ''
