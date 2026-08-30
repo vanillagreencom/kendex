@@ -452,5 +452,90 @@ run_frozen
   || bad "an empty HEAD baseline is no row set across a relocation" "rc=$RC out=$OUT"
 case "$OUT" in *"HEAD carries no baseline rows, so added and raised rows were not judged"*) ok "and a bootstrap still says the check had no reference" ;; *) bad "a bootstrap still reports that nothing was judged" "$OUT" ;; esac
 
+echo "=== every source kind that lookup reads is reproduced from HEAD, or refused ==="
+# A source the scratch tree does not reproduce faithfully makes the HEAD-side
+# resolution equal the run's own for a reason that is not HEAD's configuration,
+# and the raise gate is skipped again. One case per source kind.
+
+# .env.local is the invocation's only while it is UNTRACKED. Versioned it is
+# the commit's, and under --staged the run reads it from the index while HEAD's
+# copy is what the raise gate has to compare against.
+new_repo dotenvtracked
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/a.tsv"
+printf 'SIZE_RATCHET_BASELINE=tools/a.tsv\n' >"$R/.env.local"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: the baseline path in a tracked .env.local"
+mkfile x.test.txt 20
+printf 'SIZE_RATCHET_BASELINE=tools/b.tsv\n' >"$R/.env.local"
+relocate x.test.txt 20
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "a tracked .env.local moving the path is the commit's, and the raise is refused" \
+  || bad "a tracked .env.local moving the path is judged" "rc=$RC out=$OUT"
+
+# A tracked symlink is a supported install shape, and the link staying put
+# while its TARGET moves the path is the same relocation one indirection down.
+new_repo symlinktarget
+mkdir -p "$R/tools"
+mkfile y.test.txt 15
+printf 'y.test.txt\t15\n' >"$R/tools/a.tsv"
+printf '[env]\nSIZE_RATCHET_BASELINE = "tools/a.tsv"\n' >"$R/real.settings.toml"
+ln -s real.settings.toml "$R/kendex.settings.toml"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: the settings file reached through a tracked symlink"
+mkfile y.test.txt 20
+printf '[env]\nSIZE_RATCHET_BASELINE = "tools/b.tsv"\n' >"$R/real.settings.toml"
+relocate y.test.txt 20
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: y.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "a symlinked settings source is followed through HEAD, so its target's move is judged" \
+  || bad "a symlinked settings source is followed through HEAD" "rc=$RC out=$OUT"
+
+# A settings file this change ADDS is one HEAD never had: HEAD's baseline is
+# wherever its own configuration left it, which here is the built-in default.
+new_repo settingsadded
+mkdir -p "$R/tools"
+mkfile z.test.txt 15
+printf 'z.test.txt\t15\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: rows at the default path, no settings file"
+mkfile z.test.txt 20
+printf 'z.test.txt\t20\n' >"$R/tools/b.tsv"
+rm -f "$R/$BASE"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: z.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "a settings file this change adds leaves HEAD on its own default, and the raise is refused" \
+  || bad "a settings file this change adds leaves HEAD on its own default" "rc=$RC out=$OUT"
+# The control that tracking is what decides: the SAME move, from a settings
+# file git carries nowhere, is the invocation's and reads the same on both
+# sides, so there is no reference and the run says so.
+git -C "$R" rm --cached -q kendex.settings.toml
+run_frozen
+[ "$RC" -eq 0 ] && case "$OUT" in *"HEAD carries no baseline rows"*) true ;; *) false ;; esac \
+  && ok "control: an untracked settings file is the invocation's, on both sides" \
+  || bad "control: an untracked settings file is the invocation's" "rc=$RC out=$OUT"
+
+# What the tree cannot reproduce refuses rather than falling through to the
+# empty answer, which is the state this whole lookup exists to stop reaching
+# without judgement.
+printf '[env]\nSIZE_RATCHET_BASELINE = "tools/b.tsv"\n' >"$TMP/outside.settings.toml"
+new_repo settingsescape
+mkdir -p "$R/tools"
+mkfile q.test.txt 15
+printf 'q.test.txt\t15\n' >"$R/tools/a.tsv"
+ln -s ../outside.settings.toml "$R/kendex.settings.toml"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: a settings symlink leaving the repository"
+mkfile q.test.txt 20
+relocate q.test.txt 20
+run_frozen
+[ "$RC" -eq 2 ] && case "$OUT" in *"resolves outside the repository at HEAD"*) true ;; *) false ;; esac \
+  && ok "a settings symlink leaving the repository at HEAD is a loud exit 2" \
+  || bad "a settings symlink leaving the repository at HEAD is exit 2" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -158,9 +158,10 @@ cannot see one, so the reason belongs in the commit body for review, not in
 a check.
 
 A commit that MOVES SIZE_RATCHET_BASELINE is judged against HEAD's rows at
-the path HEAD's own settings named: the versioned settings come from HEAD,
-the environment and .env.local from the invocation, and --baseline skips the
-lookup as the operator override it is.
+the path HEAD's own settings named. Every source that resolution reads comes
+from HEAD when git tracks it and from the invocation when it does not, and a
+source it cannot reproduce is a loud refusal rather than a silent "no rows".
+--baseline skips the lookup, being the operator's override and not a commit.
 
 A run whose HEAD carries no baseline rows has no reference for the added and
 raised checks, so the verdict line says so rather than reading as clean.
@@ -1437,57 +1438,141 @@ read_head_rows_at() { # PATH — fills HEAD_BASELINE, "" when HEAD carries none 
   HEAD_BASELINE="$TMP/baseline.head"
 }
 
-# Where HEAD's own configuration put the baseline. Resolved through the SAME
-# sr_setting chain this run used, with only the VERSIONED layer — the settings
-# TOML — taken from HEAD. The environment and .env.local are the invocation's,
-# not the commit's: they are identical on both sides by construction, so the
-# two resolutions differ exactly when the change under judgement moves the
-# path. --baseline is skipped outright for the same reason — a flag is the
-# operator pointing this run at a file, never a commit relocating anything.
+# --- where HEAD's own configuration put the baseline -------------------------
+# Resolved through the SAME sr_setting chain this run used, over a scratch tree
+# holding HEAD's view of every source that chain consults. The tree is the
+# whole answer: a source it does not reproduce faithfully makes the HEAD-side
+# resolution equal the run's own for a reason that is not HEAD's configuration,
+# and "HEAD has no rows" is then reached without judgement, which is the defect
+# itself. So each source kind is reproduced or the run refuses; nothing falls
+# through. What the tree must hold, by the route sr_setting reaches the source:
+#
+#   set in the environment      nothing. One process answers both sides.
+#   SIZE_RATCHET_SETTINGS_FILE=/dev/null
+#                               nothing. It selects no source at all.
+#   an absolute path            nothing. The same file answers both sides.
+#   a relative path that leaves the repository
+#                               the worktree file, at its own spelling. No
+#                               commit can carry it, so it is the invocation's.
+#   a path git tracks nowhere   the worktree file. Unversioned, so the
+#                               invocation's; a commit reaches this gate
+#                               through --staged, where an added source is in
+#                               the index and the branch below governs.
+#   tracked, absent at HEAD     nothing. This change ADDS the source.
+#   a regular file at HEAD      HEAD's blob.
+#   a symlink at HEAD           HEAD's blob at the end of the chain, resolved
+#                               through HEAD, staged at the link's spelling.
+#                               sr_setting reads bytes, so a regular file
+#                               there reads identically.
+#   anything else at HEAD       a refusal. A chain that leaves the repository,
+#                               loops, or ends on a directory or a gitlink is
+#                               not reproducible, and neither is an absolute
+#                               link target.
+#
+# --baseline is skipped outright: a flag is the operator pointing this run at a
+# file, never a commit relocating anything.
 HEAD_SETTINGS_BASELINE=""
-read_head_settings_baseline() { # — "" when it names no usable path
+
+# The sources sr_setting consults, in the order it consults them.
+SETTINGS_SOURCES=()
+settings_sources() {
+  SETTINGS_SOURCES=()
+  [ "${SIZE_RATCHET_SETTINGS_FILE:-}" != "/dev/null" ] || return 0
+  SETTINGS_SOURCES=(".env.local")
+  if [ -n "${SIZE_RATCHET_SETTINGS_FILE:-}" ]; then
+    SETTINGS_SOURCES+=("$SIZE_RATCHET_SETTINGS_FILE")
+  else
+    SETTINGS_SOURCES+=(".kendex/settings.toml" "kendex.settings.toml")
+  fi
+}
+
+index_tracks() { # PATH — 0 when the index carries it
+  local status=0
+  git ls-files --error-unmatch -- ":(literal)$1" >/dev/null 2>&1 || status=$?
+  case "$status" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) collection_error "could not query the index for $1 (git ls-files exit $status) — refusing to judge added and raised rows without knowing whether this change adds the source" ;;
+  esac
+}
+
+# Eight hops is past any real settings install and short of a loop's patience.
+HEAD_LINK_MAX=8
+stage_head_blob() { # PATH DEST — HEAD's file content at PATH, chain followed
+  local path="$1" dest="$2" hops=0 target dir
+  while :; do
+    read_head_file_mode "$path"
+    case "$HEAD_FILE_MODE" in
+      "") return 0 ;; # HEAD carries no such source
+      100*) break ;;
+      120000)
+        hops=$((hops + 1))
+        [ "$hops" -le "$HEAD_LINK_MAX" ] || collection_error "the settings source '$1' is a symlink chain longer than $HEAD_LINK_MAX hops at HEAD — refusing to judge added and raised rows against a configuration it cannot follow"
+        git show "HEAD:$path" >"$TMP/head.link" || collection_error "could not read the symlink '$path' from HEAD to follow the settings source it points at"
+        target="$(cat -- "$TMP/head.link")" || collection_error "could not read the target of the symlink '$path' at HEAD"
+        case "$target" in /*) collection_error "the settings source '$1' resolves through an absolute symlink at HEAD, which the scratch tree cannot reproduce — refusing to judge added and raised rows against a configuration it cannot read" ;; esac
+        dir="${path%/*}"
+        [ "$dir" != "$path" ] || dir=""
+        path="$(sr_settings_normalize_path "${dir:+$dir/}$target")"
+        case "$path" in
+          "" | ".." | "../"*) collection_error "the settings source '$1' resolves outside the repository at HEAD, which the scratch tree cannot reproduce — refusing to judge added and raised rows against a configuration it cannot read" ;;
+        esac
+        ;;
+      *) collection_error "the settings source '$1' is not a regular file at HEAD (mode $HEAD_FILE_MODE) — refusing to judge added and raised rows against a configuration it cannot read" ;;
+    esac
+  done
+  git show "HEAD:$path" >"$dest" || collection_error "could not read $path from HEAD to resolve the baseline path it configures"
+}
+
+read_head_settings_baseline() { # — "" when HEAD names no usable path
   HEAD_SETTINGS_BASELINE=""
   [ "$BASELINE_SET" -eq 0 ] || return 0
-  local dir="$TMP/head-settings" src norm parent
+  local dir="$TMP/head-settings" cwd src norm dest parent depth d
   rm -rf -- "$dir" || collection_error "could not clear the scratch copy of HEAD's settings"
-  mkdir -p -- "$dir" || collection_error "could not create a scratch copy of HEAD's settings"
-  if [ "${SIZE_RATCHET_SETTINGS_FILE:-}" = "/dev/null" ]; then
-    set --
-  elif [ -n "${SIZE_RATCHET_SETTINGS_FILE:-}" ]; then
-    set -- "$SIZE_RATCHET_SETTINGS_FILE"
-  else
-    set -- ".kendex/settings.toml" "kendex.settings.toml"
-  fi
-  for src in "$@"; do
-    # An absolute source lives outside the repository: HEAD carries no copy of
-    # it, and both resolutions read the one file that is there.
+  settings_sources
+  # A source spelled with a leading `..` still has to land inside the tree, so
+  # the resolution runs from a directory nested as deep as the deepest such
+  # spelling. Counting every `..` segment overshoots, which costs an unused
+  # directory and can never come up short.
+  depth=0
+  for src in ${SETTINGS_SOURCES+"${SETTINGS_SOURCES[@]}"}; do
+    d="$(printf '%s\n' "$src" | awk -F'/' '{ n = 0; for (i = 1; i <= NF; i++) if ($i == "..") n++; print n }')" \
+      || collection_error "could not measure the depth of the settings source '$src'"
+    [ "$d" -le "$depth" ] || depth="$d"
+  done
+  cwd="$dir"
+  while [ "$depth" -gt 0 ]; do
+    cwd="$cwd/nested"
+    depth=$((depth - 1))
+  done
+  mkdir -p -- "$cwd" || collection_error "could not create a scratch copy of HEAD's settings"
+  for src in ${SETTINGS_SOURCES+"${SETTINGS_SOURCES[@]}"}; do
     case "$src" in /*) continue ;; esac
-    # git reads a tree path canonically — `sub/../f` names `f` — so the probe
-    # and the read take the NORMALIZED spelling, while the copy is written
+    dest="$cwd/$src"
+    parent="$cwd/${src%/*}"
+    [ "${src%/*}" != "$src" ] || parent="$cwd"
+    mkdir -p -- "$parent" || collection_error "could not stage the directory for HEAD's copy of $src"
+    # git reads a tree path canonically — `sub/../f` names `f` — so every
+    # probe and read takes the NORMALIZED spelling, while the copy is written
     # under the spelling the resolver will look for.
     norm="$(sr_settings_normalize_path "$src")"
     case "$norm" in
       "" | ".." | "../"*)
-        # A relative source that leaves the repository is read from the
-        # worktree by both resolutions, but the scratch directory this one
-        # runs in cannot reach it — so HEAD names no path rather than a
-        # wrong one.
-        HEAD_SETTINGS_BASELINE=""
-        return 0
+        [ ! -f "$src" ] || cp -- "$src" "$dest" || collection_error "could not stage the out-of-repository settings source $src"
+        continue
         ;;
     esac
     read_head_file_mode "$norm"
-    case "$HEAD_FILE_MODE" in 100*) ;; *) continue ;; esac
-    parent="$dir/${src%/*}"
-    [ "${src%/*}" != "$src" ] || parent="$dir"
-    mkdir -p -- "$parent" || collection_error "could not stage the directory for HEAD's copy of $src"
-    git show "HEAD:$norm" >"$dir/$src" || collection_error "could not read $src from HEAD to resolve the baseline path it configures"
+    if [ -n "$HEAD_FILE_MODE" ]; then
+      stage_head_blob "$norm" "$dest"
+    elif ! index_tracks "$norm"; then
+      [ ! -f "$src" ] || cp -- "$src" "$dest" || collection_error "could not stage the untracked settings source $src"
+    fi
   done
-  [ ! -f .env.local ] || cp -- .env.local "$dir/.env.local" || collection_error "could not stage .env.local beside HEAD's settings"
   # sr_setting reads its sources relative to the working directory and returns
-  # nonzero (never exits) on an unreadable one, so the copies answer from
-  # $dir and a refusal propagates instead of resolving to a default.
-  HEAD_SETTINGS_BASELINE="$(cd "$dir" && SR_SETTINGS_FROM_INDEX=0 sr_setting SIZE_RATCHET_BASELINE "tools/size-ratchet-baseline.tsv")" \
+  # nonzero (never exits) on an unreadable one, so the tree answers from $cwd
+  # and a refusal propagates instead of resolving to a default.
+  HEAD_SETTINGS_BASELINE="$(cd "$cwd" && SR_SETTINGS_FROM_INDEX=0 sr_setting SIZE_RATCHET_BASELINE "tools/size-ratchet-baseline.tsv")" \
     || collection_error "could not resolve SIZE_RATCHET_BASELINE from HEAD's settings — refusing to judge added and raised rows without knowing where HEAD's baseline was"
   HEAD_SETTINGS_BASELINE="$(normalize_rel_path "$HEAD_SETTINGS_BASELINE")" || HEAD_SETTINGS_BASELINE=""
   # A shape the configured path itself would be refused for names no row set
