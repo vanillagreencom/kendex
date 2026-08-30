@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { isBareCd, preCommitGate, scanCommand } from "../extensions/bash-guards.ts";
+import { runCommandAsync } from "../extensions/process.ts";
 
 // The marker the growth-guards installer ends its delegating line with, and
 // the only thing that makes a hook file ours as far as this gate is
@@ -46,6 +47,27 @@ function plantAnnouncingScript(repo: string, log: string): void {
 	chmodSync(join(scripts, "pre-commit"), 0o755);
 }
 
+const PROBE = "pi-hooks-path-probe";
+
+/**
+ * Prove the narrowed PATH is the one the gate's own spawns resolve against,
+ * then take the probe back out so the directory holds git, sh and bash alone.
+ * A narrowing that never reaches a child reads exactly like one that holds.
+ * That is how a fake cargo sat unreachable while every assertion around it
+ * passed (KEN-843), Bun's spawnSync having defaulted to a boot-time
+ * environment snapshot. The probe runs through `runCommandAsync` because that
+ * is the helper the gate spawns git with, so it answers for the gate's own
+ * resolution and not for a lookup this file did itself.
+ */
+async function expectNarrowedPathReachable(bin: string, cwd: string): Promise<void> {
+	const probe = join(bin, PROBE);
+	writeFileSync(probe, "#!/bin/sh\nprintf reached\n");
+	chmodSync(probe, 0o755);
+	const result = await runCommandAsync(PROBE, [], cwd, 5000);
+	expect([result.exitCode, result.stdout]).toEqual([0, "reached"]);
+	rmSync(probe);
+}
+
 describe("pre-commit gate: the bash hook's contract", () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-hooks-gate-"));
 	const ranLog = join(root, "ran.log");
@@ -60,13 +82,15 @@ describe("pre-commit gate: the bash hook's contract", () => {
 	let foreign: string;
 	let mixed: string;
 	let notARepo: string;
-	// Bare PATH: the armed hook gates a commit with no binary involved, and the
-	// refusal for an unarmed one needs none either. Git reads no config of the
+	// Narrowed PATH: git is the one binary this gate resolves, so the fixtures
+	// run against a directory holding git, sh and bash and nothing else. A
+	// resolution the gate is not supposed to make fails here rather than
+	// quietly finding the developer's copy. Git also reads no config of the
 	// developer's: a global core.hooksPath would disarm every fixture.
 	const savedEnv: Record<string, string | undefined> = {};
 	const isolatedEnv: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 
-	beforeAll(() => {
+	beforeAll(async () => {
 		for (const [name, value] of Object.entries(isolatedEnv)) {
 			savedEnv[name] = process.env[name];
 			process.env[name] = value;
@@ -136,7 +160,7 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			plantAnnouncingScript(repo, ranLog);
 		}
 
-		const bin = join(root, "no-kendex-bin");
+		const bin = join(root, "git-only-bin");
 		mkdirSync(bin);
 		for (const tool of ["git", "sh", "bash"]) {
 			const found = spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
@@ -144,6 +168,7 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		}
 		savedEnv.PATH = process.env.PATH;
 		process.env.PATH = bin;
+		await expectNarrowedPathReachable(bin, root);
 	});
 
 	afterAll(() => {

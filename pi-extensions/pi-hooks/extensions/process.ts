@@ -39,6 +39,13 @@ export function runCommandAsync(command: string, args: string[], cwd: string, ti
 			child = spawn(command, args, {
 				cwd,
 				detached,
+				// Name the live object rather than let the runtime choose an env.
+				// Bun's spawnSync defaults to a boot-time snapshot, which is what
+				// left a fake binary on PATH unreachable in runCargo (KEN-843).
+				// Bun's async spawn reads process.env today, so this is a no-op
+				// here as it is under Node. It is the guarantee a test planting a
+				// binary rests on, not a runtime default.
+				env: process.env,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 		} catch (error) {
