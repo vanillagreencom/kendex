@@ -141,8 +141,8 @@ if [ -z "$reference" ]; then
 fi
 ok "the roster required $renders rendered copies under $RENDER_PREFIX by name"
 
-# The declared exceptions are held to being exceptions. One naming no source
-# hides a typo; one whose skill is now installed leaves a render unchecked.
+# One exception naming no source hides a typo; one whose skill is now
+# installed leaves a render unchecked.
 for u in $UNRENDERED; do
   known=no
   for s in $CARRIER_SOURCES $EXCLUDED_SOURCES; do [ "$s" = "$u" ] && known=yes; done
@@ -226,9 +226,8 @@ fi
 
 # Constructs that must be flagged. Each is a must-fail probe: injected into a
 # scanned tree it turns that tree's suite red, which is the whole claim these
-# suites make. The alternate spellings are here because they are how the
-# earlier set was walked past. `local -rA` and `local -r -A` are one
-# declaration to Bash, so both are here: neither stands in for the other.
+# suites make. The alternate spellings are how the earlier set was walked
+# past; `local -rA` and `local -r -A` are one declaration, so both are here.
 PROBES="$(
   cat <<'PROBES_EOF'
 local -A cache
@@ -287,16 +286,18 @@ pid_initial="${$^}"
 bgpid_initial="${!^}"
 name_zero="${0^}"
 under="${_^}"
+opts_initial="${-^}"
+code_initial="${?^}"
+argc_initial="${#^}"
 PROBES_EOF
 )"
 
 # Lines that must NOT be flagged: a set that reds Bash 3.2-legal source is a
 # set nobody can keep, and every probe above widens an anchor a line here
 # keeps honest. Five are real, out of skills/preflight/scripts/preflight,
-# hooks/pre-commit-check.sh and
-# skills/reviewer/tests/harness-safe-shell-lint.test.sh. The rest are regex
-# shapes that spell an operator without being one, including the escaped
-# classes bounding the pipe anchor, and the parameters Bash will not convert.
+# hooks/pre-commit-check.sh and reviewer's harness-safe-shell-lint. The rest
+# spell an operator without being one, including the escaped classes that
+# bound the pipe anchor and the parameter forms that carry no conversion.
 CONTROLS="$(
   cat <<'CONTROLS_EOF'
 local -r frozen=1
@@ -339,13 +340,14 @@ names="${!prefix*}"
 flags="${-}"
 code="${?}"
 count="${#}"
+trimmed="${path#-}"
+defaulted=${x:-#}
 CONTROLS_EOF
 )"
 
-# scan MODE PATTERN LINES — the lines PATTERN misses, or the ones it hits.
-# Returns 2 when grep could not run: an invalid ERE prints nothing and exits
-# 2, and reading that emptiness as clean is how a proof comes to pass while
-# proving nothing.
+# scan MODE PATTERN LINES — the lines PATTERN misses, or the ones it hits. 2
+# when grep could not run: an invalid ERE prints nothing and exits 2, and
+# reading that emptiness as clean is a proof that passes while proving nothing.
 scan() {
   local out="" status=0
   case "$1" in
