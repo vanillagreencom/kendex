@@ -21,9 +21,15 @@ fn kendex(home: &Path, args: &[&str]) -> Output {
 
 #[allow(clippy::expect_used)]
 fn kendex_with(home: &Path, vars: &[(&str, &Path)], args: &[&str]) -> Output {
+    command(home, vars)
+        .args(args)
+        .output()
+        .expect("kendex binary runs")
+}
+
+fn command(home: &Path, vars: &[(&str, &Path)]) -> Command {
     let mut run = Command::new(env!("CARGO_BIN_EXE_kendex"));
-    run.args(args)
-        .current_dir(home)
+    run.current_dir(home)
         .env_clear()
         .env("HOME", home)
         .env("KENDEX_REAL_HOME", "1")
@@ -32,7 +38,40 @@ fn kendex_with(home: &Path, vars: &[(&str, &Path)], args: &[&str]) -> Output {
     for (key, value) in vars {
         run.env(key, value);
     }
-    run.output().expect("kendex binary runs")
+    run
+}
+
+/// Whether a run ended at all, inside `limit`. For the cases whose failure
+/// is a command that never returns, where `output` would hang the suite
+/// rather than fail it.
+#[allow(clippy::expect_used)]
+fn ran_within(home: &Path, args: &[&str], limit: std::time::Duration) -> bool {
+    let mut run = command(home, &[])
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("kendex binary runs");
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        if run.try_wait().expect("the run reports its state").is_some() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = run.kill();
+            let _ = run.wait();
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// The time a file was last written.
+#[allow(clippy::expect_used)]
+fn modified(path: &Path) -> std::time::SystemTime {
+    fs::metadata(path)
+        .and_then(|found| found.modified())
+        .unwrap_or_else(|error| panic!("no timestamp on {}: {error}", path.display()))
 }
 
 /// The file this test binary runs the command from, under the one spelling
@@ -61,6 +100,27 @@ fn installed_before_the_bytes_were_replaced(record: &Path, bytes: &Path) {
         .open(record)
         .and_then(|file| file.set_modified(written - std::time::Duration::from_secs(60)))
         .expect("the fixture record takes a timestamp");
+}
+
+/// The same ordering for a link, whose own timestamps the standard library
+/// cannot reach: opening one follows it, so `set_modified` would stamp the
+/// file at the other end. `touch -h` reaches them, and the GNU and BSD
+/// builds both carry it.
+#[allow(clippy::expect_used)]
+fn older_than_the_command(link: &Path, command: &Path) {
+    let reference = link
+        .parent()
+        .expect("the fixture link sits in a directory")
+        .join("fixture-timestamp");
+    fs::write(&reference, "").expect("the fixture reference is written");
+    installed_before_the_bytes_were_replaced(&reference, command);
+    let stamped = Command::new("touch")
+        .args(["-h", "-r"])
+        .args([&reference, &link.to_path_buf()])
+        .status()
+        .expect("touch runs");
+    assert!(stamped.success(), "the fixture link took no timestamp");
+    fs::remove_file(&reference).expect("the fixture reference is removed");
 }
 
 /// An install made before the record existed has none, and its owner has
@@ -355,13 +415,21 @@ fn a_run_does_not_say_what_replaced_another_installs_bytes() {
     );
 }
 
-/// A record whose path and digest both still describe the file is not
-/// written at all — not rewritten with the same content, which the file
-/// alone cannot tell apart from being left alone, so the timestamp is what
-/// is read.
+/// A record whose path and digest both still describe the file keeps its
+/// content, and comes out of the run saying which version of the command
+/// it describes.
+///
+/// The content is half the answer. The other half is the timestamp: an
+/// elevated `update --force` installs the same bytes again and leaves the
+/// command newer than a record that already names it, so a run that read,
+/// hashed and then left the timestamp alone would leave that true forever
+/// and every later run would read and hash the whole command for nothing.
+/// Carrying the command's own time onto the record is what closes it, and
+/// the assertion below is that closure rather than a proxy for it: the run
+/// reads on only where the command is strictly newer.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_record_that_still_matches_is_not_written() {
+fn a_record_that_still_matches_keeps_its_content_and_stops_being_reread() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = kendex_core::env::Env::host_rooted(&home);
@@ -372,19 +440,122 @@ fn a_record_that_still_matches_is_not_written() {
     // the timestamps refuse the case and this passes without the digest
     // ever being compared.
     installed_before_the_bytes_were_replaced(&env.installed_command_file(), &installed);
-    let untouched = fs::metadata(env.installed_command_file())
-        .unwrap()
-        .modified()
-        .unwrap();
+    let written = fs::read_to_string(env.installed_command_file()).unwrap();
 
     kendex(&home, &["verify"]);
 
     assert_eq!(
-        fs::metadata(env.installed_command_file())
-            .unwrap()
-            .modified()
-            .unwrap(),
-        untouched,
-        "a record naming the bytes that are there was written over"
+        fs::read_to_string(env.installed_command_file()).unwrap(),
+        written,
+        "a record naming the bytes that are there was rewritten"
+    );
+    assert_eq!(
+        modified(&env.installed_command_file()),
+        modified(&installed),
+        "the record still reads older than the command, so every later run rereads it"
+    );
+}
+
+/// What a repair leaves behind is the command's own time, not the moment
+/// the record was written.
+///
+/// The difference is a replacement landing between the read and the write.
+/// Stamped with the clock, that record would name the bytes this run read
+/// while claiming to be newer than the ones that replaced them, and no
+/// later run would ever look again: the state this whole change exists to
+/// repair, made permanent. Stamped with the time of the file that was
+/// read, the newer bytes are still newer and the next run repairs them.
+///
+/// The interleaving itself is not driven here. Landing a replacement
+/// inside that window needs a seam in the code under test, and this
+/// asserts the property that makes the window harmless instead.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_repair_leaves_the_record_naming_the_bytes_it_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = kendex_core::env::Env::host_rooted(&home);
+    let installed = the_command_that_runs();
+    kendex_core::command_update::record_command(&env, &installed, REPLACED).unwrap();
+    installed_before_the_bytes_were_replaced(&env.installed_command_file(), &installed);
+
+    kendex(&home, &["verify"]);
+
+    assert_eq!(
+        modified(&env.installed_command_file()),
+        modified(&installed),
+        "the repaired record was stamped with the clock rather than the command it read"
+    );
+}
+
+/// A pipe at the record path is not a record and is never read. Reading one
+/// with nothing writing it blocks forever, and this read happens before the
+/// arguments are parsed, so `--version` and `--help` would hang with it.
+///
+/// Driven against the built command under a deadline, since the failure is
+/// a run that does not end.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pipe_at_the_record_path_does_not_hold_the_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = kendex_core::env::Env::host_rooted(&home);
+    let file = env.installed_command_file();
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let made = Command::new("mkfifo").arg(&file).status().unwrap();
+    assert!(
+        made.success(),
+        "the fixture pipe was not made at {}",
+        file.display()
+    );
+
+    let ended = ran_within(&home, &["--version"], std::time::Duration::from_secs(30));
+
+    assert!(ended, "the command hung on a pipe at {}", file.display());
+}
+
+/// A link at the record path is a name somebody else chose, and a write
+/// through it lands on the file at the other end. The record path is only
+/// ever a plain file this install wrote, so a link there is refused and the
+/// file it points at is left alone.
+///
+/// The link is backdated rather than the file it names: the run reads the
+/// link's own timestamp to decide the command may have moved, so a link
+/// made just now would be refused by the timestamps and this would pass
+/// without the link ever being the reason.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_link_at_the_record_path_is_not_written_through() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = kendex_core::env::Env::host_rooted(&home);
+    let file = env.installed_command_file();
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let installed = the_command_that_runs();
+    // A whole, valid record naming the running command with bytes that are
+    // gone: follow the link and there is every reason to rewrite it.
+    let aimed_at = home.join("someone-elses-file");
+    fs::write(
+        &aimed_at,
+        format!(
+            "{}
+{}
+",
+            installed.display(),
+            kendex_core::hash::sha256_hex(REPLACED)
+        ),
+    )
+    .unwrap();
+    let theirs = fs::read_to_string(&aimed_at).unwrap();
+    std::os::unix::fs::symlink(&aimed_at, &file).unwrap();
+    older_than_the_command(&file, &installed);
+
+    kendex(&home, &["verify"]);
+
+    assert_eq!(
+        fs::read_to_string(&aimed_at).unwrap(),
+        theirs,
+        "the run wrote through a link at {}",
+        file.display()
     );
 }

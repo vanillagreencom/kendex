@@ -142,11 +142,22 @@ pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
     // `symlink_metadata`, so a link occupying the name counts as occupying
     // it.
     //
+    // Only a plain file is read on. Anything else at that name is where
+    // this function has always stopped, and it has to stay that way: a
+    // pipe there blocks the read below and holds every run of every verb
+    // before its arguments are parsed, and a link there is a name someone
+    // else chose for a write kendex would then aim at whatever it points
+    // at. Neither is a record, and the app reads no record until the run
+    // that replaces the command writes one.
+    //
     // Not the arbiter, only the cheap answer. Two runs can both see
     // nothing here; the link below is what decides which of them was
     // first.
     if let Ok(here) = std::fs::symlink_metadata(&file) {
-        return refresh_the_replaced_bytes(env, running, &here);
+        return match here.is_file() {
+            true => refresh_the_replaced_bytes(env, running, &here),
+            false => Ok(()),
+        };
     }
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("{} could not be created: {error}", parent.display()))?;
@@ -204,45 +215,80 @@ pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
 /// Nothing here is privileged and nothing crosses an account. The process
 /// is the person's own, the file is the one their own [`Env`] names, and
 /// the bytes hashed are the ones this process was loaded from.
+///
+/// The record's modified time is read here as which version of the command
+/// it describes, and left saying that on the way out. `record_file` is the
+/// caller's `symlink_metadata`, which has already established this is a
+/// plain file rather than a link or a pipe.
 fn refresh_the_replaced_bytes(
     env: &Env,
     running: &Path,
     record_file: &std::fs::Metadata,
 ) -> Result<(), String> {
+    let file = env.installed_command_file();
     let Some(record) = recorded_command(env) else {
         return Ok(());
     };
     if Host.resolve(&record.path) != Host.resolve(running) {
         return Ok(());
     }
-    // The record is written after the bytes it describes — by `install.sh`,
-    // by every replacement, and by the arm above — so bytes no newer than
-    // the record are bytes it already names. Every run of every verb
-    // reaches here, and that ordering is what keeps the steady state off a
-    // read and a hash of the whole executable. Where either timestamp
-    // cannot be read the record stays as it is, which is this function's
-    // answer to everything it cannot establish; a replacement that carried
-    // an older timestamp across is missed the same way, and the record then
-    // stays exactly where it was before this arm existed.
-    let replaced = match (
+    // The record's own timestamp says which version of the file it
+    // describes, so bytes no newer than that are bytes it already names.
+    // Every run of every verb reaches here, and that comparison is what
+    // keeps the steady state off a read and a hash of the whole
+    // executable. Where either timestamp cannot be read the record stays
+    // as it is, which is this function's answer to everything it cannot
+    // establish; a replacement landing on the same timestamp or an older
+    // one is missed the same way, and the record then stays exactly where
+    // it was before this arm existed.
+    let (Ok(recorded_at), Ok(written_at)) = (
         record_file.modified(),
         std::fs::metadata(running).and_then(|bytes| bytes.modified()),
-    ) {
-        (Ok(recorded_at), Ok(written_at)) => written_at > recorded_at,
-        _ => false,
+    ) else {
+        return Ok(());
     };
-    if !replaced {
+    if written_at <= recorded_at {
         return Ok(());
     }
     let bytes = std::fs::read(running)
         .map_err(|error| format!("{} could not be read: {error}", running.display()))?;
-    if crate::hash::sha256_hex(&bytes) == record.digest {
-        return Ok(());
+    // A record already naming these bytes is left as it is rather than
+    // rewritten with what it already holds. No reader can tell the two
+    // apart afterwards, and that is the point: `record_command` truncates
+    // before it writes, so rewriting would open a window where a reader
+    // sees half a record where there was a whole one.
+    if crate::hash::sha256_hex(&bytes) != record.digest {
+        // Written back under the path the record already spells, not the
+        // resolved one: the two name the same file, and a record rewritten
+        // as a link's target stops describing the name a later release
+        // replaces.
+        record_command(env, &record.path, &bytes)?;
     }
-    // Written back under the path the record already spells, not the
-    // resolved one: the two name the same file, and a record rewritten as
-    // a link's target stops describing the name a later release replaces.
-    record_command(env, &record.path, &bytes)
+    // Read before the bytes were, and stamped whether or not the digest
+    // moved. Both halves matter.
+    //
+    // Stamped even where nothing was written, or a replacement installing
+    // the same bytes again leaves the file newer than a record that
+    // already names it and every later run pays the read and the hash for
+    // nothing.
+    //
+    // Stamped with the file's own time rather than this moment, so the
+    // record never claims to describe bytes this run did not read. A
+    // replacement landing between that read and this write is then still
+    // newer than the record, and the next run repairs it. Taking the clock
+    // instead would leave the record naming bytes that are gone with a
+    // timestamp that says otherwise, which is this defect made permanent.
+    stamp(&file, written_at)
+}
+
+/// Say which version of a file a record describes, by giving the record
+/// that file's own modified time.
+fn stamp(file: &Path, written_at: std::time::SystemTime) -> Result<(), String> {
+    std::fs::File::options()
+        .write(true)
+        .open(file)
+        .and_then(|handle| handle.set_modified(written_at))
+        .map_err(|error| format!("{} could not be stamped: {error}", file.display()))
 }
 
 /// The same record, taken from a file already on disk — the running
