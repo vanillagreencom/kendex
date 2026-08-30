@@ -112,10 +112,11 @@ PANE_MARKER_RE='^❯|^›'
 #   dialog row all as the marker, a blank and text — the same shape as a turn —
 #   and always draws one of them below the transcript. So every Codex screen
 #   ends in a live-input marker line, and its marker alone is the signature.
-# The last marker line is the live input when it carries either signature, and
-# the turn the boundary sits on otherwise.
+# The last marker line is the live input when it carries either signature;
+# pane_below_last_turn holds the rest of the rule.
 # Byte escapes, never `\u`: bash leaves a `\u` escape unexpanded in the C
-# locale, which would hand awk a literal backslash-u and match nothing.
+# locale, and an awk that does not expand one either then matches nothing.
+# gawk does expand it, so no test on a gawk runner can catch that spelling.
 CLAUDE_COMPOSER_RE=$'^\xe2\x9d\xaf\xc2\xa0'
 CODEX_MARKER_RE='^›'
 
@@ -467,11 +468,18 @@ note_probe_unusable() {
 #
 # The boundary is the last marker line, unless that line is the live input the
 # lane is sitting at — in which case it is the marker line before it.
+#
+# A marker line that is the LAST line of the capture counts as live input
+# whatever it looks like. Nothing sits after it, so the wider window costs
+# nothing there, and the fallback is what keeps an unrecognized composer from
+# becoming the boundary itself: that would empty the slice and turn
+# usage-limit into a silent no-op for the lane. Unrecognized fails toward a
+# stale banner, never toward silence.
 pane_below_last_turn() {
   awk -v marker="$PANE_MARKER_RE" -v composer="$CLAUDE_COMPOSER_RE" -v codex="$CODEX_MARKER_RE" '
     { line[NR] = $0; if ($0 ~ marker) { prev = last; last = NR } }
     END {
-      live = (last > 0 && (line[last] ~ composer || line[last] ~ codex))
+      live = (last > 0 && (last == NR || line[last] ~ composer || line[last] ~ codex))
       turn = live ? prev : last
       for (i = turn + 1; i <= NR; i++) print line[i]
     }

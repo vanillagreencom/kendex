@@ -314,8 +314,10 @@ printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3fd"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_not_contains "$out" "EVENT usage-limit" \
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
   "a codex dialog row is live input, so the banner above the turn stays scrollback" "$err"
+assert_not_contains "$out" "EVENT usage-limit" \
+  "the codex dialog row never resurrects a stale banner" "$err"
 
 # ...and its control: the banner below the turn on the same dialog screen
 new_case usage_limit_codex_dialog_live_banner
@@ -351,18 +353,39 @@ assert_not_contains "$out" "EVENT usage-limit" \
   "the codex composer never resurrects a stale banner" "$err"
 
 # The must-fail control for the case above: the same screen with the banner
-# BELOW the turn — the account is spent right now
+# BELOW the turn — the account is spent right now. It carries the permission
+# line a real screen draws under the composer, so the composer is not the last
+# line of the capture: this is where the Claude signature decides the boundary
+# rather than the last-line fallback, and a signature that stops matching
+# drops the banner out of the slice here.
 new_case usage_limit_after_turn
 {
   printf '❯ pick the round back up\n'
   printf '⏺ Working through the queue.\n'
   printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
   printf '\xe2\x9d\xaf\xc2\xa0\n'
+  printf '  bypass permissions on\n'
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3f5"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
   "a banner below the last user turn is the event" "$err"
+
+# An input line the composer rule does not recognize must not become the
+# boundary itself: that empties the slice and makes usage-limit a silent
+# no-op. A marker line that is the last line of the capture falls back to the
+# previous marker, so the unrecognized case fails toward a stale banner.
+new_case usage_limit_unrecognized_composer
+{
+  printf '❯ pick the round back up\n'
+  printf '⏺ Working through the queue.\n'
+  printf "You've hit your usage limit \xc2\xb7 resets 21:00\n"
+  printf '❯ \n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3f6"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
+  "an unrecognized last input line never swallows the screen" "$err"
 
 # A realistic transcript, with the E2-lead lines a real screen carries
 # between the banner and the composer. The marker must be an alternation of
@@ -414,14 +437,6 @@ assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
   "a stale banner never masks the live question on a dialog screen" "$err"
 assert_not_contains "$out" "EVENT usage-limit" \
   "the banner above the turn stays scrollback when no composer is drawn" "$err"
-# And in the C locale. The composer signature is spelled in escapes, and bash
-# leaves a `\u` escape unexpanded there, so a signature written that way stops
-# separating the composer from a turn on exactly this screen — invisibly to
-# any run under the runner's own UTF-8 locale.
-err="$TMP_ROOT/e3fa2"
-out="$(run_watch LC_ALL=C LANG=C -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
-  "...and under a byte-oriented locale, where an unexpanded escape would hide" "$err"
 
 # ...and its control: on the same dialog screen, a banner BELOW the turn is
 # the account spent right now, and it still outranks the question
