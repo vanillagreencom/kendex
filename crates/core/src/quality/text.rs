@@ -15,7 +15,7 @@ mod line;
 mod normalize;
 pub(in crate::quality) mod tokens;
 
-pub use line::Line;
+pub use line::{Line, Reading};
 pub use normalize::deobfuscate;
 
 use super::{AuditInput, Content, Doc, Prepared, TreeFile};
@@ -85,7 +85,7 @@ pub fn prepare(input: AuditInput) -> Prepared {
             docs.push(Doc {
                 location: input.location.clone(),
                 role: super::DocRole::Text,
-                lines: lines(&text, is_markdown(&input.location)),
+                lines: lines(&text, reading(&input.location, &text)),
             });
             Content::Document { text }
         }
@@ -144,7 +144,7 @@ fn tree_docs(
             let location = format!("{root}/{}", crate::paths::slashed(&file.path));
             let supporting = is_supporting(&file.path);
             let text = clean(location.clone(), &text);
-            let split = lines(&text, is_markdown(&location));
+            let split = lines(&text, reading(&location, &text));
             docs.push(Doc {
                 lines: match supporting {
                     true => split.into_iter().map(Line::as_description).collect(),
@@ -208,7 +208,7 @@ fn hook_docs(
     docs.push(Doc {
         location: format!("{root} (command)"),
         role: super::DocRole::Text,
-        lines: lines(&command, false),
+        lines: lines(&command, Reading::Shell),
     });
     // What the harness stores beside the command, not what it runs: one
     // value per line, one document, for the rules about values.
@@ -217,7 +217,7 @@ fn hook_docs(
         docs.push(Doc {
             location: format!("{root} (entry)"),
             role: super::DocRole::Values,
-            lines: lines(&values, false),
+            lines: lines(&values, Reading::Shell),
         });
         values
     });
@@ -226,7 +226,7 @@ fn hook_docs(
         docs.push(Doc {
             location: root.to_owned(),
             role: super::DocRole::Text,
-            lines: lines(&body, false),
+            lines: lines(&body, reading(root, &body)),
         });
         body
     });
@@ -245,18 +245,18 @@ fn hook_docs(
 /// words".
 ///
 /// What a fence does decide is which marks quote *inside* the line, which
-/// is [`Line::prose`]. `markdown` says the document has prose to tell from
-/// blocks at all; a script is a command line from its first byte.
+/// is [`Line::reading`]. A markdown document has prose to tell from blocks
+/// at all; a script is a command line from its first byte.
 ///
 /// The code spans come from here too, and for the same reason: a run of
 /// backticks may close on a later line, so only something holding the
 /// whole document can say which of them ever meet a match.
-pub fn lines(text: &str, markdown: bool) -> Vec<Line> {
+pub fn lines(text: &str, reading: Reading) -> Vec<Line> {
     let raw: Vec<&str> = text.lines().collect();
     let lower: Vec<String> = raw.iter().map(|line| flatten(line)).collect();
-    let prose = match markdown {
-        true => crate::render::prose_lines(text),
-        false => vec![false; raw.len()],
+    let prose = match reading {
+        Reading::Prose => crate::render::prose_lines(text),
+        Reading::Shell | Reading::Opaque => vec![false; raw.len()],
     };
     let spans = crate::render::code_spans_by_line(&lower, &prose);
     raw.iter()
@@ -267,25 +267,84 @@ pub fn lines(text: &str, markdown: bool) -> Vec<Line> {
             number: index + 1,
             lower,
             describing: raw.trim_start().starts_with('>'),
-            prose: prose[index],
+            // A markdown document is prose outside its blocks and a
+            // command line inside them; every other document is one
+            // reading throughout.
+            reading: match prose[index] {
+                true => Reading::Prose,
+                false => match reading {
+                    Reading::Prose => Reading::Shell,
+                    other => other,
+                },
+            },
             spans,
             text: (*raw).to_owned(),
         })
         .collect()
 }
 
-/// Whether this path's text is markdown, where a code block is marked and
-/// everything outside one is prose. Everything else — a script, a hook's
-/// command, a config file — reads as a command line throughout.
+/// Shells whose scripts are the command lines this rule reads.
+const SHELLS: &[&str] = &["sh", "bash", "zsh", "dash", "ksh", "ash"];
+
+/// Suffixes that name one of those scripts.
+const SHELL_SUFFIXES: &[&str] = &[".sh", ".bash", ".zsh", ".ksh", ".bats"];
+
+/// Which syntax reads this document.
 ///
-/// The parked suffix comes off first. `SKILL.md.disabled` is the same
-/// markdown as `SKILL.md` and the audit reads it as one, so judging it by
-/// the trailing extension would make switching an item off turn its code
-/// spans back into findings.
-fn is_markdown(location: &str) -> bool {
+/// Markdown by its suffix, with the parked suffix taken off first:
+/// `SKILL.md.disabled` is the same markdown as `SKILL.md` and the audit
+/// reads it as one, so judging it by the trailing extension would make
+/// switching an item off turn its code spans back into findings.
+///
+/// Otherwise a shebang settles it, because that line is the file saying
+/// what runs it. Failing that, a shell suffix, and then a name carrying no
+/// suffix at all — a script in a skill's `scripts/` directory is written
+/// without one, and every such file this repository ships is a shell
+/// script.
+///
+/// Everything left is a program in some other language, and this rule does
+/// not read those. A `.rs`, `.py` or `.js` file hands a program its
+/// arguments through a call, not a command line, and a `.json` or `.toml`
+/// file holds strings some other reader gives meaning to. None of that
+/// makes what is written there any less handed over, so none of it is read
+/// as quoted: see [`Reading::Opaque`].
+fn reading(location: &str, text: &str) -> Reading {
     let lower = location.to_ascii_lowercase();
     let base = lower.strip_suffix(".disabled").unwrap_or(&lower);
-    base.ends_with(".md") || base.ends_with(".markdown")
+    if base.ends_with(".md") || base.ends_with(".markdown") {
+        return Reading::Prose;
+    }
+    if let Some(interpreter) = shebang(text) {
+        return match SHELLS.contains(&interpreter.as_str()) {
+            true => Reading::Shell,
+            false => Reading::Opaque,
+        };
+    }
+    let name = base.rsplit('/').next().unwrap_or(base);
+    let shell = SHELL_SUFFIXES.iter().any(|suffix| name.ends_with(suffix)) || !name.contains('.');
+    match shell {
+        true => Reading::Shell,
+        false => Reading::Opaque,
+    }
+}
+
+/// The interpreter a first line names, by its own name rather than the
+/// path it was reached through. `#!/usr/bin/env bash` names it in the word
+/// after `env`, which is how nearly every script this reads is written.
+fn shebang(text: &str) -> Option<String> {
+    let mut words = text
+        .lines()
+        .next()?
+        .strip_prefix("#!")?
+        .split_whitespace()
+        .filter(|word| !word.starts_with('-'));
+    let program = words.next()?;
+    let named = program.rsplit('/').next().unwrap_or(program);
+    let named = match named == "env" {
+        true => words.next().unwrap_or(named),
+        false => named,
+    };
+    Some(named.to_ascii_lowercase())
 }
 
 /// ASCII-lowercase with every whitespace byte turned into a space. Both

@@ -70,32 +70,95 @@ impl Command {
     /// `mybash.txt` are still their own whole names and still match
     /// nothing. An address is not a path to a program, whatever it ends in.
     pub(in crate::quality) fn verb(&self) -> Option<String> {
-        let written = &self.words.get(self.names_program()?)?.text;
-        let named = match written.contains("://") {
-            true => written.as_str(),
-            false => written.rsplit('/').next().unwrap_or(written),
-        };
-        Some(named.to_ascii_lowercase())
+        Some(named(&self.words.get(self.names_program()?)?.text))
     }
 
     pub(in crate::quality) fn has_word(&self, word: &str) -> bool {
         self.words.iter().any(|held| held.text == word)
     }
 
-    /// Whether this command reads one of the words it is given as a
-    /// command line of its own and runs it. What is written inside that
-    /// word is then an instruction, not an operand: the quote marks
-    /// around it are the outer shell's and the inner shell never sees
-    /// them.
+    /// Where the program that actually runs sits, past whatever launcher
+    /// prefixes stand in front of it. `env bash -c …` runs bash, and a
+    /// reading that stops at `env` is reading the launcher's argument list
+    /// as bash's.
+    fn runs_program(&self) -> Option<usize> {
+        let mut at = self.names_program()?;
+        while LAUNCHERS.contains(&named(&self.words.get(at)?.text).as_str()) {
+            at = self
+                .words
+                .iter()
+                .enumerate()
+                .skip(at + 1)
+                .find(|(_, word)| !word.text.starts_with('-') && !assigns(word))
+                .map(|(at, _)| at)?;
+        }
+        Some(at)
+    }
+
+    /// Which of the words this command is given the program reads as a
+    /// command line of its own and runs. What is written inside one of
+    /// them is an instruction, not an operand: the quote marks around it
+    /// are the outer shell's and the inner shell never sees them.
     ///
-    /// A shell handed `-c` is the plain case. `eval` is the same thing
-    /// with the shell already running, and a remote shell is the same
-    /// thing on another machine. Every other program is given operands,
-    /// whatever it does with them.
-    pub(in crate::quality) fn runs_a_command_string(&self) -> bool {
-        self.verb().is_some_and(|verb| {
-            verb == "eval" || verb == "ssh" || (interprets(&verb) && self.has_word("-c"))
-        })
+    /// This is a position and not a property of the command. `eval` joins
+    /// every operand it is given into one command line, and a remote shell
+    /// does the same on another machine. An interpreter handed `-c` reads
+    /// exactly one: the first operand after that option, because the ones
+    /// after it are the `$0`, `$1`, `$2` the command line is run with —
+    /// `sh -c 'true' marker 'git commit --no-verify'` never runs the third
+    /// operand, and reading it as code reports a switch nothing hands over.
+    ///
+    /// The option is found the way the shell finds it. A bundle is a `-`
+    /// and a run of option letters; `c` takes the command line as its
+    /// value, which is the rest of the bundle where letters follow it and
+    /// the next word where none do. So `-lc` reaches the next word and
+    /// `-cl` does not, which is what the shell does with each. Option
+    /// parsing stops at the first operand, so the `-c` in `python
+    /// script.py -c x` belongs to the script.
+    fn command_strings(&self) -> Vec<usize> {
+        let Some(program) = self.runs_program() else {
+            return Vec::new();
+        };
+        let Some(verb) = self.words.get(program).map(|word| named(&word.text)) else {
+            return Vec::new();
+        };
+        if verb == "eval" || verb == "ssh" {
+            return (program + 1..self.words.len()).collect();
+        }
+        if !interprets(&verb) {
+            return Vec::new();
+        }
+        for (at, word) in self.words.iter().enumerate().skip(program + 1) {
+            let Some(letters) = word.text.strip_prefix('-') else {
+                break;
+            };
+            if !letters.chars().all(|c| c.is_ascii_alphanumeric()) {
+                continue;
+            }
+            let Some(taken) = letters.find('c') else {
+                continue;
+            };
+            return match taken + 1 == letters.len() {
+                true => vec![at + 1],
+                false => vec![at],
+            };
+        }
+        Vec::new()
+    }
+
+    /// Every argument this command is given, each with whether the program
+    /// reads it as a command line rather than as an operand.
+    pub(in crate::quality) fn operands(&self) -> Vec<(&Word, bool)> {
+        let Some(program) = self.names_program() else {
+            return Vec::new();
+        };
+        let strings = self.command_strings();
+        self.words
+            .iter()
+            .enumerate()
+            .skip(program + 1)
+            .map(|(at, word)| (word, strings.contains(&at)))
+            .collect()
     }
 
     /// Everything after the program name, as the shell would pass it —
@@ -108,6 +171,36 @@ impl Command {
         self.words.get(at + 1..).unwrap_or_default()
     }
 }
+
+/// A program by its own name rather than the path it was reached through,
+/// lowercased.
+///
+/// `/bin/sh` and `./bash` run the same programs `sh` and `bash` do, and a
+/// line piping a download into one of them is the thing these rules exist
+/// to catch — matching the whole word means they say nothing about it. The
+/// cut is at the last separator, so `notbash` and `mybash.txt` are still
+/// their own whole names and still match nothing. An address is not a path
+/// to a program, whatever it ends in.
+fn named(written: &str) -> String {
+    let named = match written.contains("://") {
+        true => written,
+        false => written.rsplit('/').next().unwrap_or(written),
+    };
+    named.to_ascii_lowercase()
+}
+
+/// Programs that run one of their own operands as a program and hand it
+/// the rest of the line. Each takes its options first and then the
+/// program, so the program it runs is the first operand that is neither an
+/// option nor an assignment.
+///
+/// Only that shape is listed. `timeout 5 bash -c …` and `nice -n 5 bash …`
+/// put an operand of their own before the program, so the first non-option
+/// word names `5` rather than an interpreter — and a launcher option that
+/// takes a separate value, `env -u NAME bash`, lands on the value the same
+/// way. Both leave the words after them read as the operands they are
+/// written as, which is what an unrecognised program gets anyway.
+const LAUNCHERS: &[&str] = &["env", "command", "exec", "nohup", "setsid"];
 
 /// Whether this word sets a variable for the command rather than being one:
 /// a name the shell would accept, then `=`. `--referer=https://x` is not

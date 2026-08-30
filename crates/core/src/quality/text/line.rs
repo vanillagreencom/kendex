@@ -6,6 +6,30 @@ use super::super::Severity;
 use super::super::phrase::find_phrase;
 use super::tokens;
 
+/// How much of a line this rule can read.
+///
+/// The two questions a position is weighed by — what quotes, and what is
+/// dead text — have an answer only in a language whose syntax is known
+/// here. There are two: markdown, where a code span quotes and an
+/// apostrophe is punctuation, and the shell, which is the other way round.
+/// A program written in anything else is read by neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reading {
+    /// Markdown, outside its code blocks.
+    Prose,
+    /// A command line: a script the shell runs, a hook's command, the
+    /// inside of a markdown code block.
+    Shell,
+    /// A program in a language this rule does not read — Rust, Python,
+    /// JavaScript, a config format. Nothing here can say which of its
+    /// characters a program is handed and which are a comment, so every
+    /// one of them counts. A switch written into a `subprocess.run` list
+    /// or a `.arg` call reaches the program exactly as the shell spelling
+    /// does, and a reading that called it quoted would let any file this
+    /// rule cannot parse carry the switch through in silence.
+    Opaque,
+}
+
 /// One line of a document, classified.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line {
@@ -19,14 +43,12 @@ pub struct Line {
     /// skill's supporting files. A code fence is not one of these: see
     /// [`super::lines`].
     pub describing: bool,
-    /// This line is prose: markdown, outside its code blocks. It decides
-    /// one thing and nothing else — which marks quote, which
-    /// [`Line::runs_at`] reads. Prose names a switch inside a code span and
-    /// an apostrophe in it is punctuation; a command line is the other way
-    /// round. Weight is a separate question: see `describing`.
-    pub prose: bool,
+    /// Which syntax reads this line, which decides one thing and nothing
+    /// else — which marks quote, which [`Line::runs_at`] reads. Weight is
+    /// a separate question: see `describing`.
+    pub reading: Reading,
     /// This line's inline code spans, as byte ranges into `lower`. Read
-    /// only where `prose` says the marks are markdown's. A span may open
+    /// only where `reading` says the marks are markdown's. A span may open
     /// on one line and close on a later one, so these are read for the
     /// whole document at once: see [`super::lines`].
     pub spans: Vec<(usize, usize)>,
@@ -132,9 +154,11 @@ impl Line {
     /// Two shapes count. A word that *is* the needle is that program's
     /// own argument, whatever the program turns out to be — a name
     /// nobody listed is not evidence that it ignores what it is handed,
-    /// so an unrecognised program counts. A word a program will run as a
-    /// command line counts by what is written inside it, which is how a
-    /// switch reaches git through an `eval`, a `sh -c` or an `ssh`.
+    /// so an unrecognised program counts. A word the program will run as
+    /// a command line counts by what is written inside it, which is how a
+    /// switch reaches git through an `eval`, a `sh -c` or an `ssh`. Which
+    /// word that is comes from the tokenizer, which reads the operand the
+    /// option takes rather than every operand after it.
     ///
     /// What does not count is a needle standing inside a longer word that
     /// nothing will read as a command. `echo "use --no-verify"` hands one
@@ -145,17 +169,21 @@ impl Line {
     /// `runs_at`, so a comment and a `case` arm's pattern list are still
     /// the dead text they were: this widens what a live word can be, not
     /// where a word is live.
+    ///
+    /// Only a command line has an argument list to read. Prose has none,
+    /// and a program in a language this rule does not parse has one this
+    /// cannot find — where [`Line::runs_at`] already counts every position
+    /// rather than letting the file through.
     pub fn hands_over(&self, needle: &str) -> bool {
-        if self.prose {
+        if self.reading != Reading::Shell {
             return false;
         }
         tokens::commands(&self.lower).iter().any(|command| {
-            let interpreted = command.runs_a_command_string();
             command
-                .arguments()
-                .iter()
-                .filter(|word| self.runs_at(word.at.start))
-                .any(|word| match interpreted {
+                .operands()
+                .into_iter()
+                .filter(|(word, _)| self.runs_at(word.at.start))
+                .any(|(word, interpreted)| match interpreted {
                     true => tokens::commands(&word.text)
                         .iter()
                         .flat_map(|inner| inner.words.iter())
@@ -182,11 +210,20 @@ impl Line {
     /// On a command line `'` and `"` hold a string, a backtick runs what
     /// it holds rather than quoting it, and a `#` opens a comment that
     /// reaches the end of the line wherever a word could start.
+    ///
+    /// A line in neither language has no marks this can read, so nothing
+    /// on it is called quoted. That is the answer that fails closed: a
+    /// switch a Python or a Rust file hands to a program is spelled inside
+    /// that language's quotes, and calling those the shell's would let
+    /// every file this rule cannot parse through without a word.
     pub fn runs_at(&self, at: usize) -> bool {
+        if self.reading == Reading::Opaque {
+            return true;
+        }
         if at < self.command_at() {
             return false;
         }
-        if self.prose {
+        if self.reading == Reading::Prose {
             return !self
                 .spans
                 .iter()
