@@ -1,0 +1,187 @@
+name: KEN-849 loader diagnostic
+
+# TEMPORARY, and deleted with the fix. `crates/app`'s `bindings` test binary
+# exits 0xc0000139 (STATUS_ENTRYPOINT_NOT_FOUND) on windows-latest before any
+# test runs: a DLL it imports resolved, but a name it asks that DLL for did
+# not. Nothing in skill-tests.yml runs on a branch push, and this needs a
+# Windows runner, so it gets its own file on its own branch trigger.
+#
+# It names the DLL and the export by walking the binary's import table with
+# dumpbin and asking the loader for each name the way the loader would.
+
+"on":
+  push:
+    branches: [ken-849]
+
+permissions:
+  contents: read
+
+jobs:
+  loader:
+    name: Name the unbound import
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the test binaries without running them
+        run: cargo test -p kendex-app --test bindings --test icons --no-run --locked
+
+      - name: Walk the import table
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The binary under test is expected to exit non-zero. That is the
+          # whole subject, so a native exit code must not end the step.
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          Write-Host "== runner =="
+          Write-Host (Get-CimInstance Win32_OperatingSystem |
+            Select-Object -ExpandProperty Caption)
+          Write-Host (Get-CimInstance Win32_OperatingSystem |
+            Select-Object -ExpandProperty Version)
+
+          $json = cargo test -p kendex-app --test bindings --test icons --no-run --locked --message-format=json
+          $exes = @{}
+          foreach ($line in $json) {
+            if ($line -notmatch '"executable":"[^"]+"') { continue }
+            $m = $line | ConvertFrom-Json
+            if ($m.reason -ne 'compiler-artifact' -or -not $m.executable) { continue }
+            $exes[$m.target.name] = $m.executable
+          }
+          $exe = $exes['bindings']
+          Write-Host "== binaries =="
+          foreach ($k in $exes.Keys) { Write-Host "$k = $($exes[$k])" }
+          if (-not $exe) { throw 'no bindings test binary in the cargo output' }
+
+          Write-Host "== running it =="
+          $ran = & $exe --list 2>&1
+          Write-Host ("exit: 0x{0:X8}" -f $LASTEXITCODE)
+          $ran | Select-Object -First 20 | ForEach-Object { Write-Host $_ }
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products * -property installationPath
+          $dumpbin = (Get-ChildItem -Path (Join-Path $vs 'VC\Tools\MSVC') -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like '*Hostx64\x64*' } | Select-Object -First 1).FullName
+          Write-Host "== dumpbin =="
+          Write-Host $dumpbin
+          if (-not $dumpbin) { throw 'no dumpbin on this runner' }
+
+          Add-Type -Namespace Ldr -Name Api -MemberDefinition @'
+          [DllImport("kernel32", CharSet=CharSet.Unicode, SetLastError=true)]
+          public static extern IntPtr LoadLibraryW(string name);
+          [DllImport("kernel32", CharSet=CharSet.Ansi, ExactSpelling=true, SetLastError=true)]
+          public static extern IntPtr GetProcAddress(IntPtr h, string name);
+          [DllImport("kernel32", EntryPoint="GetProcAddress", ExactSpelling=true, SetLastError=true)]
+          public static extern IntPtr GetProcAddressByOrdinal(IntPtr h, IntPtr ordinal);
+          [DllImport("kernel32", CharSet=CharSet.Unicode, SetLastError=true)]
+          public static extern int GetModuleFileNameW(IntPtr h, System.Text.StringBuilder buf, int size);
+          '@
+
+          # Names the loader binds eagerly. Delay-loaded names are bound on
+          # first call, so they cannot be what stops this process starting.
+          function Read-Imports([string]$path) {
+            $out = & $dumpbin /nologo /imports $path 2>&1
+            $table = @{}
+            $dll = $null
+            foreach ($line in $out) {
+              if ($line -match 'delay load imports') { break }
+              if ($line -match '^\s{4}(\S+\.(?i:dll))\s*$') {
+                $dll = $Matches[1]
+                if (-not $table.ContainsKey($dll)) { $table[$dll] = @() }
+                continue
+              }
+              if (-not $dll) { continue }
+              if ($line -match '^\s+[0-9A-Fa-f]+\s+([A-Za-z_?@][A-Za-z0-9_?@$.]*)\s*$') {
+                $table[$dll] += $Matches[1]
+              } elseif ($line -match '^\s+Ordinal\s+(\d+)\s*$') {
+                $table[$dll] += ('#' + $Matches[1])
+              }
+            }
+            return $table
+          }
+
+          function Resolve-Module([IntPtr]$handle) {
+            $buf = New-Object System.Text.StringBuilder 32768
+            [void][Ldr.Api]::GetModuleFileNameW($handle, $buf, $buf.Capacity)
+            return $buf.ToString()
+          }
+
+          # The loader searches the directory of the module it is loading for
+          # first, so probe from there rather than from the pwsh directory.
+          Set-Location (Split-Path $exe)
+
+          $failures = @()
+          $seen = @{}
+          $level = @($exe)
+          foreach ($depth in 0, 1) {
+            $next = @()
+            foreach ($module in $level) {
+              $key = $module.ToLowerInvariant()
+              if ($seen.ContainsKey($key)) { continue }
+              $seen[$key] = $true
+              $table = Read-Imports $module
+              if ($depth -eq 0) {
+                Write-Host "== imports of $(Split-Path -Leaf $module) =="
+              }
+              foreach ($dll in ($table.Keys | Sort-Object)) {
+                $handle = [Ldr.Api]::LoadLibraryW($dll)
+                if ($handle -eq [IntPtr]::Zero) {
+                  $code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                  $failures += "$(Split-Path -Leaf $module) -> $dll : LoadLibrary failed, error $code"
+                  continue
+                }
+                $resolved = Resolve-Module $handle
+                if ($depth -eq 0) {
+                  Write-Host ("  {0,-34} {1,4} names  {2}" -f $dll, $table[$dll].Count, $resolved)
+                }
+                $next += $resolved
+                foreach ($name in $table[$dll]) {
+                  if ($name.StartsWith('#')) {
+                    $address = [Ldr.Api]::GetProcAddressByOrdinal($handle, [IntPtr][int]$name.Substring(1))
+                  } else {
+                    $address = [Ldr.Api]::GetProcAddress($handle, $name)
+                  }
+                  if ($address -eq [IntPtr]::Zero) {
+                    $failures += "$(Split-Path -Leaf $module) -> $dll : $name is not exported by $resolved"
+                  }
+                }
+              }
+            }
+            $level = $next
+          }
+
+          Write-Host "== unbound names =="
+          if ($failures.Count -eq 0) {
+            Write-Host 'every eagerly bound name resolved, two levels deep'
+          } else {
+            $failures | Sort-Object -Unique | ForEach-Object { Write-Host $_ }
+          }
+
+      # The second question the same run can answer. A debug link keeps
+      # functions nothing calls, and a raw-dylib import named by a function
+      # nothing calls is still bound when the process starts. /OPT:REF is
+      # what a release link already does, and release.yml builds the app on
+      # this platform without trouble. `cargo rustc` puts the flag on this
+      # one target so no dependency relinks.
+      - name: Does dropping dead code drop the import
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $json = cargo rustc -p kendex-app --test bindings --locked --message-format=json -- -C link-arg=/OPT:REF
+          $exe = $null
+          foreach ($line in $json) {
+            if ($line -notmatch '"executable":"[^"]+"') { continue }
+            $m = $line | ConvertFrom-Json
+            if ($m.reason -eq 'compiler-artifact' -and $m.target.name -eq 'bindings' -and $m.executable) {
+              $exe = $m.executable
+            }
+          }
+          Write-Host "relinked: $exe"
+          if (-not $exe) { throw 'no bindings test binary in the cargo output' }
+          & $exe
+          Write-Host ("exit: 0x{0:X8}" -f $LASTEXITCODE)
