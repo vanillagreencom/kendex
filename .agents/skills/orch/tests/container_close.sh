@@ -155,6 +155,11 @@ case "$resource:$action" in
     case "$mode" in
       exit) echo 'validator unavailable' >&2; exit 7 ;;
       false) printf '{"all_ok":false,"results":[{"id":"PARENT-1","state_type":"started","ok":false,"cause":"blocked"}]}\n' ;;
+      string_all_ok) printf '{"all_ok":"true","results":[{"id":"PARENT-1","state_type":"started","ok":true}]}\n' ;;
+      missing_parent) printf '{"all_ok":true,"results":[]}\n' ;;
+      duplicate_parent) printf '{"all_ok":true,"results":[{"id":"PARENT-1","state_type":"started"},{"id":"PARENT-1","state_type":"started"}]}\n' ;;
+      empty_state) printf '{"all_ok":true,"results":[{"id":"PARENT-1","state_type":""}]}\n' ;;
+      wrong_state_type) printf '{"all_ok":true,"results":[{"id":"PARENT-1","state_type":7}]}\n' ;;
       completed)
         jq 'map(if .state_type == "canceled" then .state = "Done" | .state_type = "completed" else . end)' \
           "$root/children.json" > "$root/children.next"
@@ -449,27 +454,28 @@ run_close >/dev/null 2>"$TMP_ROOT/late-cascade-first.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "late-cascade fixture keeps the first recovery record" || fail "late-cascade fixture keeps the first recovery record"
 rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
 touch "$FAKE_LINEAR_ROOT/late.cascade.on.children"
-out="$(run_close 2>"$TMP_ROOT/late-cascade-retry.err")"
-assert_eq "$out" "closed PARENT-1" "late cascade retry closes the parent"
-assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "canceled" "merged recovery restores a cascade after the open-parent check"
-[[ ! -e "$RECOVERY" ]] && ok "late cascade repair removes the merged recovery" || fail "late cascade repair removes the merged recovery"
+rc=0; run_close >/dev/null 2>"$TMP_ROOT/late-cascade-retry.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "independent child completion refuses stale parent closure" || fail "independent child completion refuses stale parent closure"
+assert_contains "$TMP_ROOT/late-cascade-retry.err" "recovery conflict for PARENT-1: parent is open and child CHILD-2 moved from Canceled to Done" "independent completion reports the state change"
+assert_contains "$TMP_ROOT/late-cascade-retry.err" "reconcile Linear state, then remove $RECOVERY" "independent completion gives the recovery remedy"
+assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "independent completion is not restored to stale canceled state"
+[[ ! -e "$FAKE_LINEAR_ROOT/update.calls" && -s "$RECOVERY" ]] && ok "independent completion retains recovery without a stale update" || fail "independent completion retains recovery without a stale update"
 
-LATE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-late-mutant"
-assert_eq "$(grep -Fc '"$ACTIVE_ROWS" "$SNAPSHOT" > "$PUBLISHED_ROWS"' "$SCRIPT")" "2" "late-cascade control finds both merge producers"
-awk 'index($0, "\"$ACTIVE_ROWS\" \"$SNAPSHOT\" > \"$PUBLISHED_ROWS\"") { seen++; if (seen == 2) { print "    " sprintf("%c", 39) " \"$SNAPSHOT\" > \"$PUBLISHED_ROWS\" || {"; next } } { print }' "$SCRIPT" > "$LATE_MUTANT"
-chmod +x "$LATE_MUTANT"
+RECHECK_MUTANT="$SANDBOX/skills/orch/scripts/container-close-recheck-mutant"
+assert_eq "$(grep -Fxc 'check_open_recovery' "$SCRIPT")" "2" "independent-completion control finds the final recheck"
+awk '$0 == "check_open_recovery" { seen++; if (seen == 2) { print ":"; next } } { print }' "$SCRIPT" > "$RECHECK_MUTANT"
+chmod +x "$RECHECK_MUTANT"
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 touch "$FAKE_LINEAR_ROOT/fail.complete.before"
 rc=0
 "$SCRIPT" "$SANDBOX" PARENT-1 >/dev/null 2>&1 || rc=$?
-[[ $rc -ne 0 ]] && ok "late-cascade mutant fixture keeps recovery" || fail "late-cascade mutant fixture keeps recovery"
+[[ $rc -ne 0 ]] && ok "independent-completion mutant fixture keeps recovery" || fail "independent-completion mutant fixture keeps recovery"
 rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
 touch "$FAKE_LINEAR_ROOT/late.cascade.on.children"
-rc=0
-"$LATE_MUTANT" "$SANDBOX" PARENT-1 >/dev/null 2>"$TMP_ROOT/late-mutant.err" || rc=$?
-[[ $rc -ne 0 ]] && ok "late-cascade control fails when fresh snapshot replaces recovery" || fail "late-cascade control fails when fresh snapshot replaces recovery"
-assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "late-cascade mutant loses the recorded restoration"
+out="$("$RECHECK_MUTANT" "$SANDBOX" PARENT-1 2>"$TMP_ROOT/recheck-mutant.err")"
+assert_eq "$out" "closed PARENT-1" "independent-completion control fails without the final recheck"
+assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "canceled" "recheck mutant restores a legitimate completion to stale canceled state"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -596,8 +602,8 @@ assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "authorization refusal does not retry parent completion"
 
 AUTH_MUTANT="$SANDBOX/skills/orch/scripts/container-close-auth-mutant"
-assert_eq "$(grep -Fxc 'check_open_recovery' "$SCRIPT")" "1" "authorization control finds the open-parent boundary"
-awk '$0 == "check_open_recovery" { print "repair_canceled"; next } { print }' "$SCRIPT" > "$AUTH_MUTANT"
+assert_eq "$(grep -Fxc 'check_open_recovery' "$SCRIPT")" "2" "authorization control finds both open-parent boundaries"
+awk '$0 == "check_open_recovery" { seen++; if (seen == 1) { print "repair_canceled"; next } } { print }' "$SCRIPT" > "$AUTH_MUTANT"
 chmod +x "$AUTH_MUTANT"
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -638,8 +644,7 @@ rc=0
 run_close >"$TMP_ROOT/summary-rows.out" 2>"$TMP_ROOT/summary-rows.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "invalid child summary rows refuse closure" || fail "invalid child summary rows refuse closure"
 [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "invalid child summary rows fail before completion" || fail "invalid child summary rows fail before completion"
-
-for validation_mode in exit false; do
+for validation_mode in exit false string_all_ok missing_parent duplicate_parent empty_state wrong_state_type; do
   reset_state
   printf '%s\n' "$validation_mode" > "$FAKE_LINEAR_ROOT/validation.mode"
   printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -650,16 +655,15 @@ for validation_mode in exit false; do
   assert_contains "$TMP_ROOT/validation-$validation_mode.err" "completion validation" "$validation_mode validation reports its cause"
   assert_no_runs "$validation_mode validation removes private run state"
 done
-
-REFUSAL_MUTANT="$SANDBOX/skills/orch/scripts/container-close-refusal-mutant"
-assert_eq "$(grep -Fc 'if [[ "$ALL_OK" != "true" ]]; then' "$SCRIPT")" "1" "refusal control finds the live validation gate"
-awk 'index($0, "if [[ \"$ALL_OK\" != \"true\" ]]; then") { print "if false; then"; next } { print }' "$SCRIPT" > "$REFUSAL_MUTANT"
-chmod +x "$REFUSAL_MUTANT"
+SHAPE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-shape-mutant"
+assert_eq "$(grep -Fc '(.all_ok | type) == "boolean"' "$SCRIPT")" "1" "validation-shape control finds the Boolean gate"
+awk '{ sub(/\(\.all_ok \| type\) == "boolean"/, "(.all_ok | type) == \"string\""); print }' "$SCRIPT" > "$SHAPE_MUTANT"
+chmod +x "$SHAPE_MUTANT"
 reset_state
-printf 'false\n' > "$FAKE_LINEAR_ROOT/validation.mode"
+printf 'string_all_ok\n' > "$FAKE_LINEAR_ROOT/validation.mode"
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
-"$REFUSAL_MUTANT" "$SANDBOX" PARENT-1 >/dev/null
-assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "refusal control fails when the all_ok gate is removed"
+"$SHAPE_MUTANT" "$SANDBOX" PARENT-1 >/dev/null
+assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "validation-shape control fails when string true is accepted"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"

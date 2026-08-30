@@ -81,6 +81,14 @@ if [[ -n "$BASE_WORKTREE" ]]; then
     exit 1
   }
   git -C "$BASE_WORKTREE" merge --ff-only --no-overwrite-ignore "origin/$BASE_BRANCH" >&2
+  LOCAL_SHA="$(git -C "$BASE_WORKTREE" rev-parse "refs/heads/$BASE_BRANCH")" \
+    || { echo "sync-base: cannot resolve local $BASE_BRANCH after fast-forward" >&2; exit 1; }
+  ORIGIN_SHA="$(git -C "$BASE_WORKTREE" rev-parse "refs/remotes/origin/$BASE_BRANCH")" \
+    || { echo "sync-base: cannot resolve origin/$BASE_BRANCH after fast-forward" >&2; exit 1; }
+  [[ "$LOCAL_SHA" == "$ORIGIN_SHA" ]] || {
+    printf 'sync-base: base mismatch after fast-forward: local %s, origin %s\n' "$LOCAL_SHA" "$ORIGIN_SHA" >&2
+    exit 1
+  }
 else
   git -C "$REPO_ROOT" fetch . \
     "refs/remotes/origin/$BASE_BRANCH:refs/heads/$BASE_BRANCH" >&2

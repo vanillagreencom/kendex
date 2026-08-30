@@ -352,6 +352,9 @@ jq -r '[.[] | select(.state_type == "canceled")] | sort_by(.depth) | reverse[] |
 ids=(); states=(); depths=(); load_recovery_rows "$SNAPSHOT"
 VALIDATION="$("$LINEAR" issues validate-completion "$PARENT_ID" --include-children-of "$PARENT_ID" --container)" \
   || { echo "container-close: completion validation failed for $PARENT_ID" >&2; exit 1; }
+jq -e --arg id "$PARENT_ID" '(.results | if type == "array" then [.[] | select(.id == $id)] else [] end) as $parent |
+  (.all_ok | type) == "boolean" and (.results | type) == "array" and ($parent | length) == 1 and ($parent[0].state_type | type) == "string" and ($parent[0].state_type | length) > 0' <<<"$VALIDATION" >/dev/null \
+  || { echo "container-close: completion validation returned invalid results for $PARENT_ID" >&2; exit 1; }
 ALL_OK="$(jq -r '.all_ok // false' <<<"$VALIDATION")" \
   || { echo "container-close: completion validation returned invalid JSON for $PARENT_ID" >&2; exit 1; }
 if [[ "$ALL_OK" != "true" ]]; then
@@ -362,9 +365,7 @@ fi
 VALIDATED_PARENT_TYPE="$(jq -r --arg id "$PARENT_ID" \
   '.results[] | select(.id == $id) | .state_type // ""' <<<"$VALIDATION")" \
   || { echo "container-close: completion validation returned invalid results for $PARENT_ID" >&2; exit 1; }
-if [[ "$VALIDATED_PARENT_TYPE" == "completed" ]]; then
-  publish_recovery; repair_canceled; printf 'closed %s\n' "$PARENT_ID"; exit 0
-fi
+if [[ "$VALIDATED_PARENT_TYPE" == "completed" ]]; then publish_recovery; repair_canceled; printf 'closed %s\n' "$PARENT_ID"; exit 0; fi
 
 jq -r '.[] | [.id, .title, .state_type] | @tsv' <<<"$CHILDREN" > "$CHILD_ROWS" \
   || { echo "container-close: cannot build child summary rows for $PARENT_ID" >&2; exit 1; }
@@ -379,6 +380,7 @@ while IFS=$'\t' read -r id title state_type; do
   printf -- '- %s %s %s — PR %s\n' "$id" "$MARKER" "$title" "$PR_REFERENCE" >> "$SUMMARY"
 done < "$CHILD_ROWS"
 publish_recovery
+check_open_recovery
 
 COMPLETE_RC=0
 "$LINEAR" issues complete "$PARENT_ID" --summary-file "$SUMMARY" >/dev/null || COMPLETE_RC=$?

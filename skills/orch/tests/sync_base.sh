@@ -98,6 +98,24 @@ out="$($SYNC "$CLONE" 2>"$TMP_ROOT/sync.err")"
 assert_eq "$out" "main" "owned-base sync prints the branch"
 assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$(git -C "$SEED" rev-parse main)" "sync advances the worktree that owns the base"
 
+git -C "$BASE_TREE" commit -q --allow-empty -m local-ahead
+local_ahead_sha="$(git -C "$BASE_TREE" rev-parse HEAD)"
+origin_sha="$(git -C "$BASE_TREE" rev-parse origin/main)"
+AHEAD_MUTANT="$TMP_ROOT/sync-base-ahead-mutant"
+assert_eq "$(grep -Fc '[[ "$LOCAL_SHA" == "$ORIGIN_SHA" ]] || {' "$SYNC")" "1" "local-ahead control finds the SHA equality gate"
+awk '
+  index($0, "SCRIPT_DIR=\"$(cd --") { print "SCRIPT_DIR=\"${SYNC_TEST_SCRIPT_DIR:?}\""; next }
+  { sub(/\[\[ "\$LOCAL_SHA" == "\$ORIGIN_SHA" \]\]/, "[[ -n \"$LOCAL_SHA\" ]]"); print }
+' "$SYNC" > "$AHEAD_MUTANT"
+chmod +x "$AHEAD_MUTANT"
+assert_eq "$(SYNC_TEST_SCRIPT_DIR="$REPO_ROOT/skills/orch/scripts" "$AHEAD_MUTANT" "$CLONE" 2>"$TMP_ROOT/local-ahead-mutant.err")" "main" "local-ahead control fails without SHA equality"
+rc=0
+out="$($SYNC "$CLONE" 2>"$TMP_ROOT/local-ahead.err")" || rc=$?
+[[ $rc -ne 0 ]] && ok "owned local-ahead base fails closed" || fail "owned local-ahead base fails closed"
+assert_eq "$out" "" "local-ahead refusal prints no branch"
+grep -Fq "local $local_ahead_sha, origin $origin_sha" "$TMP_ROOT/local-ahead.err" && ok "local-ahead refusal names both SHAs" || fail "local-ahead refusal names both SHAs"
+git -C "$BASE_TREE" reset -q --hard "$origin_sha"
+
 printf 'dirty\n' >> "$BASE_TREE/local"
 printf 'six\n' >> "$SEED/file"
 git -C "$SEED" add file
