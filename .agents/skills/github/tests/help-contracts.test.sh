@@ -167,10 +167,15 @@ run_help_contracts() {
   done
 
   for token in 'ALREADY MERGED PR #N' 'QUEUED IN MERGE QUEUE PR #N' \
-    'AUTO-MERGE ENABLED PR #N' 'CLOSED (not merged) PR #N'; do
+    'AUTO-MERGE ENABLED PR #N' 'BLOCKED PR #N' \
+    'The requested operation failed' 'pre-existing queue entry' \
+    'auto-merge request may remain active' 'CLOSED (not merged) PR #N'; do
     assert_section_token "$merge_help" 'Merge-mode exit codes:' '--check exit:' "$token" \
       "$label exit codes carry $token"
   done
+  assert_section_rejects_token "$merge_help" 'Merge-mode exit codes:' '--check exit:' \
+    'Nothing merged, queued, or armed.' \
+    "$label BLOCKED outcome does not erase pre-existing pending state"
 
   for token in '--check exits 0' 'valid readiness JSON' 'can_merge=false' \
     'CLOSED' 'nonzero'; do
@@ -229,6 +234,15 @@ merge_decoy=$'Exit 75 is volatile:\nwatch only\nTerminal and mutation rules:\nej
 assert_section_rejects_decoy "$merge_decoy" 'Exit 75 is volatile:' \
   'Terminal and mutation rules:' 'ejected' \
   'pr-merge token in a sibling section does not satisfy ownership'
+
+stale_blocked_help=$'Merge-mode exit codes:\n  1 BLOCKED PR #N\n  Nothing merged, queued, or armed.\n--check exit:'
+if section_has_token "$stale_blocked_help" 'Merge-mode exit codes:' '--check exit:' \
+    'Nothing merged, queued, or armed.'; then
+  pass 'stale BLOCKED claim is detectable inside its owning section'
+else
+  fail 'stale BLOCKED claim is detectable inside its owning section' \
+    'the stale-claim control did not reach the merge exit table'
+fi
 
 echo
 echo "=== SKILL word ceiling and mirror ==="

@@ -58,7 +58,7 @@ Merge-mode exit codes:
   75   AUTO-MERGE ENABLED PR #N
        Classic auto-merge is armed until protection clears.
   1    BLOCKED PR #N
-       Nothing merged, queued, or armed.
+       The requested operation failed; a pre-existing queue entry or auto-merge request may remain active.
   1    CLOSED (not merged) PR #N
        The PR is closed unmerged. Nothing was attempted.
 
