@@ -33,10 +33,22 @@ DENYLIST=(
 )
 
 # scan <file> — prints "file: name" for every denylisted name found.
+#
+# grep's status is part of the answer: 0 found, 1 none, anything else is a scan
+# that did not run — a missing file included — and a scan that did not run is
+# not a clean document. It exits rather than returning, so the caller's command
+# substitution carries the refusal: an empty result there reads as "no offender"
+# and is exactly the fail-open this guards.
 scan() {
-  local f="$1" name
+  local f="$1" name status
   for name in "${DENYLIST[@]}"; do
-    if grep -qiw -- "$name" "$f"; then
+    status=0
+    grep -qiw -- "$name" "$f" || status=$?
+    if [[ "$status" -gt 1 ]]; then
+      printf 'the scan of %s could not run (grep exited %s)\n' "$f" "$status" >&2
+      exit 1
+    fi
+    if [[ "$status" -eq 0 ]]; then
       printf '%s: %s\n' "$f" "$name"
     fi
   done

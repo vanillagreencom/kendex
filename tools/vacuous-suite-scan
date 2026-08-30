@@ -39,8 +39,8 @@
 #
 # A suite declares at most one subject. Two declarations are a malformed
 # header rather than a category to resolve by precedence, and they end the run.
-# Every header is read before any suite is staged, so an unknown or doubled
-# declaration ends the run whether or not its suite can run from a copy.
+# An unknown or doubled declaration ends the run whether or not its suite can
+# run from a copy: a skill's headers are read before its suites are staged.
 #
 # What is left under vacuous after those two categories is not always a suite
 # to fix. A suite whose subject does not travel with the skill — a document
@@ -238,12 +238,11 @@ scan_skill() {
         die "$skill_dir/tests holds no shell suites"
     fi
 
-    # Every declaration is read and judged BEFORE anything is staged or run. A
-    # header defect is a defect in text, settled by reading it, so it must not
-    # depend on the suite reaching the comparison: a suite that fails its
-    # pristine run is set aside as unrunnable, and validating inside that loop
-    # left every such suite's declaration unread. It also means a typo fails in
-    # the first second rather than after minutes of staging and running.
+    # This skill's declarations are all read and judged BEFORE any of its
+    # suites is staged or run. A header defect is a defect in text, settled by
+    # reading it, so it must not depend on the suite reaching the comparison: a
+    # suite that fails its pristine run is set aside as unrunnable, and
+    # validating inside that loop left every such suite's declaration unread.
     for suite in "${suites[@]}"; do
         subjects+=("$(suite_subject "$skill_dir/tests/$suite")")
     done
