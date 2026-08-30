@@ -1,0 +1,65 @@
+local -A cache
+local    -A cache
+local -rA cache
+local -Ar cache
+local -r -A cache
+local -r -x -A cache
+typeset -A cache
+typeset -r -A cache
+declare -A cache
+declare -gA cache
+declare -Ag cache
+declare -g COUNT=1
+declare -x -g name
+declare -n ref=target
+local -n ref=target
+readonly -A cache
+declare -l lowered_attr
+declare -u upper_attr
+local -al items
+mapfile -t lanes < panes.txt
+readarray -t lanes < panes.txt
+exec {lock_fd}<"$lockfile"
+exec {log_fd}>>"$logfile"
+head_lower="${head,,}"
+head_upper="${head^^}"
+initial="${name^}"
+lowered="${name,}"
+first="${words[0]^}"
+coproc FOO { :; }
+coproc { read -r line; }
+printf "%s" "$value" |& tee log
+printf "%s" "$value"|& tee log
+grep -q x file |&tee log
+(cat f)|& tee log
+run 2>&1|& tee log
+printf x\(|& cat
+printf x\;|& cat
+printf x\[|& cat
+cmd |&
+cmd &>> log
+cmd&>>log
+  short) run ;;&
+  short) run ;&
+case $x in short) run ;;&long) run ;; esac
+case $x in short) run ;&long) run ;; esac
+initial="${1^}"
+lowered="${1,}"
+indirect="${!name^}"
+indirect_all="${!name^^}"
+every="${@^^}"
+star="${*,,}"
+tenth="${10^}"
+pid_initial="${$^}"
+bgpid_initial="${!^}"
+name_zero="${0^}"
+under="${_^}"
+opts_initial="${-^}"
+code_initial="${?^}"
+argc_initial="${#^}"
+printf '%s\n' [|& cat
+printf '%s\n' x[|& cat
+cmd |&$RUNNER
+cmd |&"$log"
+case $x in a) printf x[;&b) :;; esac
+  a) [ -n "$v" ];& b) :;;

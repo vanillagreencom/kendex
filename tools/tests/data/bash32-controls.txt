@@ -1,0 +1,47 @@
+local -r frozen=1
+local -a items
+local -ar items
+local -r -i count=0
+local -r -- name
+declare -i count=0
+declare -f helper
+declare -p NAME
+declare -r -x name
+declare -f -p helper
+readonly frozen=1
+readonly -a items
+typeset -r frozen=1
+grep -A 3 pattern file
+export -n VAR
+printf '%s\n' "${items[@]}"
+echo "${first}, ${second}"
+total=${#files[@]}
+fallback=${value:-,}
+MKTEMP_CALL_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)mktemp([^A-Za-z0-9_.-]|$)'
+RUNNER_RE="(^[[:space:]]*|[;&|\`(][[:space:]]*)"
+KIND_TAIL="([[:space:]\"'\`;&|)]|\$)"
+  SEP = ";&|()" "\n" "\r"
+alternation='([a-z]|&)'
+escaped_class='[\(|&]'
+escaped_class2='[\;&|)]'
+escaped_class3='[\[;&]'
+escaped_class4='[a\(|&]'
+escaped_group='\(|&\)'
+awk_redirect_re=/([[:space:]]>>?|[0-9]>|&>)/
+first || second &
+first; second &
+echo "${1}, ${2}"
+echo "${*}"
+echo "${!ref}"
+keys="${!arr[@]}"
+names="${!prefix*}"
+flags="${-}"
+code="${?}"
+count="${#}"
+trimmed="${path#-}"
+defaulted=${x:-#}
+plain_class='[|&]'
+open_class='[|&(]'
+brace_class='[|&{]'
+class_with_semi='[;&]'
+sedprog='s/\(foo\)|&/x/'

@@ -11,8 +11,11 @@
 # EVERY CHECK BELOW FAILS CLOSED. A proof that cannot fail is worse than no
 # proof, because ten files rest on this one. So no result is read out of an
 # empty string: git, grep and awk are asked for their status, and a command
-# that could not run ends the run instead of scoring a pass.
-set -uo pipefail
+# that could not run ends the run instead of scoring a pass. And THE BLOCK IS
+# NEVER EXECUTED. It is content this suite judges, so it is parsed: the
+# quoted literals are lifted out and joined, and the pattern reaches nothing
+# but `grep -E --`. There is no eval here and no shell a block could reach.
+set -uf -o pipefail
 ROOT="$(git rev-parse --show-toplevel)" || exit 2
 cd "$ROOT" || exit 2
 
@@ -166,6 +169,36 @@ else
 fi
 
 # --- 2. the roster is closed ---
+# Over markers first, then over filenames. The tenth carrier was an inline
+# scan inside bot_review_status.sh, found by reading rather than by anything
+# failing, so a roster that closes over `bash32-portability.test.sh` would
+# miss the next one added the same way.
+case "$BEGIN" in
+*[\\^\$.\[\]\|\(\)\*\+\?\{\}]*)
+  bad "the marker carries a regex metacharacter, so the tree-wide scan cannot pin it"
+  verdict
+  exit
+  ;;
+esac
+marker_files=""
+status=0
+marker_files="$(git grep -I --name-only -E -e "^$BEGIN\$")" || status=$?
+if [ "$status" -gt 1 ]; then
+  bad "the marker scan could not run (git grep exited $status)"
+  verdict
+  exit
+fi
+for f in $marker_files; do
+  listed=no
+  for c in $CARRIERS; do [ "$c" = "$f" ] && listed=yes; done
+  if [ "$listed" = yes ]; then
+    ok "$f carries the marker and is a listed carrier"
+  else
+    bad "$f carries the shared block but is on no list" \
+      "add it to CARRIER_SOURCES, whatever the file is named"
+  fi
+done
+
 for f in $TRACKED; do
   case "$f" in
   */tests/bash32-portability.test.sh) ;;
@@ -197,153 +230,72 @@ for f in $EXCLUDED; do
 done
 
 # --- 3. the set's teeth, against the text the suites ship ---
-# Running the block is the only way to test the regex the suites actually use
-# rather than a retyped copy, so every line is first held to the shape the
-# block may have: a single-quoted PATTERN assignment, or a comment.
-shape_ok=yes
+# The pattern is built out of the block, not run from it. A shell single-quote
+# ends at the next one, so the literal between the quotes is exactly the bytes
+# in it and a line carrying a second quote is not an assignment at all — which
+# is what an `eval` of a shape-checked line would have run. The first
+# assignment opens the chain, the rest append to it, and anything else is a
+# refusal, so a block can define a pattern and nothing more.
+PATTERN=""
+built=none
 while IFS= read -r line; do
   case "$line" in
-  '#'* | '') ;;
-  "PATTERN=$Q"*"$Q") ;;
-  "PATTERN=\"\$PATTERN\"$Q"*"$Q") ;;
+  '#'* | '') continue ;;
+  esac
+  if [ "$built" = none ]; then
+    prefix="PATTERN=$Q"
+  else
+    prefix="PATTERN=\"\$PATTERN\"$Q"
+  fi
+  case "$line" in
+  "$prefix"*"$Q")
+    body="${line#"$prefix"}"
+    body="${body%"$Q"}"
+    case "$body" in
+    *"$Q"*)
+      bad "a block line closes its quote and keeps going, so it is not an assignment" "$line"
+      built=refused
+      break
+      ;;
+    esac
+    PATTERN="$PATTERN$body"
+    built=yes
+    ;;
   *)
-    shape_ok=no
-    bad "the block holds a line that is neither a comment nor a PATTERN assignment" "$line"
+    bad "the block holds a line that is not the PATTERN assignment expected here" "$line"
+    built=refused
+    break
     ;;
   esac
 done <<EOF
 $reference
 EOF
-[ "$shape_ok" = no ] || ok "every block line is a comment or a PATTERN assignment"
-
-PATTERN=""
-[ "$shape_ok" = no ] || eval "$reference"
-if [ -z "$PATTERN" ]; then
-  bad "the block left PATTERN empty, so nothing below was proven"
+if [ "$built" != yes ] || [ -z "$PATTERN" ]; then
+  bad "no pattern could be built from the block, so nothing below was proven"
   verdict
   exit
 fi
+ok "the block parses as a PATTERN chain and was never executed"
 
-# Constructs that must be flagged. Each is a must-fail probe: injected into a
-# scanned tree it turns that tree's suite red, which is the whole claim these
-# suites make. The alternate spellings are how the earlier set was walked
-# past; `local -rA` and `local -r -A` are one declaration, so both are here.
-PROBES="$(
-  cat <<'PROBES_EOF'
-local -A cache
-local    -A cache
-local -rA cache
-local -Ar cache
-local -r -A cache
-local -r -x -A cache
-typeset -A cache
-typeset -r -A cache
-declare -A cache
-declare -gA cache
-declare -Ag cache
-declare -g COUNT=1
-declare -x -g name
-declare -n ref=target
-local -n ref=target
-readonly -A cache
-declare -l lowered_attr
-declare -u upper_attr
-local -al items
-mapfile -t lanes < panes.txt
-readarray -t lanes < panes.txt
-exec {lock_fd}<"$lockfile"
-exec {log_fd}>>"$logfile"
-head_lower="${head,,}"
-head_upper="${head^^}"
-initial="${name^}"
-lowered="${name,}"
-first="${words[0]^}"
-coproc FOO { :; }
-coproc { read -r line; }
-printf "%s" "$value" |& tee log
-printf "%s" "$value"|& tee log
-grep -q x file |&tee log
-(cat f)|& tee log
-run 2>&1|& tee log
-printf x\(|& cat
-printf x\;|& cat
-printf x\[|& cat
-cmd |&
-cmd &>> log
-cmd&>>log
-  short) run ;;&
-  short) run ;&
-case $x in short) run ;;&long) run ;; esac
-case $x in short) run ;&long) run ;; esac
-initial="${1^}"
-lowered="${1,}"
-indirect="${!name^}"
-indirect_all="${!name^^}"
-every="${@^^}"
-star="${*,,}"
-tenth="${10^}"
-pid_initial="${$^}"
-bgpid_initial="${!^}"
-name_zero="${0^}"
-under="${_^}"
-opts_initial="${-^}"
-code_initial="${?^}"
-argc_initial="${#^}"
-PROBES_EOF
-)"
-
-# Lines that must NOT be flagged: a set that reds Bash 3.2-legal source is a
-# set nobody can keep, and every probe above widens an anchor a line here
-# keeps honest. Five are real, out of skills/preflight/scripts/preflight,
-# hooks/pre-commit-check.sh and reviewer's harness-safe-shell-lint. The rest
-# spell an operator without being one, including the escaped classes that
-# bound the pipe anchor and the parameter forms that carry no conversion.
-CONTROLS="$(
-  cat <<'CONTROLS_EOF'
-local -r frozen=1
-local -a items
-local -ar items
-local -r -i count=0
-local -r -- name
-declare -i count=0
-declare -f helper
-declare -p NAME
-declare -r -x name
-declare -f -p helper
-readonly frozen=1
-readonly -a items
-typeset -r frozen=1
-grep -A 3 pattern file
-export -n VAR
-printf '%s\n' "${items[@]}"
-echo "${first}, ${second}"
-total=${#files[@]}
-fallback=${value:-,}
-MKTEMP_CALL_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)mktemp([^A-Za-z0-9_.-]|$)'
-RUNNER_RE="(^[[:space:]]*|[;&|\`(][[:space:]]*)"
-KIND_TAIL="([[:space:]\"'\`;&|)]|\$)"
-  SEP = ";&|()" "\n" "\r"
-alternation='([a-z]|&)'
-escaped_class='[\(|&]'
-escaped_class2='[\;&|)]'
-escaped_class3='[\[;&]'
-escaped_class4='[a\(|&]'
-escaped_group='\(|&\)'
-awk_redirect_re=/([[:space:]]>>?|[0-9]>|&>)/
-first || second &
-first; second &
-echo "${1}, ${2}"
-echo "${*}"
-echo "${!ref}"
-keys="${!arr[@]}"
-names="${!prefix*}"
-flags="${-}"
-code="${?}"
-count="${#}"
-trimmed="${path#-}"
-defaulted=${x:-#}
-CONTROLS_EOF
-)"
+# The proof's two fixtures, read as data and never sourced. tools/tests/data
+# holds them a line per case: probes are Bash 4 constructs the set must flag,
+# each a must-fail probe that reds a real suite when dropped into a scanned
+# tree; controls are Bash 3.2-legal source it must leave alone, including the
+# bracket expressions and separator strings in this repo that an unanchored
+# operator pattern used to match. An unreadable or empty fixture ends the run
+# rather than proving nothing over no cases — and it is read here rather than
+# inside a helper, because a `bad` raised in a command substitution is stdout,
+# not a failure, and would land in the variable it was refusing to fill.
+PROBES=""
+CONTROLS=""
+fixture_status=0
+PROBES="$(cat tools/tests/data/bash32-probes.txt)" || fixture_status=$?
+CONTROLS="$(cat tools/tests/data/bash32-controls.txt)" || fixture_status=$?
+if [ "$fixture_status" -ne 0 ] || [ -z "$PROBES" ] || [ -z "$CONTROLS" ]; then
+  bad "a fixture under tools/tests/data is missing or empty, so the proof has no cases"
+  verdict
+  exit
+fi
 
 # scan MODE PATTERN LINES — the lines PATTERN misses, or the ones it hits. 2
 # when grep could not run: an invalid ERE prints nothing and exits 2, and

@@ -301,25 +301,23 @@ PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
 PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?|[0-9]+|[-#?$!@*])(,,?|\^\^?)'
 PATTERN="$PATTERN"'|(^|[^[:alnum:]_])coproc([[:blank:]]|$)'
 # The pipe-with-stderr, the append-both redirection, and the two case
-# terminators. Each is anchored on BOTH sides, and both sides carry weight:
-# wide enough to admit every real token boundary, a bare word or quote or
-# brace or blank or line end or an escaped metacharacter, and narrow enough
-# to leave a script's own bracket expression alone. Only shapes that cannot
-# occur in real shell are excluded, since nothing legal ends a command with a
-# bare [ or ; or ( ahead of a pipe, and nothing legal begins one with ] > < )
-# ; | & or a backslash after it. Widening one side and not the other reopens
-# the side left alone: unanchored, these matched the character classes inside
-# preflight's own regexes; anchored on one side only, they missed a quoted
-# left boundary and a case arm that runs straight into the next pattern.
+# terminators, each anchored on BOTH sides. The left admits every real token
+# boundary — a bare word, a quote, a brace, a bracket, a blank, a line end,
+# an escaped metacharacter — and the right admits only what can begin a
+# command. Widening one side and not the other reopens the side left alone:
+# unanchored, these matched the character classes inside preflight's own
+# regexes; anchored on one side only, they missed a quoted left boundary and
+# a case arm running straight into the next pattern.
 #
-# The boundary this cannot decide is an escape. `x\(|& cat` is a pipe and
-# `[\(|&]` is a character class, and telling them apart is parsing, not
-# matching. The anchors take the shapes a pipeline has and let a regex
-# literal that spells one through, so a scan is a backstop and never the
-# rule: the rule is that every one of these has a Bash 3.2 spelling — `2>&1 |`
-# for the pipe, `>>file 2>&1` for the redirection, a repeated case body for
-# the fallthrough — and a script that writes those needs no verdict here.
-PATTERN="$PATTERN"'|(^|[^[;(]|\\[[;(])\|&([^]><);|&\\]|$)|&>>|(^|[^[]);;?&([^|]|$)'
+# What no anchor decides is which of two identical texts is code. `x\(|& cat`
+# is a pipe and `[\(|&]` is a character class; `x[;&b)` is a case arm and
+# `[a;&b]` is a class again. Separating those is parsing, not matching, so
+# the anchors take the shapes a pipeline has and let a regex literal that
+# spells one through in either direction. That is why a scan is a backstop
+# and never the rule: each of these has a Bash 3.2 spelling — `2>&1 |` for
+# the pipe, `>>file 2>&1` for the redirection, a repeated case body for the
+# fallthrough — and a script that writes those needs no verdict here.
+PATTERN="$PATTERN"'|(^|[^;(]|\\[;(])\|&([[:blank:]]|$|[[:alnum:]_.~$"])|&>>|(^|[^|]);;?&([^]|]|$)'
 # --- shared bash32 pattern set: end
 portability_violations="$(grep -rnE "$PATTERN" "$SCRIPTS_DIR" \
     | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
