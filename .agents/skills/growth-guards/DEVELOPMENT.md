@@ -258,7 +258,9 @@ in, which the lane's own invariant turns into a spurious exit 2.
 count, and `prose` inherit the rule from the helper; `prose` reaches it having
 already made the same judgement in its own walk. Every skip the helper makes
 is named and counted in `GG_WALK_SKIPPED`, which each check's verdict line
-carries as `N matched path(s) not measured`.
+carries as `N matched path(s) not measured`. The tally is of distinct PATHS:
+a check running several lanes over overlapping pathspecs meets the same
+unreadable blob once per lane, and `gg_note_skip` names and counts it once.
 
 ## byte-ceiling sizing
 

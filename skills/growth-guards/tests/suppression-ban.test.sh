@@ -397,6 +397,24 @@ case "$OUT" in
   *) ok "and no unmeasured qualifier accompanies a fully read scan" ;;
 esac
 
+echo "=== one path skipped by two lanes is named once and counted once ==="
+new_repo unmeasured-dedup
+printf 'fn main() {}\n' >"$R/ok.rs"
+# The same unreadable blob reaches two of this check's scans: the module-wide
+# pragma matches the blanket lane's listing and the bare attribute matches the
+# bare-allow carrier listing, so the sniff meets blob.rs twice. The verdict
+# counts PATHS, so both the name and the number are per distinct path.
+printf '\000\n#![allow(dead_code)]\n#[allow(dead_code)]\nfn x() {}\n' >"$R/blob.rs"
+git -C "$R" add -A
+run_sb
+NAMED="$(printf '%s\n' "$OUT" | grep -c "not measured: blob\.rs — binary content, not text")" || NAMED=0
+[ "$RC" -eq 0 ] && [ "$NAMED" -eq 1 ] && case "$OUT" in
+  *"suppression-ban: OK"*"1 matched path(s) not measured"*) true ;;
+  *) false ;;
+esac \
+  && ok "a two-lane skip prints one not-measured line and counts one path" \
+  || bad "two-lane skip is deduplicated by path" "rc=$RC named=$NAMED out=$OUT"
+
 echo "=== fail-closed: an unreadable staged blob is a collection error ==="
 new_repo unreadable
 printf '#[allow(dead_code)]\nfn f() {}\n' >"$R/bare.rs"

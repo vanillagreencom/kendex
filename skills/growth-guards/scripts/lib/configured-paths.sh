@@ -85,9 +85,33 @@ gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
 # Needs gg_tmpdir and the configured globs already loaded. ON_FILE runs in
 # the caller's own shell, as `ON_FILE PATH BLOBFILE`, so it may set the
 # caller's counters.
+#
+# The tally is of PATHS, which is what the verdict line claims — and one path
+# reaches the sniff once per scan that lists it, so a check running several
+# lanes over overlapping pathspecs meets the same unreadable blob several
+# times. The paths already named are kept in $GG_TMP/skipped.z, NUL-delimited
+# so a path holding any byte but NUL round-trips exactly; a repeat is neither
+# printed again nor counted again, and the reason it carries is the first
+# one it was given. The file lives beside the counter and is emptied wherever
+# the counter is reset, so the two always describe the same run.
 GG_WALK_SKIPPED=0
 
+gg_skip_seen() { # PATH — 0 when this path was already named unmeasured
+  local seen
+  [ -s "$GG_TMP/skipped.z" ] || return 1
+  while IFS= read -r -d '' seen; do
+    if [ "$seen" = "$1" ]; then
+      return 0
+    fi
+  done <"$GG_TMP/skipped.z"
+  return 1
+}
+
 gg_note_skip() { # PATH REASON — a matched path this scan cannot measure
+  if gg_skip_seen "$1"; then
+    return 0
+  fi
+  printf '%s\0' "$1" >>"$GG_TMP/skipped.z"
   echo "${GG_CHECK:-growth-guards}: not measured: $(gg_shown "$1") — $2"
   GG_WALK_SKIPPED=$((GG_WALK_SKIPPED + 1))
 }
@@ -101,6 +125,7 @@ gg_read_blob() { # SHA PATH NOUN — the blob's bytes into $GG_TMP/blob
 gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
   local noun="$1" unread="$2" on_file="$3" rec f mode rest sha
   GG_WALK_SKIPPED=0
+  : >"$GG_TMP/skipped.z"
   # `ls-files -s` emits one record per STAGE for an unmerged path, so the walk
   # would read rival blobs as separate files.
   gg_require_merged_index
