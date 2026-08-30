@@ -281,8 +281,10 @@ longer header is a body sentence on the line every log shows.
 add or modify a path under `GROWTH_GUARDS_CHANGELOG_PATHS` — the fragment
 scope changelog-entries judges, resolved by the same library — or carry
 `[no-changelog]` in the header. Deleting a fragment is not writing one, so
-only additions and modifications count as evidence — plus the destination of
-a rename or a copy, which is a path that carries an entry now.
+evidence is an addition, a modification, a type change, or the destination of
+a rename or a copy — every shape that leaves a path carrying an entry it did
+not carry before. What that path became is changelog-entries' judgement,
+running beside this one.
 
 The staged list comes from `--name-status`, not `--name-only`: rename
 detection is on by default and a rename comes back as one `--name-only` entry

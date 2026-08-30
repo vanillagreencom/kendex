@@ -444,6 +444,41 @@ run_rc 'fix(KEN-9): change a crate'
   || bad "a text correction in a released section is not an entry either" "rc=$RC out=$OUT"
 git -C "$RC_REPO" reset -q --hard HEAD
 
+# A type change is a written entry: git reports T, not M, when a path swaps
+# kind, and reading that as merely touched rejects a commit that replaced a
+# link with a real fragment. What it became is the sibling lane's judgement.
+git -C "$RC_REPO" reset -q --hard HEAD
+mkdir -p "$RC_REPO/changelog.d/fixed"
+printf -- '- The real entry.\n' >"$RC_REPO/real-entry.md"
+ln -s ../../real-entry.md "$RC_REPO/changelog.d/fixed/ken-t.md"
+git -C "$RC_REPO" add -A
+git -C "$RC_REPO" commit -qm "chore: a fragment that is a link [no-changelog]"
+[ "$(git -C "$RC_REPO" ls-files -s changelog.d/fixed/ken-t.md | cut -d' ' -f1)" = "120000" ] \
+  && ok "fixture: HEAD really carries that fragment as a symlink" \
+  || bad "fixture: HEAD carries that fragment as a symlink" "$(git -C "$RC_REPO" ls-files -s changelog.d/fixed/ken-t.md)"
+rm -f "$RC_REPO/changelog.d/fixed/ken-t.md"
+printf -- '- The real entry.\n' >"$RC_REPO/changelog.d/fixed/ken-t.md"
+printf 'fn typed() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+git -C "$RC_REPO" add -A
+[ -n "$(cd "$RC_REPO" && git diff --cached --name-status | grep '^T')" ] \
+  && ok "fixture: git reports it as a type change, not a modification" \
+  || bad "fixture: git reports it as a type change" "$(cd "$RC_REPO" && git diff --cached --name-status)"
+run_rc 'fix(KEN-T): replace a link with a real fragment'
+[ "$RC" -eq 0 ] && ok "a fragment that changed type is a written entry" \
+  || bad "a fragment that changed type is a written entry" "rc=$RC out=$OUT"
+# The control: the same type change with no fragment among it still owes one,
+# so the pass above is the entry and not the rule going quiet.
+git -C "$RC_REPO" reset -q --hard HEAD
+printf 'fn typed_only() {}\n' >>"$RC_REPO/crates/core/lib.rs"
+ln -sf ../../real-entry.md "$RC_REPO/other-link"
+git -C "$RC_REPO" add -A
+run_rc 'fix(KEN-T): change a crate'
+[ "$RC" -eq 1 ] && case "$OUT" in *"changed without a changelog entry"*) true ;; *) false ;; esac \
+  && ok "control: a type change outside the fragment globs is no entry" \
+  || bad "control: a type change outside the fragment globs is no entry" "rc=$RC out=$OUT"
+git -C "$RC_REPO" reset -q --hard HEAD
+rm -f "$RC_REPO/other-link"
+
 # A path git would quote in its text output — the name carries a byte outside
 # ASCII — still reaches the globs as the bytes git recorded. A quoted name
 # matches no glob, and the rule would stop seeing the file it is about.

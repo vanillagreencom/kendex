@@ -201,6 +201,13 @@ if [ -n "$REQUIRED" ]; then
   # fragment is not writing one, and neither is moving one away — so the
   # evidence list keeps the additions and modifications it always did, plus
   # the destination a rename creates.
+  #
+  # A type change is written too: the path holds different content of a
+  # different kind now, which is what an entry at it would be. What that
+  # content turned INTO is the changelog-entries lane's judgement, running
+  # beside this one — a path that became a symlink is refused there, so
+  # counting it here costs nothing and refusing it would reject a commit
+  # that replaced a link with a real entry.
   : >"$GG_TMP/staged.z"
   : >"$GG_TMP/written.z"
   while IFS= read -r -d '' status; do
@@ -213,7 +220,7 @@ if [ -n "$REQUIRED" ]; then
         printf '%s\0' "$src" "$dest" >>"$GG_TMP/staged.z"
         printf '%s\0' "$dest" >>"$GG_TMP/written.z"
         ;;
-      A* | M*)
+      A* | M* | T*)
         printf '%s\0' "$src" >>"$GG_TMP/staged.z"
         printf '%s\0' "$src" >>"$GG_TMP/written.z"
         ;;
