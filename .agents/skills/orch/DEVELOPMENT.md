@@ -66,13 +66,16 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 
 ## Container close
 
-`container-close` derives the shared main checkout, takes a bounded per-parent
-lock, and owns the completion gate, canceled-child recovery record, completion
-summary, and cascade repair. Only confirmed parent completion authorizes repair;
+`container-close` derives the shared main checkout, waits up to 120 seconds for
+the per-parent lock, and owns the completion gate, canceled-child recovery
+record, completion summary, and cascade repair. Recovery rows store child id,
+state, and depth; publication sorts deepest-first. Only confirmed parent
+completion authorizes repair;
 an open parent validates matching recovery, retains it, and atomically merges it
-with the next snapshot. A conflict names the durable record path. Reconcile the
-Linear states, then remove that record only when no cascade repair remains. Exit
-zero prints one `closed [PARENT_ID]` or `deferred [CHILD_IDS...]` line to stdout.
+with the next snapshot. Every recovery conflict names the durable record path.
+Reconcile the Linear states, then remove that record only when no cascade repair
+remains. Exit zero prints one `closed [PARENT_ID]` or `deferred [CHILD_IDS...]`
+line to stdout.
 A closed result may include recovery diagnostics on stderr; consumers preserve
 them all.
 Any incomplete read, summary, completion, or repair exits nonzero. `sync-base`

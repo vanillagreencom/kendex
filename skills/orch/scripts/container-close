@@ -10,7 +10,7 @@ Derives the shared main repository and serializes closure per Linear container.
 Prints `closed <PARENT_ID>` when the container is Done, including an idempotent
 repeat.
 Prints `deferred` followed by pending child ids when closure must wait. A bare
-`deferred` means the bounded lock wait expired. Operational and validation
+`deferred` means the 120-second lock wait expired. Operational and validation
 failures exit 1. A successful `closed` result may carry recovery diagnostics on
 stderr; callers must preserve every one.
 EOF
@@ -43,7 +43,8 @@ mkdir -p "$MAIN_REPO_ROOT/tmp"
 LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.lock"
 umask 077
 exec 9>>"$LOCK_FILE"
-if ! flock -w 2 9; then
+LOCK_WAIT_SECONDS=120
+if ! flock -w "$LOCK_WAIT_SECONDS" 9; then
   printf 'deferred\n'
   exit 0
 fi
@@ -62,6 +63,11 @@ if [[ -L "$RECOVERY" || ( -e "$RECOVERY" && ( ! -f "$RECOVERY" || ! -O "$RECOVER
   echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2
   exit 1
 fi
+
+recovery_conflict() {
+  echo "container-close: recovery conflict for $PARENT_ID: $1; reconcile Linear state, then remove $RECOVERY only if no cascade repair remains" >&2
+  return 1
+}
 
 RUN_DIR="$(mktemp -d "$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.XXXXXX")" \
   || { echo "container-close: cannot create private run directory" >&2; exit 1; }
@@ -83,14 +89,23 @@ sync_linear() { "$LINEAR" sync --reconcile >/dev/null; }
 parent_json() { "$LINEAR" cache issues get "$PARENT_ID"; }
 
 load_recovery_rows() {
-  local source="$1" id state
+  local source="$1" line id rest state depth
   ids=()
   states=()
-  while IFS=$'\t' read -r id state; do
+  depths=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    id="${line%%$'\t'*}"
+    rest="${line#*$'\t'}"
+    [[ "$rest" != "$line" && "$rest" == *$'\t'* ]] || rest+=$'\t'
+    state="${rest%%$'\t'*}"
+    depth="${rest#*$'\t'}"
     [[ -n "$id" ]] || { echo "container-close: recovery record has a row without a child id for $PARENT_ID" >&2; return 1; }
     [[ -n "$state" ]] || { echo "container-close: recovery record for $id has no state" >&2; return 1; }
+    [[ "$depth" =~ ^[0-9]+$ ]] \
+      || { echo "container-close: recovery record for $id has invalid depth: $depth" >&2; return 1; }
     ids+=("$id")
     states+=("$state")
+    depths+=("$depth")
   done < "$source"
 }
 
@@ -120,7 +135,7 @@ fetch_recovery_rows() {
 publish_recovery() {
   [[ -s "$SNAPSHOT" || -s "$RECOVERY" ]] || return 0
   local recovery_tmp
-  ids=(); states=()
+  ids=(); states=(); depths=()
   load_recovery_rows "$SNAPSHOT" || return 1
   if [[ -e "$RECOVERY" || -L "$RECOVERY" ]]; then
     [[ -f "$RECOVERY" && ! -L "$RECOVERY" && -O "$RECOVERY" ]] \
@@ -131,21 +146,26 @@ publish_recovery() {
     || { echo "container-close: cannot create recovery record for $PARENT_ID" >&2; return 1; }
   if [[ -s "$RECOVERY" ]]; then
     awk -F '\t' 'BEGIN { OFS="\t" }
-      NF != 2 || $1 == "" || $2 == "" { bad=1; exit }
-      !($1 in states) { states[$1]=$2; order[++count]=$1; next }
-      states[$1] != $2 { bad=1; exit }
-      END { if (bad) exit 2; for (i=1; i<=count; i++) print order[i], states[order[i]] }
+      NF != 3 || $1 == "" || $2 == "" || $3 !~ /^[0-9]+$/ { bad=1; exit }
+      !($1 in states) { states[$1]=$2; depths[$1]=$3; order[++count]=$1; next }
+      states[$1] != $2 || depths[$1] != $3 { bad=1; exit }
+      END {
+        if (bad) exit 2
+        for (i=1; i<=count; i++) for (j=i+1; j<=count; j++)
+          if (depths[order[j]] > depths[order[i]]) { swap=order[i]; order[i]=order[j]; order[j]=swap }
+        for (i=1; i<=count; i++) print order[i], states[order[i]], depths[order[i]]
+      }
     ' "$RECOVERY" "$SNAPSHOT" > "$recovery_tmp" || {
       rm -f -- "$recovery_tmp"
-      echo "container-close: cannot merge recovery records for $PARENT_ID" >&2
-      return 1
+      recovery_conflict "durable and fresh rows disagree"
+      return $?
     }
   elif ! cp "$SNAPSHOT" "$recovery_tmp"; then
     rm -f -- "$recovery_tmp"
     echo "container-close: cannot copy recovery record for $PARENT_ID" >&2
     return 1
   fi
-  ids=(); states=()
+  ids=(); states=(); depths=()
   load_recovery_rows "$recovery_tmp" || { rm -f -- "$recovery_tmp"; return 1; }
   if ! chmod 600 "$recovery_tmp" || ! mv -f "$recovery_tmp" "$RECOVERY"; then
     rm -f -- "$recovery_tmp"
@@ -158,7 +178,7 @@ repair_canceled() {
   [[ -e "$RECOVERY" || -L "$RECOVERY" ]] || return 0
   [[ -f "$RECOVERY" && ! -L "$RECOVERY" && -O "$RECOVERY" ]] \
     || { echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2; return 1; }
-  local ids=() states=() id state current_state current_type index matches
+  local ids=() states=() depths=() id state current_state current_type index matches
   load_recovery_rows "$RECOVERY" || return 1
   [[ ${#ids[@]} -gt 0 ]] || { echo "container-close: recovery record is empty for $PARENT_ID" >&2; return 1; }
   fetch_recovery_rows || return 1
@@ -179,12 +199,13 @@ repair_canceled() {
     printf 'container-close: restored %s to %s\n' "$id" "$state" >&2
   done
   fetch_recovery_rows || return 1
-  while IFS=$'\t' read -r id state; do
+  for ((index=0; index<${#ids[@]}; index++)); do
+    id="${ids[$index]}"; state="${states[$index]}"
     matches="$(jq -r --arg id "$id" --arg state "$state" \
       'select(.id == $id and .state == $state) | .id' "$CURRENT" | wc -l | tr -d ' ')" \
       || { echo "container-close: canceled-child repair could not verify $id" >&2; return 1; }
     [[ "$matches" -eq 1 ]] || { echo "container-close: canceled-child repair could not verify $id at $state" >&2; return 1; }
-  done < "$RECOVERY"
+  done
   rm -f -- "$RECOVERY" || { echo "container-close: cannot remove verified recovery record for $PARENT_ID" >&2; return 1; }
 }
 
@@ -192,7 +213,7 @@ check_open_recovery() {
   [[ -e "$RECOVERY" || -L "$RECOVERY" ]] || return 0
   [[ -f "$RECOVERY" && ! -L "$RECOVERY" && -O "$RECOVERY" ]] \
     || { echo "container-close: recovery record is not an owned regular file: $RECOVERY" >&2; return 1; }
-  local ids=() states=() id state current_state index
+  local ids=() states=() depths=() id state current_state index
   load_recovery_rows "$RECOVERY" || return 1
   [[ ${#ids[@]} -gt 0 ]] || { echo "container-close: recovery record is empty for $PARENT_ID" >&2; return 1; }
   fetch_recovery_rows || return 1
@@ -202,8 +223,8 @@ check_open_recovery() {
       || { echo "container-close: open-parent recovery could not read the state for $id" >&2; return 1; }
     [[ "$current_state" == "$state" ]] \
       || {
-        echo "container-close: parent $PARENT_ID is open and recovery child $id moved from $state to $current_state; reconcile Linear state, then remove $RECOVERY only if no cascade repair remains" >&2
-        return 1
+        recovery_conflict "parent is open and child $id moved from $state to $current_state"
+        return $?
       }
   done
 }
@@ -248,9 +269,9 @@ fi
 
 CHILDREN="$("$LINEAR" cache issues children "$PARENT_ID" --recursive)" \
   || { echo "container-close: cannot read children for $PARENT_ID" >&2; exit 1; }
-jq -r '[.[] | select(.state_type == "canceled")] | reverse[] | [.id, .state] | @tsv' \
+jq -r '[.[] | select(.state_type == "canceled")] | sort_by(.depth) | reverse[] | [.id, .state, .depth] | @tsv' \
   <<<"$CHILDREN" > "$SNAPSHOT" || { echo "container-close: child response is invalid for $PARENT_ID" >&2; exit 1; }
-ids=(); states=(); load_recovery_rows "$SNAPSHOT"
+ids=(); states=(); depths=(); load_recovery_rows "$SNAPSHOT"
 VALIDATION="$("$LINEAR" issues validate-completion "$PARENT_ID" --include-children-of "$PARENT_ID" --container)" \
   || { echo "container-close: completion validation failed for $PARENT_ID" >&2; exit 1; }
 ALL_OK="$(jq -r '.all_ok // false' <<<"$VALIDATION")" \

@@ -77,6 +77,12 @@ case "$resource:$action" in
             "$root/children.json" > "$root/children.next.$$"
           mv "$root/children.next.$$" "$root/children.json"
         fi
+        if [[ -e "$root/fresh.conflict.on.children" ]]; then
+          rm -f "$root/fresh.conflict.on.children"
+          jq 'map(if .id == "CHILD-2" then .state = "Canceled Again" else . end)' \
+            "$root/children.json" > "$root/children.next.$$"
+          mv "$root/children.next.$$" "$root/children.json"
+        fi
         if $pending; then
           if [[ "$format" == ids ]]; then
             jq -r '.[] | select(.state_type != "completed" and .state_type != "canceled") | .id' "$root/children.json"
@@ -84,7 +90,7 @@ case "$resource:$action" in
             jq '[.[] | select(.state_type != "completed" and .state_type != "canceled")]' "$root/children.json"
           fi
         else
-          cat "$root/children.json"
+          jq 'map(.depth //= 0)' "$root/children.json"
         fi
         ;;
       *) exit 2 ;;
@@ -139,6 +145,7 @@ case "$resource:$action" in
       rm -f "$root/fail.update.once"
       exit 8
     fi
+    printf '%s\n' "$id" >> "$root/update.calls"
     type=started
     [[ "$wanted" == Canceled ]] && type=canceled
     jq --arg id "$id" --arg state "$wanted" --arg type "$type" \
@@ -173,6 +180,7 @@ reset_state() {
     "$FAKE_LINEAR_ROOT/fail.complete.after" "$FAKE_LINEAR_ROOT/interrupt.after.complete" \
     "$FAKE_LINEAR_ROOT/fail.complete.before" "$FAKE_LINEAR_ROOT/fail.update.once" "$FAKE_LINEAR_ROOT/gh.mode" \
     "$FAKE_LINEAR_ROOT/late.cascade.on.children" \
+    "$FAKE_LINEAR_ROOT/fresh.conflict.on.children" "$FAKE_LINEAR_ROOT/update.calls" \
     "$SANDBOX/tmp/container-close-recovery/PARENT-1.tsv"
   rm -rf "$FAKE_LINEAR_ROOT/complete.entries"
   mkdir "$FAKE_LINEAR_ROOT/complete.entries"
@@ -293,6 +301,64 @@ reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 touch "$FAKE_LINEAR_ROOT/fail.complete.before"
 rc=0
+run_close >/dev/null 2>"$TMP_ROOT/merge-conflict-first.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "merge-conflict fixture keeps durable recovery" || fail "merge-conflict fixture keeps durable recovery"
+rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
+touch "$FAKE_LINEAR_ROOT/fresh.conflict.on.children"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/merge-conflict.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "conflicting durable and fresh recovery rows fail closed" || fail "conflicting durable and fresh recovery rows fail closed"
+assert_contains "$TMP_ROOT/merge-conflict.err" "recovery conflict for PARENT-1: durable and fresh rows disagree" "publish conflict names its cause"
+assert_contains "$TMP_ROOT/merge-conflict.err" "$RECOVERY" "publish conflict names the durable recovery path"
+assert_contains "$TMP_ROOT/merge-conflict.err" "reconcile Linear state, then remove" "publish conflict gives the reconciliation remedy"
+assert_eq "$(cat "$RECOVERY")" $'CHILD-2\tCanceled\t0' "publish conflict preserves the durable row"
+
+reset_state
+printf '%s\n' '[{"id":"CHILD-2","title":"ancestor","state":"Canceled","state_type":"canceled","depth":0},{"id":"CHILD-1","title":"done","state":"Done","state_type":"completed","depth":0}]' > "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/fail.complete.before"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/depth-first.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "depth-order fixture records the ancestor" || fail "depth-order fixture records the ancestor"
+assert_eq "$(cat "$RECOVERY")" $'CHILD-2\tCanceled\t0' "durable recovery persists child depth"
+rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
+jq '. += [{"id":"CHILD-3","title":"descendant","state":"Canceled","state_type":"canceled","depth":1}]' \
+  "$FAKE_LINEAR_ROOT/children.json" > "$FAKE_LINEAR_ROOT/children.with-descendant"
+mv "$FAKE_LINEAR_ROOT/children.with-descendant" "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/interrupt.after.complete"
+rc=0
+run_close >/dev/null 2>"$TMP_ROOT/depth-interrupt.err" || rc=$?
+[[ $rc -ne 0 ]] && ok "depth-order fixture interrupts before repair" || fail "depth-order fixture interrupts before repair"
+assert_eq "$(cut -f1 "$RECOVERY")" $'CHILD-3\nCHILD-2' "merged recovery sorts descendants before ancestors"
+assert_eq "$(cut -f3 "$RECOVERY")" $'1\n0' "merged recovery stores descending depth"
+rm -f "$FAKE_LINEAR_ROOT/interrupt.after.complete"
+out="$(run_close 2>"$TMP_ROOT/depth-retry.err")"
+assert_eq "$out" "closed PARENT-1" "depth-ordered retry closes the parent"
+assert_eq "$(cat "$FAKE_LINEAR_ROOT/update.calls")" $'CHILD-3\nCHILD-2' "repair restores the descendant before its ancestor"
+
+DEPTH_MUTANT="$SANDBOX/skills/orch/scripts/container-close-depth-mutant"
+assert_eq "$(grep -Fc 'if (depths[order[j]] > depths[order[i]])' "$SCRIPT")" "1" "depth-order control finds descending sort"
+awk 'index($0, "if (depths[order[j]] > depths[order[i]])") { print "          if (0) { swap=order[i]; order[i]=order[j]; order[j]=swap }"; next } { print }' "$SCRIPT" > "$DEPTH_MUTANT"
+chmod +x "$DEPTH_MUTANT"
+reset_state
+printf '%s\n' '[{"id":"CHILD-2","title":"ancestor","state":"Canceled","state_type":"canceled","depth":0},{"id":"CHILD-1","title":"done","state":"Done","state_type":"completed","depth":0}]' > "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/fail.complete.before"
+rc=0
+"$SCRIPT" "$SANDBOX" PARENT-1 >/dev/null 2>&1 || rc=$?
+[[ $rc -ne 0 ]] && ok "depth-order mutant fixture records the ancestor" || fail "depth-order mutant fixture records the ancestor"
+rm -f "$FAKE_LINEAR_ROOT/fail.complete.before"
+jq '. += [{"id":"CHILD-3","title":"descendant","state":"Canceled","state_type":"canceled","depth":1}]' \
+  "$FAKE_LINEAR_ROOT/children.json" > "$FAKE_LINEAR_ROOT/children.with-descendant"
+mv "$FAKE_LINEAR_ROOT/children.with-descendant" "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/interrupt.after.complete"
+rc=0
+"$DEPTH_MUTANT" "$SANDBOX" PARENT-1 >/dev/null 2>&1 || rc=$?
+[[ $rc -ne 0 ]] && ok "depth-order mutant interrupts before repair" || fail "depth-order mutant interrupts before repair"
+assert_eq "$(cut -f1 "$RECOVERY")" $'CHILD-2\nCHILD-3' "depth-order control fails when merged rows keep insertion order"
+
+reset_state
+printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+touch "$FAKE_LINEAR_ROOT/fail.complete.before"
+rc=0
 run_close >"$TMP_ROOT/open-recovery.out" 2>"$TMP_ROOT/open-recovery.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "failed parent completion keeps the parent open" || fail "failed parent completion keeps the parent open"
 [[ -s "$RECOVERY" ]] && ok "failed parent completion keeps its recovery record" || fail "failed parent completion keeps its recovery record"
@@ -303,7 +369,7 @@ mv "$FAKE_LINEAR_ROOT/children.independent" "$FAKE_LINEAR_ROOT/children.json"
 rc=0
 run_close >"$TMP_ROOT/open-recovery-retry.out" 2>"$TMP_ROOT/open-recovery-retry.err" || rc=$?
 [[ $rc -ne 0 ]] && ok "open parent cannot authorize recovery over an independently completed child" || fail "open parent cannot authorize recovery over an independently completed child"
-assert_contains "$TMP_ROOT/open-recovery-retry.err" "recovery child CHILD-2 moved from Canceled to Done" "authorization refusal names the changed child"
+assert_contains "$TMP_ROOT/open-recovery-retry.err" "parent is open and child CHILD-2 moved from Canceled to Done" "authorization refusal names the changed child"
 assert_contains "$TMP_ROOT/open-recovery-retry.err" "$RECOVERY" "authorization refusal names the durable recovery path"
 assert_contains "$TMP_ROOT/open-recovery-retry.err" "reconcile Linear state, then remove" "authorization refusal gives the reconciliation remedy"
 assert_eq "$(jq -r '.[] | select(.id == "CHILD-2") | .state_type' "$FAKE_LINEAR_ROOT/children.json")" "completed" "authorization refusal preserves the independent completion"
@@ -388,8 +454,8 @@ done
 [[ "$(find "$FAKE_LINEAR_ROOT/complete.entries" -type f | wc -l | tr -d ' ')" -ge 1 ]] || fail "race winner never entered completion"
 (run_linked_close > "$TMP_ROOT/race-two.out" 2> "$TMP_ROOT/race-two.err") &
 pid_two=$!
-sleep 0.1
-[[ ! -s "$TMP_ROOT/race-two.out" ]] && ok "lock loser waits for the owner" || fail "lock loser waits for the owner"
+sleep 2.2
+[[ ! -s "$TMP_ROOT/race-two.out" ]] && ok "lock loser waits beyond the old two-second bound" || fail "lock loser waits beyond the old two-second bound"
 touch "$FAKE_LINEAR_ROOT/release.complete"
 rc_one=0
 wait "$pid_one" || rc_one=$?
@@ -400,8 +466,9 @@ assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "main 
 assert_eq "$(cat "$TMP_ROOT/race-one.out"):$(cat "$TMP_ROOT/race-two.out")" "closed PARENT-1:closed PARENT-1" "lock loser re-evaluates after the owner releases"
 
 WAIT_MUTANT="$SANDBOX/skills/orch/scripts/container-close-wait-mutant"
-assert_eq "$(grep -Fc 'if ! flock -w 2 9; then' "$SCRIPT")" "1" "bounded-wait control finds lock acquisition"
-awk 'index($0, "if ! flock -w 2 9; then") { print "if ! flock -n 9; then"; next } { print }' "$SCRIPT" > "$WAIT_MUTANT"
+assert_eq "$(grep -Fc 'LOCK_WAIT_SECONDS=120' "$SCRIPT")" "1" "bounded-wait control finds the production wait"
+assert_eq "$(grep -Fc 'if ! flock -w "$LOCK_WAIT_SECONDS" 9; then' "$SCRIPT")" "1" "bounded-wait control finds lock acquisition"
+awk 'index($0, "LOCK_WAIT_SECONDS=120") { print "LOCK_WAIT_SECONDS=0"; next } { print }' "$SCRIPT" > "$WAIT_MUTANT"
 chmod +x "$WAIT_MUTANT"
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
@@ -438,8 +505,8 @@ rc_two=0; wait "$pid_two" || rc_two=$?
 assert_eq "$rc_one:$rc_two:$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "0:0:2" "common-root control fails when callers keep checkout-local locks"
 
 RACE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-race-mutant"
-assert_eq "$(grep -Fc 'if ! flock -w 2 9; then' "$SCRIPT")" "1" "race control finds flock acquisition"
-awk 'index($0, "if ! flock -w 2 9; then") { print "if false; then"; next } { print }' "$SCRIPT" > "$RACE_MUTANT"
+assert_eq "$(grep -Fc 'if ! flock -w "$LOCK_WAIT_SECONDS" 9; then' "$SCRIPT")" "1" "race control finds flock acquisition"
+awk 'index($0, "if ! flock -w \"$LOCK_WAIT_SECONDS\" 9; then") { print "if false; then"; next } { print }' "$SCRIPT" > "$RACE_MUTANT"
 chmod +x "$RACE_MUTANT"
 race_failures=0
 for _iteration in {1..10}; do
@@ -489,7 +556,7 @@ assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "state
 MERGE_WORKFLOW="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
 grep -Fq 'scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' "$MERGE_WORKFLOW" && ok "merge-pr passes the shared main root" || fail "merge-pr passes the shared main root"
 grep -Fq 'with every stderr diagnostic from the helper' "$MERGE_WORKFLOW" && ok "merge-pr preserves every closed diagnostic" || fail "merge-pr preserves every closed diagnostic"
-grep -Fq 'bounded lock wait expired' "$MERGE_WORKFLOW" && ok "merge-pr reports only genuine lock timeouts as bare deferred" || fail "merge-pr reports only genuine lock timeouts as bare deferred"
+grep -Fq '120-second lock wait expired' "$MERGE_WORKFLOW" && ok "merge-pr documents the production lock timeout" || fail "merge-pr documents the production lock timeout"
 
 printf 'container-close: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
