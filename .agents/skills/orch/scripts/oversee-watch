@@ -83,19 +83,20 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 
 # Every pane predicate lives here, one line each, matched with `grep -E`
 # against the whole pane capture.
-QUESTION_RE='❯ [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
-# The account is spent. Both harnesses: Claude Code opens the banner with
-# "You've hit your <bucket> limit" / "You've reached your…" and points at
-# /usage-credits; Codex prints "Usage limit reached" and its out-of-credits
-# wording. `.` stands in for the apostrophe, which is ASCII in the binaries
-# and typographic once rendered.
+# A dialog waiting on an answer: the selected numbered row, drawn with each
+# harness's marker; Claude Code's question and key hints; Codex's enter hint.
+QUESTION_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel|Press enter to '
+# The account is spent. Claude Code opens the banner with "You've hit your
+# <bucket> limit" / "You've reached your…" and points at /usage-credits; Codex
+# prints "Usage limit reached" and its out-of-credits wording. `.` stands in
+# for the apostrophe: ASCII in the binaries, typographic once rendered.
 USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
 # A turn in flight: the interrupt hint (both harnesses), the hint shown while
 # a foreground shell runs, or the streaming token counter of the status line.
 WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
-# A ready input prompt: Claude Code's composer line, Codex's submit hint.
-# Present while working too, so it decides idleness only with WORKING_RE out.
-IDLE_PROMPT_RE='^❯|to submit message'
+# A ready input prompt: either harness's marker at column 0, or Codex's submit
+# hint. Present while working, so it decides idleness only with WORKING_RE out.
+IDLE_PROMPT_RE='^❯|^›|to submit message'
 # The marker each harness draws at column 0 for a submitted user message
 # echoed into the transcript AND for the composer the lane sits at: Claude
 # Code `❯`, Codex `›`. Spelled as an alternation of literals and NEVER as a
@@ -106,9 +107,8 @@ IDLE_PROMPT_RE='^❯|to submit message'
 PANE_MARKER_RE='^❯|^›'
 # The live input a lane is sitting at, as opposed to a turn it already took:
 # one signature per harness, both measured off a running session.
-#   Claude Code draws its composer as the marker then U+00A0, with or without
-#   an unsent draft, and indents its dialog rows, so only the composer reaches
-#   column 0 as live input.
+#   Claude Code draws its composer as the marker then U+00A0, draft or not,
+#   and indents its dialog rows, so only the composer reaches column 0.
 #   Codex draws its composer, its placeholder, its draft AND its selected
 #   dialog row all as the marker, a blank and text — the same shape as a turn —
 #   and always draws one of them below the transcript. So every Codex screen
@@ -184,9 +184,9 @@ Events, checked in this order every pass:
                              turn (last 40 non-empty pane lines follow)
   EVENT idle-after-return <lane>
                              the harness has not exited and its pane sits at
-                             the composer (`❯`, Codex's submit
-                             hint) with no work in flight (no interrupt hint,
-                             no background-shell hint, no streaming token
+                             the composer (Claude Code `❯` or Codex `›` at
+                             column 0) with no work in flight (no interrupt
+                             hint, no background-shell hint, no streaming token
                              counter) on two consecutive passes: the round is
                              over and the lane is waiting on the overseer
                              (last 40 non-empty pane lines follow)

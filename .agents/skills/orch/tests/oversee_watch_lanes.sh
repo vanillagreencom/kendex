@@ -19,11 +19,12 @@
 #       lane claim maps the window to; a pruned claim names none; a healthy
 #       pane never fires; a banner under an exited harness is lane-exited
 #       instead; and a banner above a later user turn is scrollback, while
-#       one below that turn still fires
+#       one below that turn still fires. Codex's benign reset OFFER is not a
+#       spent account
 #   4.  a lane pane showing a question prompt (pane tail follows), under a
-#       wrapped shell too; a selection list above the last user turn is one
-#       the lane already answered and never fires, while one below that turn
-#       still does
+#       wrapped shell too, and on either harness's dialog screen; a selection
+#       list above the last user turn is one the lane already answered and
+#       never fires, while one below that turn still does
 #   4b. idle-after-return: a harness at its composer with nothing in flight
 #       on two consecutive passes (either harness's prompt, and under a
 #       wrapped shell); one pass alone, a working indicator alongside the
@@ -32,6 +33,12 @@ set -euo pipefail
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+
+# Byte-exact 120x40 captures of a live Codex 0.151.0 pane, recorded for
+# KEN-863. A Codex shape is asserted from one of these, never hand-written:
+# every predicate in this area that was reasoned instead of measured has been
+# wrong about the screen it claimed to describe.
+CODEX_PANES="$REPO_ROOT/skills/orch/tests/fixtures/oversee-watch"
 
 echo "=== oversee-watch lanes ==="
 
@@ -316,10 +323,25 @@ printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3fd"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
+assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
   "a codex dialog row is live input, so the banner above the turn stays scrollback" "$err"
 assert_not_contains "$out" "EVENT usage-limit" \
   "the codex dialog row never resurrects a stale banner" "$err"
+
+# The near-miss control. Every fresh Codex prints a benign reset OFFER, and
+# loosening USAGE_LIMIT_RE toward a bare `usage limit` would turn the startup
+# screen of every Codex lane into a spent-account event.
+new_case usage_limit_codex_reset_offer
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+cat "$CODEX_PANES/codex-composer-idle.txt" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3fg"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_contains "$(cat "$STUB_DIR/pane-gh-2.txt")" "You have 1 usage limit reset available" \
+  "the fixture really carries the reset offer, so the control is not vacuous" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
+  "a codex startup screen is no event at all" "$err"
+assert_not_contains "$out" "EVENT usage-limit" \
+  "an offered reset is credit to spend, never a spent account" "$err"
 
 # ...and its control: the banner below the turn on the same dialog screen
 new_case usage_limit_codex_dialog_live_banner
@@ -527,6 +549,30 @@ out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
   "a wrapped lane's question is still the event" "$err"
 
+# Codex on a dialog. It marks the row it has selected with `›`, not `❯`,
+# and closes the screen with its own enter hint, so nothing Claude Code draws
+# reaches these two screens: before KEN-863 both fell through every predicate
+# and the pass said nothing about the lane.
+new_case question_codex_dialog_trust
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+cat "$CODEX_PANES/codex-dialog-trust.txt" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e4c1"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
+  "a codex directory-trust dialog is a question" "$err"
+assert_contains "$out" "Do you trust the contents of this directory?" \
+  "the pane tail carries what the lane is being asked" "$err"
+
+new_case question_codex_dialog_model
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+cat "$CODEX_PANES/codex-dialog-model.txt" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e4c2"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
+  "a codex model picker is a question" "$err"
+assert_contains "$out" "Select Model and Effort" \
+  "the pane tail carries the choice on offer" "$err"
+
 # A tmux window name carries any character, so two lanes can differ only
 # outside a filename-safe set. Their pane snapshots must stay separate or each
 # lane is classified on the other's screen.
@@ -592,14 +638,28 @@ assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
   "an idle prompt on two consecutive passes is the event" "$err"
 assert_contains "$out" "the PR is merged" "the pane tail follows the idle event" "$err"
 
-# Codex's ready prompt reads differently and counts the same
+# Codex's ready prompt reads differently and counts the same. Its composer
+# draws no submit hint at all — only the marker and either the placeholder or
+# an unsent draft — so the marker is what has to carry idleness. The fixture
+# is the capture: the hint this case used to assert on renders nowhere here.
 new_case idle_after_return_codex
 printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
-printf '· Ran the test suite\n  ⏎ to submit message\n' > "$STUB_DIR/pane-gh-2.txt"
+cat "$CODEX_PANES/codex-composer-idle.txt" > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4b2"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
-  "a codex lane at its submit prompt is idle too" "$err"
+  "a codex lane at its composer is idle too" "$err"
+assert_not_contains "$(cat "$STUB_DIR/pane-gh-2.txt")" "to submit message" \
+  "the real composer carries no submit hint, so the marker alone decides" "$err"
+
+# ...and holding an unsent draft, which has the same shape as a taken turn
+new_case idle_after_return_codex_draft
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+cat "$CODEX_PANES/codex-composer-draft.txt" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e4b2b"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
+  "a codex composer holding a draft is idle too" "$err"
 
 # The idle check reads the same liveness answer too
 new_case idle_after_return_wrapped_shell

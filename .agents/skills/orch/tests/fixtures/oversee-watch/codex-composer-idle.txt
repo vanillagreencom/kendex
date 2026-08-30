@@ -1,0 +1,40 @@
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.151.0)                         │
+│                                                    │
+│ model:       gpt-5.6-sol high   /model to change   │
+│ directory:   /var/tmp/claude/…/scratchpad/codexcap │
+│ permissions: YOLO mode                             │
+╰────────────────────────────────────────────────────╯
+
+  Tip: Try the Desktop app on Linux: install it from https://learn.chatgpt.com/docs/linux/linux-app and run 'chatgpt'.
+
+• You have 1 usage limit reset available. Run /usage to use one.
+
+
+› Ask Codex to do anything
+
+  Context 100% left · /var/tmp/claude/claude-1000/-home-method-dev-kendex/19f120b0-90ae-4c87-aefc-59eec757deb9/scratchp…
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

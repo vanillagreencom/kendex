@@ -1,0 +1,40 @@
+> You are in /var/tmp/claude/claude-1000/-home-method-dev-kendex/19f120b0-90ae-4c87-aefc-59eec757deb9/scratchpad/codexca
+
+  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt
+  injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
+
+› 1. Yes, continue
+  2. No, quit
+
+  Press enter to continue
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

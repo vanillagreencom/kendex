@@ -1,0 +1,40 @@
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.151.0)                         │
+│                                                    │
+│ model:       gpt-5.6-sol high   /model to change   │
+│ directory:   /var/tmp/claude/…/scratchpad/codexcap │
+│ permissions: YOLO mode                             │
+╰────────────────────────────────────────────────────╯
+
+  Tip: Try the Desktop app on Linux: install it from https://learn.chatgpt.com/docs/linux/linux-app and run 'chatgpt'.
+
+• You have 1 usage limit reset available. Run /usage to use one.
+
+
+  Select Model and Effort
+  Access legacy models by running codex -m <model_name> or in your config.toml
+
+› 1. gpt-5.6-sol (current)  Latest frontier agentic coding model.
+  2. gpt-5.6-terra          Balanced agentic coding model for everyday work.
+  3. gpt-5.6-luna           Fast and affordable agentic coding model.
+  4. gpt-5.5                Frontier model for complex coding, research, and real-world work.
+  5. gpt-5.4                Strong model for everyday coding.
+  6. gpt-5.4-mini           Small, fast, and cost-efficient model for simpler coding tasks.
+  7. gpt-5.3-codex-spark    Ultra-fast coding model.
+
+  Press enter to confirm or esc to go back
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
