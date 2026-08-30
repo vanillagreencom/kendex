@@ -281,7 +281,7 @@ mkfile y.test.txt 15
 printf 'other.txt\t15\ny.test.txt\t15\n' >"$R/$BASE"
 git -C "$R" add -A
 run_frozen
-[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row added: y.test.txt — row 15 lines > threshold 10"*) true ;; *) false ;; esac \
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row added: y.test.txt — a first row, at 15 lines (threshold 10"*) true ;; *) false ;; esac \
   && ok "adding a row fails undeclared, naming the count and threshold" \
   || bad "adding a row fails undeclared, naming the count and threshold" "rc=$RC out=$OUT"
 # The remedy on THIS verdict must name the declaration, because the

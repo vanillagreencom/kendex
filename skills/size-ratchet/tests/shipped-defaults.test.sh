@@ -256,13 +256,29 @@ git -C "$R" commit -q -m seed
 mklines grew.rs 600
 mklines shrunk.rs 450
 git -C "$R" add grew.rs shrunk.rs
+# The restore is a WRITE, on the path taken when the run is already failing:
+# it must put the file back as it found it, mode included. A narrower-than-
+# umask mode is what a plain redirect through the existing inode would widen.
+chmod 600 "$R/$BASE"
+mode_before="$(ls -l "$R/$BASE" | cut -c1-10)"
 run -- --staged
-[ "$RC" -eq 1 ] && has "baselined file grew: grew.rs" \
-  && ok "the run still fails on the growth the rewrite cannot fix" \
-  || bad "the run fails on the growth" "rc=$RC out=$OUT"
+# Both verdicts and the count: the restored verdict is the INDEX copy's, which
+# names the loose row too. Asserting the growth alone would pass on a run that
+# reported the rewritten candidate's verdict and lost the other violation.
+[ "$RC" -eq 1 ] && has "baselined file grew: grew.rs" && has "baseline looser than reality: shrunk.rs" \
+  && has "size-ratchet: 2 violation(s)" \
+  && ok "the run reports the index copy's own two violations, counted" \
+  || bad "the run reports the index verdict in full" "rc=$RC out=$OUT"
+has "the run is not clean, so tools/size-ratchet-baseline.tsv is restored and nothing was staged" \
+  && ok "and says the baseline was put back, so the restore is not silent" \
+  || bad "the restore is announced" "out=$OUT"
 [ "$(cat "$R/$BASE")" = "$(printf 'grew.rs\t500\nshrunk.rs\t500')" ] \
   && ok "and the worktree baseline is byte-identical to what the run found" \
   || bad "the worktree baseline is untouched" "row=$(cat "$R/$BASE")"
+[ "$(ls -l "$R/$BASE" | cut -c1-10)" = "$mode_before" ] \
+  && ok "and comes back at its own mode ($mode_before), not the umask's" \
+  || bad "the restore preserves the file mode" "before=$mode_before after=$(ls -l "$R/$BASE" | cut -c1-10)"
+chmod 644 "$R/$BASE"
 case "$(git -C "$R" diff --cached --name-only)" in
   *"$BASE"*) bad "nothing is staged by a rejected run" "the baseline is in the index" ;;
   *) ok "and nothing was staged — the rejected commit carries no baseline change" ;;
@@ -298,25 +314,49 @@ run
   && ok "control: the same file governing the default mode is exit 2" \
   || bad "control: a governing malformed baseline is exit 2" "rc=$RC out=$OUT"
 # And the case the rewrite is actually reached for: a snapshot that FAILS,
-# with the half-typed row in the worktree. The verdict is the commit's own,
+# with an unusable baseline in the worktree. The verdict is the commit's own,
 # reported as a violation — never the config error of a file it does not
-# record.
-new_repo autolower-malformed-failing
-mklines big.rs 500
-mkdir -p "$R/tools"
-printf 'big.rs\t500\n' >"$R/$BASE"
-git -C "$R" add -A
-git -C "$R" commit -q -m seed
-mklines big.rs 600
-git -C "$R" add big.rs
-printf 'big.rs\tfive hundred\n' >"$R/$BASE"
-run -- --staged
-[ "$RC" -eq 1 ] && has "baselined file grew: big.rs" \
-  && ok "a failing snapshot reports its own verdict, the malformed rewrite source skipped" \
-  || bad "a malformed worktree copy does not turn a violation into a config error" "rc=$RC out=$OUT"
-[ "$(cat "$R/$BASE")" = "$(printf 'big.rs\tfive hundred')" ] \
-  && ok "and the half-typed row is still exactly as it was" \
-  || bad "the malformed copy survives a failing run" "row=$(cat "$R/$BASE")"
+# record. All three of soft mode's escapes go through here: a malformed row,
+# unsorted rows, and a duplicated path each make the copy unrewritable, and
+# any of them failing the run would put a config error about a file the commit
+# does not record in place of the verdict on the snapshot it does.
+for kind in malformed unsorted duplicate; do
+  case "$kind" in
+    malformed) worktree_rows="$(printf 'big.rs\tfive hundred\nother.rs\t500')"; want="malformed row(s) above" ;;
+    unsorted) worktree_rows="$(printf 'other.rs\t500\nbig.rs\t500')"; want="rows must be LC_ALL=C sorted" ;;
+    duplicate) worktree_rows="$(printf 'big.rs\t500\nbig.rs\t500')"; want="duplicate path row(s) above" ;;
+  esac
+  new_repo "autolower-$kind-failing"
+  mklines big.rs 500
+  mklines other.rs 500
+  mkdir -p "$R/tools"
+  printf 'big.rs\t500\nother.rs\t500\n' >"$R/$BASE"
+  git -C "$R" add -A
+  git -C "$R" commit -q -m seed
+  mklines big.rs 600
+  git -C "$R" add big.rs
+  printf '%s\n' "$worktree_rows" >"$R/$BASE"
+  run -- --staged
+  [ "$RC" -eq 1 ] && has "baselined file grew: big.rs" \
+    && ok "a $kind worktree copy leaves the failing snapshot's own verdict standing (exit 1, not 2)" \
+    || bad "a $kind worktree copy does not turn a violation into a config error" "rc=$RC out=$OUT"
+  # The skip must SAY so. A rewrite that quietly does not happen leaves the
+  # run failing on the verdict the rewrite existed to resolve, with a remedy
+  # naming the file that just refused and nothing connecting the two.
+  has "$want" && has "the --staged rewrite is skipped and the verdict comes from the index copy" \
+    && ok "and the $kind skip is announced, naming its own reason" \
+    || bad "the $kind skip says so" "out=$OUT"
+  [ "$(cat "$R/$BASE")" = "$worktree_rows" ] \
+    && ok "and the $kind worktree copy is left exactly as it was" \
+    || bad "the $kind worktree copy is untouched" "rows=$(cat "$R/$BASE")"
+  # The control, per state: the SAME file governing the default mode is still
+  # a loud config error, so the skip is scoped to the rewrite and has not
+  # softened the gate.
+  run
+  [ "$RC" -eq 2 ] && has "$want" \
+    && ok "control: the same $kind file governing the default mode is exit 2" \
+    || bad "control: a governing $kind baseline is exit 2" "rc=$RC out=$OUT"
+done
 
 echo "=== an added or raised row names the ROW, not the file's size ==="
 # The two quantities differ whenever the row sits above the file, which is
@@ -332,7 +372,7 @@ git -C "$R" commit -q -m seed
 printf 'big.rs\t900\nother.rs\t500\n' >"$R/$BASE"
 git -C "$R" add -A
 run
-[ "$RC" -eq 1 ] && has "baseline row added: big.rs — row 900 lines" \
+[ "$RC" -eq 1 ] && has "baseline row added: big.rs — a first row, at 900 lines" \
   && ok "an added row is reported at the row's own value" \
   || bad "an added row names the row" "rc=$RC out=$OUT"
 has "baseline looser than reality: big.rs — baseline 900 > actual 500 lines" \

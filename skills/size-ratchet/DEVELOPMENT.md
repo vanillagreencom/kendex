@@ -81,9 +81,12 @@ is judged first; the rewrite then runs from saved copies and its candidate is
 re-judged, and only a clean candidate reaches `git add`. Anything else
 restores the worktree baseline byte for byte and reports what the snapshot
 earned, so a rejected commit carries no baseline change the developer never
-asked for. A malformed WORKTREE copy skips the rewrite with a note rather
-than failing the run: a hand-edit in progress is not a gate, and the commit
-records the index copy.
+asked for. A worktree copy the rewrite cannot read — a malformed row, an
+unsorted file, a duplicated path — skips the rewrite rather than failing the
+run: a hand-edit in progress is not a gate, and the commit records the index
+copy. The skip says so on stderr, with the row diagnostic that caused it,
+because a rewrite that quietly does not happen leaves the run failing on the
+verdict it existed to resolve.
 
 The baseline is itself a counted file, so the rewrite reconciles its own row
 against the file it is about to become. A line row settles in one pass —
@@ -197,8 +200,10 @@ is what a repo adopting a class needs on day one.
 Rows already at HEAD are grandfathered, because the gate judges the change
 and not the history it inherited. A HEAD with no baseline (an unborn HEAD,
 a first `--seed`, a baseline this change introduces) has nothing to compare,
-so the run passes and its verdict line says the added and raised checks did
-not run — "no reference" must never read as "checked and clean". A row whose
+so the raise gate alone is skipped — every other verdict still judges the
+snapshot and can fail it — and the verdict line says the added and raised
+checks did not run, because "no reference" must never read as "checked and
+clean". A row whose
 file is at or under its threshold is reported as stale instead, so one root
 cause reads as one verdict. A class that changes its UNIT does not escape:
 HEAD's row is re-expressed in the unit the class counts now, measured from

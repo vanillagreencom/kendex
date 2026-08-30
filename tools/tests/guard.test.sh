@@ -422,5 +422,26 @@ run_guard
 [ "$RC" -eq 0 ] && ok "control: the same file with no duplicate passes" \
   || bad "control: the same file with no duplicate passes" "rc=$RC out=$OUT"
 
+echo "=== this suite isolates every RATCHET_ key the gate reads ==="
+# The shipped package sweeps its OWN tests directory for this, and cannot
+# reach a file outside it — so the one suite here that runs the gate (through
+# guard's size-ratchet lane, and again as the control above) asserts it where
+# it lives. The keys are derived from the script this suite actually runs, so
+# a key added there is covered without anyone remembering this list.
+ratchet_keys="$(grep -rhoE '[A-Z_]*RATCHET_[A-Z][A-Z_]*' "$(dirname "$RATCHET")" | LC_ALL=C sort -u)"
+missing_keys=""
+for key in $ratchet_keys; do
+  grep -q "^unset .*$key" "${BASH_SOURCE[0]}" || missing_keys="$missing_keys $key"
+done
+[ -n "$ratchet_keys" ] && [ -z "$missing_keys" ] \
+  && ok "this file's unset line names every RATCHET_ key the gate reads" \
+  || bad "this file isolates the whole key set" "missing:$missing_keys derived:$ratchet_keys"
+# Anti-vacuous: a derivation that found nothing, or one that missed the key
+# outside the SIZE_RATCHET_ prefix, would pass the check above silently.
+case "$ratchet_keys" in
+  *RATCHET_RAISE*) ok "control: the derivation reaches RATCHET_RAISE, the key with no SIZE_ prefix" ;;
+  *) bad "the derivation reaches RATCHET_RAISE" "derived:$ratchet_keys" ;;
+esac
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

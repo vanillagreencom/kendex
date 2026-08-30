@@ -21,8 +21,8 @@ tags: [automation]
 it only shrink.** Existing offenders are frozen in a baseline at their
 current sizes; everything else stays at or under its path class's
 threshold. Markdown is measured in bytes and code in lines. Baseline rows
-only go down or away; a number goes up only by a human editing the row in a
-reviewed diff, and never at all in a frozen class.
+only go down or away; an existing row's number goes up only by a human
+editing it in a reviewed diff, and never at all in a frozen class.
 
 ```bash
 .agents/skills/size-ratchet/scripts/size-ratchet            # check (pre-PR / CI)

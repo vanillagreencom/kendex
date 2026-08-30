@@ -121,7 +121,9 @@ kendex.settings.toml [env] > default):
                            (default none)
   SIZE_RATCHET_DEFAULT_CLASSES
                            the class list this package ships, same syntax;
-                           set it empty to run with no classes at all
+                           set it empty to drop the shipped list alone —
+                           SIZE_RATCHET_CLASSES still matches first, so
+                           single-threshold behavior needs both empty
   SIZE_RATCHET_FROZEN_CLASSES
                            `;`-separated globs whose rows may never rise,
                            whatever RATCHET_RAISE says (default: markdown
@@ -664,25 +666,35 @@ format_row() { # SIZE UNIT — the baseline row's number
 # file a fix command would operate on, and is empty for a copy the caller has
 # no path to hand back.
 validate_baseline_rows() { # MODE FILE LABEL [SUGGEST]
-  local mode="$1" file="$2" label="$3" suggest="${4:-}" grep_status=0 bad_rows dup_paths hint=""
+  local mode="$1" file="$2" label="$3" suggest="${4:-}" grep_status=0 bad_rows dup_paths hint="" fault=""
   bad_rows="$(grep -nEv -- "^[^${TAB}]+${TAB}[1-9][0-9]*b?\$" "$file")" || grep_status=$?
   [ "$grep_status" -le 1 ] || collection_error "could not validate $label (grep exit $grep_status)"
-  if [ -n "$bad_rows" ]; then
-    [ "$mode" = "fatal" ] || return 1
-    printf '%s\n' "$bad_rows" >&2
-    config_error "$label: malformed row(s) above (expected 'path<TAB>size' with a positive count, suffixed 'b' when the class counts bytes)"
-  fi
   [ -z "$suggest" ] || hint=" (LC_ALL=C sort -o $suggest $suggest)"
-  if ! LC_ALL=C sort -c -- "$file" 2>/dev/null; then
-    [ "$mode" = "fatal" ] || return 1
-    config_error "$label: rows must be LC_ALL=C sorted$hint"
+  # One fault decided in one place, so a soft caller cannot inherit an arm
+  # that forgot to speak. The listing an arm has goes to stderr on the way.
+  if [ -n "$bad_rows" ]; then
+    printf '%s\n' "$bad_rows" >&2
+    fault="malformed row(s) above (expected 'path<TAB>size' with a positive count, suffixed 'b' when the class counts bytes)"
+  elif ! LC_ALL=C sort -c -- "$file" 2>/dev/null; then
+    fault="rows must be LC_ALL=C sorted$hint"
+  else
+    dup_paths="$(cut -f1 -- "$file" | LC_ALL=C uniq -d)" || collection_error "could not scan $label for duplicate paths"
+    if [ -n "$dup_paths" ]; then
+      printf '%s\n' "$dup_paths" >&2
+      fault="duplicate path row(s) above"
+    fi
   fi
-  dup_paths="$(cut -f1 -- "$file" | LC_ALL=C uniq -d)" || collection_error "could not scan $label for duplicate paths"
-  if [ -n "$dup_paths" ]; then
-    [ "$mode" = "fatal" ] || return 1
-    printf '%s\n' "$dup_paths" >&2
-    config_error "$label: duplicate path row(s) above"
-  fi
+  [ -n "$fault" ] || return 0
+  # Soft mode is a rewrite source, not a gate, so a fault there is a SKIP —
+  # said out loud. A rewrite that silently does not happen leaves the commit
+  # failing on the verdict the rewrite existed to resolve, and pointing the
+  # developer at a remedy that operates on the file that just refused.
+  [ "$mode" = "fatal" ] || {
+    echo "size-ratchet: $label: $fault" >&2
+    echo "size-ratchet: the worktree copy cannot be rewritten, so the --staged rewrite is skipped and the verdict comes from the index copy" >&2
+    return 1
+  }
+  config_error "$label: $fault"
 }
 
 BASELINE_FROM_INDEX=0
@@ -987,7 +999,7 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
         echo "  remedy: run size-ratchet --update to re-measure the row"
         ;;
       ADDED)
-        echo "size-ratchet FAIL baseline row added: $path — row $n $unit > threshold $PT ($why), and HEAD's baseline carries no row for it"
+        echo "size-ratchet FAIL baseline row added: $path — a first row, at $n $unit (threshold $PT, $why); HEAD's baseline carries no row for it"
         echo "  remedy: $boot"
         ;;
       RAISED)
@@ -1518,7 +1530,9 @@ if [ "$MODE" = "check" ] && [ "$STAGED" -eq 1 ] && [ "$VIOLATIONS" -gt 0 ] \
   && validate_baseline_rows soft "$BASELINE_FILE" "$BASELINE_FILE"; then
   cp -- "$TMP/violations.tsv" "$TMP/violations.staged-index" || collection_error "could not preserve the verdict before the --staged rewrite"
   cp -- "$TMP/baseline.tsv" "$TMP/baseline.staged-index" || collection_error "could not preserve the index baseline before the --staged rewrite"
-  cp -- "$BASELINE_FILE" "$TMP/baseline.worktree-orig" || collection_error "could not preserve the worktree baseline before the --staged rewrite"
+  # -p, so the preserved copy carries the original's MODE: the restore below
+  # puts that mode back with it rather than the running umask's.
+  cp -p -- "$BASELINE_FILE" "$TMP/baseline.worktree-orig" || collection_error "could not preserve the worktree baseline before the --staged rewrite"
   cp -- "$TMP/baseline.worktree-orig" "$TMP/baseline.tsv" || collection_error "could not stage a working copy of $BASELINE_FILE for the --staged rewrite"
   tighten_baseline "--staged"
   [ "$BASELINE_REWRITTEN" != "1" ] || run_verdict "$TMP/baseline.tsv"
@@ -1530,7 +1544,20 @@ if [ "$MODE" = "check" ] && [ "$STAGED" -eq 1 ] && [ "$VIOLATIONS" -gt 0 ] \
     # run. Put the worktree copy back byte for byte and report what the
     # commit's own snapshot earned.
     if [ "$BASELINE_REWRITTEN" = "1" ]; then
-      cat -- "$TMP/baseline.worktree-orig" >"$BASELINE_FILE" || collection_error "could not restore $BASELINE_FILE after an unsuccessful --staged rewrite — inspect the file before trusting it"
+      # The recovery path for a run that is already failing, so it is the last
+      # write that may leave the file half-written: it goes through the same
+      # sibling-temp-then-rename(2) the rewrite itself uses. `cp -p` from the
+      # preserved copy carries the original mode onto the temp before the
+      # rename, so the file comes back exactly as wide as it was — never
+      # wider, and never the umask's idea of it.
+      case "$BASELINE_FILE" in
+        */*) restore_dir="${BASELINE_FILE%/*}" ;;
+        *) restore_dir=. ;;
+      esac
+      STAGED_BASELINE="$(mktemp -- "$restore_dir/.size-ratchet-baseline.XXXXXX")" || collection_error "could not create a staging file beside $BASELINE_FILE to restore it — it is REWRITTEN in the worktree; inspect it before trusting it"
+      cp -p -- "$TMP/baseline.worktree-orig" "$STAGED_BASELINE" || collection_error "could not write the restore beside $BASELINE_FILE — it is REWRITTEN in the worktree; inspect it before trusting it"
+      mv -- "$STAGED_BASELINE" "$BASELINE_FILE" || collection_error "could not restore $BASELINE_FILE (mv failed) — inspect the file before trusting it"
+      STAGED_BASELINE="" # renamed away; nothing left for the EXIT trap to remove
       echo "size-ratchet --staged: the run is not clean, so $BASELINE_FILE is restored and nothing was staged"
     fi
     cp -- "$TMP/baseline.staged-index" "$TMP/baseline.tsv" || collection_error "could not restore the index baseline after the --staged rewrite"
