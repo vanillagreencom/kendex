@@ -1,76 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { isBareCd, preCommitGate, scanCommand } from "../extensions/bash-guards.ts";
-import { runCommandAsync } from "../extensions/process.ts";
-
-// The marker the growth-guards installer ends its delegating line with, and
-// the only thing that makes a hook file ours as far as this gate is
-// concerned. Assembled so this file is not itself mistaken for a shim.
-const GG_MARK = "# kendex-" + "guards-hook";
-
-function runGit(args: string[], cwd: string): void {
-	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
-	if (result.status !== 0) {
-		throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
-	}
-}
-
-// A global init.templateDir can leave git init without a hooks directory,
-// so the fixture makes the one it writes into.
-function initRepo(root: string, name: string): string {
-	const dir = join(root, name);
-	mkdirSync(dir, { recursive: true });
-	runGit(["init", "-q"], dir);
-	mkdirSync(join(dir, ".git", "hooks"), { recursive: true });
-	return dir;
-}
-
-// A hook file git would run, carrying the marker; `executable: false` leaves
-// the marker in place and takes the bit git needs away.
-function writeHook(dir: string, lane: string, executable = true): void {
-	const file = join(dir, lane);
-	writeFileSync(file, `#!/bin/sh\nexit 0 ${GG_MARK}\n`);
-	chmodSync(file, executable ? 0o755 : 0o644);
-}
-
-// Every fixture carries a package script that would announce itself if
-// anything ran it. Nothing may: this gate defers to an armed hook or refuses,
-// and never runs a repository's own scripts on its behalf.
-function plantAnnouncingScript(repo: string, log: string): void {
-	const scripts = join(repo, ".agents", "skills", "growth-guards", "scripts");
-	mkdirSync(scripts, { recursive: true });
-	writeFileSync(join(scripts, "pre-commit"), `#!/usr/bin/env bash\necho 'the repository script ran' >>"${log}"\nexit 0\n`);
-	chmodSync(join(scripts, "pre-commit"), 0o755);
-}
-
-const PROBE = "pi-hooks-path-probe";
-
-/**
- * Prove the narrowed PATH is the one the gate's own spawns resolve against,
- * then take the probe back out so the directory holds git, sh and bash alone.
- * A narrowing that never reaches a child reads exactly like one that holds.
- * That is how a fake cargo sat unreachable while every assertion around it
- * passed (KEN-843), Bun's spawnSync having defaulted to a boot-time
- * environment snapshot. The probe runs through `runCommandAsync` because that
- * is the helper the gate spawns git with, so it answers for the gate's own
- * resolution and not for a lookup this file did itself.
- */
-async function expectNarrowedPathReachable(bin: string, cwd: string): Promise<void> {
-	const probe = join(bin, PROBE);
-	writeFileSync(probe, "#!/bin/sh\nprintf reached\n");
-	chmodSync(probe, 0o755);
-	const result = await runCommandAsync(PROBE, [], cwd, 5000);
-	expect([result.exitCode, result.stdout]).toEqual([0, "reached"]);
-	rmSync(probe);
-}
+import { type GateHarness, armGateFixtures } from "./gate-harness.ts";
 
 describe("pre-commit gate: the bash hook's contract", () => {
-	const root = mkdtempSync(join(tmpdir(), "pi-hooks-gate-"));
-	const ranLog = join(root, "ran.log");
+	let h: GateHarness;
 	let unarmed: string;
 	let armed: string;
 	let armedByPath: string;
@@ -82,127 +16,16 @@ describe("pre-commit gate: the bash hook's contract", () => {
 	let foreign: string;
 	let mixed: string;
 	let notARepo: string;
-	// Narrowed PATH: git is the one binary this gate resolves, so the fixtures
-	// run against a directory holding git, sh and bash and nothing else. A
-	// resolution the gate is not supposed to make fails here rather than
-	// quietly finding the developer's copy. Git also reads no config of the
-	// developer's: a global core.hooksPath would disarm every fixture.
-	const savedEnv: Record<string, string | undefined> = {};
-	const isolatedEnv: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+	let gate: GateHarness["gate"];
+	let both: GateHarness["both"];
 
 	beforeAll(async () => {
-		for (const [name, value] of Object.entries(isolatedEnv)) {
-			savedEnv[name] = process.env[name];
-			process.env[name] = value;
-		}
-
-		unarmed = initRepo(root, "unarmed");
-
-		armed = initRepo(root, "armed");
-		for (const lane of ["pre-commit", "commit-msg"]) writeHook(join(armed, ".git", "hooks"), lane);
-
-		armedByPath = initRepo(root, "armed-by-path");
-		const customHooks = join(root, "custom-hooks");
-		mkdirSync(customHooks);
-		for (const lane of ["pre-commit", "commit-msg"]) writeHook(customHooks, lane);
-		runGit(["config", "core.hooksPath", customHooks], armedByPath);
-
-		// A hook file git will not run: present, execute bit off. Git skips it
-		// silently, so it must not count as armed.
-		disarmed = initRepo(root, "disarmed");
-		writeHook(join(disarmed, ".git", "hooks"), "pre-commit", false);
-
-		disarmedByPath = initRepo(root, "disarmed-by-path");
-		const disarmedHooks = join(root, "disarmed-hooks");
-		mkdirSync(disarmedHooks);
-		writeHook(disarmedHooks, "pre-commit", false);
-		runGit(["config", "core.hooksPath", disarmedHooks], disarmedByPath);
-
-		// core.hooksPath set and EMPTY switches hooks off, and git's answer
-		// about it misleads: `rev-parse --git-path hooks` reports `./`, so the
-		// directory resolves to the repository root. This fixture puts an
-		// executable `pre-commit` exactly there, the trap, while git runs
-		// nothing at all.
-		hooksOff = initRepo(root, "hooks-off");
-		runGit(["config", "core.hooksPath", ""], hooksOff);
-		writeFileSync(join(hooksOff, "pre-commit"), "#!/bin/sh\nexit 0\n");
-		chmodSync(join(hooksOff, "pre-commit"), 0o755);
-
-		// One lane armed and not the other. Deferring here would hand the
-		// commit to a gate that checks content and accepts any message.
-		halfArmed = initRepo(root, "half-armed");
-		writeHook(join(halfArmed, ".git", "hooks"), "pre-commit");
-
-		// Marked on both lanes, and one of them is a file git will not execute.
-		markedNotExec = initRepo(root, "marked-not-exec");
-		writeHook(join(markedNotExec, ".git", "hooks"), "pre-commit", false);
-		writeHook(join(markedNotExec, ".git", "hooks"), "commit-msg");
-
-		// Both lanes executable where git reads them, and neither is ours: a
-		// hook somebody else installed is not kendex's arming.
-		foreign = initRepo(root, "foreign");
-		for (const lane of ["pre-commit", "commit-msg"]) {
-			writeFileSync(join(foreign, ".git", "hooks", lane), "#!/bin/sh\nexit 0\n");
-			chmodSync(join(foreign, ".git", "hooks", lane), 0o755);
-		}
-
-		// Ours on the content lane, somebody else's on the message lane: the
-		// marker has to be read on both, not on pre-commit alone.
-		mixed = initRepo(root, "mixed");
-		writeHook(join(mixed, ".git", "hooks"), "pre-commit");
-		writeFileSync(join(mixed, ".git", "hooks", "commit-msg"), "#!/bin/sh\nexit 0\n");
-		chmodSync(join(mixed, ".git", "hooks", "commit-msg"), 0o755);
-
-		notARepo = join(root, "plain");
-		mkdirSync(notARepo);
-
-		for (const repo of [unarmed, armed, armedByPath, disarmed, disarmedByPath, hooksOff, halfArmed, markedNotExec, foreign, mixed]) {
-			plantAnnouncingScript(repo, ranLog);
-		}
-
-		const bin = join(root, "git-only-bin");
-		mkdirSync(bin);
-		for (const tool of ["git", "sh", "bash"]) {
-			const found = spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
-			if (found) spawnSync("ln", ["-sf", found, join(bin, tool)]);
-		}
-		savedEnv.PATH = process.env.PATH;
-		process.env.PATH = bin;
-		await expectNarrowedPathReachable(bin, root);
+		h = await armGateFixtures();
+		({ unarmed, armed, armedByPath, disarmed, disarmedByPath, hooksOff, halfArmed, markedNotExec, foreign, mixed, notARepo, gate, both } = h);
 	});
 
-	afterAll(() => {
-		for (const [name, value] of Object.entries(savedEnv)) {
-			if (value === undefined) delete process.env[name];
-			else process.env[name] = value;
-		}
-		rmSync(root, { recursive: true, force: true });
-	});
+	afterAll(() => h.disarm());
 
-	async function gate(cwd: string, command: string) {
-		const verdict = await preCommitGate(command, cwd);
-		let ran = "";
-		try {
-			ran = readFileSync(ranLog, "utf8");
-		} catch {
-			// Nothing ran, so nothing wrote the log.
-		}
-		return { verdict, ran };
-	}
-
-	// Judge one form in both fixtures. The armed expectation says whether the git
-	// argv carries a bypass; the unarmed one is the control proving the commit
-	// was found at all, since a form the gate never sees passes there too.
-	async function both(command: string, wantArmed: "allow" | "refuse", wantUnarmed: "allow" | "refuse"): Promise<void> {
-		const a = await gate(armed, command);
-		expect([command, a.verdict.kind]).toEqual([command, wantArmed]);
-		if (a.verdict.kind === "refuse") expect(a.verdict.reason).toContain("bypasses this repository's armed git hooks");
-		expect(a.ran).toBe("");
-		const u = await gate(unarmed, command);
-		expect([command, u.verdict.kind]).toEqual([command, wantUnarmed]);
-		if (u.verdict.kind === "refuse") expect(u.verdict.reason).toContain("not armed by kendex");
-		expect(u.ran).toBe("");
-	}
 
 	test("detection reads live words, not the whole command", () => {
 		const commit = (c: string): boolean => scanCommand(c).commit;
@@ -344,90 +167,6 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		const named = await gate(armed, "git -cinclude.path=/tmp/c commit -m x");
 		if (named.verdict.kind !== "refuse") throw new Error("unreachable");
 		expect(named.verdict.reason).toContain("'-cinclude.path=/tmp/c' bypasses");
-	});
-
-	test("a construct this gate does not model is refused on sight", async () => {
-		// Each of these hides text from the scanner, and each decode added to read
-		// one invites the next construct. So the construct itself is the answer: a
-		// command naming git that carries one is refused in either fixture, without
-		// parsing. The refusals name no bypass — nothing was parsed to find one.
-		const nv = "--no-" + "verify";
-		for (const command of [
-			`git -c alias.c='commit ${nv}' c --allow-empty -m x`,
-			`git config alias.c 'commit ${nv}' && git c --allow-empty -m x`,
-			"cat <<$'EOF'\nbody\nEOF\ngit commit -m x",
-			"x=$(( 1 << 2 )) && git commit -m x",
-			// The prerequisite takes either answer to where the commit is, and each of
-			// these has only one of them. The first two have only the assembled word:
-			// the alias value spells the commit out of an escape and across a
-			// continuation, so no text of the command ever holds it. The third has
-			// only the text: the scanner reads the shift as a heredoc opener, and the
-			// body it then skips swallows the commit line bash does run, so no live
-			// word holds it either.
-			`git config alias.c "com\\\nmit -n" && git c --allow-empty -m x`,
-			`git config alias.c com\\mit && git c ${nv} -m x`,
-			`x=$(( 1 << EOF ))\ngit commit ${nv} -m x\nEOF\ngit status`,
-			// The prerequisite is read off the command with its quote characters
-			// removed, so a spelling the shell assembles reads as its letters. Each
-			// of these is the word once the quotes come out, and one also spells git.
-			"git com''mit $'--no-verify' -m x",
-			"git $'com''mit' --no-verify -m x",
-			"git status && $'g''it' commit --no-verify -m x",
-			// An alias key carried inline keeps the bare git prerequisite: it
-			// renames the subcommand of this very invocation, so no normalizing
-			// brings the word back. It is read off the live words, so a key the
-			// shell assembles across a line continuation is that key however the
-			// text was written.
-			"git -c alias.c='co' co --allow-empty -m x",
-			`git -c alias.c\\\n=com\\\nmit c ${nv} -m x`,
-			`git -c "ali\\\nas.c=com\\\nmit -n" c --allow-empty -m x`,
-			// Accepted on KEN-866 and pinned so it cannot flip in silence: the
-			// pattern supplies the word, and no text test tells it from the
-			// subcommand.
-			"git log --oneline | grep 'commit$'",
-		]) {
-			for (const repo of [armed, unarmed]) {
-				const { verdict, ran } = await gate(repo, command);
-				expect([command, verdict.kind]).toEqual([command, "refuse"]);
-				if (verdict.kind !== "refuse") throw new Error("unreachable");
-				expect(verdict.reason).toContain("does not model");
-				expect(ran).toBe("");
-			}
-		}
-		// The controls. A command with none of these parses as before, and one
-		// naming no git at all is not this gate to judge however it is written.
-		await both("git commit -m x", "allow", "refuse");
-		await both("git -c core.pager=cat log", "allow", "allow");
-		expect((await gate(armed, "echo $'hi'")).verdict).toEqual({ kind: "allow" });
-		expect((await gate(armed, "x=$(( 1 << 2 ))")).verdict).toEqual({ kind: "allow" });
-		// The KEN-866 regression. Removing quote characters joins fragments and
-		// moves nothing else, so a pattern anchored to end-of-line names no commit.
-		await both("grep -rn 'foo$' .git/config", "allow", "allow");
-		await both("git log --oneline | grep 'fix$'", "allow", "allow");
-		await both("git status --short | grep 'M$'", "allow", "allow");
-		await both("git log --grep='fix$' | head", "allow", "allow");
-		await both('git log --grep="foo\\\nbar"', "allow", "allow");
-		// The KEN-870 regression. A trigger fires where the construct can change
-		// what the command runs, not wherever its text appears. A key written to
-		// the config runs nothing here — it takes effect on later commands, which
-		// arrive as their own payloads — so it is judged behind the commit word
-		// like any other text, and a body hiding the commit in a script it names
-		// is out of model exactly as that script is. A line continuation inside
-		// quotes is joined rather than named, so what is judged is the word it
-		// assembles: a flag either side of the break is that flag, and a message
-		// either side of it is prose.
-		await both("git config alias.st status", "allow", "allow");
-		await both("git config alias.c 'status' && git c", "allow", "allow");
-		await both("cat <<EOF\ngit -c alias.c=co co\nEOF\ngit status", "allow", "allow");
-		// Behind a real heredoc that same body is the control: bash runs nothing in
-		// it, so the commit the text holds is text and this passes.
-		await both(`cat <<EOF\ngit commit ${nv} -m x\nEOF\ngit status`, "allow", "allow");
-		await both('git commit "a\\\nb"', "allow", "refuse");
-		await both('git commit -m "line one\nline two"', "allow", "refuse");
-		const joined = await gate(armed, `git commit "--no-veri\\\nfy" -m x`);
-		expect(joined.verdict.kind).toBe("refuse");
-		if (joined.verdict.kind !== "refuse") throw new Error("unreachable");
-		expect(joined.verdict.reason).toContain(`'${nv}' bypasses`);
 	});
 
 	test("only <<- accepts a tab-indented terminator", async () => {
