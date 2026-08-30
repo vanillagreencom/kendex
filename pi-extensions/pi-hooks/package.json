@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-hooks",
   "version": "0.7.0",
-  "description": "First-class Pi port of the kendex safety hooks: bare-cd blocking, pre-commit gate deferring to armed git hooks, post-edit clippy, end-of-turn lint, session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
+  "description": "First-class Pi port of the kendex safety hooks: bare-cd blocking, pre-commit gate deferring to armed git hooks, end-of-turn lint, session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -53,7 +53,7 @@
         {
           "key": "preCommitCheck",
           "label": "Pre-commit gate",
-          "description": "On a bash command whose `git` argv names `commit`, defer to the working directory's git hooks when kendex armed them (`kendex guard install`: pre-commit and commit-msg both executable and marked, `core.hooksPath` unset), so git validates the commit exactly once. Refuse a git argv that sidesteps an armed hook (`--no-verify`, `-n`, a global `-c` or `--config-env`, a `GIT_CONFIG_*` assignment, a `git config` line naming `core.hooksPath`); a `-n` or `--no-verify` in a heredoc body, another program's arguments, or a quoted commit message is text, not a flag. Refuse a commit in a repository nothing armed, naming `kendex guard install`; this gate never runs a check of its own. Gates the working directory only: a commit aimed at another repository is that repository's own hook's to gate. Mirrors hooks/pre-commit-check.sh.",
+          "description": "On a bash command whose `git` argv names `commit`, defer to the working directory's git hooks when kendex armed them (`kendex guard install`: pre-commit and commit-msg both executable and marked, `core.hooksPath` unset), so git validates the commit exactly once. Refuse a git argv that sidesteps an armed hook (`--no-verify`, `-n`, a global `-c` or `--config-env`, a `GIT_CONFIG_*` assignment, a `git config` line naming `core.hooksPath`); a heredoc body, a comment, another program's arguments, an operand after `--`, the value of an option that takes one, and prose in a quoted commit message are text, not flags. Fails closed twice over: a wrapper whose options it cannot read (`sudo -u dev`, `timeout 30`) does not hide the git word behind it, and a command whose quoting never closes falls back to the word-order rule. Refuse a commit in a repository nothing armed, naming `kendex guard install`; this gate never runs a check of its own. Gates the working directory only: a commit aimed at another repository is that repository's own hook's to gate. Mirrors hooks/pre-commit-check.sh.",
           "type": "boolean",
           "default": true,
           "category": "Bash",
@@ -89,7 +89,7 @@
         {
           "key": "clippyTimeoutMs",
           "label": "Clippy timeout",
-          "description": "Maximum milliseconds the end-of-turn cargo clippy run is allowed to take before it is abandoned so the turn can continue. Raise for slow workspaces.",
+          "description": "Maximum milliseconds the whole end-of-turn check may take: a quarter of it, capped at 5s, goes to the `cargo metadata` workspace lookup and the rest to `cargo clippy`, each abandoned past its share so the turn can continue. Raise for slow workspaces.",
           "type": "number",
           "default": 30000,
           "category": "Rust",

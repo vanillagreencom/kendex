@@ -236,7 +236,7 @@ describe("pi-hooks pre-commit tool_call", () => {
 		}
 	});
 
-	test("allows a command with no git commit in word order without running anything", async () => {
+	test("allows a command with no git commit in any argv without running anything", async () => {
 		await withFakeCargo(async ({ log }) => {
 			const project = initRustRepo("pi-hooks-project-");
 			process.env.FAKE_FMT_EXIT = "1";

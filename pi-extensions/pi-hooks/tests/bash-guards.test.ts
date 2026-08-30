@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { isBareCd, isGitCommit, preCommitGate, scanCommand } from "../extensions/bash-guards.ts";
+import { isBareCd, preCommitGate, scanCommand } from "../extensions/bash-guards.ts";
 
 // The marker the growth-guards installer ends its delegating line with, and
 // the only thing that makes a hook file ours as far as this gate is
@@ -165,62 +165,158 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		return { verdict, ran };
 	}
 
+	// Judge one form in both fixtures. The armed expectation says whether the git
+	// argv carries a bypass; the unarmed one is the control proving the commit
+	// was found at all, since a form the gate never sees passes there too.
+	async function both(command: string, wantArmed: "allow" | "refuse", wantUnarmed: "allow" | "refuse"): Promise<void> {
+		const a = await gate(armed, command);
+		expect([command, a.verdict.kind]).toEqual([command, wantArmed]);
+		if (a.verdict.kind === "refuse") expect(a.verdict.reason).toContain("bypasses this repository's armed git hooks");
+		expect(a.ran).toBe("");
+		const u = await gate(unarmed, command);
+		expect([command, u.verdict.kind]).toEqual([command, wantUnarmed]);
+		if (u.verdict.kind === "refuse") expect(u.verdict.reason).toContain("not armed by kendex");
+		expect(u.ran).toBe("");
+	}
+
 	test("detection reads a git argv, not the whole command", () => {
-		expect(isGitCommit("ls -la")).toBe(false);
-		expect(isGitCommit("git commit -m test")).toBe(true);
-		expect(isGitCommit("git -C /somewhere/else commit -m test")).toBe(true);
+		const commit = (c: string): boolean => scanCommand(c).commit;
+		expect(commit("ls -la")).toBe(false);
+		expect(commit("git commit -m test")).toBe(true);
+		expect(commit("git -C /somewhere/else commit -m test")).toBe(true);
 		// A newline ends a command; a tab is word whitespace, so that payload
 		// is one `cd` with five arguments and no commit at all.
-		expect(isGitCommit("cargo fmt\ngit commit -m x")).toBe(true);
-		expect(isGitCommit("cargo fmt\r\ngit commit -m x")).toBe(true);
-		expect(isGitCommit("cd sub\tgit commit -m x")).toBe(false);
+		expect(commit("cargo fmt\ngit commit -m x")).toBe(true);
+		expect(commit("cargo fmt\r\ngit commit -m x")).toBe(true);
+		expect(commit("cd sub\tgit commit -m x")).toBe(false);
 		// Words outside a git argv are text, not a commit.
-		expect(isGitCommit("echo git commit")).toBe(false);
-		expect(isGitCommit("git status && echo commit")).toBe(false);
-		expect(isGitCommit("git log --grep=commit")).toBe(false);
-		expect(isGitCommit("commit git")).toBe(false);
+		expect(commit("echo git commit")).toBe(false);
+		expect(commit("git status && echo commit")).toBe(false);
+		expect(commit("git log --grep=commit")).toBe(false);
+		expect(commit("commit git")).toBe(false);
+		// A command naming no git at all leaves before the scan runs.
+		expect(scanCommand("cd /tmp && rm -rf build")).toEqual({ commit: false, moves: false, bypass: null });
 	});
 
 	test("only a git argv is judged", async () => {
-		// The three refusals this rule exists to stop, all of them in one day:
-		// a `-n` in a heredoc body, a `-c` belonging to another program, and
-		// prose naming --no-verify inside a quoted string.
-		const passing = [
-			'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -m note',
+		// The three refusals this rule exists to stop, all of them in one day: a
+		// `-n` in a heredoc body, a `-c` belonging to another program, and prose
+		// naming --no-verify inside a quoted string.
+		for (const command of [
+			"cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -m note",
 			'python3 -c "print(1)" && git commit -m x',
 			'git commit -m "explain why --no-verify is banned"',
 			'gh pr comment 7 --body "we never pass --no-verify" && git commit -m x',
 			"git commit -c HEAD --reset-author",
-		];
-		for (const command of passing) {
-			expect(scanCommand(command).bypass).toBeNull();
-			// Reached through a commit the gate did see, so the assertion above
-			// is not passing on a command it never found.
-			expect(scanCommand(command).commit).toBe(true);
-			expect((await gate(armed, command)).verdict).toEqual({ kind: "allow" });
+		]) {
+			expect([command, scanCommand(command).bypass]).toEqual([command, null]);
+			await both(command, "allow", "refuse");
 		}
 
 		// The same forms with the flag moved into the commit's own argv.
 		for (const command of [
-			'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -n -m note',
+			"cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -n -m note",
 			'python3 -c "print(1)" && git commit --no-verify -m x',
 			'git commit -m "explain why --no-verify is banned" --no-verify',
 			'gh pr comment 7 --body "we never pass --no-verify" && git -c core.hooksPath=/dev/null commit -m x',
 		]) {
-			const { verdict } = await gate(armed, command);
-			expect(verdict.kind).toBe("refuse");
+			await both(command, "refuse", "refuse");
+		}
+	});
+
+	test("a heredoc body is text, not shell", async () => {
+		// A body line beginning with `git` is prose about a commit, not a commit;
+		// the body is skipped whole, so no quote in it opens anything either.
+		// Without that, one apostrophe swallowed every separator after it and the
+		// real commit behind the heredoc went unjudged in both fixtures.
+		for (const command of [
+			"cat > note.md <<EOF\ngit commit --no-verify is banned in this repo\nEOF\ngit commit -m x",
+			'cat <<EOF > n.md\nsay "hi\nEOF\ngit commit -m x',
+			"cat <<-EOF > n.md\n\tgit commit -n here\n\tEOF\ngit commit -m x",
+			'cat <<"END" > n.md\ngit commit -n here\nEND\ngit commit -m x',
+			"git commit -m x <<< ignored",
+		]) {
+			await both(command, "allow", "refuse");
+		}
+		await both("cat <<EOF >> notes.md\ndon't forget\nEOF\ngit commit --no-verify -m x", "refuse", "refuse");
+	});
+
+	test("a comment is text", async () => {
+		await both("git commit -m x  # never --no-verify", "allow", "refuse");
+		await both("git commit -m x # -n", "allow", "refuse");
+		await both("git commit -m x#y --no-verify", "refuse", "refuse");
+	});
+
+	test("a backslash-newline joins lines", async () => {
+		// hooks/block-unsafe-rm.sh folds the same sequence before its separator
+		// split. Left alone it puts a newline inside the word, and the command
+		// after it goes unjudged in both fixtures.
+		await both("git status && \\\ngit commit --no-verify -m x", "refuse", "refuse");
+		await both("cargo fmt && \\\ngit commit -m x", "allow", "refuse");
+	});
+
+	test("git option boundaries hold", async () => {
+		await both("git commit -- --no-verify", "allow", "refuse");
+		await both("git commit -m x -- -n", "allow", "refuse");
+		await both("git commit -F --no-verify", "allow", "refuse");
+		await both("git commit -m a{b} --no-verify", "refuse", "refuse");
+		await both("{ git commit --no-verify -m x; }", "refuse", "refuse");
+	});
+
+	test("a command prefix does not hide the git argv", async () => {
+		// The bash hook's word-order predecessor caught every one of these without
+		// reading a prefix at all, so a prefix this gate cannot resolve must not
+		// read as not-a-git-command.
+		for (const command of [
+			"sudo git commit --no-verify -m x",
+			"sudo -E git commit -n -m x",
+			"sudo -u dev git commit --no-verify -m x",
+			"env git commit -n -m x",
+			"env -i git commit -n -m x",
+			"/usr/bin/env -i git -c core.hooksPath=/dev/null commit -m x",
+			"nice git commit -n -m x",
+			"timeout 30 git commit -n -m x",
+			"stdbuf -o0 git commit -n -m x",
+			"/usr/bin/git commit --no-verify -m x",
+		]) {
+			await both(command, "refuse", "refuse");
+		}
+		await both("echo git commit --no-verify", "allow", "allow");
+	});
+
+	test("a command whose quoting never closes is judged, not skipped", async () => {
+		// The parser cannot tokenize this, so the word-order rule it replaced
+		// stands in rather than the commit passing unjudged.
+		await both("echo don't && git commit --no-verify -m x", "refuse", "refuse");
+		await both("echo don't && git commit -m x", "allow", "refuse");
+	});
+
+	test("quoting and redirection hold the argv together", async () => {
+		await both("git commit>/dev/null -n -m x", "refuse", "refuse");
+		await both("git -C `echo ; pwd` commit --no-verify -m x", "refuse", "refuse");
+
+		for (const command of ["GIT_DIR=/elsewhere/.git git commit -m x", "GIT_WORK_TREE=/elsewhere git commit -m x"]) {
+			const scan = scanCommand(command);
+			expect([command, scan.commit, scan.moves]).toEqual([command, true, true]);
+			const { verdict } = await gate(unarmed, command);
 			if (verdict.kind !== "refuse") throw new Error("unreachable");
-			expect(verdict.reason).toContain("bypasses this repository's armed git hooks");
+			expect(verdict.reason).toContain("moves repositories");
 		}
 	});
 
 	test("a long command is judged in linear time", async () => {
-		// Every character is read once and no regex runs over the command as a
-		// whole, so twenty thousand git words stay far under the bound a
-		// backtracking scan blew through on Pi's event loop.
+		// Ordinary characters are counted rather than copied and a heredoc body is
+		// skipped whole, so neither twenty thousand git words nor a half-megabyte
+		// file write stalls Pi's event loop before the tool runs.
+		const body = "the quick brown fox jumps over the lazy dog; it's a note line\n".repeat(8000);
+		const heredoc = `cat > note.md <<'EOF'\n${body}EOF\ngit commit -m note`;
+		const heredocStarted = performance.now();
+		expect(scanCommand(heredoc)).toEqual({ commit: true, moves: false, bypass: null });
+		expect(performance.now() - heredocStarted).toBeLessThan(250);
+
 		const command = " git x".repeat(20000);
 		const started = performance.now();
-		expect(isGitCommit(command)).toBe(false);
+		expect(scanCommand(command).commit).toBe(false);
 		expect(await preCommitGate(command, armed)).toEqual({ kind: "allow" });
 		expect(performance.now() - started).toBeLessThan(250);
 

@@ -3,8 +3,8 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only the argv of a `git` invocation is judged, so a heredoc body, a quoted commit message, or another program's -n or -c is not a git flag. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a git commit argv that bypasses an armed hook (no-verify, -n) or injects git configuration that could (a global -c or --config-env option, a GIT_CONFIG_* assignment, a git config write of core.hooksPath); a commit aimed at another repository is that repository's armed hook's to gate.
+# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only the argv of a `git` invocation is judged, with heredoc bodies, comments, operands after --, and option values all read as text rather than flags. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
+# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a git commit argv that bypasses an armed hook (no-verify, -n) or injects git configuration that could (a global -c or --config-env option, a GIT_CONFIG_* assignment, a git config write of core.hooksPath); a command it cannot tokenize falls back to word-order matching rather than passing unjudged, and a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 60
 # ---
 
@@ -16,152 +16,214 @@ MARKER="# kendex-guards-hook"
 
 INPUT=$(cat)
 
-# What this lane judges, and what it deliberately does not.
+# The command splits on shell control operators into simple commands, and only
+# a simple command whose command word is `git` is judged. Inside that argv the
+# subcommand decides: `commit` is this gate's business, `config` is watched for
+# a core.hooksPath write, everything else is left alone. Heredoc bodies,
+# comments, operands after `--` and option values are text — `cat -n` in a
+# heredoc, `python3 -c` and prose naming --no-verify were all refused as
+# bypasses by the word-soup rule this replaces.
 #
-# The command is split on shell control operators into simple commands, and
-# a simple command is judged only where its command word is `git`. Inside a
-# git argv the subcommand decides: `commit` is the gate's business, `config`
-# is watched for a core.hooksPath write, everything else is left alone. Text
-# that is not in a git argv — a heredoc body, another program's arguments, a
-# quoted commit message — is not a flag here, which is the whole reason for
-# the split: `cat -n` in a heredoc, `python3 -c`, and prose naming
-# --no-verify were all refused as bypasses by the word-soup rule this
-# replaces.
+# It fails closed where it can: a wrapper whose options it cannot read (`sudo
+# -u dev`, `timeout 30`) does not hide the git word behind it, and a command
+# whose quoting never closes falls back to the word-order rule. `sh -c '...'`,
+# git aliases, a wrapper outside the transparent list and the inside of a
+# `$(...)` stay invisible: this guards habit, and git's hooks are the control.
 #
-# The limits are the price of not running a shell. `sh -c '...'` and git
-# aliases hide a commit from this lane entirely, and a `$(...)` stays one
-# word rather than being looked into. This hook guards habit, not an
-# adversary: git's own hooks are the control, and they run in the right
-# repository whatever the command's quoting or directory hops. A miss here
-# skips a refusal, never a check.
-#
-# The payload is JSON, where a string never spans lines, so the analysis
-# reads the whole input and finds the first `"command"` key in it.
+# The payload is JSON, whose strings never span lines, so the analysis reads
+# the whole input and takes the first `"command"` key. Decoding uses
+# whole-string substitutions and tokenizing copies each run once: mawk, the
+# default awk on Debian and Ubuntu, copies an accumulator on every append.
 if ! ANALYSIS=$(printf '%s' "$INPUT" | awk '
 function setbypass(t) {
   if (BYPASS != "") return
   gsub(/[\n\r\t]/, " ", t)
   BYPASS = (length(t) > 60) ? substr(t, 1, 60) : t
 }
-
-# Decode one JSON string, starting at its opening quote. CLOSED stays 0 for
-# a string that never ends, which is a payload this lane cannot read.
-function decode(s,   n, i, ch, e, out) {
-  n = length(s); i = 2; out = ""
-  while (i <= n) {
-    ch = substr(s, i, 1)
-    if (ch == "\\") {
-      e = substr(s, i + 1, 1)
-      if (e == "n") out = out "\n"
-      else if (e == "t") out = out "\t"
-      else if (e == "r") out = out "\r"
-      else if (e == "u") { out = out " "; i += 4 }
-      else if (e == "b" || e == "f") out = out " "
-      else out = out e
-      i += 2
-    } else if (ch == "\"") { CLOSED = 1; return out }
-    else { out = out ch; i++ }
-  }
-  return out
-}
-
-function flush_word() {
-  if (HAVEW) { TOK[++NTOK] = W; W = ""; HAVEW = 0 }
-}
-
+function basename(t) { sub(/^.*\//, "", t); return t }
+function flush_word() { if (HAVEW) { TOK[++NTOK] = W; W = ""; HAVEW = 0 } }
+# split with an empty string is the portable array clear (not `delete TOK`).
 function end_command() {
   flush_word()
   if (NTOK > 0) judge()
-  # split with an empty string is the portable array clear: `delete TOK`
-  # is not in every awk this hook is rendered into.
-  split("", TOK)
-  NTOK = 0
+  split("", TOK); NTOK = 0
 }
-
-# Consume a $(...) or ${...} whole, so its operators never split a command
-# and its contents never read as words of their own.
-function substitution(cmd, i, n,   opener, closer, depth, ch) {
-  opener = substr(cmd, i + 1, 1)
-  closer = (opener == "(") ? ")" : "}"
-  depth = 0
-  W = W "$"
-  i++
+# Decode the JSON string opening at s[1]. BS, the decoded backslash, stays the
+# sentinel it was folded to: it is the only one the shell layer below can see.
+function jsonstring(s,   fin, body) {
+  gsub(BS, " ", s); gsub(DQ, " ", s)
+  gsub(/\\\\/, BS, s); gsub(/\\"/, DQ, s)
+  fin = index(substr(s, 2), "\"")
+  if (fin == 0) { UNREADABLE = 1; return "" }
+  body = substr(s, 2, fin - 1)
+  gsub(/\\n/, "\n", body); gsub(/\\t/, "\t", body); gsub(/\\r/, "\r", body)
+  gsub(/\\\//, "/", body); gsub(/\\[bf]/, " ", body)
+  gsub(/\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/, " ", body)
+  gsub(DQ, "\"", body); return body
+}
+function quoted(cmd, i, n, q,   start) {
+  i++; start = i
+  while (i <= n && substr(cmd, i, 1) != q) i++
+  W = W substr(cmd, start, i - start); HAVEW = 1
+  if (i > n) { UNBALANCED = 1; return i }
+  return i + 1
+}
+# A double-quoted run: a backslash escapes the next character, unless that is a
+# newline, which is line joining.
+function dquoted(cmd, i, n,   start, ch, c2) {
+  i++; HAVEW = 1; start = i
   while (i <= n) {
     ch = substr(cmd, i, 1)
-    W = W ch
-    if (ch == opener) depth++
-    else if (ch == closer) { depth--; if (depth == 0) return i + 1 }
+    if (ch == "\"") { W = W substr(cmd, start, i - start); return i + 1 }
+    if (ch == BS) {
+      W = W substr(cmd, start, i - start)
+      c2 = substr(cmd, i + 1, 1)
+      if (c2 != "\n") W = W c2
+      i += 2; start = i; continue
+    }
     i++
   }
+  W = W substr(cmd, start, i - start); UNBALANCED = 1
   return i
 }
-
-# One left-to-right pass: quotes hold a word together, control operators end
-# a simple command, and every simple command is judged as it closes.
-function scan(cmd,   n, i, ch, c2) {
-  n = length(cmd); i = 1; W = ""; HAVEW = 0; NTOK = 0
+# Consume a $(...) or ${...} whole: its operators never split a command.
+function substitution(cmd, i, n,   opener, closer, depth, ch, start) {
+  opener = substr(cmd, i + 1, 1); closer = (opener == "(") ? ")" : "}"
+  depth = 0; start = i; i++
   while (i <= n) {
     ch = substr(cmd, i, 1)
-    if (ch == "\\") { W = W substr(cmd, i + 1, 1); HAVEW = 1; i += 2; continue }
-    if (ch == SQ) {
+    if (ch == opener) depth++
+    else if (ch == closer) { depth--; if (depth == 0) { i++; break } }
+    i++
+  }
+  W = W substr(cmd, start, i - start); HAVEW = 1
+  return i
+}
+# A redirection ends the word. `<<`/`<<-` name a heredoc: the delimiter is
+# recorded here, the body skipped at the newline.
+function redirect(cmd, i, n,   ch, q, w) {
+  flush_word()
+  if (substr(cmd, i, 3) == "<<<") return i + 3
+  if (substr(cmd, i, 2) == ">&" || substr(cmd, i, 2) == "<&") return i + 2
+  if (substr(cmd, i, 2) != "<<") return i + 1
+  i += 2; HDTAB[NHD + 1] = 0
+  if (substr(cmd, i, 1) == "-") { HDTAB[NHD + 1] = 1; i++ }
+  while (i <= n && (substr(cmd, i, 1) == " " || substr(cmd, i, 1) == "\t")) i++
+  w = ""
+  while (i <= n) {
+    ch = substr(cmd, i, 1)
+    if (ch == " " || ch == "\t" || ch == "<" || ch == ">" || index(SEP, ch) > 0) break
+    if (ch == SQ || ch == "\"") {
+      q = ch; i++
+      while (i <= n && substr(cmd, i, 1) != q) { w = w substr(cmd, i, 1); i++ }
+      i++; continue
+    }
+    if (ch == BS) { w = w substr(cmd, i + 1, 1); i += 2; continue }
+    w = w ch; i++
+  }
+  if (w != "") { NHD++; HD[NHD] = w }
+  return i
+}
+# Skip each heredoc body opened on the line just ended, terminator included.
+function heredoc_bodies(cmd, i, n,   h, ls, line) {
+  i++
+  for (h = 1; h <= NHD; h++) {
+    while (i <= n) {
+      ls = i
+      while (i <= n && substr(cmd, i, 1) != "\n") i++
+      line = substr(cmd, ls, i - ls)
+      if (i <= n) i++
+      sub(/\r$/, "", line)
+      if (HDTAB[h]) sub(/^\t+/, "", line)
+      if (line == HD[h]) break
+    }
+  }
+  NHD = 0; return i
+}
+
+# One left-to-right pass. Ordinary characters are counted, not appended, and a
+# run reaches the word with one substr, so a long word costs one copy.
+function scan(cmd,   n, i, ch, c2, start) {
+  n = length(cmd); i = 1; W = ""; HAVEW = 0; NTOK = 0; NHD = 0
+  while (i <= n) {
+    start = i
+    while (i <= n) {
+      ch = substr(cmd, i, 1)
+      if (ch == " " || ch == "\t" || ch == BS || ch == SQ || ch == "\"" || ch == BT \
+          || ch == "$" || ch == "<" || ch == ">" || ch == "#" || ch == "{" || ch == "}" \
+          || index(SEP, ch) > 0) break
       i++
-      while (i <= n && substr(cmd, i, 1) != SQ) { W = W substr(cmd, i, 1); i++ }
-      i++; HAVEW = 1; continue
     }
-    if (ch == "\"") {
-      i++
-      while (i <= n) {
-        c2 = substr(cmd, i, 1)
-        if (c2 == "\\") { W = W substr(cmd, i + 1, 1); i += 2; continue }
-        if (c2 == "\"") { i++; break }
-        W = W c2; i++
-      }
-      HAVEW = 1; continue
-    }
-    if (ch == BT) {
-      i++
-      while (i <= n && substr(cmd, i, 1) != BT) { W = W substr(cmd, i, 1); i++ }
-      i++; HAVEW = 1; continue
-    }
-    if (ch == "$" && (substr(cmd, i + 1, 1) == "(" || substr(cmd, i + 1, 1) == "{")) {
-      i = substitution(cmd, i, n); HAVEW = 1; continue
-    }
+    if (i > start) { W = W substr(cmd, start, i - start); HAVEW = 1 }
+    if (i > n) break
     if (ch == " " || ch == "\t") { flush_word(); i++; continue }
-    if (index(SEPARATORS, ch) > 0) { end_command(); i++; continue }
-    # A redirection operator ends the word; its target reads as one more
-    # argument, which no rule below matches.
-    if (ch == "<" || ch == ">") { flush_word(); i++; continue }
-    W = W ch; HAVEW = 1; i++
+    # A backslash-newline is line joining: the shell removes both.
+    if (ch == BS) {
+      c2 = substr(cmd, i + 1, 1)
+      if (c2 == "\n") { i += 2; continue }
+      if (c2 == "\r" && substr(cmd, i + 2, 1) == "\n") { i += 3; continue }
+      W = W c2; HAVEW = 1; i += 2; continue
+    }
+    if (ch == SQ) { i = quoted(cmd, i, n, SQ); continue }
+    if (ch == BT) { i = quoted(cmd, i, n, BT); continue }
+    if (ch == "\"") { i = dquoted(cmd, i, n); continue }
+    if (ch == "$") {
+      c2 = substr(cmd, i + 1, 1)
+      if (c2 == "(" || c2 == "{") { i = substitution(cmd, i, n); continue }
+      W = W "$"; HAVEW = 1; i++; continue
+    }
+    # A # begins a comment at word start only; mid-word it is `-m x#y`.
+    if (ch == "#") {
+      if (HAVEW) { W = W "#"; i++; continue }
+      while (i <= n && substr(cmd, i, 1) != "\n") i++
+      continue
+    }
+    # A brace is a keyword only as a whole word; inside one it is expansion,
+    # so `git commit -m a{b} --no-verify` is one commit argv.
+    if (ch == "{" || ch == "}") {
+      c2 = substr(cmd, i + 1, 1)
+      if (!HAVEW && (i == n || c2 == " " || c2 == "\t" || index(SEP, c2) > 0)) {
+        end_command(); i++; continue
+      }
+      W = W ch; HAVEW = 1; i++; continue
+    }
+    if (ch == "<" || ch == ">") { i = redirect(cmd, i, n); continue }
+    if (ch == "&" && substr(cmd, i + 1, 1) == ">") { flush_word(); i += 2; continue }
+    end_command()
+    if (ch == "\n") i = heredoc_bodies(cmd, i, n)
+    else i++
   }
   end_command()
 }
 
 # Judge one simple command: leading assignments, then transparent prefixes
-# (`if`, `sudo`, `env`, …), then the command word.
-function judge(   k, base, j, gstart, gend, subcmd, m, t) {
-  k = 1
+# (`if`, `sudo`, `env`, `timeout`, …), then the command word.
+function judge(   k, base, j, gstart, gend, subcmd, m, t, prefixed) {
+  k = 1; prefixed = 0
   while (k <= NTOK) {
     t = TOK[k]
+    # Environment-injected configuration reaches git wherever it stands.
     if (t ~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
-      # Configuration injected through the environment reaches git wherever
-      # the assignment stands, so it is judged as a word of its own.
       if (t ~ /^GIT_CONFIG_/) setbypass(t)
       if (t ~ /^GIT_DIR=/ || t ~ /^GIT_WORK_TREE=/) MOVES = 1
       k++; continue
     }
-    if (t in TRANSPARENT) { k++; continue }
+    if (basename(t) in TRANSPARENT) { prefixed = 1; k++; continue }
     break
   }
   if (k > NTOK) return
-  base = TOK[k]
-  sub(/^.*\//, "", base)
-  if (base != "git") { if (base == "cd") MOVES = 1; return }
-
+  base = basename(TOK[k])
+  # A wrapper whose options this lane cannot read (`sudo -u dev`, `timeout 30`)
+  # is not a reason to call this not-a-git-command: look behind it instead.
+  if (base != "git") {
+    if (base == "cd") MOVES = 1
+    if (!prefixed) return
+    while (k <= NTOK && basename(TOK[k]) != "git") k++
+    if (k > NTOK) return
+  }
   # Global options run until the first word that is not one; a global option
   # taking a separate value carries that value with it.
-  j = k + 1
-  gstart = j
-  subcmd = ""
+  j = k + 1; gstart = j; subcmd = ""
   while (j <= NTOK) {
     t = TOK[j]
     if (substr(t, 1, 1) != "-") { subcmd = t; break }
@@ -169,17 +231,14 @@ function judge(   k, base, j, gstart, gend, subcmd, m, t) {
     j++
   }
   gend = j - 1
-
+  # A core.hooksPath line disarms the hook before the commit reaches it; a read
+  # is refused with the write, and the key is matched in any case.
   if (subcmd == "config") {
-    # A core.hooksPath line disarms the hook before the commit reaches it.
-    # A read on the same line is refused with the write: the key is matched
-    # wherever it stands after `config`, in any case.
     for (m = j + 1; m <= NTOK; m++) if (tolower(TOK[m]) ~ /hookspath/) setbypass(TOK[m])
     return
   }
   if (subcmd != "commit") return
   COMMIT = 1
-
   # -c and --config-env are configuration only as GLOBAL options. After the
   # subcommand, `git commit -c` is --reedit-message and injects nothing.
   for (m = gstart; m <= gend; m++) {
@@ -187,34 +246,58 @@ function judge(   k, base, j, gstart, gend, subcmd, m, t) {
     if (t == "-c" || t ~ /^--config-env/) setbypass(t)
     if (t == "-C" || t ~ /^--git-dir/ || t ~ /^--work-tree/) MOVES = 1
   }
-  # git allows any unique prefix of --no-verify, and -n alone or inside a
-  # short-flag cluster is the same flag. It skips the commit-msg hook too,
-  # whose gate is not knowable here, so nothing can stand in for it.
+  # git allows any unique prefix of --no-verify, and -n alone or in a cluster is
+  # the same flag; it skips commit-msg too, whose gate is unknowable here. git
+  # option boundaries hold: `--` ends them, and an option value is not a flag.
   for (m = j + 1; m <= NTOK; m++) {
     t = TOK[m]
-    if (t ~ /^--no-veri/ || t ~ /^-[A-Za-z]*n[A-Za-z]*$/) setbypass(t)
+    if (t == "--") return
+    if (substr(t, 1, 2) == "--") {
+      if (t ~ /^--no-veri/) { setbypass(t); return }
+      if (t in COMMIT_VALUE) m++
+      continue
+    }
+    if (substr(t, 1, 1) != "-") continue
+    if (t ~ /^-[A-Za-z]*n[A-Za-z]*$/) { setbypass(t); return }
+    if (index(SHORT_VALUE, substr(t, length(t), 1)) > 0) m++
   }
 }
-
+# The rule this parser replaced, kept for the one input it cannot tokenize: a
+# command whose quoting never closes. Over-refusing it is the trade here.
+function fallback(cmd,   words, g, b) {
+  words = " " cmd " "
+  gsub(/[^a-zA-Z0-9_=-]+/, " ", words)
+  g = index(words, " git ")
+  if (g == 0 || index(substr(words, g + 4), " commit ") == 0) return
+  COMMIT = 1
+  if (match(words, / (--no-veri[a-z]*|-[a-zA-Z]*n[a-zA-Z]*|-c|--config-env[^ ]*|GIT_CONFIG_[^ ]*) /)) {
+    b = substr(words, RSTART + 1, RLENGTH - 2)
+    setbypass(b)
+  }
+}
 BEGIN {
-  SQ = sprintf("%c", 39)
-  BT = sprintf("%c", 96)
-  SEPARATORS = ";&|(){}" "\n" "\r"
+  SQ = sprintf("%c", 39); BT = sprintf("%c", 96)
+  BS = sprintf("%c", 1); DQ = sprintf("%c", 2)
+  SEP = ";&|()" "\n" "\r"
   split("-C -c --git-dir --work-tree --namespace --super-prefix --exec-path --config-env --attr-source", A, " ")
   for (i in A) GIT_GLOBAL_VALUE[A[i]] = 1
-  split("if then else elif fi while until do done ! time command exec nohup sudo env", B, " ")
-  for (i in B) TRANSPARENT[B[i]] = 1
+  split("if then else elif fi while until do done ! time command exec eval nohup sudo doas env nice ionice timeout stdbuf setsid xargs export declare typeset local readonly", A, " ")
+  for (i in A) TRANSPARENT[A[i]] = 1
+  split("--author --date --message --file --template --cleanup --reuse-message --reedit-message --fixup --squash --pathspec-from-file --trailer", A, " ")
+  for (i in A) COMMIT_VALUE[A[i]] = 1
+  # git commit short options whose value is the next word.
+  SHORT_VALUE = "mFcCt"
 }
-
 { raw = raw $0 "\n" }
-
 END {
-  if (match(raw, /"command"[[:space:]]*:[[:space:]]*/) == 0) { print "nocommand=1"; exit }
+  # An explicit set, not [[:space:]]: some awks read that as a literal set.
+  if (match(raw, /"command"[ \t\n\r]*:[ \t\n\r]*/) == 0) { print "nocommand=1"; exit }
   rest = substr(raw, RSTART + RLENGTH)
   if (substr(rest, 1, 1) != "\"") { print "unreadable=1"; exit }
-  cmd = decode(rest)
-  if (!CLOSED) { print "unreadable=1"; exit }
+  cmd = jsonstring(rest)
+  if (UNREADABLE) { print "unreadable=1"; exit }
   scan(cmd)
+  if (UNBALANCED && !COMMIT) fallback(cmd)
   if (COMMIT) print "commit=1"
   if (MOVES) print "moves=1"
   if (COMMIT && BYPASS != "") print "bypass=" BYPASS

@@ -402,9 +402,9 @@ lives in one capability table read by core and UI.
   local act that asks for that, and a clone carries no hooks. Sidestepping an armed one (`--no-verify`, `-n`) or injecting git
   config (a global `-c`, `--config-env`, `GIT_CONFIG_*`) is refused: git skips
   commit-msg too, unjudgeable here. Only a `git` argv is judged, so a heredoc
-  body or another program's flags are text. It gates its working directory
-  only — a commit aimed elsewhere is not (a stderr notice says so) — and a
-  payload it cannot read is a refusal, as is nothing armed.
+  body, a comment and another program's flags are text. It gates its working
+  directory only, and where it cannot defer a stderr notice names the directory
+  it judged; a payload it cannot read is a refusal, as is nothing armed.
 - **kendex carries no migration machinery.** Breaking changes are a
   changelog entry and a fresh install, never compatibility code: a path
   kept for a population nobody measured is machinery that has to be

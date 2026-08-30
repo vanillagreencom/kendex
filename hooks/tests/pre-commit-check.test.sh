@@ -93,6 +93,27 @@ assert_not_contains() {
   fi
 }
 
+# Judge one form in both fixtures at once. The ARMED expectation says whether
+# the git argv carries a bypass; the UNARMED one is the control proving the
+# commit was found at all, since a form the hook never sees passes there too.
+both() {
+  local form="$1" want_armed="$2" want_unarmed="$3" name="$4"
+  run_hook "$ARMED" "$(payload "$form")" CHAIN_EXIT=1
+  assert_eq "$rc" "$want_armed" "armed: $name"
+  if [[ "$want_armed" == 2 ]]; then
+    assert_contains "$err" "bypasses this repository's armed git hooks" "armed refusal names a bypass: $name"
+  else
+    assert_not_contains "$err" "bypasses" "armed: nothing read as a bypass: $name"
+  fi
+  assert_eq "$log" "" "armed: nothing of the repository's ran: $name"
+  run_hook "$UNARMED" "$(payload "$form")" CHAIN_EXIT=1
+  assert_eq "$rc" "$want_unarmed" "unarmed: $name"
+  if [[ "$want_unarmed" == 2 ]]; then
+    assert_contains "$err" "not armed by kendex" "unarmed refusal names the arming: $name"
+  fi
+  assert_eq "$log" "" "unarmed: nothing of the repository's ran: $name"
+}
+
 # --- Fixtures ----------------------------------------------------------------
 UNARMED="$TMP_ROOT/unarmed"
 mkdir -p "$UNARMED"
@@ -329,48 +350,110 @@ echo "only a git argv is judged"
 
 # The three refusals this rule exists to stop, all of them in one day: a `-n`
 # in a heredoc body, a `-c` belonging to another program, and prose naming
-# --no-verify inside a quoted string are text, not flags of the commit. The
-# quotes are JSON-escaped because the harness sends them that way, and an
-# unescaped one would end the payload string before the commit.
+# --no-verify inside a quoted string. The quotes are JSON-escaped because the
+# harness sends them that way, and an unescaped one would end the payload
+# string before the commit.
 # shellcheck disable=SC2016
-for form in \
-  'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -m note' \
-  'python3 -c \"print(1)\" && git commit -m x' \
-  'git commit -m \"explain why --no-verify is banned\"' \
-  'gh pr comment 7 --body \"we never pass --no-verify\" && git commit -m x' \
-  'git commit -c HEAD --reset-author'; do
-  run_hook "$ARMED" "$(payload "$form")" CHAIN_EXIT=1
-  assert_eq "$rc" "0" "not a bypass: $form"
-  assert_not_contains "$err" "bypasses" "no bypass refusal for: $form"
-done
+both 'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -m note' 0 2 "a -n in a heredoc body"
+both 'python3 -c \"print(1)\" && git commit -m x' 0 2 "another program's -c"
+both 'git commit -m \"explain why --no-verify is banned\"' 0 2 "prose in a quoted message"
+both 'gh pr comment 7 --body \"we never pass --no-verify\" && git commit -m x' 0 2 "prose in another program's argv"
+both 'git commit -c HEAD --reset-author' 0 2 "-c after commit is --reedit-message"
 
-# The same forms with the flag moved into the commit's own argv. Without
-# these the block above would pass on a hook that saw no commit at all.
+# The same forms with the flag moved into the commit's own argv.
 # shellcheck disable=SC2016
-for form in \
-  'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -n -m note' \
-  'python3 -c \"print(1)\" && git commit --no-verify -m x' \
-  'git commit -m \"explain why --no-verify is banned\" --no-verify' \
-  'gh pr comment 7 --body \"we never pass --no-verify\" && git -c core.hooksPath=/dev/null commit -m x'; do
-  run_hook "$ARMED" "$(payload "$form")" CHAIN_EXIT=1
-  assert_eq "$rc" "2" "still refused: $form"
-  assert_contains "$err" "bypasses this repository's armed git hooks" "named as a bypass: $form"
-done
+both 'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -n -m note' 2 2 "the heredoc form with -n in the argv"
+both 'python3 -c \"print(1)\" && git commit --no-verify -m x' 2 2 "the python3 form with the flag in the argv"
+both 'git commit -m \"explain why --no-verify is banned\" --no-verify' 2 2 "the quoted-message form with the flag in the argv"
+both 'gh pr comment 7 --body \"we never pass --no-verify\" && git -c core.hooksPath=/dev/null commit -m x' 2 2 "the gh form with config injected"
 
-# The passing block must be reached through a commit the hook did see: an
-# unarmed repository refuses each of those forms for being unarmed, which it
-# can only do having found the commit.
+echo
+echo "a heredoc body is text, not shell"
+
+# A body line that begins with `git` is prose about a commit, not a commit; the
+# body is skipped whole, so no quote in it opens anything either. Without that,
+# one apostrophe swallowed every separator after it and the real commit behind
+# the heredoc went unjudged in both fixtures.
 # shellcheck disable=SC2016
-for form in \
-  'cat <<EOF > tmp/note.md\nrun cat -n on the file\nEOF\ngit commit -m note' \
-  'python3 -c \"print(1)\" && git commit -m x' \
-  'git commit -m \"explain why --no-verify is banned\"' \
-  'gh pr comment 7 --body \"we never pass --no-verify\" && git commit -m x' \
-  'git commit -c HEAD --reset-author'; do
-  run_hook "$UNARMED" "$(payload "$form")" CHAIN_EXIT=1
-  assert_eq "$rc" "2" "the commit was found: $form"
-  assert_contains "$err" "not armed by kendex" "and refused for the unarmed repository: $form"
-done
+both 'cat > note.md <<EOF\ngit commit --no-verify is banned in this repo\nEOF\ngit commit -m x' 0 2 "a body line beginning with git"
+both 'cat <<EOF >> notes.md\ndon'"'"'t forget\nEOF\ngit commit --no-verify -m x' 2 2 "an apostrophe in the body hides nothing"
+both 'cat <<EOF > n.md\nsay \"hi\nEOF\ngit commit -m x' 0 2 "an unpaired double quote in the body"
+both 'cat <<-EOF > n.md\n\tgit commit -n here\n\tEOF\ngit commit -m x' 0 2 "<<- with a tab-indented terminator"
+both 'cat <<\"END\" > n.md\ngit commit -n here\nEND\ngit commit -m x' 0 2 "a quoted delimiter"
+both 'git commit -m x <<< ignored' 0 2 "a here-string is not a heredoc"
+
+echo
+echo "a comment is text"
+
+both 'git commit -m x  # never --no-verify' 0 2 "a trailing comment naming --no-verify"
+both 'git commit -m x # -n' 0 2 "a trailing comment naming -n"
+both 'git commit -m x#y --no-verify' 2 2 "a mid-word hash is an ordinary character"
+
+echo
+echo "a backslash-newline joins lines"
+
+# hooks/block-unsafe-rm.sh folds the same sequence before its separator split.
+# Left alone it puts a newline inside the word, and the command after it goes
+# unjudged in both fixtures.
+# shellcheck disable=SC2016
+both 'git status && \\\ngit commit --no-verify -m x' 2 2 "a bypass on the continued line"
+both 'cargo fmt && \\\ngit commit -m x' 0 2 "a plain commit on the continued line"
+
+echo
+echo "git option boundaries hold"
+
+both 'git commit -- --no-verify' 0 2 "a pathspec after --"
+both 'git commit -m x -- -n' 0 2 "-n as a pathspec after --"
+both 'git commit -F --no-verify' 0 2 "-F takes its value"
+both 'git commit -m a{b} --no-verify' 2 2 "a brace is expansion, not a command break"
+both '{ git commit --no-verify -m x; }' 2 2 "a brace group still holds a commit"
+
+echo
+echo "a command prefix does not hide the git argv"
+
+# main's word-order rule caught every one of these without reading a prefix at
+# all, so a prefix this lane cannot resolve must not read as not-a-git-command.
+both 'sudo git commit --no-verify -m x' 2 2 "sudo"
+both 'sudo -E git commit -n -m x' 2 2 "sudo with its own option"
+both 'sudo -u dev git commit --no-verify -m x' 2 2 "sudo with an option and a value"
+both 'env git commit -n -m x' 2 2 "env"
+both 'env -i git commit -n -m x' 2 2 "env -i"
+both '/usr/bin/env -i git -c core.hooksPath=/dev/null commit -m x' 2 2 "an absolute env injecting config"
+both 'nice git commit -n -m x' 2 2 "nice"
+both 'timeout 30 git commit -n -m x' 2 2 "timeout with its duration"
+both 'stdbuf -o0 git commit -n -m x' 2 2 "stdbuf with its own option"
+both '/usr/bin/git commit --no-verify -m x' 2 2 "an absolute git path"
+both 'echo git commit --no-verify' 0 0 "a word outside any argv is still text"
+
+echo
+echo "quoting and redirection hold the argv together"
+
+# shellcheck disable=SC2016
+both 'git commit>/dev/null -n -m x' 2 2 "a redirection ends the word before it"
+both 'git -C `echo ; pwd` commit --no-verify -m x' 2 2 "a backtick holds a separator inside one word"
+
+echo
+echo "a command whose quoting never closes is judged, not skipped"
+
+# The parser cannot tokenize this, so the word-order rule it replaced stands in
+# rather than the commit passing unjudged: an unbalanced quote otherwise
+# swallows every separator after it, the commit with it.
+# shellcheck disable=SC2016
+both 'echo don'"'"'t && git commit --no-verify -m x' 2 2 "an unbalanced quote before a bypass"
+both 'echo don'"'"'t && git commit -m x' 0 2 "an unbalanced quote before a plain commit"
+
+run_hook "$UNARMED" "$(payload 'GIT_DIR=/elsewhere/.git git commit -m x')" CHAIN_EXIT=1
+assert_eq "$rc" "2" "a GIT_DIR assignment is still a commit"
+assert_contains "$err" "moves repositories" "and the notice says the commit may land elsewhere"
+
+run_hook "$UNARMED" "$(payload 'GIT_WORK_TREE=/elsewhere git commit -m x')" CHAIN_EXIT=1
+assert_eq "$rc" "2" "a GIT_WORK_TREE assignment is still a commit"
+assert_contains "$err" "moves repositories" "and its notice says so too"
+
+run_hook "$UNARMED" '{"tool_input":{"command":"git commit -m x' CHAIN_EXIT=1
+assert_eq "$rc" "2" "a command string that never ends is refused"
+assert_contains "$err" "could not read the command" "and the refusal names the unreadable payload"
+assert_eq "$log" "" "nothing was run for the unterminated payload"
 
 # The JSON-escaped quoted-path form: quotes arrive as \" in the payload.
 run_hook "$ARMED" '{"tool_input":{"command":"git -C \"/tmp/my repo\" commit -m x"}}' CHAIN_EXIT=1
