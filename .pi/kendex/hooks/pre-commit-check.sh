@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command that sidesteps it with git's no-verify flag, -n, or a core.hooksPath override is refused: git would skip the commit-msg hook too, and nothing here can check the message. The command is split into simple commands and only its live words are judged: heredoc bodies and comment tails are text, a quoted word is a live word whose text is its unquoted content, and a `git` word with a later `commit` word is the commit. Whole words decide, so a quoted --no-verify is the flag while a commit message naming it is one long word of prose. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a commit whose live words include one that bypasses an armed hook (no-verify, -n) or injects git configuration that could (-c, --config-env, a GIT_CONFIG_* assignment, a core.hooksPath key); it models no argv, and a construct it cannot read at all — an alias key, ANSI-C quoting, a line continuation inside quotes, a shift inside arithmetic, a \\u escape in the payload — is refused on sight rather than parsed harder; it models no argv, so a construct it does not recognise leaves the words standing and is judged rather than passing unjudged, and its blind spot is the other way round: text a shell would run but this drops, inside quotes or a heredoc body, and a commit aimed at another repository is that repository's armed hook's to gate.
+# safety: Refuses a commit from a working directory with no armed git pre-commit hook rather than running that repository's own scripts to check it, and refuses a commit whose live words include one that bypasses an armed hook (no-verify, -n) or injects git configuration that could (-c, --config-env, a GIT_CONFIG_* assignment, a core.hooksPath key); it models no argv, and a construct it cannot read at all — an alias key, ANSI-C quoting, a line continuation inside quotes, a shift inside arithmetic, a \\u escape in the payload — is refused on sight, where the text names a commit at all, rather than parsed harder; it models no argv, so a construct it does not recognise leaves the words standing and is judged rather than passing unjudged, and its blind spot is the other way round: text a shell would run but this drops, inside quotes or a heredoc body, and a commit aimed at another repository is that repository's armed hook's to gate.
 # timeout: 60
 # ---
 
@@ -180,8 +180,9 @@ function scan(cmd,   n, i, ch, c2, d, j, start) {
 # Constructs this scanner does not model, named rather than decoded: an alias
 # config key, ANSI-C quoting, a line continuation inside quotes, and a shift
 # operator inside arithmetic, which is not the heredoc this reads it as. Seeing
-# one is the whole rule. Each decoder added here invites the next construct, and
-# the answer to text this cannot read is to refuse, not to parse harder.
+# one is the whole rule, and it is asked only of text naming both git and a
+# commit. Each decoder added here invites the next construct, and the answer to
+# text this cannot read is to refuse, not to parse harder.
 function unmodelled(cmd) {
   if (tolower(cmd) ~ /alias\./) return "an alias config key"
   if (index(cmd, "$" SQ) > 0) return "ANSI-C quoting"
@@ -238,9 +239,13 @@ END {
   cmd = jsonstring(rest)
   if (UNREADABLE) { print "unreadable=1"; exit }
   scan(cmd)
-  # A command naming no git is not this gate to judge, so an ordinary
-  # `echo $<quote>hi<quote>` is left alone.
-  if (index(cmd, "git") > 0) { u = unmodelled(cmd); if (u != "") { print "unmodelled=" u; exit } }
+  # A construct is judged only where the text could hold a commit at all, and
+  # both words are read raw because a construct is what the words cannot be
+  # trusted through. Nothing else is this gate to judge, so an ordinary grep
+  # anchored to end-of-line inside quotes passes over a .git path.
+  if (index(cmd, "git") > 0 && index(cmd, "commit") > 0) {
+    u = unmodelled(cmd); if (u != "") { print "unmodelled=" u; exit }
+  }
   if (COMMIT) print "commit=1"
   if (MOVES) print "moves=1"
   if (COMMIT && BYPASS != "") print "bypass=" BYPASS

@@ -333,6 +333,10 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			"cat <<$'EOF'\nbody\nEOF\ngit commit -m x",
 			`git commit "--no-veri\\\nfy" -m x`,
 			"x=$(( 1 << 2 )) && git commit -m x",
+			// The gate is asked of the raw text, not of the words: this one hides
+			// its subcommand inside the construct, so the scanner finds no commit
+			// and only the text does. A gate reading `scan.commit` waves it through.
+			"git $'commit' --allow-empty -m x",
 		]) {
 			for (const repo of [armed, unarmed]) {
 				const { verdict, ran } = await gate(repo, command);
@@ -348,6 +352,12 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("git -c core.pager=cat log", "allow", "allow");
 		expect((await gate(armed, "echo $'hi'")).verdict).toEqual({ kind: "allow" });
 		expect((await gate(armed, "x=$(( 1 << 2 ))")).verdict).toEqual({ kind: "allow" });
+		// The other half of the gate, and the KEN-866 regression: a command with no
+		// commit in it is never refused for carrying a construct. Both of these were
+		// refused — the first because `.git/` names git in a path, the second
+		// because the pipeline opens with a read-only `git log`.
+		await both("grep -rn 'foo$' .git/config", "allow", "allow");
+		await both("git log --oneline | grep 'fix$'", "allow", "allow");
 	});
 
 	test("only <<- accepts a tab-indented terminator", async () => {

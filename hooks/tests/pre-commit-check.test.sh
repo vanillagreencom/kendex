@@ -17,7 +17,8 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK="$(cd "$TEST_DIR/.." && pwd)/pre-commit-check.sh"
+# HOOK_UNDER_TEST runs these assertions against a must-fail mutant of the hook.
+HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/pre-commit-check.sh}"
 
 # The marker the growth-guards installer ends its delegating line with, and
 # the only thing that makes a hook file ours as far as this lane is
@@ -544,6 +545,15 @@ unmodelled "git config alias.c 'commit $NV' && git c --allow-empty -m x" "a pers
 unmodelled "$ANSIC" "ANSI-C quoting"
 unmodelled 'git commit \"--no-veri\\\nfy\" -m x' "a line continuation inside quotes"
 unmodelled 'x=$(( 1 << 2 )) && git commit -m x' "a shift inside arithmetic"
+
+# The gate reads the raw text, not the words: this hides its subcommand inside
+# the construct, where a gate reading the scanner's verdict would miss it.
+unmodelled "git \$'commit' --allow-empty -m x" "a subcommand inside the construct"
+
+# The other half of it, and the KEN-866 regression: a command with no commit in
+# it is never refused for a construct — one of these names git only in a path.
+both "grep -rn 'foo\$' .git/config" 0 0 "an anchored grep over a .git path"
+both "git log --oneline | grep 'fix\$'" 0 0 "a read-only log piped into an anchored grep"
 
 # The controls. A command with none of these parses as before, and one naming
 # no git at all is not this gate to judge however it is written.

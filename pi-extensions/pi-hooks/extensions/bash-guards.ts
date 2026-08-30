@@ -42,10 +42,13 @@ function setBypass(scan: CommandScan, token: string): void {
  * config key, ANSI-C quoting, a line continuation inside quotes, and a shift
  * operator inside arithmetic, which is not the heredoc this reads it as. Seeing
  * one is the whole rule. Each decoder added here invites the next construct, and
- * the answer to text this cannot read is to refuse, not to parse harder. Only a
- * command naming git is this gate to judge, so `echo $'hi'` is left alone. */
+ * the answer to text this cannot read is to refuse, not to parse harder. A
+ * construct is judged only where the text could hold a commit at all, and both
+ * words are read raw because a construct is what the words cannot be trusted
+ * through: `echo $'hi'` and a grep anchored to end-of-line over a `.git` path
+ * name no commit and are left alone. */
 function unmodelled(command: string, quotedContinuation: boolean): string | null {
-	if (!command.includes("git")) return null;
+	if (!command.includes("git") || !command.includes("commit")) return null;
 	if (command.toLowerCase().includes("alias.")) return "an alias config key";
 	if (command.includes("$'")) return "ANSI-C quoting";
 	if (quotedContinuation) return "a line continuation inside quotes";
