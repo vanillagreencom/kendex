@@ -6,3 +6,6 @@ keep|f.sh:12:  mapfile -t x < f
 keep|12:  coproc cat
 keep|f.sh:12:  printf "%s" "# not a comment"
 keep|12:x=1 # trailing comment
+keep|f.sh:12:mapfile -t v < /etc/hostname  # see foo.sh:12: # note
+keep|12:mapfile -t v < /etc/hostname  # x:12: # note
+keep|a:b.sh:12:  # a colon in the scanned path keeps the comment

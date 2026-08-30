@@ -106,9 +106,9 @@ PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[([^][]|\[[^]]*\])*\])?|[0-9]
 #     `"declare" -A c`, `map\file -t v`. Bash strips the quoting before it
 #     looks the word up, and doing that is the shell's job, not a scan's.
 #   - a construct inside a string on a code line, `printf '%s\n' "use coproc
-#     here"`, is flagged. Telling a string from code is parsing. A whole-line
-#     comment is not: those are skipped, which is where the realistic false
-#     positive lived.
+#     here"`, or after a trailing `#` on one, `x=1  # no coproc`, is flagged.
+#     Telling either from code is parsing. A WHOLE-LINE comment is not, and
+#     those are skipped, which is where the realistic false positive lived.
 #   - an operator inside a regex literal or string data is flagged for the
 #     same reason. That is the accepted cost of matching operators plainly,
 #     and the fix is to respell the line as preflight's brackets now are.
@@ -129,11 +129,22 @@ PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[([^][]|\[[^]]*\])*\])?|[0-9]
 # pipe, `>>file 2>&1` for the redirection, a repeated case body for the
 # fallthrough — and a script that writes those needs no verdict here.
 PATTERN="$PATTERN"'|\|&|&>>|;;?&'
-# A whole-line comment executes nothing, and recognising one is not parsing:
+# A WHOLE-LINE comment executes nothing, and recognising one is not parsing:
 # it is the one narrowing available here that costs no catch. Every suite
 # filters its HITS through this, never its source lines, so it matches both
 # shapes a scan produces — `file:12:  # ...` and `12:  # ...`.
-COMMENT_HIT='(^|:)[0-9]+:[[:blank:]]*#'
+#
+# Anchored at the start, because a hit line carries the scanned line's own
+# text and that text can spell a prefix. Unanchored, `mapfile -t v # see
+# foo.sh:12: # note` was dropped as a comment and a real call went uncaught.
+# The anchor assumes no colon in a scanned path, which is the ambiguity in
+# grep's own output rather than one this adds; a path holding one keeps its
+# comments instead, an over-flag and never a missed catch.
+#
+# A TRAILING comment on a code line is not covered and is not meant to be:
+# `x=1  # never use coproc here` is flagged, because knowing that `#` is not
+# inside a string or a heredoc is parsing. It is in bash32-overflagged.txt.
+COMMENT_HIT='^([^:]*:)?[0-9]+:[[:blank:]]*#'
 # --- shared bash32 pattern set: end
 
 # grep's status is part of the answer: 0 found, 1 none, anything else is a
