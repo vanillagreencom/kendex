@@ -417,7 +417,7 @@ emit_result() {
       echo "Merge queue: merged (PR #$PR_NUM${last_merged_at:+ at $last_merged_at})"
       ;;
     conflicting)
-      echo "Merge queue: conflicting — PR #$PR_NUM conflicts with its base after ${elapsed}s (GitHub reports mergeable CONFLICTING). No merge fires until the branch is restacked: restack, push, and re-arm."
+      echo "Merge queue: conflicting — PR #$PR_NUM conflicts with its base after ${elapsed}s (GitHub reports mergeable CONFLICTING). No merge fires until the branch is restacked, and an armed PR re-enqueues itself the moment its requirements go green, so a push is not the first step: follow merge-pr.md § 5 step 1's restack cycle."
       ;;
     ejected)
       echo "Merge queue: ejected — PR #$PR_NUM left the merge queue after ${elapsed}s without merging; the merge-group run failed. Fix CI and re-arm."

@@ -18,12 +18,16 @@
 # deepest footers belong to the orchestrating lanes, the ones this
 # measurement exists for. The whole captured screen is read and the
 # BOTTOM-MOST reading wins: anything above it is an earlier render of the
-# same lane, from before it compacted.
+# same lane, from before it compacted. Bottom-most is safe only because a
+# reading is a whole STATUS LINE and never a fragment prose can carry too:
+# otherwise the lowest sentence naming a model and a percentage beats the
+# real status line above it.
 #
 # A screen that outlived its harness is refused rather than measured, and
-# that refusal takes positive evidence, never distance: a pane whose
-# foreground process is the shell it exited to runs no harness, and its last
-# render would otherwise be reported as current forever.
+# that refusal takes positive evidence, never distance: the pane's
+# foreground process must BE a harness this reader knows. A pane that has
+# outlived its harness would otherwise have its last render reported as
+# current forever.
 #
 # A lane is live while its claim's pane is (lib/lane-claims.sh). A pane that
 # cannot be captured — on another tmux server, or gone between the claim read
@@ -31,9 +35,18 @@
 # never read as an empty one.
 set -euo pipefail
 
-# Foreground processes that are not a harness. Positive evidence only: an
-# unrecognised process is measured, so a new harness or a launcher wrapper
-# drops no lane out of the report — only an exit back to the shell does.
+# The foreground processes that ARE a harness, matched whole. A denylist of
+# shells cannot establish that one is running: after a harness exits, a pane
+# running less, vim or git log still holds the old footer and passes any
+# not-a-shell test. `[a-z0-9]*claude` covers the per-account wrappers this
+# fleet launches through — nclaude, dclaude, 1claude — which exec the real
+# binary, and agent-confine is the launcher they exec through. Anything else
+# is refused BY NAME, so a harness missing from this list reads as a named
+# refusal in the report rather than as a lane that stopped being measured.
+LANE_CONTEXT_HARNESSES='[a-z0-9]*claude|codex|pi|agent-confine'
+
+# Shells choose the refusal's wording and nothing else: a pane back at its
+# shell ended its session, which says more than the process name does.
 LANE_CONTEXT_SHELLS='sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh|nu|xonsh|elvish'
 
 # One record. $1 window, $2 pane id, $3 config dir, $4 account label,
@@ -63,12 +76,16 @@ lane_context_emit() {
 # has no bound, so any count would lose exactly the busiest lanes.
 #
 # Matching is done on a lowercased copy of each line: a model name is a word,
-# and the harness spells it differently in different places. The claude shape
-# is the status line's own — the percentage follows the model name directly,
-# with only the model's version and its optional parenthetical between. Prose
-# about a lane's context use puts words there, and a session that has not
-# rendered a percentage yet carries none at all; neither is a reading. The
-# codex shape is tested first and consumes its line, so a screen carrying
+# and the harness spells it differently in different places. The claude
+# reading is a WHOLE LINE, never a fragment of one: the status line runs
+# `<cwd> [(<branch>)] <model> <version> [(<window>)] <N>% (<account>)`, so a
+# match starts at the line's own beginning with a working directory and ends
+# in a parenthesised account. Prose carries the model-and-percentage fragment
+# too — `Opus 5 92% is already heavily used` — and under a bottom-most rule
+# a sentence like that outranks the real status line above it. The branch
+# parenthetical is optional: a lane outside a repository has none, and a
+# session that has not rendered a percentage yet matches nothing at all.
+# The codex shape is tested first and consumes its line, so a screen carrying
 # both never takes the claude direction for a codex reading. Codex's status
 # item is user-configured and both directions ship, so both are matched and
 # only `left` is converted. A percentage over 100 is not a context figure and
@@ -85,8 +102,9 @@ lane_context_parse() {
         if (s + 0 <= 100) { harness = "codex"; used = remaining ? 100 - (s + 0) : s + 0 }
         next
       }
-      if (match(low, /(opus|sonnet|haiku|fable)[ \t]+[0-9]+(\.[0-9]+)?([ \t]*\([^)]*\))?[ \t]+[0-9]+%/)) {
+      if (match(low, /^[ \t]*[^ \t()]+([ \t]+\([^)]*\))?[ \t]+(opus|sonnet|haiku|fable)[ \t]+[0-9]+(\.[0-9]+)?([ \t]*\([^)]*\))?[ \t]+[0-9]+%[ \t]+\([^) \t]+\)/)) {
         s = substr(low, RSTART, RLENGTH)
+        sub(/[ \t]+\([^)]*\)$/, "", s)
         sub(/%$/, "", s)
         sub(/^.*[^0-9]/, "", s)
         if (s != "" && s + 0 <= 100) { harness = "claude"; used = s + 0 }
@@ -137,10 +155,16 @@ lane_context_collect() {
           "unreadable" "$detail"
         continue
       fi
+      # tmux names a login shell with the dash it was started with.
       cmd="$(awk -v p="$pane" '$1 == p { print $2; exit }' <<<"$pane_cmds")"
-      if [[ "${cmd#-}" =~ ^($LANE_CONTEXT_SHELLS)$ ]]; then
+      cmd="${cmd#-}"
+      # An empty name means the pane is on no list this server printed, so it
+      # is gone: the capture below is what says so, and says it as unreadable.
+      if [[ -n "$cmd" && ! "$cmd" =~ ^($LANE_CONTEXT_HARNESSES)$ ]]; then
+        detail="the pane is running $cmd, not a harness this reader measures; any reading left on its screen is what the lane ended with"
+        [[ ! "$cmd" =~ ^($LANE_CONTEXT_SHELLS)$ ]] || detail="the pane has exited to its shell; any reading left on its screen is what the lane ended with"
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "no_status_line" "the pane has exited to its shell; any reading left on its screen is what the lane ended with"
+          "no_status_line" "$detail"
         continue
       fi
       if ! screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)"; then

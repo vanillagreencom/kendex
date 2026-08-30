@@ -123,7 +123,7 @@ The three waiters exit `3` on hard auth failure — [references/gates.md](refere
 
 Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.local` holds secrets and personal overrides. Keys: [README.md](README.md) § Configuration; review-gate keys in [references/gates.md](references/gates.md); lane keys in `lanes --help` and `open-terminal --help`.
 
-System dependencies: `jq`; `bash` 4+; `flock` (util-linux).
+System dependencies: `jq`; `bash` 3.2; `flock` (util-linux).
 
 ## Tests
 

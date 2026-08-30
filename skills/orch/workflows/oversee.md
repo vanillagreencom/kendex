@@ -71,9 +71,9 @@ handled under these rules:
   through a lane as its own item — the overseer still implements nothing.
   Deterministic beats prose where it stays simple; complex or brittle
   machinery is worse than either.
-- **Compact a lane before it runs out.** At every § 4 event — the cadence
-  this whole block runs on, and the only one the loop makes observable —
-  read each live lane's context use:
+- **Compact a lane before it runs out.** On the § 1 tmux surface, at every
+  § 4 event — the cadence this whole block runs on, and the only one the
+  loop makes observable — read each live lane's context use:
 
   ```bash
   .agents/skills/orch/scripts/lanes context
@@ -84,6 +84,13 @@ handled under these rules:
   focus note naming its item, its open PRs and their thread state, what
   remains in its queue, and the standing rulings it works under. A lane
   compacted without that note re-derives every one of them.
+
+  A claim is keyed on `<tmux server pid> <pane id>`, so surface 2's managed
+  sessions register none and `lanes context` reports an empty fleet there;
+  surface 3 has no lanes at all. On neither does this rule run, and nothing
+  else here measures those sessions — they compact on their own harness's
+  prompt, and the focus note is still the overseer's to hand over when they
+  do.
 - **Decide without the user.** SKILL.md's ask gates stand unchanged — scope
   expansion, recorded decisions, and merge autonomy still ask. Any other
   reversible call takes the option that costs nothing, recorded in the fleet

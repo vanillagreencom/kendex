@@ -271,6 +271,17 @@ out="$(run_queue_wait -- 1 1 20 --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_contains "$out" "conflicting" "the plain line names the verdict" "$err"
 assert_contains "$out" "restacked" "the plain line names the remedy" "$err"
 
+# The remedy is a ROUTE, not a short restatement of one. merge-pr.md § 5
+# step 1 fixes the restack order — disarm, dequeue, and only then push,
+# because an armed PR re-enqueues itself the moment its requirements go
+# green — and guard_fire enforces that same order here. A line restating a
+# shorter version drifts away from it the next time the order is corrected,
+# which is exactly what this line did.
+assert_contains "$out" "merge-pr.md § 5 step 1" \
+  "the plain line routes to the workflow that owns the restack order" "$err"
+assert_contains "$out" "a push is not the first step" \
+  "the line refuses the bare push a reader would otherwise infer from it" "$err"
+
 # The --help heredoc is the semantics reference other documents point at
 # instead of restating a verdict list, so deleting a row here strands them.
 # The row assertion is anchored on the row, so deleting it cannot pass on the

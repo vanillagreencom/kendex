@@ -13,13 +13,17 @@
 # count. Case 1's screen is a real `tmux capture-pane`; the other claude
 # screens are built from real status lines. The footer under a status line
 # grows by a row per running agent, so no line count reaches an
-# orchestrating lane's. Three cases hold that shut, each against a different
+# orchestrating lane's. Four cases hold that shut, each against a different
 # mutation:
 #   case 1  an orchestrating lane's real footer — dies the moment any bottom
 #           window narrower than it is taken off the screen
 #   case 14 a session with no percentage yet, under prose that names a model
 #           and one — dies if the claude shape is loosened back to accepting
 #           words between the model name and the percentage
+#   case 18 prose naming a model and a percentage BELOW a real status line —
+#           dies if a reading is a FRAGMENT of the status line rather than
+#           the whole line, because bottom-most then hands the sentence the
+#           verdict over the real line above it
 #   case 13 a pane that exited to its shell — dies if the liveness evidence
 #           is dropped, which is the only thing a window ever stood in for
 #
@@ -45,6 +49,13 @@
 #      only the one name case 13 supplies
 #  17. the model's dotted version and its `(1M context)` parenthetical both
 #      sit between the model name and the percentage, and both parse
+#  18. prose naming a model and a percentage below a real status line does
+#      not outrank the line above it
+#  19. a screen whose only model and percentage sit in prose is no reading
+#  20. a pane running a command that is neither a shell nor a harness is
+#      refused, and the refusal names the process it found
+#  21. the per-account wrapper spellings the fleet launches through are
+#      harnesses, and their panes are measured
 #
 # errexit is on: every case here either succeeds or is guarded, so an
 # unexpected non-zero is a broken fixture, not a finding to print past.
@@ -170,12 +181,18 @@ echo "=== lanes context ==="
 
 # Foreground process per pane. %9 is the one that exited to its shell.
 {
-  for n in 1 2 3 4 5 10 13 14; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
+  for n in 1 2 3 4 5 10 13 14 15 16; do printf '%s %%%s claude\n' "$LIVE_PID" "$n"; done
   for n in 6 7 8; do printf '%s %%%s codex\n' "$LIVE_PID" "$n"; done
   printf '%s %%9 fish\n' "$LIVE_PID"
   # tmux reports a login shell with the leading dash it was started with.
   printf '%s %%11 -bash\n' "$LIVE_PID"
   printf '%s %%12 zsh\n' "$LIVE_PID"
+  # 20. A harness gone, an ordinary command left running in its pane. It is
+  # not a shell, so any not-a-shell test admits it and measures the footer
+  # the harness left behind.
+  printf '%s %%17 less\n' "$LIVE_PID"
+  # 21. The per-account wrapper this fleet launches Claude through.
+  printf '%s %%18 nclaude\n' "$LIVE_PID"
 } > "$PANES"
 
 write_claim one    "%1"  "$H/.claude"  "ken-101"
@@ -191,6 +208,10 @@ write_claim twelve   "%11" "$H/.claude" "ken-112"
 write_claim thirteen "%12" "$H/.claude" "ken-113"
 write_claim fourteen "%13" "$H/.claude" "ken-114"
 write_claim fifteen  "%14" "$H/.claude" "ken-115"
+write_claim sixteen   "%15" "$H/.claude" "ken-116"
+write_claim seventeen "%16" "$H/.claude" "ken-117"
+write_claim eighteen  "%17" "$H/.claude" "ken-118"
+write_claim nineteen  "%18" "$H/.claude" "ken-119"
 # The foreign lane's pane NUMBER exists here too, on a screen that parses
 # cleanly: %1 is ken-101's, reading 35.
 write_claim_on "$FOREIGN_PID" foreign "%1" "$H/.claude" "ken-110"
@@ -261,6 +282,20 @@ $ '
 screen 13 '  scribd-brain Opus 5 (1M context) 22% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 screen 14 '  scribd-brain Sonnet 4.5 (1M context) 12% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
+# 18 and 19. The transcript ends in a sentence carrying a model, a version
+# and a percentage — every piece of the status line except the line itself.
+# %15 puts it BELOW a real status line, which is where bottom-most hands it
+# the verdict; %16 gives it a screen of its own.
+screen 15 '  kendex (🌳 ken-116) Opus 5 35% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+● Documentation example: Opus 5 92% is already heavily used.'
+screen 16 '● Documentation example: Opus 5 92% is already heavily used.'
+# 20 and 21. Both screens parse cleanly; what separates them is the process
+# tmux reports for the pane.
+screen 17 '  kendex (🌳 ken-118) Opus 5 66% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
+screen 18 '  kendex (🌳 ken-119) Opus 5 27% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 
 OUT="$(run_ctx --json)"
@@ -352,6 +387,36 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-111") | .status' <<<"$OUT")" "no_st
   "a model and a percentage in prose is not a status line"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-111") | .context_used_pct' <<<"$OUT")" "null" \
   "a session with no percentage yet carries no number, not the prose's"
+
+# 18 and 19. Prose carries the model, the version and the percentage in the
+# order the status line does — the fragment, not the line. ken-116 puts that
+# sentence under a real status line, where the bottom-most rule hands it the
+# verdict and the lane reports 92 for a lane that is at 35; ken-117 has
+# nothing else on its screen at all.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-116") | .context_used_pct' <<<"$OUT")" "35" \
+  "prose below a status line does not outrank the status line above it"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-117") | .status' <<<"$OUT")" "no_status_line" \
+  "a screen whose only model and percentage sit in prose carries no reading"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-117") | .context_used_pct' <<<"$OUT")" "null" \
+  "that lane carries no number, not the sentence's"
+
+# 20. The harness is gone and something that is not a shell is running in its
+# pane. A not-a-shell test admits less, vim and git log alike, and reports the
+# 66 still painted on this screen as the lane's current context use.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-118") | .status' <<<"$OUT")" "no_status_line" \
+  "a pane running a command that is not a harness is not measured"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-118") | .context_used_pct' <<<"$OUT")" "null" \
+  "that pane carries no number, not the one left on its screen"
+assert_contains "$(jq -r '.[] | select(.lane=="ken-118") | .detail' <<<"$OUT")" "running less" \
+  "the refusal names the process it found"
+
+# 21. The fleet launches Claude through a per-account wrapper, and tmux may
+# name the pane after it. A list holding only the bare binary names drops
+# every lane on this machine out of the report.
+assert_eq "$(jq -r '.[] | select(.lane=="ken-119") | .context_used_pct' <<<"$OUT")" "27" \
+  "a pane running a per-account claude wrapper is measured like any other"
+assert_eq "$(jq -r '.[] | select(.lane=="ken-119") | .status' <<<"$OUT")" "ok" \
+  "that lane is ok, not a refusal"
 
 # 10. `capture-pane -t %N` answers from THIS server only, and pane ids restart
 # at %0 on each one. ken-110 claims %1 on another server; %1 here is ken-101's
