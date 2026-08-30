@@ -367,5 +367,90 @@ run_frozen
 [ "$RC" -eq 0 ] && ok "a zero-row HEAD baseline is no baseline, so the first row passes undeclared" \
   || bad "a zero-row HEAD baseline is no baseline, so the first row passes undeclared" "rc=$RC out=$OUT"
 
+echo "=== a commit that MOVES the baseline is judged against the rows it moved ==="
+# The path the CURRENT invocation resolves is not the path HEAD's rows are at:
+# a commit that relocates SIZE_RATCHET_BASELINE leaves HEAD carrying nothing at
+# the new one. Read as "HEAD has no rows" that is every raise unjudged, frozen
+# ones included, so the rows are followed to the path HEAD's settings named.
+settings_baseline() { # PATH — the fixture's committed settings name it
+  printf '[env]\nSIZE_RATCHET_BASELINE = "%s"\n' "$1" >"$R/kendex.settings.toml"
+}
+relocating_repo() { # NAME PATH LINES ROWLINES — HEAD's rows at tools/a.tsv
+  new_repo "$1"
+  mkdir -p "$R/tools"
+  mkfile "$2" "$3"
+  printf '%s\t%s\n' "$2" "$4" >"$R/tools/a.tsv"
+  settings_baseline tools/a.tsv
+  git -C "$R" add -A
+  git -C "$R" commit -q -m "seed: a baselined offender, baseline at tools/a.tsv"
+}
+relocate() { # PATH ROWLINES — the same rows move to tools/b.tsv at ROWLINES
+  printf '%s\t%s\n' "$1" "$2" >"$R/tools/b.tsv"
+  rm -f "$R/tools/a.tsv"
+  settings_baseline tools/b.tsv
+  git -C "$R" add -A
+}
+relocating_repo relocfrozen x.test.txt 15 15
+relocate x.test.txt 15
+run_frozen
+[ "$RC" -eq 0 ] && ok "control: a relocation that moves the rows unchanged passes" \
+  || bad "a relocation that moves the rows unchanged passes" "rc=$RC out=$OUT"
+case "$OUT" in *"judged against HEAD's baseline at tools/a.tsv, which this change relocates"*) ok "and the verdict says which rows it judged against" ;; *) bad "the verdict names the relocated baseline" "$OUT" ;; esac
+mkfile x.test.txt 20
+relocate x.test.txt 20
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "a frozen row raised across the relocation is refused, declaration and all" \
+  || bad "a frozen raise across a relocation is refused" "rc=$RC out=$OUT"
+# The open class takes the other branch of the same judgment: refused
+# undeclared, carried by the declaration, exactly as it is in place.
+relocating_repo relocopen plain.txt 15 15
+mkfile plain.txt 20
+relocate plain.txt 20
+run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline row raised: plain.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "an unfrozen row raised across the relocation is refused undeclared" \
+  || bad "an unfrozen raise across a relocation is refused undeclared" "rc=$RC out=$OUT"
+RAISE=1 run_frozen
+[ "$RC" -eq 0 ] && ok "control: the declaration carries that unfrozen raise, as it does in place" \
+  || bad "the declaration carries an unfrozen raise across a relocation" "rc=$RC out=$OUT"
+
+echo "=== and the three bootstraps still pass: they leave HEAD naming no rows ==="
+# Each of the three produces an empty HEAD row set legitimately, and each is
+# the case a refusal on emptiness alone would break. All three are run with the
+# baseline path relocated in the same commit, which is the only way the lookup
+# above runs at all.
+new_repo bootunborn
+mkdir -p "$R/tools"
+mkfile u.test.txt 15
+printf 'u.test.txt\t15\n' >"$R/tools/b.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+run_frozen
+[ "$RC" -eq 0 ] && ok "an unborn HEAD bootstraps a first baseline at a configured path" \
+  || bad "an unborn HEAD bootstraps a first baseline" "rc=$RC out=$OUT"
+new_repo bootintroduced
+mkfile v.test.txt 5
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: a repo with no baseline at all"
+mkdir -p "$R/tools"
+mkfile v.test.txt 15
+printf 'v.test.txt\t15\n' >"$R/tools/b.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+run_frozen
+[ "$RC" -eq 0 ] && ok "a baseline this change introduces bootstraps, path and all" \
+  || bad "a baseline this change introduces bootstraps" "rc=$RC out=$OUT"
+relocating_repo bootplaceholder w.test.txt 5 5
+: >"$R/tools/a.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m "the baseline, emptied to a placeholder"
+mkfile w.test.txt 15
+relocate w.test.txt 15
+run_frozen
+[ "$RC" -eq 0 ] && ok "a HEAD baseline committed empty is no row set, wherever the path moves" \
+  || bad "an empty HEAD baseline is no row set across a relocation" "rc=$RC out=$OUT"
+case "$OUT" in *"HEAD carries no baseline rows, so added and raised rows were not judged"*) ok "and a bootstrap still says the check had no reference" ;; *) bad "a bootstrap still reports that nothing was judged" "$OUT" ;; esac
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

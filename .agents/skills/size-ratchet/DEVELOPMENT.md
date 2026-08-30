@@ -206,7 +206,13 @@ a first `--seed`, a baseline this change introduces) has nothing to compare,
 so the raise gate alone is skipped — every other verdict still judges the
 snapshot and can fail it — and the verdict line says the added and raised
 checks did not run, because "no reference" must never read as "checked and
-clean". A row whose
+clean". A commit that MOVES the
+baseline is not such a HEAD: the rows are followed to the path HEAD's own
+settings named, resolved through the same chain with the versioned settings
+taken from HEAD, so a relocation cannot land the raise an unjudged gate would
+have carried. None of the three no-baseline cases can misfire on that lookup,
+because each leaves HEAD naming either the path the run already read or one
+HEAD carries no rows at. A row whose
 file is at or under its threshold is reported as stale instead, so one root
 cause reads as one verdict. A class that changes its UNIT does not escape:
 HEAD's row is re-expressed in the unit the class counts now, measured from
