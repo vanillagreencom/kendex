@@ -135,11 +135,17 @@ blob_is_binary() { # SHA — 0 when the staged blob's first block carries a NUL
     [ ! -s "$GG_TMP/blob.err" ] || cat -- "$GG_TMP/blob.err" >&2
     gg_collection_error "could not read the staged blob $sha (git cat-file exit $status)"
   fi
-  head -c 8192 -- "$GG_TMP/blob" >"$GG_TMP/blob.head" \
+  # 8000 is git's own window, so the two verdicts cannot diverge: a NUL at
+  # offset 7999 makes git call the blob binary, one at 8000 leaves it text.
+  head -c 8000 -- "$GG_TMP/blob" >"$GG_TMP/blob.head" \
     || gg_collection_error "could not read the first block of the staged blob $sha"
-  total=$(($(wc -c <"$GG_TMP/blob.head")))
-  nulless=$(($(LC_ALL=C tr -d '\000' <"$GG_TMP/blob.head" | wc -c)))
-  [ "$total" -gt "$nulless" ]
+  # Plain assignments, not arithmetic: a count that fails must reach the ||
+  # rather than collapsing to 0, which would answer "binary" and skip the file.
+  total="$(wc -c <"$GG_TMP/blob.head")" \
+    || gg_collection_error "could not size the first block of the staged blob $sha"
+  nulless="$(LC_ALL=C tr -d '\000' <"$GG_TMP/blob.head" | wc -c)" \
+    || gg_collection_error "could not count the NUL-free bytes of the staged blob $sha"
+  [ $((total)) -gt $((nulless)) ]
 }
 
 carriers_chunk() { # PATHSPEC... — append the carriers among them to carriers.z
@@ -147,10 +153,9 @@ carriers_chunk() { # PATHSPEC... — append the carriers among them to carriers.
   # No -I: without it git grep matches in every blob, whatever an attributes
   # rule calls that blob, and -I would put the bypass the per-path read is
   # pinned against back in the fast path — where a skipped file reads as
-  # clean. -a says the same intent outright and pins it against an output
-  # form that summarises a binary match instead of naming the path. What
-  # this scan lists is judged on CONTENT by blob_is_binary, never on an
-  # attribute.
+  # clean. -a says the same intent outright; -l already pins the output form
+  # to a path per line. What this scan lists is judged on CONTENT by
+  # blob_is_binary, never on an attribute.
   LC_ALL=C git grep --cached -alzE "$MARKER_ERE" -- "$@" \
     >>"$GG_TMP/carriers.z" 2>"$GG_TMP/carriers.err" || status=$?
   gg_grep_guard "$status" "$GG_TMP/carriers.err" "listing the staged files that carry a work marker"

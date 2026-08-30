@@ -410,6 +410,24 @@ run_tb --staged
   && ok "control: the same bytes without a NUL are text, and fire" \
   || bad "control: the NUL-free bytes fire" "rc=$RC out=$OUT"
 
+# The window is git's, 8000 bytes, and the arms above only pin it from
+# below. A NUL past 8000 leaves git calling the blob text — `git diff
+# --numstat` counts its lines rather than printing '-' — so the sniff must
+# read it too. A wider read here answers "binary", the file is skipped, and
+# a marker that fails the index scan passes the commit.
+{
+  head -c 8050 /dev/zero | LC_ALL=C tr '\000' 'x'
+  printf '\000\n// %s: past the 8000-byte window\n' "$TD"
+} >"$R/late-nul.rs"
+git -C "$R" reset -q -- asset.png
+git -C "$R" add late-nul.rs
+[ "$(git -C "$R" diff --cached --numstat -- late-nul.rs | cut -f1)" = 2 ] \
+  || bad "fixture: git does not call the late-NUL blob text" "$(git -C "$R" diff --cached --numstat -- late-nul.rs)"
+run_tb --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: late-nul.rs:2:"*) true ;; *) false ;; esac \
+  && ok "a NUL past git's 8000-byte window leaves the blob text, and it fires" \
+  || bad "a late NUL leaves the blob text" "rc=$RC out=$OUT"
+
 echo "=== a type change emits two diff sections, neither header an added line ==="
 new_repo typechange
 printf 'fn main() {}\n' >"$R/ok.rs"
@@ -641,6 +659,82 @@ OUT="$(cd "$R" && PATH="$CATFILE_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC
   && ok "a content sniff that cannot read the blob is exit 2, never OK" \
   || bad "a broken content sniff is exit 2" "rc=$RC out=$OUT"
 case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken content sniff" "$OUT" ;; *) ok "no OK verdict accompanies the broken content sniff" ;; esac
+
+# The sniff's two byte counts are effectful calls, and a count that fails
+# silently must not be allowed to decide the verdict. Each arm below breaks
+# exactly one of them, so each pins its own guard: with the first count
+# broken the second still succeeds, and with the second broken the first
+# still succeeds. Both must terminate the run rather than fold the file
+# into a clean pass.
+new_repo sniffcount
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf '// %s: staged for the counts to read\n' "$TD" >>"$R/ok.rs"
+git -C "$R" add ok.rs
+run_tb --staged
+[ "$RC" -eq 1 ] && ok "shim-free control: the staged marker fires with the real counts" \
+  || bad "shim-free control fires with the real counts" "rc=$RC out=$OUT"
+
+# The first count only: the shim fails once per run, so the size of the
+# block fails while the NUL-free count that follows it succeeds.
+COUNT_SHIM="$TMP/count-shim"
+mkdir -p "$COUNT_SHIM"
+cat >"$COUNT_SHIM/wc" <<EOF
+#!/usr/bin/env bash
+if [ ! -e "$TMP/wc-fired" ]; then
+  : >"$TMP/wc-fired"
+  echo "wc: simulated execution failure" >&2
+  exit 1
+fi
+exec "$(command -v wc)" "\$@"
+EOF
+chmod +x "$COUNT_SHIM/wc"
+rm -f "$TMP/wc-fired"
+OUT="$(cd "$R" && PATH="$COUNT_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not size the first block of the staged blob"*) true ;; *) false ;; esac \
+  && ok "a first block that cannot be sized is exit 2, never OK" \
+  || bad "an unsized first block is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany an unsized first block" "$OUT" ;; *) ok "no OK verdict accompanies the unsized first block" ;; esac
+
+# The second count only: the NUL strip fails inside a pipeline, which is
+# the dangerous direction — a zero there reads as "every byte was a NUL".
+TR_SHIM="$TMP/tr-shim"
+mkdir -p "$TR_SHIM"
+cat >"$TR_SHIM/tr" <<'EOF'
+#!/usr/bin/env bash
+echo "tr: simulated execution failure" >&2
+exit 1
+EOF
+chmod +x "$TR_SHIM/tr"
+OUT="$(cd "$R" && PATH="$TR_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not count the NUL-free bytes of the staged blob"*) true ;; *) false ;; esac \
+  && ok "a NUL-free count that cannot run is exit 2, never OK" \
+  || bad "a broken NUL-free count is exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken NUL-free count" "$OUT" ;; *) ok "no OK verdict accompanies the broken NUL-free count" ;; esac
+
+echo "=== the carriers pre-filter is chunked, and every chunk survives ==="
+# The chunk size is 256, so a change set larger than that is the only shape
+# that runs the loop more than once. A chunk that overwrites its
+# predecessors instead of appending drops the carrier named by an earlier
+# one, and the lane prints OK: this repository's own render-propagation
+# commits stage several hundred files at a time, so the shape is routine.
+new_repo chunking
+printf 'fn main() {}\n' >"$R/seed.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf '// %s: in the first chunk\n' "$TD" >"$R/a000.rs"
+i=1
+while [ "$i" -lt 300 ]; do
+  printf 'fn f%s() {}\n' "$i" >"$R/$(printf 'a%03d' "$i").rs"
+  i=$((i + 1))
+done
+git -C "$R" add -A
+run_tb --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"work marker: a000.rs:1:"*) true ;; *) false ;; esac \
+  && ok "a marker in the first of 300 staged paths survives every later chunk" \
+  || bad "the first chunk's carrier survives" "rc=$RC out=$OUT"
+case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a chunked carrier" "$OUT" ;; *) ok "no OK verdict accompanies the chunked scan" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
