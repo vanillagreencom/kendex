@@ -44,6 +44,7 @@ const row = (scope: Scope, over: Partial<UpdateRow> = {}): UpdateRow => ({
   forked: false,
   mixed: false,
   removedUpstream: false,
+  noPerPackageUpdate: null,
   ...over,
 });
 
@@ -187,10 +188,16 @@ describe("which places can take an update", () => {
     ).toBe(false);
   });
 
-  it("offers none for a kind the planner never updates one at a time", () => {
+  it("offers none for a kind core refuses", () => {
     const built = places(
       [VG],
-      [{ ...row(VG), kind: "pi-extension" }],
+      [
+        {
+          ...row(VG),
+          kind: "pi-extension",
+          noPerPackageUpdate: "core will not update this one",
+        },
+      ],
       {},
       "pi-extension",
     );

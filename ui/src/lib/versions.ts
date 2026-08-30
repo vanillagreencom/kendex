@@ -1,9 +1,5 @@
-import {
-  type ItemKind,
-  PER_PACKAGE_UPDATE_KINDS,
-  type VersionRef,
-  type VersionRow,
-} from "@/bindings";
+import type { UpdateRow, VersionRef, VersionRow } from "@/bindings";
+import { updateAvailability } from "@/lib/update-groups";
 
 /** A version as a person reads it: the release name when it has one, a
  *  short commit id otherwise. */
@@ -26,31 +22,24 @@ export function installedRow(rows: VersionRow[]): VersionRow | undefined {
   return rows.find((row) => row.installed);
 }
 
-/** Whether the planner can bring one package of this kind current on its
- *  own. The list comes from core, which is also where the refusal behind
- *  it lives, so an offer and its refusal can never come from two accounts
- *  of the same rule. A Pi extension comes current with `kendex update-pi`
- *  and a plugin with its place's own apply. */
-export const hasPerPackageUpdate = (kind: ItemKind): boolean =>
-  (PER_PACKAGE_UPDATE_KINDS as readonly ItemKind[]).includes(kind);
-
 /** Whether the package page may offer Update. There has to be a newer
- *  version to move to and an installed one to move from, the page has to
- *  know whether the package is held and whether it is edited, no edit may
- *  be holding it — and the planner has to handle the kind at all. Offering
- *  it otherwise is a button that can only fail. */
+ *  version to move to and an installed one to move from, and the update
+ *  read has to have spoken for this place: what stands in the way — an
+ *  edit, somebody else's hold, a kind core never brings current one
+ *  package at a time — is the row's to say, through the same reading the
+ *  Updates page uses. Offering it otherwise is a button that can only
+ *  fail, and a place with no row at all is one the engine would refuse. */
 export const canUpdatePackage = (page: {
-  kind: ItemKind;
   latest: VersionRow | undefined;
   installed: VersionRow | undefined;
   metaLoaded: boolean;
   updatesLoaded: boolean;
-  edited: boolean;
+  row: UpdateRow | null;
 }): boolean =>
   page.latest != null &&
   !page.latest.installed &&
   page.installed != null &&
   page.metaLoaded &&
   page.updatesLoaded &&
-  !page.edited &&
-  hasPerPackageUpdate(page.kind);
+  page.row !== null &&
+  updateAvailability(page.row).withheld === null;

@@ -14,7 +14,6 @@ import {
   usePackageData,
   usePackageDiff,
 } from "@/components/package/use-package-data";
-import { NO_PER_PACKAGE_UPDATE_NOTE } from "@/lib/copy-updates";
 import { groupItems, groupScopes, installationAt } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
 import { usePackageMark } from "@/lib/package-mark";
@@ -22,7 +21,6 @@ import { vendorAt } from "@/lib/package-places";
 import { sameScope } from "@/lib/scope";
 import {
   canUpdatePackage,
-  hasPerPackageUpdate,
   installedRow,
   latestRow,
   versionRowLabel,
@@ -88,15 +86,18 @@ export function PackagePage() {
     diffHarness(view, installationAt(group, ref?.scope)?.harness ?? null),
   );
   const updatesLoaded = useUpdatesStore((s) => s.loaded);
-  const edited = useUpdatesStore((s) =>
-    s.rows.some(
-      (row) =>
-        ref != null &&
-        row.kind === ref.kind &&
-        row.name === ref.name &&
-        sameScope(row.scope, ref.scope) &&
-        row.blockedByLocalEdit,
-    ),
+  // This place's update standing, or null where the read never spoke for
+  // it. Whether Update belongs here — and what to say where it does not —
+  // is the row's to answer, core's refusal for the kind included.
+  const updateRow = useUpdatesStore(
+    (s) =>
+      s.rows.find(
+        (row) =>
+          ref != null &&
+          row.kind === ref.kind &&
+          row.name === ref.name &&
+          sameScope(row.scope, ref.scope),
+      ) ?? null,
   );
 
   const mark = usePackageMark(group);
@@ -123,22 +124,21 @@ export function PackagePage() {
   const displayName = packageDisplayName(ref);
   const installed = installedRow(versions);
   const latest = latestRow(versions);
-  // Update waits for meta (held vs following) and the updates store
-  // (edited), is off while edits are held, and is never offered for a kind
-  // the planner does not bring current one package at a time.
+  // Update waits for meta (held vs following) and for the updates read to
+  // have spoken for this place; what stands in the way is that row's word.
   const canUpdate = canUpdatePackage({
-    kind: group.kind,
     latest,
     installed,
     metaLoaded: meta != null,
     updatesLoaded,
-    edited,
+    row: updateRow,
   });
   // Said where the button would be, so a page with news but no way to act
-  // on it here names the way that does.
+  // on it here names the way that does — in core's own words, never this
+  // page's account of the same rule.
   const updateWithheld =
-    latest != null && !latest.installed && !hasPerPackageUpdate(group.kind)
-      ? NO_PER_PACKAGE_UPDATE_NOTE
+    latest != null && !latest.installed
+      ? (updateRow?.noPerPackageUpdate ?? null)
       : null;
 
   // Every scope this package sits in, one at a time — each apply takes

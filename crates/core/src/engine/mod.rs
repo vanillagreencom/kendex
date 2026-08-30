@@ -58,7 +58,7 @@ pub use unmanaged::unmanaged_here;
 mod written;
 
 pub(crate) use desired_agent::contributes_to_agent;
-pub use expansion::{NO_PER_PACKAGE_UPDATE, PER_PACKAGE_UPDATE_KINDS, plans_per_package};
+pub use expansion::{NO_PER_PACKAGE_UPDATE, plans_per_package};
 pub use item_source::{ItemSource, item_source};
 pub use observed::observed_rows;
 pub use planned::{PlannedDeclaration, planned_declarations};

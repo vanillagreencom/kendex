@@ -144,6 +144,7 @@ const row = (
   forked: false,
   mixed: false,
   removedUpstream: false,
+  noPerPackageUpdate: null,
 });
 
 // Each stand-in carries the signature it stands in for, so a store the

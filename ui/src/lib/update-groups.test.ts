@@ -31,6 +31,7 @@ const row = (
   holdOwner: null,
   derived: false,
   removedUpstream: false,
+  noPerPackageUpdate: null,
   mixed: false,
   forked: false,
   ignored: false,
@@ -148,14 +149,16 @@ describe("update groups", () => {
   });
 
   // The plan refuses a kind it never derives, so an Update offered for one
-  // could only fail. The rule comes from core's own list, not a second one
-  // kept here, and a place it rejects still has news — it belongs to the
-  // skipped side rather than to neither.
-  it("leaves a kind the planner never brings current out of a bulk update", () => {
+  // could only fail. The refusal arrives on the row in core's own words —
+  // nothing here works the kind out for itself — and a place it rejects
+  // still has news, so it belongs to the skipped side rather than to
+  // neither.
+  it("leaves a kind core refuses out of a bulk update", () => {
+    const refused = { noPerPackageUpdate: "core will not update this one" };
     const rows = [
       row("gh", "/a"),
-      row("pi-hooks", "/b", { kind: "pi-extension" }),
-      row("pack", "/c", { kind: "plugin" }),
+      row("pi-hooks", "/b", { kind: "pi-extension", ...refused }),
+      row("pack", "/c", { kind: "plugin", ...refused }),
     ];
     expect(updatablePlaces(rows).map((p) => p.name)).toEqual(["gh"]);
     expect(skippedPlaces(rows).map((p) => p.name)).toEqual([

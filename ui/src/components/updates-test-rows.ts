@@ -25,6 +25,7 @@ export const updateRow = (
   holdOwner: null,
   derived: false,
   removedUpstream: false,
+  noPerPackageUpdate: null,
   mixed: false,
   forked: false,
   ignored: false,

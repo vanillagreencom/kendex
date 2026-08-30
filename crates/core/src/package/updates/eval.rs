@@ -139,6 +139,7 @@ impl Eval<'_> {
                     removed_upstream: true,
                     repo_identity: crate::source_ref::repo_identity(&repo),
                     repo,
+                    no_per_package_update: super::no_per_package_update(kind),
                 });
             }
             _ => report
@@ -258,6 +259,7 @@ impl Eval<'_> {
             update_available,
             mixed,
             removed_upstream: false,
+            no_per_package_update: super::no_per_package_update(kind),
         });
     }
 

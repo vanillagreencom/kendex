@@ -24,14 +24,17 @@ import {
   followSourceLabel,
   HELD_BY_OWNER_NOTE,
   heldBySourceNote,
-  NO_PER_PACKAGE_UPDATE_NOTE,
   OPEN_PACKAGE_LABEL,
   UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
-import { heldByOwner, placeName, switchLockedBy } from "@/lib/update-groups";
+import {
+  placeName,
+  switchLockedBy,
+  updateAvailability,
+} from "@/lib/update-groups";
 import { rowUnsettled } from "@/lib/updates-read-state";
-import { hasPerPackageUpdate, versionLabel } from "@/lib/versions";
+import { versionLabel } from "@/lib/versions";
 import { useNavStore } from "@/stores/nav";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
@@ -61,6 +64,9 @@ export function PlaceCells({
   const name = packageDisplayName(row);
   const place = placeName(row.scope, among);
   const locked = switchLockedBy(row);
+  // Whether Update belongs on this row at all, and what to say where it
+  // does not — one reading, the same "Update all" acts on.
+  const availability = updateAvailability(row);
   const ref = { kind: row.kind, name: row.name, scope: row.scope };
 
   const preview = () => {
@@ -158,24 +164,12 @@ export function PlaceCells({
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={
-                      busy ||
-                      held ||
-                      !row.updateAvailable ||
-                      heldByOwner(row) ||
-                      !hasPerPackageUpdate(row.kind)
-                    }
-                    // The kind comes first: the others are reasons this
-                    // row cannot be updated right now, and that one is why
-                    // it never can be here.
+                    disabled={busy || held || !availability.can}
+                    // What stands in the way is the row's own reading;
+                    // the pending check is this surface's alone.
                     title={
-                      !hasPerPackageUpdate(row.kind)
-                        ? NO_PER_PACKAGE_UPDATE_NOTE
-                        : heldByOwner(row)
-                          ? HELD_BY_OWNER_NOTE
-                          : held
-                            ? UPDATE_NEEDS_CHECK_NOTE
-                            : undefined
+                      availability.withheld ??
+                      (held ? UPDATE_NEEDS_CHECK_NOTE : undefined)
                     }
                     onClick={() => void updateOne(row)}
                   >

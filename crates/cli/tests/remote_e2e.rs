@@ -300,312 +300,12 @@ fn pinning_one_package_leaves_the_scopes_followers_where_they_are() {
     assert!(manifest.contains(&tip), "the hold is recorded: {manifest}");
 }
 
-/// `kendex updates apply <kind> <name>` says what it did, and a copy the
-/// person changed by hand is said about rather than written over — the one
-/// verdict that must never read as "applied" when nothing moved.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn updates_apply_names_what_moved_and_what_was_held_back() {
-    let tmp = fixture();
-    let home = tmp.path();
-    let proj = home.join("proj");
-    let upstream = home.join("git/vanillagreencom/kendex");
-
-    let output = kendex(home, &proj, &["add", "--skill", "gh", "-y"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    fs::write(
-        upstream.join("skills/gh/SKILL.md"),
-        "---\nname: gh\ndescription: github flows\n---\nUpstream v2.\n",
-    )
-    .unwrap();
-    git(&upstream, &["commit", "--quiet", "-am", "two"]);
-    assert!(
-        kendex(home, &proj, &["updates", "--refresh"])
-            .status
-            .success()
-    );
-
-    let applied = said(&kendex(
-        home,
-        &proj,
-        &["updates", "apply", "skill", "gh", "-y"],
-    ));
-    assert!(
-        applied.contains("applied — skill gh is current here"),
-        "{applied}"
-    );
-    // Content this run writes is scored where every other writing verb
-    // scores it — the shared printer's account, not this verb's own.
-    assert!(
-        applied.contains("safety: skill gh for Claude Code scores"),
-        "the apply says what it is about to install: {applied}"
-    );
-    let rendered = proj.join(".agents/skills/gh/SKILL.md");
-    assert!(
-        fs::read_to_string(&rendered)
-            .unwrap()
-            .contains("Upstream v2")
-    );
-
-    // Now the person edits their copy and upstream moves again: the plan
-    // holds the edited rendering back, and the run has to say so.
-    fs::write(
-        &rendered,
-        "---\nname: gh\ndescription: mine\n---\nMy own words.\n",
-    )
-    .unwrap();
-    fs::write(
-        upstream.join("skills/gh/SKILL.md"),
-        "---\nname: gh\ndescription: github flows\n---\nUpstream v3.\n",
-    )
-    .unwrap();
-    git(&upstream, &["commit", "--quiet", "-am", "three"]);
-    assert!(
-        kendex(home, &proj, &["updates", "--refresh"])
-            .status
-            .success()
-    );
-
-    let held = said(&kendex(
-        home,
-        &proj,
-        &["updates", "apply", "skill", "gh", "-y"],
-    ));
-    assert!(
-        held.contains("skill gh is held back by the conflict above — nothing moved for it"),
-        "{held}"
-    );
-    assert!(
-        !held.contains("applied —"),
-        "a held-back package must never read as applied: {held}"
-    );
-    assert!(
-        !held.contains("nothing to change"),
-        "a refused plan is not an empty one: {held}"
-    );
-    // The conflict and its ways out come from the shared printer, so this
-    // verb says what `apply` and `pin` say about the same row.
-    assert!(
-        held.contains("conflict: skill gh for Claude Code:"),
-        "{held}"
-    );
-    assert!(
-        held.contains("keep your edits as a fork"),
-        "the way out is named, not just the refusal: {held}"
-    );
-    assert_eq!(
-        fs::read_to_string(&rendered).unwrap(),
-        "---\nname: gh\ndescription: mine\n---\nMy own words.\n",
-        "the edited copy survives the run that refused to write over it"
-    );
-}
-
-/// The verb takes a kind the engine never derives only to refuse it: a Pi
-/// extension installs through its own path, so planning one here comes
-/// back empty and "nothing to change" would be a success-shaped answer for
-/// work that cannot happen.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn updates_apply_refuses_a_kind_with_no_per_package_update() {
-    let tmp = fixture();
-    let home = tmp.path();
-    let proj = home.join("proj");
-    assert!(
-        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
-            .status
-            .success()
-    );
-
-    let refused = kendex(home, &proj, &["updates", "apply", "pi-extension", "gh"]);
-    let printed = said(&refused);
-    assert!(!refused.status.success(), "{printed}");
-    assert!(
-        printed.contains("has no per-package update"),
-        "the refusal says what it will not do: {printed}"
-    );
-    assert!(
-        printed.contains("kendex update-pi"),
-        "and names the path that does move a Pi extension: {printed}"
-    );
-    assert!(
-        !printed.contains("nothing to change"),
-        "never the already-current answer: {printed}"
-    );
-
-    // The help stops advertising a kind this verb refuses.
-    let help = said(&kendex(home, &proj, &["updates", "apply", "--help"]))
-        + &String::from_utf8_lossy(&kendex(home, &proj, &["updates", "apply", "--help"]).stdout);
-    assert!(help.contains("mcp-server"), "{help}");
-    assert!(
-        !help.contains("| pi-extension"),
-        "pi-extension is no longer offered as a kind: {help}"
-    );
-}
-
-/// A verb that writes managed files asks first. The runs here are not a
-/// terminal, so without `--yes` there is nobody to ask: the apply refuses
-/// and nothing on disk moves, the same contract `add`, `apply`, `pin` and
-/// `refresh` hold to.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn updates_apply_refuses_to_write_without_a_yes() {
-    let tmp = fixture();
-    let home = tmp.path();
-    let proj = home.join("proj");
-    let upstream = home.join("git/vanillagreencom/kendex");
-    assert!(
-        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
-            .status
-            .success()
-    );
-
-    fs::write(
-        upstream.join("skills/gh/SKILL.md"),
-        "---\nname: gh\ndescription: github flows\n---\nUpstream v2.\n",
-    )
-    .unwrap();
-    git(&upstream, &["commit", "--quiet", "-am", "two"]);
-    assert!(
-        kendex(home, &proj, &["updates", "--refresh"])
-            .status
-            .success()
-    );
-
-    let rendered = proj.join(".agents/skills/gh/SKILL.md");
-    let before = fs::read_to_string(&rendered).unwrap();
-
-    let refused = kendex(home, &proj, &["updates", "apply", "skill", "gh"]);
-    let printed = said(&refused);
-    assert!(!refused.status.success(), "{printed}");
-    assert!(
-        printed.contains("refusing to apply without --yes"),
-        "the refusal says what is missing: {printed}"
-    );
-    assert_eq!(
-        fs::read_to_string(&rendered).unwrap(),
-        before,
-        "a run that was never confirmed wrote nothing"
-    );
-
-    // The flag is reachable either side of the subcommand, and the run it
-    // confirms still reports in this verb's own words.
-    let applied = said(&kendex(
-        home,
-        &proj,
-        &["updates", "apply", "skill", "gh", "--yes"],
-    ));
-    assert!(
-        applied.contains("applied — skill gh is current here"),
-        "{applied}"
-    );
-    assert!(
-        fs::read_to_string(&rendered)
-            .unwrap()
-            .contains("Upstream v2")
-    );
-}
-
-/// A note the plan raises reaches the reader. `update_one`'s account of a
-/// target its source no longer offers used to be dropped on the floor
-/// here: the run said what it applied and never said what it had found.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn updates_apply_says_what_the_plan_found() {
-    let tmp = fixture();
-    let home = tmp.path();
-    let proj = home.join("proj");
-    let upstream = home.join("git/vanillagreencom/kendex");
-    assert!(
-        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
-            .status
-            .success()
-    );
-
-    fs::remove_dir_all(upstream.join("skills/gh")).unwrap();
-    git(&upstream, &["add", "-A"]);
-    git(&upstream, &["commit", "--quiet", "-m", "gh withdrawn"]);
-    assert!(
-        kendex(home, &proj, &["updates", "--refresh"])
-            .status
-            .success()
-    );
-
-    let printed = said(&kendex(
-        home,
-        &proj,
-        &["updates", "apply", "skill", "gh", "-y"],
-    ));
-    assert!(
-        printed.contains("note: gh: not found in source"),
-        "the plan's own account of the target reaches the reader: {printed}"
-    );
-}
-
-/// A refusal is not always a hold. An installation with nothing of the
-/// person's in it goes to the trash and nothing is written back — the
-/// conflict's own detail says so — and reporting that as held back said
-/// nothing happened over the one outcome that took something away.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn updates_apply_says_when_a_copy_went_to_the_trash() {
-    let tmp = fixture();
-    let home = tmp.path();
-    let proj = home.join("proj");
-    let upstream = home.join("git/vanillagreencom/kendex");
-    assert!(
-        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
-            .status
-            .success()
-    );
-    let rendered = proj.join(".agents/skills/gh/SKILL.md");
-    assert!(rendered.is_file());
-
-    // The catalog starts shipping both names for one skill: nothing can be
-    // rendered from it, and the copy on disk is nobody's edit to keep.
-    fs::write(
-        upstream.join("skills/gh/SKILL.md.disabled"),
-        "---\nname: gh\ndescription: github flows\n---\nOff.\n",
-    )
-    .unwrap();
-    git(&upstream, &["add", "-A"]);
-    git(&upstream, &["commit", "--quiet", "-m", "both names"]);
-    assert!(
-        kendex(home, &proj, &["updates", "--refresh"])
-            .status
-            .success()
-    );
-
-    let printed = said(&kendex(
-        home,
-        &proj,
-        &["updates", "apply", "skill", "gh", "-y"],
-    ));
-    assert!(
-        printed.contains("went to the trash"),
-        "the run says what it took away: {printed}"
-    );
-    assert!(
-        !printed.contains("nothing moved for it"),
-        "a copy that was removed is not one that stayed: {printed}"
-    );
-    assert!(
-        !printed.contains("applied —"),
-        "and it is not an apply either: {printed}"
-    );
-    assert!(!rendered.exists(), "the copy really is gone");
-}
-
 /// `--refresh` is a fetch the person asked for before anything reads a
-/// catalog, and a targeted apply reads one. Skipped, the run applies the
-/// mirror's cached tip in answer to an explicit ask for fresh.
+/// catalog, and the listing reads one. Skipped, the run answers from the
+/// mirror as it already stands rather than from an explicit ask for fresh.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn updates_refresh_fetches_before_a_targeted_apply() {
+fn updates_refresh_fetches_before_the_listing() {
     let tmp = fixture();
     let home = tmp.path();
     let proj = home.join("proj");
@@ -615,7 +315,6 @@ fn updates_refresh_fetches_before_a_targeted_apply() {
             .status
             .success()
     );
-    let rendered = proj.join(".agents/skills/gh/SKILL.md");
 
     fs::write(
         upstream.join("skills/gh/SKILL.md"),
@@ -625,33 +324,22 @@ fn updates_refresh_fetches_before_a_targeted_apply() {
     git(&upstream, &["commit", "--quiet", "-am", "two"]);
 
     // Without the flag the mirror is never asked, so the run has nothing
-    // newer to apply.
+    // newer to report.
+    let stale = said(&kendex(home, &proj, &["updates"]));
     assert!(
-        kendex(home, &proj, &["updates", "apply", "skill", "gh", "-y"])
-            .status
-            .success()
-    );
-    assert!(
-        fs::read_to_string(&rendered)
-            .unwrap()
-            .contains("Upstream v1"),
-        "no fetch was asked for, so nothing newer was found"
+        stale.contains("everything is on its latest version"),
+        "no fetch was asked for, so nothing newer was found: {stale}"
     );
 
-    // With it, the fetch happens first and the apply sees the new commit.
-    let printed = said(&kendex(
-        home,
-        &proj,
-        &["updates", "--refresh", "apply", "skill", "gh", "-y"],
-    ));
+    // With it, the fetch happens first and the listing sees the new commit.
+    let printed = said(&kendex(home, &proj, &["updates", "--refresh"]));
     assert!(
-        printed.contains("applied — skill gh is current here"),
+        printed.lines().any(|line| line.contains("skill gh")),
         "{printed}"
     );
     assert!(
-        fs::read_to_string(&rendered)
-            .unwrap()
-            .contains("Upstream v2")
+        !printed.contains("everything is on its latest version"),
+        "{printed}"
     );
 }
 
@@ -690,8 +378,8 @@ fn updates_refresh_does_not_fetch_for_a_settings_only_verb() {
     );
 }
 
-/// The whole place and one package are different asks; a run that carries
-/// both silently does one of them.
+/// Bringing the whole place current and changing one package's setting
+/// are different asks; a run that carries both silently does one of them.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updates_refuses_a_whole_place_apply_beside_a_named_package() {
@@ -707,7 +395,7 @@ fn updates_refuses_a_whole_place_apply_beside_a_named_package() {
     let refused = kendex(
         home,
         &proj,
-        &["updates", "--apply", "apply", "skill", "gh", "-y"],
+        &["updates", "--apply", "ignore", "skill", "gh"],
     );
     let printed = said(&refused);
     assert!(!refused.status.success(), "{printed}");

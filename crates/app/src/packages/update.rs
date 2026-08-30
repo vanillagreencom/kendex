@@ -47,12 +47,13 @@ pub struct PackageUpdate {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn package_update(scope: Scope, kind: ItemKind, name: String) -> Result<PackageUpdate, String> {
-    // The same refusal the CLI verb makes, for the same reason: a kind the
-    // engine never derives plans nothing, and an empty plan reads as
-    // "already current" on the page that asked.
+    // A kind the engine never derives plans nothing, and an empty plan
+    // reads as "already current" on the page that asked. The row the page
+    // read carries this same refusal, so the button is not offered — this
+    // is the floor under a caller that asks anyway.
     if !engine::plans_per_package(kind) {
         return Err(format!(
-            "{} '{name}' {}",
+            "{} '{name}': {}",
             kind.name(),
             engine::NO_PER_PACKAGE_UPDATE
         ));
@@ -158,7 +159,7 @@ pub fn package_update_many(
     for target in &targets {
         if !engine::plans_per_package(target.kind) {
             return Err(format!(
-                "{} '{}' {}",
+                "{} '{}': {}",
                 target.kind.name(),
                 target.name,
                 engine::NO_PER_PACKAGE_UPDATE

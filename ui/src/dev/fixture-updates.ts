@@ -51,5 +51,6 @@ function updateRow(
     forked: false,
     mixed: false,
     removedUpstream: false,
+    noPerPackageUpdate: null,
   };
 }

@@ -39,8 +39,6 @@ export const updatesSubtitle = (packages: number, places: number): string =>
 export const UPDATE_PACKAGE_EVERYWHERE_LABEL = "Update all";
 export const heldBySourceNote = (source: string): string =>
   `Held by the source "${source}" as a whole — release it where that source is declared`;
-export const NO_PER_PACKAGE_UPDATE_NOTE =
-  "Not updated one package at a time — Pi extensions come current with the update-pi command, plugins with their place's own apply";
 export const HELD_BY_OWNER_NOTE =
   "Held by the bundle or package it came with — update or release it from there";
 

@@ -371,6 +371,21 @@ fn a_pi_extension_reaches_the_updates_report() {
         .unwrap_or_else(|| panic!("no pi-extension row in {:?}", report.rows));
     assert_eq!(row.name, "pi-hooks");
 
+    // The row says why it can never be updated one package at a time, in
+    // the same words core refuses with, so no surface has to work the rule
+    // out for itself. A kind that does plan carries nothing.
+    assert_eq!(
+        row.no_per_package_update.as_deref(),
+        Some(kendex_core::engine::NO_PER_PACKAGE_UPDATE),
+        "{row:?}"
+    );
+    let gh = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill)
+        .unwrap_or_else(|| panic!("no skill row in {:?}", report.rows));
+    assert_eq!(gh.no_per_package_update, None, "{gh:?}");
+
     // And it can never be acted on. Nothing records a Pi extension in the
     // lock — update-pi installs them and writes none — so there is no
     // installed commit to move from, and every surface that offers Update

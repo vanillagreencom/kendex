@@ -96,6 +96,21 @@ pub struct UpdateRow {
     pub mixed: bool,
     /// The source's tracked tip no longer carries this package at all.
     pub removed_upstream: bool,
+    /// Why this place is never updated one package at a time, when it is
+    /// not: the planner derives no plan for the kind, so an Update offered
+    /// here could only be refused. `None` for every kind that does plan.
+    ///
+    /// The refusal travels with the row rather than being worked out again
+    /// where it is shown: a surface deciding for itself which kinds are
+    /// refused is a second account of a rule that lives in
+    /// [`crate::engine::plans_per_package`].
+    pub no_per_package_update: Option<String>,
+}
+
+/// The refusal a row carries for its kind, when the planner has one.
+fn no_per_package_update(kind: ItemKind) -> Option<String> {
+    (!crate::engine::plans_per_package(kind))
+        .then(|| crate::engine::NO_PER_PACKAGE_UPDATE.to_owned())
 }
 
 /// Update standing for one scope, and every package the standing could not
@@ -289,6 +304,7 @@ fn fork_row(
         forked: true,
         mixed: false,
         removed_upstream: false,
+        no_per_package_update: no_per_package_update(kind),
     }
 }
 

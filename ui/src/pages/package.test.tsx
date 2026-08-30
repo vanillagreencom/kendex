@@ -154,6 +154,7 @@ const updateRow = (scope: Project): UpdateRow => ({
   forked: false,
   mixed: false,
   removedUpstream: false,
+  noPerPackageUpdate: null,
 });
 
 beforeEach(() => {

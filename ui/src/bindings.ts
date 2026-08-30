@@ -431,8 +431,6 @@ export const commands = {
 };
 
 /* Constants */
-export const PER_PACKAGE_UPDATE_KINDS = ["skill","agent","hook","command","mcp-server"] as const;
-
 export const ZOOM = {"min":50,"max":200,"step":10,"default":100} as const;
 
 /* Types */
@@ -2877,6 +2875,17 @@ export type UpdateRow = {
 	mixed: boolean,
 	/**  The source's tracked tip no longer carries this package at all. */
 	removedUpstream: boolean,
+	/**
+	 *  Why this place is never updated one package at a time, when it is
+	 *  not: the planner derives no plan for the kind, so an Update offered
+	 *  here could only be refused. `None` for every kind that does plan.
+	 * 
+	 *  The refusal travels with the row rather than being worked out again
+	 *  where it is shown: a surface deciding for itself which kinds are
+	 *  refused is a second account of a rule that lives in
+	 *  [`crate::engine::plans_per_package`].
+	 */
+	noPerPackageUpdate: string | null,
 };
 
 /**

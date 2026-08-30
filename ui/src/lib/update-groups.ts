@@ -1,7 +1,10 @@
 import type { Scope, UpdateRow } from "@/bindings";
-import { USER_LEVEL_PLACE } from "@/lib/copy-updates";
+import {
+  EDITED_CANT_UPDATE_NOTE,
+  HELD_BY_OWNER_NOTE,
+  USER_LEVEL_PLACE,
+} from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
-import { hasPerPackageUpdate } from "@/lib/versions";
 
 /** One package with every place it is out of date in. The same skill
  *  installed in three projects is one decision with three places, not
@@ -46,21 +49,33 @@ export function groupUpdates(rows: UpdateRow[]): UpdateGroup[] {
 export const packageCount = (rows: UpdateRow[]): number =>
   new Set(rows.map(groupKey)).size;
 
-/** Whether a bulk update can act on this place at all: the planner brings
- *  this kind current one package at a time, no edit of the person's is
- *  holding it, and its hold is not an owner's to move. Said once, because
- *  the two sets below are the two halves of it — a place this rejects has
- *  to land in the other set, not in neither. */
-const actionable = (row: UpdateRow): boolean =>
-  hasPerPackageUpdate(row.kind) && !row.blockedByLocalEdit && !heldByOwner(row);
+/** Whether this place can take its update now, and what to say when it
+ *  cannot. Every surface that offers Update asks this one function —
+ *  "Update all", the row's own button, the package page — so an offer and
+ *  the refusal beside it can never come from two readings of the same row.
+ *
+ *  `withheld` is the note to show. The kind's refusal is core's own words,
+ *  carried on the row: the UI never works out for itself which kinds are
+ *  brought current one at a time. */
+export const updateAvailability = (
+  row: UpdateRow,
+): { can: boolean; withheld: string | null } => {
+  // The kind comes first: the others are reasons this row cannot be
+  // updated right now, and that one is why it never can be here.
+  if (row.noPerPackageUpdate !== null)
+    return { can: false, withheld: row.noPerPackageUpdate };
+  // An edited place is never updated over; its row offers the install
+  // beside it instead.
+  if (row.blockedByLocalEdit)
+    return { can: false, withheld: EDITED_CANT_UPDATE_NOTE };
+  if (heldByOwner(row)) return { can: false, withheld: HELD_BY_OWNER_NOTE };
+  return { can: row.updateAvailable, withheld: null };
+};
 
 /** The places "Update all" can act on: a newer version exists and nothing
- *  above stands in the way. An edited place is never updated over; its row
- *  offers the install beside it. A Pi extension comes current through its
- *  own command, so an Update offered here could only be refused by the
- *  plan behind it. */
+ *  stands in the way. */
 export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
-  rows.filter((row) => row.updateAvailable && actionable(row));
+  rows.filter((row) => updateAvailability(row).can);
 
 /** A bundle member or dependency held at its owner's revision: the hold
  *  is the owner's to move, so nothing here can update or release it. */
@@ -86,7 +101,7 @@ export const switchLockedBy = (
  *  [`updatablePlaces`] over the same news, so every place with something
  *  to say is counted once. */
 export const skippedPlaces = (rows: UpdateRow[]): UpdateRow[] =>
-  rows.filter((row) => row.updateAvailable && !actionable(row));
+  rows.filter((row) => row.updateAvailable && !updateAvailability(row).can);
 
 /** Where a package lives, as a person names it: the project folder, or
  *  "User level" for the install that applies everywhere. Two projects
