@@ -1,9 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
-import { getBool, getNumber, readConfig, recordProjectTrust } from "./config.js";
+import { getBool, getNumber, piUserDir, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { runCommandAsync } from "./process.js";
@@ -14,10 +13,26 @@ const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
  * bash hooks declare `timeout: 60` in their own frontmatter. */
 const HOOK_BUDGET_MS = 60_000;
 
-/** Where kendex renders a Pi hook, project scope first (docs/adapters/pi.md).
- * A name neither scope holds is a hook this project has not installed. */
-function renderedHook(name: string, cwd: string): string | undefined {
-	for (const root of [resolve(cwd, ".pi", "kendex"), resolve(homedir(), ".pi", "agent", "kendex")]) {
+/**
+ * Where kendex renders a Pi hook: `<project>/.pi/kendex/hooks/<name>.sh`, then
+ * the global `<PI_CODING_AGENT_DIR or ~/.pi/agent>/kendex/hooks/<name>.sh`
+ * (docs/adapters/pi.md). Both roots come from the same helpers the rest of
+ * these extensions use, so a session started in a subdirectory finds the same
+ * project as one started at its root.
+ *
+ * The project script is EXECUTED, so it is behind Pi's project trust: a clone
+ * the person has not trusted must not get its own code run on the first bash
+ * call of the session. Untrusted, the project root is skipped and the global
+ * root still answers — the person's own scripts are not the project's.
+ *
+ * A name neither root holds is a hook this project has not installed, and the
+ * caller allows the command. runRenderedHook says why that is the right answer.
+ */
+function renderedHook(name: string, ctx: ExtensionContext): string | undefined {
+	const roots = projectTrusted(ctx)
+		? [join(projectRoot(ctx.cwd), ".pi", "kendex"), join(piUserDir(), "kendex")]
+		: [join(piUserDir(), "kendex")];
+	for (const root of roots) {
 		const script = resolve(root, "hooks", `${name}.sh`);
 		if (existsSync(script)) return script;
 	}
@@ -43,9 +58,22 @@ type Verdict = { block: true; reason: string } | undefined;
  * did not reach a verdict, and a guard that did not run does not stand aside:
  * the command is refused, as the scripts themselves do when they cannot read
  * their input.
+ *
+ * No script at either root allows the command, and that is deliberate. It means
+ * kendex has not installed this hook here — the package is installable from npm
+ * on its own, and refusing every bash call in a project that never asked for
+ * the guard would make it unusable. The case that used to hide behind this
+ * answer was a resolution failure rather than an absence, and that is fixed
+ * above: the roots are now the adapter's own. What is left is a script kendex
+ * rendered and something later deleted, which is drift in the render tree;
+ * `kendex check` and this extension's own session-start report own that, and a
+ * repository does not defend against edits to its own kendex renders. Reading
+ * `.pi/kendex/hooks.json` to tell "not installed" from "installed and missing"
+ * would put a second model of the install state in here, which is the mistake
+ * this change removes.
  */
 async function runRenderedHook(name: string, command: string, ctx: ExtensionContext): Promise<Verdict> {
-	const script = renderedHook(name, ctx.cwd);
+	const script = renderedHook(name, ctx);
 	if (!script) return undefined;
 
 	const payload = JSON.stringify({ tool_name: "Bash", tool_input: { command } });

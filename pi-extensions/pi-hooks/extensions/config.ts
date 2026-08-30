@@ -24,34 +24,52 @@ export const DEFAULTS = {
 
 export type HookKey = Exclude<keyof typeof DEFAULTS, "clippyTimeoutMs" | "driftCheckTimeoutMs">;
 
-function piUserDir(): string {
+/**
+ * Pi's global root, resolved the way the Pi adapter resolves it
+ * (`crates/core/src/harness/pi.rs::default_global_root`):
+ * `PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`. An empty value counts as
+ * unset — it names no directory, and honouring it would root the whole global
+ * scope at the process cwd.
+ */
+export function piUserDir(): string {
+	const override = process.env.PI_CODING_AGENT_DIR;
+	if (override) return resolve(override);
 	const home = homedir();
 	if (!home) return resolve(".pi", "agent");
 	return resolve(home, ".pi", "agent");
 }
 
 /**
- * Walk up from `cwd` looking for an existing `.pi/settings.json`. Falls back to
- * a sibling `.pi/`, `.git/`, or `.kendex-lock.json` marker, then to the cwd
- * itself. Mirrors the pi-output-policy resolution to keep behavior identical
- * across the kendex pi extensions.
+ * Walk up from `cwd` to the directory holding the project: the first ancestor
+ * with a `.pi/settings.json`, else the first with a `.pi/`, `.git/`, or
+ * `.kendex-lock.json` marker, else `cwd`. Mirrors the pi-output-policy
+ * resolution to keep behavior identical across the kendex pi extensions.
+ *
+ * Everything that reads or runs something of the project's resolves from here,
+ * so a session started in a subdirectory sees the same project as one started
+ * at its root. Resolving from `cwd` alone made a nested session find nothing,
+ * which for a settings file reads as no settings and for a hook script read as
+ * no hook — and a hook that is not found is allowed.
  */
-function projectSettingsPath(cwd: string): string {
+export function projectRoot(cwd: string): string {
 	let current = resolve(cwd);
 	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
+		if (existsSync(join(current, ".pi", "settings.json"))) return current;
 		if (
 			existsSync(join(current, ".pi")) ||
 			existsSync(join(current, ".git")) ||
 			existsSync(join(current, ".kendex-lock.json"))
 		) {
-			return candidate;
+			return current;
 		}
 		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
+		if (parent === current) return resolve(cwd);
 		current = parent;
 	}
+}
+
+function projectSettingsPath(cwd: string): string {
+	return join(projectRoot(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -69,14 +87,23 @@ function projectTrustRegistry(): ProjectTrustRegistry {
 	return created;
 }
 
+/**
+ * Pi's answer to "has this person trusted this workspace". Only a plain `true`
+ * counts: a Pi with no such method, or one that throws, is not trusted. This
+ * gates reading the project's settings and running the project's own scripts,
+ * and both of those are safe to withhold and unsafe to grant by accident.
+ */
+export function projectTrusted(ctx: { isProjectTrusted?: () => boolean }): boolean {
+	try {
+		return ctx.isProjectTrusted?.() === true;
+	} catch {
+		return false;
+	}
+}
+
 export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () => boolean }): void {
 	if (!ctx.cwd) return;
-	let trusted = true;
-	try {
-		trusted = ctx.isProjectTrusted?.() === true;
-	} catch {
-		trusted = false;
-	}
+	const trusted = projectTrusted(ctx);
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
 	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);

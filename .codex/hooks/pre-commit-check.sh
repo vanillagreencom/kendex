@@ -52,6 +52,12 @@ IFS=$' \t\n\r'
 # shellcheck disable=SC2206
 WORDS=($COMMAND)
 set +f
+# An empty or whitespace-only command names nothing. The count is read rather
+# than the array: under `set -u` bash before 4.4 treats `"${WORDS[@]}"` on a
+# zero-element array as unset and aborts, while `${#WORDS[@]}` is 0 on every
+# version back to 3.2 — so this guard is what keeps the loop below reachable
+# only when there is something in it. Measured on 3.2.57, 4.2, 4.3 and 4.4; do
+# not "simplify" it into expanding the array first.
 [ "${#WORDS[@]}" -gt 0 ] || exit 0
 
 COMMIT=""

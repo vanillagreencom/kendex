@@ -4,7 +4,11 @@ The carrier that makes kendex's safety hooks run under Pi. Each hook is independ
 
 ## Hooks
 
-Three of them are the rendered bash hooks themselves. Pi has no per-hook runner, so this extension spawns `.pi/kendex/hooks/<name>.sh` (falling back to `~/.pi/agent/kendex/hooks/<name>.sh`) with the payload Claude Code sends a `PreToolUse` hook, and reads the exit status: `2` refuses the tool call with the script's stderr as the reason, `0` allows it, and anything else refuses too, because a guard that did not run does not stand aside. A script writing to stderr and still exiting `0` is an advisory, shown to the person through the UI and never to the agent. A name kendex has not rendered here is a hook this project has not installed, and nothing runs.
+Three of them are the rendered bash hooks themselves. Pi has no per-hook runner, so this extension spawns the script with the payload Claude Code sends a `PreToolUse` hook and reads the exit status: `2` refuses the tool call with the script's stderr as the reason, `0` allows it, and anything else refuses too, because a guard that did not run does not stand aside. A script writing to stderr and still exiting `0` is an advisory, shown to the person through the UI and never to the agent.
+
+It looks for `<project>/.pi/kendex/hooks/<name>.sh`, then `<global>/kendex/hooks/<name>.sh`, where `<global>` is `PI_CODING_AGENT_DIR` if set and `~/.pi/agent` otherwise. The project is the nearest ancestor of the session's directory holding a `.pi/`, `.git/` or `.kendex-lock.json`, so a session started in a subdirectory gets the same hooks as one started at the repository root.
+
+**A project-scope script only runs in a workspace Pi reports trusted.** Spawning it is executing code the project ships, so a clone nobody has trusted gets its guards skipped rather than its scripts run; the global root still answers, because those scripts are the person's own. A name neither root holds is a hook kendex has not installed here, and the command passes.
 
 That is the whole of it: no second implementation. Claude Code, Codex and Pi run the same bytes, so a change to a hook reaches all three at once.
 

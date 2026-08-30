@@ -144,6 +144,18 @@ both 'echo commit && git status' 0 0 "a commit word before the git word"
 run_hook "$UNARMED" '{"note":"about to commit with git"}'
 assert_eq "$rc" "0" "a payload with no command field is left alone"
 
+# A command that splits into no words at all. On bash before 4.4 expanding a
+# zero-element array under `set -u` aborts, so the clean exit is pinned rather
+# than assumed; this suite is run against bash 3.2 as well as the host's.
+for empty in '' ' ' '   \t  ' '\n\n'; do
+  run_hook "$UNARMED" "$(payload "$empty")"
+  assert_eq "$rc" "0" "an empty or whitespace-only command exits clean: [$empty]"
+  assert_eq "$err" "" "and says nothing: [$empty]"
+done
+
+run_hook "$UNARMED" '{"tool_input":{"command":""}}'
+assert_eq "$rc" "0" "a payload with no command field is left alone"
+
 echo
 echo "an unreadable payload is refused, never skipped"
 

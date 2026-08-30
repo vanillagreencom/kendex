@@ -191,6 +191,12 @@ function readLog(log: string): string {
 	return readFileSync(log, { encoding: "utf8", flag: "a+" });
 }
 
+/** A trusted workspace. Pi gates the project's own scripts on this, so every
+ * case that expects a project-scope hook to run has to say so. */
+function trusted(cwd: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+	return { cwd, isProjectTrusted: () => true, ...extra };
+}
+
 describe("pi-hooks pre-commit tool_call", () => {
 	test("spawns the rendered hook with the payload a PreToolUse hook is sent", async () => {
 		const project = initRustRepo("pi-hooks-project-");
@@ -198,7 +204,7 @@ describe("pi-hooks pre-commit tool_call", () => {
 		try {
 			renderStub(project, "pre-commit-check", { exitCode: 0, log });
 			const handler = installToolCallHandler();
-			expect(await handler({ toolName: "bash", input: { command: "git status" } }, { cwd: project })).toBeUndefined();
+			expect(await handler({ toolName: "bash", input: { command: "git status" } }, trusted(project))).toBeUndefined();
 			expect(JSON.parse(readLog(log))).toEqual({ tool_name: "Bash", tool_input: { command: "git status" } });
 		} finally {
 			rmSync(project, { recursive: true, force: true });
@@ -211,7 +217,7 @@ describe("pi-hooks pre-commit tool_call", () => {
 		try {
 			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check: refused for a reason", log });
 			const handler = installToolCallHandler();
-			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project }) as { block?: boolean; reason?: string };
+			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
 			expect(result).toEqual({ block: true, reason: "pre-commit-check: refused for a reason" });
 			expect(readLog(log)).toContain("git commit -m x");
 		} finally {
@@ -226,11 +232,11 @@ describe("pi-hooks pre-commit tool_call", () => {
 		try {
 			renderStub(project, "pre-commit-check", { exitCode: 0, stderr: "pre-commit-check: the command moves repositories", log });
 			const handler = installToolCallHandler();
-			const ctx = { cwd: project, hasUI: true, ui: { notify: (message: string) => notices.push(message) } };
+			const ctx = trusted(project, { hasUI: true, ui: { notify: (message: string) => notices.push(message) } });
 			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, ctx)).toBeUndefined();
 			expect(notices).toEqual(["pre-commit-check: the command moves repositories"]);
 			// Headless Pi has no ui: the notice is dropped, never thrown.
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project })).toBeUndefined();
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project))).toBeUndefined();
 			expect(notices).toHaveLength(1);
 		} finally {
 			rmSync(project, { recursive: true, force: true });
@@ -243,20 +249,10 @@ describe("pi-hooks pre-commit tool_call", () => {
 		try {
 			renderStub(project, "pre-commit-check", { exitCode: 1, stderr: "boom", log });
 			const handler = installToolCallHandler();
-			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project }) as { block?: boolean; reason?: string };
+			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
 			expect(result.block).toBe(true);
 			expect(result.reason).toContain("exited 1 without judging this command");
 			expect(result.reason).toContain("boom");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("a name kendex has not rendered installs no guard", async () => {
-		const project = initRustRepo("pi-hooks-project-");
-		try {
-			const handler = installToolCallHandler();
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project })).toBeUndefined();
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -271,7 +267,7 @@ describe("pi-hooks pre-commit tool_call", () => {
 		try {
 			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "should never run", log });
 			const handler = installToolCallHandler();
-			const ctx = { cwd: project, isProjectTrusted: () => true };
+			const ctx = trusted(project);
 			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, ctx)).toBeUndefined();
 			expect(readLog(log)).toBe("");
 		} finally {
@@ -293,9 +289,9 @@ describe("pi-hooks pre-commit tool_call", () => {
 			process.env.FAKE_FMT_EXIT = "1";
 			try {
 				const handler = installToolCallHandler();
-				expect(await handler({ toolName: "bash", input: { command: "git commit -m test" } }, { cwd: armed })).toBeUndefined();
+				expect(await handler({ toolName: "bash", input: { command: "git commit -m test" } }, trusted(armed))).toBeUndefined();
 
-				const refused = await handler({ toolName: "bash", input: { command: "git commit -m test" } }, { cwd: unarmed }) as { block?: boolean; reason?: string };
+				const refused = await handler({ toolName: "bash", input: { command: "git commit -m test" } }, trusted(unarmed)) as { block?: boolean; reason?: string };
 				expect(refused.block).toBe(true);
 				expect(refused.reason).toContain("not armed by kendex");
 				expect(refused.reason).toContain("kendex guard install");
@@ -303,7 +299,7 @@ describe("pi-hooks pre-commit tool_call", () => {
 				// Both bypass shapes, and the reason is the script's own stderr:
 				// the flag, and the config key that switches the armed hook off.
 				for (const command of [`git commit ${NO_VERIFY} -m test`, `git -c ${HOOKS_PATH_KEY}=/dev/null commit -m test`]) {
-					const bypass = await handler({ toolName: "bash", input: { command } }, { cwd: armed }) as { block?: boolean; reason?: string };
+					const bypass = await handler({ toolName: "bash", input: { command } }, trusted(armed)) as { block?: boolean; reason?: string };
 					expect(bypass.block).toBe(true);
 					expect(bypass.reason).toContain("would skip this repository's armed git hooks");
 					expect(bypass.reason).toContain("git commit -F <file>");
@@ -327,7 +323,7 @@ describe("pi-hooks bash guard passthrough", () => {
 			renderStub(project, "block-repo-copy", { exitCode: 2, stderr: "block-repo-copy: refused", log });
 			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "pre-commit-check: refused", log });
 			const handler = installToolCallHandler();
-			const result = await handler({ toolName: "bash", input: { command: "cp -r . /tmp/x" } }, { cwd: project }) as { block?: boolean; reason?: string };
+			const result = await handler({ toolName: "bash", input: { command: "cp -r . /tmp/x" } }, trusted(project)) as { block?: boolean; reason?: string };
 			expect(result).toEqual({ block: true, reason: "block-repo-copy: refused" });
 			// Two payloads read, not three: pre-commit-check never ran.
 			expect(readLog(log).split("}{").length).toBe(2);
@@ -342,11 +338,11 @@ describe("pi-hooks bash guard passthrough", () => {
 			renderRealHook(project, "block-bare-cd");
 			const handler = installToolCallHandler();
 			for (const command of ["cd /tmp", "cd"]) {
-				const result = await handler({ toolName: "bash", input: { command } }, { cwd: project }) as { block?: boolean; reason?: string };
+				const result = await handler({ toolName: "bash", input: { command } }, trusted(project)) as { block?: boolean; reason?: string };
 				expect(result.block).toBe(true);
 				expect(result.reason).toContain("Use a subshell instead");
 			}
-			expect(await handler({ toolName: "bash", input: { command: "(cd /tmp && ls)" } }, { cwd: project })).toBeUndefined();
+			expect(await handler({ toolName: "bash", input: { command: "(cd /tmp && ls)" } }, trusted(project))).toBeUndefined();
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -357,8 +353,8 @@ describe("pi-hooks bash guard passthrough", () => {
 		try {
 			for (const name of ["block-bare-cd", "block-repo-copy", "pre-commit-check"]) renderRealHook(project, name);
 			const handler = installToolCallHandler();
-			expect(await handler({ toolName: "bash", input: { command: 'rg -n "`kendex refresh`" skills/' } }, { cwd: project })).toBeUndefined();
-			expect(await handler({ toolName: "bash", input: { command: "rg -n '\\x60kendex refresh\\x60' skills/" } }, { cwd: project })).toBeUndefined();
+			expect(await handler({ toolName: "bash", input: { command: 'rg -n "`kendex refresh`" skills/' } }, trusted(project))).toBeUndefined();
+			expect(await handler({ toolName: "bash", input: { command: "rg -n '\\x60kendex refresh\\x60' skills/" } }, trusted(project))).toBeUndefined();
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -444,6 +440,113 @@ async function onPath(bin: string, run: () => Promise<void>): Promise<void> {
 		else process.env.PATH = oldPath;
 	}
 }
+
+describe("pi-hooks rendered-hook resolution", () => {
+	// A project-scope hook is code the project ships, and spawning it is
+	// executing it. Pi's trust answer is what stands between a fresh clone and
+	// arbitrary code on the session's first bash call.
+	test("an untrusted workspace does not run the project's script; a trusted one does", async () => {
+		const project = initRustRepo("pi-hooks-trust-");
+		const log = join(project, "payload.log");
+		try {
+			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "the project's script ran", log });
+			const handler = installToolCallHandler();
+
+			// Untrusted: no spawn at all, so no refusal and an empty log.
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project, isProjectTrusted: () => false })).toBeUndefined();
+			expect(readLog(log)).toBe("");
+
+			// A Pi with no trust method, and one whose trust method throws, are
+			// both untrusted: only a plain true runs the project's code.
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project })).toBeUndefined();
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project, isProjectTrusted: () => { throw new Error("no answer"); } })).toBeUndefined();
+			expect(readLog(log)).toBe("");
+
+			// The control: the same script, the same command, trusted. Without
+			// this the assertions above pass for a hook that never resolved.
+			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
+			expect(result).toEqual({ block: true, reason: "the project's script ran" });
+			expect(readLog(log)).toContain("git commit -m x");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	// Resolving `.pi` under the cwd alone found nothing from a subdirectory, and
+	// nothing found is allowed — so every guard silently switched off for a
+	// session started anywhere but the repository root.
+	test("a nested cwd resolves the same project hook as the root", async () => {
+		const project = initRustRepo("pi-hooks-nested-");
+		const log = join(project, "payload.log");
+		const nested = join(project, "crates", "core", "src");
+		mkdirSync(nested, { recursive: true });
+		try {
+			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "refused from the project root", log });
+			const handler = installToolCallHandler();
+
+			const atRoot = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean };
+			expect(atRoot.block).toBe(true);
+
+			// The same command three directories down must reach the same script.
+			const fromNested = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(nested)) as { block?: boolean; reason?: string };
+			expect(fromNested).toEqual({ block: true, reason: "refused from the project root" });
+			expect(readLog(log).split("}{").length).toBe(2);
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("the global root honours PI_CODING_AGENT_DIR", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-hooks-agentdir-"));
+		const project = initRustRepo("pi-hooks-globalonly-");
+		const log = join(agentDir, "payload.log");
+		const saved = process.env.PI_CODING_AGENT_DIR;
+		try {
+			// Rendered at the global root only: nothing under the project.
+			mkdirSync(join(agentDir, "kendex", "hooks"), { recursive: true });
+			const script = join(agentDir, "kendex", "hooks", "pre-commit-check.sh");
+			writeFileSync(script, `#!/usr/bin/env bash\nset -euo pipefail\ncat >> ${JSON.stringify(log)}\necho "the global hook ran" >&2\nexit 2\n`);
+			chmodSync(script, 0o755);
+			const handler = installToolCallHandler();
+
+			// Unset, the relocated root is invisible and nothing runs.
+			delete process.env.PI_CODING_AGENT_DIR;
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project))).toBeUndefined();
+			expect(readLog(log)).toBe("");
+
+			process.env.PI_CODING_AGENT_DIR = agentDir;
+			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
+			expect(result).toEqual({ block: true, reason: "the global hook ran" });
+
+			// The person's own scripts are not the project's, so the global root
+			// answers whether or not the workspace is trusted.
+			const untrusted = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project, isProjectTrusted: () => false }) as { block?: boolean };
+			expect(untrusted.block).toBe(true);
+
+			// An empty value names no directory and counts as unset.
+			process.env.PI_CODING_AGENT_DIR = "";
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project))).toBeUndefined();
+		} finally {
+			if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = saved;
+			rmSync(agentDir, { recursive: true, force: true });
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	// Decided rather than inherited: a name neither root holds means kendex did
+	// not install this hook here, and the command passes. See runRenderedHook.
+	test("a hook kendex never rendered allows the command", async () => {
+		const project = initRustRepo("pi-hooks-norender-");
+		try {
+			const handler = installToolCallHandler();
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project))).toBeUndefined();
+			expect(await handler({ toolName: "bash", input: { command: "cd /tmp" } }, trusted(project))).toBeUndefined();
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+});
 
 describe("pi-hooks end-of-turn clippy", () => {
 	/** One turn that edits a `.rs` file, against an already-installed extension. */

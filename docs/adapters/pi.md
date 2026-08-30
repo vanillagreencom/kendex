@@ -35,8 +35,12 @@ On a bash tool call the carrier spawns the rendered `block-bare-cd`,
 `block-repo-copy` and `pre-commit-check` scripts in that order with the
 payload Claude Code sends a `PreToolUse` hook, and stops at the first exit
 2, whose stderr is the refusal the agent reads. So the three run the same
-bytes under Claude, Codex and Pi. A script the carrier finds at neither
-scope is a hook this project has not installed, and nothing runs.
+bytes under Claude, Codex and Pi. It resolves the project the way the rest
+of the adapter does, from the nearest ancestor carrying a marker, and the
+global root from `PI_CODING_AGENT_DIR`; a project script runs only where Pi
+reports the workspace trusted, since spawning it executes what the project
+ships. A script the carrier finds at neither scope is a hook this project
+has not installed, and nothing runs.
 
 **The reserved names.** Pi warns on two directory names directly beside a
 root it loads and halts an interactive start until a keypress: `hooks/` on
