@@ -24,6 +24,11 @@ Options:
   --pr              Treat the ref as a PR (default).
   --help, -h        Show this help.
 
+Configuration:
+  Direct execution loads the current project's kendex.settings.toml,
+  .kendex/settings.toml, and .env.local before selecting auth. Parent-process
+  values keep precedence.
+
 Examples:
   label-remove.sh 44 needs-qa
   label-remove.sh 123 needs-triage --issue

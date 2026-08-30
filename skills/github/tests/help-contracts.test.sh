@@ -2,79 +2,209 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GITHUB_SH="$(cd "$TEST_DIR/.." && pwd)/scripts/github.sh"
+PACKAGE_ROOT="$(cd "$TEST_DIR/.." && pwd)"
+REPO_ROOT="$(git -C "$TEST_DIR" rev-parse --show-toplevel)"
+CANONICAL="$REPO_ROOT/skills/github"
+MIRROR="$REPO_ROOT/.agents/skills/github"
+[[ -d "$CANONICAL" ]] || CANONICAL="$PACKAGE_ROOT"
+[[ -d "$MIRROR" ]] || MIRROR="$PACKAGE_ROOT"
 
 PASS=0
 FAIL=0
 
-assert_token() {
-  local output="$1" token="$2" name="$3"
-  if grep -qF -- "$token" <<<"$output"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
+pass() {
+  PASS=$((PASS + 1))
+  printf '  ok    %s\n' "$1"
+}
+
+fail() {
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  %s\n        %s\n' "$1" "$2"
+}
+
+extract_section() {
+  local output="$1" start="$2" end="$3" start_count end_count
+  start_count=$(grep -cxF -- "$start" <<<"$output" || true)
+  end_count=$(grep -cxF -- "$end" <<<"$output" || true)
+  [[ "$start_count" -eq 1 && "$end_count" -eq 1 ]] || return 2
+  awk -v start="$start" -v end="$end" '
+    $0 == start { inside = 1; next }
+    $0 == end { if (inside) exit }
+    inside { print }
+  ' <<<"$output"
+}
+
+section_has_token() {
+  local output="$1" start="$2" end="$3" token="$4" section
+  section=$(extract_section "$output" "$start" "$end") || return 1
+  grep -qF -- "$token" <<<"$section"
+}
+
+assert_section_token() {
+  local output="$1" start="$2" end="$3" token="$4" name="$5"
+  if section_has_token "$output" "$start" "$end" "$token"; then
+    pass "$name"
   else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        missing token: %s\n' "$name" "$token"
+    fail "$name" "missing $token inside $start"
   fi
 }
 
-echo "=== github.sh help owns configuration and error contracts ==="
-github_help="$($GITHUB_SH --help)"
-for token in \
-  'Configuration:' \
-  'GH_TOKEN' \
-  'GITHUB_TOKEN' \
-  'GH_BOT_TOKEN' \
-  'GH_BOT_USERNAME' \
-  'GH_ISSUE_PATTERN' \
-  'GH_VERIFY_CMD' \
-  'KENDEX_GITHUB_OP_TIMEOUT' \
-  'KENDEX_GITHUB_AUTH_TIMEOUT' \
-  'KENDEX_GITHUB_PR_VIEW_TIMEOUT' \
-  'KENDEX_GITHUB_GIT_HTTPS_FALLBACK' \
-  'kendex.settings.toml' \
-  '.kendex/settings.toml' \
-  '.env.local' \
-  'op://' \
-  'gh api user' \
-  'gh auth status' \
-  '{"error": "message"}' \
-  'pr-view --json' \
-  '3 attempts'; do
-  assert_token "$github_help" "$token" "github.sh help carries $token"
-done
+assert_section_rejects_decoy() {
+  local output="$1" start="$2" end="$3" token="$4" name="$5"
+  if section_has_token "$output" "$start" "$end" "$token"; then
+    fail "$name" "accepted $token from a sibling section"
+  else
+    pass "$name"
+  fi
+}
+
+word_count_at_most() {
+  local text="$1" limit="$2" count
+  count=$(wc -w <<<"$text")
+  [[ "$count" -le "$limit" ]]
+}
+
+assert_file_word_limit() {
+  local file="$1" name="$2" text count
+  text=$(<"$file")
+  count=$(wc -w <<<"$text")
+  if word_count_at_most "$text" 900; then
+    pass "$name ($count words)"
+  else
+    fail "$name" "$count words exceeds 900"
+  fi
+}
+
+assert_file_token() {
+  local file="$1" token="$2" name="$3"
+  if grep -qF -- "$token" "$file"; then
+    pass "$name"
+  else
+    fail "$name" "missing token: $token"
+  fi
+}
+
+run_help_contracts() {
+  local label="$1" root="$2" github_help merge_help label_add_help label_remove_help token
+  github_help=$("$root/scripts/github.sh" --help)
+  merge_help=$("$root/scripts/github.sh" pr-merge --help)
+  label_add_help=$("$root/scripts/github.sh" label-add --help)
+  label_remove_help=$("$root/scripts/github.sh" label-remove --help)
+
+  for token in 'unknown flags' 'positionals' 'positional body' 'omitted PR number'; do
+    assert_section_token "$github_help" 'Argument rules:' 'Configuration:' "$token" \
+      "$label argument rules carry $token"
+  done
+
+  for token in 'GH_TOKEN' 'GITHUB_TOKEN' 'GH_BOT_TOKEN' 'GH_BOT_USERNAME' \
+    'GH_ISSUE_PATTERN' 'GH_VERIFY_CMD' 'KENDEX_GITHUB_OP_TIMEOUT' \
+    'KENDEX_GITHUB_AUTH_TIMEOUT' 'KENDEX_GITHUB_PR_VIEW_TIMEOUT' \
+    'KENDEX_GITHUB_GIT_HTTPS_FALLBACK' 'kendex.settings.toml' \
+    '.kendex/settings.toml' '.env.local'; do
+    assert_section_token "$github_help" 'Configuration:' 'Token selection:' "$token" \
+      "$label configuration carries $token"
+  done
+
+  for token in 'GH_TOKEN, GH_BOT_TOKEN, GITHUB_TOKEN' 'op://' 'op read'; do
+    assert_section_token "$github_help" 'Token selection:' 'Auth preflight:' "$token" \
+      "$label token selection carries $token"
+  done
+
+  for token in 'gh api user' 'gh auth status'; do
+    assert_section_token "$github_help" 'Auth preflight:' 'Errors and retries:' "$token" \
+      "$label auth preflight carries $token"
+  done
+
+  for token in '{"error": "message"}' 'pr-view --json' 'gh_graphql' 'gh_rest' \
+    '3 attempts' 'first-failure'; do
+    assert_section_token "$github_help" 'Errors and retries:' 'Examples:' "$token" \
+      "$label errors carry $token"
+  done
+
+  for token in 'kendex.settings.toml' '.kendex/settings.toml' '.env.local' \
+    'Parent-process'; do
+    assert_section_token "$label_add_help" 'Configuration:' 'Examples:' "$token" \
+      "$label label-add configuration carries $token"
+    assert_section_token "$label_remove_help" 'Configuration:' 'Examples:' "$token" \
+      "$label label-remove configuration carries $token"
+  done
+
+  for token in 'ALREADY MERGED PR #N' 'QUEUED IN MERGE QUEUE PR #N' \
+    'AUTO-MERGE ENABLED PR #N' 'CLOSED (not merged) PR #N'; do
+    assert_section_token "$merge_help" 'Exit codes:' 'Exit 75 is volatile:' "$token" \
+      "$label exit codes carry $token"
+  done
+
+  for token in 'queue-wait <N>' 'pr-watch.sh' 'ejected' 'disarmed' 'not_queued' \
+    'Dequeued' 'closed' 'unknown' 'README.md "Exit 75 recovery"' 'await-mergeable'; do
+    assert_section_token "$merge_help" 'Exit 75 is volatile:' 'Terminal and mutation rules:' "$token" \
+      "$label exit-75 routing carries $token"
+  done
+
+  for token in 'github.sh router setup' 'bot-token load' 'merge-state mutation' \
+    'exact-head guarded' '--match-head-commit' '--delete-branch' \
+    'best-effort'; do
+    assert_section_token "$merge_help" 'Terminal and mutation rules:' 'Review-thread gate:' "$token" \
+      "$label terminal and mutation rules carry $token"
+  done
+
+  for token in 'required_conversation_resolution' 'gh pr merge' 'UI Merge button'; do
+    assert_section_token "$merge_help" 'Review-thread gate:' 'Force rules:' "$token" \
+      "$label review-thread gate carries $token"
+  done
+
+  for token in '--force' '--auto' 'exact-head post-state'; do
+    assert_section_token "$merge_help" 'Force rules:' '--check JSON:' "$token" \
+      "$label force rules carry $token"
+  done
+
+  for token in 'can_merge' 'issues' 'transient' 'state' 'merged_at' 'head_runs' \
+    'checks' 'ci-classify-refusal' 'unknown:' 'ci_pending:' 'ci_unconfigured:' \
+    'ci_fetch_failed:' 'ci_failed:'; do
+    assert_section_token "$merge_help" '--check JSON:' 'Examples:' "$token" \
+      "$label check JSON carries $token"
+  done
+}
+
+echo "=== bounded help contracts ==="
+run_help_contracts canonical "$CANONICAL"
+run_help_contracts mirror "$MIRROR"
 
 echo
-echo "=== pr-merge help owns merge outcomes and checks ==="
-merge_help="$($GITHUB_SH pr-merge --help)"
-for token in \
-  'Exit codes:' \
-  'ALREADY MERGED PR #N' \
-  'QUEUED IN MERGE QUEUE PR #N' \
-  'AUTO-MERGE ENABLED PR #N' \
-  'CLOSED (not merged) PR #N' \
-  'queue-wait <N>' \
-  'pr-watch.sh' \
-  'await-mergeable' \
-  '--match-head-commit' \
-  'isInMergeQueue' \
-  'required_conversation_resolution' \
-  'gh pr merge' \
-  'can_merge' \
-  'issues' \
-  'transient' \
-  'state' \
-  'merged_at' \
-  'head_runs' \
-  'checks' \
-  'ci-classify-refusal' \
-  'unknown:' \
-  'ci_pending:' \
-  'ci_unconfigured:' \
-  'ci_fetch_failed:' \
-  'ci_failed:'; do
-  assert_token "$merge_help" "$token" "pr-merge help carries $token"
-done
+echo "=== section-boundary must-fail controls ==="
+github_decoy=$'Argument rules:\nknown only\nConfiguration:\nunknown flags\nToken selection:'
+assert_section_rejects_decoy "$github_decoy" 'Argument rules:' 'Configuration:' \
+  'unknown flags' 'github token in a sibling section does not satisfy ownership'
+
+merge_decoy=$'Exit 75 is volatile:\nwatch only\nTerminal and mutation rules:\nejected\nReview-thread gate:'
+assert_section_rejects_decoy "$merge_decoy" 'Exit 75 is volatile:' \
+  'Terminal and mutation rules:' 'ejected' \
+  'pr-merge token in a sibling section does not satisfy ownership'
+
+echo
+echo "=== SKILL word ceiling and mirror ==="
+assert_file_word_limit "$CANONICAL/SKILL.md" 'canonical SKILL stays within 900 words'
+assert_file_word_limit "$MIRROR/SKILL.md" 'mirror SKILL stays within 900 words'
+assert_file_token "$CANONICAL/SKILL.md" 'Do not hand-file' \
+  'canonical SKILL keeps the report banner'
+assert_file_token "$MIRROR/SKILL.md" 'Do not hand-file' \
+  'mirror SKILL keeps the report banner'
+assert_file_token "$CANONICAL/SKILL.md" '.agents/skills/orch/scripts/ci-wait' \
+  'canonical SKILL routes CI waiting to orch'
+assert_file_token "$MIRROR/SKILL.md" '.agents/skills/orch/scripts/ci-wait' \
+  'mirror SKILL routes CI waiting to orch'
+if cmp -s "$CANONICAL/SKILL.md" "$MIRROR/SKILL.md"; then
+  pass 'canonical and mirror SKILL files are byte-equivalent'
+else
+  fail 'canonical and mirror SKILL files are byte-equivalent' 'cmp reported drift'
+fi
+
+over_limit=$(awk 'BEGIN { for (i = 1; i <= 901; i++) printf "word " }')
+if word_count_at_most "$over_limit" 900; then
+  fail '901-word control exceeds the ceiling' 'word limit accepted 901 words'
+else
+  pass '901-word control exceeds the ceiling'
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

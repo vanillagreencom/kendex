@@ -15,7 +15,7 @@ tags: [git, integration]
 
 # GitHub Queries
 
-> **Problem with this skill?** Run `kendex report`.
+> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
 
 ```bash
 .agents/skills/github/scripts/github.sh [-C <path>] <command> [options]
@@ -50,8 +50,8 @@ tags: [git, integration]
 | `edit-comment <id> [body \| --body-file PATH]` | Edit existing comment. |
 | `sticky-comment <PR> [--verdict\|--analysis\|--body]` | Get bot sticky comment. `--verdict`: quick pass/fail. `--analysis`: deep recommendation. |
 
-CI waiting belongs to the orch skill's `ci-wait`; `await-mergeable` waits
-for merge-state resolution.
+CI waiting belongs to `.agents/skills/orch/scripts/ci-wait`; `await-mergeable`
+waits for merge-state resolution.
 
 ### Label application contract
 
@@ -59,16 +59,15 @@ Label modes and failures: `label-add --help`.
 
 ### Git HTTPS Auth Helper
 
-GitHub SSH-to-HTTPS fallback contract: `git-https-auth --help`.
+Contract: `git-https-auth --help`.
 
 ### Diff Summary Helper
 
-Output and risk flags: `git-diff-summary --help`.
+Contract: `git-diff-summary --help`.
 
 ### PR Merge Outcomes
 
-Exit codes, volatility, exact-head mutation, thread bounds, `--check`, and
-`--force`: `pr-merge --help`.
+Full contract: `pr-merge --help`.
 Exit `75` is volatile, so keep a watcher running until `MERGED`.
 If `can_merge` is false with no `issues`, read `state`.
 The thread gate is **Policy, not mechanism.** `--force` is its only override.

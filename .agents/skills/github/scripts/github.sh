@@ -73,6 +73,11 @@ Output Formats:
   pr-data and pr-threads take --format=safe|raw only and reject unknown
   flags.
 
+Argument rules:
+  Subcommands reject unknown flags and positionals beyond their documented
+  Usage. A positional body or omitted PR number is accepted only when that
+  command's Usage shows it.
+
 Configuration:
   Project files load in this order, from lowest to highest precedence:
     kendex.settings.toml [env]
@@ -121,9 +126,11 @@ Errors and retries:
   Most commands write {"error": "message"} JSON to stderr and exit 1.
   pr-view --json writes its structured failure object to stdout; run
   'github.sh pr-view --help' for its status values and exit codes.
-  API rate limits and retryable request failures get at most 3 attempts with
-  exponential backoff. An unreadable thread list, comment list, or CI log is
-  an error, never an empty result.
+  Operations routed through the shared gh_graphql and gh_rest wrappers retry
+  rate limits and retryable request failures for at most 3 attempts with
+  exponential backoff. Other operations keep their command-specific
+  first-failure behavior. An unreadable thread list, comment list, or CI log
+  is an error, never an empty result.
 
 Examples:
   # Get PR data with all threads and comments

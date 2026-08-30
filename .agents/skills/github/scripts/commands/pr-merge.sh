@@ -64,22 +64,22 @@ Exit codes:
        The PR is closed unmerged. Nothing was attempted.
 
 Exit 75 is volatile:
-  A queue ejection or failed protection check can disarm merge state without
-  another notification. Keep a watcher running until the PR is MERGED. Use
-  the orch skill's queue-wait <N> or the review-gate pr-watch.sh reducer, then
-  repair the named cause and re-arm with github.sh pr-merge <N> --auto.
-  Neither watcher is durable. await-mergeable is not an ejection watcher; it
-  stops when GitHub finishes computing the current merge state.
+  A queue ejection or failed protection check can disarm merge state silently.
+  Launch the prepared .agents/skills/orch/scripts/merge-queue-watch before returning; it binds repository, PR, expected head, and watch generation.
+  Its one-shot worker writes a durable verdict and claims one recovery action; the review-gate reducer still reports fleet attention.
+  Route verdicts through README.md "Exit 75 recovery". Re-arm only through
+  github.sh pr-merge <N> --auto after that route. await-mergeable is not the
+  lifecycle watcher; it stops when GitHub computes the current merge state.
 
 Terminal and mutation rules:
-  A PR outside OPEN is terminal. Every mode returns its state before checks,
-  auth, or mutation. --check reports that lifecycle in state.
+  After github.sh router setup, a PR outside OPEN short-circuits pr-merge safety
+  checks, bot-token load, and merge-state mutation. --check reports state.
 
-  Every mutation resolves the checked head and passes --match-head-commit.
-  A post-mutation snapshot for another head is BLOCKED. Queue membership comes
-  from GraphQL isInMergeQueue and mergeQueueEntry. An OPEN PR with an active
-  queue entry exits 75 even when autoMergeRequest is absent. An OPEN PR with
-  no queue or auto-merge proof fails closed.
+  Every gh pr merge invocation is exact-head guarded by --match-head-commit; a changed head is BLOCKED.
+  Queue membership comes from GraphQL isInMergeQueue and mergeQueueEntry. An
+  OPEN PR with an active queue entry exits 75 even when autoMergeRequest is
+  absent. An OPEN PR with no queue or auto-merge proof fails closed. The
+  --delete-branch cleanup after MERGED is best-effort, not merge-state mutation.
 
 Review-thread gate:
   Unresolved, non-outdated review threads make can_merge false and block both

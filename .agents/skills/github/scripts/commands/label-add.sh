@@ -37,6 +37,11 @@ or resembling booleans, integers, nulls, and placeholders. Neither mode
 mutates anything on a refusal, and auth, lookup, rate-limit, and server
 errors are operational errors in both modes — never optional skips.
 
+Configuration:
+  Direct execution loads the current project's kendex.settings.toml,
+  .kendex/settings.toml, and .env.local before selecting auth. Parent-process
+  values keep precedence.
+
 Examples:
   label-add.sh 44 needs-qa
   label-add.sh 123 needs-triage --issue
