@@ -330,43 +330,82 @@ else
   ok "no Bash 3.2-legal control line is flagged"
 fi
 
-# A carrier may EXTEND the set after the end marker — review-gate does, twice,
-# in the documented append form — and may not REPLACE it. `PATTERN=mapfile` one
-# line below the marker leaves every block byte-identical while the scan judges
-# something else entirely, so the comparison above cannot see it. This is a
-# static read of the text, not a run of it: the block is still never executed.
+# After the end marker the guard is a WHITELIST. A line may extend the set in
+# the documented append form, or READ the variable — every legitimate line in
+# every carrier is one of those two — and a line that names PATTERN any other
+# way is refused, whatever the spelling.
+#
+# It was a blocklist and came up short five times: `export PATTERN=`,
+# `PATTERN[0]=`, `declare PATTERN=`, `readonly PATTERN=` and `printf -v
+# PATTERN` all walked past it. Enumerating the ways a shell can assign a name
+# has no more of an end than enumerating the ways it can spell `mapfile`, and
+# this repo has made that mistake in both directions today. What every
+# assignment shares is that it NAMES the variable, so naming it outside a read
+# is what this refuses, including the ones nobody has thought of.
+#
+# Reads are recognised by stripping them: `$PATTERN` and `${PATTERN}` come out
+# of the line, and if the token survives, the line names it for some other
+# purpose. A comment mentioning PATTERN after the marker would be refused too;
+# none exists, and rewording one is the cost of a guard whose default is no.
+#
+# This is a static read of the text. The block is still never executed.
+# names_pattern — reads a carrier on stdin, prints `N: line` for every line
+# after the marker that names PATTERN outside a `$PATTERN` read.
+names_pattern() {
+  awk -v marker="$END" '
+    $0 == marker { after = 1; next }
+    !after { next }
+    {
+      line = $0
+      gsub(/\$\{PATTERN\}/, "", line)
+      gsub(/\$PATTERN/, "", line)
+      if (line ~ /(^|[^A-Za-z0-9_])PATTERN([^A-Za-z0-9_]|$)/) printf "%d: %s\n", NR, $0
+    }
+  '
+}
 APPEND_RE='^[0-9]+: PATTERN="\$PATTERN"'"$Q"'[^'"$Q"']*'"$Q"'$'
 for f in $CARRIERS; do
   [ -f "$f" ] || continue
-  post=""
-  post_status=0
-  post="$(awk -v marker="$END" 'after { printf "%d: %s\n", NR, $0 } $0 == marker { after = 1 }' "$f")" ||
-    post_status=$?
-  if [ "$post_status" -ne 0 ]; then
-    bad "the lines after the marker in $f could not be read (awk exited $post_status)"
+  named=""
+  named_status=0
+  named="$(names_pattern <"$f")" || named_status=$?
+  if [ "$named_status" -ne 0 ]; then
+    bad "the lines after the marker in $f could not be read (awk exited $named_status)"
     continue
   fi
-  assigns=""
-  status=0
-  assigns="$(printf '%s\n' "$post" | grep -E '^[0-9]+: [[:blank:]]*PATTERN\+?=')" || status=$?
-  if [ "$status" -gt 1 ]; then
-    bad "the post-marker scan over $f could not run (grep exited $status)"
-    continue
-  fi
-  [ -n "$assigns" ] || continue
   offenders=""
   status=0
-  offenders="$(printf '%s\n' "$assigns" | grep -vE "$APPEND_RE")" || status=$?
+  if [ -n "$named" ]; then
+    offenders="$(printf '%s\n' "$named" | grep -vE "$APPEND_RE")" || status=$?
+  fi
   if [ "$status" -gt 1 ]; then
     bad "the post-marker scan over $f could not run (grep exited $status)"
   elif [ -n "$offenders" ]; then
-    bad "$f assigns PATTERN after the marker in a form that is not the append" \
+    bad "$f names PATTERN after the marker outside a read or the append form" \
       "$(printf '%s\n' "$offenders" | head -5)
-only PATTERN=\"\$PATTERN\"'...' may follow the block; anything else replaces the set"
+after the block, PATTERN may be read or extended with PATTERN=\"\$PATTERN\"'...' and nothing else"
   else
-    ok "$f only extends the set after the marker"
+    ok "$f only extends or reads the set after the marker"
   fi
 done
+
+# The gap this guard has, checked so the sentence above cannot go stale. An
+# assignment that never spells the name is invisible to a text rule, and bash
+# really does perform it — `v=PATT; v="${v}ERN"; declare "$v=mapfile"` leaves
+# PATTERN set to mapfile. Reaching that means resolving a variable's value,
+# which is running the shell, not reading it. If it ever starts being caught,
+# this reds and the claim above gets rewritten to match.
+indirect='v=PATT; v="${v}ERN"; declare "$v=mapfile"'
+status=0
+caught="$(printf '%s\n%s\n' "$END" "$indirect" | names_pattern)" || status=$?
+if [ "$status" -ne 0 ]; then
+  bad "the indirection check could not run (awk exited $status)"
+elif [ -n "$caught" ]; then
+  bad "the guard now catches an assignment that never spells PATTERN" \
+    "rewrite the stated gap beside it; it is no longer a gap"
+else
+  ok "an assignment that never spells PATTERN is still outside this guard"
+fi
 
 # And a render matches its source WHOLE, not only inside the block. Every
 # rendered tests/ and scripts/ file in this repo is byte-identical to its
