@@ -39,22 +39,28 @@ function setBypass(scan: CommandScan, token: string): void {
 }
 
 /** Constructs this scanner does not model, named rather than decoded: an alias
- * config key, ANSI-C quoting, a line continuation inside quotes, and a shift
- * operator inside arithmetic, which is not the heredoc this reads it as. Seeing
- * one is the whole rule. Each decoder added here invites the next construct, and
- * the answer to text this cannot read is to refuse, not to parse harder.
+ * config key, ANSI-C quoting, and a shift operator inside arithmetic, which is
+ * not the heredoc this reads it as. Seeing one is the whole rule. Each decoder
+ * added here invites the next construct, and the answer to text this cannot read
+ * is to refuse, not to parse harder.
  *
  * They are asked of the NORMALIZED command — quote characters removed — so a
  * spelling the shell assembles reads as its letters and `com''mit` holds the
- * word. One text test over text this cannot parse, rather than a parse. An
- * alias key is the exception and keeps the bare git prerequisite: it defines
- * the commit under another name, so the word can be absent altogether. */
-function unmodelled(command: string, quotedContinuation: boolean, norm: string): string | null {
+ * word. One text test over text this cannot parse, rather than a parse.
+ *
+ * An alias key carried inline is the exception and keeps the bare git
+ * prerequisite: `-c alias.x=...` renames the subcommand of this very
+ * invocation, so the commit word can be absent altogether. A key written to the
+ * config instead takes effect on later commands, which arrive as their own
+ * payloads; here it is text like any other and takes the commit prerequisite,
+ * so writing an ordinary shorthand is the write it reads as. */
+function unmodelled(command: string, norm: string): string | null {
 	if (!norm.includes("git")) return null;
-	if (command.toLowerCase().includes("alias.")) return "an alias config key";
+	const lower = command.toLowerCase();
+	if (/alias\.[^= \t\n\r]*=/.test(lower)) return "an alias config key";
 	if (!norm.includes("commit")) return null;
+	if (lower.includes("alias.")) return "an alias config key";
 	if (command.includes("$'")) return "ANSI-C quoting";
-	if (quotedContinuation) return "a line continuation inside quotes";
 	if (/\(\([^)]*<</.test(command)) return "a shift inside arithmetic";
 	return null;
 }
@@ -114,7 +120,6 @@ function judge(tokens: string[], scan: CommandScan): void {
 export function scanCommand(command: string): CommandScan {
 	const scan: CommandScan = { commit: false, moves: false, bypass: null, unmodelled: null };
 	const n = command.length;
-	let quotedContinuation = false;
 	let tokens: string[] = [];
 	let word = "";
 	let haveWord = false;
@@ -149,8 +154,10 @@ export function scanCommand(command: string): CommandScan {
 				return;
 			}
 			if (command[i] === "\\" && q !== "'") {
-				if (command[i + 1] === "\n") quotedContinuation = true;
-				text += command.slice(start, i) + (command[i + 1] ?? "");
+				// Line joining reaches inside a run too: the shell removes both
+				// characters and the fragments either side are one word, so a flag
+				// continued across lines is that flag and a message is prose.
+				text += command.slice(start, i) + (command[i + 1] === "\n" ? "" : (command[i + 1] ?? ""));
 				i += 2;
 				start = i;
 				continue;
@@ -273,7 +280,7 @@ export function scanCommand(command: string): CommandScan {
 		}
 	}
 	endCommand();
-	scan.unmodelled = unmodelled(command, quotedContinuation, normalize(command));
+	scan.unmodelled = unmodelled(command, normalize(command));
 	return scan;
 }
 

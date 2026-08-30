@@ -356,7 +356,6 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			`git -c alias.c='commit ${nv}' c --allow-empty -m x`,
 			`git config alias.c 'commit ${nv}' && git c --allow-empty -m x`,
 			"cat <<$'EOF'\nbody\nEOF\ngit commit -m x",
-			`git commit "--no-veri\\\nfy" -m x`,
 			"x=$(( 1 << 2 )) && git commit -m x",
 			// The prerequisite is read off the command with its quote characters
 			// removed, so a spelling the shell assembles reads as its letters. Each
@@ -364,8 +363,9 @@ describe("pre-commit gate: the bash hook's contract", () => {
 			"git com''mit $'--no-verify' -m x",
 			"git $'com''mit' --no-verify -m x",
 			"git status && $'g''it' commit --no-verify -m x",
-			// The alias key keeps the bare git prerequisite: it defines the commit
-			// under another name, so no normalizing brings the word back.
+			// An alias key carried inline keeps the bare git prerequisite: it
+			// renames the subcommand of this very invocation, so no normalizing
+			// brings the word back.
 			"git -c alias.c='co' co --allow-empty -m x",
 			// Accepted on KEN-866 and pinned so it cannot flip in silence: the
 			// pattern supplies the word, and no text test tells it from the
@@ -393,6 +393,23 @@ describe("pre-commit gate: the bash hook's contract", () => {
 		await both("git status --short | grep 'M$'", "allow", "allow");
 		await both("git log --grep='fix$' | head", "allow", "allow");
 		await both('git log --grep="foo\\\nbar"', "allow", "allow");
+		// The KEN-870 regression. A trigger fires where the construct can change
+		// what the command runs, not wherever its text appears. A key written to
+		// the config runs nothing here — it takes effect on later commands, which
+		// arrive as their own payloads — so it is judged behind the commit word
+		// like any other text, and a body hiding the commit in a script it names
+		// is out of model exactly as that script is. A line continuation inside
+		// quotes is joined rather than named, so what is judged is the word it
+		// assembles: a flag either side of the break is that flag, and a message
+		// either side of it is prose.
+		await both("git config alias.st status", "allow", "allow");
+		await both("git config alias.c 'status' && git c", "allow", "allow");
+		await both('git commit "a\\\nb"', "allow", "refuse");
+		await both('git commit -m "line one\nline two"', "allow", "refuse");
+		const joined = await gate(armed, `git commit "--no-veri\\\nfy" -m x`);
+		expect(joined.verdict.kind).toBe("refuse");
+		if (joined.verdict.kind !== "refuse") throw new Error("unreachable");
+		expect(joined.verdict.reason).toContain(`'${nv}' bypasses`);
 	});
 
 	test("only <<- accepts a tab-indented terminator", async () => {
