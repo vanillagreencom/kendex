@@ -90,7 +90,7 @@ Cancel ends the workflow; a selection goes to § 2.
 
    Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim.
 
-   Decide whether this fix round may add protected files. Protected additions are root `crates/` and `tools/`; `skills/*/scripts/` and `.agents/skills/*/scripts/`; root or nested `src/test/`; directories named `helper`, `helpers`, `test-helper`, `test-helpers`, `test_helper`, `test_helpers`, `test-util`, `test-utils`, `test_util`, or `test_utils`; `lib`, `support`, `util`, or `utils` below `test/` or `tests/`; and files whose basename before the first extension has one of those helper or test-helper spellings. Renames and moves are not additions. The default is none.
+   Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
 
    When the list is non-empty, write `[WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of exact repository-relative paths. Pass only that data-file path to the writer:
 

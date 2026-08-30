@@ -14,6 +14,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
 CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
+RETURN_WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -56,16 +57,6 @@ delegation_block() {
   ' "$file"
 }
 
-function_block() {
-  local file="$1" function_name="$2" start
-  start="^${function_name}[(][)]"
-  awk -v start="$start" '
-    $0 ~ start { inside = 1 }
-    inside { print }
-    inside && /^}/ { exit }
-  ' "$file"
-}
-
 assert_text_matches() {
   local text="$1" pattern="$2" name="$3"
   if grep -Eq -- "$pattern" <<<"$text"; then
@@ -82,6 +73,20 @@ assert_text_not_matches() {
   else
     PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
   fi
+}
+
+run_workflow_round_command() {
+  local workflow="$1" wt="$2" issue_id="$3" rid="$4" block line
+  block="$(fenced_block_with "$workflow" "dev-round-write --worktree")"
+  line="$(awk '/dev-round-write --worktree/ { print; exit }' <<<"$block")"
+  [[ -n "$line" ]] || return 1
+  line="${line//.agents\/skills\/orch\/scripts\/dev-round-write/$WRITE}"
+  line="${line//\[WORKTREE_PATH\]/$wt}"
+  line="${line//\[ISSUE_ID\]/$issue_id}"
+  line="${line//\[DEV_ROUND_ID\]/$rid}"
+  line="${line/\[--adds-file/--adds-file}"
+  line="${line/.json\]/.json}"
+  bash -c "$line"
 }
 
 # Assert an invocation fails validation with exit code 2.
@@ -309,6 +314,84 @@ printf '%s' '["tools/new","tools/new"]' > "$adds_file"
 assert_exit2 "duplicate path in --adds-file exits 2" \
   --worktree "$worktree" --issue i --round-id 1-1 --item 1 t --adds-file "$adds_file"
 
+# A real linked worktree stores authorization in the common repository and the
+# public checker catches suffix, substring, and dotfile helper names.
+linked_main="$TMP_ROOT/linked-main"
+linked_wt="$TMP_ROOT/linked-wt"
+mkdir -p "$linked_main"
+git -C "$linked_main" init -q -b main
+git -C "$linked_main" config user.email test@example.com
+git -C "$linked_main" config user.name Test
+git -C "$linked_main" config commit.gpgsign false
+git -C "$linked_main" commit -q --allow-empty -m base
+git -C "$linked_main" worktree add -q -b linked "$linked_wt"
+"$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 30-30 --item 1 linked >/dev/null
+linked_auth="$linked_main/.git/kendex/dev-round-authorizations/issue-826-30-30.json"
+assert_eq "$([[ -f "$linked_auth" && ! -e "$linked_wt/.git/kendex/dev-round-authorizations/issue-826-30-30.json" ]] && echo yes)" \
+  "yes" "linked worktree authorization lives in the common repository"
+mkdir -p "$linked_wt/existing" "$linked_wt/adversarial/name_test-helper_more" \
+  "$linked_wt/adversarial/name_test_helper_more" "$linked_wt/adversarial/name_test-util_more" \
+  "$linked_wt/adversarial/name_test_util_more"
+printf 'helper\n' > "$linked_wt/existing/workflow_helpers.sh"
+printf 'dot helper\n' > "$linked_wt/.workflow_helpers.sh"
+printf 'suffix helper\n' > "$linked_wt/adversarial/prefixhelperSuffix.rs"
+printf 'path substring\n' > "$linked_wt/adversarial/name_test-helper_more/file.rs"
+printf 'path substring\n' > "$linked_wt/adversarial/name_test_helper_more/file.rs"
+printf 'path substring\n' > "$linked_wt/adversarial/name_test-util_more/file.rs"
+printf 'path substring\n' > "$linked_wt/adversarial/name_test_util_more/file.rs"
+git -C "$linked_wt" add existing/workflow_helpers.sh .workflow_helpers.sh \
+  adversarial/prefixhelperSuffix.rs adversarial/name_test-helper_more/file.rs \
+  adversarial/name_test_helper_more/file.rs adversarial/name_test-util_more/file.rs \
+  adversarial/name_test_util_more/file.rs
+git -C "$linked_wt" commit -q -m helpers
+linked_head="$(git -C "$linked_wt" rev-parse HEAD)"
+"$RETURN_WRITE" --worktree "$linked_wt" --kind fix --issue issue-826 --round-id 30-30 \
+  --branch linked --commit "$linked_head" --validate pass --item 1 Applied done >/dev/null
+set +e
+linked_out="$("$CHECK" --worktree "$linked_wt" --issue issue-826 --round-id 30-30 --expect-items-from-round 2>/dev/null)"
+linked_rc=$?
+set -e
+assert_eq "$linked_rc" "1" "linked worktree helper additions refuse acceptance"
+assert_eq "$(jq -r '.reason' <<<"$linked_out")" "unapproved_additions" "public checker routes helper suffixes through the additions gate"
+assert_eq "$(jq -c '.files' <<<"$linked_out")" \
+  '[".workflow_helpers.sh","adversarial/name_test-helper_more/file.rs","adversarial/name_test-util_more/file.rs","adversarial/name_test_helper_more/file.rs","adversarial/name_test_util_more/file.rs","adversarial/prefixhelperSuffix.rs","existing/workflow_helpers.sh"]' \
+  "public checker reports substring, suffix, and dotfile helper shapes"
+
+inert_classifier="$TMP_ROOT/inert-classifier"
+cp "$CHECK" "$inert_classifier"
+sed -i.bak '/^is_protected_addition()/,/^}/ s/return 0/return 1/' "$inert_classifier"
+chmod +x "$inert_classifier"
+set +e
+inert_out="$("$inert_classifier" --worktree "$linked_wt" --issue issue-826 --round-id 30-30 --expect-items-from-round 2>/dev/null)"
+set -e
+if [[ "$(jq -r '.reason' <<<"$inert_out")" == "unapproved_additions" ]]; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "public checker control kills an inert classifier"
+else
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "public checker control kills an inert classifier"
+fi
+
+failed_classifier="$TMP_ROOT/failed-classifier"
+cp "$CHECK" "$failed_classifier"
+sed -i.bak 's/\[\[ -s "\$result" \]\]/[[ ! -s "$result" ]]/' "$failed_classifier"
+chmod +x "$failed_classifier"
+set +e
+failed_out="$("$failed_classifier" --worktree "$linked_wt" --issue issue-826 --round-id 30-30 --expect-items-from-round 2>/dev/null)"
+failed_rc=$?
+set -e
+assert_eq "$failed_rc" "1" "invalid classifier output fails acceptance"
+assert_eq "$(jq -r '.ok' <<<"$failed_out")" "false" "classifier failure reports ok false"
+assert_eq "$(jq -r '.verdict' <<<"$failed_out")" "retry" "classifier failure routes to retry"
+assert_eq "$(jq -r '.reason' <<<"$failed_out")" "classifier_failed" "classifier failure has a positive routing verdict"
+
+"$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --item 1 symlink >/dev/null
+symlink_auth="$linked_main/.git/kendex/dev-round-authorizations/issue-826-31-31.json"
+rm -f "$symlink_auth"
+ln -s "$linked_wt/tmp/dev-round-issue-826-31-31.json" "$symlink_auth"
+set +e
+"$CHECK" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "symlinked external authorization fails closed"
+set -e
+
 # Live workflow blocks own the additions-file transport. Prose and commented
 # decoys outside those blocks cannot satisfy these controls.
 for workflow in dev-fix review-pr-comments; do
@@ -320,34 +403,82 @@ for workflow in dev-fix review-pr-comments; do
   assert_text_matches "$delegation" '^[[:space:]]*\[If the round may add files: "Adds: \[REPO_RELATIVE_PATH\]' "$workflow live delegation carries the optional Adds line"
 done
 
+scope_docs=(
+  "$REPO_ROOT/skills/dev/workflows/dev-fix.md"
+  "$REPO_ROOT/skills/orch/workflows/dev-fix.md"
+  "$REPO_ROOT/skills/orch/workflows/review-pr-comments.md"
+  "$CHECK"
+)
+for scope_doc in "${scope_docs[@]}"; do
+  scope_text="$(<"$scope_doc")"
+  assert_text_matches "$scope_text" 'schemas/dev-round\.md.*Protected additions' \
+    "$(basename "$scope_doc") points at the canonical protected-additions scope"
+  assert_text_not_matches "$scope_text" 'Protected additions are|files? (the )?fix round may add|files? this round may add' \
+    "$(basename "$scope_doc") makes no repository-wide additions claim"
+done
+
+workflow_rid=40
+for workflow in dev-fix review-pr-comments; do
+  round_token="$workflow_rid-$workflow_rid"
+  printf '%s' '[{"n":1,"text":"workflow item"}]' > "$linked_wt/tmp/dev-round-items-$round_token.json"
+  printf '%s' '["tools/future-helper.sh"]' > "$linked_wt/tmp/dev-round-adds-$round_token.json"
+  run_workflow_round_command "$REPO_ROOT/skills/orch/workflows/$workflow.md" \
+    "$linked_wt" issue-826 "$round_token" >/dev/null
+  workflow_auth="$linked_main/.git/kendex/dev-round-authorizations/issue-826-$round_token.json"
+  assert_eq "$(jq -c '.adds' "$workflow_auth")" '["tools/future-helper.sh"]' \
+    "$workflow live command executes and binds its additions file"
+  workflow_rid=$((workflow_rid + 1))
+done
+
 command_mutant="$TMP_ROOT/dev-fix-command-mutant.md"
 cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$command_mutant"
-sed -i '/dev-round-write --worktree/ s/^[[:space:]]*/# /' "$command_mutant"
+sed -i.bak '/dev-round-write --worktree/ s/^[[:space:]]*/# /' "$command_mutant"
 printf '\n--adds-file decoy outside the command block\n' >> "$command_mutant"
 mutant_round_block="$(fenced_block_with "$command_mutant" "dev-round-write --worktree")"
 assert_text_not_matches "$mutant_round_block" '^[[:space:]]*\.agents/.+dev-round-write .+--adds-file ' "workflow control rejects a commented live command plus prose decoy"
 
 delegation_mutant="$TMP_ROOT/dev-fix-delegation-mutant.md"
 cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$delegation_mutant"
-sed -i '/^   \[If the round may add files: "Adds:/ s/^/   <!-- /; /^   <!-- .*Adds:/ s/$/ -->/' "$delegation_mutant"
+sed -i.bak '/^   \[If the round may add files: "Adds:/ s/^/   <!-- /; /^   <!-- .*Adds:/ s/$/ -->/' "$delegation_mutant"
 printf '\nAdds: [REPO_RELATIVE_PATH] prose decoy\n' >> "$delegation_mutant"
 mutant_delegation="$(delegation_block "$delegation_mutant" "Adds: [REPO_RELATIVE_PATH]")"
 assert_text_not_matches "$mutant_delegation" '^[[:space:]]*\[If the round may add files: "Adds: \[REPO_RELATIVE_PATH\]' "workflow control rejects an inert delegation line plus prose decoy"
+
+inert_workflow="$TMP_ROOT/inert-workflow.md"
+cp "$REPO_ROOT/skills/orch/workflows/dev-fix.md" "$inert_workflow"
+sed -i.bak '/dev-round-write --worktree/ s|^[[:space:]]*\.agents|true # .agents|' "$inert_workflow"
+printf '%s' '[{"n":1,"text":"inert workflow"}]' > "$linked_wt/tmp/dev-round-items-42-42.json"
+printf '%s' '["tools/inert-helper.sh"]' > "$linked_wt/tmp/dev-round-adds-42-42.json"
+run_workflow_round_command "$inert_workflow" "$linked_wt" issue-826 42-42 >/dev/null
+inert_auth="$linked_main/.git/kendex/dev-round-authorizations/issue-826-42-42.json"
+assert_eq "$([[ -e "$inert_auth" ]] && echo yes || echo no)" "no" \
+  "executable workflow control kills a satisfied-but-inert command"
 
 if grep -Fq '< <(' "$CHECK" || grep -Fq '$!' "$CHECK"; then
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "Git probe avoids process-substitution PID behavior"
 else
   PASS=$((PASS + 1)); printf '  ok    %s\n' "Git probe avoids process-substitution PID behavior"
 fi
-classifier_block="$(function_block "$CHECK" collect_unapproved_additions)"
-assert_text_matches "$classifier_block" '\[\[ -s "\$result" \]\]' "classifier rejects an empty result file"
-assert_text_matches "$classifier_block" 'type == "array"' "classifier requires an array result"
-assert_text_matches "$classifier_block" 'all\(\.\[\]; type == "string"\)' "classifier requires string result entries"
-classifier_mutant="$TMP_ROOT/classifier-mutant"
-cp "$CHECK" "$classifier_mutant"
-sed -i '/\[\[ -s "\$result" \]\]/d' "$classifier_mutant"
-mutant_classifier_block="$(function_block "$classifier_mutant" collect_unapproved_additions)"
-assert_text_not_matches "$mutant_classifier_block" '\[\[ -s "\$result" \]\]' "classifier control detects a removed empty-result guard"
+# Round-mode waiting runs validate_artifact in command substitutions. Each
+# invocation owns and removes its probe files before returning to the parent.
+wait_round="$TMP_ROOT/wait-round"
+mkdir -p "$wait_round"
+git -C "$wait_round" init -q -b main
+git -C "$wait_round" config user.email test@example.com
+git -C "$wait_round" config user.name Test
+git -C "$wait_round" config commit.gpgsign false
+git -C "$wait_round" commit -q --allow-empty -m base
+wait_head="$(git -C "$wait_round" rev-parse HEAD)"
+"$WRITE" --worktree "$wait_round" --issue issue-826 --round-id 21-21 --item 1 wait >/dev/null
+( sleep 2; "$RETURN_WRITE" --worktree "$wait_round" --kind fix --issue issue-826 --round-id 21-21 \
+    --branch main --commit "$wait_head" --validate pass --item 1 Applied done >/dev/null ) &
+writer_pid=$!
+wait_out="$("$CHECK" --worktree "$wait_round" --issue issue-826 --round-id 21-21 \
+  --expect-items-from-round --wait 20 --interval 1 2>/dev/null)"
+wait "$writer_pid"
+assert_eq "$(jq -r '.verdict' <<<"$wait_out")" "accept" "round-mode wait accepts the landed artifact"
+scratch_count="$(find "$wait_round/tmp" -maxdepth 1 -name '.dev-artifact-*' | wc -l | tr -d ' ')"
+assert_eq "$scratch_count" "0" "round-mode wait leaves no dev-artifact scratch files"
 
 set +e
 "$WRITE" -h >/dev/null 2>&1

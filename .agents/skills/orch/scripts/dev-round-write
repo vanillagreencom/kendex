@@ -99,8 +99,8 @@ success; different content under the same round id exits 2 — a changed
 delegation needs a NEW round id. The record is read back by
 dev-artifact-check --expect-items-from-round, by a respawned dev agent
 recovering its items, and by the tail-reconciliation nudge.
---adds-file is a JSON array of repository-relative files the fix round may add.
-Omit it to allow none. Absolute, traversing, empty-component, multiline, and
+--adds-file is a JSON array of protected additions the fix round may make.
+Omit it to allow none in that scope. Absolute, traversing, empty-component, multiline, and
 duplicate paths are rejected. Paths stay in the file channel, never argv. The
 record captures the worktree's current HEAD as base_sha; a worktree with no
 resolvable HEAD is rejected.

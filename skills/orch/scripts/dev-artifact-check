@@ -99,6 +99,7 @@ directory, outside the delegated worktree. The worktree recovery copy must
 match that authorization exactly. Missing, mismatched, symlinked, or malformed
 records refuse with exit 2. Never recreate authorization after delegation and
 never downgrade to --expect-items; mint a fresh round.
+Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
@@ -297,6 +298,9 @@ analysis_incomplete() {
 is_protected_addition() {
   local path="$1" basename stem
   case "$path" in
+    *test-helper*|*test_helper*|*test-util*|*test_util*) return 0 ;;
+  esac
+  case "$path" in
     crates/*|tools/*|skills/*/scripts/*|.agents/skills/*/scripts/*|\
     src/test/*|*/src/test/*|\
     helper/*|helpers/*|*/helper/*|*/helpers/*|\
@@ -312,10 +316,10 @@ is_protected_addition() {
       ;;
   esac
   basename="${path##*/}"
+  while [[ "$basename" == .* ]]; do basename="${basename#.}"; done
   stem="${basename%%.*}"
   case "$stem" in
-    helper|helpers|test-helper|test-helpers|test_helper|test_helpers|\
-    test-util|test-utils|test_util|test_utils) return 0 ;;
+    *helper*|*test-util*|*test_util*) return 0 ;;
   esac
   return 1
 }
@@ -328,6 +332,7 @@ collect_unapproved_additions() {
     || return 3
   scratch_files+=("$probe")
   if ! git -C "$repo" diff --find-renames --diff-filter=A --name-only -z "$base_sha...HEAD" > "$probe"; then
+    rm -f -- "$probe"
     return 2
   fi
   while IFS= read -r -d '' path; do
@@ -337,12 +342,17 @@ collect_unapproved_additions() {
     fi
   done < "$probe"
   if (( ${#additions[@]} > 0 )); then
-    jq -n '$ARGS.positional' --args "${additions[@]}" > "$result" \
-      || return 3
+    if ! jq -n '$ARGS.positional' --args "${additions[@]}" > "$result"; then
+      rm -f -- "$probe"
+      return 3
+    fi
   else
-    printf '[]\n' > "$result" \
-      || return 3
+    if ! printf '[]\n' > "$result"; then
+      rm -f -- "$probe"
+      return 3
+    fi
   fi
+  rm -f -- "$probe"
   [[ -s "$result" ]] \
     && jq -e '(type == "array") and all(.[]; type == "string")' "$result" >/dev/null 2>&1
 }
@@ -399,16 +409,23 @@ validate_artifact() {
         || additions_rc=$?
     fi
     if (( additions_rc == 2 )); then
+      [[ -n "$refused_file" ]] && rm -f -- "$refused_file"
       printf '%s: could not compare fix-round base to HEAD in %s\n' "$PROG" "$repo" >&2
       emit false "$file" "comparison_failed"
       return 1
     fi
     if (( additions_rc != 0 )); then
+      [[ -n "$refused_file" ]] && rm -f -- "$refused_file"
       printf '%s: protected-addition classifier produced no valid result in %s\n' "$PROG" "$repo" >&2
       emit false "$file" "classifier_failed"
       return 1
     fi
-    refused_additions="$(jq -c '.' "$refused_file")"
+    if ! refused_additions="$(jq -c '.' "$refused_file")"; then
+      rm -f -- "$refused_file"
+      emit false "$file" "classifier_failed"
+      return 1
+    fi
+    rm -f -- "$refused_file"
     if [[ "$refused_additions" != "[]" ]]; then
       printf '%s: fix round added files absent from its Adds line: %s\n' \
         "$PROG" "$(jq -r 'join(", ")' <<<"$refused_additions")" >&2

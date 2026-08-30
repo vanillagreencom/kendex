@@ -464,7 +464,7 @@ assert_eq "$(jq -r '.reason' <<<"$diverge_out")" "comparison_failed" "comparison
 assert_eq "$(jq -c '.files' <<<"$diverge_out")" "[]" "comparison failure does not fabricate refused files"
 routing_mutant="$TMP_ROOT/routing-mutant"
 cp "$CHECK" "$routing_mutant"
-sed -i 's/emit false "$file" "comparison_failed"/emit false "$file" "unapproved_additions"/' "$routing_mutant"
+sed -i.bak 's/emit false "$file" "comparison_failed"/emit false "$file" "unapproved_additions"/' "$routing_mutant"
 chmod +x "$routing_mutant"
 set +e
 routing_mutant_out="$("$routing_mutant" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round 2>/dev/null)"

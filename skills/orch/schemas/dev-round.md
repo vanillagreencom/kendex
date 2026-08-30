@@ -1,6 +1,6 @@
 # Dev round schema
 
-The on-disk record of a fix round's delegated items, starting commit, and allowed new files. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation.
+The on-disk record of a fix round's delegated items, starting commit, and allowed protected additions. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation.
 
 ## Identity: the round id
 
@@ -29,7 +29,7 @@ The recovery copy is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`.
 | `round_id` | Yes | `--round-id` | Per-delegation token; equals the filename token and the round's `dev_round_id` |
 | `issue` | Yes | `--issue` | Normalized workflow-state key |
 | `base_sha` | Yes | captured from `HEAD` | Commit at delegation time |
-| `adds` | Yes | `--adds-file JSON_PATH` | Exact repository-relative files the round may add; an empty array allows none |
+| `adds` | Yes | `--adds-file JSON_PATH` | Exact protected additions the round may make; an empty array allows none in the protected scope |
 | `items` | Yes (>=1) | `--items-file` or `--item N TEXT` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim |
 
 `--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
@@ -43,8 +43,23 @@ The external authorization adds `"schema_version": 1` and `"worktree": "[CANONIC
 ## Readers
 
 - **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the external authorization after checking the worktree copy exactly matches it. It compares `base_sha...HEAD` through a checked, NUL-delimited Git probe. Comparison failures return `comparison_failed`; an unusable classifier result returns `classifier_failed`.
-- **Protected additions** are root `crates/` and `tools/`; `skills/*/scripts/` and `.agents/skills/*/scripts/`; root or nested `src/test/`; directories named `helper`, `helpers`, `test-helper`, `test-helpers`, `test_helper`, `test_helpers`, `test-util`, `test-utils`, `test_util`, or `test_utils`; `lib`, `support`, `util`, or `utils` below `test/` or `tests/`; and files whose basename before the first extension has one of those helper or test-helper spellings. `unapproved_additions` returns every refused path in `files`. Git rename detection keeps moves and renames outside the additions gate.
 - **A respawned dev agent** reads `items[]` to recover the item numbers and texts.
 - **The tail-reconciliation nudge** points at the record.
 
 The record is input, never receipt: it proves what was delegated, not that anything completed. Completion stays with [`dev-return.md`](dev-return.md) and the A/B acceptance tables.
+
+## Protected additions
+
+The gate checks additions only. Git rename detection keeps moves and renames outside it.
+
+Protected additions are:
+
+- root `crates/` and `tools/`;
+- `skills/*/scripts/` and `.agents/skills/*/scripts/`;
+- root or nested `src/test/`;
+- directories named `helper`, `helpers`, `test-helper`, `test-helpers`, `test_helper`, `test_helpers`, `test-util`, `test-utils`, `test_util`, or `test_utils`;
+- `lib`, `support`, `util`, or `utils` below `test/` or `tests/`;
+- repository-relative paths containing `test-helper`, `test_helper`, `test-util`, or `test_util`;
+- files whose basename before the first extension contains `helper`, `test-util`, or `test_util`, including suffix forms and dotfiles.
+
+`unapproved_additions` returns every refused protected path in `files`.
