@@ -337,36 +337,48 @@ run 'SIZE_RATCHET_CLASSES=ui/*=2000' SIZE_RATCHET_FROZEN_CLASSES=
   || bad "control: the looser entry reaches the fixture" "rc=$RC out=$OUT"
 
 echo "=== the verdict line reports what each repo entry actually governed ==="
-# A yielded entry that still governs its own paths is named as such; one that
-# yielded on every path it matched governed nothing, and a run that printed it
+# An entry that decided no counted path governs nothing, and a run printing it
 # as the mapping in force would advertise a threshold nothing was judged
-# against — a clean run saying something false.
+# against. Three shapes arrive at that state and the line names none of them,
+# because the engine holds no state that tells them apart: every arm below
+# asserts the SAME reason.
 new_repo shadownote
 mklines ui/src/App.ts 300
 mklines ui/src/App.test.ts 500
 git -C "$R" add -A
+NOTHING="(governed nothing: decided no counted path)"
+# Shape one: every path it matches is frozen, so it is passed over on all of
+# them.
 run 'SIZE_RATCHET_CLASSES=ui/src/*.test.ts=100'
-if [ "$RC" -eq 0 ] && has "classes ui/src/*.test.ts=100 (governed nothing: yielded on every path it matched)"; then
+if [ "$RC" -eq 0 ] && has "classes ui/src/*.test.ts=100 $NOTHING"; then
   ok "an entry every one of whose paths is frozen is reported as governing nothing"
 else
   bad "a wholly yielded entry says so on the verdict line" "rc=$RC out=$OUT"
 fi
+# Shape two: it matches a counted path, but an EARLIER repo entry already
+# claimed it. Nothing was frozen and nothing yielded.
+run SIZE_RATCHET_DEFAULT_CLASSES= SIZE_RATCHET_FROZEN_CLASSES= 'SIZE_RATCHET_CLASSES=*.ts=400;ui/*.ts=250'
+if [ "$RC" -eq 1 ] && has "classes *.ts=400;ui/*.ts=250 $NOTHING"; then
+  ok "an entry an earlier one shadows is reported the same way, with no cause claimed"
+else
+  bad "an ordering-shadowed entry says the same thing" "rc=$RC out=$OUT"
+fi
+# Shape three: no counted path matches it at all.
+run 'SIZE_RATCHET_CLASSES=uii/*.ts=1'
+if [ "$RC" -eq 0 ] && has "classes uii/*.ts=1 $NOTHING"; then
+  ok "an entry no counted path matches is reported the same way"
+else
+  bad "a never-matched entry says the same thing" "rc=$RC out=$OUT"
+fi
+# An entry that DOES govern its own paths and was passed over on frozen ones
+# is a different statement, and that one the engine can stand behind.
 run 'SIZE_RATCHET_CLASSES=ui/*.ts=400'
-if [ "$RC" -eq 0 ] && has "classes ui/*.ts=400 (yielded on frozen paths)"; then
-  ok "an entry that governs some paths and yields others is reported as yielding"
+if [ "$RC" -eq 0 ] && has "classes ui/*.ts=400 (yielded on frozen paths)" && ! has "governed nothing"; then
+  ok "an entry that governs some paths and is passed over on frozen ones says exactly that"
 else
   bad "a partly yielded entry says so on the verdict line" "rc=$RC out=$OUT"
 fi
-# An entry that matched nothing at all governs nothing too — a typo'd or stale
-# pattern is the likeliest way to get there, and a run confirming it as the
-# mapping in force is the one that hides it.
-run 'SIZE_RATCHET_CLASSES=uii/*.ts=1'
-if [ "$RC" -eq 0 ] && has "classes uii/*.ts=1 (governed nothing: matched no counted path)"; then
-  ok "an entry no counted path matches is reported as governing nothing"
-else
-  bad "a never-matched entry says so on the verdict line" "rc=$RC out=$OUT"
-fi
-# The control: an entry that yields nowhere and governs its paths carries no
+# The control: an entry that governs its paths with nothing frozen carries no
 # annotation at all, so the annotations above are not on every entry.
 run 'SIZE_RATCHET_CLASSES=ui/*.ts=400' SIZE_RATCHET_FROZEN_CLASSES=
 if [ "$RC" -eq 1 ] && has "classes ui/*.ts=400," && ! has "governed nothing" && ! has "yielded"; then

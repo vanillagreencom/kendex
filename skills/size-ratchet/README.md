@@ -164,10 +164,11 @@ names it and points here, because a rule paraphrased in six places loses a
 clause in one of them.
 
 The verdict line says what each entry governed. An entry that decided some
-paths and lost others reads `ui/*.ts=250 (yielded on frozen paths)`; one that
-decided none reads `(governed nothing: yielded on every path it matched)`, or
-`(governed nothing: matched no counted path)` where a typo'd or stale pattern
-matched nothing at all.
+paths and was passed over on frozen ones reads `ui/*.ts=250 (yielded on
+frozen paths)`; one that decided none reads `(governed nothing: decided no
+counted path)`. It does not say why, because a pattern matching nothing, a
+pattern an earlier entry already claimed, and one passed over on frozen paths
+all reach that state and the engine cannot tell them apart.
 
 `SIZE_RATCHET_DEFAULT_CLASSES = ""` drops the shipped list; the repo's own
 `SIZE_RATCHET_CLASSES` still matches first, so single-threshold behavior

@@ -649,14 +649,10 @@ is_excluded() { # PATH — 0 when some exclusion glob matches the full path
 # report() re-runs it to name the threshold that judged the path — including
 # for a baseline row whose file left the tracked set.
 #
-# A repo entry is matched first, EXCEPT on a frozen path. `*` crosses `/`, so
-# a repo class scoped to a directory (`ui/*.ts=250`) also matches paths the
-# repo never named, and silently retitles the shipped class that named them,
-# the counting UNIT included: a `docs/*=250` meant for code judges a byte
-# class in lines. That is what the skip below prevents, and it prevents it in
-# both directions, because what it protects is the shipped class naming the
-# path rather than any one number. The rule and its two exits are stated once,
-# in README.md "Path classes"; each exit is a branch below.
+# A repo entry is matched first, EXCEPT on a frozen path: the skip below is
+# there so a directory-scoped entry cannot retitle a shipped class for paths
+# the repo never named. The rule and its two exits are stated once, in
+# README.md "Path classes"; each exit is a branch below.
 path_threshold() { # PATH
   local i=0 frozen="" shadowed="" skipped="" hit="" s
   # Indexed iteration bounded by CLASS_COUNT: a whole-array expansion on an
@@ -996,11 +992,11 @@ LC_ALL=C sort -- "$TMP/counts.classed" >"$TMP/counts.tsv" || collection_error "c
 
 # The verdict line reports the mapping the run actually USED, which is why it
 # is built here and not at parse time: the pass above put every tracked path
-# through the resolver, so each repo entry now knows whether it decided a path
-# or yielded one to a frozen class. An entry that decided none governs
-# nothing, and a run that printed it as the mapping in force would advertise a
-# threshold no file was ever judged against — a clean run saying something
-# false. The raw setting's spacing and empty entries stay out: they
+# through the resolver, so each repo entry now knows whether it decided one.
+# An entry that decided none governs nothing, and a run that printed it as the
+# mapping in force would advertise a threshold no file was ever judged
+# against — a clean run saying something false. The raw setting's spacing and
+# empty entries stay out: they
 # read as behavior the matcher never sees. The shipped list is a count, not a
 # transcript — it is the same everywhere, and the per-file diagnostics already
 # name the class that decided each path.
@@ -1009,15 +1005,12 @@ sr_ni=0
 while [ "$sr_ni" -lt "$REPO_CLASS_COUNT" ]; do
   sr_entry="${CLASS_PATTERNS[$sr_ni]}=${CLASS_RAW[$sr_ni]}"
   # DECIDED is the predicate, so the bare rendering is unreachable for an
-  # entry that governed nothing however it got there — yielded away, or a
-  # typo'd or stale pattern that matched no counted path at all. YIELDED only
-  # supplies the reason.
+  # entry that governed nothing. WHY it governed nothing is not said: a
+  # pattern matching nothing, a pattern an earlier entry already claimed, and
+  # one passed over on frozen paths all arrive here, and the engine holds no
+  # state that tells them apart. The line says the part it can stand behind.
   if [ "${CLASS_DECIDED[$sr_ni]:-0}" != "1" ]; then
-    if [ "${CLASS_YIELDED[$sr_ni]:-0}" = "1" ]; then
-      sr_entry="$sr_entry (governed nothing: yielded on every path it matched)"
-    else
-      sr_entry="$sr_entry (governed nothing: matched no counted path)"
-    fi
+    sr_entry="$sr_entry (governed nothing: decided no counted path)"
   elif [ "${CLASS_YIELDED[$sr_ni]:-0}" = "1" ]; then
     sr_entry="$sr_entry (yielded on frozen paths)"
   fi

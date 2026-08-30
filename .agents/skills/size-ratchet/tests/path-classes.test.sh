@@ -55,6 +55,17 @@ run_raw() { # [VAR=val ...] [-- script-args...] — run $SR in $R; sets OUT, RC
   OUT="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$SR" ${args[@]+"${args[@]}"} 2>&1)" || RC=$?
 }
 
+echo "=== the README heading every other surface points at still exists ==="
+# The rule is stated once, in README.md "Path classes". The script header, two
+# --help entries, two block comments, DEVELOPMENT.md and two settings-table
+# links all name that heading, the last two through its #path-classes anchor.
+# Retitle it and all of them rot silently, onto paraphrases that were deleted.
+if grep -qx '## Path classes' "$SKILL_DIR/README.md"; then
+  ok "README.md carries the '## Path classes' heading the pointers name"
+else
+  bad "the canonical heading exists at its stated level" "no '## Path classes' line in $SKILL_DIR/README.md"
+fi
+
 echo "=== a class threshold governs the paths it matches; the base governs the rest ==="
 new_repo classes
 mkfile src/big.txt 500

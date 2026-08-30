@@ -93,9 +93,12 @@ git -C "$R" commit -q -m row
 mkfile x.test.txt 15
 git -C "$R" add -A
 run_frozen
+# Both halves: the string it IS given, and the absence of either wording that
+# carries RATCHET_RAISE. Without the positive half an empty remedy passes.
 if [ "$RC" -eq 1 ] && case "$OUT" in *"baselined file grew: x.test.txt"*) true ;; *) false ;; esac \
+  && case "$OUT" in *"remedy: split at a concept seam (a frozen class never raises an existing row)"*) true ;; *) false ;; esac \
   && case "$OUT" in *RATCHET_RAISE*) false ;; *) true ;; esac; then
-  ok "control: a frozen path whose row exists is never offered a raise"
+  ok "control: a frozen baselined file that grew is told to split, and offered no raise"
 else
   bad "control: a frozen row refuses the raise" "rc=$RC out=$OUT"
 fi
