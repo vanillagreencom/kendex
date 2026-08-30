@@ -477,6 +477,37 @@ RAISE=1 run_frozen --staged
 [ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
   && ok "emptying the old baseline in place is a move, not a modification to ignore" \
   || bad "emptying the old baseline in place is a move" "rc=$RC out=$OUT"
+# Replacing the old baseline with a symlink to the NEW one leaves a path that
+# reads through as rows, which is how the move looked untouched. A symlink is
+# not the row set that was there, whatever it points at. Both modes are run on
+# one tree, because the defect was that they disagreed: the index records mode
+# 120000 and answered no already, the worktree followed the link.
+new_repo relocsymlinkover
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/a.tsv"
+settings_baseline tools/a.tsv
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: the baseline at tools/a.tsv"
+mkfile x.test.txt 20
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+rm -f "$R/tools/a.tsv"
+ln -s b.tsv "$R/tools/a.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+RAISE=1 run_frozen
+WORKTREE_RC="$RC"
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a symlink over the old baseline is not the row set that was there" \
+  || bad "a symlink over the old baseline is not the row set that was there" "rc=$RC out=$OUT"
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline moved and rewritten: tools/a.tsv -> tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "and the staged lane says the same of the same tree" \
+  || bad "the staged lane refuses the symlinked move" "rc=$RC out=$OUT"
+[ "$WORKTREE_RC" -eq "$RC" ] \
+  && ok "control: the two modes agree on that tree, which is the whole finding" \
+  || bad "the two modes agree on the symlinked move" "worktree=$WORKTREE_RC staged=$RC"
+
 # …and the predicate that keeps the wider list honest: a row-shaped file whose
 # numbers move is still a row set, so an ordinary edit of one is not a move.
 new_repo rowshapededit

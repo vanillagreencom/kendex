@@ -1538,6 +1538,11 @@ snapshot_rows_at() { # PATH — 0 when the snapshot still holds a row set there
     case "$INDEX_FILE_MODE" in 100*) ;; *) return 1 ;; esac
     git show ":$1" >"$TMP/removed.now" || collection_error "could not read the staged copy of $1 to tell whether it still holds baseline rows"
   else
+    # -L before -f, which follows. A symlink is not the row set that was
+    # there, whatever it points at — and pointing it at the NEW baseline is
+    # exactly how a move made the old path look untouched. The index side
+    # never had this: it reads mode 120000 and answers no already.
+    [ ! -L "$1" ] || return 1
     [ -f "$1" ] || return 1
     cp -- "$1" "$TMP/removed.now" || collection_error "could not copy $1 to tell whether it still holds baseline rows"
   fi
