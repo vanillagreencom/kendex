@@ -32,7 +32,33 @@ fn the_card_is_told_what_each_state_owes_a_person() {
         )),
         Some(CommandNotice::NeedsPrivilege {
             path: "/usr/local/bin/kendex".to_owned(),
-            command: ELEVATED_UPDATE.to_owned(),
+            command: "sudo HOME=\"$HOME\" '/usr/local/bin/kendex' update".to_owned(),
         })
     );
+}
+
+/// The command names the file the card just named, and carries the home
+/// the record belongs to.
+///
+/// `sudo` resolves a bare name against `secure_path`, so `sudo kendex` is
+/// either not found or a different kendex; and it resets the environment,
+/// so an elevated run without `HOME` writes its record into root's data
+/// directory and the person's own record keeps naming bytes that are gone.
+/// Either way the one command the card offers fails to do what it says.
+#[test]
+fn the_elevated_command_names_the_file_and_the_home() {
+    let said = elevated_update(Path::new("/opt/kendex/bin/kendex"));
+
+    assert!(said.contains("'/opt/kendex/bin/kendex'"), "{said}");
+    assert!(said.contains(r#"HOME="$HOME""#), "{said}");
+    assert!(!said.contains("sudo kendex"), "{said}");
+}
+
+/// A path is quoted, not merely shown: this is a line somebody pastes into
+/// a root shell, and a space in it would otherwise split into two words.
+#[test]
+fn a_path_with_a_space_is_one_word_to_a_shell() {
+    let said = elevated_update(Path::new("/opt/my tools/kendex"));
+
+    assert!(said.contains("'/opt/my tools/kendex'"), "{said}");
 }

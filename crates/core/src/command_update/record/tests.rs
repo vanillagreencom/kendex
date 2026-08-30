@@ -48,3 +48,38 @@ fn a_record_that_is_not_a_path_and_a_digest_is_no_record() {
         })
     );
 }
+
+/// Who to give the record back to is sudo's answer and nothing else's. A
+/// run that is not elevated names nobody, and a half-set pair — one id
+/// present, the other not — is not a person either; guessing the other
+/// half would hand a file to whoever that id turns out to be.
+#[test]
+fn only_a_sudo_run_names_someone_to_hand_the_record_back_to() {
+    let ids = |pairs: &[(&str, &str)]| {
+        let held: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        caller_ids(|name| {
+            held.iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        })
+    };
+
+    assert_eq!(
+        ids(&[("SUDO_UID", "501"), ("SUDO_GID", "20")]),
+        Some((501, 20))
+    );
+    assert_eq!(ids(&[]), None, "an ordinary run named someone");
+    assert_eq!(
+        ids(&[("SUDO_UID", "501")]),
+        None,
+        "half a pair named someone"
+    );
+    assert_eq!(
+        ids(&[("SUDO_UID", "root"), ("SUDO_GID", "20")]),
+        None,
+        "a value that is not an id named someone"
+    );
+}
