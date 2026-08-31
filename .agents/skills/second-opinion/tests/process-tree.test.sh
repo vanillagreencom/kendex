@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# Process-tree ownership: who the run is allowed to signal, and what dies with
-# it. Split from detached-run.test.sh at the seam between the wait PROTOCOL
-# (what `wait` reports) and process OWNERSHIP (what it may terminate).
-#
-# Every case here builds a real tree — a CLI with a child of its own — and asks
-# what survives, because the defects this guards were all invisible to a suite
-# that only watched exit codes.
+# Process-tree ownership: who the run may signal, and what dies with it. Split
+# from detached-run.test.sh at the seam between what `wait` REPORTS and what it
+# may TERMINATE. Every case builds a real tree — a CLI with a child of its own
+# — and asks what survives, because every defect this guards was invisible to a
+# suite that watched only exit codes.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -79,6 +77,21 @@ cat >/dev/null
 printf 'answer from codex\n'
 SH
 chmod +x "$TMP_ROOT/bin/codex"
+# A CLI whose LEADER exits while its child runs on holding stdout. The child
+# dies on TERM, so a teardown that reaches the group ends this in seconds while
+# one that only probes the leader leaves the child holding the pipe.
+cat > "$TMP_ROOT/bin/orphan-codex" <<'SH'
+#!/usr/bin/env bash
+cat >/dev/null
+(
+  printf '%s\n' "$BASHPID" > "$CLI_KID_FILE"
+  sleep 120
+) &
+printf 'started\n' > "$CLI_READY_FILE"
+sleep 1
+printf 'leader done\n'
+SH
+chmod +x "$TMP_ROOT/bin/orphan-codex"
 
 unset CLAUDECODE CLAUDE_CODE CLAUDE_PROJECT_DIR CODEX_SANDBOX \
       CODEX_SANDBOX_NETWORK_DISABLED PI_CODING_AGENT_DIR OPENCODE \
@@ -94,9 +107,9 @@ git -C "$TMP_ROOT/work" add file.txt
 git -C "$TMP_ROOT/work" -c commit.gpgsign=false commit -q -m init
 
 echo "=== a per-CLI timeout takes the CLI's children with it ==="
-# The caller CAPTURES stdout. A surviving grandchild holds that pipe open, so
-# this case measures the caller's own wall time, not just the exit status: the
-# defect was a 2-second timeout that returned after the child's full 600.
+# The caller CAPTURES stdout, so a surviving grandchild holds that pipe open.
+# This measures the caller's wall time, not just the status: the defect was a
+# 2-second timeout returning after the child's full 600.
 : > "$TMP_ROOT/tree.ready"; : > "$TMP_ROOT/tree.kid"
 start=$(date +%s)
 rc=0
@@ -115,6 +128,67 @@ await_gone "$kid" || fail "the CLI's child $kid survived the timeout"
 ok "the timeout took the CLI's child with it"
 [[ $rc -ne 0 ]] || fail "a timed-out CLI must not read as success"
 ok "the timed-out run exits non-zero (rc=$rc)"
+
+echo "=== the CLI's leader exiting first does not end the teardown ==="
+# A leader that exits while its child runs on is the ordinary shape of a CLI
+# that forks, and a teardown probing the LEADER reads that as "the tree is
+# gone". It is not: the child still holds the captured pipe, which is the same
+# hang the per-CLI timeout above exists to prevent, one level down.
+: > "$TMP_ROOT/orphan.ready"; : > "$TMP_ROOT/orphan.kid"
+start=$(date +%s)
+rc=0
+captured=$(CLI_READY_FILE="$TMP_ROOT/orphan.ready" CLI_KID_FILE="$TMP_ROOT/orphan.kid" \
+  SECOND_OPINION_CODEX_CMD=orphan-codex SECOND_OPINION_TIMEOUT=600 \
+  "$SECOND_OPINION" quick question --cwd "$TMP_ROOT/work" \
+  2> "$TMP_ROOT/orphan.stderr") || rc=$?
+elapsed=$(( $(date +%s) - start ))
+orphan_kid="$(cat < "$TMP_ROOT/orphan.kid" 2>/dev/null || true)"
+STRAYS+=("$orphan_kid")
+[[ $elapsed -lt 60 ]] \
+  || fail "the capture waited ${elapsed}s after the CLI leader exited — the child held the pipe"
+ok "the capture returns (${elapsed}s) once the leader exits"
+[[ -n "$orphan_kid" ]] || fail "the CLI never recorded a surviving child"
+await_gone "$orphan_kid" \
+  || fail "the CLI's surviving child $orphan_kid outlived the run"
+ok "the surviving child is torn down with the group"
+
+echo "=== control: the same CLI against a teardown that probes the leader ==="
+# Without this the case above cannot say WHICH probe ended the run. It drives
+# `group-run` directly — the function the mutation changes — because the
+# detached path would not distinguish the two: there the worker leads the group
+# AND outlives it, so probing the leader and probing the group agree.
+LEADER_MUTANT="$TMP_ROOT/leader-probe-runtime"
+sed 's|^process_group_alive() { kill -0 -- "-\$1" 2>/dev/null; }$|process_group_alive() { kill -0 "$1" 2>/dev/null; }|' \
+  "$RUNTIME" > "$LEADER_MUTANT"
+chmod +x "$LEADER_MUTANT"
+cmp -s "$RUNTIME" "$LEADER_MUTANT" && fail "the leader-probe control mutated nothing"
+grep -q 'process_group_alive() { kill -0 "$1" 2>/dev/null; }' "$LEADER_MUTANT" \
+  || fail "the leader-probe control did not replace the group probe"
+ok "the leader-probe control probes the leader instead of the group"
+# capture_group_run <runtime> <label>: capture group-run's stdout under a hard
+# bound, and report whether it returned or was still held. The bound is what
+# makes the hang measurable in seconds instead of the child's full lifetime.
+capture_group_run() { # RUNTIME LABEL -> "rc"
+  local runtime="$1" label="$2" rc=0
+  : > "$TMP_ROOT/$label.ready"; : > "$TMP_ROOT/$label.kid"
+  CLI_READY_FILE="$TMP_ROOT/$label.ready" CLI_KID_FILE="$TMP_ROOT/$label.kid" \
+    timeout 8 bash -c \
+    'out=$("$1" group-run "$2" orphan-codex < /dev/null); printf %s "$out" > "$3"' \
+    _ "$runtime" "$TMP_ROOT/$label.stderr" "$TMP_ROOT/$label.out" || rc=$?
+  printf '%s' "$rc"
+}
+real_rc="$(capture_group_run "$RUNTIME" ctl-real)"
+real_kid="$(cat < "$TMP_ROOT/ctl-real.kid" 2>/dev/null || true)"
+STRAYS+=("$real_kid")
+[[ "$real_rc" != 124 ]] || fail "the shipped runtime held the capture open"
+ok "the shipped runtime releases the capture (rc=$real_rc)"
+mutant_rc="$(capture_group_run "$LEADER_MUTANT" ctl-mutant)"
+mutant_kid="$(cat < "$TMP_ROOT/ctl-mutant.kid" 2>/dev/null || true)"
+STRAYS+=("$mutant_kid")
+[[ "$mutant_rc" == 124 ]] \
+  || fail "the leader-probe control released the capture too (rc=$mutant_rc) — the case above proves nothing"
+ok "the leader-probe control holds the capture open, so the group probe is what releases it"
+kill -KILL "$mutant_kid" 2>/dev/null || true
 
 echo "=== a signal to second-opinion still reaches the CLI ==="
 # The other half, and the reason the wrapper cannot simply drop --foreground:
@@ -140,9 +214,9 @@ else
 fi
 
 echo "=== the detached deadline takes the CLI tree with it ==="
-# B: this is the path stock macOS takes, where the worker's own group is the
-# only handle on the tree. `wait` reports 124 and deletes the runtime state, so
-# if it does not stop the tree here nothing ever will.
+# The path stock macOS takes, where the worker's own group is the only handle
+# on the tree. `wait` reports 124 and deletes the runtime state, so a tree it
+# does not stop here is one nothing will ever stop.
 : > "$TMP_ROOT/dl.ready"; : > "$TMP_ROOT/dl.kid"
 mkdir "$TMP_ROOT/dl-runtime"
 CLI_READY_FILE="$TMP_ROOT/dl.ready" CLI_KID_FILE="$TMP_ROOT/dl.kid" \
@@ -173,10 +247,60 @@ await_gone "$dl_kid" \
   || fail "the deadline reported 124 and left the CLI's child $dl_kid running"
 ok "the deadline takes the CLI tree with it"
 
+echo "=== a launch cancelled before it publishes takes its worker with it ==="
+# Between the fork and the last protocol line the worker exists but nothing can
+# reach it: the pid, the identity and the wait command are not all out yet. A
+# launch that dies there would strand a run nobody can wait on or stop.
+#
+# STAGED BY BLOCKING THE PUBLISH, not by timing. `worker-id` is pre-created as a
+# FIFO, so the launcher blocks writing it with the worker already running —
+# provably inside the window. The signal is then delivered and the FIFO drained,
+# so the trap runs at a point this case chose rather than one it raced for.
+mkdir "$TMP_ROOT/win-runtime"
+mkfifo "$TMP_ROOT/win-runtime/worker-id"
+: > "$TMP_ROOT/win.ready"; : > "$TMP_ROOT/win.kid"
+CLI_READY_FILE="$TMP_ROOT/win.ready" CLI_KID_FILE="$TMP_ROOT/win.kid" \
+  SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_LAUNCH_SOURCE=detected \
+  SECOND_OPINION_LAUNCH_IN_CALLER_ENV=false SECOND_OPINION_LAUNCH_SESSION_SCOPED=false \
+  SECOND_OPINION_CODEX_CMD=treeish-codex \
+  "$RUNTIME" launch "$SECOND_OPINION" "$TMP_ROOT/win-answer" "$TMP_ROOT/win-runtime" \
+  120 false 10 quick question --target=codex --cwd "$TMP_ROOT/work" --timeout 600 \
+  > "$TMP_ROOT/win-launch.stdout" 2> "$TMP_ROOT/win-launch.stderr" &
+win_launcher=$!
+# The pid file is written before worker-id, so its arrival proves the launcher
+# is past the fork and blocked on the FIFO.
+await_file "$TMP_ROOT/win-runtime/pid" || fail "the launcher never reached the publish window"
+win_pid="$(cat < "$TMP_ROOT/win-runtime/pid")"
+STRAYS+=("$win_pid")
+await_file "$TMP_ROOT/win.ready" || fail "the worker never started"
+win_kid="$(cat < "$TMP_ROOT/win.kid" 2>/dev/null || true)"
+STRAYS+=("$win_kid")
+grep -q '^wait:' "$TMP_ROOT/win-launch.stdout" \
+  && fail "the launcher published its wait command before the window closed"
+ok "the launcher is inside the window: worker running, protocol unpublished"
+kill -TERM "$win_launcher" 2>/dev/null || true
+# Draining the FIFO lets the blocked write finish; bash then runs the signal it
+# has been holding, before any further command.
+cat < "$TMP_ROOT/win-runtime/worker-id" > /dev/null 2>&1 || true
+win_rc=0
+wait "$win_launcher" 2>/dev/null || win_rc=$?
+[[ $win_rc -ne 0 ]] || fail "a cancelled launch reported success"
+ok "the cancelled launch exits non-zero (rc=$win_rc)"
+grep -q '^wait:' "$TMP_ROOT/win-launch.stdout" \
+  && fail "a cancelled launch still published a wait command"
+ok "no wait command was published for a run that was cancelled"
+await_gone "$win_pid" || fail "the cancelled launch left its worker $win_pid running"
+ok "the cancelled launch stopped its worker"
+[[ -z "$win_kid" ]] || await_gone "$win_kid" \
+  || fail "the cancelled launch left the CLI's child $win_kid running"
+ok "and the CLI tree under it"
+[[ -e "$TMP_ROOT/win-runtime" ]] && fail "the cancelled launch left its runtime state behind"
+ok "the cancelled launch removed its runtime directory"
+
 echo "=== wait never signals a pid it cannot verify ==="
-# C, and the constraint is absolute: a pid is a number, not an identity. This
-# stages the reuse case directly — an unrelated live process whose pid sits in
-# the runtime dir — because that is what a reused pid looks like from here.
+# A pid is a number, not an identity. Staged directly: an unrelated live
+# process whose pid sits in the runtime dir is what a reused pid looks like
+# from here.
 # The bystander LEADS ITS OWN GROUP, which is the dangerous shape: teardown
 # aims at a process group, so a reused pid that leads no group is out of reach
 # anyway and would let this case pass without any identity check at all.

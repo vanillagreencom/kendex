@@ -14,6 +14,27 @@ validate_runtime_dir() {
   runtime_dir_valid "$dir" "$token" \
     || die "runtime directory or token is missing, unsafe, or changed: $dir"
 }
+# THE PROBE IS THE GROUP, NOT ITS LEADER. A leader can exit while its children
+# run on — that is the ordinary shape of a CLI that forks — so probing the
+# leader answers "the first process finished", never "the tree is gone". Asking
+# `kill -0` about the negative pid asks about the whole group, which is what
+# both callers below actually need: a survivor holding a captured pipe open is
+# the failure they exist to prevent.
+process_group_alive() { kill -0 -- "-$1" 2>/dev/null; }
+stop_process_group() {
+  local leader="$1" grace="$2" end now
+  process_group_alive "$leader" || return 0
+  kill -TERM -- "-$leader" 2>/dev/null || true
+  end=$(($(date +%s) + grace))
+  while process_group_alive "$leader"; do
+    now=$(date +%s)
+    if [[ $now -ge $end ]]; then
+      kill -KILL -- "-$leader" 2>/dev/null || true
+      break
+    fi
+    sleep 0.1
+  done
+}
 second_opinion_runtime_setup() {
   TIMEOUT_CMD="$(command -v timeout || command -v gtimeout || true)"
   [[ -n "$TIMEOUT_CMD" ]] \
@@ -53,19 +74,7 @@ group_run() {
   shift
   [[ $# -gt 0 ]] || die "group command is missing"
   local cli_pid="" rc=0
-  stop_cli() {
-    [[ -n "$cli_pid" ]] || return 0
-    kill -0 "$cli_pid" 2>/dev/null || return 0
-    kill -TERM -- "-$cli_pid" 2>/dev/null || kill -TERM "$cli_pid" 2>/dev/null || true
-    local end=$(($(date +%s) + 5))
-    while kill -0 "$cli_pid" 2>/dev/null; do
-      if [[ $(date +%s) -ge $end ]]; then
-        kill -KILL -- "-$cli_pid" 2>/dev/null || kill -KILL "$cli_pid" 2>/dev/null || true
-        break
-      fi
-      sleep 0.1
-    done
-  }
+  stop_cli() { [[ -z "$cli_pid" ]] || stop_process_group "$cli_pid" 25; }
   trap 'stop_cli; exit 143' TERM HUP
   trap 'stop_cli; exit 130' INT
   trap stop_cli EXIT
@@ -109,8 +118,29 @@ launch() {
   [[ "$owned" == true || "$owned" == false ]] || die "owned must be true or false"
   [[ "$wait_slice" =~ ^[1-9][0-9]*$ && $wait_slice -lt 600 ]] \
     || die "wait slice must be positive and below 600 seconds"
-  local deadline token worker_pid log="$runtime_dir/worker.log"
+  # token and worker_pid are initialised, not merely declared: the cleanup below
+  # reads both, and it is armed before either is assigned. Under `set -u` a
+  # declared-but-unassigned local is still unbound, so a signal arriving in that
+  # first instant would fault the handler instead of running it.
+  local deadline token="" worker_pid="" log="$runtime_dir/worker.log"
   local worker_args worker_id
+  # THE WINDOW BETWEEN THE FORK AND THE PROTOCOL. Once the worker exists it can
+  # only be recovered through what launch prints and stopped through what it
+  # records, so until all of that is published the worker is unreachable — a
+  # cancelled or failed launch there strands a run nobody can wait on or stop.
+  # Armed before the fork, cleared after the last protocol line.
+  #
+  # It reads locals of this frame, so it must never run after launch RETURNS.
+  # That is why the traps are cleared at the end rather than gated on a flag:
+  # every path that reaches it — a signal, or `die` on a failed publish — is
+  # still inside the frame, where a flag would be readable but pointless.
+  cleanup_launch() {
+    [[ -z "$worker_pid" ]] || stop_process_group "$worker_pid" 30
+    ! runtime_dir_valid "$runtime_dir" "$token" || rm -rf -- "${runtime_dir:?}" || true
+  }
+  trap 'cleanup_launch; exit 143' TERM HUP
+  trap 'cleanup_launch; exit 130' INT
+  trap cleanup_launch EXIT
   token="$(date +%s).$$.$RANDOM"
   (umask 077 && set -C && printf '%s\n' "$token" > "$runtime_dir/token") \
     || die "cannot create runtime token: $runtime_dir/token"
@@ -162,6 +192,9 @@ launch() {
   printf 'wait:'
   printf ' %q' "$RUNTIME_SELF" wait "$artifact" "$runtime_dir" "$deadline" "$token" "$wait_slice"
   printf '\n'
+  # The run is now recoverable and stoppable by its consumer; the launcher's
+  # ownership of it ends here, and so does the window the traps guard.
+  trap - EXIT TERM HUP INT
 }
 second_opinion_detach_if_needed() {
   local artifact="$OUTPUT_PATH" owned=false attempts=1 budget runtime_dir
@@ -201,8 +234,20 @@ completion_line() {
 # in a form Linux and macOS both answer.
 #
 # UNVERIFIABLE NEVER PASSES. No ps, no record, no match — the pid is not ours,
-# which costs at worst an early 75 the caller resolves by rerunning, and never
-# a signal sent to a process that was never part of this run.
+# which costs at worst an early 75 the caller resolves by rerunning.
+#
+# WHAT THAT GUARANTEES, EXACTLY, because the guarantee is not "never": a pid is
+# signalled only while it still leads its own group AND still reports the start
+# time recorded at launch. `ps` reports that time to the whole second, so one
+# window remains — a pid reused by another group leader inside the same second
+# the worker started. Reaching it means wrapping the host's pid space within
+# that second; measured on this repo's Linux host, 4194304 pids against about
+# 6500 forks a second is roughly 639 seconds of churn to come back around, and
+# a reuse at any later second cannot match a record that is already fixed.
+# Finer tokens exist — Linux /proc/<pid>/stat field 22 resolves to 10ms — but
+# not portably, and 10ms narrows the window rather than closing it. One path on
+# every host is worth more than a hundredfold on a window this shape, so the
+# claim stays the one stated here rather than an absolute one.
 worker_identity() { # PID — "PGID STARTTIME" on stdout; 1 when unknowable
   local pid="$1" line
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
@@ -226,20 +271,14 @@ worker_is_ours() { # PID RUNTIME_DIR — 0 only when the pid is verifiably ours
   [[ "${current%% *}" == "$pid" ]]
 }
 # Stop a worker that outlived the run's deadline, and the CLI tree under it.
-# The group form is the point: the worker leads its own group, so this reaches
-# the external CLI it started rather than orphaning it.
+# Identity AUTHORISES the signal; the group primitive then does the work. The
+# two jobs are separate on purpose: re-testing identity per iteration would end
+# the loop the moment the worker itself exited, leaving its children running —
+# which is the same leader-shaped mistake, one level up.
 stop_worker() { # PID RUNTIME_DIR
-  local pid="$1" dir="$2" end
+  local pid="$1" dir="$2"
   worker_is_ours "$pid" "$dir" || return 0
-  kill -TERM -- "-$pid" 2>/dev/null || true
-  end=$(($(date +%s) + 5))
-  while worker_is_ours "$pid" "$dir"; do
-    if [[ $(date +%s) -ge $end ]]; then
-      kill -KILL -- "-$pid" 2>/dev/null || true
-      break
-    fi
-    sleep 0.1
-  done
+  stop_process_group "$pid" 30
 }
 wait_for_run() {
   local artifact="$1" runtime_dir="$2" deadline="$3" token="$4"

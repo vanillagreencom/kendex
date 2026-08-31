@@ -88,8 +88,8 @@ Options:
   --foreground      Mark this call as subject to a foreground harness cap
   -h, --help        Show this help
 With --foreground, run the printed wait command unchanged until terminal.
-Exit 75 means completion is still recoverable; exit 124 means the supervisor
-published its terminal deadline result.
+Exit 75 means completion is still recoverable; exit 124 means the run reached
+its deadline and was stopped.
 Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
 first target that is available AND runs a different model from this session —
 the model this session runs is never dispatched to, in any mode, forced or not.
