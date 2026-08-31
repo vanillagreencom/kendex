@@ -58,39 +58,50 @@ fn refused(commit: &str, reason: String) -> CoreError {
 /// that cannot be wrong in silence.
 const GIT_FLOOR: (u32, u32) = (2, 41);
 
-/// Asked once and then remembered — but only once it answers.
+/// Asked once and then remembered — but only a reading that clears the
+/// floor is worth remembering.
 ///
-/// A host does not change its git mid-run, so an answer is worth a process
-/// once and never again: a long session materializes many commits and only
-/// the first of them spends a spawn. A failure is worth nothing, though,
-/// and remembering one would be worse than not asking. `stdout` says
-/// `None` for a spawn that did not happen as readily as for a git that is
-/// not there, and a Mac without the command line tools installed has a
-/// `/usr/bin/git` shim that exits non-zero until they are: remembered,
-/// that one refusal would tell the user to install git and then keep
-/// refusing after they had. So the answer is kept and the failure is not,
-/// and the next checkout asks again.
+/// A host whose git can write a checkout does not stop being one mid-run,
+/// so that answer is worth a process once and never again: a long session
+/// materializes many commits and only the first of them spends a spawn.
+///
+/// Every other reading is worth nothing, and keeping one would outlive its
+/// cause. Two of them, and both are a person following the refusal's own
+/// advice. `stdout` says `None` for a spawn that did not happen as readily
+/// as for a git that is not there, and a Mac without the command line
+/// tools has a `/usr/bin/git` shim that exits non-zero until they are
+/// installed: remembered, that reading tells them to install git and then
+/// refuses all the same once they have. A reading below the floor is the
+/// same shape one step later — the app is open, the refusal says to
+/// upgrade, and a remembered 2.34 keeps refusing after they upgrade. Both
+/// recover on the next checkout instead of on the next restart, and the
+/// cost is one spawn per checkout only while kendex is refusing anyway.
 ///
 /// The lock is held across the asking, not merely around the remembering,
 /// so two publishes starting together spend one spawn between them rather
-/// than one each. On the path that fails they each spend one, which is the
-/// path that ends in a refusal either way.
+/// than one each. On the paths that ask again they each spend one, which
+/// are the paths that end in a refusal either way.
 fn git_version() -> Option<String> {
-    static REPORTED: Mutex<Option<String>> = Mutex::new(None);
-    remembered(&REPORTED, || stdout(Hardened::git(&["--version"], None)))
+    static CLEARED: Mutex<Option<String>> = Mutex::new(None);
+    reading(&CLEARED, || stdout(Hardened::git(&["--version"], None)))
 }
 
-/// The remembering itself, given the cell to remember in, so that what it
-/// keeps and what it does not can be shown without a git that fails.
-fn remembered(
-    cell: &Mutex<Option<String>>,
-    ask: impl FnOnce() -> Option<String>,
-) -> Option<String> {
+/// The asking and the remembering, given the cell to remember in, so that
+/// what it keeps and what it asks for again can be shown without a git
+/// that fails and without a git that is old.
+fn reading(cell: &Mutex<Option<String>>, ask: impl FnOnce() -> Option<String>) -> Option<String> {
     let mut kept = cell.lock().unwrap_or_else(PoisonError::into_inner);
-    if kept.is_none() {
-        *kept = ask();
+    if let Some(cleared) = kept.as_deref() {
+        return Some(cleared.to_owned());
     }
-    kept.clone()
+    let answer = ask();
+    if answer
+        .as_deref()
+        .is_some_and(|line| below_floor(Some(line)).is_none())
+    {
+        kept.clone_from(&answer);
+    }
+    answer
 }
 
 /// What a `git --version` line earns, or `None` when it clears the floor.
@@ -215,19 +226,25 @@ mod tests {
         assert!(silent.contains(NEEDED), "{silent}");
     }
 
-    /// An answer is kept, a failure is not. Remembering a failure would
-    /// outlive its cause: a Mac whose `/usr/bin/git` shim exits non-zero
-    /// until the command line tools are installed would be told to install
-    /// them and then refused all the same, for the rest of the session.
+    /// Only a reading that clears the floor is kept, and every other one
+    /// is asked for again on the next checkout.
+    ///
+    /// Both of the others are a person doing what the refusal told them
+    /// to. A Mac whose `/usr/bin/git` shim exits non-zero until the
+    /// command line tools arrive would be told to install them and then
+    /// refused all the same; a host on 2.34 would be told to upgrade and
+    /// then refused after upgrading. Remembering either makes the app's
+    /// own advice take a restart to work.
+    ///
     /// The keeping is what bounds the asking, so the count is asserted
-    /// with it: one spawn for a host that answers, however many checkouts
-    /// follow.
+    /// with it: one spawn for a host that clears the floor, however many
+    /// checkouts follow.
     #[test]
-    fn only_an_answer_is_remembered_and_only_asked_for_once() {
+    fn only_a_reading_that_clears_the_floor_is_remembered() {
         let cell = Mutex::new(None);
         let probes = std::cell::Cell::new(0);
         let ask = |answer: Option<&str>| {
-            remembered(&cell, || {
+            reading(&cell, || {
                 probes.set(probes.get() + 1);
                 answer.map(str::to_owned)
             })
@@ -241,19 +258,28 @@ mod tests {
             "a failure was remembered instead of asked again"
         );
 
-        let answer = Some("git version 2.55.0");
-        assert_eq!(ask(answer).as_deref(), answer);
+        let old = Some("git version 2.34.1");
+        assert_eq!(ask(old).as_deref(), old);
+        assert_eq!(ask(old).as_deref(), old);
+        assert_eq!(
+            probes.get(),
+            4,
+            "a git below the floor was remembered, so upgrading it would take a restart"
+        );
+
+        let current = Some("git version 2.55.0");
+        assert_eq!(ask(current).as_deref(), current);
         for _ in 0..29 {
             assert_eq!(
                 ask(None).as_deref(),
-                answer,
-                "the answer was not kept, so every checkout would ask again"
+                current,
+                "the reading was not kept, so every checkout would ask again"
             );
         }
         assert_eq!(
             probes.get(),
-            3,
-            "the answer cost one asking and the 29 checkouts after it cost none"
+            5,
+            "the reading cost one asking and the 29 checkouts after it cost none"
         );
     }
 
