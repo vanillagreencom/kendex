@@ -189,21 +189,54 @@ pub fn parse_tolerant(yaml: &str) -> Result<Parsed, String> {
     Ok(parsed)
 }
 
-/// Whether an inline value closes every flow collection it opens. Bracket
-/// depth, which is what tells `[a, b]` from `[` running on to the next
-/// line — a flow collection is the one value that continues at column 0,
-/// where an indent test reads it as a value that ended. A value opening
-/// none is closed by definition.
-pub fn flow_closes(value: &str) -> bool {
-    let mut depth = 0i32;
-    for c in value.chars() {
-        match c {
-            '[' | '{' => depth += 1,
-            ']' | '}' => depth -= 1,
-            _ => {}
+/// Whether this inline value is the whole of its node: a plain scalar
+/// opening no construct, or a quoted one whose closing quote is on the
+/// same line with nothing after it but whitespace or a comment.
+///
+/// Asked as an allowlist rather than as a list of ways a value can run
+/// on, because that list has been wrong three times: a block scalar
+/// continues indented, a flow collection continues at column 0, and so
+/// does an indentless block sequence. What a caller replacing one line
+/// needs is not "does this continue" but "is this bounded", and only the
+/// two shapes above are.
+///
+/// An empty value is not one of them: an entry with nothing after its
+/// colon takes its value from the lines below.
+pub fn value_is_whole(value: &str) -> bool {
+    match value.chars().next() {
+        None => false,
+        Some(quote @ ('"' | '\'')) => quoted_closes(value, quote),
+        Some(_) => is_plain_inline(value),
+    }
+}
+
+/// Whether the quoted scalar opening `text` closes on it, with nothing
+/// following but whitespace and a comment — the shapes YAML itself
+/// accepts there. Single quotes escape themselves (`''`); double quotes
+/// escape with `\`.
+fn quoted_closes(text: &str, quote: char) -> bool {
+    let mut chars = text.char_indices().skip(1);
+    let mut end = None;
+    while let Some((at, c)) = chars.next() {
+        if quote == '"' && c == '\\' {
+            chars.next();
+            continue;
+        }
+        if c == quote {
+            if quote == '\'' && text[at + 1..].starts_with('\'') {
+                chars.next();
+                continue;
+            }
+            end = Some(at + c.len_utf8());
+            break;
         }
     }
-    depth == 0
+    let Some(end) = end else {
+        return false;
+    };
+    let after = &text[end..];
+    let trimmed = after.trim_start_matches([' ', '\t']);
+    trimmed.is_empty() || (trimmed.starts_with('#') && trimmed.len() < after.len())
 }
 
 /// A plain inline value is one where verbatim capture and YAML agree apart

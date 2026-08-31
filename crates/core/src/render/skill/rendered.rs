@@ -54,19 +54,23 @@ pub(crate) fn with_name(text: &str, installed: &str) -> std::result::Result<Stri
         if found.is_some() {
             return Err("its frontmatter names it twice");
         }
-        // Blank and comment-only lines attach to the entry without
-        // extending its value (YAML ignores them); real indented content
-        // continues the scalar onto another line, and one line cannot
-        // stand in for it.
-        let continued = lines[index + 1..]
+        // Asked as an allowlist. Enumerating the ways a value can run on
+        // has been wrong three times — a block scalar continues indented,
+        // a flow collection and an indentless block sequence continue at
+        // column 0 — so the question is which shapes are provably one
+        // line rather than which are not. The value has to be whole on
+        // its own line, and what follows it has to open a new entry;
+        // blank and comment-only lines attach to neither, which is what
+        // YAML does with them.
+        let bounded = lines[index + 1..]
             .iter()
-            .map(|line| (line.starts_with([' ', '\t']), line.trim()))
-            .find(|(_, text)| !text.is_empty() && !text.starts_with('#'))
-            .is_some_and(|(indented, _)| indented);
-        // A flow collection continues at column 0, where the indent test
-        // reads it as a value that ended: `name: [` with `foo]` under it
-        // would leave the orphan standing beside the new name.
-        if continued || !crate::frontmatter::flow_closes(value.trim()) {
+            .map(|line| line.trim_end_matches(['\r', '\n']))
+            .find(|line| {
+                let text = line.trim();
+                !text.is_empty() && !text.starts_with('#')
+            })
+            .is_none_or(opens_entry);
+        if !crate::frontmatter::value_is_whole(value.trim()) || !bounded {
             return Err("its frontmatter's `name` runs on past its own line");
         }
         found = Some((start, start + line.trim_end_matches(['\r', '\n']).len()));
@@ -83,6 +87,14 @@ pub(crate) fn with_name(text: &str, installed: &str) -> std::result::Result<Stri
         ));
     };
     Ok(format!("{}{entry}{}", &text[..from], &text[to..]))
+}
+
+/// Whether this line opens a new top-level entry rather than continuing
+/// the one above it: unindented, and carrying a key. An indentless block
+/// sequence needs no clause of its own — it can only be the value of an
+/// entry whose own line held none, which the value test refuses first.
+fn opens_entry(line: &str) -> bool {
+    !line.starts_with([' ', '\t']) && line.contains(':')
 }
 
 /// A rendered tree as apply materializes it: relative path, bytes.
@@ -169,12 +181,6 @@ mod tests {
                 "---\nname: mine\n...\nBody.\n",
             ),
             ("---\nname: \"gh\"\n---\n", "mine", "---\nname: mine\n---\n"),
-            // One closing on its own line is replaced whole, as always.
-            (
-                "---\nname: [a, b]\ndescription: d\n---\n",
-                "mine",
-                "---\nname: mine\ndescription: d\n---\n",
-            ),
             (
                 "---\nname: gh\n  # note\ndescription: d\n---\n",
                 "mine",
@@ -236,13 +242,42 @@ mod tests {
                 "---\nname: gh\n  continued\n---\n",
                 "its frontmatter's `name` runs on past its own line",
             ),
-            // The value that continues at column 0.
+            // The values that continue at column 0, where an indent test
+            // reads them as a value that ended: a flow collection, and a
+            // block sequence with no indentation of its own.
             (
                 "---\nname: [\nfoo]\n---\n",
                 "its frontmatter's `name` runs on past its own line",
             ),
             (
                 "---\nname: {\nfoo: bar}\n---\n",
+                "its frontmatter's `name` runs on past its own line",
+            ),
+            (
+                "---\nname:\n- old\n---\n",
+                "its frontmatter's `name` runs on past its own line",
+            ),
+            (
+                "---\nname:\n- old\ndescription: d\n---\n",
+                "its frontmatter's `name` runs on past its own line",
+            ),
+            // A flow collection is no name a loader would take, and one
+            // closing on its own line is no more replaceable than one
+            // that does not: the allowlist admits a scalar or nothing.
+            (
+                "---\nname: [a, b]\ndescription: d\n---\n",
+                "its frontmatter's `name` runs on past its own line",
+            ),
+            // A line carrying no key opens no entry, so nothing here
+            // proves the name's own node ended on its line.
+            (
+                "---\nname: gh\njust text\n---\n",
+                "its frontmatter's `name` runs on past its own line",
+            ),
+            // An entry with nothing after its colon takes its value from
+            // the lines below, whatever they turn out to be.
+            (
+                "---\nname:\ndescription: d\n---\n",
                 "its frontmatter's `name` runs on past its own line",
             ),
         ] {
