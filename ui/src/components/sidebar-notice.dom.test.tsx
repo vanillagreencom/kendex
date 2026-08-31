@@ -327,6 +327,9 @@ describe("a replacement that went through", () => {
     );
     expect(said).toBeDefined();
     expect(said?.className).not.toContain("text-critical");
+    // It arrives in the render that takes the button away, so nothing
+    // reads it unless the paragraph is a live region.
+    expect(said?.getAttribute("role")).toBe("status");
     expect(useNoticeStore.getState().error).toBeNull();
     // And the action is gone rather than disabled: there is nothing left
     // to run, and the card now says what is beside the app.

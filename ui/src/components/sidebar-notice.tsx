@@ -142,9 +142,20 @@ export function SidebarNotice() {
 
       {/* What an install that went through still owed the person. The
           release is on disk and the next launch runs it, so this is a
-          sentence about the command beside the app and not a failure. */}
+          sentence about the command beside the app and not a failure.
+
+          `role="status"` because it arrives after the press, in the same
+          render that takes away the button the person was on: unannounced,
+          the only sentence saying what happened to their command is one
+          nothing reads out. The role carries a polite `aria-live` and
+          `aria-atomic` of its own, so neither is spelled again here. */}
       {note === null ? null : (
-        <p className="mt-2 break-words text-xs text-muted-foreground">{note}</p>
+        <p
+          role="status"
+          className="mt-2 break-words text-xs text-muted-foreground"
+        >
+          {note}
+        </p>
       )}
 
       <button
