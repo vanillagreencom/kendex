@@ -7,7 +7,8 @@
 # A `.env` file is never read. The TOML reader loads the [env] table only;
 # a duplicate key inside [env], a value outside the contract grammar
 # (single-line double-quoted, no `"`, no `\`), or a `[`-leading line that
-# is not a lone [name] header, fails the load.
+# is not a lone [name] header, fails the load — as does a leading UTF-8
+# BOM in any project file.
 #
 # Bug 2 (kendex#507): the settings loader clobbered caller-provided env. Parent
 # values must now win over every project file, while the settings < .env.local
@@ -199,15 +200,41 @@ s6_case "an unquoted value" $'[env]\nUNQ = bare' "unsupported syntax for UNQ"
 # quoted foreign header after [env]) whole tables if it passes as content.
 s6_case "a commented [env] header" $'[env] # comment\nHIDDEN = "x"' "unsupported table header shape"
 s6_case "a quoted foreign header after [env]" $'[env]\nGOOD = "y"\n["notes"]\nLEAK = "z"' "unsupported table header shape"
+# A UTF-8 BOM is neither whitespace nor `[` to this reader: a BOM'd first
+# header would leave every assignment outside any table — silent defaults.
+s6_case "a BOM-prefixed first header" "$(printf '\357\273\277')"$'[env]\nHIDDEN = "x"' "byte-order mark"
 
-# Scenario 7: a source the read itself cannot open fails the load. The
-# loader skips a source only when -f finds no regular file there; a
-# mode-000 file IS one, so the settings redirect and the .env.local
-# `source` are what see it. Nothing else in this suite would notice a
-# reader that swallowed the read error and resolved on an empty file.
-s7_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside a fresh project dir
-  local name="$1" stage="$2" want="$3" code=0 err proj
-  proj="$(mktemp -d "$TMP_ROOT/proj7.XXXXXX")"
+# Scenario 7: a BOM-prefixed .env.local refuses the load the same way. The
+# env file is SOURCED, and bash would read the BOM as part of the first
+# command name — the assignment it hides would be silently dropped.
+PROJ7="$TMP_ROOT/proj7"
+mkdir -p "$PROJ7"
+printf '\357\273\277BOMMED="x"\n' > "$PROJ7/.env.local"
+set +e
+s7_err=$(
+  set -euo pipefail
+  source "$LIB"
+  kendex_load_project_env "$PROJ7" 2>&1 >/dev/null
+)
+s7_code=$?
+set -e
+assert_eq "$s7_code" "1" "scenario 7: a BOM-prefixed .env.local fails the load"
+case "$s7_err" in
+  *"byte-order mark"*)
+    PASS=$((PASS + 1)); printf '  ok    scenario 7: the refusal names the BOM\n' ;;
+  *)
+    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 7: the refusal names the BOM\n        stderr: %s\n' "$s7_err" ;;
+esac
+
+# Scenario 8: a source is skipped only when ABSENT. A present-but-unusable
+# source (directory, dangling symlink, unreadable file) fails the load
+# loud, naming the path — silently treating it as absent would let a
+# lower-precedence value decide, the same fail-open the rg/gg/sr resolver
+# family refuses.
+s8_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside the project dir
+  local name="$1" stage="$2" want="$3" code=0 err proj="$TMP_ROOT/proj8"
+  rm -rf "$proj"
+  mkdir -p "$proj"
   ( cd "$proj" && eval "$stage" )
   set +e
   err=$(
@@ -217,21 +244,19 @@ s7_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside a fresh project 
   )
   code=$?
   set -e
-  if [[ "$code" -ne 0 && "$err" == *"$want"* ]]; then
-    PASS=$((PASS + 1)); printf '  ok    scenario 7: %s fails the load\n' "$name"
+  if [ "$code" -ne 0 ] && case "$err" in *"$want"*) true ;; *) false ;; esac; then
+    PASS=$((PASS + 1)); printf '  ok    scenario 8: %s fails the load and names the path\n' "$name"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 7: %s fails the load (code=%s err=%s)\n' "$name" "$code" "$err"
+    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 8: %s fails the load and names the path\n        code=%s stderr: %s\n' "$name" "$code" "$err"
   fi
 }
+s8_case "a DIRECTORY at .env.local" 'mkdir .env.local' ".env.local: source exists but is not a regular file"
+s8_case "a DANGLING SYMLINK at kendex.settings.toml" 'ln -s missing.toml kendex.settings.toml' "kendex.settings.toml: source is a symlink that does not resolve"
+s8_case "a DIRECTORY at .kendex/settings.toml" 'mkdir -p .kendex/settings.toml' "settings.toml: source exists but is not a regular file"
 if [ "$(id -u)" -eq 0 ]; then
-  printf '  skip  scenario 7: unreadable-source pins need a non-root reader (chmod 000 cannot deny root)\n'
+  printf '  skip  scenario 8: unreadable-source pin needs a non-root reader (chmod 000 cannot deny root)\n'
 else
-  s7_case "an UNREADABLE kendex.settings.toml" \
-    'printf "[env]\nX = \"y\"\n" > kendex.settings.toml && chmod 000 kendex.settings.toml' \
-    "kendex.settings.toml: Permission denied"
-  s7_case "an UNREADABLE .env.local" \
-    'printf "A=b\n" > .env.local && chmod 000 .env.local' \
-    ".env.local: Permission denied"
+  s8_case "an UNREADABLE kendex.settings.toml" 'printf "[env]\nX = \"y\"\n" > kendex.settings.toml && chmod 000 kendex.settings.toml' "kendex.settings.toml: source exists but is unreadable"
 fi
 
 echo

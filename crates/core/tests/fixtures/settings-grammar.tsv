@@ -12,6 +12,10 @@
 # sits, and a row asserting one would say the reader and the loaders
 # disagree — which is the one thing this corpus exists to refuse. Those are
 # pinned in crates/core/src/settings_template/tests.rs.
+# The leading-bom row carries the three BOM bytes literally, in the body
+# field where no reader of this file can mistake them for a header: it is
+# the one encoding the shell harness and the Rust side read identically,
+# since neither unescapes the other's octal or unicode spelling.
 #
 # name<TAB>verdict<TAB>key<TAB>expect<TAB>body ('\n' spells a newline)
 #   loads    the loaders load the file and export KEY as EXPECT ("quoted";
@@ -41,6 +45,7 @@ other-header-with-comment	refused	WAIT	-	[env]\n# How long to wait.\nWAIT = "900
 quoted-header	refused	WAIT	-	["env"]\n# How long to wait.\nWAIT = "900"
 array-of-tables-header	refused	WAIT	-	[[env]]\n# How long to wait.\nWAIT = "900"
 doubled-header	refused	WAIT	-	[env][env]\n# How long to wait.\nWAIT = "900"
+leading-bom	refused	WAIT	-	﻿[env]\n# How long to wait.\nWAIT = "900"
 hyphen-key	unread	FOO-BAR	-	[env]\n# A name no shell exports.\nFOO-BAR = "900"
 dot-key	unread	FOO.BAR	-	[env]\n# A name no shell exports.\nFOO.BAR = "900"
 quoted-key	unread	WAIT	-	[env]\n# How long to wait.\n"WAIT" = "900"

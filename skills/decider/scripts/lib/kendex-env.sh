@@ -24,7 +24,9 @@
 # standard: a line starting with `[` must be a lone `[name]` header, and
 # any other `[`-leading shape fails the load — headers decide which
 # assignments load, so one this reader cannot parse must never pass as an
-# ignorable line.
+# ignorable line. A file that begins with a UTF-8 byte-order mark is
+# refused the same way: the BOM is neither whitespace nor `[` nor a key
+# character, so the first header or assignment would silently misclassify.
 
 # Parent-process env snapshot (name/value pairs). Bash 3.2 (macOS system
 # bash) has no associative arrays, so the snapshot is a pair of parallel
@@ -40,12 +42,44 @@ kendex_parent_env_has() {
   return 1
 }
 
-# A source is skipped only when `-f` says there is no regular file there.
-# An unreadable one is not skipped: `source` fails on it and that failure is
-# this function's exit status.
+# A UTF-8 byte-order mark is neither whitespace nor `[` nor a key character
+# to any reader in either resolver family, so a BOM-prefixed first line
+# silently misfiles the header or assignment it hides. Refuse the file
+# whole, same discipline as the header rule. Read via stdin so the path is
+# never an operand.
+kendex_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
+  if [[ "$(head -c 3 < "$1" 2>/dev/null)" == $'\xEF\xBB\xBF' ]]; then
+    echo "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
+    return 1
+  fi
+}
+
+# A source is skipped only when it is ABSENT. A path that exists as
+# something else — directory, FIFO, socket, device — fails -f exactly like
+# an absent one, and a dangling symlink fails -e as well as -f, so -L is
+# what sees it at all: either shape would silently skip a configured
+# source and let a lower-precedence value decide. Same rule the
+# rg/gg/sr resolver family enforces on its sources.
+kendex_source_usable() { # PATH — 0 = readable regular file or absent; 1 + ::error otherwise
+  if [[ -f "$1" ]]; then
+    [[ -r "$1" ]] && return 0
+    echo "::error::$1: source exists but is unreadable (permission denied); a source is skipped only when it is absent" >&2
+    return 1
+  fi
+  { [[ -e "$1" || -L "$1" ]]; } || return 0
+  if [[ ! -e "$1" ]]; then
+    echo "::error::$1: source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
+  else
+    echo "::error::$1: source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
+  fi
+  return 1
+}
+
 kendex_source_env_file() {
   local file="$1"
+  kendex_source_usable "$file" || return 1
   [[ -f "$file" ]] || return 0
+  kendex_bom_guard "$file" || return 1
   # shellcheck source=/dev/null
   source "$file"
 }
@@ -67,12 +101,11 @@ kendex_decode_value() { # RAW — decoded value on stdout; 1 = not contract shap
   printf '%s' "${BASH_REMATCH[1]}"
 }
 
-# As in kendex_source_env_file, only an absent regular file is skipped: the
-# `< "$file"` redirect below fails on an unreadable one and the loop's
-# nonzero status is this function's.
 kendex_load_settings_file() {
   local file="$1"
+  kendex_source_usable "$file" || return 1
   [[ -f "$file" ]] || return 0
+  kendex_bom_guard "$file" || return 1
 
   local section="" line key value seen=" " lineno=0
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -145,8 +178,9 @@ kendex_load_project_env() {
   # Load order (lowest to highest among project files): settings, then
   # .env.local. kendex_load_settings_file skips parent keys directly; the
   # env file is sourced wholesale, so its clobbers are undone below. A
-  # refused load fails the whole call: resolving on a partial or silently
-  # reinterpreted file would be worse than stopping.
+  # refused load — settings or a BOM-prefixed .env.local — fails the whole
+  # call: resolving on a partial or silently reinterpreted file would be
+  # worse than stopping.
   kendex_load_settings_file "$project_root/kendex.settings.toml" || return 1
   kendex_load_settings_file "$project_root/.kendex/settings.toml" || return 1
   kendex_source_env_file "$project_root/.env.local" || return 1

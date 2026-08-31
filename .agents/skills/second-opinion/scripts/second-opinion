@@ -788,6 +788,9 @@ resolve_current_model() {
 # one never became this value.
 file_declares_current_model() {
   local file="$1" kind="$2" line trimmed in_env=1 lineno=0
+  # Same refusals the loader applies (BOM, then headers): this probe must
+  # not read a file the loader refuses.
+  kendex_bom_guard "$file" || return 2
   [[ "$kind" != "toml" ]] || in_env=0
   # `|| [[ -n "$line" ]]` so a final line with no trailing newline is still read.
   while IFS= read -r line || [[ -n "$line" ]]; do

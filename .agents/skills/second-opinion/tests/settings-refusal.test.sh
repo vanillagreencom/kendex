@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# A settings file the loader refuses (a malformed table header) is a
-# configuration error, never "undeclared": every second-opinion run aborts
-# at the startup project-env load naming the defect. Emitting
+# A settings file the loader refuses (malformed table header, leading UTF-8
+# BOM) is a configuration error, never "undeclared": every second-opinion
+# run aborts at the startup project-env load naming the defect. Emitting
 # the undeclared refusal instead would send the operator hunting a
 # declaration while the real fix is one line in the settings file. Sibling
 # of review-dual-model.test.sh scenario 33c, split out at the
@@ -29,24 +29,35 @@ cp -R "$REPO_ROOT/skills/second-opinion" "$proj/second-opinion"
 SO="$proj/second-opinion/scripts/second-opinion"
 
 echo "=== a refused settings file fails the run as a config error ==="
-printf '[env] # comment\nSECOND_OPINION_CURRENT_MODEL = "codex"\n' > "$proj/kendex.settings.toml"
-rc=0
-env -u SECOND_OPINION_CURRENT_MODEL "$SO" detect >/dev/null 2>"$TMP_ROOT/err" || rc=$?
-[ "$rc" -eq 1 ] && ok "the run exits 1 at the startup settings load" \
-  || fail "expected exit 1, got $rc: $(cat "$TMP_ROOT/err")"
-grep -q "unsupported table header shape" "$TMP_ROOT/err" && ok "the failure names the settings defect" \
-  || fail "stderr does not name the defect: $(cat "$TMP_ROOT/err")"
-# The marker proves SECOND-OPINION terminated on the refusal: without it,
-# the loader's own stderr plus detect's unrelated exit 1 satisfies every
-# other assertion even when the run tolerates the rejected load.
-grep -q "second-opinion: refusing to run on a rejected settings load" "$TMP_ROOT/err" \
-  && ok "the run's own refusal marker is stated" \
-  || fail "the refusal marker is missing: $(cat "$TMP_ROOT/err")"
-if grep -q "model undeclared" "$TMP_ROOT/err"; then
-  fail "a refused file must not read as an undeclared session"
-else
-  ok "not misreported as an undeclared session"
-fi
+for defect in header bom; do
+  case "$defect" in
+    header)
+      printf '[env] # comment\nSECOND_OPINION_CURRENT_MODEL = "codex"\n' > "$proj/kendex.settings.toml"
+      msg="unsupported table header shape"
+      ;;
+    bom)
+      printf '\357\273\277[env]\nSECOND_OPINION_CURRENT_MODEL = "codex"\n' > "$proj/kendex.settings.toml"
+      msg="byte-order mark"
+      ;;
+  esac
+  rc=0
+  env -u SECOND_OPINION_CURRENT_MODEL "$SO" detect >/dev/null 2>"$TMP_ROOT/err" || rc=$?
+  [ "$rc" -eq 1 ] && ok "($defect) the run exits 1 at the startup settings load" \
+    || fail "($defect) expected exit 1, got $rc: $(cat "$TMP_ROOT/err")"
+  grep -q "$msg" "$TMP_ROOT/err" && ok "($defect) the failure names the settings defect" \
+    || fail "($defect) stderr does not name the defect: $(cat "$TMP_ROOT/err")"
+  # The marker proves SECOND-OPINION terminated on the refusal: without it,
+  # the loader's own stderr plus detect's unrelated exit 1 satisfies every
+  # other assertion even when the run tolerates the rejected load.
+  grep -q "second-opinion: refusing to run on a rejected settings load" "$TMP_ROOT/err" \
+    && ok "($defect) the run's own refusal marker is stated" \
+    || fail "($defect) the refusal marker is missing: $(cat "$TMP_ROOT/err")"
+  if grep -q "model undeclared" "$TMP_ROOT/err"; then
+    fail "($defect) a refused file must not read as an undeclared session"
+  else
+    ok "($defect) not misreported as an undeclared session"
+  fi
+done
 
 # SECOND_OPINION_FOREGROUND_CAP is a statement about ONE session, so a project
 # file may not make it for every session in the repo. The refusal fires on the
