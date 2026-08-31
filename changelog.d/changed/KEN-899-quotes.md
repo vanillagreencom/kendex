@@ -1,3 +1,3 @@
-- Quote characters and bash's own metacharacters come out of a command before
-  its words are read, so `git commit "--no-verify"` and `true;git commit -n`
-  are refused as the bare flag is.
+- What bash removes while building a word now comes out first: quotes, a
+  backslash, a line continuation, braces, metacharacters. `g\it commit
+  --no-verify` is refused.

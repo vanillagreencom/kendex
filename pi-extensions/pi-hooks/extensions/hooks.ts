@@ -67,7 +67,13 @@ type Verdict = { block: true; reason: string } | undefined;
  * through the UI, never the agent. Any other non-zero status means the guard
  * did not reach a verdict, and a guard that did not run does not stand aside:
  * the command is refused, as the scripts themselves do when they cannot read
- * their input.
+ * their input. A run past the budget is refused ahead of all of that, because
+ * a killed process still carries an exit code and a hook that traps the signal
+ * can exit 0 on its way out — which is a run that judged nothing wearing the
+ * status of one that allowed.
+ *
+ * `budgetMs` exists so a suite can prove that path in milliseconds rather than
+ * in a minute; nothing but a test passes it.
  *
  * No script at either root allows the command, and that is deliberate. It means
  * kendex has not installed this hook here — the package is installable from npm
@@ -82,21 +88,32 @@ type Verdict = { block: true; reason: string } | undefined;
  * would put a second model of the install state in here, which is the mistake
  * this change removes.
  */
-async function runRenderedHook(name: string, command: string, ctx: ExtensionContext): Promise<Verdict> {
+export async function runRenderedHook(name: string, command: string, ctx: ExtensionContext, budgetMs: number = HOOK_BUDGET_MS): Promise<Verdict> {
 	const script = renderedHook(name, ctx);
 	if (!script) return undefined;
 
 	const payload = JSON.stringify({ tool_name: "Bash", tool_input: { command } });
-	const result = await runCommandAsync("bash", [script], ctx.cwd, HOOK_BUDGET_MS, payload);
+	const result = await runCommandAsync("bash", [script], ctx.cwd, budgetMs, payload);
 	const stderr = result.stderr.trim();
 
+	// The budget is read BEFORE any exit code, because a killed process still
+	// has one. `runCommandAsync` sends SIGTERM at the budget and the child gets
+	// a grace period to die, so a hook that traps the signal and exits 0 — or
+	// one whose last statement happens to succeed as it is torn down — settles
+	// as `timedOut: true, exitCode: 0`. Read in the other order, that was an
+	// allow: the one status this must never take from a run that was cut off.
+	// A hook stopped part way judged nothing, whatever it managed to exit with.
+	if (result.timedOut) {
+		return {
+			block: true,
+			reason: `pi-hooks: ${name} timed out after ${budgetMs}ms in ${ctx.cwd}, so this command was not judged; a guard that did not run does not stand aside.`,
+		};
+	}
 	if (result.exitCode === 2) return { block: true, reason: stderr || `${name} refused this command.` };
 	if (result.exitCode !== 0) {
 		return {
 			block: true,
-			reason: result.timedOut
-				? `pi-hooks: ${name} timed out after ${HOOK_BUDGET_MS}ms in ${ctx.cwd}, so this command was not judged; a guard that did not run does not stand aside.`
-				: `pi-hooks: ${name} exited ${result.exitCode} without judging this command${stderr ? `: ${stderr}` : "."}`,
+			reason: `pi-hooks: ${name} exited ${result.exitCode} without judging this command${stderr ? `: ${stderr}` : "."}`,
 		};
 	}
 	if (stderr && ctx.hasUI) ctx.ui.notify(stderr, "info");

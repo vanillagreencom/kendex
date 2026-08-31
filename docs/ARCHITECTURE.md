@@ -402,9 +402,10 @@ lives in one capability table read by core and UI.
   arming is the local act that asks for that, and a clone carries no hooks.
   Sidestepping an armed one is refused, whether by the no-verify flag, a cluster
   holding its letter, or a word carrying a `core.hooksPath` key: git skips
-  commit-msg too, unjudgeable here. It reads no shell, but drops the quote
-  characters and splits on bash's own metacharacters first, so the word judged
-  is the word bash would hand git: a bypass in a message, a heredoc or a comment
+  commit-msg too, unjudgeable here. It reads no shell, but first removes what
+  bash removes while assembling a word — quotes, an unquoted backslash, a line
+  continuation, brace-expansion braces — and splits on bash's own
+  metacharacters, so the word judged is the word bash would hand git: a bypass in a message, a heredoc or a comment
   reads as one, and a bypass assembled any other way, through an alias or an
   `include.path`, does not.
   It gates its working directory only, naming the one it judged where it cannot
