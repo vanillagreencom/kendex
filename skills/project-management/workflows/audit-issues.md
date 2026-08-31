@@ -154,7 +154,7 @@ Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_
 Tracker: [TRACKER] [OWNER/REPO]
 </delegation_format>
 
-`Worktree:` and its `Worktree Check:` always ship together, main repo included — fill both with the main checkout's absolute path, which the delegate proves against exactly as it would a worktree's. Omit `[OWNER/REPO]` when `TRACKER=linear`.
+`Worktree:` and its `Worktree Check:` always ship together. Fill both with the absolute path of the caller worktree § 4.2 step 2 resolves, which is the main checkout only when the main checkout is the caller. Omit `[OWNER/REPO]` when `TRACKER=linear`.
 
 ### 4.2 Collect and Validate
 

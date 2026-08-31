@@ -65,6 +65,8 @@ Otherwise, match `FEATURE` keywords and component paths to domain agents (projec
 Feature: [FEATURE]
 Research: [RESEARCH_PATH or "None"]
 Spec: [SPEC_PATH or "None"] — when set, its approach and workstreams are binding: do not re-litigate them; cut its phases into PR-sized issues
+Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
 
 List implementation issues for your domain only. Reply as a table with these columns:
 
@@ -113,6 +115,8 @@ Review proposed roadmap for: [FEATURE]
 
 Proposed project: [project_placement.project_name]
 Spec: [SPEC_PATH or "None"] — when set, the spec's phases bound the roadmap: report anything beyond them as out-of-spec, with why it is needed
+Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
 
 Organized issues:
 [organized_issues]

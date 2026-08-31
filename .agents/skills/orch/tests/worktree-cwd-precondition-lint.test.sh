@@ -22,11 +22,12 @@
 #
 #   1. A `Worktree: [TOKEN]` line is followed on the very next line by the
 #      canonical `Worktree Check:` line for that same TOKEN.
-#   2. A block that hands the delegate a repo-relative path — a bare path
-#      opening `.agents/`, `skills/` or `tools/` — carries that pair at
-#      all. Without it the delegate runs those paths wherever its shell
-#      happens to be. A block whose paths are all placeholders is out of
-#      scope: the caller resolves those, and the lint cannot judge them.
+#   2. EVERY block carries that pair. No path matcher decides which
+#      delegations need it: judging "does this delegate touch the repo"
+#      from the block's literal text missed blocks with no pair at all,
+#      then missed blocks whose paths are placeholders the caller fills.
+#      The pair costs two lines on a delegation that never touches the
+#      repo, and uniform is the only rule that cannot be wrong.
 #
 # Scope is every skill doc that can carry a delegation, in BOTH trees: the
 # `skills/` source and the `.agents/skills/` render agents actually load.
@@ -76,11 +77,11 @@ scan_worktree_precondition() {
   awk -v f="$1" -v canon="$CANON" '
     function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
     /^[[:space:]]*<delegation_format>[[:space:]]*$/ {
-      indel = 1; pending = 0; haswt = 0; relline = 0; relpath = ""; next
+      indel = 1; pending = 0; haswt = 0; delline = NR; next
     }
     /^[[:space:]]*<\/delegation_format>[[:space:]]*$/ {
       if (pending) printf "%s:%d: Worktree: [%s] ends the delegation with no Worktree Check line\n", f, pendline, token
-      if (indel && !haswt && relline) printf "%s:%d: delegation hands over the repo-relative path %s but carries no Worktree:/Worktree Check: pair\n", f, relline, relpath
+      if (indel && !haswt) printf "%s:%d: delegation carries no Worktree:/Worktree Check: pair\n", f, delline
       indel = 0; pending = 0; next
     }
     indel {
@@ -98,30 +99,7 @@ scan_worktree_precondition() {
         sub(/\].*$/, "", line)
         token = line; pendline = NR; pending = 1; haswt = 1
       }
-      if (!relline) {
-        probe = " " $0
-        if (match(probe, /[^A-Za-z0-9_.\/-](\.agents|skills|tools)\/[A-Za-z0-9._\/-]+/)) {
-          relline = NR
-          relpath = substr(probe, RSTART + 1, RLENGTH - 1)
-        }
-      }
     }
-  ' "$1"
-}
-
-# count_guarded_relpath_blocks <file>
-# Prints the number of delegation blocks that name a repo-relative path AND
-# carry a Worktree: line — the population rule 2 is meant to hold.
-count_guarded_relpath_blocks() {
-  awk '
-    /^[[:space:]]*<delegation_format>[[:space:]]*$/ { indel = 1; haswt = 0; hasrel = 0; next }
-    /^[[:space:]]*<\/delegation_format>[[:space:]]*$/ { if (indel && haswt && hasrel) n++; indel = 0; next }
-    indel {
-      if ($0 ~ /^[[:space:]]*Worktree:[[:space:]]*\[[A-Za-z_][A-Za-z0-9_]*\][[:space:]]*$/) haswt = 1
-      probe = " " $0
-      if (match(probe, /[^A-Za-z0-9_.\/-](\.agents|skills|tools)\/[A-Za-z0-9._\/-]+/)) hasrel = 1
-    }
-    END { print n + 0 }
   ' "$1"
 }
 
@@ -141,22 +119,13 @@ scan_trees() {
   done
 }
 
-# count_sites <root> — shipped Worktree Check lines under one tree.
-count_sites() {
-  find "$1" -name '*.md' -not -path '*/tests/*' -exec grep -c '^[[:space:]]*Worktree Check:' {} + 2>/dev/null |
+# count_blocks <root> — delegation blocks the scan opened under one tree.
+# Counting blocks rather than shipped check lines guards the scanner's own
+# unit: if the block opener stopped matching, every rule would pass on an
+# empty population while the docs still read as full of check lines.
+count_blocks() {
+  find "$1" -name '*.md' -not -path '*/tests/*' -exec grep -c '^[[:space:]]*<delegation_format>[[:space:]]*$' {} + 2>/dev/null |
     awk -F: '{ n += $NF } END { print n + 0 }'
-}
-
-# count_guarded <root> — guarded repo-relative blocks under one tree.
-count_guarded() {
-  total=0
-  while IFS= read -r doc; do
-    [ -n "$doc" ] || continue
-    total=$((total + $(count_guarded_relpath_blocks "$doc")))
-  done <<EOF
-$(find "$1" -name '*.md' -not -path '*/tests/*' | sort)
-EOF
-  printf '%d' "$total"
 }
 
 echo "=== orch delegation worktree-cwd-precondition lint ==="
@@ -179,17 +148,11 @@ fi
 # counted on its own and an empty population in EITHER reds.
 for root in "$SOURCE_ROOT" "$RENDER_ROOT"; do
   label="${root#$REPO_ROOT/}"
-  sites="$(count_sites "$root")"
-  guarded="$(count_guarded "$root")"
-  if [ "$sites" -gt 0 ]; then
-    pass "$label: the scan read $sites delegated Worktree Check line(s)"
+  blocks="$(count_blocks "$root")"
+  if [ "$blocks" -gt 0 ]; then
+    pass "$label: the scan opened $blocks delegation block(s)"
   else
-    fail "$label: no Worktree Check lines found — the scan matched nothing to check"
-  fi
-  if [ "$guarded" -gt 0 ]; then
-    pass "$label: the scan read $guarded repo-relative delegation block(s) carrying the pair"
-  else
-    fail "$label: no repo-relative delegation blocks found — the repo-path rule matched nothing"
+    fail "$label: no delegation blocks found — the scan matched nothing to check"
   fi
 done
 
@@ -306,28 +269,13 @@ else
   fail "lint MISSED a remedy an absolute path cannot deliver"
 fi
 
-# b.13 — RULE 2. A block that hands over a repo-relative path with no
-# Worktree:/Worktree Check: pair IS flagged: the delegate runs that path
-# wherever its shell happens to be.
-if [ -n "$(scan_worktree_precondition "$(probe relpath 'Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md\n\nArguments: --project-order')" )" ]; then
-  pass "lint flags a delegation naming a repo-relative path with no Worktree pair"
+# b.13 — RULE 2. A block with no Worktree:/Worktree Check: pair at all IS
+# flagged, whatever it hands over: a placeholder the caller fills with a
+# repo path is invisible to any matcher, so no block is out of scope.
+if [ -n "$(scan_worktree_precondition "$(probe nopair 'Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md\n\nArguments: --project-order')" )" ]; then
+  pass "lint flags a delegation carrying no Worktree pair"
 else
-  fail "lint MISSED a repo-relative delegation with no Worktree pair"
-fi
-
-# b.14 — the same block WITH the pair is not flagged.
-if [ -z "$(scan_worktree_precondition "$(probe relok "Follow workflow: .agents/skills/x/y.md\nWorktree: [WORKTREE_PATH]\n$CHECK")" )" ]; then
-  pass "lint accepts a repo-relative delegation carrying the pair"
-else
-  fail "lint false-flagged a repo-relative delegation that carries the pair"
-fi
-
-# b.15 — a block whose paths are ALL placeholders is out of scope: the
-# caller resolves them, and the lint cannot judge where they land.
-if [ -z "$(scan_worktree_precondition "$(probe placeholders 'Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md\nWrite: [INPUT_FILE_PATH]')" )" ]; then
-  pass "lint ignores a delegation whose paths are all placeholders"
-else
-  fail "lint false-flagged a placeholder-only delegation"
+  fail "lint MISSED a delegation with no Worktree pair"
 fi
 
 # b.5 — a Worktree: mention outside a delegation block is NOT scanned.
@@ -355,8 +303,8 @@ fi
 # half and a render half, and a defect planted in EITHER half must red.
 TWO="$TMP_ROOT/two-trees"
 mkdir -p "$TWO/skills/x" "$TWO/.agents/skills/x"
-GOOD="Follow workflow: .agents/skills/x/y.md\nWorktree: [WORKTREE_PATH]\n$CHECK"
-BROKEN='Follow workflow: .agents/skills/x/y.md\nWorktree: [WORKTREE_PATH]'
+GOOD="Worktree: [WORKTREE_PATH]\n$CHECK"
+BROKEN='Worktree: [WORKTREE_PATH]'
 write_half() { printf '<delegation_format>\n%b\n</delegation_format>\n' "$2" > "$TWO/$1/x/y.md"; }
 
 # c.1 — control: both halves carry the check, nothing is flagged. Without
@@ -397,10 +345,10 @@ fi
 
 # c.5 — the real run reached both trees, so parts a and b judged the shipped
 # render and not just the source.
-if [ "$(count_sites "$SOURCE_ROOT")" -gt 0 ] && [ "$(count_sites "$RENDER_ROOT")" -gt 0 ]; then
+if [ "$(count_blocks "$SOURCE_ROOT")" -gt 0 ] && [ "$(count_blocks "$RENDER_ROOT")" -gt 0 ]; then
   pass "the shipped scan covered skills/ and .agents/skills/ alike"
 else
-  fail "one of the two shipped trees carried no Worktree Check line"
+  fail "one of the two shipped trees carried no delegation block"
 fi
 
 echo

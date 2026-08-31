@@ -60,6 +60,9 @@ Delegate to the domain agent:
 <delegation_format>
 Analyze the impact of these research findings on your domain.
 
+Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+
 Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 
 Report with tables:
@@ -84,6 +87,9 @@ Delegate the same analysis to every affected domain agent in parallel, minus the
 
 <delegation_format>
 Synthesize the domain reports into a cross-cutting impact analysis.
+
+Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
 
 Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 
