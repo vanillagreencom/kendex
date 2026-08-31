@@ -243,10 +243,10 @@ describe("the action each channel allows", () => {
 
   // The command is kendex's own and the app cannot write where it sits,
   // which is neither of the two answers above: there is an owner, and the
-  // installer that put it there can write the directory. Said with the
-  // path, because a person may have more than one kendex and only one of
-  // them is the file this is about — and the offer is the installer, not
-  // that path, which is what keeps a root shell off a name an account can
+  // installer can write the directory it picks. Said with the path,
+  // because a person may have more than one kendex and only one of them is
+  // the file this is about — and the offer is the installer, not that
+  // path, which is what keeps a root shell off a name an account can
   // arrange.
   it("offers the installer for one only privilege withholds", async () => {
     const container = await show(
@@ -270,6 +270,9 @@ describe("the action each channel allows", () => {
     );
     // Nothing on the card invites a person to run anything as root.
     expect(container.textContent).not.toContain("sudo");
+    // And nothing promises the named file is what moves: install.sh picks
+    // its bin directory off PATH membership, which need not be that file.
+    expect(container.textContent).toContain("bin directory your PATH selects");
   });
 
   // Nothing kendex could name owns it, so the card says the command is

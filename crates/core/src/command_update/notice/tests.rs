@@ -163,16 +163,22 @@ fn the_privileged_arm_offers_a_command_no_path_reaches() {
     let system = offered("/usr/local/bin/kendex");
     let owned = offered("/home/someone/.local/bin/kendex");
     assert_eq!(system, owned);
-    for path in ["/usr/local/bin", "/home/someone", ".local/bin"] {
+    // Each command against the directory of the path it was built from,
+    // so both assertions red on an interpolation and neither passes for
+    // want of a fixture that could have carried it.
+    for (path, command) in [
+        ("/usr/local/bin", &system),
+        ("/home/someone/.local/bin", &owned),
+    ] {
         assert!(
-            !system.contains(path),
-            "the offered command carries {path}: {system}"
+            !command.contains(path),
+            "the offered command carries {path}: {command}"
+        );
+        // A root shell handed a bare name resolves it against sudo's own
+        // `secure_path`, which is the other half of the same defect.
+        assert!(
+            !command.contains("sudo"),
+            "the offered command elevates: {command}"
         );
     }
-    // A root shell handed a bare name resolves it against sudo's own
-    // `secure_path`, which is the other half of the same defect.
-    assert!(
-        !system.contains("sudo"),
-        "the offered command elevates: {system}"
-    );
 }

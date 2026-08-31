@@ -238,11 +238,11 @@ export const appUpdateCommandManagedNote = (manager: string): string =>
 export const APP_UPDATE_COMMAND_UNKNOWN_NOTE =
   "Update now updates the app only. Update the kendex command the way you installed it.";
 // The command is kendex's own — an installer recorded it — but it sits in
-// a directory this app cannot write, which is where install.sh puts it
-// with sudo. So the offer is a re-run of that installer, never a command
-// aimed at the path: an unprivileged account can arrange what sits there.
+// a directory this app cannot write. The offer is the installer, never a
+// command aimed at the path: an account can arrange what sits there. So
+// the sentence says what the installer does, not that this file moves.
 export const appUpdateCommandPrivilegeNote = (path: string): string =>
-  `Update now updates the app only. The kendex command at ${path} needs permissions this app does not have. Re-run the installer to update it:`;
+  `Update now updates the app only. The kendex command at ${path} needs permissions this app does not have. The installer installs kendex to the bin directory your PATH selects:`;
 // A whole-settings write the engine refused because the file moved under
 // it. Said wherever a change is one field and the retry is to press again.
 export const SETTINGS_MOVED_MESSAGE =

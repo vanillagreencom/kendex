@@ -35,14 +35,14 @@ fn requested_urls(os: &str, arch: &str) -> String {
 #[allow(clippy::unwrap_used)]
 fn run_install(os: &str, arch: &str, fail: Option<(&str, i32)>) -> (std::process::Output, String) {
     let tmp = tempfile::tempdir().unwrap();
-    run_install_in(os, arch, fail, tmp.path())
+    run_install_in(os, arch, fail, tmp.path(), &[])
 }
 
 /// The same run against a home the caller keeps, for a test that reads what
 /// the script left behind rather than only what it fetched.
 #[allow(clippy::unwrap_used)]
 fn run_install_at(os: &str, arch: &str, home: &Path) -> (std::process::Output, String) {
-    run_install_in(os, arch, None, home)
+    run_install_in(os, arch, None, home, &[])
 }
 
 /// What `uname -s` answers on the machine running these tests.
@@ -65,6 +65,7 @@ fn run_install_in(
     arch: &str,
     fail: Option<(&str, i32)>,
     home: &Path,
+    path_ahead: &[&str],
 ) -> (std::process::Output, String) {
     let fake = home.join("fake-bin");
     let bindir = home.join(".local/bin");
@@ -96,9 +97,16 @@ fn run_install_in(
         .env("KENDEX_REAL_HOME", "1")
         .env(
             "PATH",
+            // `path_ahead` sits between the fake tools and the home
+            // `bindir`, so a caller can put another of the script's
+            // candidates in front of the one it would otherwise find.
             format!(
-                "{}:{}:{}",
+                "{}:{}{}:{}",
                 fake.display(),
+                path_ahead
+                    .iter()
+                    .map(|dir| format!("{dir}:"))
+                    .collect::<String>(),
                 bindir.display(),
                 std::env::var("PATH").unwrap_or_default()
             ),
@@ -273,6 +281,67 @@ fn every_directory_the_installer_can_choose_is_a_candidate() {
             expanded.display()
         );
     }
+}
+
+/// The invocation `install.sh` publishes for itself, read out of the
+/// script's own header rather than restated here. A header this cannot
+/// parse fails the same way a changed command does, because a silent
+/// no-match would be the drift it exists to catch.
+#[allow(clippy::unwrap_used)]
+fn published_invocation(script: &str) -> String {
+    script
+        .lines()
+        .find_map(|line| {
+            let shown = line.strip_prefix('#')?.trim();
+            (shown.starts_with("curl ") && shown.ends_with("| sh")).then(|| shown.to_owned())
+        })
+        .expect("install.sh's header shows the curl invocation that runs it")
+}
+
+/// The command the app's update card hands a person whose `kendex` command
+/// sits where the app cannot write. They have no in-app remedy — that is
+/// what the card's arm means — so a command that has drifted from the one
+/// the script publishes leaves them with nothing that works, and `curl`
+/// failing inside a pipe into `sh` still exits 0.
+///
+/// Read against the script itself, the way the `bindir` list above is.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_card_offers_the_invocation_the_script_publishes() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+    assert_eq!(
+        published_invocation(&fs::read_to_string(&script).unwrap()),
+        kendex_core::command_update::INSTALLER_RERUN,
+        "install.sh publishes one invocation and the update card offers another"
+    );
+}
+
+/// Where a re-run of `install.sh` lands, which is what the card's
+/// privileged arm now says rather than promising the file it names moves.
+///
+/// The script picks its `bindir` by candidate order, not by `PATH` order:
+/// the home directory is tried first and taken whenever it is on `PATH` at
+/// all. So a machine whose record names `/usr/local/bin/kendex` and whose
+/// `PATH` has since gained `~/.local/bin` gets the command installed in the
+/// home directory, and the named file is left where it was. Driven with
+/// `/usr/local/bin` ahead of the home directory, which is the arrangement
+/// that would settle it the other way if `PATH` order decided.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_re_run_installs_where_path_membership_puts_it_not_at_a_named_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let (output, _) = run_install_in(HOST_UNAME, "x86_64", None, &home, &["/usr/local/bin"]);
+    let said = String::from_utf8_lossy(&output.stdout);
+    let installed = said
+        .lines()
+        .find_map(|line| line.strip_prefix("Installed the kendex command to "))
+        .unwrap_or_else(|| panic!("install.sh did not say where it installed:\n{said}"));
+    assert_eq!(
+        PathBuf::from(installed),
+        home.join(".local/bin/kendex"),
+        "install.sh chose {installed} with /usr/local/bin ahead of the home directory on PATH"
+    );
 }
 
 /// The same contract from the other end, run rather than read: install.sh

@@ -33,15 +33,18 @@ pub enum CommandNotice {
     /// Nothing names an owner and no record proves the file is kendex's,
     /// so there is no name to print and no command to offer.
     Unknown,
-    /// Kendex's own command, where this app cannot write. `command` is the
-    /// installer, which supplies the privilege the app lacks.
+    /// Kendex's own command, where this app cannot write. `path` names
+    /// the file the notice is about; `command` is the installer, which
+    /// installs to the directory it picks from `PATH` rather than to that
+    /// file.
     NeedsPrivilege { path: String, command: String },
 }
 
-/// The installer, run again: the update path for a command an installer
-/// put where the app cannot write. `install.sh` elevates its own write
-/// when its `bindir` needs it, and re-running it is what a person on that
-/// install already has.
+/// The invocation `install.sh` publishes for itself. The script is the
+/// source of it and this is its only spelling in Rust;
+/// `crates/cli/tests/install_script.rs` reads it out of the script's own
+/// header and fails when the two drift, the way the `bindir` constants in
+/// this crate are already pinned.
 ///
 /// It names no path, which is the whole of why it is this and not a
 /// command aimed at the file. `sudo kendex update` resolves a bare name
@@ -51,7 +54,19 @@ pub enum CommandNotice {
 /// because every route to that path — a write probe on a directory its
 /// owner can open up again, a prefix an account owns — is one that account
 /// can arrange.
-const INSTALLER_RERUN: &str = "curl -fsSL https://kendex.ai/install.sh | sh";
+///
+/// What it costs: `kendex update` holds every download to the release key
+/// before it writes, and this re-run does not — `install.sh` says so in
+/// its own header, because minisign is not on a machine that has installed
+/// nothing. So the offer trades a signature check for the escalation, and
+/// takes that trade because the command it replaces put a path the account
+/// controls in front of a root shell, which is the worse of the two. The
+/// card is text a person reads; nothing here runs either one.
+///
+/// It installs to the `bindir` the script picks from `PATH` membership,
+/// which need not be the file the card names — the copy beside it says so
+/// rather than promising that file moves.
+pub const INSTALLER_RERUN: &str = "curl -fsSL https://kendex.ai/install.sh | sh";
 
 impl CommandNotice {
     /// What the card owes a person about this command, or `None` where it
