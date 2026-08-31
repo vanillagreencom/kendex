@@ -221,10 +221,12 @@ describe("the package page's Update", () => {
     {
       loaded = true,
       kind = "skill" as ItemKind,
+      versions = newerThanInstalled,
       ...standing
     }: {
       loaded?: boolean;
       kind?: ItemKind;
+      versions?: VersionRow[];
       error?: string | null;
       checking?: boolean;
       overviewInFlight?: boolean;
@@ -232,7 +234,7 @@ describe("the package page's Update", () => {
   ) => {
     vi.mocked(commands.packageVersions).mockResolvedValue({
       status: "ok",
-      data: newerThanInstalled,
+      data: versions,
     });
     vi.mocked(commands.packageMeta).mockResolvedValue({
       status: "ok",
@@ -318,7 +320,7 @@ describe("the package page's Update", () => {
       error: "no network",
     });
     expect(updateButton(host)).toBeUndefined();
-    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_HERE);
+    expect(note(host)).toBe(UPDATE_NEEDS_CHECK_HERE);
     expect(host.textContent).not.toContain(UPDATES_CHECKING);
   });
 
@@ -331,7 +333,7 @@ describe("the package page's Update", () => {
       { loaded: false, error: "no network" },
     );
     expect(updateButton(host)).toBeUndefined();
-    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_HERE);
+    expect(note(host)).toBe(UPDATE_NEEDS_CHECK_HERE);
   });
 
   // The invariant the page's own comments claim, asserted as the absence
@@ -391,11 +393,19 @@ describe("the package page's Update", () => {
 
   // A read-only diff of two commits the page already holds. No state of
   // the update read bears on it, so none of them may take it away.
+  /** The note rendered where the button would be, read whole. The table's
+   *  wording is this sentence plus a stale-versions tail, so a substring
+   *  check would pass on either and the split this round made would go
+   *  unguarded at the layer that renders it. */
+  const note = (host: HTMLElement) =>
+    host.querySelector("p.text-sm.text-muted-foreground")?.textContent;
+
+  const preview = (host: HTMLElement) =>
+    [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === PREVIEW_CHANGES_LABEL,
+    );
+
   it("keeps Preview changes through every withheld state", async () => {
-    const preview = (host: HTMLElement) =>
-      [...host.querySelectorAll("button")].find(
-        (button) => button.textContent === PREVIEW_CHANGES_LABEL,
-      );
     for (const standing of [
       {},
       { loaded: false },
@@ -407,5 +417,16 @@ describe("the package page's Update", () => {
       );
       expect(preview(host)).toBeDefined();
     }
+  });
+
+  // A package already at its newest has one version, not two: latestRow is
+  // rows[0] whatever it is, so on a current timeline it is the installed
+  // row. Offering Preview there diffs a commit against itself, which
+  // resolves to an empty comparison the reader has to close.
+  it("offers no Preview when the only version is the installed one", async () => {
+    const host = await openWithUpdates([updateRow(VG)], {
+      versions: [version("a".repeat(40), true)],
+    });
+    expect(preview(host)).toBeUndefined();
   });
 });

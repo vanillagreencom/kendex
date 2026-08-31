@@ -94,10 +94,10 @@ type UpdatesReadStanding = Parameters<typeof settlingIn>[0] &
   Parameters<typeof unsettled>[0] &
   Parameters<typeof updatesReadState>[0];
 
-/** A read state nobody handled. The union is closed and every arm above
- *  answers, so reaching this means a new one was added without deciding
- *  what the page does under it — which would otherwise fall through to the
- *  row and could answer "nothing withheld" over a read nobody read. */
+/** Unreachable by construction — `read` is `never` here, so nothing calls
+ *  this and no test can reach it. Its point is the compile error a new
+ *  `UpdatesReadState` variant raises: without it that state would fall
+ *  through to the row and answer "nothing withheld" over an unread read. */
 const unhandledReadState = (state: never): never => {
   throw new Error(`unhandled update read state: ${String(state)}`);
 };

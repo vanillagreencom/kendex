@@ -42,9 +42,13 @@ export function PackageActions({
   name: string;
   primaryPath: string;
   updateAvailable: boolean;
-  /** Whether there are two versions to diff. Read-only, so no state of the
-   *  update read bears on it — a check in flight or a refusal to write
-   *  does not stop anyone looking at what changed. */
+  /** Whether there are two versions to diff: a newest that is not the
+   *  installed one, and an installed one to compare it against. A package
+   *  already at its newest has one version, and a diff of a commit with
+   *  itself is an empty comparison to close rather than something to read.
+   *  Read-only otherwise, so no state of the update read bears on it — a
+   *  check in flight or a refusal to write does not stop anyone looking at
+   *  what changed. */
   previewAvailable: boolean;
   /** Why there is no Update here, when the reason is one the update read
    *  carries: a kind core never brings current one package at a time, a

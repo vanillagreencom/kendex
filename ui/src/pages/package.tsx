@@ -138,9 +138,10 @@ export function PackagePage() {
     metaLoaded: meta != null,
     withheld,
   });
-  // Said where the button would be. A page with nothing newer to move to
-  // has nothing withheld to explain.
-  const updateWithheld = latest != null && !latest.installed ? withheld : null;
+  // A newer version to move to and an installed one to move from: what
+  // the read-only diff needs, and what the note below has to explain.
+  const newer = latest != null && !latest.installed;
+  const updateWithheld = newer ? withheld : null;
 
   // Every scope this package sits in, one at a time — each apply takes
   // that scope's writer lock — and stopping at the first that fails.
@@ -208,7 +209,7 @@ export function PackagePage() {
             name={group.name}
             primaryPath={primary.path}
             updateAvailable={canUpdate}
-            previewAvailable={latest != null && installed != null}
+            previewAvailable={newer && installed != null}
             withheldNote={updateWithheld}
             busy={mutating}
             onUpdate={() => latest && updateToLatest(latest)}
