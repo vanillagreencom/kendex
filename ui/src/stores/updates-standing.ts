@@ -7,14 +7,10 @@ import {
   type UpdateRow,
   type UpdatesReport_Serialize,
 } from "@/bindings";
-import {
-  invalidations,
-  type ReadState,
-  readOf,
-  readOrder,
-} from "@/lib/read-state";
+import { type ReadState, readOf, readOrder } from "@/lib/read-state";
 import { settled } from "@/lib/settled";
 import { type PendingFollow, withPending } from "./updates-follow";
+import { commits } from "./updates-writes";
 
 /** The slice a landing writes, and the two it reads. */
 interface Standing {
@@ -39,9 +35,6 @@ export function standingReads(
   get: () => { pendingFollows: PendingFollow[] },
 ) {
   const order = readOrder();
-  // Writes that have committed. An answer built before one may not carry
-  // it, which is what decides whether that answer may claim to be newest.
-  const commits = invalidations();
 
   // The one place a read of the standing lands, however it went. A failure
   // — a returned refusal and a rejected call alike, via `settled` — keeps
@@ -68,10 +61,6 @@ export function standingReads(
   };
 
   return {
-    land,
-    /** Say a write has committed. Every answer already out was built
-     *  before this moment and may not have it. */
-    committed: commits.moved,
     /** Begin an operation that answers with the standing itself, and take
      *  the landing for that answer.
      *

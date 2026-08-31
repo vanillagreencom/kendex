@@ -6,17 +6,13 @@
 // on screen until the read that follows the write lands, and its scope
 // holds while it is outstanding: an apply moves what is installed there,
 // and nowhere else.
-import {
-  commands,
-  type ItemKind,
-  type Scope,
-  type UpdateRow,
-} from "@/bindings";
+import type { ItemKind, Scope, UpdateRow } from "@/bindings";
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import type { ReadState } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
 import { settled } from "@/lib/settled";
 import { rowUnsettled } from "@/lib/updates-read-state";
+import { writeRev } from "./updates-writes";
 
 /** A follow switch moved but not yet answered for: the place it was moved
  *  in, and the position it was moved to. */
@@ -112,12 +108,7 @@ export function followSwitch({
     });
     try {
       const response = await settled(
-        commands.packageSetRev(
-          row.scope,
-          row.kind,
-          row.name,
-          auto ? null : hold,
-        ),
+        writeRev(row.scope, row.kind, row.name, auto ? null : hold),
       );
       if (response.status === "error") {
         // Nothing committed, so nothing is coming to replace the rows the

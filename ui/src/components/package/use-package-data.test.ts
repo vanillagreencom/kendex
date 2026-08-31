@@ -119,7 +119,10 @@ describe("packageVersionActions", () => {
       answer({ moved: [stale("claude")] }),
     );
     actions(false).updateToLatest(version("b".repeat(40)));
-    await vi.waitFor(() => expect(commands.packageUpdate).toHaveBeenCalled());
+    // Waits on the outcome rather than the call: the write is awaited
+    // through a wrapper, so the command having been called says nothing
+    // about the answer having landed.
+    await vi.waitFor(() => expect(toast.success).toHaveBeenCalled());
     expect(vi.mocked(commands.packageUpdate).mock.calls).toEqual([
       [ref.scope, ref.kind, ref.name],
     ]);
@@ -186,7 +189,7 @@ describe("packageVersionActions", () => {
       answer({ moved: [stale("claude")] }),
     );
     actions(true).updateToLatest(row);
-    await vi.waitFor(() => expect(commands.packageSetRev).toHaveBeenCalled());
+    await vi.waitFor(() => expect(toast.success).toHaveBeenCalled());
     expect(vi.mocked(commands.packageSetRev).mock.calls).toEqual([
       [ref.scope, ref.kind, ref.name, row.id],
     ]);

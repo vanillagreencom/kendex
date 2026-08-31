@@ -29,6 +29,7 @@ import type { PackageRef } from "@/stores/nav";
 import { useProblemsStore } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
+import { writeRev, writeUpdate } from "@/stores/updates-writes";
 
 export type PackageView =
   | { mode: "files"; file: string | null }
@@ -170,7 +171,7 @@ export function packageVersionActions(
 
   const switchTo = (row: VersionRow) => {
     const version = versionRowLabel(row);
-    return run(commands.packageSetRev(ref.scope, ref.kind, ref.name, row.id), {
+    return run(writeRev(ref.scope, ref.kind, ref.name, row.id), {
       moved: updatedToastLabel(`${displayName} to ${version}`),
       stalled: notSwitchedToastLead(displayName, version),
     });
@@ -183,12 +184,12 @@ export function packageVersionActions(
     held
       ? switchTo(latest)
       : run(
-          commands.packageUpdate(ref.scope, ref.kind, ref.name),
+          writeUpdate(ref.scope, ref.kind, ref.name),
           updateLines(displayName),
         );
 
   const follow = () =>
-    run(commands.packageSetRev(ref.scope, ref.kind, ref.name, null), {
+    run(writeRev(ref.scope, ref.kind, ref.name, null), {
       moved: FOLLOW_SOURCE_TOAST,
       stalled: FOLLOW_SOURCE_STALLED_TOAST,
     });

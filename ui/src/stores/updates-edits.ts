@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { commands, type HarnessId, type UpdateRow } from "@/bindings";
+import type { HarnessId, UpdateRow } from "@/bindings";
 import { FORK_ERROR_TITLE, forkedToastLabel } from "@/lib/copy";
 import {
   installedAsNewToastLabel,
@@ -12,6 +12,11 @@ import { caught } from "@/lib/settled";
 import { rowUnsettled } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
 import { useUpdatesStore } from "./updates";
+import {
+  writeDiscardEdits,
+  writeFork,
+  writeForkBeside,
+} from "./updates-writes";
 
 /** The ways out of an edited place, run under the updates store's busy
  *  flag so every control on the page waits on the same one — a fork, a
@@ -61,12 +66,7 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
   if (!harness) return;
   report(
     await run(async () => {
-      const response = await commands.packageFork(
-        row.scope,
-        row.kind,
-        row.name,
-        harness,
-      );
+      const response = await writeFork(row.scope, row.kind, row.name, harness);
       if (response.status === "error") return { error: response.error };
       toast.success(forkedToastLabel(packageDisplayName(row)));
       return { ok: null };
@@ -83,7 +83,7 @@ export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
   }
   report(
     await run(async () => {
-      const response = await commands.applyDiscardEdits(
+      const response = await writeDiscardEdits(
         row.scope,
         row.kind,
         row.name,
@@ -117,7 +117,7 @@ export const installAsNew = async (
   if (stale(row)) return UPDATE_NEEDS_CHECK_NOTE;
   const name = packageDisplayName(row);
   const outcome = await run<string | null>(async () => {
-    const response = await commands.packageForkBeside(
+    const response = await writeForkBeside(
       row.scope,
       row.kind,
       row.name,

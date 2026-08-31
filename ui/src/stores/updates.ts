@@ -21,9 +21,9 @@ import {
 } from "@/lib/update-outcome";
 import { rowUnsettled } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
-import { applyRow, applyRows } from "./updates-apply";
 import { followSwitch, type PendingFollow } from "./updates-follow";
 import { standingReads } from "./updates-standing";
+import { writeIgnored, writeRow, writeRows } from "./updates-writes";
 
 interface UpdatesState {
   rows: UpdateRow[];
@@ -71,7 +71,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
 
   const reportUpdate = (error: string) => showError(UPDATE_ERROR_TITLE, error);
 
-  const { beginOwn, committed, reload } = standingReads(set, get);
+  const { beginOwn, reload } = standingReads(set, get);
 
   /** What a commit-applying action says instead of running. Each captures
    *  values off the rows it was handed, so it may run only against rows a
@@ -101,9 +101,10 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         const response = await settled(commands.updatesRefresh());
         // The fetch reads the standing after fetching every mirror, so it
         // ranks by when it lands — unless something committed while it was
-        // out, in which case that operation's own read is the newer answer
-        // and this one says nothing about the rows.
-        landOwn(response);
+        // out, which its report would not carry. The mirrors are fetched
+        // either way, so an ordinary read picks them up ranked behind
+        // whatever committed.
+        if (!landOwn(response)) await reload();
         if (response.status === "error")
           showError(UPDATE_ERROR_TITLE, response.error);
       } finally {
@@ -115,7 +116,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       if (rowUnsettled(get(), row)) return needsCheck();
       set({ busy: true });
       try {
-        const answer = await caught(applyRow(row, reportUpdate));
+        const answer = await caught(writeRow(row, reportUpdate));
         let applied = false;
         if (answer.status === "error") {
           // A transport failure rejects rather than refusing, and only
@@ -155,7 +156,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           return;
         }
         const outcome = startBulk(skipped);
-        const answer = await caught(applyRows(rows, reportUpdate, outcome));
+        const answer = await caught(writeRows(rows, reportUpdate, outcome));
         // A rejection escapes the sequence without touching the outcome —
         // only this catch saw it, and success must not be claimed over it.
         if (answer.status === "error") {
@@ -183,30 +184,16 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     }),
 
     setIgnored: async (row, ignored) => {
-      const landOwn = beginOwn();
-      const response = await settled(
-        commands.updateSetIgnored(
-          row.scope,
-          row.kind,
-          row.name,
-          row.repo,
-          ignored,
-        ),
-      );
-      // The command answers with the overview it just rebuilt, which
-      // carries this write — good enough unless something ELSE committed
-      // while it was out, which its report would not have. Asked before
-      // the bump below, or this operation would rule out its own answer.
-      const landed = response.status === "ok" && landOwn(response);
-      // The preference is written before the overview is built, so even a
-      // refusal may have committed it.
-      committed();
-      if (landed) return;
+      const response = await settled(writeIgnored(row, ignored));
       if (response.status === "error")
         showError(UPDATE_ERROR_TITLE, response.error);
-      // It can persist the preference and then fail building the overview,
-      // so the rows on screen may no longer be the truth: one read answers
-      // either way.
+      // The command answers with the overview it rebuilt, and this reads
+      // it again anyway. That report carries this write but not one that
+      // landed beside it, and a single count cannot tell an operation's
+      // own commit from another's — so rather than reason about whose bump
+      // was whose, the ordinary read takes it, ranked behind whatever
+      // committed. The command can also persist the preference and then
+      // fail building the overview, which the same read answers.
       await reload();
     },
   };

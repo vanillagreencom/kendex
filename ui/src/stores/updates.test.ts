@@ -23,6 +23,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     updateSetIgnored: vi.fn(),
     packageSetRev: vi.fn(),
     packageUpdate: vi.fn(),
+    packageUpdateMany: vi.fn(),
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
   },
@@ -335,6 +336,12 @@ describe("updates store", () => {
       status: "ok",
       data: { rows: muted, warnings: [], lastFetched: null },
     });
+    // The mute reads the standing back rather than trusting its own
+    // report, so this is what it lands.
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: muted, warnings: [], lastFetched: null },
+    });
     await useUpdatesStore.getState().setIgnored(row({}), true);
     expect(useUpdatesStore.getState().rows).toEqual(muted);
 
@@ -573,6 +580,12 @@ describe("updates store", () => {
   it("muting keeps the row, flagged — and unmuting brings it back", async () => {
     const muted = [row({ ignored: true })];
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({
+      status: "ok",
+      data: { rows: muted, warnings: [], lastFetched: null },
+    });
+    // The mute reads the standing back rather than trusting its own
+    // report, so this is what lands.
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: { rows: muted, warnings: [], lastFetched: null },
     });
