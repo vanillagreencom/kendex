@@ -110,6 +110,7 @@ skills/orch/tests/ci_wait.sh	824
 skills/orch/tests/lanes.sh	890
 skills/orch/tests/oversee_watch_lanes.sh	815
 skills/orch/tests/queue_wait.sh	920
+skills/orch/tests/worktree-cwd-precondition-lint.test.sh	940
 skills/preflight/scripts/preflight	1289
 skills/review-gate/scripts/pr-watch.sh	871
 skills/review-gate/scripts/review-predicate-selftest.sh	2514

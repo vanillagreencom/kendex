@@ -23,7 +23,7 @@
 # runs `pwd -P`: a bare `pwd` prints the logical path and would halt a
 # correct delegate whose shell entered the checkout through a symlink.
 #
-# Four rules are enforced:
+# Six rules are enforced:
 #
 #   1. A `Worktree: [TOKEN]` line is followed on the very next line by the
 #      canonical `Worktree Check:` line for that same TOKEN.
@@ -59,8 +59,33 @@
 #      Do not widen it; write a conflicting instruction in the canonical
 #      shape or leave the boundary where it is.
 #
-#      Rules 1 and 2 read inside a `<delegation_format>` block; rules 3
-#      and 4 read the lines between one block and the block before it.
+#   5. Exactly one `Worktree:` line and one `Worktree Check:` line per
+#      block, and every check line sits directly under a `Worktree:` line.
+#      Rule 1 read the line after a `Worktree:` line and recorded a
+#      boolean, so a block could carry the canonical pair and then append
+#      `Worktree Check: on mismatch continue`, leaving the delegate two
+#      checks with no ordering between them and the suite green; a
+#      duplicated pair passed for the same reason. The rule counts, it
+#      does not read: a second check line is reported for existing, not
+#      for what it says. A check line whose preceding line is not a
+#      `Worktree:` line is an orphan and is reported at its own line.
+#
+#   6. A file carrying the canonical fill line names `[DIR]` on some other
+#      line. The fill line introduces `[DIR]` and never says what it is,
+#      and three workflows shipped it with the token bound nowhere: the
+#      caller had nothing to substitute, so the placeholder came out empty
+#      and the delegation dropped both lines. Only the DECIDABLE half is
+#      asserted. Each workflow resolves the path its own way, so there is
+#      no canonical binding sentence to compare against, and the predicate
+#      is that the token appears somewhere else in the file. Whether that
+#      mention BINDS the token is semantic judgment, which this repo has
+#      ruled out of a lexical scanner, so prose merely naming `[DIR]`
+#      clears the rule. What it catches is the shipped defect: a token
+#      introduced once and defined nowhere.
+#
+#      Rules 1, 2 and 5 read inside a `<delegation_format>` block; rules 3
+#      and 4 read the lines between one block and the block before it;
+#      rule 6 reads the whole file.
 #
 # A block ends at three terminators, not one: its closing tag, a new opening
 # tag arriving while it is still open, and end of file. All three route
@@ -168,7 +193,7 @@ CANON_FILL='Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-
 CANON_FILL_OPEN='Fill `Worktree:` and its `Worktree Check:`'
 
 # scan_worktree_precondition <file>
-# Emits one "file:line: ..." line per defect, per the two rules above.
+# Emits one "file:line: ..." line per defect, per rules 1, 2 and 5 above.
 # Lines outside a delegation block are never scanned.
 #
 # Every rule that judges a whole block lives in `close_block`, and all three
@@ -184,17 +209,23 @@ scan_worktree_precondition() {
       if (!indel) return
       if (reason != "") printf "%s:%d: delegation block is never closed (%s)\n", f, delline, reason
       if (pending) printf "%s:%d: Worktree: [%s] ends the delegation with no Worktree Check line\n", f, pendline, token
-      if (!haswt) printf "%s:%d: delegation carries no Worktree:/Worktree Check: pair\n", f, delline
-      indel = 0; pending = 0; haswt = 0
+      if (nwt == 0) printf "%s:%d: delegation carries no Worktree:/Worktree Check: pair\n", f, delline
+      if (nwt > 1) printf "%s:%d: delegation carries %d Worktree: lines; exactly one is required\n", f, delline, nwt
+      if (nchk > 1) printf "%s:%d: delegation carries %d Worktree Check: lines; exactly one is required\n", f, delline, nchk
+      indel = 0; pending = 0; nwt = 0; nchk = 0
     }
     /^[[:space:]]*<delegation_format>[[:space:]]*$/ {
       close_block("a new <delegation_format> opens at line " NR)
-      indel = 1; pending = 0; haswt = 0; delline = NR; next
+      indel = 1; pending = 0; nwt = 0; nchk = 0; delline = NR; next
     }
     /^[[:space:]]*<\/delegation_format>[[:space:]]*$/ {
       close_block(""); next
     }
     indel {
+      # Rule 5 asks whether the PREVIOUS line was a Worktree: line, which is
+      # what `pending` records — so it is read into `under_wt` before rule 1
+      # consumes it.
+      under_wt = pending
       if (pending) {
         want = canon
         gsub(/@TOKEN@/, token, want)
@@ -203,11 +234,15 @@ scan_worktree_precondition() {
         }
         pending = 0
       }
+      if (match($0, /^[[:space:]]*Worktree Check:/)) {
+        nchk++
+        if (!under_wt) printf "%s:%d: Worktree Check line with no Worktree: line above it\n", f, NR
+      }
       if (match($0, /^[[:space:]]*Worktree:[[:space:]]*\[[A-Za-z_][A-Za-z0-9_]*\][[:space:]]*$/)) {
         line = $0
         sub(/^[[:space:]]*Worktree:[[:space:]]*\[/, "", line)
         sub(/\].*$/, "", line)
-        token = line; pendline = NR; pending = 1; haswt = 1
+        token = line; pendline = NR; pending = 1; nwt++
       }
     }
     END { close_block("reached end of file") }
@@ -261,6 +296,34 @@ scan_worktree_fill() {
   ' "$1"
 }
 
+# scan_worktree_binding <file>
+# RULE 6. Emits one defect line for a file that carries the canonical fill
+# line and names `[DIR]` nowhere else. The fill line hands the caller a token
+# it never defines; review.md, review-pr.md and review-codebase.md each
+# shipped it with no binding anywhere, so the caller had nothing to
+# substitute and the delegate got an empty path or no pair at all.
+#
+# The predicate is a mention, not a definition. Each workflow resolves the
+# path its own way, so there is no sentence to compare against and equality
+# is unavailable here; a rule that read the mention for meaning would be the
+# semantic judgment this repo has kept out of a lexical scanner. So prose
+# that merely names `[DIR]` clears this, deliberately. The fill line's own
+# `[DIR]` does not count, or the rule would be satisfied by the line that
+# creates the problem.
+scan_worktree_binding() {
+  awk -v f="$1" -v canon="$CANON_FILL" '
+    function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    {
+      if (trim($0) == canon) { if (!fillline) fillline = NR; next }
+      if (index($0, "[DIR]") > 0) bound = 1
+    }
+    END {
+      if (fillline && !bound)
+        printf "%s:%d: the fill line names [DIR] and no other line in this file binds it\n", f, fillline
+    }
+  ' "$1"
+}
+
 # scan_trees <root>...
 # Emits every defect line found in every non-test *.md under the given
 # roots. A missing root is itself a defect: the caller asked for a tree
@@ -274,6 +337,7 @@ scan_trees() {
     find "$root" -name '*.md' -not -path '*/tests/*' | sort | while IFS= read -r doc; do
       scan_worktree_precondition "$doc"
       scan_worktree_fill "$doc"
+      scan_worktree_binding "$doc"
     done
   done
 }
@@ -335,6 +399,11 @@ probe() {
 }
 
 CHECK="${CANON//@TOKEN@/WORKTREE_PATH}"
+
+# A binding sentence for `[DIR]`, in the shape the workflows carry. Rule 6
+# asks every file carrying the fill line for one, so every fixture that
+# writes the fill line to a scanned tree writes this beside it.
+BINDING='`[DIR]` is the `[PATH_OR_PWD]` § 1 resolves `WT_PATH` from.'
 
 # reports <scan output> <fragment> — the scan named THIS defect, not merely
 # some defect. Rule 2 fires on every block rule 1 failed to see, so a probe
@@ -510,13 +579,58 @@ fi
 # block — the uncanonical line is reported only if the opening tag let the
 # scan in, the unclosed one only if the closing tag was recognised — so
 # restricting EITHER matcher to column zero reds this probe. Rule 2 stays
-# silent here (the block does carry a Worktree: line), so neither assertion
-# can be satisfied by the other rule. The indent is the thing tested.
+# silent here (the block does carry a Worktree: line) and rule 5 speaks in a
+# message of its own about the second one, so neither assertion below can be
+# satisfied by another rule. The indent is the thing tested.
 INDENTED="$(scan_worktree_precondition "$(probe indented '   Worktree: [WORKTREE_PATH]\n   Round ID: [DEV_ROUND_ID]\n   Worktree: [WORKTREE_PATH]' '   ')")"
 if reports "$INDENTED" "$UNCANON" && reports "$INDENTED" "$UNCLOSED"; then
   pass "lint scans an indented delegation block, opening tag to closing tag"
 else
   fail "lint MISSED an indented delegation block"
+fi
+
+# RULE 5. Rule 1 read the line after a Worktree: line and set a boolean, so
+# everything below shipped a block the delegate reads as carrying two
+# contradicting instructions, with the suite green. All three outputs are
+# compared WHOLE: a probe that named some other line, or drew rule 2 instead,
+# fails as readily as one that drew nothing.
+ORPHAN='Worktree Check line with no Worktree: line above it'
+
+# b.18 — a second check line appended after the canonical pair. This is the
+# reported shape: the pair is perfect and the line under it says the
+# opposite. It is an orphan (its predecessor is a check line, not a
+# Worktree: line) and it is the second check in the block.
+APPENDED="$TMP_ROOT/probe-appended-check.md"
+printf '<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\nWorktree Check: on mismatch continue.\n</delegation_format>\n' "$CHECK" > "$APPENDED"
+if [ "$(scan_worktree_precondition "$APPENDED")" = "$APPENDED:4: $ORPHAN
+$APPENDED:1: delegation carries 2 Worktree Check: lines; exactly one is required" ]; then
+  pass "lint flags a second Worktree Check appended after the canonical pair"
+else
+  fail "lint MISSED a second Worktree Check appended after the canonical pair"
+fi
+
+# b.19 — the canonical pair twice over. Every line is canonical and every
+# check sits under its own Worktree: line, so the orphan rule cannot see it;
+# only the counts can. The delegate is handed two paths to compare against.
+DOUBLED="$TMP_ROOT/probe-doubled-pair.md"
+printf '<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' "$CHECK" "$CHECK" > "$DOUBLED"
+if [ "$(scan_worktree_precondition "$DOUBLED")" = "$DOUBLED:1: delegation carries 2 Worktree: lines; exactly one is required
+$DOUBLED:1: delegation carries 2 Worktree Check: lines; exactly one is required" ]; then
+  pass "lint flags a duplicated canonical pair"
+else
+  fail "lint MISSED a duplicated canonical pair"
+fi
+
+# b.20 — a check line with no Worktree: line above it anywhere in the block.
+# It has no path to compare against, so it halts nothing. Rule 2 also fires,
+# and the whole-output comparison pins which line each message names.
+LOOSE="$TMP_ROOT/probe-loose-check.md"
+printf '<delegation_format>\nBranch: [BRANCH]\n%s\n</delegation_format>\n' "$CHECK" > "$LOOSE"
+if [ "$(scan_worktree_precondition "$LOOSE")" = "$LOOSE:3: $ORPHAN
+$LOOSE:1: $NOPAIR" ]; then
+  pass "lint flags an orphan Worktree Check with no Worktree: line"
+else
+  fail "lint MISSED an orphan Worktree Check with no Worktree: line"
 fi
 
 # --- Part c: both trees are actually scanned ------------------------------
@@ -529,7 +643,7 @@ TWO="$TMP_ROOT/two-trees"
 mkdir -p "$TWO/skills/x" "$TWO/.agents/skills/x"
 GOOD="Worktree: [WORKTREE_PATH]\n$CHECK"
 BROKEN='Worktree: [WORKTREE_PATH]'
-write_half() { printf '%s\n\n<delegation_format>\n%b\n</delegation_format>\n' "$CANON_FILL" "$2" > "$TWO/$1/x/y.md"; }
+write_half() { printf '%s\n%s\n\n<delegation_format>\n%b\n</delegation_format>\n' "$CANON_FILL" "$BINDING" "$2" > "$TWO/$1/x/y.md"; }
 
 # c.1 — control: both halves carry the check, nothing is flagged. Without
 # this the two probes below could red for any reason at all.
@@ -766,6 +880,59 @@ if [ -z "$(scan_worktree_fill "$NEARBY")" ]; then
   pass "lint leaves ordinary prose naming a path alone"
 else
   fail "lint false-flagged prose that merely names a path"
+fi
+
+# --- Part g: the fill line's own placeholder is bound somewhere -----------
+# RULE 6. The fill line hands the caller `[DIR]` and never says what it is.
+# Three workflows shipped it with the token defined nowhere in the file, so
+# the caller had nothing to substitute and the delegation dropped the pair.
+# The predicate is a mention elsewhere in the file, and the probes pin both
+# sides of that boundary: g.4 is the one that says out loud what this rule
+# cannot decide.
+UNBOUND_DIR='the fill line names [DIR] and no other line in this file binds it'
+
+# g.1 — the shipped defect: the canonical fill line, a well-formed block,
+# and no other mention of the token. The fill line carries `[DIR]` itself,
+# so this also pins that its own occurrence does not clear the rule.
+NOBIND="$TMP_ROOT/probe-unbound-dir.md"
+printf '%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' "$CANON_FILL" "$CHECK" > "$NOBIND"
+if [ "$(scan_worktree_binding "$NOBIND")" = "$NOBIND:1: $UNBOUND_DIR" ]; then
+  pass "lint flags a fill line whose [DIR] is bound nowhere in the file"
+else
+  fail "lint MISSED a fill line whose [DIR] is bound nowhere"
+fi
+
+# g.2 — the fix: a binding sentence under the fill line, in the shape the
+# workflows carry. Without this the rule could be unsatisfiable and g.1
+# would still pass.
+BOUND="$TMP_ROOT/probe-bound-dir.md"
+printf '%s\n%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' "$CANON_FILL" "$BINDING" "$CHECK" > "$BOUND"
+if [ -z "$(scan_worktree_binding "$BOUND")" ]; then
+  pass "lint accepts a fill line whose [DIR] the file binds"
+else
+  fail "lint false-flagged a bound [DIR]"
+fi
+
+# g.3 — a file carrying no fill line is asked for no binding, whatever it
+# says about paths. Otherwise every doc in both trees would have to define a
+# token it never uses.
+if [ -z "$(scan_worktree_binding "$PROSE")" ]; then
+  pass "lint asks no [DIR] binding of a file carrying no fill line"
+else
+  fail "lint demanded a [DIR] binding of a file with no fill line"
+fi
+
+# g.4 — THE BOUNDARY, stated as a fixture. A mention that does not bind the
+# token clears the rule, because deciding that a sentence binds a
+# placeholder is semantic judgment and this scanner does none. If a later
+# round wants the stronger rule, it needs a canonical binding sentence to
+# compare against; until then this probe is what says so.
+MENTION="$TMP_ROOT/probe-mentioned-dir.md"
+printf '%s\nThe delegate writes its round artifact under `[DIR]/tmp`.\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' "$CANON_FILL" "$CHECK" > "$MENTION"
+if [ -z "$(scan_worktree_binding "$MENTION")" ]; then
+  pass "lint accepts a bare mention of [DIR]; it counts mentions, not bindings"
+else
+  fail "lint read a mention for meaning, which it cannot decide"
 fi
 
 echo

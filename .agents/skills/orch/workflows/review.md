@@ -20,6 +20,7 @@ On-demand review of local changes: review, present findings, and offer to fix th
 Use the outputs as `BRANCH`, `ISSUE_ID` (empty means skip every workflow-state step), and `BASE_BRANCH`; `WT_PATH` is `git-context repo-root .`.
 
 Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+`[DIR]` is the `.` the line above resolves `WT_PATH` from.
 
 | Argument | `DIFF_RANGE` |
 |----------|-------------|
