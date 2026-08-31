@@ -407,7 +407,9 @@ if [[ "$setup_error" == *"$SCRIPTS/queue-wait"* && "$setup_error" == *"diagnosti
 eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" launch_failed "setup failure remains an active lifecycle"
 replay=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$replay")" resume_launch "setup failure cannot hand back before launch recovery"
+registered_runtime=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .runtime_dir); touch "$registered_runtime/registered-marker"
 launch_bounded "$watch"
+[[ -e "$registered_runtime/registered-marker" ]] && ok "registered attempt runtime is never reclaimed" || bad "retry reclaimed registered attempt runtime"
 eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" watching "same watch retries after setup repair"
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 
@@ -430,7 +432,9 @@ rm -f -- "$WATCH_SUPERVISOR_PID_GATE.enabled" "$WATCH_SUPERVISOR_PID_GATE.entere
 if [[ "$setup_rc" -ne 0 ]]; then ok "supervisor failure before ready exits nonzero"; else bad "supervisor failure before ready exited zero"; fi
 eq "$(jq -r .verdict "$artifact")" unknown "dead supervisor publishes its setup failure"
 old_inode=$(inode "$artifact")
+retry_state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829); reserved_runtime="$(jq -r .runtime_root <<<"$retry_state")/$watch-attempt-2"; mkdir "$reserved_runtime"; touch "$reserved_runtime/interrupted-marker"
 launch_bounded "$watch"
+[[ ! -e "$reserved_runtime/interrupted-marker" ]] && ok "retry reclaims only unregistered attempt runtime" || bad "interrupted reservation wedged retry"
 retry_artifact=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .artifact_path)
 [[ "$retry_artifact" != "$artifact" ]] && ok "retry reserves a fresh artifact identity" || bad "retry reused the dead supervisor artifact"
 touch "$RELEASE"; wait_file "$retry_artifact" || bad "retried supervisor verdict missing"

@@ -276,6 +276,8 @@ launch() {
       --max-wait) max_wait="${2:-}"; shift 2 ;; *) die "unknown launch option: $1" ;; esac
   done
   resolve_state; require_state
+  exec 8>"$STATE_FILE.launch.lock"
+  flock -w 10 8 || die "another launch attempt owns generation reservation"
   migrate_legacy_state
   [[ "$poll" =~ ^[1-9][0-9]*$ && "$max_wait" =~ ^[1-9][0-9]*$ && "$poll" -le "$max_wait" ]] || die "invalid wait bounds"
   snapshot=$(state_snapshot) || die "cannot snapshot prepared lifecycle"
@@ -307,6 +309,12 @@ launch() {
       || die "prepared attempt runtime is invalid: $runtime"
   else
     runtime="$runtime_root/$attempt_id"; artifact="$watch_dir/verdict-$attempt_id.json"
+    if [[ -e "$runtime" ]]; then
+      [[ "$(jq -r .runtime_dir <<<"$snapshot")" != "$runtime" &&
+         "$(jq -r '.launch_attempt_id // empty' <<<"$snapshot")" != "$attempt_id" ]] \
+        || die "registered launch attempt runtime cannot be reclaimed: $runtime"
+      rm -rf -- "$runtime" || die "cannot reclaim unregistered launch attempt runtime: $runtime"
+    fi
     mkdir -- "$runtime" || die "cannot reserve launch attempt runtime: $runtime"
     created=true; chmod 700 "$runtime"
     printf '%s\n' "$attempt_id" > "$runtime/token" && chmod 600 "$runtime/token" \
@@ -324,6 +332,7 @@ launch() {
     $created && { rm -f -- "$runtime/token"; rmdir -- "$runtime" 2>/dev/null || true; }
     die "prepared lifecycle was terminalized before launch"
   fi
+  flock -u 8; exec 8>&-
   if [[ "$method" == setsid ]]; then
     env "MERGE_QUEUE_SUPERVISOR_TOKEN=$supervisor_token" setsid -f "$SELF" __supervise "$STATE_FILE" "$WATCH_ID" "$attempt_id" "$runtime" "$artifact" "$deadline" "$waiter" "$poll" "$max_wait" >> "$log" 2>&1 \
       || { launch_failure "setsid could not launch supervisor; see $log" "$attempt_id" "$runtime" "$artifact" "$supervisor_token"; die "detached supervisor launch failed; see $log"; }
