@@ -39,12 +39,39 @@ re-renders every file, and the diff says which doctrine the repo moved to. The
 marker is also how `render`, `adopt` and the `orphan` validator tell a
 generated file from a hand-written one.
 
+**The marker gate is read on the file opened for the replacement**, never on an
+earlier read of the repo. A path whose marker is absent at that moment fails
+naming the path rather than being replaced — the same form § `AGENTS.md` uses
+for a region that moved between the build and the write, and for the same
+reason. The gate is what stops a render from destroying hand-written bot files,
+so proving it against a copy read before the write phase leaves the whole write
+phase as a window: a hand edit, a marker deletion, or another run landing in it
+would have the render overwrite exactly the content the gate exists to protect,
+silently. `orphan` keeps its pre-write read of the repo, because it reports and
+writes nothing.
+
 **Write phase.** The generator builds and validates a complete scratch tree,
 writes a manifest of every path it is about to replace, then replaces them.
 A failure part way through leaves the manifest, so re-running `render` finishes
 the set, and `check` reds on every path still carrying the old bytes until it
 does. What the design does not claim is an atomic multi-file replacement: no
 filesystem offers one, and a mixed tree that says so beats one that does not.
+
+**Each individual replacement is atomic**, the `AGENTS.md` splice included. An
+interrupted write leaves the old bytes, never a truncated file. That is what
+makes the mixed tree above a recoverable state rather than a lost one: every
+path holds either its old content or its new one, so a recovery render has
+something to compare and `check` has something to report. It matters most for
+`AGENTS.md`, which the splice makes a genuine read-modify-write during the write
+phase — a truncate-then-write interrupted midway would leave the repo's own file
+cut off, and that file is the doctrine root three of the five bots read. This
+repo's own convention is the mechanism: write a temp file and rename it over the
+target, one temp name per write.
+
+The rest of the write path — how the lock is acquired and released, where the
+scratch tree lives and how it is made unique per run, where the manifest lives
+and when it is removed — is the generator's to define. This spec states the
+properties a caller can rely on; KEN-1006 owns the mechanics that hold them.
 
 `AGENTS.md` is outside that scheme, because it is the one output whose
 non-owned bytes belong to the repo. Carrying a build-phase copy of the whole

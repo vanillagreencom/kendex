@@ -102,10 +102,12 @@ The generator offers three verbs.
 - `render` writes every enabled surface from doctrine plus the repo TOML, after
   validating what it built. It builds and validates in a scratch tree first, so
   a validator failure leaves the repo untouched; a failure during the write
-  phase is reported naming every path already replaced. `AGENTS.md` is the
-  exception to scratch-then-replace, because it is the one output whose
-  non-owned bytes belong to the repo: what the build produces is the region's
-  body, and the write splices it into the file's bytes read at write time.
+  phase is reported naming every path already replaced, each of which holds
+  either its old bytes or its new ones — every replacement is atomic, so an
+  interrupt never leaves a truncated file. `AGENTS.md` is the exception to
+  scratch-then-replace, because it is the one output whose non-owned bytes
+  belong to the repo: what the build produces is the region's body, and the
+  write splices it into the file's bytes read at write time.
   The validators that judge repository state rather than emitted bytes read the
   repo, before the write, so a render that would orphan a file fails instead of
   reporting a clean pass and then orphaning it. `schemas/validators.md` § Where
@@ -116,7 +118,9 @@ The generator offers three verbs.
   finding naming the path and the differing region.
 - `adopt` is the one-time verb for a repo that already has hand-written bot
   files. `render` refuses to replace a file at a generated path that does not
-  carry this package's marker; `adopt` takes such a file over, printing what it
+  carry this package's marker, and it reads that marker on the file it has
+  opened to replace rather than on some prior pass over the repo, so nothing
+  can slip into the gap; `adopt` takes such a file over, printing what it
   replaced so the diff shows the content that has to survive in the TOML.
 
 There is no install-time placement step, no overwrite prompt, and no merge of
