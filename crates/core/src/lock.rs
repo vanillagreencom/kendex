@@ -16,22 +16,30 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// The floor is not ceremony. Every field a version added is a fact this
 /// build reads and an older record does not carry — which bytes are whose,
 /// where an installed set sits, why an installation exists, which project
-/// wrote the record — and read as
-/// absent each of those is a wrong answer rather than a missing one: a set
-/// placeable at nothing comes current on the next update of anything else,
-/// an installation with no reason recorded is swept as one nobody asked
-/// for, and a lock naming no project would refresh a nested checkout's
-/// files as this project's and write the record back with nothing left to
-/// catch it. A bump is what stops an older build reading a newer record
-/// and dropping what it did not understand on its next write.
+/// wrote the record — and read as absent each of those is a wrong answer
+/// rather than a missing one: a set placeable at nothing comes current on
+/// the next update of anything else, an installation with no reason
+/// recorded is swept as one nobody asked for, and a lock naming no project
+/// would refresh a nested checkout's files as this project's and write the
+/// record back with nothing left to catch it. A bump is what stops an
+/// older build reading a newer record and dropping what it did not
+/// understand on its next write.
 ///
-/// Version 9 is this shape without the record a pi hook's move out of the
-/// directory pi reserved once left behind. Dropping a field bumps for the
-/// same reason adding one does, and for a sharper one here: the build that
-/// still looks for that record would find it absent, read the default as
-/// "this install never left the reserved name", and go looking under a
-/// directory the person now owns. Against version 9 it refuses instead.
-pub const LOCK_VERSION: u32 = 9;
+/// Version 9 dropped the record a pi hook's move out of the directory pi
+/// reserved once left behind. Dropping a field bumps for the same reason
+/// adding one does, and for a sharper one there: the build that still
+/// looks for that record would find it absent, read the default as "this
+/// install never left the reserved name", and go looking under a directory
+/// the person now owns. Against version 9 it refuses instead.
+///
+/// Version 10 is that shape without the ledger naming which skill seeded
+/// each `kendex.settings.toml` key and what the comment block seeding last
+/// wrote hashed to. Absence is a write here rather than a stale read: the
+/// build that still looks for that ledger finds none, takes it for a
+/// project nothing has seeded yet, and writes the template comments back
+/// over the keys the person deleted — the one thing the ledger's removal
+/// was for. Against version 10 it refuses the record instead.
+pub const LOCK_VERSION: u32 = 10;
 
 /// The lock file a project scope carries. The global lock is `lock.json`
 /// under the app's own directory ([`Env::global_lock_file`]).
