@@ -345,3 +345,42 @@ fn install_sh_records_the_command_it_installed() {
     });
     assert_eq!(recorded.path, PathBuf::from(installed));
 }
+
+/// A record the script cannot write costs the app-side update and never
+/// the install: the run says so on stderr and carries on. The branch fires
+/// on either write behind it failing — here the record path is a directory,
+/// so `mkdir -p` finds the state directory already there and the redirect
+/// has nowhere to land. A mode bit would have been the other spelling, and
+/// a run acting as root writes through those.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn install_sh_says_when_it_cannot_record_the_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    // Asked of the resolver: the record path differs by platform, and a
+    // second spelling here agrees until it does not.
+    let env = kendex_core::env::Env::host_rooted(&home);
+    fs::create_dir_all(env.installed_command_file()).unwrap();
+
+    let (output, _) = run_install_at(HOST_UNAME, "x86_64", &home);
+    let said = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "a record that would not be written cost the install itself:\n{said}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Installed the kendex command to"),
+        "the command was never installed, so the record is not what this proves:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        said.contains("could not record the command's identity"),
+        "the run said nothing about the record it did not write:\n{said}"
+    );
+    assert_eq!(
+        kendex_core::command_update::recorded_command(&env),
+        None,
+        "the app was handed a record install.sh never wrote"
+    );
+}

@@ -140,8 +140,9 @@ fn the_forms_clap_answers_itself_record_the_command_too() {
 /// last. Refusing the name that is taken cannot do that.
 ///
 /// The unparseable record itself stays; `kendex update` rewrites it,
-/// because that is the run replacing the bytes. Until then the app reads
-/// no record and refuses the command, which is the safe direction.
+/// because that run records the file it is running from. Until then the
+/// app reads no record and refuses the command, which is the safe
+/// direction.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_already_there_is_not_written_over_by_a_first_run() {
@@ -181,6 +182,62 @@ fn a_record_already_there_is_not_written_over_by_a_first_run() {
     assert!(
         !home.join("no/such/kendex").exists(),
         "the fixture exists, so this proves nothing"
+    );
+}
+
+/// Concurrent first runs leave one whole record and nothing beside it.
+///
+/// Not a proof of the ordering — two threads rarely land inside the window
+/// that would show it, and a version deciding by reading passes this too.
+/// What stands behind it is `create_new`: the name is taken or it is not,
+/// so the run that loses writes nothing at all, and the record reads as
+/// the one line the other put there rather than as two answers over each
+/// other.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn concurrent_first_runs_leave_one_whole_record() {
+    if no_record_on_this_runner() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = kendex_core::env::Env::host_rooted(&home);
+    let theirs = home.join("theirs/kendex");
+    let second = home.join("second/kendex");
+    for (path, bytes) in [
+        (&theirs, b"the kendex they installed".as_slice()),
+        (&second, b"a second copy of kendex".as_slice()),
+    ] {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+
+    let both = std::thread::scope(|scope| {
+        let a = scope.spawn(|| kendex_core::command_update::record_first_run(&env, &theirs));
+        let b = scope.spawn(|| kendex_core::command_update::record_first_run(&env, &second));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    assert!(both.0.is_ok() && both.1.is_ok(), "{both:?}");
+
+    let recorded = kendex_core::command_update::recorded_command(&env).unwrap();
+    assert!(
+        recorded.path == theirs || recorded.path == second,
+        "the record names {}",
+        recorded.path.display()
+    );
+    assert_eq!(
+        fs::read_to_string(env.installed_command_file()).unwrap(),
+        format!("{}\n", recorded.path.display()),
+        "the record holds more than the line the run that won wrote"
+    );
+    let beside: Vec<_> = fs::read_dir(env.installed_command_file().parent().unwrap())
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
+        .filter(|name| name.to_string_lossy().starts_with("installed-command."))
+        .collect();
+    assert!(
+        beside.is_empty(),
+        "files left beside the record: {beside:?}"
     );
 }
 

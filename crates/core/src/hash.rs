@@ -131,18 +131,6 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
     hex(&hasher.finalize())
 }
 
-/// Plain SHA-256 over these bytes, hex, with nothing framed in — the
-/// digest `sha256sum` and `shasum -a 256` print for a file holding them.
-///
-/// [`hash_bytes`] is kendex's own encoding and only kendex can produce it.
-/// This one is what a shell script and this build can both compute over one
-/// file and get the same answer for, which is what the installed-command
-/// record needs: `install.sh` writes the digest of the binary it installed
-/// and the app checks the file it found against it.
-pub fn sha256_hex(bytes: &[u8]) -> String {
-    hex(&Sha256::digest(bytes))
-}
-
 /// The hash an in-memory rendered tree will have once written — mirrors
 /// `hash_tree` so plans can compare desired vs. disk without materializing.
 pub fn hash_files(files: &[(std::path::PathBuf, Vec<u8>)]) -> String {

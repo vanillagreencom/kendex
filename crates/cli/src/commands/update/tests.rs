@@ -485,7 +485,7 @@ fn an_update_records_the_command_it_is_running_as() {
 /// A run that finds nothing to do still records: the path is what an
 /// install made before this record existed is missing.
 #[test]
-fn a_run_with_nothing_to_do_records_the_bytes_already_installed() {
+fn a_run_with_nothing_to_do_still_records_the_command() {
     if no_record_on_this_runner() {
         return;
     }

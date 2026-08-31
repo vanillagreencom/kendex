@@ -56,8 +56,6 @@ impl HostProbe for Fake {
         self.present.iter().any(|p| Path::new(p) == path)
     }
 
-    /// Nothing routed through this fake asks either: which installer owns
-    /// a path is a question about the path, not about the bytes at it.
     fn on_path(&self, command: &str) -> bool {
         self.on_path.iter().any(|c| c == command)
     }

@@ -7,6 +7,10 @@
 mod fixture_url;
 use fixture_url::file_url;
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -392,10 +396,12 @@ fn the_app_version_is_the_one_kendex_version_prints() {
         .as_str()
         .expect("the app bundle names a version");
 
-    let said = Command::new(env!("CARGO_BIN_EXE_kendex"))
-        .arg("--version")
-        .output()
-        .unwrap();
+    // Through the file's own runner: `--version` bootstraps the installed
+    // command record before clap answers, and that write belongs in this
+    // test's fixture rather than in the account running the suite.
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let said = kendex_in(&home, &home, &["--version"], &[]);
 
     assert_eq!(
         String::from_utf8_lossy(&said.stdout).trim(),

@@ -130,16 +130,16 @@ fn write_the_command(env: &Env, path: &Path) -> Result<(), String> {
 /// verb writes the first one.
 ///
 /// Only the first, and first is the filesystem's answer rather than this
-/// function's: a record already here is repointed by the run that replaces
-/// the bytes it names and by nothing else. A second kendex on the machine
-/// would otherwise take the record off the one a person installed merely by
-/// being run once, and the app would then carry the copy nobody uses and
-/// leave the one they do.
+/// function's: a record already here is repointed by `kendex update`, which
+/// records the file it is running from, and by no other verb. A second
+/// kendex on the machine would otherwise take the record off the one a
+/// person installed merely by being run once, and the app would then carry
+/// the copy nobody uses and leave the one they do.
 ///
 /// A record already present but unreadable stays as it is. `recorded_command`
 /// reads it as no record and the app refuses the command, which is the safe
-/// direction; `kendex update` rewrites it, because that is the run replacing
-/// the bytes.
+/// direction; `kendex update` rewrites it, because that run records the
+/// file it is running from.
 ///
 /// A run acting as root writes nothing here either — see [`record_as`].
 pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
