@@ -73,10 +73,17 @@ group_run() {
   local stderr_file="$1"
   shift
   [[ $# -gt 0 ]] || die "group command is missing"
-  local cli_pid="" rc=0
+  local cli_pid="" rc=0 cancel_rc=""
   stop_cli() { [[ -z "$cli_pid" ]] || stop_process_group "$cli_pid" 25; }
-  trap 'stop_cli; exit 143' TERM HUP
-  trap 'stop_cli; exit 130' INT
+  # OWN THE CHILD BEFORE A HANDLER MAY EXIT. Between the fork below and the
+  # assignment that follows it there is no pid to act on, and a handler that
+  # exited there would leave a live process group behind with nothing left to
+  # stop it. So the handler RECORDS the cancellation in that window and the
+  # check after the assignment honours it; only once the pid is owned does the
+  # handler go back to exiting directly.
+  request_cancel() { cancel_rc="$1"; }
+  trap 'request_cancel 143' TERM HUP
+  trap 'request_cancel 130' INT
   trap stop_cli EXIT
   # Job control is on only across the fork: that is what makes the CLI a
   # process-group leader, and turning it straight back off keeps bash from
@@ -89,6 +96,9 @@ group_run() {
   cli_pid=$!
   set +m
   exec 8<&-
+  trap 'stop_cli; exit 143' TERM HUP
+  trap 'stop_cli; exit 130' INT
+  [[ -z "$cancel_rc" ]] || { stop_cli; exit "$cancel_rc"; }
   wait "$cli_pid" || rc=$?
   stop_cli
   exit "$rc"
@@ -122,7 +132,7 @@ launch() {
   # reads both, and it is armed before either is assigned. Under `set -u` a
   # declared-but-unassigned local is still unbound, so a signal arriving in that
   # first instant would fault the handler instead of running it.
-  local deadline token="" worker_pid="" log="$runtime_dir/worker.log"
+  local deadline token="" worker_pid="" cancel_rc="" log="$runtime_dir/worker.log"
   local worker_args worker_id
   # THE WINDOW BETWEEN THE FORK AND THE PROTOCOL. Once the worker exists it can
   # only be recovered through what launch prints and stopped through what it
@@ -138,8 +148,12 @@ launch() {
     [[ -z "$worker_pid" ]] || stop_process_group "$worker_pid" 30
     ! runtime_dir_valid "$runtime_dir" "$token" || rm -rf -- "${runtime_dir:?}" || true
   }
-  trap 'cleanup_launch; exit 143' TERM HUP
-  trap 'cleanup_launch; exit 130' INT
+  # Deferred across the fork window for the same reason as group_run: until
+  # worker_pid is assigned there is no group to stop, and a handler exiting
+  # there would strand the very run this cleanup exists to reclaim.
+  request_cancel() { cancel_rc="$1"; }
+  trap 'request_cancel 143' TERM HUP
+  trap 'request_cancel 130' INT
   trap cleanup_launch EXIT
   token="$(date +%s).$$.$RANDOM"
   (umask 077 && set -C && printf '%s\n' "$token" > "$runtime_dir/token") \
@@ -180,6 +194,9 @@ launch() {
     < /dev/null > "$log" 2>&1 &
   worker_pid=$!
   set +m
+  trap 'cleanup_launch; exit 143' TERM HUP
+  trap 'cleanup_launch; exit 130' INT
+  [[ -z "$cancel_rc" ]] || { cleanup_launch; exit "$cancel_rc"; }
   (umask 077 && set -C && printf '%s\n' "$worker_pid" > "$runtime_dir/pid") \
     || die "cannot record detached worker pid: $runtime_dir/pid"
   # Recorded once, here, while the pid is unambiguously the process we just

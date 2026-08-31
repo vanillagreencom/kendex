@@ -90,13 +90,16 @@ chmod +x "$TMP_ROOT/bin/codex"
 # A CLI whose LEADER exits while its child runs on holding stdout. The child
 # dies on TERM, so a teardown that reaches the group ends this in seconds while
 # one that only probes the leader leaves the child holding the pipe.
+#
+# The parent records the child with `$!` rather than the child recording
+# itself: BASHPID does not exist in bash 3.2, which is what macOS ships as
+# /bin/bash, so a self-recording child writes a blank line there and the case
+# silently stops testing anything on the one platform it is written for.
 cat > "$TMP_ROOT/bin/orphan-codex" <<'SH'
 #!/usr/bin/env bash
 cat >/dev/null
-(
-  printf '%s\n' "$BASHPID" > "$CLI_KID_FILE"
-  sleep 120
-) &
+sleep 120 &
+printf '%s\n' "$!" > "$CLI_KID_FILE"
 printf 'started\n' > "$CLI_READY_FILE"
 sleep 1
 printf 'leader done\n'
@@ -288,6 +291,73 @@ await_gone "$dl_kid" \
   || fail "the deadline reported 124 and left the CLI's child $dl_kid running"
 ok "the deadline takes the CLI tree with it"
 
+echo "=== a signal inside the fork window still stops the child ==="
+# Between the fork and the assignment that records its pid there is nothing for
+# a handler to act on. The window is microseconds wide, so it is not raced: a
+# copy of the runtime blocks there on a FIFO, and the signal is delivered while
+# it is blocked. The logic under test — defer, then honour after assignment —
+# is the shipped logic; only the width of the window is staged.
+widen_fork_window() { # OUT ANCHOR — insert a FIFO block right after the fork
+  local out="$1" anchor="$2"
+  awk -v anchor="$anchor" '
+    { print }
+    index($0, anchor) > 0 && !done { print "  cat < \"$WINDOW_FIFO\" > /dev/null"; done = 1 }
+  ' "$RUNTIME" > "$out"
+  chmod +x "$out"
+  grep -q 'WINDOW_FIFO' "$out" || fail "the window widener matched nothing in $out"
+}
+# run_in_window <runtime> <label>: start group-run so it blocks in the widened
+# window, signal it there, release it, and report the exit status.
+run_in_window() { # RUNTIME LABEL -> "rc"
+  local runtime="$1" label="$2" rc=0 job
+  : > "$TMP_ROOT/$label.ready"; : > "$TMP_ROOT/$label.kid"
+  mkfifo "$TMP_ROOT/$label.fifo"
+  CLI_READY_FILE="$TMP_ROOT/$label.ready" CLI_KID_FILE="$TMP_ROOT/$label.kid" \
+    WINDOW_FIFO="$TMP_ROOT/$label.fifo" \
+    "$runtime" group-run "$TMP_ROOT/$label.stderr" orphan-codex \
+    < /dev/null > /dev/null 2>&1 &
+  job=$!
+  # The CLI's own ready file proves the fork happened, so the process is now
+  # blocked in the window rather than approaching it.
+  await_file "$TMP_ROOT/$label.ready" || fail "$label never reached the fork window"
+  kill -TERM "$job" 2>/dev/null || true
+  printf 'go\n' > "$TMP_ROOT/$label.fifo"
+  wait "$job" 2>/dev/null || rc=$?
+  printf '%s' "$rc"
+}
+WINDOW_RUNTIME="$TMP_ROOT/window-runtime"
+widen_fork_window "$WINDOW_RUNTIME" '2>"$stderr_file" &'
+window_rc="$(run_in_window "$WINDOW_RUNTIME" win)"
+window_kid="$(cat < "$TMP_ROOT/win.kid" 2>/dev/null || true)"
+STRAYS+=("$window_kid")
+assert_rc "$window_rc" 143 "a signal in the fork window still ends the run"
+[[ -n "$window_kid" ]] || fail "the CLI never recorded a child"
+await_gone "$window_kid" \
+  || fail "a signal in the fork window abandoned the live child $window_kid"
+ok "the child forked in that window is still stopped"
+
+echo "=== control: the same window against a handler that exits in it ==="
+# The pre-fix shape: exit from the handler instead of recording. With no pid
+# assigned yet there is nothing to stop, so the child must survive — which is
+# what says the deferral is doing the work above.
+EXIT_MUTANT="$TMP_ROOT/exit-in-window-runtime"
+sed 's|^  request_cancel() { cancel_rc="\$1"; }$|  request_cancel() { exit "$1"; }|' \
+  "$WINDOW_RUNTIME" > "$EXIT_MUTANT"
+chmod +x "$EXIT_MUTANT"
+cmp -s "$WINDOW_RUNTIME" "$EXIT_MUTANT" && fail "the exit-in-window control mutated nothing"
+grep -q 'request_cancel() { exit "$1"; }' "$EXIT_MUTANT" \
+  || fail "the exit-in-window control did not replace the deferral"
+ok "the exit-in-window control exits from the handler instead of recording"
+ctl_window_rc="$(run_in_window "$EXIT_MUTANT" ctlwin)"
+ctl_window_kid="$(cat < "$TMP_ROOT/ctlwin.kid" 2>/dev/null || true)"
+STRAYS+=("$ctl_window_kid")
+[[ -n "$ctl_window_kid" ]] || fail "the control's CLI never recorded a child"
+if gone "$ctl_window_kid"; then
+  fail "the exit-in-window control stopped the child too — the case above proves nothing"
+fi
+ok "the control abandons the child, so the deferral is what saves it (rc=$ctl_window_rc)"
+kill -KILL "$ctl_window_kid" 2>/dev/null || true
+
 echo "=== a launch cancelled before it publishes takes its worker with it ==="
 # Between the fork and the last protocol line the worker exists but nothing can
 # reach it: the pid, the identity and the wait command are not all out yet. A
@@ -337,6 +407,44 @@ ok "the cancelled launch stopped its worker"
 ok "and the CLI tree under it"
 [[ -e "$TMP_ROOT/win-runtime" ]] && fail "the cancelled launch left its runtime state behind"
 ok "the cancelled launch removed its runtime directory"
+
+echo "=== and the launcher's own fork window behaves the same way ==="
+# The same defect and the same fix one level up, tested separately because
+# launch's cleanup does more than group_run's: it must also reclaim the runtime
+# directory, and a signal caught before the pid was owned would leave both the
+# worker and that state behind.
+LAUNCH_WINDOW_RUNTIME="$TMP_ROOT/launch-window-runtime"
+widen_fork_window "$LAUNCH_WINDOW_RUNTIME" '< /dev/null > "$log" 2>&1 &'
+mkdir "$TMP_ROOT/lw-runtime"
+mkfifo "$TMP_ROOT/lw.fifo"
+: > "$TMP_ROOT/lw.ready"; : > "$TMP_ROOT/lw.kid"
+CLI_READY_FILE="$TMP_ROOT/lw.ready" CLI_KID_FILE="$TMP_ROOT/lw.kid" \
+  WINDOW_FIFO="$TMP_ROOT/lw.fifo" \
+  SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_LAUNCH_SOURCE=detected \
+  SECOND_OPINION_LAUNCH_IN_CALLER_ENV=false SECOND_OPINION_LAUNCH_SESSION_SCOPED=false \
+  SECOND_OPINION_CODEX_CMD=treeish-codex \
+  "$LAUNCH_WINDOW_RUNTIME" launch "$SECOND_OPINION" "$TMP_ROOT/lw-answer" \
+  "$TMP_ROOT/lw-runtime" 120 false 10 quick question --target=codex \
+  --cwd "$TMP_ROOT/work" --timeout 600 \
+  > "$TMP_ROOT/lw-launch.stdout" 2> "$TMP_ROOT/lw-launch.stderr" &
+lw_launcher=$!
+await_file "$TMP_ROOT/lw.ready" || fail "the launcher never reached its fork window"
+lw_kid="$(cat < "$TMP_ROOT/lw.kid" 2>/dev/null || true)"
+STRAYS+=("$lw_kid")
+kill -TERM "$lw_launcher" 2>/dev/null || true
+printf 'go\n' > "$TMP_ROOT/lw.fifo"
+lw_rc=0
+wait "$lw_launcher" 2>/dev/null || lw_rc=$?
+assert_rc "$lw_rc" 143 "a signal in the launcher's fork window ends the launch"
+grep -q '^wait:' "$TMP_ROOT/lw-launch.stdout" \
+  && fail "a launch cancelled in its fork window still published a wait command"
+ok "no wait command was published"
+[[ -n "$lw_kid" ]] || fail "the worker's CLI never recorded a child"
+await_gone "$lw_kid" \
+  || fail "the launcher abandoned the CLI child $lw_kid forked in that window"
+ok "the worker's whole tree is stopped"
+[[ -e "$TMP_ROOT/lw-runtime" ]] && fail "the cancelled launch left its runtime state behind"
+ok "and its runtime directory is reclaimed"
 
 echo "=== wait never signals a pid it cannot verify ==="
 # A pid is a number, not an identity. Staged directly: an unrelated live
