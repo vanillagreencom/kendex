@@ -51,19 +51,39 @@ const APP = "/home/me/app";
 // landing's row matching do any work: name alone would identify every row.
 const rows = [row("gh", null), row("gh", APP), row("orch", APP)];
 
-/** What the flip's own apply answers with. */
+const view = {
+  scope: { scope: "global" as const },
+  drift: [],
+  plan: [],
+  notes: [],
+  warnings: [],
+  safety: [],
+  adoptable: ADOPTABLE,
+  exits: [],
+};
+
+/** One rendering an apply wrote, for a report that says it moved something. */
+const wrote = {
+  kind: "skill" as const,
+  name: "gh",
+  harness: "claude" as const,
+  state: "drifted" as const,
+  detail: "",
+  scope: { scope: "global" as const },
+};
+
+/** What the flip's own apply answers with: the scope's view afterwards,
+ *  and what became of the package. Switching Follow off records a hold and
+ *  writes nothing, which is `moved` empty. */
 const ok = {
   status: "ok" as const,
-  data: {
-    scope: { scope: "global" as const },
-    drift: [],
-    plan: [],
-    notes: [],
-    warnings: [],
-    safety: [],
-    adoptable: ADOPTABLE,
-    exits: [],
-  },
+  data: { view, heldBack: [], removed: [], moved: [] },
+};
+
+/** The same, for a flip that resolved the package at its source's tip. */
+const okMoved = {
+  status: "ok" as const,
+  data: { view, heldBack: [], removed: [], moved: [wrote] },
 };
 
 /** The table drawn from the store, the way the page draws it: a flip that
@@ -258,6 +278,42 @@ describe("the Follow source switch", () => {
         (call) => call[0].message === "manifest busy",
       ),
     ).toHaveLength(1);
+  });
+
+  // Switching Follow back on resolves the package at its source's tip, so
+  // the apply writes bytes the scan lists and the audit scored. `updateOne`
+  // runs the identical apply and ends in a rescan; this must too, or every
+  // score on screen goes on quoting the commit before the flip.
+  it("rescans the machine when the flip moved something", async () => {
+    vi.mocked(commands.packageSetRev).mockResolvedValue(okMoved as never);
+    mount(<Live />);
+    await openPlaces();
+
+    await act(async () => {
+      followSwitch("gh", USER_LEVEL_PLACE).click();
+    });
+    await settle();
+
+    expect(commands.scanMachine).toHaveBeenCalled();
+    expect(commands.auditAll).toHaveBeenCalled();
+  });
+
+  // The control, and the reason the rule is the report rather than the
+  // click: switching Follow off records a hold and writes nothing, so
+  // there are no new bytes for either read to be wrong about.
+  it("does not rescan for a flip that wrote nothing", async () => {
+    vi.mocked(commands.packageSetRev).mockResolvedValue(ok as never);
+    mount(<Live />);
+    await openPlaces();
+
+    await act(async () => {
+      followSwitch("gh", USER_LEVEL_PLACE).click();
+    });
+    await settle();
+
+    expect(commands.packageSetRev).toHaveBeenCalled();
+    expect(commands.scanMachine).not.toHaveBeenCalled();
+    expect(commands.auditAll).not.toHaveBeenCalled();
   });
 
   it("refuses a second place in the settling scope, and takes another", async () => {

@@ -42,16 +42,17 @@ export const asOffline = (account: AccountState): SettledAccount | null =>
 
 /** Whether a settled read leaves a standing expiry where it is.
  *
- *  The verdict comes from a call refused under the sign-in (`refused`), not
- *  from the account read, so nothing on the read's own path forgot the
- *  cached identity. An offline answer is that warm cache being served
- *  because the server could not be asked, and it knows strictly less than
- *  the server already said: where the credential was left installed by a
- *  failed removal, it would hand back a name for a sign-in ruled dead and
- *  put Submit in front of the person again.
+ *  Two things raise the verdict: a call refused under the sign-in
+ *  (`refused`), and a read that reached the server and was told the
+ *  credential is dead. The second forgets the cached identity on its way
+ *  through `me::load`; the first does not, so where a refused call raised
+ *  it the cache is still warm and a later offline answer may be that cache
+ *  being served because the server could not be asked. With the credential
+ *  left installed by a failed removal, that answer hands back a name for a
+ *  sign-in already ruled dead and puts Submit in front of the person again.
  *
- *  So only a read that reached the server may overturn the verdict. Signed
- *  out and offline both leave it standing; a signed-in answer is the server
+ *  So only a read that reached the server may overturn it. Signed out and
+ *  offline both leave it standing; a signed-in answer is the server
  *  accepting the credential, which is news that outranks it. The cost is a
  *  wrongly-held expiry that the next reachable read clears, which is the
  *  direction a gate on an auth verdict should fail. */

@@ -2,6 +2,8 @@ import { RefreshCw } from "lucide-react";
 import type { CatalogSummary } from "@/bindings";
 import { SubscribeFromRepo } from "@/components/marketplaces/subscribe-from-repo";
 import { Button } from "@/components/ui/button";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
+import { MARKETPLACES_CHECK_FAILED_TITLE } from "@/lib/copy-marketplaces";
 import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
 import { repoAction, useMarketplacesStore } from "@/stores/marketplaces";
@@ -25,6 +27,7 @@ export function RepoAction({
   const toggle = useMarketplacesStore((s) => s.toggle);
   const checkForUpdates = useMarketplacesStore((s) => s.checkForUpdates);
   const busy = useMarketplacesStore((s) => s.busy);
+  const load = useMarketplacesStore((s) => s.load);
   // The canonical key comes from core — the directory row's from the first
   // render, or the summary's once it lands — never from the spelling.
   const listedKey = useCommunityStore(
@@ -34,8 +37,22 @@ export function RepoAction({
   const { kind, holder } = repoAction(rows, read, key);
 
   switch (kind) {
+    // Nothing to match the repository against yet. Whether that is worth
+    // waiting for or worth acting on is what the read says: a read still
+    // out will answer on its own, and one that failed will not — so the
+    // second gets the reason and the way to ask again, rather than a dead
+    // control claiming a check that is over.
     case "checking":
-      return (
+      return read.status === "failed" ? (
+        <Button
+          size="sm"
+          variant="outline"
+          title={`${MARKETPLACES_CHECK_FAILED_TITLE}: ${read.error}`}
+          onClick={() => void load()}
+        >
+          {TRY_AGAIN_LABEL}
+        </Button>
+      ) : (
         <Button size="sm" variant="outline" disabled>
           Checking subscriptions…
         </Button>
