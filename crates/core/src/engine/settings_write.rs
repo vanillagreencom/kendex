@@ -45,9 +45,9 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
 /// writes nothing at all.
 ///
 /// A person's own edits are the other thing that reaches this file, and
-/// they compose here rather than following as a second write: a manifest
-/// save re-plans the scope and may seed this same file, and a second write
-/// would bind to bytes the first one replaced. Seeds and edits become one
+/// they compose here rather than following as a second write: the keys a
+/// save names are inserted by this same pass, so a second write would bind
+/// to bytes the first one replaced. Inserts and edits become one
 /// `WriteFile` under one precondition.
 ///
 /// The notes ride out either way: a key several packages give different

@@ -250,8 +250,11 @@ struct Shipped<'a> {
 
 /// What the plan says about a key seeding will not write at all: a
 /// template that never finishes the value. That is an unterminated
-/// template, not a multiline one — a value that closes is seeded whole,
-/// however many lines it takes.
+/// template, not a multiline one: a value that closes is complete text and
+/// this note says nothing about it. Complete is not the same as written,
+/// though. The marker can only follow a value that closes on its line, so
+/// no arrival ever writes a multiline key, and a save naming one is
+/// refused by the reader that sees no value in that shape.
 ///
 /// Which delimiter was left open is deliberately not named. Completeness
 /// comes off the enumerated grammar in [`crate::settings_toml`], so a form

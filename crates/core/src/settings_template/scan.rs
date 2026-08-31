@@ -197,11 +197,20 @@ fn header(
 /// honoured, so anything else is refused; here nothing is being honoured
 /// at all and the only question is whether the line is the marker word. So
 /// the comparison folds what changes the word's presentation and not the
-/// word: its case, and the punctuation a line collects from being written
-/// as a heading. `# Required` and `# required.` mean it as plainly as
-/// `# required` does, and answering only the lowercase spelling left the
-/// same silence one keystroke away. The text arrives trimmed of its `#`
-/// and its spacing, so those need no answer of their own.
+/// word: its case, and everything that is not a letter or a digit at
+/// either end of the line. `# Required`, `# required.`, `# (required)`,
+/// `# "required"` and a marker trailed by an ellipsis or a zero-width
+/// character all mean it as plainly as `# required` does. Naming a closed
+/// list of trailing ASCII marks left every other presentation of the word
+/// silent, which is one keystroke away in a set nobody can enumerate; what
+/// the fold trims is instead everything the word is NOT. The text arrives
+/// trimmed of its `#` and its spacing, so those need no answer of their
+/// own.
+///
+/// Only the ends are folded, so the word has to be the whole line. A
+/// comment that merely contains it, `# required for CI` or the sentence
+/// every shipped template heads a marked key with, keeps a letter at both
+/// ends and is no finding.
 ///
 /// This is the one comparison here that does not ask
 /// [`crate::settings_seed::marks_required`], and the folding is why: that
@@ -222,8 +231,8 @@ fn header(
 /// mistake.
 fn marker_alone(line: u32, said: &str) -> Option<TemplateFinding> {
     let marker = crate::settings_seed::REQUIRED_MARKER;
-    let word = said.to_ascii_lowercase();
-    (word.trim_end_matches(['.', ',', ':', ';', '!', '?']) == marker).then(|| TemplateFinding {
+    let word = said.trim_matches(|c: char| !c.is_alphanumeric());
+    word.eq_ignore_ascii_case(marker).then(|| TemplateFinding {
         line,
         problem: format!("this comment line is just `{said}`, which marks nothing"),
         fix: format!("write the marker after the value it marks, as `KEY = \"\" # {marker}`"),

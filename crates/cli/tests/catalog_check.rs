@@ -319,14 +319,26 @@ fn a_malformed_settings_template_fails_marketplace_check() {
 /// end: the key is never written, and it is never reported as unanswered
 /// either, because nothing downstream knows it was ever marked.
 ///
-/// Both spellings run here because the check exiting 0 is what the review
-/// measured. `# Required` reached this surface as a clean pass while the
-/// lowercase word failed it, so a rule that widened in the scan and not in
-/// what an author actually runs would read as fixed and not be.
+/// Every presentation runs here because the check exiting 0 is what the
+/// review measured. `# Required` reached this surface as a clean pass
+/// while the lowercase word failed it, and so did each of these once the
+/// fold named a closed list of trailing ASCII marks. A rule that widened
+/// in the scan and not in what an author actually runs would read as fixed
+/// and not be.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_marker_on_its_own_comment_line_fails_marketplace_check() {
-    for said_as in ["required", "Required"] {
+    // What the template says, and how the report spells it back: an
+    // invisible character reaches the author escaped, because every note
+    // goes out through the same renderer that strips one.
+    for (said_as, shown_as) in [
+        ("required", "required"),
+        ("Required", "Required"),
+        ("required\u{2026}", "required\u{2026}"),
+        ("Required)", "Required)"),
+        ("\"required\"", "\"required\""),
+        ("required\u{200b}", "required\\u{200b}"),
+    ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let home = home.as_path();
@@ -344,7 +356,7 @@ fn a_marker_on_its_own_comment_line_fails_marketplace_check() {
         assert!(!output.status.success(), "{said_as}: {said}");
         assert!(
             said.contains(&format!(
-                "settings: skills/review/kendex.settings.toml.example:4: this comment line is just `{said_as}`, which marks nothing"
+                "settings: skills/review/kendex.settings.toml.example:4: this comment line is just `{shown_as}`, which marks nothing"
             )),
             "{said_as}: {said}"
         );
@@ -358,12 +370,19 @@ fn a_marker_on_its_own_comment_line_fails_marketplace_check() {
 /// The must-fail control's other half: a template with nothing wrong with
 /// it is not reported, so the pass is reading the file rather than firing
 /// on its presence.
+///
+/// The comment block says the word on purpose. What the marker rule folds
+/// is the ends of a line, so a comment that merely mentions it is an
+/// ordinary comment, and a fold that reached any further would fail here.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_well_formed_settings_template_passes() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
-    let catalog = catalog_shipping(home, "[env]\n\n# How long to wait.\nWAIT = \"900\"\n");
+    let catalog = catalog_shipping(
+        home,
+        "[env]\n\n# How long to wait.\n# required for CI, though nothing here marks anything.\nWAIT = \"900\"\n",
+    );
     let output = kendex(
         home,
         home,

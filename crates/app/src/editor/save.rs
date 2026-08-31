@@ -8,9 +8,12 @@
 //! copy came from to stop that.
 //!
 //! Both halves go down as one plan. Saving the manifest re-plans the
-//! scope, and that plan may seed or refresh the settings file itself, so
-//! settings edits are an input to it rather than a write that follows:
-//! a second write would bind to bytes the first one had already replaced.
+//! scope, and that plan is what writes the settings file: an edited key is
+//! checked against the templates the saved manifest declares, and the
+//! assignment it needs to land on is inserted by the same pass that sets
+//! the value. So settings edits are an input to the plan rather than a
+//! write that follows it. A second write would bind to bytes the first one
+//! had already replaced.
 
 use kendex_core::apply::{self, Op, PlannedOp, Pre};
 use kendex_core::base::Base;
@@ -108,10 +111,10 @@ pub struct SettingsDraft {
 /// Save the Customize tab and reconcile the scope to it.
 ///
 /// Either draft may be absent: a settings-only save carries no manifest,
-/// and a manifest-only save carries no edits. Both are one transaction —
-/// saving the manifest re-plans the scope, and that plan may seed or
-/// refresh the settings file itself, so a second write would bind to
-/// bytes the first one had already replaced.
+/// and a manifest-only save carries no edits. Both are one transaction.
+/// Saving the manifest re-plans the scope, and that plan is where the
+/// edits land, read against the templates the saved manifest declares; a
+/// second write would bind to bytes the first one had already replaced.
 ///
 /// Each base is what its file was when this copy was read. A whole
 /// manifest goes back with every save, so a copy read before something

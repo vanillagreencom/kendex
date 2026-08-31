@@ -71,10 +71,13 @@ The marker is the template's own word. It is cut off before the assignment is
 written, so a consumer's file never carries it. Write it after the value and
 nowhere else. On a comment line of its own it marks nothing, and both ways of
 getting it wrong are findings: after a value, whatever you wrote there; on a
-line of its own, the word however you capitalise it and whatever sentence
-punctuation trails it. A marker nothing reads is silent twice over. No
-arrival writes the key, and nothing reports it as unanswered either, because
-nothing downstream knows it was ever marked.
+line of its own, the word however you capitalise it and inside whatever is
+not a letter or a digit, so a bracket, a quote, an ellipsis or an invisible
+character around it changes nothing. Only the ends of the line are read that
+way, so a comment that merely mentions the word is an ordinary comment. A
+marker nothing reads is silent twice over. No arrival writes the key, and
+nothing reports it as unanswered either, because nothing downstream knows it
+was ever marked.
 
 A marked key nobody has answered is reported instead. So a template that gains
 a marked key after release does not reach an existing consumer as a write into
@@ -138,14 +141,21 @@ runs.
 
 Seeding stays lenient, and that is the point of checking: in the consumer's
 `kendex.settings.toml` a duplicate assignment inside `[env]` fails the load,
-while a template with one seeds the first declaration it can write whole and
-drops the rest without a word. Write each key once.
+while a template with one is read past without a word. On a pass that writes
+the key at all, which the rule above settles and nothing here widens, the
+first declaration seeding can write whole is what lands and the rest are
+dropped. Write each key once.
 
 A value the template never closes is the one thing seeding will not pass
 over in silence. It writes nothing for that key — a partial value would stop
 the consumer's file parsing from that line down — and the plan names the key
-instead. A value that does close is seeded whole however many lines it
-takes, spelled exactly as the template spells it.
+instead.
+
+A value that takes more than one line reaches nobody either way. The marker
+can only follow a value that closes on its line, so a multiline value is
+never marked and no arrival writes it, and a save naming that key refuses
+because the loaders read no value out of that shape. The check refuses the
+shape outright, so this is what a template that ships one anyway gets.
 
 ## Naming
 

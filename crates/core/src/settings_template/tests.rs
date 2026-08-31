@@ -188,9 +188,10 @@ fn the_required_marker_rides_with_the_value_and_nothing_else_may() {
 /// `the_reader_flags_exactly_what_the_loaders_cannot_read`.
 #[test]
 fn a_marker_on_its_own_comment_line_is_located() {
-    // However the word is presented. Answering only the lowercase spelling
-    // left the same silence one keystroke away, which is the round this
-    // rule is on.
+    // However the word is presented. Case and everything at either end
+    // that is not a letter or a digit: a closed list of trailing ASCII
+    // marks left an ellipsis, a bracket, wrapping quotes and an invisible
+    // character each one keystroke from the same silence.
     for said in [
         "required",
         "Required",
@@ -199,6 +200,12 @@ fn a_marker_on_its_own_comment_line_is_located() {
         "required.",
         "Required:",
         "required!",
+        "required\u{2026}",
+        "Required)",
+        " (required)",
+        " \"required\"",
+        " *required*",
+        "required\u{200b}",
     ] {
         assert_eq!(
             located(&format!(
@@ -256,10 +263,24 @@ fn a_marker_on_its_own_comment_line_is_located() {
         [1]
     );
     // The word inside a sentence is what every shipped template writes,
-    // and it is not a marker.
-    assert!(
-        located("[env]\n# Keys marked `# required` land on arrival.\nWAIT = \"900\"\n").is_empty()
-    );
+    // and it is not a marker. Only the ends of the line are folded, so a
+    // comment that merely contains the word keeps a letter at both ends
+    // and stays an ordinary comment however short it is.
+    for said in [
+        "Keys marked `# required` land on arrival.",
+        "required for CI",
+        "The team is required.",
+        "(required for a Linear write)",
+        "required1",
+    ] {
+        assert!(
+            located(&format!(
+                "[env]\n# How long to wait.\n# {said}\nWAIT = \"900\"\n"
+            ))
+            .is_empty(),
+            "{said:?}"
+        );
+    }
 }
 
 #[test]

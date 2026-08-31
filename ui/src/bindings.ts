@@ -164,10 +164,10 @@ export const commands = {
 	 *  Save the Customize tab and reconcile the scope to it.
 	 * 
 	 *  Either draft may be absent: a settings-only save carries no manifest,
-	 *  and a manifest-only save carries no edits. Both are one transaction —
-	 *  saving the manifest re-plans the scope, and that plan may seed or
-	 *  refresh the settings file itself, so a second write would bind to
-	 *  bytes the first one had already replaced.
+	 *  and a manifest-only save carries no edits. Both are one transaction.
+	 *  Saving the manifest re-plans the scope, and that plan is where the
+	 *  edits land, read against the templates the saved manifest declares; a
+	 *  second write would bind to bytes the first one had already replaced.
 	 * 
 	 *  Each base is what its file was when this copy was read. A whole
 	 *  manifest goes back with every save, so a copy read before something
