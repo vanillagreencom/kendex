@@ -77,11 +77,14 @@ pub fn apply(
 ///
 /// The destinations are compared component by component under
 /// [`crate::names::fold`], the spelling a folding filesystem hands both
-/// names to. Equal is a collision outright. A strict prefix is only the
-/// shape of one: a catalog offers a directory carrying `SKILL.md` as an
-/// item and its children as items too (`source::layout::nested_names`),
-/// so importing `p` beside `p/sub` is an ordinary pair, and it collides
-/// only where `p` really puts something at or under `p/sub`.
+/// names to. Equal is a collision outright.
+///
+/// A strict prefix is only the shape of one. A nested name is ordinary
+/// kendex vocabulary — `source::layout::nested_names` lists items as
+/// `<parent>/<leaf>`, and a person may give any selection a destination
+/// spelled that way — so `p` beside `p/sub` says nothing on its own about
+/// where the bytes go. What decides it is whether the outer selection
+/// really puts something at or under the inner's place.
 fn occupies(
     resolved: &[(usize, ResolvedSelection, PathBuf)],
     selections: &[ImportSelection],

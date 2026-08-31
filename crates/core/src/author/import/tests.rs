@@ -241,11 +241,15 @@ fn a_write_that_stops_part_way_names_what_reached_the_folder() {
     );
 }
 
-/// A nested pair a catalog really offers. `source::layout::nested_names`
-/// lists a directory carrying `SKILL.md` as an item and descends into it
-/// for its children, so `p` and `p/sub` arrive as two items and importing
-/// both is ordinary. The names are nested; the bytes are not, because `p`
-/// puts nothing under `sub/`.
+/// Two candidates with nothing to do with each other, one of them given
+/// a destination spelled under the other's. A nested destination name is
+/// ordinary and says nothing by itself about where the bytes land: these
+/// two trees never meet, so both are copied whole.
+///
+/// (A pair `source::layout::nested_names` itself offers is the other
+/// case. It lists `p` only where `p/SKILL.md` sits and `p/sub` only where
+/// `p/sub/SKILL.md` does, and a skill's tree is read whole, so `p` really
+/// does write into `p/sub` and this rule refuses it.)
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_nested_pair_whose_trees_do_not_meet_is_copied_whole() {

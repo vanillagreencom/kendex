@@ -1,6 +1,6 @@
 //! Making the folder: the one place a create touches the disk, and the
-//! two questions asked before it does — is this a path a folder can be
-//! made at, and is anything already there.
+//! questions asked before it does — is this a path a folder can be made
+//! at, is anything already there, and does the registry take the row.
 
 use std::path::{Path, PathBuf};
 
