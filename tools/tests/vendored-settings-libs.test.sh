@@ -34,10 +34,35 @@ REPO_ROOT="$(cd "$TEST_DIR/../.." && pwd)" || exit 2
 TMP="$(mktemp -d)" || exit 2
 trap 'rm -rf -- "${TMP:?}"' EXIT
 
+NL='
+'
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; [ $# -lt 2 ] || printf '        %s\n' "$2"; }
+verdict() { printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"; [ "$FAIL" -eq 0 ]; }
+
+# The render paths git carries. Asking the FILESYSTEM whether a skill has a
+# render cannot tell one that was never rendered from one whose render was
+# deleted, so a wholesale deletion read as "nothing to check" — while the
+# repo rule is that a source change lands its render in the same commit.
+# git knows the difference: a render it tracks is owed, whatever the working
+# tree holds. One listing, status checked, because a git that could not run
+# would otherwise read as a repository that renders nothing.
+TRACKED_RENDERS=""
+git_status=0
+TRACKED_RENDERS="$(git -C "$REPO_ROOT" ls-files -- \
+  '.agents/skills/*/scripts/lib/kendex-env.sh' '.agents/skills/*/scripts/lib/settings.sh')" || git_status=$?
+if [ "$git_status" != 0 ] || [ -z "$TRACKED_RENDERS" ]; then
+  bad "git listed no tracked render (exit $git_status), so no render below was checked"
+  verdict
+  exit
+fi
+# Membership by whole line: a path is owed a render or it is not.
+render_tracked() { # RENDER_PATH
+  case "$NL$TRACKED_RENDERS$NL" in *"$NL$1$NL"*) return 0 ;; esac
+  return 1
+}
 
 # Helper names the three settings.sh copies deliberately spell differently,
 # each with the reason it is not one text. A name here that no longer
@@ -65,8 +90,6 @@ PARTIAL="settings_normalize_path settings_source dotenv_layer"
 #                      only the two commit-time guards perform.
 #   dotenv_layer     — size-ratchet reads .env.local inline in sr_setting.
 
-NL='
-'
 # Membership over a whitespace-separated set: the declarations above and the
 # collected name list are both read this way, so one spelling serves both.
 listed() { case " $2 " in *[$' \t\n']"$1"[$' \t\n']*) return 0 ;; esac; return 1; }
@@ -180,9 +203,15 @@ check_tree() { # ROOT
       continue
     fi
     for skill in $copies; do
-      # A skill this repo does not install has no render to check. One
-      # under .agents with no source is caught by the reverse pass below.
-      [ -d "$root/.agents/skills/$skill" ] || continue
+      # A skill this repo does not install is owed no render, and git is
+      # what says which those are. One under .agents with no source is
+      # caught by the reverse pass below.
+      render_tracked ".agents/skills/$skill/scripts/lib/$rel" || continue
+      if [ "$(classify_path "$root/.agents/skills/$skill/scripts/lib/$rel")" != file ]; then
+        echo ".agents/skills/$skill/scripts/lib/$rel is tracked but not here; a source change lands its render in the same commit"
+        rc=1
+        continue
+      fi
       if ! cmp -s "$root/skills/$skill/scripts/lib/$rel" "$root/.agents/skills/$skill/scripts/lib/$rel"; then
         echo ".agents/skills/$skill/scripts/lib/$rel is not its source, byte for byte"
         rc=1
@@ -439,6 +468,26 @@ reds "a render that drifted from its source fails" \
   'printf "\n# a render-only edit\n" >>"$control/.agents/skills/orch/scripts/lib/kendex-env.sh"'
 restore .agents/skills orch kendex-env.sh
 
+# A render DELETED wholesale left nothing on the filesystem to notice, so
+# the skill read as one that was never rendered. git is what tells those
+# apart, and the deletion is the shape the repo rule forbids.
+reds "a DELETED render fails, never reads as a skill that has none" \
+  "is tracked but not here" \
+  'rm -f "$control/.agents/skills/worktree/scripts/lib/kendex-env.sh"'
+restore .agents/skills worktree kendex-env.sh
+
+# And the other side of that branch, which every carrier being rendered
+# today would otherwise leave untaken: a source git tracks no render for is
+# genuinely unrendered and must still be SKIPPED, not reported missing.
+mkdir -p "$control/skills/unrendered/scripts/lib"
+cp "$REPO_ROOT/skills/orch/scripts/lib/kendex-env.sh" "$control/skills/unrendered/scripts/lib/kendex-env.sh"
+if check_tree "$control" >/dev/null 2>&1; then
+  ok "a source with no tracked render is skipped, so the unrendered branch is reachable"
+else
+  bad "a source with no tracked render is skipped" "$(check_tree "$control" 2>&1 || true)"
+fi
+rm -rf -- "${control:?}/skills/unrendered"
+
 reds "a render of no source fails" \
   "is a render of no source" \
   'mkdir -p "$control/.agents/skills/ghost/scripts/lib" &&
@@ -565,6 +614,4 @@ check_tree "$control" >/dev/null 2>&1 \
   && ok "the control tree is clean again, so no control leaked into the next" \
   || bad "a control left the tree mutated — the arms after it proved nothing"
 
-echo
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-[ "$FAIL" -eq 0 ]
+verdict
