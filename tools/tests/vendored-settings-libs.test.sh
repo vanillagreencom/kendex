@@ -71,11 +71,29 @@ NL='
 # collected name list are both read this way, so one spelling serves both.
 listed() { case " $2 " in *[$' \t\n']"$1"[$' \t\n']*) return 0 ;; esac; return 1; }
 
-# Every skill under ROOT carrying REL, as skill names, one per line.
+# How one rostered path reads. This is the classification the resolvers
+# this suite pins apply to their own sources, and the one review-gate's
+# scan_source applies to its TOML sources: ABSENT is an ordinary install and
+# skips, a regular file is compared, and every other shape EXISTS while
+# being unreadable as a vendored copy. Testing -f alone called all of them
+# absent — the same "present is not absent" defect this PR is about, in the
+# suite standing behind it. -L comes first because -f and -d both follow.
+classify_path() { # PATH — one word or phrase naming what is there
+  if [ -L "$1" ]; then printf 'a symlink'
+  elif [ -d "$1" ]; then printf 'a directory'
+  elif [ -f "$1" ]; then printf 'file'
+  elif [ -e "$1" ]; then printf 'not a regular file (a FIFO, socket or device)'
+  else printf 'absent'
+  fi
+}
+
+# Every skill under ROOT whose REL is a readable vendored copy, as skill
+# names, one per line. Anything present but unusable is refused by the pass
+# in check_tree before this roster is read, so nothing silently drops.
 skills_carrying() { # ROOT PARENT REL
   local p out=""
   for p in "$1/$2"/*/scripts/lib/"$3"; do
-    [ -f "$p" ] || continue
+    [ "$(classify_path "$p")" = file ] || continue
     p="${p%/scripts/lib/$3}"
     out="$out${p##*/}$NL"
   done
@@ -103,21 +121,23 @@ check_tree() { # ROOT
   local root="$1" rc=0 rel skill first parent copies prefix names n i seen opens closes unprefixed repeated path
   local scratch="$TMP/map.$$.$RANDOM"
 
-  # --- 0. every rostered copy is a real file, not a link to one ---
-  # `-f` and `cmp` both FOLLOW a symlink, so a copy replaced by a link to an
-  # identical sibling compares equal and stays on the roster — while the
-  # engine refuses that tree outright: source_read.rs takes symlink_metadata
-  # and answers a link in a catalog with SourceEscape. A pin that calls such
-  # a tree healthy is the one reading a green nobody should trust, and
-  # deduplicating identical files by link is a thing people do.
+  # --- 0. every rostered path is a regular file, or absent ---
+  # A path that EXISTS as something else was read as absent by the -f filter
+  # below, so it dropped out of the roster and the pin called the tree
+  # healthy while that skill could not source its copy at all. A symlink is
+  # one case of it and not a special one: source_read.rs takes
+  # symlink_metadata and answers a link in a catalog with SourceEscape, so
+  # the engine refuses a tree the bytes would have compared equal through.
   for parent in skills .agents/skills; do
     for rel in kendex-env.sh settings.sh; do
       for path in "$root/$parent"/*/scripts/lib/"$rel"; do
-        { [ -e "$path" ] || [ -L "$path" ]; } || continue
-        if [ -L "$path" ]; then
-          echo "${path#"$root/"} is a SYMLINK; each skill installs standalone, so a vendored copy is a real file — the engine refuses to read through a link in a catalog"
-          rc=1
-        fi
+        case "$(classify_path "$path")" in
+          file | absent) ;;
+          *)
+            echo "${path#"$root/"} is $(classify_path "$path"); a vendored copy is a regular file or is not there at all"
+            rc=1
+            ;;
+        esac
       done
     done
   done
@@ -306,9 +326,10 @@ reds() {
   fi
 }
 restore() { # PARENT SKILL REL
-  # rm first: a control may have left a SYMLINK there, and cp would write
-  # through it into the sibling the link points at.
-  rm -f "$control/$1/$2/scripts/lib/$3"
+  # Remove first, whatever a control left there: cp onto a SYMLINK writes
+  # through it into the sibling it points at, and cp onto a DIRECTORY drops
+  # the file inside it, leaving the copy still missing.
+  rm -rf -- "${control:?}/$1/$2/scripts/lib/$3"
   cp "$REPO_ROOT/$1/$2/scripts/lib/$3" "$control/$1/$2/scripts/lib/$3"
 }
 
@@ -328,13 +349,51 @@ reds "an UNLISTED seventh kendex-env.sh copy is compared, not ignored" \
      >"$control/skills/planted/scripts/lib/kendex-env.sh"'
 rm -rf -- "${control:?}/skills/planted"
 
-# Identical content is the point: the bytes match through the link, so only
-# the file type distinguishes this tree from a healthy one.
-reds "a vendored copy replaced by a SYMLINK fails, though its bytes match" \
-  "is a SYMLINK" \
+# One class per control, all of them the same rule: a path that EXISTS as
+# something other than a regular file is not absent. The -f filter read
+# every one of these as absent, so the copy dropped off the roster and the
+# pin called the tree healthy.
+#
+# A symlink whose bytes match is the sharp case — only the file type
+# distinguishes that tree from a healthy one, and the engine still refuses
+# it.
+reds "a copy replaced by a SYMLINK fails, though its bytes match" \
+  "is a symlink; a vendored copy is a regular file" \
   'rm -f "$control/skills/worktree/scripts/lib/kendex-env.sh" &&
    ln -s ../../../orch/scripts/lib/kendex-env.sh "$control/skills/worktree/scripts/lib/kendex-env.sh"'
 restore skills worktree kendex-env.sh
+
+# A DIRECTORY at one copy: the source goes, the render stays, and the pair
+# is inconsistent as well as unusable.
+reds "a DIRECTORY at one copy fails, never reads as absent" \
+  "is a directory; a vendored copy is a regular file" \
+  'rm -f "$control/skills/decider/scripts/lib/kendex-env.sh" &&
+   mkdir "$control/skills/decider/scripts/lib/kendex-env.sh"'
+restore skills decider kendex-env.sh
+
+# A DIRECTORY at BOTH copies of one skill, which is the shape that passed:
+# the pair stays consistent in absence, the glob is not empty, and nothing
+# else in the suite has anything to say about it.
+reds "a DIRECTORY at BOTH copies fails, though the pair stays consistent" \
+  "is a directory; a vendored copy is a regular file" \
+  'rm -f "$control/skills/decider/scripts/lib/kendex-env.sh" \
+      "$control/.agents/skills/decider/scripts/lib/kendex-env.sh" &&
+   mkdir "$control/skills/decider/scripts/lib/kendex-env.sh" \
+      "$control/.agents/skills/decider/scripts/lib/kendex-env.sh"'
+restore skills decider kendex-env.sh
+restore .agents/skills decider kendex-env.sh
+
+# The remaining class — a FIFO stands for socket and device, which read the
+# same way — where the platform provides one.
+if command -v mkfifo >/dev/null 2>&1; then
+  reds "a FIFO at a copy fails, never reads as absent" \
+    "is not a regular file (a FIFO, socket or device); a vendored copy is a regular file" \
+    'rm -f "$control/skills/github/scripts/lib/kendex-env.sh" &&
+     mkfifo "$control/skills/github/scripts/lib/kendex-env.sh"'
+  restore skills github kendex-env.sh
+else
+  echo "  skip  mkfifo unavailable — the FIFO/socket/device class is not exercised"
+fi
 
 reds "a render that drifted from its source fails" \
   "is not its source, byte for byte" \
