@@ -78,8 +78,9 @@ ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 # `<prefix>-last.json` serves every poll past the last numbered fixture, and
 # review-thread reads answer with an empty set so the late-findings guard
 # stays quiet. `STUB_QUEUE_DELAY` makes the queue read itself cost that many
-# seconds, the production condition under which a confirmation count can be
-# larger than the remaining budget can hold however short the gaps are made.
+# seconds on the clock below, the production condition under which a
+# confirmation count can be larger than the remaining budget can hold however
+# short the gaps are made.
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -155,6 +156,52 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
+# Virtual clock, on the same PATH as the gh stub. On wall time these cases have
+# no margin worth the name. They run on budgets of a few seconds, and once a
+# poll costs a large fraction of a second the deadline arrives before the
+# squeezed confirmation poll can land, so every case goes red. That is what a
+# contended CI runner and a busy developer box both produce, and it is what
+# made this suite eject merge groups (KEN-879).
+#
+# None of it is about real duration. What the cases assert is arithmetic over
+# the clock queue-wait itself keeps, and queue-wait reads wall time only as
+# `date +%s` and waits only through `sleep`, so owning those two commands makes
+# the budget exact rather than raced. A sleep advances the clock, a poll costs
+# nothing unless the stub is told to charge for it, and every assertion below
+# lands on the same number no matter how slow the machine is. The suite also
+# stops needing `date +%N`, a GNU extension that is absent on macOS.
+REAL_DATE="$(command -v date)"
+REAL_SLEEP="$(command -v sleep)"
+if [[ ! -x "$REAL_DATE" || ! -x "$REAL_SLEEP" ]]; then
+  echo "no external date/sleep for the clock stubs to fall back on" >&2
+  exit 1
+fi
+
+cat > "$TMP_ROOT/bin/date" <<'EOF'
+#!/usr/bin/env bash
+# `+%s` is the clock queue-wait keeps its budget on. Every other form is the
+# real date, so a timestamp the script prints is still a real timestamp.
+if [[ "${1:-}" == "+%s" && -f "${STUB_CLOCK:-}" ]]; then
+  cat "$STUB_CLOCK"
+  exit 0
+fi
+exec "$STUB_REAL_DATE" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/date"
+
+cat > "$TMP_ROOT/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+# Whole seconds advance the clock and return; that is every wait queue-wait and
+# the gh stub make. Anything else is a real sleep, so an unexpected fractional
+# wait still waits rather than silently passing.
+if [[ "${1:-}" =~ ^[0-9]+$ && -f "${STUB_CLOCK:-}" ]]; then
+  printf '%s' "$(( $(cat "$STUB_CLOCK") + $1 ))" > "$STUB_CLOCK"
+  exit 0
+fi
+exec "$STUB_REAL_SLEEP" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/sleep"
+
 SEQ_DIR=""
 new_case() {
   SEQ_DIR="$TMP_ROOT/seq/$1"
@@ -173,23 +220,6 @@ q_in_queue='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueu
 q_out='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null}}}}'
 q_armed_only='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
 
-# queue-wait keeps its budget with `date +%s`, so the elapsed it charges a run
-# is floor(frac(launch) + real duration). Launched .8 into a second, a run is
-# billed a whole second it never spent. Real budgets are minutes and never
-# notice. These cases run on three, where that phantom second is a third of the
-# budget and takes with it the squeezed confirmation poll they exist to prove,
-# so the suite goes red on launch phase alone (KEN-879). Stage the boundary
-# rather than race it. Started on the tick, elapsed is the run's real duration,
-# which is what the budgets below are written against, and the second the
-# alignment recovers is the margin. Startup and poll cost measures in tens of
-# milliseconds even on a loaded machine, so that margin is not close.
-align_to_tick() {
-  local ns
-  ns="$(date +%N)"
-  [[ "$ns" =~ ^[0-9]{9}$ ]] || return 0
-  sleep "0.$(printf '%09d' $(( (1000000000 - 10#$ns) % 1000000000 )))"
-}
-
 run_queue_wait() {
   local env_args=()
   while [[ $# -gt 0 && "$1" != "--" ]]; do
@@ -197,10 +227,15 @@ run_queue_wait() {
     shift
   done
   shift || true
-  align_to_tick
+  # Start each run at the real epoch, so anything reading an absolute time
+  # still reads a plausible one, and let the run move the clock from there.
+  date +%s > "$TMP_ROOT/clock"
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env STUB_SEQ_DIR="$SEQ_DIR" \
+           STUB_CLOCK="$TMP_ROOT/clock" \
+           STUB_REAL_DATE="$REAL_DATE" \
+           STUB_REAL_SLEEP="$REAL_SLEEP" \
            QUEUE_WAIT_CONFIRM_POLLS=2 \
            QUEUE_WAIT_ARM_GRACE=120 \
            QUEUE_WAIT_PROBE_INTERVAL=0 \
