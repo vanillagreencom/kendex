@@ -56,14 +56,8 @@ const version = (id: string): VersionRow => ({
   newerThanInstalled: true,
 });
 
-const actions = (held: boolean) =>
-  packageVersionActions(
-    ref,
-    "gh",
-    held,
-    () => {},
-    () => {},
-  );
+const actions = (held: boolean, reload: () => void = () => {}) =>
+  packageVersionActions(ref, "gh", held, () => {}, reload);
 
 const VIEW = {
   scope: { scope: "global" } as const,
@@ -140,6 +134,24 @@ describe("packageVersionActions", () => {
     expect(toast.info).toHaveBeenCalledWith(
       `gh was not updated — ${HELD_IN_CLAUDE}`,
     );
+  });
+
+  // A refused write is not a write that changed nothing. `package_set_rev`
+  // persists the revision through `set_rev_with` and only then runs the
+  // apply, so an apply that fails answers with an error over a manifest
+  // that already moved. A page that returned on the error would go on
+  // showing the version it read before the click as the settled one.
+  it("reads the package back when the write is refused", async () => {
+    const reload = vi.fn();
+    vi.mocked(commands.packageSetRev).mockResolvedValue({
+      status: "error",
+      error: "the apply could not finish",
+    } as never);
+
+    actions(false, reload).switchTo(version("c".repeat(40)));
+    await vi.waitFor(() => expect(reload).toHaveBeenCalled());
+
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   // The control the held cases below are read against: a switch the plan

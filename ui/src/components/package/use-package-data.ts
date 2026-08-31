@@ -162,6 +162,11 @@ export function packageVersionActions(
       setBusy(false);
       if (response.status === "error") {
         showError(response.error);
+        // An error is not proof that nothing changed: `package_set_rev`
+        // persists the revision and only then applies, so a failed apply
+        // answers over a manifest that already moved. The page reads back
+        // either way, or it shows the old version as settled.
+        afterChange();
         return;
       }
       showUpdateOutcome(displayName, response.data, lines);

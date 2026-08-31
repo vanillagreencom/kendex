@@ -246,3 +246,48 @@ describe("a check whose report predates a commit", () => {
     commitStands();
   });
 });
+
+describe("a write that answered with an error", () => {
+  const after = [row({ name: "after-the-commit" })];
+
+  beforeEach(() => {
+    useUpdatesStore.setState({ rows: [row()], read: READ_LANDED });
+  });
+
+  // An error answer is not proof that nothing changed. Four of the
+  // commands behind these writes persist before a step that can fail:
+  // `package_set_rev` and `apply_discard_edits` write the revision through
+  // `set_rev_with` and only then apply; `package_update_many` persists any
+  // hold its targets carry; `update_set_ignored` writes the preference and
+  // then builds the report. So the standing is read again either way, or a
+  // change that landed shows as one that did not.
+  it.each([
+    ["updateOne", () => useUpdatesStore.getState().updateOne(row())],
+    [
+      "updateRows",
+      () =>
+        useUpdatesStore.getState().updateRows([row({ updateAvailable: true })]),
+    ],
+    ["setIgnored", () => useUpdatesStore.getState().setIgnored(row(), true)],
+  ])("reads the standing back when %s is refused", async (_name, act) => {
+    for (const command of [
+      commands.packageUpdate,
+      commands.packageUpdateMany,
+      commands.updateSetIgnored,
+    ]) {
+      vi.mocked(command).mockResolvedValue({
+        status: "error",
+        error: "the apply could not finish",
+      } as never);
+    }
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: after, warnings: [], lastFetched: null },
+    });
+
+    await act();
+
+    expect(commands.updatesOverview).toHaveBeenCalled();
+    expect(useUpdatesStore.getState().rows).toEqual(after);
+  });
+});

@@ -259,13 +259,28 @@ describe("the Follow source switch", () => {
     await settle();
   });
 
-  // The engine wrote nothing. The rows already wear the flip, and no read
-  // is coming to replace them, so the switch goes back where the engine
-  // still has it and the refusal is news now.
-  it("puts the switch back and says why when the write is refused", async () => {
+  // A refused write is not a write that changed nothing. `package_set_rev`
+  // persists the revision through `set_rev_with` and only then runs the
+  // apply, so an apply that fails answers with an error over a manifest
+  // that already moved. Restoring the switch from the row the click read
+  // would show that as settled and re-open every action against it — so
+  // the standing is read again, and the engine's own answer decides where
+  // the switch sits.
+  it("reads the standing back when the write is refused", async () => {
     vi.mocked(commands.packageSetRev).mockResolvedValue({
       status: "error",
       error: "manifest busy",
+    });
+    // What the engine turns out to hold: the revision the failed apply
+    // had already persisted.
+    const persisted = [
+      { ...rows[0], pinned: true, holdOwner: { kind: "package" as const } },
+      rows[1],
+      rows[2],
+    ];
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: persisted, warnings: [], lastFetched: null },
     });
     mount(<Live />);
     await openPlaces();
@@ -275,10 +290,11 @@ describe("the Follow source switch", () => {
     });
     await settle();
 
-    // Nothing committed, so nothing is re-read.
-    expect(commands.updatesOverview).not.toHaveBeenCalled();
-    expect(following(followSwitch("gh", USER_LEVEL_PLACE))).toBe(true);
+    expect(commands.updatesOverview).toHaveBeenCalled();
+    // The flip is retired before that read, so the rows come back as the
+    // engine has them rather than wearing a position it never took.
     expect(useUpdatesStore.getState().pendingFollows).toEqual([]);
+    expect(following(followSwitch("gh", USER_LEVEL_PLACE))).toBe(false);
     // And said once. A second announcement re-opened a dialog the person
     // had already dismissed.
     expect(

@@ -110,35 +110,29 @@ export function followSwitch({
       const response = await settled(
         writeRev(row.scope, row.kind, row.name, auto ? null : hold),
       );
-      if (response.status === "error") {
-        // Nothing committed, so nothing is coming to replace the rows the
-        // flip painted: put the switch back where the click moved it from,
-        // and say why now rather than in the seconds a read would take.
-        //
-        // That is the best answer available, not a certain one. The rows on
-        // screen wear the flip, so they cannot say where the engine has the
-        // switch, and a read that landed while the write was out is worn
-        // over too. What puts it beyond doubt is the next landing, which
-        // carries the engine's own answer once no flip is pending.
-        set({
-          rows: withPending(get().rows, [{ ...flip, pinned: row.pinned }]),
-        });
-        report(response.error);
-        return;
-      }
-      // Every scope's standing is read again behind the apply. The scan
-      // and the audit are not: switching Follow back on resolves the
-      // package at its source's tip and moves installed bytes they both
-      // answer for, so both are left dated until something else asks.
-      // `update-follow.dom.test.tsx` holds that as it is. It is how the
-      // flip has always behaved, not something this store changed.
-      await get().reload();
+      // Say why now rather than in the seconds a read takes.
+      if (response.status === "error") report(response.error);
     } finally {
+      // Retired before the read, so the rows come back as the engine has
+      // them rather than wearing a flip that has already answered.
       set({
         pendingFollows: get().pendingFollows.filter(
           (one) => one.id !== flip.id,
         ),
       });
+      // Read again whichever way the write answered. An error is not proof
+      // that nothing changed: `package_set_rev` persists the revision
+      // through `set_rev_with` and only then runs the apply, so a failed
+      // apply returns an error over a manifest that already moved. Putting
+      // the switch back from the click's own row would show that as
+      // settled and re-open every action against it.
+      //
+      // The scan and the audit are not re-read. Switching Follow back on
+      // moves installed bytes they both answer for, so both are left dated
+      // until something else asks — how the flip has always behaved, held
+      // by `update-follow.dom.test.tsx` as it is rather than as it ought
+      // to be.
+      await get().reload();
     }
   };
 }
