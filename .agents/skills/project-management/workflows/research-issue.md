@@ -78,6 +78,9 @@ Map each domain label to its agent type (project-configurable) and delegate in p
 
 Re-delegate to `[CONSULTATION_AGENT_NAME]` when the caller supplied one, omitting the reading block below. Otherwise start a fresh agent with the full block.
 
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+`[DIR]` is the caller's own checkout, main checkout included.
+
 <delegation_format>
 Research: [RESEARCH_ISSUE_ID] - [TOPIC]
 
@@ -102,9 +105,6 @@ Draft your domain's contribution:
 
 Reply with a structured section per item.
 </delegation_format>
-
-Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
-`[DIR]` is the caller's own checkout, main checkout included.
 
 ### 2.2 Assemble
 
@@ -150,7 +150,10 @@ Run `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`, or use Pi `web_research` 
 
 **If `auto_execute` is false**: present the issue and assets and stop, noting that the issue is labeled `agent:researcher` and ready.
 
-Otherwise delegate to `researcher` (or `[RESEARCHER_AGENT_NAME]`):
+Otherwise delegate to `researcher` (or `[RESEARCHER_AGENT_NAME]`).
+
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+`[DIR]` is the caller's own checkout, main checkout included.
 
 <delegation_format>
 Research issue: [RESEARCH_ISSUE_ID] - [TOPIC]

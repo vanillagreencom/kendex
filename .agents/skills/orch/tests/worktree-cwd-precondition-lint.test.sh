@@ -33,15 +33,19 @@
 #      then missed blocks whose paths are placeholders the caller fills.
 #      The pair costs two lines on a delegation that never touches the
 #      repo, and uniform is the only rule that cannot be wrong.
-#   3. A doc carrying a block also carries the canonical fill line, held in
+#   3. EVERY block is preceded by the canonical fill line, held in
 #      $CANON_FILL by the same equality predicate. The pair is worth
 #      nothing if the value poured into it is not what `pwd -P` prints, and
 #      the workflows resolved that value to `.` or to "the current
 #      directory", so a filled delegation halted in a CORRECT checkout. The
 #      fill line names `git-context repo-root`, whose `--show-toplevel`
 #      output is absolute and physical, so both sides of the comparison
-#      agree by construction. Rules 1 and 2 read inside a
-#      `<delegation_format>` block; rule 3 reads the doc around it.
+#      agree by construction. Per block, because a doc satisfying the rule
+#      once bought silence for every later block: the second block in
+#      audit-issues.md carried its own resolution, to an absolute LOGICAL
+#      path, and a file-wide assertion never read it. Rules 1 and 2 read
+#      inside a `<delegation_format>` block; rule 3 reads the lines between
+#      one block and the block before it.
 #
 # Scope is every skill doc that can carry a delegation, in BOTH trees where
 # both exist: the `skills/` source and the `.agents/skills/` render agents
@@ -166,20 +170,25 @@ scan_worktree_precondition() {
 }
 
 # scan_worktree_fill <file>
-# Emits one defect line when a doc opens a delegation block but never states,
-# outside every block, that the delegated path comes from `git-context
-# repo-root`. Equality against $CANON_FILL is the whole predicate, so a
-# resolution reworded back to `.` or to the current directory reds.
+# Emits one defect line per delegation block the canonical fill line does not
+# precede. The scope is the BLOCK, not the file: a doc that states the
+# canonical resolution once and a divergent one before a later block passed a
+# file-wide assertion, and the later block is the one that poured a logical
+# path into a `pwd -P` comparison. So the demand is raised at every opening
+# tag and the evidence is cleared at every closing tag — each block is asked
+# for the sentence again, in the lines between it and the block before it.
+# Equality against $CANON_FILL is the whole predicate, so a resolution
+# reworded back to `.` or to the current directory reds.
 scan_worktree_fill() {
   awk -v f="$1" -v canon="$CANON_FILL" '
     function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
-    /^[[:space:]]*<delegation_format>[[:space:]]*$/ { indel = 1; hasblock = 1; next }
-    /^[[:space:]]*<\/delegation_format>[[:space:]]*$/ { indel = 0; next }
-    !indel { if (trim($0) == canon) hasfill = 1 }
-    END {
-      if (hasblock && !hasfill)
-        printf "%s: carries a delegation block but no canonical Worktree fill line\n", f
+    /^[[:space:]]*<delegation_format>[[:space:]]*$/ {
+      if (!hasfill)
+        printf "%s:%d: delegation block is not preceded by the canonical Worktree fill line\n", f, NR
+      indel = 1; next
     }
+    /^[[:space:]]*<\/delegation_format>[[:space:]]*$/ { indel = 0; hasfill = 0; next }
+    !indel { if (trim($0) == canon) hasfill = 1 }
   ' "$1"
 }
 
@@ -517,7 +526,9 @@ fi
 # prints. The workflows resolved it to `.` or to "the current directory", so
 # a delegate filled from them halted in a CORRECT checkout. The fill line is
 # held by the same equality predicate as the check line.
-NOFILL='carries a delegation block but no canonical Worktree fill line'
+# The demand is per block, so the fragment carries no file half and each
+# probe below pins the block it must name.
+NOFILL='delegation block is not preceded by the canonical Worktree fill line'
 
 # e.1 — a delegating doc that never says where the path comes from IS
 # flagged, even with a perfect check line inside the block.
@@ -563,6 +574,36 @@ if [ -z "$(scan_worktree_fill "$PROSE")" ]; then
   pass "lint asks no fill line of a doc carrying no delegation"
 else
   fail "lint demanded a fill line of a non-delegating doc"
+fi
+
+# e.6 — the shape a file-wide assertion hid, and the reason rule 3 is now
+# per block: the canonical line before the FIRST block, a resolution of the
+# doc's own before the second. The one in audit-issues.md § 4.1 said
+# "the absolute path of the caller worktree", which admits a LOGICAL path —
+# a checkout entered through a symlink — and `pwd -P` then halts a correctly
+# placed delegate. The output is compared whole, so the probe fails if the
+# scan names the wrong block as readily as if it names none.
+TWOBLOCK="$TMP_ROOT/probe-two-blocks.md"
+DIVERGENT='Fill both fields with the absolute path of the caller worktree the collect step resolves.'
+printf '%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n\n%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' \
+  "$CANON_FILL" "$CHECK" "$DIVERGENT" "$CHECK" > "$TWOBLOCK"
+SECOND_OPEN="$(grep -n '^<delegation_format>$' "$TWOBLOCK" | sed -n '2s/:.*//p')"
+if [ "$(scan_worktree_fill "$TWOBLOCK")" = "$TWOBLOCK:$SECOND_OPEN: $NOFILL" ]; then
+  pass "lint flags the second block of a doc whose first block alone carries the fill line"
+else
+  fail "lint MISSED a second block carrying a divergent fill instruction"
+fi
+
+# e.7 — and the same two blocks, each preceded by the canonical line, are
+# clean. Without this the reset at the closing tag could demand the sentence
+# somewhere a doc can never put it and e.6 would still pass.
+BOTHFILLED="$TMP_ROOT/probe-two-blocks-filled.md"
+printf '%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n\n%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' \
+  "$CANON_FILL" "$CHECK" "$CANON_FILL" "$CHECK" > "$BOTHFILLED"
+if [ -z "$(scan_worktree_fill "$BOTHFILLED")" ]; then
+  pass "lint accepts a doc whose every block carries the canonical fill line"
+else
+  fail "lint false-flagged a doc filling both its blocks canonically"
 fi
 
 echo

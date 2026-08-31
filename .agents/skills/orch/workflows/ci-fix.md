@@ -104,7 +104,10 @@ gh pr view [DRAFT_PR] --json commits --jq '.commits[].oid'
 
 Cross-reference those commits with the original PRs to identify which file failed, which commit introduced it, and which PR that commit belongs to. A single identifiable PR routes to that PR's agent; a genuine cross-PR integration issue routes to the architecture reviewer for analysis; an unclear source goes to the user.
 
-For an integration issue, create a worktree from the draft branch (`worktree create [ISSUE_ID] "[DRAFT_BRANCH]" --pr [DRAFT_PR_NUMBER]`) and delegate analysis:
+For an integration issue, create a worktree from the draft branch (`worktree create [ISSUE_ID] "[DRAFT_BRANCH]" --pr [DRAFT_PR_NUMBER]`) and delegate analysis.
+
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+`[DIR]` is the worktree just created from the draft branch.
 
 <delegation_format>
 Merge queue CI failure — integration issue across stacked PRs.

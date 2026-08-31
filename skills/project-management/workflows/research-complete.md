@@ -86,7 +86,9 @@ List a technical change only when it changes what a user or operator experiences
 
 ### 5.2 Pervasive
 
-Delegate the same analysis to every affected domain agent in parallel, minus the cross-domain and scope questions. Then delegate the synthesis to the architecture review agent:
+Delegate the same analysis to every affected domain agent in parallel, minus the cross-domain and scope questions. Then delegate the synthesis to the architecture review agent.
+
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
 
 <delegation_format>
 Synthesize the domain reports into a cross-cutting impact analysis.

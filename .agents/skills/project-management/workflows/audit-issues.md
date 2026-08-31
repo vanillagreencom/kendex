@@ -83,7 +83,10 @@ No sync step. Load project taxonomy the same way as Linear mode; with no declare
 
 ### 2.1 Delegate
 
-Spawn a one-shot `[TPM]` sub-agent (not a teammate — no re-delegation):
+Spawn a one-shot `[TPM]` sub-agent (not a teammate — no re-delegation).
+
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+`[DIR]` is the caller's own checkout, per § 4.1.
 
 <delegation_format>
 Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
@@ -92,9 +95,6 @@ Arguments: --project-order
 Worktree: [WORKTREE_PATH]
 Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
 </delegation_format>
-
-Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
-`[DIR]` is the caller's own checkout, per § 4.1.
 
 ### 2.2 Materialize and Present
 
@@ -144,7 +144,10 @@ With `TARGET` set, use it. Otherwise take the first `session-status.projects` en
 
 ### 4.1 Delegate
 
-Spawn a one-shot `[TPM]` sub-agent (not a teammate):
+Spawn a one-shot `[TPM]` sub-agent (not a teammate).
+
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+`[DIR]` is the caller worktree § 4.2 step 2 resolves, which is the main checkout only when the main checkout is the caller.
 
 <delegation_format>
 Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
@@ -155,7 +158,7 @@ Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTR
 Tracker: [TRACKER] [OWNER/REPO]
 </delegation_format>
 
-`Worktree:` and its `Worktree Check:` always ship together. Fill both with the absolute path of the caller worktree § 4.2 step 2 resolves, which is the main checkout only when the main checkout is the caller. Omit `[OWNER/REPO]` when `TRACKER=linear`.
+Omit `[OWNER/REPO]` when `TRACKER=linear`.
 
 ### 4.2 Collect and Validate
 

@@ -103,6 +103,8 @@ Group pending sub-issues by `agent:[TYPE]` label and order them per [SKILL.md §
 
 Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run all four § 2 stamps immediately before each group's delegation.
 
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+
 <delegation_format>
 Follow workflow: .agents/skills/dev/workflows/dev-implement.md
 
