@@ -156,7 +156,12 @@ state_flags=()
 [[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
 
 authorization_mapping_is_unambiguous() {
-	local base_sha="$1" map_json="$2" base_subject old_sha old_subject old_shas
+	local base_sha="$1" map_json="$2" base_subject old_sha old_subject old_shas has_drop
+	has_drop="$(jq -er 'any(.[]; . == "dropped") | tostring' <<<"$map_json")" || {
+		printf 'worktree-push: could not determine the rebase-map pairing mode\n' >&2
+		return 1
+	}
+	[[ "$has_drop" == "true" ]] || return 0
 	base_subject="$(git -C "$worktree_abs" show -s --format=%s "$base_sha^{commit}" 2>/dev/null)" || {
 		printf 'worktree-push: could not read authorization base commit %s while checking its rebase mapping\n' "$base_sha" >&2
 		return 1

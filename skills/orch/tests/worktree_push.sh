@@ -549,6 +549,22 @@ duplicate_auth="$duplicate_wt/.git/kendex/dev-round-authorizations/KEN-DUPLICATE
 assert_eq "$(jq -r '.base_sha' "$duplicate_auth")" "$duplicate_first" \
   "an ambiguous mapping does not advance the authorization base"
 
+rm -f "$duplicate_wt/.git/worktree-push-pending-map-KEN-DUPLICATE.json"
+"$ROUND_WRITE" --worktree "$duplicate_wt" --issue KEN-DUPLICATE --round-id 2-2 --item 1 positional >/dev/null
+duplicate_equal_old="$(git -C "$duplicate_wt" rev-parse HEAD)"
+git -C "$duplicate_wt" commit -q --allow-empty -m 'same subject'
+duplicate_equal_new_first="$(git -C "$duplicate_wt" rev-parse HEAD)"
+git -C "$duplicate_wt" commit -q --allow-empty -m 'same subject'
+duplicate_equal_new_second="$(git -C "$duplicate_wt" rev-parse HEAD)"
+(cd "$duplicate_state" && "$STATE" set KEN-DUPLICATE dev_round_id 2-2)
+STUB_PUSH_STDOUT="rebase-map: $duplicate_first $duplicate_equal_new_first
+rebase-map: $duplicate_equal_old $duplicate_equal_new_second" \
+  run_push "$duplicate_state" --worktree "$duplicate_wt" --issue KEN-DUPLICATE
+assert_eq "$RUN_RC" "0" "equal-count duplicate subjects keep positional authorization mapping"
+duplicate_equal_auth="$duplicate_wt/.git/kendex/dev-round-authorizations/KEN-DUPLICATE-2-2.json"
+assert_eq "$(jq -r '.base_sha' "$duplicate_equal_auth")" "$duplicate_equal_new_second" \
+  "equal-count mapping advances the authorization base by position"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
