@@ -295,18 +295,41 @@ pub(super) fn notice_files(
     else {
         return Ok(Vec::new());
     };
+    // Carried, not swallowed, though no deterministic case drives it:
+    // `resolve` hands back `Ready` only after finding the root a
+    // directory, so what is left here is the root going away or losing its
+    // permissions between that answer and this open. A refusal is the
+    // right default for a read whose absence would publish a package
+    // without its licence, whether or not a fixture can stage it.
     let sealed = SealedSource::open(&resolved.root)?;
     let mut notices = Vec::new();
     for entry in sealed.entries(&resolved.root)? {
-        // A name no UTF-8 spells is no evidence file: every name this
-        // collects is ASCII, so passing over it drops nothing.
-        let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
+        // The stem is read off the lossy spelling, so bytes no UTF-8
+        // decodes cannot hide a licence behind an ASCII name: on Linux a
+        // filename is bytes, and `LICENSE.<invalid>` has the stem this
+        // collects.
+        let Some(raw) = entry.file_name() else {
             continue;
         };
-        let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+        let shown = raw.to_string_lossy();
+        let stem = shown
+            .split('.')
+            .next()
+            .unwrap_or(&shown)
+            .to_ascii_uppercase();
         if !matches!(stem.as_str(), "LICENSE" | "LICENCE" | "NOTICE" | "COPYING") {
             continue;
         }
+        // A name the copy could not reproduce is the refusal, not a skip:
+        // the notice is written under this name at the destination, and
+        // there is no name to write it under.
+        let Some(name) = raw.to_str() else {
+            return Err(CoreError::SourceEscape {
+                path: entry.clone(),
+                reason: "a licence file's name is not valid UTF-8, so the copy cannot carry it"
+                    .to_owned(),
+            });
+        };
         // Asked through the sealed reader, which refuses a link rather
         // than following it: read as a boolean, a symlinked LICENSE is
         // skipped as though it were no file at all, and the copy goes out

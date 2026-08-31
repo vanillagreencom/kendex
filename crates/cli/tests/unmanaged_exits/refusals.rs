@@ -2,7 +2,7 @@
 //! have to name the scope they were read in. Every offer here is checked
 //! against what a reader could actually run.
 
-use crate::test_util::source_path;
+use crate::test_util::{rooted, source_path};
 
 use std::fs;
 
@@ -366,5 +366,74 @@ fn a_directory_named_like_the_marker_is_not_offered_the_keep() {
         offer(&planned),
         "move them somewhere else first",
         "{planned}"
+    );
+}
+
+/// A person's own edit never takes the item's other exits away, which is
+/// the invariant `DriftCause::is_own_decision` exists to keep. The sweep
+/// settles a scope whose only unsettleable row is an edit, so withholding
+/// the offer there would leave the reader with no printed way to install
+/// what kendex.toml asks for: the per-item line offers only the keep.
+/// Held here in the hardest shape — one item carrying an edit at one tool
+/// and a stranger's files at another, beside a wholly replaceable item.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edit_beside_a_replaceable_item_does_not_withhold_the_scope_exit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let home = home.as_path();
+    let project = project_with(home, "[\"claude\"]", "copy");
+    fs::create_dir_all(home.join("catalog/skills/lint")).unwrap();
+    fs::write(
+        home.join("catalog/skills/lint/SKILL.md"),
+        "---\nname: lint\ndescription: lints it\n---\nUpstream.\n",
+    )
+    .unwrap();
+    let manifest = project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        text.replace(
+            "[skills.deploy]\nsource = \"cat\"\n",
+            "[skills.lint]\nsource = \"cat\"\n",
+        ),
+    )
+    .unwrap();
+    // lint installs for claude alone, and the person edits it.
+    assert!(kendex(home, &project, &["apply", "-y"]).status.success());
+    fs::write(
+        project.join(".claude/skills/lint/SKILL.md"),
+        "---\nname: lint\ndescription: lints it\n---\nEdited by hand.\n",
+    )
+    .unwrap();
+    // Codex joins, with a stranger's files already at lint's place there,
+    // and deploy is declared beside it and wholly replaceable.
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        text.replace(
+            "harnesses = [\"claude\"]",
+            "harnesses = [\"claude\", \"codex\"]",
+        )
+        .replace(
+            "[skills.lint]\nsource = \"cat\"\n",
+            "[skills.lint]\nsource = \"cat\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+        ),
+    )
+    .unwrap();
+    fs::create_dir_all(project.join(".codex/skills/lint")).unwrap();
+    fs::write(
+        project.join(".codex/skills/lint/SKILL.md"),
+        "---\nname: lint\ndescription: lints it\n---\nSomebody else's.\n",
+    )
+    .unwrap();
+    folder_at(&project.join(".claude/skills/deploy"), "By hand.");
+    folder_at(&project.join(".codex/skills/deploy"), "By hand.");
+
+    let planned = plan(home, &project);
+    assert!(planned.contains("conflict: skill deploy"), "{planned}");
+    assert!(
+        planned.contains("--replace-unmanaged"),
+        "an edit is not a row the sweep refuses on: {planned}"
     );
 }

@@ -80,13 +80,13 @@ pub(super) fn wrapper(
     // The strip cannot fail as the two are built here: `bare_before` and
     // `bare_after` are what this same configuration renders around a
     // stand-in body, and `bare_body` is what it renders around the real
-    // one, so the ends bracket it by construction. Probed at the
-    // degenerate end — an absent, empty and whitespace-only publisher body
-    // — and never reached. It is written as a refusal rather than a
-    // `debug_assert` because only a renderer whose text around a body
-    // varied with that body could break it, and reading a wrapper wrongly
-    // cuts the person's own words out of their prose. An invariant held
-    // fail-closed, not a guard with a case behind it.
+    // one, so the ends bracket it by construction. It is written as a
+    // refusal rather than a `debug_assert` because only a renderer whose
+    // text around a body varied with that body could break it, and reading
+    // a wrapper wrongly cuts the person's own words out of their prose. An
+    // invariant held fail-closed, not a guard with a case behind it —
+    // `a_publisher_body_with_nothing_in_it_still_forks` holds the end of
+    // the range where a body could plausibly change what surrounds it.
     let Some(published) = bare_body
         .strip_prefix(bare_before.as_str())
         .and_then(|rest| rest.strip_suffix(bare_after.as_str()))

@@ -1,3 +1,3 @@
-- Forking or renaming a hook, command or MCP server is refused, naming the
-  kind. It used to record a fork that installed nowhere and stranded the
-  original.
+- `kendex fork` and its rename refuse any kind but a skill or an agent, naming
+  the kind. Hooks, commands, MCP servers, plugins and Pi extensions have no
+  fork path.

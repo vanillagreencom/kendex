@@ -77,13 +77,21 @@ fn with_instructions(
 /// carrying no `name` gets one as its first line, in the file's own line
 /// ending.
 ///
-/// `Err` where no single line carries the name, saying which of the three
+/// `Err` where no single line carries the name, saying which of the four
 /// shapes the file is in: the reader is going to go and look at it, and
-/// "add a frontmatter block", "you named it twice" and "the name runs past
-/// its line" send them to three different edits. The validators say the
-/// same things plainly, and writing around any of them here would hide it.
+/// "add a block", "close the one you have", "you named it twice" and "the
+/// name runs past its line" send them to four different edits. The
+/// validators say the same things plainly, and writing around any of them
+/// here would hide it.
 pub(crate) fn with_name(text: &str, installed: &str) -> std::result::Result<String, &'static str> {
-    let (yaml, _) = crate::frontmatter::split(text).map_err(|_| "it has no frontmatter")?;
+    // `split` tells a missing block from one whose closing marker is gone,
+    // and the two send a reader to different edits.
+    let (yaml, _) = crate::frontmatter::split(text).map_err(|problem| {
+        match problem.contains("unterminated") {
+            true => "its frontmatter block is never closed",
+            false => "it has no frontmatter",
+        }
+    })?;
     let yaml_start = yaml.as_ptr() as usize - text.as_ptr() as usize;
     let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
     let entry = format!("name: {}", super::yaml_scalar(installed));
@@ -262,6 +270,10 @@ mod tests {
     fn with_name_refuses_where_no_one_line_carries_the_name() {
         for (text, problem) in [
             ("Body.\n", "it has no frontmatter"),
+            (
+                "---\nname: gh\nBody.\n",
+                "its frontmatter block is never closed",
+            ),
             (
                 "---\nname: a\nname: b\n---\n",
                 "its frontmatter names it twice",

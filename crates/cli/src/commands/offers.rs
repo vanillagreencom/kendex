@@ -107,8 +107,14 @@ fn item_replaceable(item: &[&DriftRow]) -> bool {
 /// the run refuse, since replacing the rest would leave that place in the
 /// way with the item no longer its tool's. An item with no replaceable
 /// place at all is never swept and is no reason to withhold anything.
+///
+/// The blocking half asks `dead_stop`, which is the engine's own question,
+/// rather than reading "not replaceable" off the cause: a person's own
+/// edit is not replaceable and is not a dead stop either, and it must
+/// never take the item's other exits away. Asked here rather than relied
+/// on from the caller's filter, so the two cannot drift apart.
 fn sweep_refuses(item: &[&DriftRow]) -> bool {
-    item.iter().any(can_replace) && !item.iter().all(can_replace)
+    item.iter().any(can_replace) && item.iter().any(|row| !can_replace(row) && row.dead_stop())
 }
 
 /// Whether the offer belongs under this row: the last of the item's rows

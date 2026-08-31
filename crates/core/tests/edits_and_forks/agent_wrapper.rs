@@ -756,3 +756,43 @@ fn whitespace_a_person_edits_inside_an_indented_block_is_their_edit() {
     assert!(text.contains("    first\n\n    second"), "{text}");
     assert_eq!(banners(&text), 1, "{text}");
 }
+
+/// The wrapper is read by rendering the agent around a stand-in body and
+/// taking what surrounds it, so a publisher who wrote no body at all is
+/// the end of the range where that reading could break. The fork still
+/// captures, and what it captures is the person's line and no wrapper.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_publisher_body_with_nothing_in_it_still_forks() {
+    for published in [
+        "---\nname: rev\ndescription: agent rev\n---\n",
+        "---\nname: rev\ndescription: agent rev\n---\n\n",
+        "---\nname: rev\ndescription: agent rev\n---\n   \n",
+    ] {
+        let w = agent_world(
+            "\"claude\"",
+            published,
+            "",
+            "[agent-additional-instructions]\nrev = \"Say what you changed.\"\n",
+        );
+        let file = rendered(&w, HarnessId::Claude, "rev");
+        // Their line goes where the body goes: between the banner and the
+        // generated section, the region the publisher left empty.
+        let text = fs::read_to_string(&file).unwrap();
+        let edited = text.replacen(
+            "## Additional Instructions",
+            "Mine.\n\n## Additional Instructions",
+            1,
+        );
+        assert_ne!(edited, text, "{published:?}: {text}");
+        fs::write(&file, &edited).unwrap();
+
+        let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude)
+            .unwrap_or_else(|e| panic!("{published:?}: {e}"));
+        apply::execute(&w.env, &plan).unwrap();
+        let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+        assert_eq!(times(&source, "Mine."), 1, "{published:?}: {source}");
+        let kept = times(&source, "## Additional Instructions");
+        assert_eq!(kept, 0, "{published:?}: the wrapper was kept: {source}");
+    }
+}

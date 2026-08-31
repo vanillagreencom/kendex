@@ -165,6 +165,16 @@ fn the_collapsed_reading_answers_no_where_it_cannot_tell() {
     assert!(!sealed.is_file(&dir));
     assert!(!sealed.is_file(&dir.join("nowhere")));
 
+    // Absent said the other way, which only the three-valued reading can
+    // tell from a refusal: a name built under a plain file, which is what
+    // a probe for `<entry>/SKILL.md` reads whenever the entry beside an
+    // item is an ordinary file.
+    assert!(
+        crate::fs::entry(&file.join("SKILL.md"))
+            .expect("probe")
+            .is_none()
+    );
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
