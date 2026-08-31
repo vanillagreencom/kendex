@@ -42,12 +42,14 @@ and the drift validator reds before that happens.
 | Copilot code review | `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`, `AGENTS.md` | the pull request head |
 | CodeRabbit | `.coderabbit.yaml`, whole-file, beneath any organization or workspace global override, plus `AGENTS.md` through `knowledge_base.code_guidelines.filePatterns` | the pull request head |
 | Qodo | `.pr_agent.toml`, `best_practices.md`, `REVIEW.md` | the default branch root |
-| Macroscope | `.macroscope/ignore.md`, `.macroscope/correctness/*.md`, and nothing else | the pull request's most recent commit, or the default branch for a fork |
+| Macroscope | `.macroscope/ignore.md`, `.macroscope/correctness/*.md`, plus `.macroscope/check-run-agents/**` and `.macroscope/approvability.md`, which this package never writes | the pull request's most recent commit, or the default branch for a fork |
 
 Three of the five reach the `AGENTS.md` section, which is why it is the
 doctrine root and why `[bots] codex = false` with `copilot` or `coderabbit` on
-is a `toml-schema` error. Codex and Macroscope each read one surface and nothing
-else, so both carry every doctrine block; the routing table in
+is a `toml-schema` error. Codex and Macroscope are the two that do not: neither
+reads an `AGENTS.md` at all, so a block left out of the one surface this package
+writes for each reaches that bot nowhere, and both carry every block. The
+routing table in
 [schemas/renders.md](schemas/renders.md) is where that lives, one row per block
 and one column per destination.
 
@@ -143,11 +145,15 @@ Codex without passing through doctrine. `check` reports one.
 files beside generated ones. The generator writes only the names the TOML's
 surfaces produce and reads nothing else. Telling the two apart is what the
 marker comment is for, and it is the only test: anything carrying the marker
-that the current TOML does not produce is an orphan, and `check` reports it.
-That is a retired surface's file, a retired bot's, and the `AGENTS.md` region
-when `codex` goes false. An unmarked file at one of those paths is the repo's
-own, whatever the flags say, and `adopt` is how one becomes managed. Retiring a
-surface or a bot otherwise leaves a file every bot keeps loading.
+that the current TOML does not produce is an orphan. That is a retired surface's
+file, a retired bot's, and the `AGENTS.md` region when `codex` goes false. An
+unmarked file at one of those paths is the repo's own, whatever the flags say,
+and `adopt` is how one becomes managed.
+
+**Retiring one is delete-then-render, in that order**, because `render` fails on
+an orphan rather than creating one. `check` catches a retirement that skipped
+the render; it is not the normal path. `validators.md` § `orphan` carries the
+order and what deleting the `AGENTS.md` region means.
 
 **Every open is contained, and the rule is about opens rather than about
 outputs.** Resolving a path, checking it, then opening it proves the property
@@ -201,31 +207,37 @@ whose merge gate consumes bot output has to do instead:
 - Run `check` in CI from the default branch's copy of this package, never from
   the pull request's checkout: a workflow that checks out the default branch
   for the generator and validators, then points them at the pull request's
-  tree, passing `--doctrine` for the doctrine source in that tree. Inputs come
+  tree, passing `--spec` for the package copy in that tree. Inputs come
   from the tree under judgment, because a legitimate doctrine or TOML change has
   to be able to land; the trusted checkout supplies the code. What that buys is
   that a tampered generator cannot report a clean render. It does not and cannot
   stop a policy change, which is what the approval rule above is for.
 
+**The render inputs**, which is every path a render reads. This is the one
+statement of the set: the marker names them, `check --staged` reads each from
+the index, every one is under the open rule above, and the policy set below
+contains them.
+
+- `bot-instructions.toml`.
+- The spec copy's doctrine source and routing table.
+- `.bot-instructions/coderabbit-schema.json`, when `[bots] coderabbit` is true.
+- The resolved install manifest, when `[exclusions] derive_render` is true.
+- The existing `AGENTS.md`, when `[bots] codex` is true.
+
 **The policy set**, which is every path whose bytes decide what a bot is told or
 whether a render validates. This list is the one statement of it; the checklist
 line points here rather than repeating it, so the two cannot drift.
 
-- `bot-instructions.toml`.
-- The doctrine source.
+- Every render input above.
 - Every generated path.
 - Every `AGENTS.md` in the repo. Codex reads the nearest nested one, so a file
   the root render never touches still reaches it.
-- `.bot-instructions/coderabbit-schema.json`, the vendored CodeRabbit schema.
-  Loosening it — dropping the `tone_instructions` cap, dropping the root
-  `additionalProperties: false` — turns `coderabbit-schema` green on a file
-  CodeRabbit discards whole, and it stays green on every later pull request.
-- The resolved install manifest when `[exclusions] derive_render` is true. It
-  decides which trees leave review scope, and `exclusion-consistency` derives
-  both sides of its comparison from it.
-- Every file under `.github/instructions/` and `.macroscope/correctness/`,
-  marked or not. Copilot and Macroscope load an unmarked file from the head just
-  as readily as a generated one, and nothing else here judges it.
+- Every file under `.github/instructions/`, `.macroscope/correctness/`,
+  `.macroscope/check-run-agents/`, and `.macroscope/approvability.md`, marked or
+  not. Copilot and Macroscope load an unmarked file from those just as readily
+  as a generated one, and nothing else here judges it. The last two this package
+  never writes at all, which makes them unmanaged surfaces rather than
+  unmanaged files.
 - Any repo-wide reviewer file the repo keeps by hand. § Adding a repo says what
   becomes of one.
 
@@ -255,13 +267,16 @@ and it is the reason the version is in the marker at all.
 
 ## Doctrine
 
-The generator reads doctrine from a **doctrine source**: a SKILL.md carrying
-this section. It defaults to the running copy's own, and `--doctrine <path>`
-names another, which is what lets a trusted checkout render a tree whose
-doctrine has moved. The marker records the version from the doctrine source's
-frontmatter, not the running copy's, and a doctrine source with no readable
-version is an error — otherwise a doctrine change would land under a stamp
-naming doctrine it does not carry.
+The generator reads doctrine from a **spec copy**: a copy of this package, whose
+`SKILL.md` carries this section and whose `schemas/renders.md` carries the
+routing table. It defaults to the running copy, and `--spec <path>` names
+another, which is what lets a trusted checkout render a tree whose doctrine has
+moved. One flag for both files because they are one set: `doctrine-routing`
+holds the headings here to the rows there, so reading them from different
+copies would red on every legitimate doctrine change. The marker records the
+version from the spec copy's frontmatter, not the running copy's, and a spec
+copy with no readable version is an error — otherwise a doctrine change would
+land under a stamp naming doctrine it does not carry.
 
 The generator locates exactly one `## Doctrine` section in the doctrine source.
 Zero sections, or more than one, is an error rather than a guess. Blocks are the
@@ -354,9 +369,14 @@ recommend parsing them.
    and is a policy path. Read both lists against the TOML: a claim in one of
    those files that the TOML does not carry is about to be deleted, or to go on
    steering reviews from outside the package.
-3. Run `render`, then read the diff. Doctrine text appearing for the first time
+3. If `[bots] coderabbit` is true, put CodeRabbit's published schema at
+   `.bot-instructions/coderabbit-schema.json`. No verb writes it and
+   `coderabbit-schema` fails without it, deliberately: a validator that skipped
+   on a missing schema would be silent for the life of the repo, which is the
+   failure it exists to catch.
+4. Run `render`, then read the diff. Doctrine text appearing for the first time
    is expected; a repo-specific claim disappearing means it never made it into
    the TOML.
-4. Work [references/checklist.md](references/checklist.md). Every bot has at
+5. Work [references/checklist.md](references/checklist.md). Every bot has at
    least one setting no file can express, and a bot whose install or enablement
    step is skipped reviews nothing while every file below looks correct.

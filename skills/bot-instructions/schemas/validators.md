@@ -72,7 +72,9 @@ Its sites, and which answer each takes:
 | Doctrine block ids: the doctrine source's `###` headings against the routing table's rows | `doctrine-routing`, set equality in both directions |
 | Which block reaches which destination, and in what order | Derived. The routing table in `renders.md` is the single source; per-surface sections cite it and state no order of their own |
 | Content refusals: which input string is under which refusal, and what each refusal's predicate is | Derived. The table in `repo-toml.md` § The content refusals is the single source; `toml-schema`, `agents-section` and the Escaping paragraphs cite it |
-| The Qodo verbs `[cadence] qodo_commands` accepts | Derived. `repo-toml.md` § `[cadence]` states the set; `qodo-parity` reads it rather than carrying its own |
+| The Qodo verbs `[cadence] qodo_commands` accepts, and which half `qodo-parity` requires guidance for | Derived. `repo-toml.md` § `[cadence]` states the set and the split; `qodo-parity` reads it rather than carrying its own |
+| Which paths a render reads: the marker's input list, `drift`'s `--staged` index set, the policy set, the open rule's coverage | Derived. SKILL.md § The render inputs is the single source; the routing table is one of them, and all four cite it rather than each naming its own set |
+| The routing table's own shape: positions contiguous per column, no duplicates, and every block in the two all-eight columns | `doctrine-routing`, which judges the table as well as comparing it to the doctrine source |
 | Rejection clauses against their controls | Checked by reading, and the one exception. § Controls makes the count checkable by requiring one control per clause, which is why every clause has to be enumerated somewhere a reader can count |
 
 **What no validator can do.** Each one judges bytes this generator produced.
@@ -97,14 +99,13 @@ malformed, duplicated or reserved, an unknown doctrine block id in
 **Rejects, the content set.** Closure over keys and types leaves the contents of
 values that land in a control position, and those are where an injection goes.
 The clauses are the cells of `repo-toml.md` § The content refusals: every marked
-cell is one clause with one control, and the predicates are that table's. Two
-clauses live outside it because they are not content refusals on a string:
-
-- A glob whose path shape is refused — a leading or trailing `/`, a `..`
-  component, or an empty one. The character class admits every byte in those,
-  so the shape is checked separately.
-- A `[cadence] qodo_commands` entry outside the verb set `repo-toml.md`
-  § `[cadence]` states, or carrying whitespace or `--`.
+cell is one clause with one control, and the predicates are that table's. That
+table carries every one of them, `[tone] coderabbit`'s ASCII rule and the
+`qodo_commands` verb set included, so neither list has anything the other lacks.
+One clause lives outside it, because it is a shape rather than a content
+refusal: a glob with a leading or trailing `/`, a `..` component, or an empty
+one, none of which the character class can catch since every byte in them is
+permitted.
 
 Reading the table's marked cells is how the control count is checked, which is
 what a validator restating its own copy of the predicates would defeat.
@@ -129,19 +130,38 @@ source's `###` headings are two hand-kept copies of one set. A heading with no
 row renders into nothing at all; a row naming a heading that does not exist
 renders a hole. Both render clean.
 
-`--doctrine` makes the mismatch designed-in rather than hypothetical: in the CI
-lane this package prescribes, the block set comes from the tree under judgment
-and the routing table comes from the trusted default-branch checkout. A pull
-request adding a doctrine block renders green and the block reaches no bot.
-"Block ids are frozen" is a rule, and this is its enforcer.
+`--spec` makes the mismatch designed-in rather than hypothetical: in the CI
+lane this package prescribes, the spec copy comes from the tree under judgment
+while the code runs from the trusted default-branch checkout, so a pull request
+adding a doctrine block is a pull request changing the routing. "Block ids are
+frozen" is a rule, and this is its enforcer. The one flag naming both files is
+what keeps the two halves of the set arriving together; reading doctrine from
+one copy and routing from another would red every legitimate change.
 
-**Rejects.** A `###` block id in the doctrine source with no row in the routing
-table. A routing-table row naming an id the doctrine source does not define. Set
-equality in both directions: the one-directional half leaves the orphaned row
-unchecked, which is the half `--doctrine` produces.
+**Rejects, the set.** A `###` block id in the doctrine source with no row in the
+routing table — an unrouted block is an error, never a silent drop. A
+routing-table row naming an id the doctrine source does not define. Set equality
+in both directions: the one-directional half leaves the orphaned row unchecked.
 
-A byte validator — both inputs belong to the render. Its controls are a block
-with no row and a row with no block.
+**Rejects, the table's own shape.** Nothing else judges the table, and it is the
+generator's single routing input, so a one-character edit to it is a silent
+policy change:
+
+- A position repeated inside a column.
+- A gap in a column's positions, which must run `1..n`.
+- A missing block in the `AGENTS.md` or `macroscope doctrine.md` column. Both
+  columns carry every block, because neither Codex nor Macroscope reads a second
+  surface, and the table states that as an invariant of itself. Delete the `8`
+  from `reply-contract`'s `AGENTS.md` cell and Codex loses the reply contract
+  with every other validator green.
+
+A byte validator — both inputs belong to the render, and `--spec` names the one
+copy both come from, so they cannot arrive from different checkouts. One control
+per clause above.
+
+`qodo-parity` is the weaker relative and is worth reading as such: it compares a
+render against the table the render was generated from, so only a render bug
+reds it. What holds the table itself is here.
 
 ## `coderabbit-schema`
 
@@ -162,6 +182,15 @@ length cap, of which `tone_instructions` at 250 and
 can reach. Lengths count Unicode code points, which is what the schema's
 `maxLength` counts; `[tone] coderabbit` is required to be ASCII so the local
 count and the vendor's cannot disagree.
+
+**Rejects, also.** A missing, unreadable or unparseable
+`.bot-instructions/coderabbit-schema.json`, whenever `[bots] coderabbit` is
+true, on both verbs. Never a skipped validator: no verb writes that file, so
+every repo starts without one, and a validator that skipped on its absence
+would be silent for the life of a repo that never vendored it — which is the
+failure this validator exists to catch, one level up. SKILL.md § Adding a repo
+carries the step that puts the first copy there, and the absent file is one of
+this validator's controls.
 
 **Rejects, also.** A schema keyword the validator does not implement. A
 hand-written validator that ignores an unknown constraint under-validates while
@@ -306,20 +335,29 @@ else. Rename the heading, move the section, or delete the file, and Codex
 reviews every pull request with no repo rules at all, posting normally
 throughout.
 
-Runs only when `[bots] codex` is true, which `toml-schema` requires whenever
-`copilot` or `coderabbit` is. A repo with every bot off has no rendered section
-for this to judge, and rejecting a missing heading there would fail a repo that
-never asked for one.
+**Rejects, always.** A nested `AGENTS.md` anywhere below the root carrying a
+`## Code Review Rules` section. Codex reads the nearest nested file covering each
+changed path, so such a section reaches it without passing through doctrine, and
+the generator writes only the root one.
 
-**Rejects.** A nested `AGENTS.md` anywhere below the root carrying a `## Code
-Review Rules` section. Codex reads the nearest nested file covering each
-changed path, so such a section reaches it without passing through doctrine,
-and the generator writes only the root one. A root `AGENTS.md` with no `## Code
-Review Rules` heading, or with more than one. An owned region whose bytes
-differ from the render. A doctrine
-or repo line matching the heading predicate in `repo-toml.md` § The content
-refusals, which markdown reads as a heading and which would end the owned region
-at the next render, taking the rest of the section with it.
+Unconditional, and this is the clause the flag does not gate. `[bots] codex =
+false` says this package does not manage the section; it says nothing about
+whether Codex is installed, which an administrator changes without touching the
+repo. A repo running Macroscope and Qodo with `codex` off would otherwise lose
+the only detection of an unmanaged surface reaching a bot the TOML cannot switch
+off, while the policy set still counts every `AGENTS.md` as policy-bearing for
+exactly that reason. Its control is independent of the flag.
+
+**Rejects, when `[bots] codex` is true.** A root `AGENTS.md` with no `## Code
+Review Rules` heading, or with more than one. An owned region whose bytes differ
+from the render. A doctrine or repo line matching the heading predicate in
+`repo-toml.md` § The content refusals, which markdown reads as a heading and
+which would end the owned region at the next render, taking the rest of the
+section with it.
+
+These three judge a rendered region, so with the flag off there is no region to
+judge and rejecting a missing heading would fail a repo that never asked for
+one.
 
 ## `orphan`
 
@@ -356,13 +394,21 @@ Copilot and Macroscope walk those subtrees. A marked file one directory down,
 left by a hand move or a directory rename, is at no path the generator would
 write, so a flat scan would miss it while Copilot kept loading it.
 
-The fix is usually a deletion in the commit that retired the surface or the bot,
-which is why the generator reports rather than deletes: removing a file is a
-decision the commit's author makes. It is not always a deletion. Another check
-in the repo may require the file to exist, in which case the fix is to move what
-that check reads before the file goes. kendex is an example: its `tools/guard`
-fails when `.github/copilot-instructions.md` is absent, so retiring `[bots]
-copilot` there means moving guard's reply-contract pointer first.
+**Retiring one is delete-then-render.** `render` runs this before the write and
+fails on what it finds, so the render that would create the orphan never
+completes; the deletion has to come first, in the same commit. `check` is what
+catches a retirement that skipped the render, not the ordinary route. The
+generator reports rather than deletes because removing a file is a decision the
+commit's author makes, and sometimes the fix is not a deletion at all: another
+check in the repo may require the file, in which case what that check reads
+moves first. kendex is the worked example — its `tools/guard` fails when
+`.github/copilot-instructions.md` is absent, so retiring `[bots] copilot` there
+is move the pointer, delete the file, then render.
+
+**De-orphaning the `AGENTS.md` region** is not a deletion of the file. The
+heading is the repo's and has to survive; what goes is the marker and the body
+below it, leaving the section for the repo to fill or leave empty. Until that
+happens `render` fails, the same as for any other orphan.
 
 ## `drift`
 
@@ -396,9 +442,9 @@ a path the TOML does not produce and that this package never wrote is neither.
 
 **Which tree.** `check` reads the working tree by default. Under `--staged` it
 reads the index — and the index for **every render input**, not only the
-outputs: `bot-instructions.toml`, the doctrine source, the vendored schema,
-and the resolved install manifest when `derive_render` is on. A file absent
-from the index is that absence, not its worktree copy. Outputs-only would be
+outputs: every path in SKILL.md § The render inputs, read from that list rather
+than from a copy of it here. A file absent from the index is that absence, not
+its worktree copy. Outputs-only would be
 wrong in both directions in the pre-commit lane this mode exists for: a commit
 staging a TOML change with its re-rendered outputs would red, because the
 outputs came from the index while the render was built from a worktree TOML
@@ -407,9 +453,17 @@ would silently decide what the staged outputs were compared against, passing or
 failing on bytes nobody is committing.
 
 **Controls.** The hand-edit fixture, a fixture whose only change is a deleted
-marker line, and two for the mode: staged TOML plus staged outputs that agree
-with a divergent worktree TOML, asserted green; and a staged TOML whose outputs
-were not re-rendered, asserted red.
+marker line, and one pair per render input for the mode. Per input — the TOML,
+the spec copy, the vendored schema, the resolved manifest — a staged, consistent
+set with a divergent worktree copy of that input, asserted green; and a staged
+copy of that input that its staged outputs are stale against, asserted red. Plus
+one for absence: an input staged as absent, asserted on the absence rather than
+on its worktree copy.
+
+A TOML-only pair is what a generator reading the index for the TOML and the
+worktree for everything else passes, with the failure § Which tree names shipping
+intact. One clause, one control, applied to the validator whose clause names
+four inputs.
 
 ## Where these run
 

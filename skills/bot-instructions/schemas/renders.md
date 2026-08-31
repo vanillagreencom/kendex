@@ -25,17 +25,16 @@ at the top of `.coderabbit.yaml`. Ownership is decided by the marker being
 present, never by its offset, so `render`, `adopt` and `orphan` all ask the same
 question of every output.
 
-The marker is a comment in that file's syntax naming this package, the doctrine
-source's version, and its input files: `bot-instructions.toml`, the doctrine
-source, and the resolved install manifest when `[exclusions] derive_render` is
-true, by the path actually read. The comment ends with the sentence `Edit
-bot-instructions.toml or the doctrine source, then re-render.` A markdown
-output uses an HTML comment; YAML and TOML use `#`.
+The marker is a comment in that file's syntax naming this package, the spec
+copy's version, and the paths this render read — SKILL.md § The render inputs
+is the set, and each is named by the path actually read. The comment ends with
+the sentence `Edit bot-instructions.toml or the spec copy, then re-render.` A
+markdown output uses an HTML comment; YAML and TOML use `#`.
 
-The version is the doctrine source's, not the running copy's, since
-`--doctrine` can point them at different copies and the stamp has to name the
-doctrine the file carries. It is the one stamp a render carries. It is what makes a
-repo running an older installed copy of this package visible: a version bump
+The version is the spec copy's, not the running copy's, since `--spec` can point
+them at different copies and the stamp has to name the doctrine the file
+carries. It is the one stamp a render carries, and what makes a repo running an
+older installed copy of this package visible: a version bump
 re-renders every file, and the diff says which doctrine the repo moved to. The
 marker is also how `render`, `adopt` and the `orphan` validator tell a
 generated file from a hand-written one.

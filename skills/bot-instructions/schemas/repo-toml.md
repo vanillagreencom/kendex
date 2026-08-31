@@ -163,12 +163,14 @@ Three flag combinations are errors, all enforced by `toml-schema`:
   `qodo_best_practices` all false. Those four are every route surface text has,
   so the surfaces would be instructions nothing reads.
 
-Turning a capability off renders none of its files and deletes none of them.
-The files this package wrote stay active until someone removes them, so `check`
-reports each as an orphan by its marker, in the commit that flipped the flag. A
-file at one of those paths that this package never wrote is the repo's own and
-is not judged: `adopt` is how one becomes managed, and it needs the capability
-on.
+Turning a capability off renders none of its files and deletes none of them, so
+the files this package wrote stay active until someone removes them. Deleting
+them is the same commit's work and it comes first: `render` fails on an orphan
+rather than creating one, so the order is delete, then flip the flag and render.
+`check` is what catches a retirement that skipped the render.
+`validators.md` § `orphan` carries the order. A file at one of those paths that
+this package never wrote is the repo's own and is not judged: `adopt` is how one
+becomes managed, and it needs the capability on.
 
 ### `[cadence]`
 
@@ -179,13 +181,25 @@ on.
 | `qodo_commands` | array of string | `["/agentic_review"]` | `[github_app] pr_commands` |
 | `qodo_push_trigger` | bool | `false` | `[github_app] handle_push_trigger` |
 
-Each `qodo_commands` entry is a bare verb, and the set is `/review` and
-`/agentic_review`. Those are the two review commands, and the two whose sections
-this render writes guidance into; `qodo-parity` rejects a `pr_commands` entry
-whose section carries no guidance, so admitting `/describe` or `/improve` here
-would document a value that renders and then fails its own validator with no fix
-available inside the TOML. A repo wanting either configures it outside this
-package.
+Each `qodo_commands` entry is a bare verb from this set, which is the one
+statement of it — `qodo-parity` reads the review half rather than carrying a
+copy:
+
+| Verb | Line | Role |
+|------|------|------|
+| `/agentic_review` | Review | review |
+| `/review` | Merge | review |
+| `/agentic_describe` | Review | not review |
+| `/describe` | Merge | not review |
+| `/improve` | Merge | not review |
+
+`qodo-parity` requires guidance in the section a **review** verb reads, and this
+render writes it for both. A verb in the other half reads a section this render
+leaves alone by design — `/agentic_describe` and `/describe` write the pull
+request body, `/improve` reads `[pr_code_suggestions]` — so the parity clause
+does not apply to it and its presence is not a finding. Splitting by role rather
+than narrowing the set is what keeps the vendor's own documented default,
+`["/agentic_describe", "/agentic_review"]`, from being a schema error.
 
 No whitespace and no `--` in an entry. A `pr_commands` entry carries inline
 `--section.key=value` overrides, which is how Qodo's own examples are written,
@@ -296,7 +310,9 @@ here is the only predicate.
 | `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | yes | – | – |
 | doctrine block text | yes | yes | yes | – | – |
 | `[[exclusions.path]] reason` | – | – | yes | yes | single line |
-| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | the glob dialect above |
+| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | the glob dialect above, plus its path-shape rule |
+| `[tone] coderabbit` | – | – | – | – | ASCII only |
+| `[cadence] qodo_commands` entries | – | – | – | – | a verb from the set above, no whitespace, no `--` |
 
 The predicates, written once:
 
@@ -311,7 +327,11 @@ The predicates, written once:
   files this package owns.
 - **comment-close** — `-->`, which would end the HTML comment a `reason` is
   rendered inside and put the rest of the value on a line of its own.
-- **character class** — as stated for `[repo] name` and for globs above.
+- **character class** — as stated for `[repo] name`, for globs, for `[tone]
+  coderabbit` and for `qodo_commands` above. `[tone]` is ASCII so the local
+  length count and the vendor's cannot disagree about what one character is,
+  which matters there and nowhere else: `tone_instructions` is the cap
+  CodeRabbit discards the whole file over.
 
 **Render-side second checks.** `renders.md` re-checks the heading class when it
 assembles the `AGENTS.md` region and the Copilot file, because doctrine text
@@ -322,7 +342,9 @@ doctrine without also reaching a `.instructions.md` file, where the frontmatter
 the generator emits is fixed and the marker is written by the generator itself.
 
 Every row is one clause with one control, and § Controls' count is checkable
-against this table.
+against this table. `toml-schema` carries no list of its own: it names this
+table and adds the one clause that is a path shape rather than a content
+refusal.
 
 Two surfaces may match the same file. Macroscope stacks both, CodeRabbit may
 apply both `path_instructions` entries, and Copilot may load both files. No bot
