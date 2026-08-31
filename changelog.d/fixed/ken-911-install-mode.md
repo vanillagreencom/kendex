@@ -1,1 +1,1 @@
-- `suppression-ban --update` keeps its baseline file's mode instead of rewriting it readable by its owner alone.
+- `suppression-ban --update` keeps its baseline file's mode instead of rewriting it owner-only, and no longer stops for a prompt when that file is read-only.

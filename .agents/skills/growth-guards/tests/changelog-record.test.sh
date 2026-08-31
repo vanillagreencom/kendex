@@ -90,6 +90,20 @@ run_ce
 [ "$RC" -eq 0 ] && case "$OUT" in *"CHANGELOG.md unchanged under [Unreleased]"*) true ;; *) false ;; esac \
   && ok "an untouched record passes and the verdict says it was judged" \
   || bad "an untouched record passes and the verdict says it was judged" "rc=$RC out=$OUT"
+
+# A REFUSED run says which way the record scope stood down too. The fragment
+# scope failing tells the reader nothing about the record, and a verdict that
+# reports one scope while dropping the other reads as the second having
+# nothing to say.
+mkdir -p "$R/changelog.d/fixed"
+printf -- '- %s.\n' "$(awk 'BEGIN { while (i++ < 250) printf "x" }')" >"$R/changelog.d/fixed/long.md"
+stage
+run_ce
+[ "$RC" -eq 1 ] && case "$OUT" in *"violation(s)"*"CHANGELOG.md unchanged under [Unreleased]"*) true ;; *) false ;; esac \
+  && ok "a refused run carries the record scope's note on its verdict too" \
+  || bad "a refused run carries the record scope's note on its verdict too" "rc=$RC out=$OUT"
+rm -rf -- "${R:?}/changelog.d"
+stage
 record '- A hand-written line.'
 stage
 run_ce

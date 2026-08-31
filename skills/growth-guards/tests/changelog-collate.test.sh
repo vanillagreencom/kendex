@@ -322,6 +322,12 @@ printf '%s' "$RECORD" | reset
 run_collate
 [ "$RC" -eq 0 ] && case "$OUT" in *"no fragments — nothing to collate"*) true ;; *) false ;; esac \
   && ok "an empty tree folds nothing and says so" || bad "an empty tree folds nothing and says so" "rc=$RC out=$OUT"
+# That line is the whole report on a run with nothing else to say, so the
+# record scope's note has to reach the operator through it too.
+case "$OUT" in
+  *"CHANGELOG.md unchanged under [Unreleased]"*) ok "and carries the record scope's note even with nothing to fold" ;;
+  *) bad "and carries the record scope's note even with nothing to fold" "$OUT" ;;
+esac
 untouched && ok "the record is untouched with nothing to fold" || bad "the record is untouched with nothing to fold" "$(cat "$R/CHANGELOG.md")"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

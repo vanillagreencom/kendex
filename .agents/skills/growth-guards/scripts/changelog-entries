@@ -287,7 +287,7 @@ done <"$GG_TMP/files.z"
 gg_changelog_record_scope
 
 if [ "$violations" -gt 0 ]; then
-  echo "changelog-entries: $violations violation(s) — cap $CAP characters, $checked fragment(s) measured"
+  echo "changelog-entries: $violations violation(s) — cap $CAP characters, $checked fragment(s) measured$RECORD_NOTE"
   exit 1
 fi
 # Only past the verdict: the fold must never publish a set this run was still

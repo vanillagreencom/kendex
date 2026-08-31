@@ -163,10 +163,11 @@ ${shown%"$nl"}"
   # and per-section bodies, and the released versions below it. Every part of
   # the section — its lead as much as each body — goes through the ONE rule
   # that drops edge blank lines and caps interior runs at one, which is why
-  # `out` is seeded at the lead and there is no branch here that writes a
-  # line untrimmed. Trimming is what makes a section the record spells under
-  # two headings come out as one list, and a second spelling of it is the
-  # drift this lane exists without.
+  # `out` is seeded at the lead and no branch INSIDE the section writes a line
+  # untrimmed; what falls outside it, above the heading and past the section's
+  # end, is copied through as it stands. Trimming is what makes a section the
+  # record spells under two headings come out as one list, and a second
+  # spelling of it is the drift this lane exists without.
   LC_ALL=C awk -v tmp="$GG_TMP" -v start="$GG_RECORD_START" -v end="$GG_RECORD_END" \
     -v table="$GG_TMP/collate.secline" '
     BEGIN {

@@ -348,9 +348,9 @@ call 'gg_tmpdir; gg_install_file "'"$ROOT"'/src.tsv" tools/dest.tsv "the fixture
 [ "$RC" -eq 0 ] && [ "$(cat "$R/tools/dest.tsv")" = "REPLACEMENT" ] \
   && ok "a successful install replaces the destination" \
   || bad "a successful install replaces the destination" "rc=$RC out=$OUT content=$(cat "$R/tools/dest.tsv")"
-[ -z "$(find "$R/tools" -name '.gg-install*')" ] \
+[ -z "$(find "$R/tools" -name '*gg-install*')" ] \
   && ok "a successful install leaves no residue beside the destination" \
-  || bad "a successful install leaves no residue beside the destination" "$(find "$R/tools" -name '.gg-install*')"
+  || bad "a successful install leaves no residue beside the destination" "$(find "$R/tools" -name '*gg-install*')"
 
 # mktemp creates the staging file readable by its owner alone, so a rename
 # that does not take the destination's mode narrows a tracked file every
@@ -384,10 +384,32 @@ call 'gg_tmpdir; gg_install_file "'"$ROOT"'/ro.tsv" tools/dest.tsv "the fixture"
 [ "$RC" -eq 0 ] && [ "$(cat "$R/tools/dest.tsv")" = "REPLACED THROUGH A READ-ONLY DESTINATION" ] \
   && ok "a destination without owner-write is still replaced" \
   || bad "a destination without owner-write is still replaced" "rc=$RC out=$OUT content=$(cat "$R/tools/dest.tsv")"
+# Content AND mode in one condition: 444 survives an install that never
+# happened just as well as one that did, so a mode assertion standing alone
+# here cannot tell a preserved mode from a rename that stopped at a prompt.
 [ "$(filemode "$R/tools/dest.tsv")" = 444 ] \
-  && ok "and keeps its read-only mode across the rename" \
-  || bad "and keeps its read-only mode across the rename" "mode=$(filemode "$R/tools/dest.tsv")"
+  && [ "$(cat "$R/tools/dest.tsv")" = "REPLACED THROUGH A READ-ONLY DESTINATION" ] \
+  && ok "and keeps its read-only mode across the rename that replaced it" \
+  || bad "and keeps its read-only mode across the rename that replaced it" "mode=$(filemode "$R/tools/dest.tsv") content=$(cat "$R/tools/dest.tsv")"
 chmod 644 "$R/tools/dest.tsv"
+
+# A SYMLINK destination. `[ -f "$dest" ]` follows the link and the mode read
+# must follow it too: reading the link's own 0777 instead would publish a
+# world-writable file where a 0644 one stood — and for the suppression
+# baseline this helper writes, world-writable means any local account can
+# lower the ratchet without repository write access.
+mkdir -p "$ROOT/outside"
+printf 'BEHIND THE LINK\n' >"$ROOT/outside/target.tsv"
+chmod 644 "$ROOT/outside/target.tsv"
+ln -sf "$ROOT/outside/target.tsv" "$R/tools/linked.tsv"
+[ "$(filemode "$R/tools/linked.tsv")" != 644 ] \
+  && ok "the fixture link really carries a mode of its own, unlike its target" \
+  || bad "the fixture link really carries a mode of its own, unlike its target" "link=$(filemode "$R/tools/linked.tsv")"
+call 'gg_tmpdir; gg_install_file "'"$ROOT"'/src.tsv" tools/linked.tsv "the fixture"'
+[ "$RC" -eq 0 ] && [ "$(filemode "$R/tools/linked.tsv")" = 644 ] \
+  && [ "$(cat "$R/tools/linked.tsv")" = "REPLACEMENT" ] \
+  && ok "a symlink destination takes the mode of the file behind it, not the link's" \
+  || bad "a symlink destination takes the mode of the file behind it, not the link's" "rc=$RC mode=$(filemode "$R/tools/linked.tsv") out=$OUT"
 
 # A mode that cannot be read is a loud refusal, never a rename that narrows
 # the destination to the staging file's owner-only bits. `stat` shadowed by a
@@ -426,6 +448,36 @@ OUT="$(cd "$R" && GG_CHECK=probe bash -c '
 [ -z "$(find "$R/tools" -name '*gg-install*')" ] \
   && ok "and stages nothing before refusing" \
   || bad "and stages nothing before refusing" "$(find "$R/tools" -name '*gg-install*')"
+
+# The chmod branch: its whole diagnostic — the mode it could not give, and
+# what chmod said — is otherwise unpinned, so it could regress to a bare
+# symptom line with every suite green. A failing stub ahead of PATH, in the
+# same shape as the stat and mv stubs.
+mkdir -p "$ROOT/nochmod"
+printf '#!/bin/sh\necho "chmod: refused by the test stub" >&2\nexit 1\n' >"$ROOT/nochmod/chmod"
+chmod +x "$ROOT/nochmod/chmod"
+# Its own known destination state, so this case reports on the chmod branch
+# rather than on whatever the case above it managed to install.
+printf 'BEFORE THE CHMOD REFUSAL\n' >"$R/tools/dest.tsv"
+chmod 644 "$R/tools/dest.tsv"
+RC=0
+OUT="$(cd "$R" && PATH="$ROOT/nochmod:$PATH" GG_CHECK=probe bash -c '
+  set -euo pipefail
+  . "$1"
+  gg_tmpdir
+  gg_install_file "$2" tools/dest.tsv "the fixture"
+' _ "$COMMON" "$ROOT/src.tsv" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not give the replacement for the fixture tools/dest.tsv's mode (644)"*) true ;; *) false ;; esac \
+  && ok "a failed chmod names the mode it could not give" \
+  || bad "a failed chmod names the mode it could not give" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"could not give the replacement"*"refused by the test stub"*)
+    ok "and carries what chmod said inside its own line" ;;
+  *) bad "and carries what chmod said inside its own line" "$OUT" ;;
+esac
+[ "$(cat "$R/tools/dest.tsv")" = "BEFORE THE CHMOD REFUSAL" ] \
+  && ok "and the destination is untouched by that refusal" \
+  || bad "and the destination is untouched by that refusal" "content=$(cat "$R/tools/dest.tsv")"
 
 # A planted staging file must not redirect the write. cp writes THROUGH a
 # symlink, so a staging name the repository can predict is an arbitrary-file
