@@ -157,13 +157,19 @@ fn one_privileged_command_is_not_another_at_a_different_path() {
 /// the complement of this one — it asks that two such notices differ,
 /// because the arm prints the path; this asks that the command they offer
 /// does not.
+///
+/// Told there is an installer, because this is the installer arm: which
+/// one a `NeedsPrivilege` takes is the platform's answer, and asking the
+/// platform here would make the case pass or panic by where it ran.
 #[test]
 fn the_privileged_arm_offers_a_command_no_path_reaches() {
-    let offered =
-        |path: &str| match CommandNotice::for_card(&CommandBeside::NeedsPrivilege(path.into())) {
-            Some(CommandNotice::NeedsPrivilege { command, .. }) => command,
-            other => panic!("a command kendex cannot write is not {other:?}"),
-        };
+    let offered = |path: &str| match CommandNotice::for_card_where(
+        &CommandBeside::NeedsPrivilege(path.into()),
+        true,
+    ) {
+        Some(CommandNotice::NeedsPrivilege { command, .. }) => command,
+        other => panic!("a command kendex cannot write is not {other:?}"),
+    };
     let system = offered("/usr/local/bin/kendex");
     let owned = offered("/home/someone/.local/bin/kendex");
     assert_eq!(system, owned);
