@@ -24,7 +24,12 @@ use crate::error::{CoreError, Result};
 
 /// Long enough for a cold clone over a slow link, short enough that a wedged
 /// call surfaces as an error instead of a frozen window.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
+///
+/// Public so a caller under no tighter budget can NAME it rather than take
+/// it by omission. A builder default is invisible at the call site, which
+/// is how a lane that needed a smaller bound could lose it and read as a
+/// lane that never wanted one.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// What a person waiting on a button will sit through. A refresh they asked
 /// for and are watching is a different promise from a clone running behind

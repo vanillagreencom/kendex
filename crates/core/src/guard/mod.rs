@@ -28,7 +28,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::error::{CoreError, Result};
-use crate::process::Hardened;
+use crate::process::{DEFAULT_TIMEOUT, Hardened};
 
 mod repo;
 mod resolve;
@@ -66,8 +66,11 @@ pub const HELPER: &str = "kendex-guards";
 /// which reads the frontmatter, rather than by this comment citing it.
 ///
 /// [`check`], [`install`] and [`uninstall`] are verbs somebody typed, under
-/// no budget but the person's patience, and keep the ordinary timeout: a
-/// cold or networked filesystem is slow, not wedged.
+/// no budget but the person's patience, so they name
+/// [`DEFAULT_TIMEOUT`] instead: a cold or networked filesystem is slow,
+/// not wedged. Naming it rather than omitting it is the point — this is
+/// the one call in the tree that needs a smaller bound, and a lane that
+/// said nothing would be indistinguishable from one that lost it.
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Room for the whole chain, which ends in whatever the repository pointed
@@ -166,7 +169,7 @@ pub(crate) fn relay(output: &std::process::Output) -> GuardReport {
 
 /// Arm the shims: the package's own installer, in this repository.
 pub fn install(dir: &Path) -> Result<GuardReport> {
-    installer(dir, &[], None)
+    installer(dir, &[], DEFAULT_TIMEOUT)
 }
 
 /// Disarm: the package removes its helper and its own marked line, and
@@ -177,7 +180,7 @@ pub fn install(dir: &Path) -> Result<GuardReport> {
 /// could not run is exit 2 with the reason, never a quiet success about a
 /// repository nobody can commit to.
 pub fn uninstall(dir: &Path) -> Result<GuardReport> {
-    installer(dir, &["--uninstall"], None)
+    installer(dir, &["--uninstall"], DEFAULT_TIMEOUT)
 }
 
 /// Whether somebody standing at this repository ran the installer.
@@ -252,7 +255,7 @@ pub fn installer_present(repo: &Repo) -> Result<bool> {
 /// session-start fold in `commands::check` asks it before this. A guard
 /// verb somebody typed is its own license and asks nothing.
 pub fn check(dir: &Path) -> Result<GuardReport> {
-    installer(dir, &["--check"], None)
+    installer(dir, &["--check"], DEFAULT_TIMEOUT)
 }
 
 /// The same `--check` over a repository the caller already resolved, under
@@ -264,12 +267,19 @@ pub fn check(dir: &Path) -> Result<GuardReport> {
 /// fold pays those five once per project scope.
 pub fn check_repo(repo: &Repo) -> Result<GuardReport> {
     let installed = installed_or_err(repo, INSTALLER)?;
-    run_installer(repo, &installed, &["--check"], Some(CHECK_TIMEOUT))
+    run_installer(repo, &installed, &["--check"], CHECK_TIMEOUT)
 }
 
 /// The installer, run from the repository it was pointed at, with its
 /// verdict relayed unchanged.
-fn installer(dir: &Path, args: &[&str], timeout: Option<Duration>) -> Result<GuardReport> {
+///
+/// The bound is a `Duration` and not an `Option<Duration>`, so no lane can
+/// reach the process layer's default by saying nothing. It was optional
+/// once, and mutating the session-start `Some(CHECK_TIMEOUT)` to `None`
+/// left the whole guard suite green while the session-start `--check` ran
+/// under 120 seconds inside a hook the harness gives 20. Now that call
+/// does not compile.
+fn installer(dir: &Path, args: &[&str], timeout: Duration) -> Result<GuardReport> {
     let (repo, installed) = bind(dir, INSTALLER)?;
     run_installer(&repo, &installed, args, timeout)
 }
@@ -278,7 +288,7 @@ fn run_installer(
     repo: &Repo,
     installed: &Installed,
     args: &[&str],
-    timeout: Option<Duration>,
+    timeout: Duration,
 ) -> Result<GuardReport> {
     // `--repo` is a path, so it travels as one: a work tree whose name is
     // not UTF-8 would otherwise reach the installer as replacement
@@ -288,11 +298,8 @@ fn run_installer(
         repo.worktree.as_os_str().to_owned(),
     ];
     argv.extend(args.iter().map(OsString::from));
-    let mut child = Hardened::guard_script(&installed.script, argv, &repo.worktree);
-    if let Some(timeout) = timeout {
-        child = child.timeout(timeout);
-    }
-    let output = child
+    let output = Hardened::guard_script(&installed.script, argv, &repo.worktree)
+        .timeout(timeout)
         .run()
         .map_err(|error| guard_err("hooks", error.to_string()))?;
     Ok(relay(&output))
