@@ -364,6 +364,38 @@ fn a_read_it_could_not_make_stops_the_write() {
     assert!(run.ran("release upload").is_none(), "{:?}", run.calls);
 }
 
+/// The ordering runs the release's own binary, so a `dist` without it is a
+/// run that can order nothing.
+///
+/// The download that stages it is a step of its own in the workflow and can
+/// arrive with nothing in it, so the guard reads for the file rather than
+/// trusting the step above it — and stops, naming what it could not find,
+/// because a write it cannot justify is what it exists to refuse.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_release_that_staged_no_binary_stops_the_write() {
+    let channel = Fixture::new(Channel::Carrying("1.0.0-rc1"), &STAGED);
+    fs::remove_file(channel.root.join("dist").join(compare_binary())).unwrap();
+    let run = channel.run("1.0.0-rc2", &[], &[]);
+    assert_ne!(
+        run.code, 0,
+        "a dist with no binary was survivable: {:?}",
+        run.calls
+    );
+    assert!(
+        run.ran("release upload").is_none(),
+        "it uploaded anyway: {:?}",
+        run.calls
+    );
+    assert!(
+        run.output
+            .contains("the release's own binary is not in dist"),
+        "the stop was reported as something else: {}",
+        run.output
+    );
+}
+
 /// A channel version nothing can put in an order is the same answer again.
 /// The guard's whole job is to refuse a write it cannot justify, and it
 /// cannot say `NEW_VERSION` moves the channel forward from a string that is

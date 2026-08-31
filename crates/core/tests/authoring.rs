@@ -414,6 +414,82 @@ fn the_preflight_stays_local_until_a_remote_exists() {
     assert_eq!(row("Repository is public"), None);
 }
 
+/// git in a fixture, with the caller's git environment dropped: run from a
+/// commit hook, `GIT_DIR` and friends point at the repository being
+/// committed to and every command here would act on that one instead.
+#[allow(clippy::unwrap_used)]
+fn git(dir: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+        .args(args)
+        .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_PREFIX")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// What a submit would send, out of the remote the folder actually has.
+///
+/// A remote is a URL. The `owner/repo` shorthand a manifest may carry is
+/// not one, and a path remote — `../bare.git`, or an absolute one — has
+/// that same two-segment shape, so folding it would offer a folder with no
+/// GitHub anywhere near it as a repository ready to submit. Every URL
+/// spelling GitHub answers to is one candidate, folded to lowercase like
+/// every other repository string in the tree, so what a submit sends and
+/// what the Community tab matches subscriptions by are the same string.
+///
+/// Driven through `status`, not `submit_preflight`: the preflight fetches
+/// from `origin` and asks GitHub whether the repository is public, so a
+/// table of remotes there would be a table of network calls.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn only_a_github_url_is_a_candidate_to_submit() {
+    let (tmp, _env) = fake();
+    let absolute = tmp.path().join("bare.git").display().to_string();
+    for (remote, candidate) in [
+        // The path shapes, which have the shorthand's two segments and
+        // name no host at all.
+        ("../bare.git", None),
+        (absolute.as_str(), None),
+        // Every transport GitHub answers to, and the endings and case that
+        // say nothing about which repository it is.
+        ("https://github.com/Owner/Repo.git", Some("owner/repo")),
+        ("https://www.github.com/Owner/Repo/", Some("owner/repo")),
+        ("git@github.com:Owner/Repo.git", Some("owner/repo")),
+        ("ssh://git@github.com/Owner/Repo", Some("owner/repo")),
+        // A URL, and a repository — on a host a submit cannot name.
+        ("https://gitlab.com/owner/repo.git", None),
+    ] {
+        let repo = tmp.path().join("theirs");
+        let _ = fs::remove_dir_all(&repo);
+        skills_repo(&repo);
+        git(&repo, &["init", "--quiet", "-b", "main"]);
+        git(&repo, &["remote", "add", "origin", remote]);
+
+        let row = author::status(&repo).unwrap();
+        assert!(row.git.repository, "{remote}: not read as a repository");
+        assert_eq!(
+            row.git.remote.as_deref(),
+            Some(remote),
+            "{remote}: the remote was not reported as written"
+        );
+        assert_eq!(
+            row.git.candidate.as_deref(),
+            candidate,
+            "{remote}: wrong candidate"
+        );
+    }
+}
+
 /// The golden pin: these exact tree digests, per licence. Any byte change
 /// in the scaffold must land here alongside a SCAFFOLD_VERSION bump —
 /// comparing two calls of the same code can never catch drift, a

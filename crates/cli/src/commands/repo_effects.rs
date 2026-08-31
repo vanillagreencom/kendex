@@ -26,9 +26,10 @@
 //! screen.
 //!
 //! What a package's installer prints when it runs is not part of that
-//! block, and does not go through the same door: [`apply`] relays those
-//! bytes as the package wrote them, after the consent, because a caller
-//! piping its summary is reading for the package's own output.
+//! block: [`apply`] relays it after the consent, each stream on the
+//! channel it was written to. Its summary is what a caller pipes for, so
+//! that one goes out byte for byte; its stderr is read by a person and
+//! goes out escaped like any other line.
 
 use std::io::IsTerminal;
 
@@ -125,9 +126,9 @@ pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, Box<dyn st
 
 /// Run one package's installer, here and now, and relay what it said.
 ///
-/// Each of the package's streams goes out on its own channel, the way the
-/// package wrote them: its summary is what a caller pipes for, so it is
-/// relayed byte for byte rather than escaped like a line of kendex's own.
+/// Each of the package's streams goes out on the channel it was written
+/// to: its summary is what a caller pipes for, so that one is relayed byte
+/// for byte rather than escaped like a line of kendex's own.
 /// The consent that let this run was given against the disclosure above,
 /// which is escaped; this is the program the person said yes to talking.
 /// A package with nothing to run is a state to name, not a failure.

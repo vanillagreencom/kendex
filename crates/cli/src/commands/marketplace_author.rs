@@ -9,7 +9,7 @@ use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
 use kendex_core::process::Hardened;
 
-use super::{CliResult, answer, escaped, out, resolve_scopes, say};
+use super::{CliResult, Lines, answer, escaped, out, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
 pub fn new(
@@ -181,10 +181,11 @@ fn selection(
                     )
                 })
                 .collect();
-            return Err(format!(
-                "'{name}' exists with different bytes in more than one place — pick one with --origin <hash>:\n{}",
+            return Err(Lines(format!(
+                "'{}' exists with different bytes in more than one place — pick one with --origin <hash>:\n{}",
+                escaped(name),
                 listed.join("\n")
-            )
+            ))
             .into());
         }
         (Some(prefix), _) => *readable

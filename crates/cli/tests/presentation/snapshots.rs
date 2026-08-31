@@ -307,6 +307,64 @@ fn a_refusal_naming_one_finding_per_line_keeps_its_lines() {
     );
 }
 
+/// The line a run ends on is one line, unless the message wrote the break.
+///
+/// The other half of `a_refusal_naming_one_finding_per_line_keeps_its_lines`,
+/// and the control for the door that one does not reach: an ordinary
+/// refusal names values nobody escaped — a path is whatever the filesystem
+/// allowed — so it is escaped whole and stays one line. Splitting it first
+/// would let a directory name write a second line of the run's own account
+/// of why it stopped.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_value_in_the_closing_refusal_cannot_forge_a_line() {
+    // The two characters that act on a terminal, in a directory name: a
+    // break, and an escape sequence.
+    let named = "we\u{1b}[31mi\nrd";
+    for ui in ["plain", "pretty"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = &rooted(&tmp);
+        let project = home.join(named);
+        blocked_project_at(home, &project);
+        // A manifest with no schema key: refused in one sentence naming the
+        // path, which is the shape every ordinary refusal has.
+        fs::write(project.join("kendex.toml"), "name = \"v1\"\n").unwrap();
+
+        let printed = said(&kendex(
+            home,
+            &project,
+            ui,
+            &["apply", "--plan", "--scope", "project"],
+        ));
+        assert!(
+            !printed.contains('\u{1b}'),
+            "a control character reached the terminal ({ui}): {printed:?}"
+        );
+        assert!(
+            squashed(&printed).contains("we\\u{1b}[31mi\\nrd"),
+            "the place was not printed as what it is ({ui}): {printed}"
+        );
+
+        // The refusal is what it says, on the line it says it: escaped
+        // after the split, the break in the directory name put "rd/... is a
+        // v1 manifest" on a line of its own.
+        //
+        // Counted in plain, which is the rendering that does not wrap: the
+        // framed one breaks a long path to fit a box.
+        if ui == "plain" {
+            let refusals: Vec<&str> = printed
+                .lines()
+                .filter(|line| line.contains("is a v1 manifest"))
+                .collect();
+            assert_eq!(refusals.len(), 1, "the refusal was not one line: {printed}");
+            assert!(
+                refusals[0].starts_with("Error: "),
+                "the refusal did not open the line it is on: {printed}"
+            );
+        }
+    }
+}
+
 /// The stdout half of the same seam. A verb's own lines go out through
 /// `ui::out`, and the names on them come off a tree kendex did not write:
 /// `project add` lists what is there and not managed, and that listing is

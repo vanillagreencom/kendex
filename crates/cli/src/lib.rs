@@ -233,7 +233,7 @@ pub fn main() -> ExitCode {
                 // that ended before it could answer is "could not check"
                 // however it ended.
                 (true, _) => {
-                    ui::outro_fail(&format!("Error: {e}"));
+                    ui::outro_refusal(e.as_ref());
                     ExitCode::from(2)
                 }
                 // 130 is what a shell reports for a run its user killed,
@@ -247,7 +247,7 @@ pub fn main() -> ExitCode {
                     ExitCode::from(130)
                 }
                 (false, false) => {
-                    ui::outro_fail(&format!("Error: {e}"));
+                    ui::outro_refusal(e.as_ref());
                     ExitCode::FAILURE
                 }
             }

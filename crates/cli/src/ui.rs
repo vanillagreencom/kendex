@@ -26,18 +26,23 @@
 //! name carrying one is a name and not two lines. Structure is said by
 //! calling more than once.
 //!
-//! **A message that owns its own breaks goes through [`fail_lines`] or
-//! [`outro_fail`]**, which split first and escape each line, so the breaks
-//! reach the reader as breaks. That door carries an obligation, and it is
-//! the second half of the rule: a message printed through it has already
-//! escaped the values it interpolated, because a break inside one of those
-//! would become a line of its own here. Three places in the tree compose
-//! such a message — `manifest::validate::Finding`, which is what
-//! `CoreError::ManifestInvalid` names one per line; `commands::verify`;
-//! and `commands::marketplace_author` — and each escapes what it writes in
-//! with [`escaped`]. Core escapes elsewhere for its own surfaces (the app
-//! reads `names::shown` output directly, and `drift::report::text` bounds
-//! and scrubs the report the check verb composes); those are already-safe
+//! **A message that owns its own breaks goes through [`fail_lines`], or
+//! through [`outro_refusal`] wearing [`Lines`]**, which split first and
+//! escape each line, so the breaks reach the reader as breaks. That door
+//! carries an obligation, and it is the second half of the rule: a message
+//! printed through it has already escaped the values it interpolated,
+//! because a break inside one of those would become a line of its own
+//! here. Three places in the tree compose such a message —
+//! `CoreError::ManifestInvalid`, which names one
+//! `manifest::validate::Finding` per line and escapes its path with them;
+//! `commands::verify`; and `commands::marketplace_author` — and each
+//! escapes what it writes in with [`escaped`]. Nothing else reaches that
+//! door: an ordinary refusal carries values nobody escaped, and is said as
+//! one line.
+//!
+//! Core escapes elsewhere for its own surfaces (the app reads
+//! `names::shown` output directly, and `drift::report::text` bounds and
+//! scrubs the report the check verb composes); those are already-safe
 //! bytes by the time they arrive, and the escape is idempotent.
 //!
 //! A sentence is not the only thing a verb prints. What a reader asked to
@@ -55,9 +60,11 @@
 
 mod blocks;
 mod prompt;
+mod refusal;
 
 pub use blocks::{finish, flush, intro};
 pub use prompt::{ask, cancelled, confirm, spinner};
+pub use refusal::{Lines, outro_fail, outro_refusal};
 
 use std::io::{IsTerminal, Write};
 use std::sync::OnceLock;
@@ -152,7 +159,7 @@ pub fn mode() -> Mode {
     }
 }
 
-fn write_line(line: &str) {
+pub(super) fn write_line(line: &str) {
     let _ = writeln!(std::io::stderr(), "{line}");
 }
 
@@ -163,9 +170,9 @@ fn write_line(line: &str) {
 /// and leaves the escape here.
 ///
 /// It is `pub` for the other half of the rule: a message that owns its
-/// line breaks and is printed through [`fail_lines`] or [`outro_fail`]
-/// escapes the values it interpolates itself, because a break inside one
-/// of those would become a line of its own there.
+/// line breaks and is printed through [`fail_lines`] or as a [`Lines`]
+/// refusal escapes the values it interpolates itself, because a break
+/// inside one of those would become a line of its own there.
 ///
 /// Idempotent on its own output: an escape is backslashes and letters,
 /// and neither is escaped again.
@@ -269,21 +276,6 @@ pub fn ledger(head: &str, steps: &[String]) {
         return;
     }
     blocks::open(Tone::Done, &head, true, &steps);
-}
-
-/// The last line of a run that failed. Plain mode prints what it always
-/// printed; a frame closes on it in the failure style.
-///
-/// A door for a message that owns its breaks, like [`fail_lines`]: the one
-/// thing that reaches it is the error a run ended on, and a core error can
-/// name one finding per line. Same obligation — the values in such a
-/// message are escaped where it was composed.
-pub fn outro_fail(text: &str) {
-    let text = text.split('\n').map(escaped).collect::<Vec<_>>().join("\n");
-    if mode() == Mode::Plain {
-        return write_line(&text);
-    }
-    blocks::fail_frame(&text);
 }
 
 #[cfg(test)]
