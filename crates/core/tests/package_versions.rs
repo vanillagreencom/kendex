@@ -338,6 +338,95 @@ fn write_pi_extension(dir: &Path, name: &str, version: &str) {
     .unwrap();
 }
 
+/// A Pi extension whose source tip stopped carrying it still says why it
+/// is never updated one package at a time. This is the row that actually
+/// reaches a reader: a Pi extension has no lock entry, so it never has an
+/// installed commit to compare and never reports an update — the tip
+/// dropping it is the one standing that puts its row on a surface. The
+/// refusal has to survive that path, not only the evaluated one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pi_extension_gone_from_its_source_still_carries_the_refusal() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    write_pi_extension(&w.upstream, "pi-hooks", "1.0.0");
+    commit(&w.upstream, "one");
+    declare(
+        &w,
+        "",
+        "[skills.gh]\nsource = \"cat\"\n\n[pi-extensions.pi-hooks]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+
+    fs::remove_dir_all(w.upstream.join("pi-extensions/pi-hooks")).unwrap();
+    commit(&w.upstream, "the extension is gone");
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::fetch_all(&w.env, &loaded);
+
+    let report = updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::PiExtension)
+        .unwrap_or_else(|| panic!("no pi-extension row in {:?}", report.rows));
+    assert!(row.removed_upstream, "{row:?}");
+    assert_eq!(
+        row.no_per_package_update.as_deref(),
+        Some(kendex_core::engine::NO_PER_PACKAGE_UPDATE),
+        "{row:?}"
+    );
+}
+
+/// A fork row carries the refusal too. kendex's own fork refuses every
+/// kind but skills and agents, so it never writes this — but the manifest
+/// is the reader's file, `[forks]` is keyed by kind, and core reads what
+/// the file holds rather than only what it wrote. Losing the refusal here
+/// fails open: the row reaches the Library and the app would offer an
+/// Update the planner has no plan for.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_forked_row_of_a_refused_kind_still_carries_the_refusal() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    commit(&w.upstream, "one");
+    // A path source has no repository coordinates to bind, which is the
+    // one error that reaches the fork row at all.
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[sources.here]\npath = \"cat\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[pi-extensions.pi-hooks]\nsource = \"here\"\n\n[forks.pi-extension.pi-hooks]\nsource = \"cat\"\nforked-at = \"2026-01-01\"\n"
+        ),
+    )
+    .unwrap();
+    let loaded = manifest::load_for_mutation(&path).unwrap().unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+
+    let report = updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::PiExtension)
+        .unwrap_or_else(|| panic!("no fork row in {:?}", report.rows));
+    assert!(row.forked, "{row:?}");
+    assert_eq!(
+        row.no_per_package_update.as_deref(),
+        Some(kendex_core::engine::NO_PER_PACKAGE_UPDATE),
+        "{row:?}"
+    );
+    // The control: the skill beside it is a kind the planner does derive.
+    let gh = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill)
+        .unwrap_or_else(|| panic!("no skill row in {:?}", report.rows));
+    assert_eq!(gh.no_per_package_update, None, "{gh:?}");
+}
+
 /// A place held by its owner — a derived dependency under a pinned source —
 /// never reaches the package page, because the page's timeline read refuses
 /// a package the manifest does not declare. The updates table shows and

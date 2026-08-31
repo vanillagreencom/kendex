@@ -353,21 +353,24 @@ pub(super) fn expand(
 mod tests {
     use super::{ItemKind, plans_per_package};
 
+    /// The rule stated as a fact about the product, not as a copy of the
+    /// list behind it: naming the refused kinds makes the assertion the
+    /// complement of what the code reads, so it cannot be satisfied by the
+    /// implementation it checks. A kind moved into `PLANNED_KINDS` turns
+    /// this red, and a new `ItemKind` variant does too until it is
+    /// classified on one side or the other.
     #[test]
     fn only_the_kinds_a_plan_derives_have_a_per_package_update() {
-        for kind in [
-            ItemKind::Skill,
-            ItemKind::Agent,
-            ItemKind::Hook,
-            ItemKind::Command,
-            ItemKind::McpServer,
-        ] {
-            assert!(plans_per_package(kind), "{kind:?}");
-        }
         // A Pi extension installs through its own path and a plugin is
         // declared whole: a single-package plan for either is empty, which
         // every surface reads as already current.
-        assert!(!plans_per_package(ItemKind::PiExtension));
-        assert!(!plans_per_package(ItemKind::Plugin));
+        let refused = [ItemKind::Plugin, ItemKind::PiExtension];
+        for kind in ItemKind::ALL {
+            assert_eq!(
+                plans_per_package(kind),
+                !refused.contains(&kind),
+                "{kind:?}"
+            );
+        }
     }
 }

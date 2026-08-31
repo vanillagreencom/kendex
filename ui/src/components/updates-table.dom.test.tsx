@@ -372,10 +372,15 @@ describe("the explanations on the header and the tag", () => {
 // call, and the words are core's too: the row arrives carrying the
 // refusal, and the UI shows that and nothing of its own. Every Update
 // surface reads it through updateWithheld.
+//
+// Pass-through is the whole property, so the fixture is a string core
+// would never send. Core's real wording here would read as a
+// cross-boundary pin and be none: the equality asserted is fixture against
+// rendered title, which any string satisfies, and a reworded constant
+// would leave it green.
 describe("a row of a kind core refuses", () => {
   it("offers no Update, and shows the refusal core sent", async () => {
-    const refusal =
-      "Not updated one package at a time — Pi extensions come current with kendex update-pi, plugins with their place's own apply";
+    const refusal = "REFUSED-BY-CORE: this kind moves another way";
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: {

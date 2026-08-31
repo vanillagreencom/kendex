@@ -160,19 +160,19 @@ describe("update groups", () => {
   // could only fail. The refusal arrives on the row in core's own words —
   // nothing here works the kind out for itself — and a place it rejects
   // still has news, so it belongs to the skipped side rather than to
-  // neither.
+  // neither. A Pi extension is the case core actually emits: no update row
+  // is ever built for a plugin, so a plugin row here would assert over a
+  // state nothing produces.
   it("leaves a kind core refuses out of a bulk update", () => {
-    const refused = { noPerPackageUpdate: "core will not update this one" };
     const rows = [
       row("gh", "/a"),
-      row("pi-hooks", "/b", { kind: "pi-extension", ...refused }),
-      row("pack", "/c", { kind: "plugin", ...refused }),
+      row("pi-hooks", "/b", {
+        kind: "pi-extension",
+        noPerPackageUpdate: "core will not update this one",
+      }),
     ];
     expect(updatablePlaces(rows).map((p) => p.name)).toEqual(["gh"]);
-    expect(skippedPlaces(rows).map((p) => p.name)).toEqual([
-      "pi-hooks",
-      "pack",
-    ]);
+    expect(skippedPlaces(rows).map((p) => p.name)).toEqual(["pi-hooks"]);
   });
 
   it("leaves edited places out of a bulk update", () => {
