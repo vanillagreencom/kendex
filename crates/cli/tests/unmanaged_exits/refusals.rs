@@ -374,8 +374,12 @@ fn a_directory_named_like_the_marker_is_not_offered_the_keep() {
 /// settles a scope whose only unsettleable row is an edit, so withholding
 /// the offer there would leave the reader with no printed way to install
 /// what kendex.toml asks for: the per-item line offers only the keep.
-/// Held here in the hardest shape — one item carrying an edit at one tool
-/// and a stranger's files at another, beside a wholly replaceable item.
+/// Held in the hardest shape the rows allow: one item carrying an edit at
+/// one tool and a stranger's files at another, beside an item wholly
+/// replaceable at two places. The fixture asserts both of lint's rows
+/// before it reads the offer, because a claude-only install leaves the
+/// shared tree Codex reads untouched and it is easy to write the stranger
+/// where no tool looks.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_beside_a_replaceable_item_does_not_withhold_the_scope_exit() {
@@ -421,16 +425,31 @@ fn an_edit_beside_a_replaceable_item_does_not_withhold_the_scope_exit() {
         ),
     )
     .unwrap();
-    fs::create_dir_all(project.join(".codex/skills/lint")).unwrap();
+    // Codex reads the shared tree, which a claude-only install never
+    // wrote, so a stranger there is unmanaged content for Codex alone.
+    fs::create_dir_all(project.join(".agents/skills/lint")).unwrap();
     fs::write(
-        project.join(".codex/skills/lint/SKILL.md"),
+        project.join(".agents/skills/lint/SKILL.md"),
         "---\nname: lint\ndescription: lints it\n---\nSomebody else's.\n",
     )
     .unwrap();
+    // deploy is wholly replaceable at both tools' places, so the verdict
+    // has two replaceable dead stops of one item to weigh as well.
     folder_at(&project.join(".claude/skills/deploy"), "By hand.");
-    folder_at(&project.join(".codex/skills/deploy"), "By hand.");
+    folder_at(&project.join(".agents/skills/deploy"), "By hand.");
 
     let planned = plan(home, &project);
+    // The fixture proves nothing unless lint carries both halves: the
+    // person's edit at one tool, and a stranger's files at another.
+    assert!(
+        planned.contains("conflict: skill lint for Claude Code: edited on disk"),
+        "the edit half is missing: {planned}"
+    );
+    assert!(
+        planned.contains("conflict: skill lint for Codex")
+            && planned.contains("already holds files kendex did not write"),
+        "the stranger half is missing: {planned}"
+    );
     assert!(planned.contains("conflict: skill deploy"), "{planned}");
     assert!(
         planned.contains("--replace-unmanaged"),

@@ -230,6 +230,37 @@ fn a_symlinked_licence_refuses_rather_than_copying_bare() {
     );
 }
 
+/// A licence file whose name is bytes no UTF-8 spells. On Linux that is
+/// an ordinary filename, and both halves of the read meet it: the stem is
+/// matched on the lossy spelling, so `LICENSE.<invalid>` is seen as the
+/// evidence it is rather than passed over, and the name cannot be written
+/// at the destination, so the copy refuses rather than going out without
+/// it. Read either way round it is the same harm — a package published
+/// with somebody's licence left behind.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_licence_name_no_utf8_spells_refuses_rather_than_copying_bare() {
+    use std::os::unix::ffi::OsStrExt;
+    let (tmp, env, scope) = seeded();
+    let odd = std::ffi::OsStr::from_bytes(b"LICENSE.\xff");
+    fs::write(tmp.path().join("catalog").join(odd), "MIT text here\n").unwrap();
+    let scopes = [scope];
+    let target = target(&env, &tmp, "mine-odd-licence");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let gh = find(&candidates, "gh");
+
+    let asked = apply(&env, &scopes, &target, &[selection(gh, true)]);
+    assert!(
+        matches!(asked, Err(CoreError::SourceEscape { .. })),
+        "{asked:?}"
+    );
+    assert!(
+        !target.join("skills/gh").exists(),
+        "the bytes were copied before the evidence was found unreadable"
+    );
+}
+
 /// And the same for one evidence file the catalog will not hand over. The
 /// directory lists, so the licence is known to be there and known not to
 /// have travelled — copying the bytes anyway is the harm this refusal
