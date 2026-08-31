@@ -335,7 +335,7 @@ describe("a replacement that went through", () => {
   });
 });
 
-describe("a replacement that did not happen", () => {
+describe("what pressing Update now hands the engine", () => {
   // The engine says when the command it found was not the one the card
   // described, and it can only tell that if it is handed what the card
   // said. Handing it nothing would leave every such install going ahead on
@@ -354,7 +354,9 @@ describe("a replacement that did not happen", () => {
     await press(container, APP_UPDATE_INSTALL_LABEL);
     expect(commands.appUpdateInstall).toHaveBeenCalledWith(showing);
   });
+});
 
+describe("a replacement that did not happen", () => {
   // The card is the only surface left saying what happens to the command
   // beside the app, and a failed install is where that answer is most
   // likely to have moved. Left unread, the card the person is looking at

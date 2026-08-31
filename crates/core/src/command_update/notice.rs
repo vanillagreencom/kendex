@@ -71,10 +71,9 @@ impl CommandNotice {
     /// because Update now restarts the app and takes the card with it. A
     /// disposition that changed while the card sat on screen is a sentence
     /// that was never said, and the command half then acted on the new
-    /// answer: a command the card offered to carry stays where it is, or
-    /// one it promised to leave alone is replaced. Neither is refused — the
-    /// app is on the new release either way — so this is where they hear
-    /// about it, on a card the restart has not taken away yet.
+    /// answer. Nothing is refused — the app is on the new release either
+    /// way — so this is where they hear about it, on a card the restart has
+    /// not taken away yet.
     ///
     /// Compared as what was *said*, not as what was found: two `Ours` at
     /// different paths say the same nothing to a person and are the same
