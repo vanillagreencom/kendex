@@ -12,7 +12,7 @@ This workflow mutates project state, so it reconciles before anything reads the 
 
 1. **Delegate** to a one-shot `[TPM]` sub-agent.
 
-   Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+   Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
    `[DIR]` is the caller's own checkout, main checkout included.
 
    <delegation_format>

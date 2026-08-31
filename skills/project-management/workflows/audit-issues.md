@@ -85,7 +85,7 @@ No sync step. Load project taxonomy the same way as Linear mode; with no declare
 
 Spawn a one-shot `[TPM]` sub-agent (not a teammate — no re-delegation).
 
-Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
 `[DIR]` is the caller's own checkout, per § 4.1.
 
 <delegation_format>
@@ -146,7 +146,7 @@ With `TARGET` set, use it. Otherwise take the first `session-status.projects` en
 
 Spawn a one-shot `[TPM]` sub-agent (not a teammate).
 
-Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
 `[DIR]` is the caller worktree § 4.2 step 2 resolves, which is the main checkout only when the main checkout is the caller.
 
 <delegation_format>

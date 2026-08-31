@@ -61,7 +61,7 @@ With no match, ask the user:
 
 Otherwise, match `FEATURE` keywords and component paths to domain agents (project-configurable) to get `RELEVANT_AGENTS[]`, then delegate to each in parallel.
 
-Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 <delegation_format>
@@ -95,7 +95,7 @@ Build `PROPOSED_ISSUES[]` per [roadmap-plan-input.md](../schemas/roadmap-plan-in
 
 Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `origin_issue`, `planner_handoff`, and `spec_path` (each null when absent; `spec_path` is set exactly when the artifact in hand — the `@[path]` input or the § 1 disk match — classified as a SPEC). Delegate to a one-shot `[TPM]` sub-agent.
 
-Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 <delegation_format>
@@ -114,7 +114,7 @@ Materialize the returned artifact the same way as audit-issues § 4.2. Read `hie
 
 Delegate to the architecture review agent.
 
-Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 <delegation_format>

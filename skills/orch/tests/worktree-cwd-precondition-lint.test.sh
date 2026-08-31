@@ -18,12 +18,12 @@
 # leaving the agent with nothing to run. A future wording change is made in
 # $CANON and at every site together, or the lint reds.
 #
-# Both sides of the comparison are physical paths. `git-context` derives
+# Both sides of the comparison are physical paths. The fill line derives
 # the delegated path with `git rev-parse --show-toplevel`, so the check
 # runs `pwd -P`: a bare `pwd` prints the logical path and would halt a
 # correct delegate whose shell entered the checkout through a symlink.
 #
-# Three rules are enforced:
+# Four rules are enforced:
 #
 #   1. A `Worktree: [TOKEN]` line is followed on the very next line by the
 #      canonical `Worktree Check:` line for that same TOKEN.
@@ -38,14 +38,29 @@
 #      nothing if the value poured into it is not what `pwd -P` prints, and
 #      the workflows resolved that value to `.` or to "the current
 #      directory", so a filled delegation halted in a CORRECT checkout. The
-#      fill line names `git-context repo-root`, whose `--show-toplevel`
-#      output is absolute and physical, so both sides of the comparison
-#      agree by construction. Per block, because a doc satisfying the rule
-#      once bought silence for every later block: the second block in
-#      audit-issues.md carried its own resolution, to an absolute LOGICAL
-#      path, and a file-wide assertion never read it. Rules 1 and 2 read
-#      inside a `<delegation_format>` block; rule 3 reads the lines between
-#      one block and the block before it.
+#      fill line names plain `git rev-parse --show-toplevel`, whose output
+#      is absolute and physical, so both sides of the comparison agree by
+#      construction. Plain, not an orch wrapper around it: the fill line
+#      also ships in project-management, which declares `git` and not orch,
+#      so a wrapper would not exist in an install carrying one skill and
+#      not the other — the placeholder would come out empty and the
+#      precondition would vanish with it. Per block, because a doc
+#      satisfying the rule once bought silence for every later block: the
+#      second block in audit-issues.md carried its own resolution, to an
+#      absolute LOGICAL path, and a file-wide assertion never read it.
+#   4. No line among those rule 3 reads opens with the fill line's opening
+#      clause and then diverges from it. A second instruction addressing
+#      the same two fields does not clear `hasfill`, so the canonical line
+#      plus a contradicting one read as clean. The rule is the DECIDABLE
+#      half of that: same opening clause, not byte-equal. It is not a
+#      conflict detector — prose that contradicts the fill line in its own
+#      words is not caught, and deciding that it does would be semantic
+#      judgment, which this repo has twice ruled out of a lexical scanner.
+#      Do not widen it; write a conflicting instruction in the canonical
+#      shape or leave the boundary where it is.
+#
+#      Rules 1 and 2 read inside a `<delegation_format>` block; rules 3
+#      and 4 read the lines between one block and the block before it.
 #
 # A block ends at three terminators, not one: its closing tag, a new opening
 # tag arriving while it is still open, and end of file. All three route
@@ -142,7 +157,15 @@ CANON='Worktree Check: `pwd -P` before any repo-relative command. It must print 
 
 # The canonical fill line, verbatim. It carries no per-block token: `[DIR]`
 # is literal in every doc, so the whole line is compared as it stands.
-CANON_FILL='Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.'
+CANON_FILL='Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.'
+
+# The fill line's opening clause: the part that names the two fields being
+# filled, before it says where the value comes from. A line opening with it
+# is addressing the same pair, so a byte difference after it is a second,
+# contradicting instruction. Held as its own literal and asserted a PROPER
+# prefix of $CANON_FILL by f.1 — rewording the sentence without rewording
+# this reds there, rather than leaving rule 4 matching nothing in silence.
+CANON_FILL_OPEN='Fill `Worktree:` and its `Worktree Check:`'
 
 # scan_worktree_precondition <file>
 # Emits one "file:line: ..." line per defect, per the two rules above.
@@ -208,8 +231,17 @@ scan_worktree_precondition() {
 # not preceded by. The function is a no-op outside a block, so a closed
 # block's successor keeps the lines read since. Malformed structure is
 # reported once, by scan_worktree_precondition.
+#
+# Rule 4 rides the same lines. `hasfill` is a latch — it is set and never
+# unset — so the canonical line followed by a divergent one still opens the
+# next block clean, and the delegating agent reads two instructions with no
+# ordering between them. A line opening with $CANON_FILL_OPEN and not equal
+# to $CANON_FILL is reported at its own line, whether or not the canonical
+# line also appears: same clause, different bytes, nothing semantic. Prose
+# contradicting the fill line in its own words is out of scope and stays
+# silent; see rule 4 in the header for why that boundary is where it is.
 scan_worktree_fill() {
-  awk -v f="$1" -v canon="$CANON_FILL" '
+  awk -v f="$1" -v canon="$CANON_FILL" -v open="$CANON_FILL_OPEN" '
     function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
     function close_block() { if (!indel) return; indel = 0; hasfill = 0 }
     /^[[:space:]]*<delegation_format>[[:space:]]*$/ {
@@ -219,7 +251,12 @@ scan_worktree_fill() {
       indel = 1; next
     }
     /^[[:space:]]*<\/delegation_format>[[:space:]]*$/ { close_block(); next }
-    !indel { if (trim($0) == canon) hasfill = 1 }
+    !indel {
+      line = trim($0)
+      if (line == canon) hasfill = 1
+      else if (index(line, open) == 1)
+        printf "%s:%d: fill instruction opens like the canonical Worktree fill line and diverges from it (got: %s)\n", f, NR, line
+    }
     END { close_block() }
   ' "$1"
 }
@@ -677,6 +714,58 @@ if [ "$(scan_worktree_fill "$CARRIED")" = "$CARRIED:6: $NOFILL" ]; then
   pass "lint flags a block whose fill line was carried across an unclosed block"
 else
   fail "lint let an unclosed block carry its fill line to the next block"
+fi
+
+# --- Part f: a second instruction in the fill line's own shape ------------
+# RULE 4. `hasfill` latches, so a divergent instruction after the canonical
+# one leaves the block reading clean. Only the decidable half is caught:
+# same opening clause, different bytes. The probes pin both sides of that
+# boundary so the next reader does not take this for a conflict detector.
+
+# f.1 — the clause is a PROPER prefix of the sentence. Rule 4 matches by
+# `index(line, open) == 1`, so a clause reworded out of $CANON_FILL would
+# match nothing and the rule would go quiet without a single test failing;
+# a clause grown to the whole sentence would match only the canonical line
+# and do the same. This is the fixture that reds instead.
+case "$CANON_FILL" in
+  "$CANON_FILL_OPEN"*)
+    if [ "${#CANON_FILL_OPEN}" -lt "${#CANON_FILL}" ]; then
+      pass "the fill line's opening clause is a proper prefix of the canonical sentence"
+    else
+      fail "the opening clause is the whole canonical sentence — rule 4 matches only the canonical line"
+    fi
+    ;;
+  *) fail "the opening clause is not a prefix of \$CANON_FILL — rule 4 matches nothing" ;;
+esac
+
+CONFLICT_FILL='Fill `Worktree:` and its `Worktree Check:` with whichever directory this workflow is running in.'
+
+# f.2 — the canonical line, then a byte-different line in the same shape.
+# The block is preceded by the canonical sentence, so rule 3 is satisfied
+# and this output can come from nothing but rule 4. Compared whole, so the
+# probe fails if the scan names the wrong line as readily as if it names
+# none.
+CONFLICTED="$TMP_ROOT/probe-conflicting-fill.md"
+printf '%s\n\n%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' \
+  "$CANON_FILL" "$CONFLICT_FILL" "$CHECK" > "$CONFLICTED"
+DIVERGES='fill instruction opens like the canonical Worktree fill line and diverges from it'
+if [ "$(scan_worktree_fill "$CONFLICTED")" = "$CONFLICTED:3: $DIVERGES (got: $CONFLICT_FILL)" ]; then
+  pass "lint flags a second fill instruction that opens canonically and diverges"
+else
+  fail "lint MISSED a second fill instruction in the canonical shape"
+fi
+
+# f.3 — and the boundary from the other side: ordinary prose after the
+# canonical line, mentioning a path, is not an instruction in the fill
+# line's shape and stays clean. Without this the rule could be widened to
+# any line naming a directory and f.2 would still pass.
+NEARBY="$TMP_ROOT/probe-nearby-prose.md"
+printf '%s\n\nThe delegate writes its round artifact under `[DIR]/tmp`, which the collect step reads back.\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' \
+  "$CANON_FILL" "$CHECK" > "$NEARBY"
+if [ -z "$(scan_worktree_fill "$NEARBY")" ]; then
+  pass "lint leaves ordinary prose naming a path alone"
+else
+  fail "lint false-flagged prose that merely names a path"
 fi
 
 echo

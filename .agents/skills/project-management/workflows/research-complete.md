@@ -53,7 +53,7 @@ With several references, convert to a bulleted list under one `**Research**:` he
 
 Run exactly one flow, unless it escalates. Both flows fill the delegation the same way.
 
-Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 ### 5.1 Targeted
@@ -88,7 +88,7 @@ List a technical change only when it changes what a user or operator experiences
 
 Delegate the same analysis to every affected domain agent in parallel, minus the cross-domain and scope questions. Then delegate the synthesis to the architecture review agent.
 
-Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
 
 <delegation_format>
 Synthesize the domain reports into a cross-cutting impact analysis.
