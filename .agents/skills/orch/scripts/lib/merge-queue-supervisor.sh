@@ -19,9 +19,18 @@ merge_queue_supervise() {
   main_root=$(jq -r .main_repo_root "$state_file")
   log=$(jq -r .log_path "$state_file"); temp="$runtime/worker.json"; output="$runtime/artifact.tmp"
   event_fifo="$runtime/events"; owner_fifo="$runtime/deadline-owner"
-  [[ "$process_token" =~ ^[A-Za-z0-9._-]+$ && -d "$runtime" && ! -L "$runtime" && \
-     "$(cat < "$runtime/token")" == "$attempt_id" ]] || return 1
-  [[ -d "$main_root" ]] || return 1
+  # The home this attempt was launched against. Checked at entry AND polled
+  # for the whole wait: a supervisor whose runtime, state file or repository
+  # has been deleted under it has nothing left to publish into and no way to
+  # tell a live queue from a dead one, so it must stop rather than run its
+  # retry ladder against whatever the environment resolves next.
+  home_present() { [[ -d "$runtime" && ! -L "$runtime" && -f "$state_file" && -d "$main_root" ]]; }
+  report_home_lost() {
+    printf 'merge-queue supervisor: launch home is gone (runtime %s, state %s, repo %s); refusing to continue\n' \
+      "$runtime" "$state_file" "$main_root" >&2
+  }
+  home_present || { report_home_lost; return 1; }
+  [[ "$process_token" =~ ^[A-Za-z0-9._-]+$ && "$(cat < "$runtime/token")" == "$attempt_id" ]] || return 1
 
   attempt_is_current() {
     (flock -s -w 10 9 || exit 1
@@ -74,10 +83,22 @@ merge_queue_supervise() {
 
   rm -f -- "$event_fifo" "$owner_fifo"; mkfifo "$event_fifo" "$owner_fifo"
   exec 6<>"$owner_fifo" 7<>"$event_fifo"
+  # The wait is cut into short hops so a home deleted mid-wait is noticed
+  # while it still matters, instead of at a deadline the supervisor would
+  # spend polling a queue for a lifecycle that no longer exists. Fd 5 is the
+  # owner fifo opened for reading ONCE — a re-open after the supervisor
+  # released its end would block forever — and fd 7 carries both events,
+  # because a deleted home leaves the event fifo with no path to open.
   (
-    exec 6>&- 7>&-
-    delay=$((deadline - $(date +%s))); ((delay > 0)) && IFS= read -r -t "$delay" _ < "$owner_fifo" || true
-    [[ $(date +%s) -lt "$deadline" ]] || printf 'deadline\n' > "$event_fifo"
+    exec 5<"$owner_fifo" 6>&-
+    while :; do
+      delay=$((deadline - $(date +%s))); ((delay > 0)) || break
+      if ((delay > 5)); then delay=5; fi
+      rc=0; IFS= read -r -t "$delay" _ <&5 || rc=$?
+      home_present || { printf 'home_lost\n' >&7; exit 0; }
+      ((rc > 128)) || exit 0   # not a timeout: the supervisor released the wait
+    done
+    [[ $(date +%s) -lt "$deadline" ]] || printf 'deadline\n' >&7
   ) & watchdog_pid=$!
   printf '%s\n' "$$" > "$runtime/supervisor.pid"; chmod 600 "$runtime/supervisor.pid"
   attempt_is_current || return 1
@@ -96,6 +117,11 @@ merge_queue_supervise() {
   IFS= read -r event < "$event_fifo" || true
   exec 6>&- 7>&-
   wait "$watchdog_pid" 2>/dev/null || true; watchdog_pid=""
+  # Named refusal, and nothing published: an `unknown` artifact here is what
+  # the consumer turns into another launch attempt.
+  if [[ "$event" == home_lost ]] || ! home_present; then
+    stop_worker; worker_pid=""; report_home_lost; trap - EXIT TERM HUP INT; return 1
+  fi
   if [[ "$event" == deadline && ! -f "$runtime/worker.status" ]]; then stop_worker; worker_pid=""; publish_unknown supervisor_deadline 124; trap - EXIT TERM HUP INT; return 0; fi
   wait "$worker_pid" || worker_rc=$?; worker_pid=""
   if ! jq -e 'type=="object" and (.status|IN("complete","timeout","error")) and

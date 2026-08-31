@@ -22,13 +22,14 @@ Usage: queue-wait <PR#> [poll_interval] [max_wait] [--json] [--no-check-probe]
 Wait for a merge-queue / auto-merge outcome on a PR. Every exit path emits
 a final result on stdout — a "Merge queue: ..." line, or a JSON object with
 --json — so callers can route merged vs ejected vs disarmed vs still-queued
-deterministically (kendex#819). It is the merge-pr queue watch as one
-simple command (accepted by the Codex approval=never classifier where a
-sleep-poll loop is rejected) and the only place WAS_QUEUED lives: whether
-ANY earlier poll observed the PR queued or armed. Separate tool calls carry
-no memory, so an orchestrator re-entering per poll cannot tell "ejected
-from the queue" from "never entered it"; this script can. It is NOT a CI
-waiter: ci-wait owns check state and approval-wait owns the review gate.
+deterministically (kendex#819); exit 4 is the one exception. It is the
+merge-pr queue watch as one simple command (accepted by the Codex
+approval=never classifier where a sleep-poll loop is rejected) and the only
+place WAS_QUEUED lives: whether ANY earlier poll observed the PR queued or
+armed. Separate tool calls carry no memory, so an orchestrator re-entering
+per poll cannot tell "ejected from the queue" from "never entered it"; this
+script can. It is NOT a CI waiter: ci-wait owns check state and
+approval-wait owns the review gate.
 
   <PR#>          pull request number (required)
   poll_interval  seconds between polls (default 30)
@@ -215,6 +216,9 @@ Exit codes:
   2  usage error: missing PR#, unknown flag, or non-integer argument
      (matches ci-wait)
   3  GitHub auth/CLI error (matches ci-wait and approval-wait)
+  4  the repository this wait started in was deleted while it ran; no
+     result object, so nothing downstream routes or retries on a
+     reading it could not take
 USAGE
 }
 
@@ -860,6 +864,13 @@ update_elapsed
 # report not_queued/0 polls for a PR it never checked. After the first poll the
 # deadline governs normally.
 while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
+  # Deleted under a running wait, the repository leaves every remaining read
+  # pointed at nothing and every PATH lookup resolving somewhere else, so the
+  # wait stops here rather than polling on and handing back a verdict.
+  if [ ! -d "$PROJECT_ROOT" ]; then
+    echo "queue-wait: the repository this wait started in is gone ($PROJECT_ROOT); refusing to keep polling PR #$PR_NUM" >&2
+    exit 4
+  fi
   polls=$((polls + 1))
 
   # --- Signal 1: PR state. Read first, so a merge that landed between polls

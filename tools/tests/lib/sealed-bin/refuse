@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# The one body behind every name in this directory; each name is a symlink to
+# it, and `${0##*/}` is the name that was called.
+#
+# Shell fixtures shadow side-effecting binaries with stubs written inside the
+# suite's own `mktemp -d`. A process that outlives its suite outlives that
+# directory too, and its next PATH lookup falls through to the REAL binary:
+# leaked merge-queue fixtures resolved the real `ghostty` and opened terminal
+# windows on the operator's desktop (KEN-995). This directory is committed, so
+# it survives the temp tree it sits behind on PATH, and the fallthrough lands
+# here instead — loud, and with nothing executed.
+#
+# A suite puts it on PATH AFTER its own stub directory: the stubs answer while
+# they exist, and this refuses once they do not. Every name a test tree must
+# never reach for real belongs here.
+set -euo pipefail
+printf 'sealed-bin: %s is sealed inside a test tree; refusing to run the real one (argv: %s)\n' \
+  "${0##*/}" "$*" >&2
+exit 97

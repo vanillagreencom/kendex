@@ -9,8 +9,16 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH="$(cd "$TEST_DIR/.." && pwd)"
+SEALED="$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/sealed-bin"
+[[ -x "$SEALED/gh" ]] || { echo "merge_queue_rearm_e2e: sealed-bin fixture is missing: $SEALED" >&2; exit 1; }
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# This suite launches real detached supervisors; teardown owns their pids.
+# shellcheck source=lib/merge-queue-reaper.sh
+. "$TEST_DIR/lib/merge-queue-reaper.sh"
+mq_reap_own "$TMP"
+trap 'mq_reap || true; rm -rf "$TMP"' EXIT
+trap 'exit 143' TERM HUP
+trap 'exit 130' INT
 PASS=0 FAIL=0
 ok() { PASS=$((PASS+1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL  %s\n' "$1"; }
@@ -70,7 +78,7 @@ echo "unexpected gh: $*" >&2
 exit 1
 EOF
 chmod +x "$BIN/gh" "$SCRIPTS/merge-queue-watch" "$SCRIPTS/workflow-state" "$SCRIPTS/orch-env" "$SCRIPTS/queue-wait"
-export PATH="$BIN:$PATH" E2E_PHASE="$PHASE" E2E_QUEUE_LOG="$QUEUE_LOG" E2E_HEAD="$HEAD"
+export PATH="$BIN:$SEALED:$PATH" E2E_PHASE="$PHASE" E2E_QUEUE_LOG="$QUEUE_LOG" E2E_HEAD="$HEAD"
 export QUEUE_WAIT_CONFIRM_POLLS=2
 unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN GH_REPO GITHUB_REPOSITORY
 

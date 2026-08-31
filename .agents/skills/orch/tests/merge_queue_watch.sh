@@ -3,9 +3,17 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH="$(cd "$TEST_DIR/.." && pwd)"
+SEALED="$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/sealed-bin"
+[[ -x "$SEALED/gh" ]] || { echo "merge_queue_watch: sealed-bin fixture is missing: $SEALED" >&2; exit 1; }
 TMP_ROOT="$(mktemp -d)"; TMP="$TMP_ROOT/watch path"
 mkdir "$TMP"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+# This suite launches real detached supervisors; teardown owns their pids.
+# shellcheck source=lib/merge-queue-reaper.sh
+. "$TEST_DIR/lib/merge-queue-reaper.sh"
+mq_reap_own "$TMP_ROOT"
+trap 'mq_reap || true; rm -rf "$TMP_ROOT"' EXIT
+trap 'exit 143' TERM HUP
+trap 'exit 130' INT
 PASS=0 FAIL=0
 ok() { PASS=$((PASS+1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL  %s\n' "$1"; }
@@ -167,7 +175,7 @@ fi
 exec "$WATCH_REAL_MKFIFO" "$@"
 EOF
 chmod +x "$BIN/mkfifo"
-export PATH="$BIN:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
+export PATH="$BIN:$SEALED:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
 export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_CLEANUP_INTERRUPT="$TMP/cleanup-interrupt"
 export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_SETSID_DELAY="$TMP/setsid-delay" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_WORKER_PID="$TMP/worker.pid" WATCH_WORKER_TOKEN="$TMP/worker.token" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_REAL_FLOCK="$REAL_FLOCK" WATCH_FAIL_FLOCK_GATE="$TMP/fail-flock-gate" WATCH_REAL_PS="$REAL_PS" WATCH_PS_LOG="$TMP/ps.log" WATCH_SUPERVISOR_PID_GATE="$TMP/supervisor-pid-gate" WATCH_REAL_MKFIFO="$REAL_MKFIFO" WATCH_REGISTRATION_GATE="$TMP/registration-gate" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
 touch "$WATCH_PS_LOG"
