@@ -37,7 +37,7 @@ echo "=== orch escalated_items outcome lint ==="
 
 rule "the dev-fix escalated entry carries a typed outcome" \
   "$DEV_FIX" "## 2. Delegate" '"outcome":' '"description":'
-rule "the escalated write appends that entry" \
+rule_fenced "the escalated write appends that entry" \
   "$DEV_FIX" "## 2. Delegate" '.escalated_items += [$e]' '--slurpfile item'
 
 rule "review-pr routes to the schema that owns the mapping" \

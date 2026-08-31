@@ -16,7 +16,7 @@ forbid "orch docs use no unsupported decisions issue-lookup shape" \
   'Check decisions: run `decisions issue CC-125` first.' \
   "$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md "$SKILL_DIR"/references/*.md
 
-rule "dev-fix carries the supported lookup" \
+rule_fenced "dev-fix carries the supported lookup" \
   "$SKILL_DIR/workflows/dev-fix.md" "" 'decisions search --issue'
 
 md_report

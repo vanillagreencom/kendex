@@ -63,9 +63,9 @@ order "the recurrence check is routed ahead of the iterations cap" "$CM" \
 # rather than a literal written into two workflows, and past it a finding takes
 # a disposition and no fix push — except a defect the diff itself introduces or
 # arms, which is fixed whatever the round count.
-rule "§ 6.1 resolves the cap through orch-env" "$CM" "### 6.1 Delegate Fixes" \
+rule_fenced "§ 6.1 resolves the cap through orch-env" "$CM" "### 6.1 Delegate Fixes" \
   'orch-env REVIEW_MAX_EXTERNAL_ROUNDS'
-rule "submit-pr's restart check resolves the same setting" \
+rule_fenced "submit-pr's restart check resolves the same setting" \
   "$SKILL_DIR/workflows/submit-pr.md" "" 'orch-env REVIEW_MAX_EXTERNAL_ROUNDS'
 rule "the cap's three reply forms are named where it is stated" "$CM" \
   "### 6.1 Delegate Fixes" '`Tracked: [ISSUE_ID]`' '`Fixed in [SHA]`' '`Declined: [REASON]`'
@@ -102,14 +102,14 @@ order "issue creation precedes the reply step in document order" "$CM" \
 # The two records the recurrence check reads, and the channel they cross. A
 # resolved thread is invisible to the next pass, so a cause is recurrence only
 # if a pass wrote it down — and reviewer text never crosses argv.
-rule "§ 6 records a patched cause in workflow state" "$CM" "$S6" \
+rule_fenced "§ 6 records a patched cause in workflow state" "$CM" "$S6" \
   '--slurpfile entry [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json'
-rule "§ 6 records a frozen cause in workflow state" "$CM" "$S6" \
+rule_fenced "§ 6 records a frozen cause in workflow state" "$CM" "$S6" \
   '--slurpfile entry [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json'
 absent "neither cause write puts reviewer text on the command line" "$CM" "$S6" \
   'append \[ISSUE_ID\] pr_comment_review\.(patched|frozen)_causes' \
   '.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.patched_causes "[CAUSE]"'
-rule "§ 5 reads both records before triaging a pass" "$CM" "## 5. Triage Report" \
+rule_fenced "§ 5 reads both records before triaging a pass" "$CM" "## 5. Triage Report" \
   'workflow-state get [ISSUE_ID]' '.pr_comment_review.patched_causes // []' \
   '.pr_comment_review.frozen_causes // []'
 
@@ -117,7 +117,7 @@ rule "§ 5 reads both records before triaging a pass" "$CM" "## 5. Triage Report
 # own reply step; the pr-review, qa-review and review rounds reach it through
 # dev-fix.md § 2, the only thing standing between those loops and a recurrence
 # check reading an empty history.
-rule "dev-fix records a patched cause in workflow state" "$DEV_FIX" "## 2. Delegate" \
+rule_fenced "dev-fix records a patched cause in workflow state" "$DEV_FIX" "## 2. Delegate" \
   '--slurpfile cause tmp/patched-cause-[ISSUE_ID].json'
 
 rule "the schema documents both records on the pr_comment_review row" "$SCHEMA" "" \

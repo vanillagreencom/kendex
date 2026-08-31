@@ -39,13 +39,13 @@ order "§ 4 runs the cap check ahead of Fix Delegation" "$WF" \
 # leave a window where the item is in neither bucket, which § 8 reads as
 # declined; no drop at all leaves it in both, printed as FIXED against a stale
 # sha and as ESCALATED at once. The drop is keyed on both fields, § 8's key.
-rule "the cap write records into escalated_items" "$WF" "$CAP" \
+rule_fenced "the cap write records into escalated_items" "$WF" "$CAP" \
   '.escalated_items = ((.escalated_items // []) + ['
-rule "the cap write drops the superseded fixed_items entry on both fields" "$WF" "$CAP" \
+rule_fenced "the cap write drops the superseded fixed_items entry on both fields" "$WF" "$CAP" \
   '.fixed_items = ((.fixed_items // []) | map(select(' '$item.location' '$item.description'
-rule "the cap write binds the finding from its artifact" "$WF" "$CAP" '--slurpfile art'
-rule "the capped entry is typed blocked" "$WF" "$CAP" 'outcome: "blocked"'
-rule "the capped entry carries its source" "$WF" "$CAP" '--arg src' 'source: $src'
+rule_fenced "the cap write binds the finding from its artifact" "$WF" "$CAP" '--slurpfile art'
+rule_fenced "the capped entry is typed blocked" "$WF" "$CAP" 'outcome: "blocked"'
+rule_fenced "the capped entry carries its source" "$WF" "$CAP" '--arg src' 'source: $src'
 rule "the cap names both provenances" "$WF" "$CAP" '`pr-review`' '`qa-review`'
 rule "the cap excludes what § 4 declined" "$WF" "$CAP" '§ 4 declined' 'escalated_items'
 
@@ -56,12 +56,12 @@ absent "the cap write pastes no placeholder into a quoted word" "$WF" "$CAP" \
 
 # § 7 runs no cap check, so its convergence exit is the only place a QA blocker
 # whose fix did not hold gets recorded, and the reason it records is its own.
-rule "the QA exit records into escalated_items" "$WF" "$EXIT7" \
+rule_fenced "the QA exit records into escalated_items" "$WF" "$EXIT7" \
   '.escalated_items = ((.escalated_items // []) + ['
-rule "the QA exit drops the superseded fixed_items entry" "$WF" "$EXIT7" \
+rule_fenced "the QA exit drops the superseded fixed_items entry" "$WF" "$EXIT7" \
   '.fixed_items = ((.fixed_items // []) | map(select('
-rule "the QA exit binds the finding from its artifact" "$WF" "$EXIT7" '--slurpfile art'
-rule "the QA exit records its own reason, not the cap's" "$WF" "$EXIT7" \
+rule_fenced "the QA exit binds the finding from its artifact" "$WF" "$EXIT7" '--slurpfile art'
+rule_fenced "the QA exit records its own reason, not the cap's" "$WF" "$EXIT7" \
   'reason: "QA loop converged with the item unresolved"'
 
 # A verification pass is not a fix cycle. Written to the gated key it is

@@ -56,11 +56,11 @@ rule "the QA Escalated list prints the same key" "$PR" "$QA" \
 # still lists it against a dead sha, so each write clears BOTH before appending
 # its own. Clearing only the opposite bucket prints the item under FIXED and
 # ESCALATED at once.
-rule "the fixed write supersedes in both buckets from a bound entry" \
+rule_fenced "the fixed write supersedes in both buckets from a bound entry" \
   "$DEV_FIX" "$DELEGATE" '.fixed_items += [$e]' \
   '.fixed_items = ((.fixed_items // [])' '.escalated_items = ((.escalated_items // [])' \
   '$e.location' '$e.description' '--slurpfile item'
-rule "the escalated write supersedes in both buckets from a bound entry" \
+rule_fenced "the escalated write supersedes in both buckets from a bound entry" \
   "$DEV_FIX" "$DELEGATE" '.escalated_items += [$e]' \
   '.fixed_items = ((.fixed_items // [])' '.escalated_items = ((.escalated_items // [])' \
   '$e.location' '$e.description' '--slurpfile item'
