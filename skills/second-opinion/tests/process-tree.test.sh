@@ -524,6 +524,62 @@ assert_contains "$TMP_ROOT/read.stderr" "the detached worker is gone" \
 ok "it answers promptly (${elapsed}s) instead of spending the slice"
 kill -KILL "$bystander" 2>/dev/null || true
 
+echo "=== a reaped worker is not a running one, however well it matches ==="
+# THE HARD CASE, and the one the recorded identity alone gets wrong. A zombie
+# keeps the pgid and start time it was launched with, and `kill -0` still
+# succeeds on it, so its record matches EXACTLY. Only the process state says
+# the run is over. On a PID 1 that does not reap — a container without an init
+# — this is every run that ends without publishing its marker, not a rare shape.
+ZOMBIE=""
+spawn_leader_zombie() { # sets ZOMBIE to a reaped process leading its own group
+  # The parent execs into `sleep` so that nothing is left which could reap the
+  # child; a shell parent collects it and there is no zombie to stage. The
+  # child outlives that exec by a second for the same reason. No python here:
+  # this suite's whole point is the host it runs on, and it may not have one.
+  local pidfile="$TMP_ROOT/zombie.pid" _
+  rm -f "$pidfile"
+  bash -c 'set -m; sleep 1 & printf "%s\n" "$!" > "$1"; set +m; exec sleep 60' \
+    _ "$pidfile" > /dev/null 2>&1 &
+  STRAYS+=("$!")
+  await_file "$pidfile" || fail "the zombie fixture never reported its pid"
+  ZOMBIE="$(read_pid "$pidfile" "the zombie fixture")"
+  STRAYS+=("$ZOMBIE")
+  for _ in $(seq 1 100); do
+    [[ "$(ps -o state= -p "$ZOMBIE" 2>/dev/null | tr -d ' ')" == Z* ]] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+spawn_leader_zombie || fail "the fixture never became a zombie — nothing to test"
+[[ "$(ps -o pgid= -p "$ZOMBIE" 2>/dev/null | tr -d ' ')" == "$ZOMBIE" ]] \
+  || fail "the zombie does not lead its own group, so it is not worker-shaped"
+kill -0 "$ZOMBIE" 2>/dev/null \
+  || fail "kill -0 already rejects the zombie — the case would prove nothing"
+ok "the staged zombie is worker-shaped: leads its group, kill -0 accepts it"
+mkdir "$TMP_ROOT/z-runtime"
+printf 'stagedtoken\n' > "$TMP_ROOT/z-runtime/token"
+: > "$TMP_ROOT/z-runtime/worker.log"
+printf '%s\n' "$ZOMBIE" > "$TMP_ROOT/z-runtime/pid"
+# Its REAL identity, read the way the launcher records it, so the record
+# matches and the state is the only thing left that can reject it.
+ps -o pgid=,lstart= -p "$ZOMBIE" | tr -s '[:space:]' ' ' \
+  | sed 's/^ //; s/ $//' > "$TMP_ROOT/z-runtime/worker-id"
+[[ -s "$TMP_ROOT/z-runtime/worker-id" ]] \
+  || fail "the zombie's identity did not record — the case would pass vacuously"
+printf 'kept\n' > "$TMP_ROOT/z-answer"
+start=$(date +%s)
+rc=0
+"$RUNTIME" wait "$TMP_ROOT/z-answer" "$TMP_ROOT/z-runtime" \
+  "$(($(date +%s) + 3600))" stagedtoken 5 \
+  > "$TMP_ROOT/z.stdout" 2> "$TMP_ROOT/z.stderr" || rc=$?
+elapsed=$(( $(date +%s) - start ))
+assert_rc "$rc" 75 "a reaped worker is reported as gone"
+assert_contains "$TMP_ROOT/z.stderr" "the detached worker is gone" \
+  "the 75 names a gone worker instead of one still running"
+[[ $elapsed -lt 4 ]] \
+  || fail "the wait spent its whole ${elapsed}s slice waiting on a zombie"
+ok "it answers promptly (${elapsed}s) instead of spending the slice"
+
 echo "=== control: the same states against a runtime that trusts a bare pid ==="
 # Without this the two cases above cannot say WHICH check spared the bystander
 # — an identity check that never ran would pass them both the same way.

@@ -265,23 +265,43 @@ completion_line() {
 # not portably, and 10ms narrows the window rather than closing it. One path on
 # every host is worth more than a hundredfold on a window this shape, so the
 # claim stays the one stated here rather than an absolute one.
-worker_identity() { # PID — "PGID STARTTIME" on stdout; 1 when unknowable
+# One `ps` answers both questions asked about a pid, and it is one call on
+# purpose: two would read the state and the identity at different moments.
+# lstart is last because it is the only field carrying spaces.
+worker_ps() { # PID — "STATE PGID STARTTIME" on stdout; 1 when unknowable
   local pid="$1" line
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-  line=$(ps -o pgid=,lstart= -p "$pid" 2>/dev/null) || return 1
+  line=$(ps -o state=,pgid=,lstart= -p "$pid" 2>/dev/null) || return 1
   line=$(printf '%s' "$line" | tr -s '[:space:]' ' ')
   line="${line# }"
   line="${line% }"
   [[ -n "$line" ]] || return 1
   printf '%s' "$line"
 }
-worker_is_ours() { # PID RUNTIME_DIR — 0 only when the pid is verifiably ours
-  local pid="$1" dir="$2" recorded current
+# The RECORD is the stable half of that line and only the stable half. Pgid and
+# start time are fixed for the life of the process; state is not, so a record
+# carrying it would stop matching the moment the worker changed state.
+worker_identity() { # PID — "PGID STARTTIME" on stdout; 1 when unknowable
+  local line
+  line=$(worker_ps "$1") || return 1
+  printf '%s' "${line#* }"
+}
+# TWO QUESTIONS, NOT ONE, and keeping them apart is the point: "is this the
+# process we started" is answered by the record, "is it still running" by the
+# state. A reaped worker keeps its pgid and its start time, and `kill -0` still
+# succeeds on it, so the record alone matches a run that is already over.
+worker_is_ours() { # PID RUNTIME_DIR — 0 only when the pid is ours AND running
+  local pid="$1" dir="$2" recorded line current
   [[ -n "$pid" ]] || return 1
   [[ -f "$dir/worker-id" && ! -L "$dir/worker-id" ]] || return 1
   recorded=$(cat < "$dir/worker-id") || return 1
   [[ -n "$recorded" ]] || return 1
-  current=$(worker_identity "$pid") || return 1
+  line=$(worker_ps "$pid") || return 1
+  # Zombie. Nothing to wait for and nothing a signal can reach; on a PID 1 that
+  # does not reap, which is a container without an init, this is every run that
+  # ends without its marker rather than a rare shape.
+  [[ "${line%% *}" != Z* ]] || return 1
+  current="${line#* }"
   [[ "$current" == "$recorded" ]] || return 1
   # It led its own group when we started it; a pid that no longer leads that
   # group is not the process we started, whatever else matches.
@@ -299,6 +319,9 @@ stop_worker() { # PID RUNTIME_DIR
     # left running keeps running, and the wait is about to delete the runtime
     # state and return 124, so the operator reading this line is the only one
     # left who can act on it.
+    # It CAN fire on a run that then reports a real status, because the marker
+    # may land between the last poll and the deadline check. It stays here and
+    # not after the caller's re-read, so the decline and its line cannot part.
     echo "second-opinion: the run reached its deadline, but its processes could not be" >&2
     echo "identified as this run's own, so none were signalled. Stop by hand anything" >&2
     echo "still running from it." >&2
