@@ -221,6 +221,13 @@ fn a_symlinked_licence_refuses_rather_than_copying_bare() {
         matches!(asked, Err(CoreError::SourceEscape { .. })),
         "{asked:?}"
     );
+    // The refusal is what stopped the copy, not something after it: read
+    // as a boolean the same probe lets this through, and the package lands
+    // with no NOTICES beside it.
+    assert!(
+        !target.join("skills/gh").exists(),
+        "the bytes were copied before the evidence was found missing"
+    );
 }
 
 /// And the same for one evidence file the catalog will not hand over. The
