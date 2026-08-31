@@ -19,20 +19,70 @@ second_opinion_runtime_setup() {
   [[ -n "$TIMEOUT_CMD" ]] \
     || echo "Warning: no timeout or gtimeout on PATH — external CLI calls will run without a time limit" >&2
 }
-# --foreground keeps the CLI in THIS process group rather than a private one of
-# timeout's making: the caller owns the lane's lifetime, so a signal sent to
-# second-opinion's process group has to reach the CLI too. -k 30 follows an
-# ignored TERM with a KILL instead of leaving the run hung past its deadline.
+# NEITHER `timeout` MODE OWNS A PROCESS TREE ON ITS OWN, and the two failures
+# are opposite, so one flag cannot be the answer:
+#
+#   --foreground  leaves the CLI in THIS process group, so a signal aimed at
+#                 second-opinion reaches it — but on expiry timeout signals
+#                 only its direct child. The CLI's own children survive, and a
+#                 survivor holding the captured pipe open hangs the caller's
+#                 `RESULT=$(...)` for as long as it lives, long past the 124.
+#   default       kills the tree on expiry, but moves timeout into a private
+#                 process group the caller's own signal can no longer reach,
+#                 so the lane outlives the session that started it.
+#
+# Both properties are required, so the wrapper below supplies the half timeout
+# does not: it stays in the caller's group and gives the CLI a group of its own.
 run_with_timeout() {
   local duration="$1" stderr_file="$2"
   shift 2
   if [[ -z "$TIMEOUT_CMD" ]]; then
-    echo "→ cmd: direct $*" >&2
-    "$@" 2>"$stderr_file"
+    echo "→ cmd: direct $RUNTIME_SELF group-run $stderr_file $*" >&2
+    "$RUNTIME_SELF" group-run "$stderr_file" "$@"
     return
   fi
-  echo "→ cmd: $TIMEOUT_CMD --foreground -k 30 ${duration}s $*" >&2
-  "$TIMEOUT_CMD" --foreground -k 30 "$duration" "$@" 2>"$stderr_file"
+  echo "→ cmd: $TIMEOUT_CMD --foreground -k 30 ${duration}s $RUNTIME_SELF group-run $stderr_file $*" >&2
+  "$TIMEOUT_CMD" --foreground -k 30 "$duration" "$RUNTIME_SELF" group-run "$stderr_file" "$@"
+}
+# Run one CLI as its own process-group leader and tear that group down on every
+# exit path — normal return, the TERM `timeout` sends on expiry, or a signal
+# aimed at second-opinion. This is the whole of the mechanism: no gate, no
+# channel, no watchdog.
+group_run() {
+  local stderr_file="$1"
+  shift
+  [[ $# -gt 0 ]] || die "group command is missing"
+  local cli_pid="" rc=0
+  stop_cli() {
+    [[ -n "$cli_pid" ]] || return 0
+    kill -0 "$cli_pid" 2>/dev/null || return 0
+    kill -TERM -- "-$cli_pid" 2>/dev/null || kill -TERM "$cli_pid" 2>/dev/null || true
+    local end=$(($(date +%s) + 5))
+    while kill -0 "$cli_pid" 2>/dev/null; do
+      if [[ $(date +%s) -ge $end ]]; then
+        kill -KILL -- "-$cli_pid" 2>/dev/null || kill -KILL "$cli_pid" 2>/dev/null || true
+        break
+      fi
+      sleep 0.1
+    done
+  }
+  trap 'stop_cli; exit 143' TERM HUP
+  trap 'stop_cli; exit 130' INT
+  trap stop_cli EXIT
+  # Job control is on only across the fork: that is what makes the CLI a
+  # process-group leader, and turning it straight back off keeps bash from
+  # printing job notices onto the CLI's own output. Stdin is handed over
+  # explicitly — an async command in a job-control shell does not inherit the
+  # /dev/null a plain background job would get, and the prompt arrives there.
+  exec 8<&0
+  set -m
+  "$@" <&8 2>"$stderr_file" &
+  cli_pid=$!
+  set +m
+  exec 8<&-
+  wait "$cli_pid" || rc=$?
+  stop_cli
+  exit "$rc"
 }
 create_runtime_dir() {
   local dir=""
@@ -60,7 +110,7 @@ launch() {
   [[ "$wait_slice" =~ ^[1-9][0-9]*$ && $wait_slice -lt 600 ]] \
     || die "wait slice must be positive and below 600 seconds"
   local deadline token worker_pid log="$runtime_dir/worker.log"
-  local detach=() worker_args
+  local worker_args worker_id
   token="$(date +%s).$$.$RANDOM"
   (umask 077 && set -C && printf '%s\n' "$token" > "$runtime_dir/token") \
     || die "cannot create runtime token: $runtime_dir/token"
@@ -81,16 +131,17 @@ launch() {
   deadline=$(($(date +%s) + budget))
   worker_args=("$@" --detached-worker "--output=$artifact")
   $owned && worker_args+=(--scratch-output)
-  # setsid gives the worker its own session, so a signal aimed at the caller's
-  # process group does not take the detached run down with it. Stock macOS has
-  # no setsid; there the worker is merely orphaned, which nohup and the closed
-  # stdio already make survivable.
-  command -v setsid >/dev/null 2>&1 && detach=(setsid)
+  # The worker leads its own process group — job control across the fork, and
+  # nothing else. That is what lets the deadline tear the whole run down later,
+  # and it needs no setsid, which stock macOS does not ship. nohup keeps a
+  # hangup off it and the closed stdio lets the caller exit.
+  #
   # The wrapper appends the exit marker AFTER the worker returns. That marker,
   # not the pid recorded below, is what `wait` reads as the run's result.
+  set -m
   env -u SECOND_OPINION_CURRENT_MODEL \
     SECOND_OPINION_RUNTIME_DIR="$runtime_dir" SECOND_OPINION_RUN_TOKEN="$token" \
-    ${detach[@]+"${detach[@]}"} nohup bash -c '
+    nohup bash -c '
       rc=0
       "$@" || rc=$?
       printf "__SECOND_OPINION_EXIT_%s__=%s\n" "$SECOND_OPINION_RUN_TOKEN" "$rc" >&2
@@ -98,8 +149,14 @@ launch() {
     ' second-opinion-worker "$script" "${worker_args[@]}" \
     < /dev/null > "$log" 2>&1 &
   worker_pid=$!
+  set +m
   (umask 077 && set -C && printf '%s\n' "$worker_pid" > "$runtime_dir/pid") \
     || die "cannot record detached worker pid: $runtime_dir/pid"
+  # Recorded once, here, while the pid is unambiguously the process we just
+  # started. Everything that later acts on that pid compares against this.
+  worker_id=$(worker_identity "$worker_pid") || worker_id=""
+  (umask 077 && set -C && printf '%s\n' "$worker_id" > "$runtime_dir/worker-id") \
+    || die "cannot record detached worker identity: $runtime_dir/worker-id"
   printf 'artifact: %s\n' "$artifact"
   printf 'deadline: %s\n' "$deadline"
   printf 'wait:'
@@ -135,21 +192,50 @@ completion_line() {
   while IFS= read -r match; do line="$match"; done <<< "$matches"
   printf '%s' "$line"
 }
-worker_alive() { # PID — 0 = the recorded pid still names a live process
-  [[ -n "$1" ]] || return 1
-  kill -0 "$1" 2>/dev/null
+# A PID IS NOT AN IDENTITY. Pids are reused, so `kill -0` answers "some process
+# has this number", never "our worker is still running" — and acting on the
+# first answer as though it were the second signals a stranger. Every use of
+# the pid here goes through this: the worker is launched as its own
+# process-group leader, so its identity is that it still leads its own group
+# AND that it started when we recorded it starting. One `ps` call carries both,
+# in a form Linux and macOS both answer.
+#
+# UNVERIFIABLE NEVER PASSES. No ps, no record, no match — the pid is not ours,
+# which costs at worst an early 75 the caller resolves by rerunning, and never
+# a signal sent to a process that was never part of this run.
+worker_identity() { # PID — "PGID STARTTIME" on stdout; 1 when unknowable
+  local pid="$1" line
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  line=$(ps -o pgid=,lstart= -p "$pid" 2>/dev/null) || return 1
+  line=$(printf '%s' "$line" | tr -s '[:space:]' ' ')
+  line="${line# }"
+  line="${line% }"
+  [[ -n "$line" ]] || return 1
+  printf '%s' "$line"
 }
-# Stop a worker that outlived the run's deadline. The group form goes first so
-# the CLI the worker started dies with it; a pid leading no group (no setsid on
-# this host) falls back to the process itself.
-stop_worker() { # PID
-  local pid="$1" end
-  worker_alive "$pid" || return 0
-  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+worker_is_ours() { # PID RUNTIME_DIR — 0 only when the pid is verifiably ours
+  local pid="$1" dir="$2" recorded current
+  [[ -n "$pid" ]] || return 1
+  [[ -f "$dir/worker-id" && ! -L "$dir/worker-id" ]] || return 1
+  recorded=$(cat < "$dir/worker-id") || return 1
+  [[ -n "$recorded" ]] || return 1
+  current=$(worker_identity "$pid") || return 1
+  [[ "$current" == "$recorded" ]] || return 1
+  # It led its own group when we started it; a pid that no longer leads that
+  # group is not the process we started, whatever else matches.
+  [[ "${current%% *}" == "$pid" ]]
+}
+# Stop a worker that outlived the run's deadline, and the CLI tree under it.
+# The group form is the point: the worker leads its own group, so this reaches
+# the external CLI it started rather than orphaning it.
+stop_worker() { # PID RUNTIME_DIR
+  local pid="$1" dir="$2" end
+  worker_is_ours "$pid" "$dir" || return 0
+  kill -TERM -- "-$pid" 2>/dev/null || true
   end=$(($(date +%s) + 5))
-  while worker_alive "$pid"; do
+  while worker_is_ours "$pid" "$dir"; do
     if [[ $(date +%s) -ge $end ]]; then
-      kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+      kill -KILL -- "-$pid" 2>/dev/null || true
       break
     fi
     sleep 0.1
@@ -204,7 +290,7 @@ wait_for_run() {
     fi
     now=$(date +%s)
     if [[ $now -ge $deadline ]]; then
-      stop_worker "$worker_pid"
+      stop_worker "$worker_pid" "$runtime_dir"
       grep_rc=0
       line=$(completion_line "$log" "$prefix") || grep_rc=$?
       [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
@@ -214,7 +300,7 @@ wait_for_run() {
       echo "Error: detached run reached its deadline $deadline" >&2
       exit 124
     fi
-    if ! worker_alive "$worker_pid"; then
+    if ! worker_is_ours "$worker_pid" "$runtime_dir"; then
       grep_rc=0
       line=$(completion_line "$log" "$prefix") || grep_rc=$?
       [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
@@ -238,6 +324,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   [[ -n "$action" ]] || die "action required"
   shift
   case "$action" in
+    group-run) [[ $# -ge 2 ]] || die "group arguments are incomplete"; group_run "$@" ;;
     launch) [[ $# -ge 7 ]] || die "launch arguments are incomplete"; launch "$@" ;;
     wait) [[ $# -eq 5 ]] || die "wait arguments are incomplete"; wait_for_run "$@" ;;
     *) die "unknown action: $action" ;;

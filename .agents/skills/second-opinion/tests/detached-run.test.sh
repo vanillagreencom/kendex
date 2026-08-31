@@ -31,8 +31,20 @@ RUNTIME="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion-runtime"
 
 cat > "$TMP_ROOT/psbin/ps" <<'SH'
 #!/usr/bin/env bash
+# Lies about ANCESTRY only. Every other query — above all the runtime's own
+# `-o pgid=,lstart=` identity check — reaches the real ps, because a stub that
+# answered those with silence would read as "cannot verify" and quietly turn
+# the identity check off in the suite that exists to exercise it.
+args=("$@")
 mode=""; while [[ $# -gt 0 ]]; do case "$1" in -o) mode="$2"; shift 2 ;; *) shift ;; esac; done
-case "$mode" in ppid=) printf '1\n' ;; comm=) printf 'bash\n' ;; esac
+case "$mode" in
+  ppid=) printf '1\n' ;;
+  comm=) printf 'bash\n' ;;
+  *) for real in /bin/ps /usr/bin/ps; do
+       [[ -x "$real" ]] && exec "$real" "${args[@]}"
+     done
+     exit 1 ;;
+esac
 SH
 chmod +x "$TMP_ROOT/psbin/ps"
 cat > "$TMP_ROOT/bin/codex" <<'SH'
@@ -169,6 +181,9 @@ stage_runtime() { # LABEL TOKEN [MARKER-LINE]
   dead=$!
   wait "$dead" 2>/dev/null || true
   printf '%s\n' "$dead" > "$TMP_ROOT/$label/pid"
+  # A recorded identity that cannot match a live process, so the pid check
+  # reaches its comparison instead of short-circuiting on a missing record.
+  printf '%s Thu Jan  1 00:00:00 1970\n' "$dead" > "$TMP_ROOT/$label/worker-id"
   printf 'staged answer\n' > "$TMP_ROOT/$label-answer"
 }
 
@@ -238,7 +253,7 @@ ok "the recovered completion removes the runtime directory"
 # which read decided the run.
 RACE_MUTANT="$MUTANT_DIR/race-mutant-runtime"
 awk '
-  /if ! worker_alive "\$worker_pid"; then/ { print; dropping = 1; next }
+  /if ! worker_is_ours "\$worker_pid" "\$runtime_dir"; then/ { print; dropping = 1; next }
   dropping && /\[\[ -z "\$line" \]\] \|\| continue/ { dropping = 0; next }
   dropping && (/grep_rc=0/ || /line=\$\(completion_line/ || /grep_rc -ne 2/) { next }
   { print }
