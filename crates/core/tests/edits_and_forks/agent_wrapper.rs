@@ -385,6 +385,132 @@ fn a_banner_line_the_body_spells_as_an_example_is_kept() {
     );
 }
 
+/// The published prose may open and close with sections of its own that
+/// read exactly like the generated ones. Where the person deletes the
+/// generated copy, the publisher's stands at that boundary and the walk
+/// takes it: nothing in the text tells the two apart, and the wrapper is
+/// read from what the renderer writes rather than counted against the
+/// catalog. This pins that outcome. Nothing is lost from the rendering —
+/// the next render writes each section again from the manifest entry the
+/// fork carries — but the catalog's own copy no longer stands beside it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_published_section_standing_where_a_generated_one_did_is_taken_as_the_wrappers() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\n## Launch Instructions\n\nRead the brief first.\n\nUpstream body.\n\n## Additional Instructions\n\nSay what you changed.\n",
+        "",
+        "[agent-launch-instructions]\nrev = \"Read the brief first.\"\n\n[agent-additional-instructions]\nrev = \"Say what you changed.\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    // Each section stands twice: the catalog's own copy, and the generated
+    // one that is a duplicate of it.
+    for section in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&text, section), 2, "{text}");
+    }
+
+    // The person deletes the generated copy of each, keeping the
+    // publisher's. Only theirs is left standing at either boundary.
+    let head = "## Launch Instructions\n\nRead the brief first.\n\n";
+    let tail = "\n## Additional Instructions\n\nSay what you changed.\n";
+    let edited = text.replacen(head, "", 1);
+    let cut = edited.rfind(tail).unwrap();
+    let edited = format!("{}{}", &edited[..cut], &edited[cut + tail.len()..])
+        .replace("Upstream body.", "My body.");
+    for section in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&edited, section), 1, "{edited}");
+    }
+    assert_eq!(banners(&edited), 1, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    // The capture keeps the body alone: the publisher's copy of each
+    // section went with the wrapper.
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert_eq!(times(&source, "My body."), 1, "{source}");
+    for line in [
+        "## Launch Instructions",
+        "Read the brief first.",
+        "## Additional Instructions",
+        "Say what you changed.",
+    ] {
+        assert_eq!(times(&source, line), 0, "{line} was kept: {source}");
+    }
+
+    // And the rendering still carries each section once, written from the
+    // manifest entry the fork carries, with no duplicate stacked on it.
+    let text = fs::read_to_string(&file).unwrap();
+    for line in [
+        "## Launch Instructions",
+        "Read the brief first.",
+        "## Additional Instructions",
+        "Say what you changed.",
+        "My body.",
+    ] {
+        assert_eq!(times(&text, line), 1, "{line} count wrong: {text}");
+    }
+    assert_eq!(banners(&text), 1, "{text}");
+}
+
+/// A generated section may carry a fenced code block, and inside one a
+/// blank line is a line of the block rather than separation between
+/// sections. A person who edits that whitespace has edited the section,
+/// so it is theirs now and the canonical one is written beside it — a
+/// walk that reads their blank lines as separators subtracts the block
+/// they edited and their edit is gone with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn whitespace_a_person_edits_inside_a_generated_code_block_is_their_edit() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-additional-instructions]\nrev = \"\"\"\nRun each in turn:\n\n```sh\nfirst\n\nsecond\n```\"\"\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    assert!(text.contains("```sh\nfirst\n\nsecond\n```"), "{text}");
+
+    // The person closes the gap inside the block and leaves every other
+    // line of the section standing.
+    let edited = text
+        .replace("first\n\nsecond", "first\nsecond")
+        .replace("Upstream body.", "My body.");
+    assert_eq!(times(&edited, "## Additional Instructions"), 1, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert!(
+        source.contains("```sh\nfirst\nsecond\n```"),
+        "the block they edited is their words now, gap and all: {source}"
+    );
+    for line in [
+        "## Additional Instructions",
+        "Run each in turn:",
+        "My body.",
+    ] {
+        assert_eq!(times(&source, line), 1, "{line} count wrong: {source}");
+    }
+
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        times(&text, "## Additional Instructions"),
+        2,
+        "the section the person edited, and the canonical one beside it: {text}"
+    );
+    assert!(text.contains("```sh\nfirst\nsecond\n```"), "{text}");
+    assert!(text.contains("```sh\nfirst\n\nsecond\n```"), "{text}");
+    assert_eq!(banners(&text), 1, "{text}");
+}
+
 /// The renderer writes a section per hook, so the wrapper has to hold one
 /// entry per hook. Held together, a body one hook was deleted from
 /// matches none of them, and the walk stops where they stand — every
@@ -458,5 +584,100 @@ fn deleting_one_of_several_hooks_still_takes_the_sections_before_them_off() {
     ] {
         assert_eq!(times(&text, line), 1, "{line} count wrong: {text}");
     }
+    assert_eq!(banners(&text), 1, "{text}");
+}
+
+/// The other half of the same rule: a blank line inside a generated code
+/// block that the person did NOT touch is the wrapper's own line, so the
+/// section still comes off whole. Read as separation the walk would leave
+/// the block's blank line standing, take none of the section, and the
+/// next render would write the whole thing a second time.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_generated_code_block_the_person_left_alone_still_comes_off() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-additional-instructions]\nrev = \"\"\"\nRun each in turn:\n\n```sh\nfirst\n\nsecond\n```\"\"\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    assert!(text.contains("```sh\nfirst\n\nsecond\n```"), "{text}");
+
+    // Only the body changes. The generated section, blank line and all,
+    // is exactly as the renderer wrote it.
+    fs::write(&file, text.replace("Upstream body.", "My body.")).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert_eq!(times(&source, "My body."), 1, "{source}");
+    for line in ["## Additional Instructions", "Run each in turn:", "```sh"] {
+        assert_eq!(times(&source, line), 0, "{line} was kept: {source}");
+    }
+
+    // And the rendering carries the section once, not twice.
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(times(&text, "## Additional Instructions"), 1, "{text}");
+    assert!(
+        text.contains("```sh\nfirst\n\nsecond\n```"),
+        "the block came back from the manifest with its blank line: {text}"
+    );
+    assert_eq!(banners(&text), 1, "{text}");
+}
+
+/// A code block indented into the prose is a block like a fenced one, and
+/// a blank line inside it is the block's own. A walk that reads a block
+/// only where its markers are takes the section the person edited, and
+/// their edit goes with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn whitespace_a_person_edits_inside_an_indented_block_is_their_edit() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-additional-instructions]\nrev = \"\"\"\nRun each in turn:\n\n    first\n\n    second\"\"\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    assert!(text.contains("    first\n\n    second"), "{text}");
+
+    // The person closes the gap inside the block and leaves every other
+    // line of the section standing.
+    let edited = text
+        .replace("    first\n\n    second", "    first\n    second")
+        .replace("Upstream body.", "My body.");
+    assert_eq!(times(&edited, "## Additional Instructions"), 1, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert!(
+        source.contains("    first\n    second"),
+        "the block they edited is their words now, gap and all: {source}"
+    );
+    for line in [
+        "## Additional Instructions",
+        "Run each in turn:",
+        "My body.",
+    ] {
+        assert_eq!(times(&source, line), 1, "{line} count wrong: {source}");
+    }
+
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        times(&text, "## Additional Instructions"),
+        2,
+        "the section the person edited, and the canonical one beside it: {text}"
+    );
+    assert!(text.contains("    first\n    second"), "{text}");
+    assert!(text.contains("    first\n\n    second"), "{text}");
     assert_eq!(banners(&text), 1, "{text}");
 }

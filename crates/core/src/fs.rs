@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::ErrorKind::{AlreadyExists, NotADirectory, NotFound, PermissionDenied};
+use std::io::ErrorKind::{AlreadyExists, NotFound, PermissionDenied};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,24 +8,11 @@ use crate::error::{CoreError, Result};
 
 mod links;
 mod lock;
+mod probe;
 pub(crate) use links::{points_at, resolved, spelling};
 pub(crate) use lock::{LockedFile, open_read_no_follow};
-
-/// Whether a path is something a shell would run: a regular file with an
-/// execute bit. Being present is a different question — a directory, or a
-/// data file, can carry the name of a command and answer yes to it.
-pub fn is_executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path)
-            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-    }
-    #[cfg(not(unix))]
-    {
-        path.is_file()
-    }
-}
+pub(crate) use probe::entry;
+pub use probe::is_executable;
 
 /// Give a file the execute bit. On Windows there is none to give, and the
 /// file being there is the whole of what a caller can arrange.
@@ -143,23 +130,9 @@ fn follow_link(path: &Path) -> PathBuf {
     }
 }
 
-/// What is at `path`: `Some` metadata, `None` when nothing is, an error
-/// when the filesystem will not say. The one place the three answers are
-/// kept apart, for a caller deciding what a write would land on: absent
-/// and unanswerable are the same word in a boolean, and that word is how
-/// a guard deletes what it exists to protect. Absent is said two ways —
-/// no such name, and a name under a file (`<item>/SKILL.md` beside one).
-pub(crate) fn entry(path: &Path) -> Result<Option<fs::Metadata>> {
-    match fs::metadata(path) {
-        Ok(meta) => Ok(Some(meta)),
-        Err(e) if matches!(e.kind(), NotFound | NotADirectory) => Ok(None),
-        Err(e) => Err(CoreError::io(path, e)),
-    }
-}
-
 pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
     match fs::read_to_string(path) {
-        Ok(s) => Ok(Some(s)),
+        Ok(text) => Ok(Some(text)),
         Err(e) if e.kind() == NotFound => Ok(None),
         Err(e) => Err(CoreError::io(path, e)),
     }

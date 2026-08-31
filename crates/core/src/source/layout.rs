@@ -243,17 +243,17 @@ pub(super) fn file_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<Str
 ///
 /// A directory this cannot read draws no rows for that directory, and the
 /// rest of the listing still draws: a listing says what a source offers,
-/// and one unreadable directory must not take the readable items of the
-/// same kind out of `add --all` and out of place resolution. Nothing
-/// deciding what a write would destroy answers that way — those callers
-/// let the refusal out.
+/// and one unreadable sibling must not take the readable items of the same
+/// kind out of `add --all` and out of place resolution. Nothing deciding
+/// what a write would destroy asks this — that reads the disk, through
+/// `SealedSource::entries`, where a refused read is an error.
 fn nested_names(
     sealed: &SealedSource,
     dir: &str,
     is_item: &dyn Fn(&std::path::Path) -> bool,
     leaf: impl Fn(&std::path::Path) -> Option<String>,
 ) -> Vec<String> {
-    let Ok(entries) = sealed.entries(&sealed.root().join(dir)) else {
+    let Ok(entries) = sealed.readable_entries(&sealed.root().join(dir)) else {
         return Vec::new();
     };
     let mut names = Vec::new();
@@ -269,7 +269,7 @@ fn nested_names(
             // suites and fixtures, the same vocabulary a skill tree marks
             // as supporting — files there are about the items, not items.
             && !matches!(parent, "tests" | "test" | "fixtures" | "testdata")
-            && let Ok(children) = sealed.entries(&entry)
+            && let Ok(children) = sealed.readable_entries(&entry)
         {
             for child in children {
                 if is_item(&child)

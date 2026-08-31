@@ -178,16 +178,35 @@ impl SealedSource {
     /// Symlinked entries are listed too — reading through one is what
     /// fails, loudly.
     ///
-    /// A name the directory will not hand over is an error, never a
-    /// shorter listing: a caller about to decide what a write would land
-    /// on top of must not read an unknown answer as an empty directory,
-    /// and a caller drawing rows already answers an unreadable directory
-    /// by drawing none of it.
+    /// The reading for a caller about to decide what a write would land on
+    /// top of: a name the directory will not hand over means the answer is
+    /// unknown, and an unknown answer read as an empty directory is how a
+    /// guard deletes what it exists to protect.
     pub fn entries(&self, dir: &Path) -> Result<Vec<PathBuf>> {
+        self.listed(dir, true)
+    }
+
+    /// The entries of a directory that could be read, bounded and sorted.
+    ///
+    /// The reading for a caller that draws rows: a name the directory will
+    /// not hand over costs its own row and no other, so one unreadable
+    /// entry never takes a directory's readable items out of a listing.
+    /// The directory itself is a different matter and still errors — that
+    /// is not one row, it is the whole answer, and what an unreadable
+    /// directory costs the surface is the surface's to decide.
+    pub fn readable_entries(&self, dir: &Path) -> Result<Vec<PathBuf>> {
+        self.listed(dir, false)
+    }
+
+    fn listed(&self, dir: &Path, every: bool) -> Result<Vec<PathBuf>> {
         self.contained(dir)?;
         let mut entries: Vec<PathBuf> = Vec::new();
         for entry in fs::read_dir(dir).map_err(|e| CoreError::io(dir, e))? {
-            entries.push(entry.map_err(|e| CoreError::io(dir, e))?.path());
+            match entry {
+                Ok(entry) => entries.push(entry.path()),
+                Err(e) if every => return Err(CoreError::io(dir, e)),
+                Err(_) => continue,
+            }
             // The bound holds while collecting — a million-entry directory
             // must not get a million-entry allocation first. A directory of
             // exactly the limit is within it; the entry after that is not.

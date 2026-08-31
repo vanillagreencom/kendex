@@ -23,6 +23,7 @@ mod rename;
 mod revision;
 mod skill_tree;
 mod stated;
+mod vacant;
 use agent::capture_agent;
 pub use beside::fork_beside;
 use forkable::{ambiguous_skill_tree, source_form};
@@ -30,6 +31,7 @@ pub use forkable::{forkable_harness, forkable_rendering};
 use provenance::{installed_commit, provenance};
 pub use rename::rename_fork;
 pub(crate) use skill_tree::skill_content_path;
+use vacant::vacant_name;
 
 /// Turn one edited installation into a local fork. The harness names which
 /// installation's bytes are captured — an agent renders per tool, and the
@@ -264,62 +266,6 @@ fn named_bytes(bytes: Vec<u8>, name: &str) -> Result<Vec<u8>> {
 /// The local source's path for an item of this kind under `name`.
 fn local_item(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> PathBuf {
     crate::source::local_slot(&local_source_root(env, scope), kind, name)
-}
-
-/// Whether `new` can be declared here as a local item: a legal name, no
-/// declaration or lock entry of this kind under it — a derived bundle
-/// member or dependency installs without a declaration and is no less
-/// there — and nothing in the local source's slot for it. `from` is the
-/// name being left, whose configuration has to mean the same under `new`.
-///
-/// What the copy then lands on is apply's to refuse: every write it plans
-/// carries the precondition it is allowed under, so a name proven free
-/// here and taken before the write is refused there, never overwritten.
-fn vacant_name(
-    env: &Env,
-    scope: &Scope,
-    manifest: &crate::manifest::Manifest,
-    kind: ItemKind,
-    from: &str,
-    new: &str,
-) -> Result<()> {
-    // Shown, not raw: the name reaches a terminal in the refusal, and an
-    // escape sequence inside it is printed rather than run.
-    let unusable = |problem: String| CoreError::ForkNameUnusable {
-        name: crate::names::shown(new),
-        problem,
-    };
-    if let Some(problem) = crate::names::item_problem(new) {
-        return Err(unusable(problem));
-    }
-    let collision = |existing: &str| CoreError::SourceCollision {
-        name: new.to_owned(),
-        existing: existing.to_owned(),
-        requested: LOCAL_SOURCE_NAME.to_owned(),
-    };
-    if manifest.declared(kind).contains_key(new) {
-        return Err(collision("this scope's manifest"));
-    }
-    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
-    if lock
-        .entries
-        .values()
-        .any(|entry| entry.kind == kind && entry.name == new)
-    {
-        return Err(collision("this scope's installed items"));
-    }
-    // An agent answers to its name in the manifest's own tables as well as
-    // in its declaration, and that configuration has to travel to the new
-    // name and mean the same thing there.
-    if kind == ItemKind::Agent
-        && let Some(problem) = crate::engine::agent_carry::cannot_carry(manifest, from, new)
-    {
-        return Err(unusable(problem));
-    }
-    if !crate::source::slot_free(env, scope, kind, new) {
-        return Err(collision("this scope's local source"));
-    }
-    Ok(())
 }
 
 /// The ops that move the edited bytes into the local source: an earlier

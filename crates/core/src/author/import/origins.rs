@@ -286,7 +286,7 @@ pub(super) fn notice_files(env: &Env, scope: &Scope, source: &str) -> Vec<(Strin
     let Ok(sealed) = SealedSource::open(&resolved.root) else {
         return Vec::new();
     };
-    let Ok(entries) = sealed.entries(&resolved.root) else {
+    let Ok(entries) = sealed.readable_entries(&resolved.root) else {
         return Vec::new();
     };
     let mut notices = Vec::new();

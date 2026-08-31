@@ -38,13 +38,17 @@ pub(crate) fn local_slot(root: &Path, kind: ItemKind, name: &str) -> PathBuf {
 /// directory, where the planner would refuse both names and sweep the one
 /// that was there.
 ///
+/// A filesystem that will not answer is not an empty slot: the read goes
+/// through the one three-valued probe, so an unreadable ancestor reaches
+/// the caller as a refusal rather than as vacancy.
+///
 /// The one occupancy rule, asked by fork-beside and by rename of the name
 /// they are about to claim. Adoption may replace the item already in the
-/// slot, so it asks [`slot_unreachable`] instead: what the slot holds is
-/// its business, whether the source can read it back is not.
-pub(crate) fn slot_free(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> bool {
+/// slot, so it asks [`slot_unreachable`] alone: what the slot holds is its
+/// business, whether the source can read it back is not.
+pub(crate) fn slot_free(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<bool> {
     let slot = local_slot(&local_source_root(env, scope), kind, name);
-    std::fs::symlink_metadata(&slot).is_err() && crate::names::folding_sibling(&slot).is_none()
+    Ok(crate::fs::entry(&slot)?.is_none() && crate::names::folding_sibling(&slot).is_none())
 }
 
 /// Why nothing at `slot` can be read back through this scope's local
@@ -72,8 +76,8 @@ pub(crate) fn slot_escapes(
 }
 
 /// Why the local source cannot hold an item's bytes at `slot`, in words
-/// for the person who typed the name. Adoption asks it before planning a
-/// byte, of a slot it may be replacing the occupant of.
+/// for the person who typed the name. A fork's capture and adoption's both
+/// land here, and both ask this before planning a byte.
 ///
 /// Every render destination is one component under its directory — the
 /// separators fold a namespaced name into a single leaf — so the slot is

@@ -4,6 +4,7 @@
 //! of the manifest this fork carries would otherwise stand twice.
 
 use crate::render::agent::GENERATED_BANNER;
+use crate::render::inside_a_block;
 
 use super::wrapper::Wrapper;
 
@@ -49,15 +50,26 @@ pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
     format!("{}\n", out.trim_start_matches('\n').trim_end())
 }
 
+/// One line a section is identified by. `inside` is a line standing
+/// inside a code block, where whitespace is content the person can edit
+/// rather than separation between sections.
+struct Line<'a> {
+    text: &'a str,
+    inside: bool,
+}
+
 /// The lines that identify each section, in the order a walk from this
-/// end meets them. A blank line is left out: it separates sections rather
-/// than says which one this is, and a person who closed a gap up has not
-/// deleted a section.
-fn said<'a>(sections: &'a [String], from_the_end: bool) -> Vec<Vec<&'a str>> {
-    let lines = |section: &'a String| -> Vec<&'a str> {
-        let mut said: Vec<&str> = section
+/// end meets them. A blank line outside a code block is left out: it
+/// separates sections rather than says which one this is, and a person
+/// who closed a gap up has not deleted a section. Inside one it is kept,
+/// because there it is a line of the block's own text.
+fn said<'a>(sections: &'a [String], from_the_end: bool) -> Vec<Vec<Line<'a>>> {
+    let lines = |section: &'a String| -> Vec<Line<'a>> {
+        let mut said: Vec<Line> = section
             .lines()
-            .filter(|text| !text.trim().is_empty())
+            .zip(inside_a_block(section))
+            .filter(|(text, inside)| *inside || !text.trim().is_empty())
+            .map(|(text, inside)| Line { text, inside })
             .collect();
         if from_the_end {
             said.reverse();
@@ -74,7 +86,7 @@ fn said<'a>(sections: &'a [String], from_the_end: bool) -> Vec<Vec<&'a str>> {
 /// is tried where the one before it stopped and nothing is searched for,
 /// so the count is the run of lines the wrapper accounts for and stops
 /// where the person's own prose starts.
-fn taken(body: &[&str], sections: &[Vec<&str>]) -> usize {
+fn taken(body: &[&str], sections: &[Vec<Line>]) -> usize {
     let mut at = 0;
     for section in sections {
         if let Some(more) = held(&body[at..], section) {
@@ -90,7 +102,7 @@ fn taken(body: &[&str], sections: &[Vec<&str>]) -> usize {
 /// among them. A body holding some of a section holds none of it: half a
 /// section is as likely to be the person writing what the renderer would
 /// have written as it is the remains of what it wrote.
-fn held(body: &[&str], section: &[&str]) -> Option<usize> {
+fn held(body: &[&str], section: &[Line]) -> Option<usize> {
     if section.is_empty() {
         return None;
     }
@@ -98,12 +110,15 @@ fn held(body: &[&str], section: &[&str]) -> Option<usize> {
     let mut through = 0;
     for (at, line) in body.iter().enumerate() {
         let want = section.get(matched)?;
-        // A blank line is separation, and a person may open or close a gap
-        // without touching the section.
-        if line.trim().is_empty() {
+        // A blank line the section is not standing on is separation, and
+        // a person may open or close a gap without touching the section.
+        // One the section does stand on is a line of a code block, where
+        // their whitespace is content: it has to match byte for byte, and
+        // one they added stands against the block's next line and refuses.
+        if line.trim().is_empty() && !want.inside {
             continue;
         }
-        if line != want {
+        if *line != want.text {
             return None;
         }
         matched += 1;

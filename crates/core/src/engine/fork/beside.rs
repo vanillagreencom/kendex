@@ -46,7 +46,7 @@ pub fn fork_beside(
             name: name.to_owned(),
         });
     };
-    vacant_name(env, scope, &manifest, kind, name, new_name)?;
+    vacant_name(env, scope, &manifest, kind, &decl, name, new_name)?;
     let hold = match rev {
         Some(selector) => Some(crate::package::resolve_hold(
             env, &manifest, kind, name, selector,

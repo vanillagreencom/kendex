@@ -143,7 +143,7 @@ pub fn find_by_package_name(
             .file_name()
             .is_some_and(|n| n.to_string_lossy().starts_with('@'))
         {
-            candidates.extend(sealed.entries(&dir).unwrap_or_default());
+            candidates.extend(sealed.readable_entries(&dir).unwrap_or_default());
         } else {
             candidates.push(dir);
         }

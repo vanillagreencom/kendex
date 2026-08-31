@@ -1,0 +1,40 @@
+//! What is at a path, and what it will do if something runs it. Every
+//! reading of an existing file's own nature is here; the writers are in
+//! the module above.
+
+use std::fs;
+use std::io::ErrorKind::{NotADirectory, NotFound};
+use std::path::Path;
+
+use crate::error::{CoreError, Result};
+
+/// Whether a path is something a shell would run: a regular file with an
+/// execute bit. Being present is a different question — a directory, or a
+/// data file, can carry the name of a command and answer yes to it.
+pub fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path)
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
+/// What is at `path`: `Some` metadata, `None` when nothing is, an error when
+/// the filesystem will not say. The one place the three answers are kept
+/// apart, for a caller deciding what a write would land on: absent and
+/// unanswerable are the same word in a boolean, and that word is how a guard
+/// deletes what it exists to protect. A link is not looked through — one
+/// whose target is gone still stands in that name's way.
+pub(crate) fn entry(path: &Path) -> Result<Option<fs::Metadata>> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) => Ok(Some(meta)),
+        // Absent, said two ways: no such name, and a name under a file.
+        Err(e) if matches!(e.kind(), NotFound | NotADirectory) => Ok(None),
+        Err(e) => Err(CoreError::io(path, e)),
+    }
+}
