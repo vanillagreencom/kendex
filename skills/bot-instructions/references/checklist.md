@@ -86,9 +86,10 @@ can still change what the file means.
       and to the generator.
 - [ ] No `pr-agent-settings` repository exists at the organization or project
       level carrying settings this repo does not expect.
-- [ ] No other best-practices source is loaded for this repo. Qodo caps
-      accumulated best-practices content at 2,000 lines across every source,
-      and the generator can only see the one file it writes.
+- [ ] What other best-practices sources Qodo loads for this repo is known.
+      Organization and mapped-repository files layer above the generated one and
+      the generator cannot see them. Qodo documents 800 lines per file and no
+      cap on the total, so nothing checks the total.
 - [ ] Before setting `[bots] qodo_review_md`: the portal toggle under
       Configurations → Context, "REVIEW.md instructions", is on. Without it the
       file is inert, which is why the flag is set by hand after this line
@@ -107,6 +108,14 @@ can still change what the file means.
       documents no grammar for that file, so the render keeps every non-pattern
       line inside an HTML comment on the assumption that anything else would be
       read as a pattern. Confirm once that the exclusions took effect.
+
+## Glob dialect
+
+- [ ] An exclusion took effect on Copilot, on Qodo and on Macroscope. The
+      dialect claims five engines read its patterns alike, and only two can be
+      tested from a repo: CodeRabbit's minimatch and real `git sparse-checkout`.
+      The `applyTo`, `[ignore]` and `include` matchers are unpublished, so this
+      line is the only confirmation those three ever get.
 
 ## If the repo has its own guard over these files
 

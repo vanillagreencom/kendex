@@ -116,15 +116,26 @@ govern." One-off steering happens in the trigger comment, not in a file.
 
 ## Qodo
 
-<https://docs.qodo.ai/code-review/get-started/configuration-overview/configuration-file>,
-<https://docs.qodo.ai/code-review/tools/improve>
+Qodo's docs are split by product line, and a row's line decides whether it
+applies here. Qodo Review is the current product, under
+`docs.qodo.ai/...`; Qodo Merge is the legacy one, under `docs.qodo.ai/v1/...`.
+This package's `[review_agent]` keys are Review and its `[pr_reviewer]` keys are
+Merge, which is why the render writes both.
 
-| What | Value |
-|------|-------|
-| `best_practices.md` | "Keep each file relatively short, under 800 lines" |
-| Accumulated best-practices content | "limited to 2000 lines" |
-| Automatic `best_practices.md` loading | a Qodo Merge (commercial) feature, absent from open-source PR-Agent |
-| Open-source PR-Agent equivalent | `config.repo_context_files`, limited by `config.repo_context_max_lines`, default 500 |
+<https://docs.qodo.ai/install-and-configure/configuration-overview/configuration-file>,
+<https://docs.qodo.ai/governance/rule-enforcement/without-rule-system/best-practices>
+
+| What | Value | Line |
+|------|-------|------|
+| `best_practices.md` per file | "Keep files relatively short (under ~800 lines)" | Review, and the same cap on the Merge page at `/v1/features/best-practices` |
+| Automatic `best_practices.md` loading | a Qodo Merge (commercial) feature, absent from open-source PR-Agent | Merge |
+
+800 lines per file is the only best-practices cap on a live vendor page. An
+accumulated cap across every source Qodo loads, and an open-source PR-Agent
+`repo_context_max_lines` default, both appeared in material that is now gone:
+the page they came from returns 404 and neither number is on any page that
+replaced it. They are not enforced anywhere in this package, because a number
+this file cannot cite is a number the generator does not hold.
 
 **Configuration locations.** Repo root `.pr_agent.toml`, documented as the root
 of the default branch, a repo wiki page of the same name, a

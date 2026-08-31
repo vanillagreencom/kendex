@@ -6,19 +6,55 @@ still runs, still posts, and says nothing about the configuration it discarded.
 The pull request looks reviewed. Nobody learns otherwise until a defect ships.
 
 So each validator below names the silent failure it exists to catch, then what
-it rejects. A validator runs on every `render` before the tree is written and
-on every `check`. A failure fails the run; none of them warns.
+it rejects. A failure fails the run; none of them warns. Which tree each one
+reads, and which verb runs it, is § Where these run, and it is not the same
+answer for all of them.
 
-Each validator ships with a must-fail control: a fixture carrying exactly the
-defect that validator names, asserted red. A validator with no red fixture is
-indistinguishable from one that passes on everything.
+## Controls
 
-The glob dialect gets the same treatment from the other side. It claims a set
-of patterns every target reads alike, which is a claim about five engines and
-not about this code, so it ships conformance vectors: each pattern evaluated
-against each target's own matcher, with a red case for a pattern the dialect
-allows and the engines disagree on. A dialect asserted only in prose is a
-guess.
+A validator's Rejects paragraph names several independent clauses. One fixture
+per validator proves the validator can fail once and leaves every other clause
+unproven, and an unproven clause that is dead, unreachable, or matching a decoy
+stays green for good. So the rule is per clause, not per validator:
+
+- **One red control per rejection clause.** Each asserts on that validator's
+  own identity or message, never on the run's exit code. All the validators run
+  together, so a `coderabbit-filters` fixture that also trips `toml-schema`
+  reds for the wrong reason and reads as coverage.
+- **One canonical valid render asserted green.** Without it, a validator that
+  rejects everything satisfies the entire red set.
+- **Two fixtures per numeric bound**, one crossing it and one a single unit
+  inside. A `copilot-budget` fixture that stops short of `[budgets]
+  copilot_chars`, or a `tone_instructions` fixture short of 250 code points,
+  proves the run and not the bound.
+
+A clause with no control is a spec violation, which makes the count checkable
+by reading the Rejects paragraph against the fixture list. A repo-state
+validator's controls are repo fixtures, not scratch-tree ones.
+
+## The glob dialect's vectors
+
+The dialect claims a set of patterns five targets read alike. That is a claim
+about five engines rather than about this code, and only two of the five can be
+asked: CodeRabbit's `path_filters` go through minimatch and through real `git
+sparse-checkout`, both of which a test can run at a pinned version. Copilot's
+`applyTo` matcher, Qodo's `[ignore]` matcher and Macroscope's `include` matcher
+are unpublished — `references/limits.md` documents no grammar for any of them,
+and says outright that Macroscope documents none.
+
+So the vectors cover the two that can be measured, and the other three are a
+one-time confirmation in `references/checklist.md`. Claiming five-engine
+conformance from a harness that can reach two would be the false confidence
+this file exists to prevent.
+
+The harness needs its own control, and it cannot be a pattern the dialect
+allows: if the dialect is right, no such pattern produces disagreement, so that
+control could only be built by first finding a dialect bug. The buildable one
+runs in the other direction. Feed a pattern the dialect **refuses** — a brace
+and an extglob are two the dialect names, and their disagreement is exactly why
+they are refused — through the vector harness with the dialect check bypassed,
+and assert the harness reports the disagreement. That proves the instrument on
+an input the dialect guarantees exists.
 
 **What no validator can do.** Each one judges bytes this generator produced.
 None of them observes a bot's actual behavior, and several of the guarantees
@@ -159,6 +195,21 @@ and not a fourth hand-written copy of the routing: a block moved between the two
 `[review_agent]` keys changes one table cell and nothing else, while a block
 dropped from a column reds this validator.
 
+## `qodo-best-practices`
+
+**Silent failure.** Qodo documents 800 lines per file and does not document what
+it does past that. A repo cannot tell from a review whether its guidance was
+read in full, truncated, or dropped.
+
+**Rejects.** A rendered `best_practices.md` over 800 lines, naming the surfaces
+contributing the most lines so the author can see what to cut.
+
+That is the only best-practices cap on a live vendor page, and so the only one
+enforced. Organization and mapped-repository best-practices files layer above
+the generated one and the generator cannot see them, so nothing here bounds the
+total; `references/checklist.md` carries that as a question rather than a
+number.
+
 ## `macroscope-render`
 
 **Silent failure.** A `.macroscope/correctness/` file whose frontmatter
@@ -251,15 +302,81 @@ copilot` there means moving guard's reply-contract pointer first.
 render, then vanishes. Between those two moments the repo's behavior does not
 match its source, and the edit's author has no reason to suspect it.
 
-**Rejects.** Any generated path whose bytes differ from a fresh render, naming
-the path and the differing region. `check` reads the working tree by default
-and the index under `--staged`, so a pre-commit lane judges what is about to be
-committed rather than what happens to be on disk.
+**Rejects.** Any path the current TOML produces whose bytes differ from a fresh
+render, naming the path and the differing region.
+
+**Marker-agnostic, unlike every other rule here.** `render` refuses to replace
+an unmarked file and `orphan` carves unmarked files out, so a marker-gated
+`drift` would let a one-line deletion — the marker comment — drop a file out of
+all three at once: unmarked for `drift`, carved out of `orphan`, refused by
+`render`. Hand-controlled review policy would then sit at a generated path with
+`check` reporting nothing, and a CI lane never renders in place, so `render`'s
+refusal never fires there. Marker-agnostic makes the deleted marker its own byte
+difference, which reds.
+
+The intended consequence: a repo that has not run `adopt` reds on every
+hand-written file at a path its TOML produces. That is the correct signal, and
+it is what `adopt` clears. The seam with `orphan` is the TOML: `drift` judges
+paths the TOML produces now, `orphan` judges marked files it does not. A file at
+a path the TOML does not produce and that this package never wrote is neither.
+
+**Which tree.** `check` reads the working tree by default. Under `--staged` it
+reads the index — and the index for **every render input**, not only the
+outputs: `bot-instructions.toml`, the doctrine source, and `kendex.toml` when
+`derive_render` is on. A file absent from the index is that absence, not its
+worktree copy. Outputs-only would be wrong in both directions in the pre-commit
+lane this mode exists for: a commit staging a TOML change with its re-rendered
+outputs would red, because the outputs came from the index while the render was
+built from a worktree TOML that may have moved on; and an unstaged doctrine edit
+would silently decide what the staged outputs were compared against, passing or
+failing on bytes nobody is committing.
+
+**Controls.** The hand-edit fixture, a fixture whose only change is a deleted
+marker line, and two for the mode: staged TOML plus staged outputs that agree
+with a divergent worktree TOML, asserted green; and a staged TOML whose outputs
+were not re-rendered, asserted red.
 
 ## Where these run
 
-`render` runs all of them against the scratch tree before writing, and writes
-nothing when one fails. `check` runs all of them against the repo.
+Two kinds, and the difference is what each judges.
+
+**Byte validators** judge one render — its inputs and the bytes it produced —
+and nothing around it, so they read the scratch tree, on both verbs:
+`toml-schema`, `coderabbit-schema`, `coderabbit-filters`,
+`copilot-frontmatter`, `copilot-budget`, `qodo-parity`, `qodo-best-practices`,
+`macroscope-render`, `exclusion-consistency`'s cross-surface clause, and
+`agents-section`'s clauses about the rendered region.
+
+**Repo-state validators** judge the repository, so a scratch tree is the one
+place they cannot fail. `orphan` looks for what the current TOML does not
+produce, and the scratch tree holds only what it does produce. `drift` compares
+a path's bytes against a fresh render, which in the scratch tree are the same
+bytes. `exclusion-consistency`'s derived-set clause compares a set against a
+fresh derivation from the same `kendex.toml` in the same run. `agents-section`'s
+nested-`AGENTS.md` clause searches a repo, which the scratch tree is not. Run
+against a scratch tree, all four pass by construction and report a clean run.
+
+So they read the repo:
+
+| Validator or clause | `render` | `check` |
+|---------------------|----------|---------|
+| `orphan` | the repo, before the write | the repo |
+| `agents-section`, nested-file clause | the repo, before the write | the repo |
+| `drift` | skipped, and named as skipped | the repo |
+| `exclusion-consistency`, derived-set clause | skipped, and named as skipped | the repo |
+
+`orphan` runs before the write because that is the render that creates the
+orphan: retiring a `[[surface]]` or flipping a bot flag is what leaves the file
+behind, and a render that reports a clean pass and then does it is the fail-open
+shape this package exists to remove.
+
+The two skips are not vacuous checks left running; they are checks with no
+question to answer at render time, and the run says so rather than counting them
+as passed. A render exists to change the bytes `drift` compares, so at render
+time `drift` would red on its own purpose. And `exclusion-consistency`'s derived
+clause compares a derivation against itself. Both have force in `check`, against
+a committed tree whose `kendex.toml` and whose files have moved on since someone
+last rendered — which is the question they were written for.
 
 A repo wires `check` into whatever runs its other repo guards. This package
 ships no hook of its own, because a repo that already has a commit chain does

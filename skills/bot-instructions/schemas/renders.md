@@ -18,8 +18,16 @@ the slice; `[doctrine.append]` adds its text as a final paragraph. The
 `[repo] tracker` is set.
 
 **Marker.** Every file the generator owns whole, and the one region it owns
-inside `AGENTS.md`, opens with a comment in that file's syntax naming this
-package, its version, and its input files:
+inside `AGENTS.md`, carries a marker: the file's **first comment**, preceded
+only by a prologue the format requires. There are exactly two such prologues,
+and no output has any other: YAML frontmatter in a `.instructions.md` file,
+which is frontmatter only at byte 0, and the `yaml-language-server` schema line
+at the top of `.coderabbit.yaml`. Ownership is decided by the marker being
+present, never by its offset, so `render`, `adopt` and `orphan` all ask the same
+question of every output.
+
+The marker is a comment in that file's syntax naming this package, its version,
+and its input files:
 `bot-instructions.toml`, the doctrine source, and `kendex.toml` when
 `[exclusions] derive_render` is true. The comment ends with the sentence `Edit
 bot-instructions.toml or the doctrine source, then re-render.` A markdown
@@ -236,8 +244,23 @@ their schema default.
 a sentence stating that this file is not a delta and that a global override, if
 one exists, outranks it.
 
-**Keys.** In this order: `language`, `tone_instructions`, `early_access`,
-`enable_free_tier`, `inheritance`, `reviews`, `chat`, `knowledge_base`.
+**Keys.** Every top-level property the vendored schema defines, in this order:
+`language`, `tone_instructions`, `early_access`, `enable_free_tier`,
+`inheritance`, `reviews`, `chat`, `knowledge_base`, `code_generation`,
+`issue_enrichment`.
+
+The last two are here for the same reason as the rest. Full state means every
+key, or the ones left out keep resolving down the ladder this package does not
+control, and the file's claim about itself stops being true.
+`code_generation` is written with its docstring and unit-test generation off,
+matching the `finishing_touches` posture that never lets a bot push code;
+`issue_enrichment` is written off, since this package configures review and not
+issue triage.
+
+The list is transcribed from a schema that moves, which is the shape that goes
+stale, so `coderabbit-schema` also fails when the render omits a top-level
+property the vendored schema defines. The next schema refresh then reports the
+gap instead of silently widening it.
 
 `inheritance` is written `false` explicitly. It decides whether an unset key
 takes a parent level's value instead of resolving down the ladder, which is the
@@ -363,10 +386,10 @@ file has no column in the routing table.
 orphan, so retiring the last surface says so rather than leaving a
 marker-only file that looks like current guidance.
 
-**Caps.** 800 lines for this file. Qodo also documents a 2,000-line cap across
-every best-practices source it loads, and the other sources are organization
-and mapped-repository files this generator cannot see, so that cap is a
-checklist line rather than a validator.
+**Caps.** 800 lines for this file, which is what Qodo documents and all it
+documents; `references/limits.md` carries the page. Organization and
+mapped-repository best-practices files layer above this one and the generator
+cannot see them, so nothing here bounds the total.
 
 ## `REVIEW.md`
 

@@ -93,10 +93,15 @@ The generator offers three verbs.
 - `render` writes every enabled surface from doctrine plus the repo TOML, after
   validating what it built. It builds and validates in a scratch tree first, so
   a validator failure leaves the repo untouched; a failure during the write
-  phase is reported naming every path already replaced.
-- `check` re-renders and compares. It reads the working tree by default and the
-  index under `--staged`. Any difference is a finding naming the path and the
-  differing region.
+  phase is reported naming every path already replaced. The validators that
+  judge repository state rather than emitted bytes read the repo, before the
+  write, so a render that would orphan a file fails instead of reporting a
+  clean pass and then orphaning it. `schemas/validators.md` § Where these run
+  is the split.
+- `check` re-renders and compares. It reads the working tree by default; under
+  `--staged` it reads the index, for every render input as well as the outputs,
+  so a pre-commit lane judges one coherent staged state. Any difference is a
+  finding naming the path and the differing region.
 - `adopt` is the one-time verb for a repo that already has hand-written bot
   files. `render` refuses to replace a file at a generated path that does not
   carry this package's marker; `adopt` takes such a file over, printing what it

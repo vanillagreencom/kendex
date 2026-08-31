@@ -29,12 +29,14 @@ lands in which file, in what order, and why each omission is deliberate.
 
 ## Three verbs
 
-`render` builds and validates in a scratch tree, then writes. `check`
+`render` builds and validates in a scratch tree, then writes — and the checks
+that judge repository state rather than emitted bytes read the repo before the
+write, since a scratch tree is the one place they cannot fail. `check`
 re-renders and reports any file that differs, plus anything carrying the
-package's marker that the TOML no longer produces. `adopt` is the one-time verb for a repo whose bot files
-were written by hand: `render` refuses to replace a file that does not carry
-this package's marker, and `adopt` takes one over while printing what it
-replaced.
+package's marker that the TOML no longer produces. `adopt` is the one-time verb
+for a repo whose bot files were written by hand: `render` refuses to replace a
+file that does not carry this package's marker, and `adopt` takes one over while
+printing what it replaced.
 
 Generated files are outputs. A hand edit is erased at the next render, and
 `check` reds before that happens. There is no overwrite prompt and no merge of
@@ -48,8 +50,10 @@ discarded whole and the review runs with defaults, saying nothing. A
 un-reviews the repo. An `excludeAgent` typo loads reviewer doctrine into the
 working agent. In each case the pull request looks reviewed.
 
-Each validator names the silent failure it catches and ships a fixture that
-carries exactly that defect, asserted red. What no validator can reach, because
+Each validator names the silent failure it catches, and each rejection clause it
+names ships a fixture carrying exactly that defect, asserted red on the
+validator's own message — plus one canonical render asserted green, so a
+validator that rejects everything fails the suite. What no validator can reach, because
 it lives in a vendor's web UI, is the settings checklist instead.
 
 ## What this does not solve
