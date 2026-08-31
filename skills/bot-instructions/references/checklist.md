@@ -108,6 +108,22 @@ can still change what the file means.
       line inside an HTML comment on the assumption that anything else would be
       read as a pattern. Confirm once that the exclusions took effect.
 
+## If the repo has its own guard over these files
+
+- [ ] Every predicate that guard uses is at least as loose as the render's.
+      A guard slicing `AGENTS.md` on `^## Code Review Rules$`, or matching a
+      pointer sentence on one line of `.github/copilot-instructions.md`, is
+      reading bytes this package writes; the render spec pins both, and a repo
+      adding a third predicate reconciles it before rendering rather than at
+      adoption time.
+- [ ] `[repo] tracker` is set wherever a guard pins the tracked reply form.
+      Without it the render leaves the generic placeholder and the guard reads
+      the form as gone.
+- [ ] Retiring a bot whose file another check requires is a pointer move first,
+      then the deletion. kendex's guard fails when
+      `.github/copilot-instructions.md` is absent, so `[bots] copilot = false`
+      there means moving what that guard reads before removing the file.
+
 ## If the repo's gate reads bot output
 
 - [ ] `bot-instructions.toml`, the doctrine source, and every generated path

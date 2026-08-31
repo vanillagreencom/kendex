@@ -37,9 +37,20 @@ default in force, and the render is plausible, complete, and wrong.
 wrong type, an empty glob list, a glob outside the dialect in `repo-toml.md`, a
 `reason` that is multi-line or contains `-->`, a surface name that is empty,
 malformed, duplicated or reserved, an unknown doctrine block id in
-`[doctrine.append]` or `[doctrine.replace]`, `qodo_best_practices` or
-`qodo_review_md` true while `qodo` is false, and a `schema` value other
+`[doctrine.append]` or `[doctrine.replace]`, and a `schema` value other
 than `1`.
+
+**Rejects, the cross-flag set.** `qodo_best_practices` or `qodo_review_md` true
+while `qodo` is false. `copilot` or `coderabbit` true while `codex` is false,
+because the `AGENTS.md` section is where both of those bots get most of their
+doctrine and where the Copilot pointer sentence aims. A non-empty `[[surface]]`
+set while `copilot`, `coderabbit`, `macroscope` and `qodo_best_practices` are
+all false: surface text has no route to any other bot, so those surfaces are
+instructions the author wrote and nothing will ever read.
+
+A flag combination that renders nothing readable is the same defect as a flag
+that renders a file reaching nothing. Both fail here rather than rendering
+clean.
 
 ## `coderabbit-schema`
 
@@ -142,6 +153,12 @@ the two sections carry the same set of blocks, split differently. It also
 rejects a `[github_app] pr_commands` entry naming a command whose section
 carries no guidance at all.
 
+The set it compares is the routing table's three `pr_agent` columns, read as
+data rather than restated here. That is what keeps this a check on the render
+and not a fourth hand-written copy of the routing: a block moved between the two
+`[review_agent]` keys changes one table cell and nothing else, while a block
+dropped from a column reds this validator.
+
 ## `macroscope-render`
 
 **Silent failure.** A `.macroscope/correctness/` file whose frontmatter
@@ -170,6 +187,11 @@ else. Rename the heading, move the section, or delete the file, and Codex
 reviews every pull request with no repo rules at all, posting normally
 throughout.
 
+Runs only when `[bots] codex` is true, which `toml-schema` requires whenever
+`copilot` or `coderabbit` is. A repo with every bot off has no rendered section
+for this to judge, and rejecting a missing heading there would fail a repo that
+never asked for one.
+
 **Rejects.** A nested `AGENTS.md` anywhere below the root carrying a `## Code
 Review Rules` section. Codex reads the nearest nested file covering each
 changed path, so such a section reaches it without passing through doctrine,
@@ -188,22 +210,40 @@ nothing, so the file it wrote is still there and the bot still loads it. The
 repo's source says one thing and its bots read another, and no render will ever
 touch that file again.
 
-**Rejects.** Any file at a path this package can generate that carries the
-marker and that the current TOML does not produce, and any file at the
-generated paths of a bot capability the TOML sets `false`, marker or not. The
-second case has no marker requirement because the TOML says that bot is off
-while a file at its path says otherwise, and which hand wrote the file does not
-change that. That covers a retired
-surface's `.instructions.md` and `correctness/*.md`, and it covers the
-root-level files of a bot whose flag went false: `.coderabbit.yaml`,
-`.pr_agent.toml`, `best_practices.md`, `REVIEW.md`,
-`.github/copilot-instructions.md`, and the `.macroscope/` tree. Files at those
-paths with no marker, for a capability that is on, are hand-written, are not
-judged here, and are what `adopt` exists to take over.
+**Rejects.** Anything carrying this package's marker that the current TOML does
+not produce. One rule, and the marker is the whole of it: this package wrote
+every marked byte, so a marked file the TOML no longer accounts for is one it
+abandoned.
 
-The fix is a deletion in the commit that retired the surface or the bot, which
-is why the generator reports rather than deletes: removing a file is a decision
-the commit's author makes.
+That covers a retired surface's `.instructions.md` and `correctness/*.md`, the
+root-level files of a bot whose flag went false (`.coderabbit.yaml`,
+`.pr_agent.toml`, `best_practices.md`, `REVIEW.md`,
+`.github/copilot-instructions.md`, the `.macroscope/` tree), and the marked
+`## Code Review Rules` region inside `AGENTS.md` when `[bots] codex` goes false.
+That last one is why the region carries a marker at all: it is never a whole
+file, so a whole-file rule would leave live doctrine in the one place Codex
+reads, reported by nothing.
+
+**Unmarked files are not judged here, whatever the flags say.** A repo with
+`qodo_review_md = false` and its own hand-written `REVIEW.md`, or `copilot =
+false` and an existing `.github/copilot-instructions.md`, is a repo that owns
+those files; this package never wrote them and does not get to call them stale.
+That is also the state every incoming repo is in before `adopt` runs. Taking one
+over is `adopt`'s job and needs the capability on.
+
+**The scan is recursive, over what each bot reads rather than what the generator
+writes.** `.github/instructions/**` and `.macroscope/correctness/**` both, since
+Copilot and Macroscope walk those subtrees. A marked file one directory down,
+left by a hand move or a directory rename, is at no path the generator would
+write, so a flat scan would miss it while Copilot kept loading it.
+
+The fix is usually a deletion in the commit that retired the surface or the bot,
+which is why the generator reports rather than deletes: removing a file is a
+decision the commit's author makes. It is not always a deletion. Another check
+in the repo may require the file to exist, in which case the fix is to move what
+that check reads before the file goes. kendex is an example: its `tools/guard`
+fails when `.github/copilot-instructions.md` is absent, so retiring `[bots]
+copilot` there means moving guard's reply-contract pointer first.
 
 ## `drift`
 

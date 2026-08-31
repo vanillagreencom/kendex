@@ -104,7 +104,7 @@ than rendering a partly understood file.
 |-----|------|----------|---------|
 | `name` | string | yes | The repo's own name, used in generated file headers |
 | `summary` | string | yes | What this repo is, in two to six sentences. Rendered near the top of the Copilot and Qodo surfaces, which is the only place a bot learns the shape of the codebase |
-| `tracker` | string | no | Issue prefix, e.g. `KEN`. Substituted into the `reply-contract` block's `<issue>` placeholder. Absent leaves the placeholder generic |
+| `tracker` | string | no | Issue prefix, e.g. `KEN`. Substituted into the `reply-contract` block's `<issue>` placeholder. Absent leaves the placeholder generic, which a repo guard pinning the tracked reply form reads as the form being gone |
 
 `summary` is prose about this repo, not doctrine. Anything in it that would be
 true of another repo belongs in a doctrine block instead.
@@ -118,7 +118,7 @@ reach nothing.
 
 | Key | Renders |
 |-----|---------|
-| `codex` | the `AGENTS.md` section |
+| `codex` | the `AGENTS.md` section, which is the doctrine root rather than a Codex-only file |
 | `copilot` | `.github/copilot-instructions.md` and `.github/instructions/*.instructions.md` |
 | `coderabbit` | `.coderabbit.yaml` |
 | `qodo` | `.pr_agent.toml` |
@@ -126,11 +126,24 @@ reach nothing.
 | `qodo_review_md` | `REVIEW.md`. Inert until the portal's "REVIEW.md instructions" toggle is on, which is why it is a flag someone sets after doing the checklist line rather than something the generator infers |
 | `macroscope` | the `.macroscope/` tree |
 
-`qodo_best_practices` or `qodo_review_md` true with `qodo` false is an error.
+Three flag combinations are errors, all enforced by `toml-schema`:
+
+- `qodo_best_practices` or `qodo_review_md` true with `qodo` false.
+- `copilot` or `coderabbit` true with `codex` false. Both read the `AGENTS.md`
+  section: CodeRabbit through `knowledge_base.code_guidelines.filePatterns`,
+  Copilot code review directly on GitHub.com. Without it, `.coderabbit.yaml`
+  carries one doctrine block and the Copilot file's reply-contract pointer aims
+  at a section that does not exist, and both render clean.
+- A non-empty `[[surface]]` set with `copilot`, `coderabbit`, `macroscope` and
+  `qodo_best_practices` all false. Those four are every route surface text has,
+  so the surfaces would be instructions nothing reads.
 
 Turning a capability off renders none of its files and deletes none of them.
-The files it wrote stay active until someone removes them, so `check` reports
-each as an orphan by its marker, in the commit that flipped the flag.
+The files this package wrote stay active until someone removes them, so `check`
+reports each as an orphan by its marker, in the commit that flipped the flag. A
+file at one of those paths that this package never wrote is the repo's own and
+is not judged: `adopt` is how one becomes managed, and it needs the capability
+on.
 
 ### `[cadence]`
 
@@ -199,9 +212,14 @@ A path set plus what a reviewer needs to know about it. Zero or more.
 | `reviewer_only` | bool | no, default `false` | Renders `excludeAgent: "cloud-agent"` into the Copilot file, keeping reviewer doctrine away from the working agent |
 | `instructions` | string | yes | What a reviewer gets wrong here, and what is true instead |
 
-`name` may not be `doctrine`, `ignore`, or `approvability`: each of those is a
-path this package or Macroscope already writes, and a surface claiming one
-would silently lose a file to write order. A `name` colliding with another
+`name` may not be `doctrine`, `correctness`, `ignore`, or `approvability`. Each
+is a path this package or Macroscope already governs, and a surface claiming one
+would silently lose a file to write order.
+`.macroscope/correctness/correctness.md` is the one worth naming: it is
+Macroscope's governing file, carrying `waitsFor`, `requires` and their two
+timeouts for the whole correctness run, and `macroscope-render` permits no
+frontmatter key but `include` and `exclude`, so an `adopt` over it would drop a
+repo's check prerequisites for good. A `name` colliding with another
 surface, or producing a path another output already claims, is an error.
 
 `instructions` may not begin a line with `#`, with `---`, or with the marker

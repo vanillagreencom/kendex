@@ -33,9 +33,16 @@ and the drift validator reds before that happens.
 |-----|-------|-----------|
 | Codex | `AGENTS.md` § Code Review Rules, root plus nearest nested | undocumented |
 | Copilot code review | `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`, `AGENTS.md` | the pull request head |
-| CodeRabbit | `.coderabbit.yaml`, whole-file, beneath any organization or workspace global override | the pull request head |
+| CodeRabbit | `.coderabbit.yaml`, whole-file, beneath any organization or workspace global override, plus `AGENTS.md` through `knowledge_base.code_guidelines.filePatterns` | the pull request head |
 | Qodo | `.pr_agent.toml`, `best_practices.md`, `REVIEW.md` | the default branch root |
-| Macroscope | `.macroscope/ignore.md`, `.macroscope/correctness/*.md` | the pull request's most recent commit, or the default branch for a fork |
+| Macroscope | `.macroscope/ignore.md`, `.macroscope/correctness/*.md`, and nothing else | the pull request's most recent commit, or the default branch for a fork |
+
+Three of the five reach the `AGENTS.md` section, which is why it is the
+doctrine root and why `[bots] codex = false` with `copilot` or `coderabbit` on
+is a `toml-schema` error. Codex and Macroscope each read one surface and nothing
+else, so both carry every doctrine block; the routing table in
+[schemas/renders.md](schemas/renders.md) is where that lives, one row per block
+and one column per destination.
 
 Verified caps, enum values and read semantics are in
 [references/limits.md](references/limits.md), each with the vendor page that
@@ -120,10 +127,12 @@ Codex without passing through doctrine. `check` reports one.
 `.github/instructions/` and `.macroscope/correctness/` may hold hand-written
 files beside generated ones. The generator writes only the names the TOML's
 surfaces produce and reads nothing else. Telling the two apart is what the
-marker comment is for: a file at a generated path carrying the marker but
-produced by no current surface, or belonging to a bot the TOML has switched
-off, is an orphan, and `check` reports it. Retiring a surface or a bot
-otherwise leaves a file every bot keeps loading.
+marker comment is for, and it is the only test: anything carrying the marker
+that the current TOML does not produce is an orphan, and `check` reports it.
+That is a retired surface's file, a retired bot's, and the `AGENTS.md` region
+when `codex` goes false. An unmarked file at one of those paths is the repo's
+own, whatever the flags say, and `adopt` is how one becomes managed. Retiring a
+surface or a bot otherwise leaves a file every bot keeps loading.
 
 Every output path is resolved before it is written and refused when any
 component is a symlink or when the resolved path leaves the repo root.

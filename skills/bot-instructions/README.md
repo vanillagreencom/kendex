@@ -24,13 +24,14 @@ doctrine (SKILL.md § Doctrine)  +  bot-instructions.toml
 A `[[surface]]` in the TOML is written once and reaches Copilot, CodeRabbit and
 Macroscope in each one's own dialect. An exclusion is written once and reaches
 every bot that has an exclusion mechanism. Doctrine is written once, in this
-package, for every repo.
+package, for every repo, and one table in `schemas/renders.md` says which block
+lands in which file, in what order, and why each omission is deliberate.
 
 ## Three verbs
 
 `render` builds and validates in a scratch tree, then writes. `check`
-re-renders and reports any file that differs, plus any generated file the TOML
-no longer produces. `adopt` is the one-time verb for a repo whose bot files
+re-renders and reports any file that differs, plus anything carrying the
+package's marker that the TOML no longer produces. `adopt` is the one-time verb for a repo whose bot files
 were written by hand: `render` refuses to replace a file that does not carry
 this package's marker, and `adopt` takes one over while printing what it
 replaced.

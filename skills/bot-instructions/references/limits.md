@@ -127,8 +127,9 @@ govern." One-off steering happens in the trigger comment, not in a file.
 | Open-source PR-Agent equivalent | `config.repo_context_files`, limited by `config.repo_context_max_lines`, default 500 |
 
 **Configuration locations.** Repo root `.pr_agent.toml`, documented as the root
-of the default branch, a repo wiki page of the same name, a `pr-agent-settings` repository at project or organization
-level, and the Qodo portal.
+of the default branch, a repo wiki page of the same name, a
+`pr-agent-settings` repository at project or organization level, and the Qodo
+portal.
 
 **Precedence.** The docs state that project-level settings take precedence over
 organization-level, and that "a repository's local configuration always
@@ -144,8 +145,9 @@ confirms no wiki page exists.
 `smart_router_extra_instructions` for the agent deciding review depth.
 <https://docs.qodo.ai/code-review/extra-instructions>
 
-**Exclusions.** `[ignore]` globs plus pull-request-level keys (`ignore_pr_labels`, `ignore_pr_authors`,
-`ignore_pr_title`, branch filters) and `allow_only_specific_folders`. There is
+**Exclusions.** `[ignore]` globs plus pull-request-level keys
+(`ignore_pr_labels`, `ignore_pr_authors`, `ignore_pr_title`, branch filters)
+and `allow_only_specific_folders`. There is
 no per-path instruction mechanism.
 
 **`REVIEW.md`.** A root file of plain-markdown review guidelines all Qodo review
@@ -162,13 +164,17 @@ product functionality, not an open-source PR-Agent guarantee.
 |------|-------|
 | Instruction files | `.macroscope/correctness/**/*.md`, `*.md` only, `README.md` ignored |
 | Reserved names at `.macroscope/` root | `ignore.md`, `approvability.md` |
+| Governing file | `.macroscope/correctness/correctness.md`, "at the top level of the directory, spelled exactly that way" |
+| Governing-file frontmatter | `waitsFor`, `requires`, `waitsForTimeout` (default 20 minutes), `waitsForDiscoveryTimeout` (default 1 minute), configuring the whole correctness check |
 | Frontmatter on a correctness file | `include`, `exclude`, both optional glob arrays |
 | Evaluation order | `exclude` after `include`; omitted frontmatter applies repo-wide |
 | Check-run agent `title` | 60 characters |
 | Check-run agent enums | `reasoning`: `off`, `low`, `medium`, `high`, `xhigh`. `effort`: `low`, `medium`, `high`. `input`: `full_diff`, `code_object`, `pr_metadata`. `conclusion`: `neutral`, `failure` |
 
 Subdirectories are organizational only. Multiple instruction files matching one
-changed file stack.
+changed file stack. The governing file is the exception to "a correctness file
+is just instructions": its four fields set the check run's prerequisites and
+timeouts, and no other file can carry them.
 
 **`ignore.md` scope.** Repository-wide exclusion, applying to every check run.
 An agent's own `include` patterns override it, which is a reason not to give an
