@@ -32,18 +32,33 @@ mod repo;
 mod resolve;
 pub use repo::Repo;
 pub use resolve::Installed;
-/// The tool directories the verbs search, in order. Derived from the
-/// harness adapters that write them by `guard_skill_roots::
-/// a_root_for_every_harness_skills_surface`, not transcribed from the
-/// package's own copy: two lists agreeing is no evidence either is right.
+/// The tool directories the verbs search, in order — the same roots the
+/// package's own helper searches at commit time. `guard_skill_roots` holds
+/// this list to the package's, order included, and holds BOTH to the
+/// harness adapters that write the directories: two lists agreeing is no
+/// evidence either is right.
 pub use resolve::SKILL_ROOTS as SEARCH_ROOTS;
-use resolve::bind;
+use resolve::{bind, installed_or_err};
 
 /// The package that owns the checks and the git shims.
 pub const SKILL: &str = "growth-guards";
 
 /// The installer the package ships, relative to its own directory.
 const INSTALLER: &str = "scripts/install-git-hooks";
+
+/// The helper the installer writes into the hooks directory.
+const HELPER: &str = "kendex-guards";
+
+/// What a read-only `--check` gets, and why it is not the default.
+///
+/// [`check`] is on the session-start path, whose whole harness budget is 20
+/// seconds (`drift::hook`). The default 120 would be spent inside that
+/// budget and lose the entire drift report to the harness's own kill; this
+/// gives up first, and a caller folds the refusal as a verdict it could not
+/// take. Ten seconds is far longer than a read of two files and a `cmp`,
+/// so only a wedged script reaches it. `install` and `uninstall` write, are
+/// invoked deliberately, and keep the ordinary timeout.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Room for the whole chain, which ends in whatever the repository pointed
 /// `GROWTH_GUARDS_PRE_COMMIT_LOCAL` at — a cold clippy build, in this repo,
@@ -141,7 +156,7 @@ pub(crate) fn relay(output: &std::process::Output) -> GuardReport {
 
 /// Arm the shims: the package's own installer, in this repository.
 pub fn install(dir: &Path) -> Result<GuardReport> {
-    installer(dir, &[])
+    installer(dir, &[], None)
 }
 
 /// Disarm: the package removes its helper and its own marked line, and
@@ -152,7 +167,39 @@ pub fn install(dir: &Path) -> Result<GuardReport> {
 /// could not run is exit 2 with the reason, never a quiet success about a
 /// repository nobody can commit to.
 pub fn uninstall(dir: &Path) -> Result<GuardReport> {
-    installer(dir, &["--uninstall"])
+    installer(dir, &["--uninstall"], None)
+}
+
+/// Whether somebody standing at this repository ran the installer.
+///
+/// The license to run the package's scripts, and the whole of it. git
+/// clones no hook files and no helper, so anything the installer left in
+/// the hooks directory got there from a local act by whoever owns this
+/// machine — while every byte under the work tree arrived with a fetch and
+/// is whatever the branch's author wrote. That asymmetry is the only
+/// durable line between the two, and it is the line [`check`]'s callers
+/// draw before executing anything.
+///
+/// The helper's PATH, not its contents. Reading the file to decide whether
+/// this package wrote it is the second grammar this module deleted, and it
+/// would be answering a question already asked: a foreign file of that name
+/// in a directory git never clones is still local state. What the file
+/// actually is remains the package's `--check` to say, and it does.
+///
+/// `symlink_metadata`, so a dangling link still counts: something local
+/// made it, and the package's checker is the one that grades it.
+pub fn locally_armed(repo: &Repo) -> bool {
+    let helper = repo.common_dir.join("hooks").join(HELPER);
+    std::fs::symlink_metadata(&helper).is_ok()
+}
+
+/// Whether the package's installer is reachable from this repository.
+///
+/// For a caller that already knows the project DECLARED the package: a
+/// declaration with nothing to run is a missing render, whose remedy is an
+/// apply, and not the absent install [`bind`] would name.
+pub fn installer_missing(repo: &Repo) -> bool {
+    Installed::resolve(repo, INSTALLER).is_none()
 }
 
 /// Ask the package whether this repository is armed, and relay its answer.
@@ -163,19 +210,39 @@ pub fn uninstall(dir: &Path) -> Result<GuardReport> {
 /// it, so `kendex guard check` and the commit-hook line of `kendex check`
 /// are both this call.
 ///
-/// It runs a script out of the checkout, which `kendex check` reaches at
-/// every session start. What licenses that is the project's own install
-/// record: the fold in `commands::check` asks only where the project
-/// declares this package as an enabled skill, which is the same
-/// declaration `kendex apply` acts on.
+/// It runs a script out of the checkout, so a caller reaching it without
+/// somebody asking for it needs a license first. An install record is not
+/// one: `.kendex-lock.json` sits under the work tree and arrives with the
+/// fetch like everything else there. [`locally_armed`] is, and the
+/// session-start fold in `commands::check` asks it before this. A guard
+/// verb somebody typed is its own license and asks nothing.
 pub fn check(dir: &Path) -> Result<GuardReport> {
-    installer(dir, &["--check"])
+    installer(dir, &["--check"], Some(CHECK_TIMEOUT))
+}
+
+/// The same `--check` over a repository the caller already resolved.
+///
+/// `Repo::at` costs two git children and the search below costs a third;
+/// a caller that probed this repository a moment ago has already paid them,
+/// and the session-start fold pays them once per project scope.
+pub fn check_repo(repo: &Repo) -> Result<GuardReport> {
+    let installed = installed_or_err(repo, INSTALLER)?;
+    run_installer(repo, &installed, &["--check"], Some(CHECK_TIMEOUT))
 }
 
 /// The installer, run from the repository it was pointed at, with its
 /// verdict relayed unchanged.
-fn installer(dir: &Path, args: &[&str]) -> Result<GuardReport> {
+fn installer(dir: &Path, args: &[&str], timeout: Option<Duration>) -> Result<GuardReport> {
     let (repo, installed) = bind(dir, INSTALLER)?;
+    run_installer(&repo, &installed, args, timeout)
+}
+
+fn run_installer(
+    repo: &Repo,
+    installed: &Installed,
+    args: &[&str],
+    timeout: Option<Duration>,
+) -> Result<GuardReport> {
     // `--repo` is a path, so it travels as one: a work tree whose name is
     // not UTF-8 would otherwise reach the installer as replacement
     // characters and be reported as a repository that does not exist.
@@ -184,7 +251,11 @@ fn installer(dir: &Path, args: &[&str]) -> Result<GuardReport> {
         repo.worktree.as_os_str().to_owned(),
     ];
     argv.extend(args.iter().map(OsString::from));
-    let output = Hardened::guard_script(&installed.script, argv, &repo.worktree)
+    let mut child = Hardened::guard_script(&installed.script, argv, &repo.worktree);
+    if let Some(timeout) = timeout {
+        child = child.timeout(timeout);
+    }
+    let output = child
         .run()
         .map_err(|error| guard_err("hooks", error.to_string()))?;
     Ok(relay(&output))

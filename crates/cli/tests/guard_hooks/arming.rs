@@ -6,7 +6,7 @@
 //! asserted here is relay: the package's own sentence and its own exit
 //! code, not a kendex paraphrase of either.
 
-use crate::test_util::source_path;
+use crate::test_util::{rooted, source_path};
 
 use crate::{git_ok, install_package, install_package_undeclared, repo, run, said};
 
@@ -33,11 +33,13 @@ fn disarming_leaves_a_pre_existing_hook_behind() {
     assert!(!hook.contains("kendex-guards-hook"), "{hook}");
 }
 
-/// `kendex check` folds in the installer's own armed verdict: unarmed is
-/// drift the reader can act on, armed says nothing.
+/// `kendex check` reports an unarmed repository and says nothing about an
+/// armed one.
 ///
-/// The sentence is the package's, word for word — `NOT armed`, in its
-/// capitals — because kendex composes none of it.
+/// Unarmed is the one verdict kendex composes itself, because nothing has
+/// licensed it to ask the package: no helper in the hooks directory means
+/// nobody here ran the installer. Once one is there the package answers,
+/// and an armed repository has nothing to report.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_reports_whether_the_shims_are_armed() {
@@ -53,12 +55,12 @@ fn check_reports_whether_the_shims_are_armed() {
         "{}",
         said(&unarmed)
     );
+    assert!(said(&unarmed).contains("not armed"), "{}", said(&unarmed));
     assert!(
-        said(&unarmed).contains("growth-guards git hooks:"),
-        "the package's own words did not come through: {}",
+        said(&unarmed).contains("kendex guard install"),
+        "the remedy is named: {}",
         said(&unarmed)
     );
-    assert!(said(&unarmed).contains("NOT armed"), "{}", said(&unarmed));
 
     run(home, &root, "kendex", &["guard", "install"]);
     let armed = run(home, &root, "kendex", &["check"]);
@@ -383,8 +385,292 @@ fn check_relays_the_packages_words_about_a_foreign_hook() {
     );
     let text = said(&out);
     assert!(text.contains("commit hooks"), "{text}");
+    // The whole sentence, not a phrase near its front: a relay keeping only
+    // the first part of the line passes every `contains` on a phrase, and
+    // what the end of this line carries is the remedy.
     assert!(
-        text.contains("was not written by this installer"),
-        "the package's own sentence was not relayed:\n{text}\nit said: {sentence}"
+        text.contains(&sentence),
+        "the package's own sentence was not relayed whole:\n{text}\nit said: {sentence}"
+    );
+}
+
+/// Arm through the package's own installer.
+///
+/// Not a hand-written approximation: the check compares against the exact
+/// bytes that installer writes, so a fixture that guesses at them is
+/// testing the guess. This is the same call `kendex guard install` makes.
+#[allow(clippy::unwrap_used)]
+fn arm_by_hand(root: &std::path::Path) {
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let out = std::process::Command::new(&installer)
+        .args(["--repo", &root.to_string_lossy()])
+        // Run from the fixture: git's own environment reaches this child,
+        // and a test binary invoked from another checkout would otherwise
+        // hand it that repository.
+        .current_dir(root)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "install-git-hooks: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// An installer that says whether anything ran it, in place of the real one.
+#[allow(clippy::unwrap_used)]
+fn installer_that_announces_itself(root: &std::path::Path, marker: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    std::fs::write(
+        &installer,
+        format!("#!/usr/bin/env bash\ntouch {}\nexit 0\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A clone nobody armed executes none of its own code, however loudly it
+/// declares this package.
+///
+/// The whole trust boundary in one fixture. `.kendex-lock.json` sits under
+/// the work tree, so a repository can ship one declaring growth-guards as
+/// an enabled skill — that is what a real install leaves behind, and what
+/// anyone can commit. The hooks directory is the other half, and git clones
+/// it for nobody: with no helper in it, nothing here has been licensed, and
+/// `kendex check` must reach its verdict from local state alone.
+///
+/// The marker file is the assertion. A report that merely reads right can
+/// be produced by a script that already ran.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_runs_nothing_out_of_a_repository_nobody_armed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    // A real install: the lock genuinely declares the package. Nothing is
+    // armed, which is the state a fresh clone of such a repository is in.
+    install_package(home, &root, &["growth-guards"]);
+    assert!(
+        !root.join(".git/hooks/kendex-guards").exists(),
+        "the fixture is unarmed"
+    );
+    let marker = home.join("installer-ran");
+    installer_that_announces_itself(&root, &marker);
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(
+        !marker.exists(),
+        "check ran a script out of a repository nobody armed: {}",
+        said(&out)
+    );
+    // And it still says the useful thing, from local state alone.
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(said(&out).contains("not armed"), "{}", said(&out));
+}
+
+/// An armed repository that declares nothing executes nothing either.
+///
+/// The other half of the gate, and the one whose failure would be silent:
+/// here the package's `--check` would exit 0, so a regression that dropped
+/// the declaration test would relay a clean verdict and look exactly like a
+/// pass. Only the marker file tells the two apart.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_runs_nothing_where_no_project_declared_the_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    std::fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
+    install_package_undeclared(&root, &["growth-guards"]);
+    arm_by_hand(&root);
+    assert!(
+        root.join(".git/hooks/kendex-guards").is_file(),
+        "the fixture is armed"
+    );
+    let marker = home.join("installer-ran");
+    installer_that_announces_itself(&root, &marker);
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert!(
+        !marker.exists(),
+        "check ran the package for a project that never declared it: {}",
+        said(&out)
+    );
+    assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
+}
+
+/// The package's exit codes become the report's classes, exit 2 included.
+///
+/// `core.hooksPath` set to a directory is the everyday exit 2: every husky
+/// or `.githooks` repository is in it, and the package stands down there
+/// rather than grade a directory it does not write. Read as "not armed"
+/// that would be drift with a remedy — `kendex guard install`, which stands
+/// down too — offered every session for a state nobody has measured.
+///
+/// The verdict is compared against what `kendex guard check` printed rather
+/// than against a phrase, because a phrase near the front of the sentence
+/// survives a relay that keeps only the front of it. This line is 273
+/// characters of prose before the hooks directory is spelled, which is what
+/// the fragment bounding used to cut in half.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_packages_exit_two_is_could_not_check_and_its_sentence_survives_whole() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    // The control: exit 1 from the package is drift, and `kendex check`
+    // exits 1 with it.
+    let helper = root.join(".git/hooks/kendex-guards");
+    let genuine = std::fs::read(&helper).unwrap();
+    std::fs::write(&helper, b"#!/bin/sh\nexit 0\n").unwrap();
+    let drifted = run(home, &root, "kendex", &["check"]);
+    assert_eq!(
+        drifted.status.code(),
+        Some(1),
+        "the package's exit 1 is drift: {}",
+        said(&drifted)
+    );
+    std::fs::write(&helper, &genuine).unwrap();
+
+    // A configured hooks path: the package answers 2, and so does kendex.
+    git_ok(home, &root, &["config", "core.hooksPath", ".githooks"]);
+    let theirs = run(home, &root, "kendex", &["guard", "check"]);
+    assert_eq!(theirs.status.code(), Some(2), "{}", said(&theirs));
+    let sentence = String::from_utf8_lossy(&theirs.stdout).trim().to_owned();
+    assert!(
+        sentence.chars().count() > 300,
+        "this fixture only pins the relay while its sentence outruns the \
+         fragment bound: {} characters",
+        sentence.chars().count()
+    );
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "the package's exit 2 was not could-not-check: {}",
+        said(&out)
+    );
+    let text = said(&out);
+    assert!(
+        text.contains(&sentence),
+        "the package's sentence did not survive whole:\n{text}\nit said: {sentence}"
+    );
+}
+
+/// A script that died before it reached `--check` is a check that could not
+/// be taken, and its report line still says something.
+///
+/// The package promises a summary line on stdout only once `--check` runs.
+/// `set -euo pipefail` is armed above its five `source` lines, so a library
+/// file that is missing or unreadable ends it at exit 1 with stdout empty —
+/// the same status its "not armed" verdict carries. Classed by the exit
+/// code alone that reads as drift, and the reader gets `commit hooks:`
+/// followed by a blank line: a verdict nobody took, printed as one that was
+/// taken, with nothing in it to act on.
+///
+/// `bind` asks only that `scripts/install-git-hooks` exist and be
+/// executable, so a truncated sync reaches this on its own.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_installer_that_could_not_run_is_never_relayed_as_a_verdict() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    // The control: armed and whole is silence, exit 0.
+    let clean = run(home, &root, "kendex", &["check"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
+
+    // One library file gone. Nothing else changes, and the entry point is
+    // still there and still executable, so the search finds it.
+    let lib = root.join(".agents/skills/growth-guards/scripts/lib/hook-check.sh");
+    std::fs::remove_file(&lib).unwrap();
+    assert!(
+        root.join(".agents/skills/growth-guards/scripts/install-git-hooks")
+            .is_file()
+    );
+
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a script that never ran was reported as a verdict: {}",
+        said(&out)
+    );
+    let text = said(&out);
+    assert!(text.contains("commit hooks"), "{text}");
+    // Whatever the line says, it is not empty: the report must not print a
+    // heading with nothing under it.
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("  "))
+        .unwrap_or_else(|| panic!("the report carries an indented line:\n{text}"));
+    assert!(
+        line.trim().chars().count() > 20,
+        "the report line carries nothing to act on: {line:?}\n{text}"
+    );
+    assert!(
+        line.contains("could not be checked"),
+        "the line does not say what happened: {line:?}"
+    );
+}
+
+/// A package this project declared, armed, and no longer renders is drift
+/// with a remedy that fits it.
+///
+/// The shims exec scripts that are not there, so every commit fails closed
+/// — a state to fix, not one nobody could measure. And the fix is a render:
+/// the lock already records the package, so `kendex add` would be advice
+/// about a state the reader is not in, which is what the resolver's own
+/// refusal says when nothing tells it the lock has already spoken.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_declared_package_with_no_render_is_drift_naming_the_render() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    // The render goes; the lock and the shims stay. Every skills root,
+    // because an install fans out to each tool directory the project has.
+    for base in kendex_core::guard::SEARCH_ROOTS {
+        let copy = root.join(base).join(kendex_core::guard::SKILL);
+        match copy.is_symlink() {
+            true => std::fs::remove_file(&copy).unwrap(),
+            false if copy.exists() => std::fs::remove_dir_all(&copy).unwrap(),
+            false => {}
+        }
+    }
+
+    let out = run(home, &root, "kendex", &["check"]);
+    let text = said(&out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "a state with a remedy was reported as one nobody could measure: {text}"
+    );
+    assert!(text.contains("commit hooks"), "{text}");
+    assert!(
+        text.contains("kendex refresh"),
+        "the remedy does not name the render: {text}"
+    );
+    assert!(
+        !text.contains("kendex add"),
+        "it names an install the lock already records: {text}"
     );
 }

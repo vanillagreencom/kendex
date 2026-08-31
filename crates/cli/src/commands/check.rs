@@ -52,17 +52,27 @@ pub fn run(
 /// tracks, and a repository whose shims drifted looks identical on disk to
 /// one that never armed any.
 ///
-/// The verdict is the package's own `install-git-hooks --check`, relayed
-/// word for word and exit for exit. kendex used to read the hook files
-/// itself here, with a second grammar for what "armed" means; the two
-/// never agreed for long, and the disagreement showed up as a session-start
-/// report contradicting the gate that actually runs.
+/// The verdict is the package's own `install-git-hooks --check`, and its
+/// summary line is folded whole. kendex used to read the hook files itself
+/// here, with a second grammar for what "armed" means; the two never agreed
+/// for long, and the disagreement showed up as a session-start report
+/// contradicting the gate that actually runs.
 ///
-/// That costs a subprocess per declared project at every session start, and
-/// it runs a script out of the checkout. What licenses it is the project's
-/// own install record: `installed_here` asks first, so a clone that merely
-/// carries the files executes nothing, and the only checkouts whose scripts
-/// run are the ones this project declared and `kendex apply` already runs.
+/// This runs a script out of a checkout, unattended, at every session start
+/// — so what may run it is the question the rest of this is about.
+///
+/// The license is `guard::locally_armed`: the helper the installer leaves
+/// in the hooks directory, which git clones for nobody. Its presence is a
+/// local act by whoever owns this machine, and it is the same act that put
+/// the checkout's scripts on every commit here. Cloning a repository and
+/// asking after its status therefore executes none of its code, whatever
+/// the repository ships.
+///
+/// The install record is NOT that license and never was: `.kendex-lock.json`
+/// sits under the work tree and arrives with the fetch, so a checkout can
+/// write one declaring anything. It answers a different question — whether
+/// this project asked for a commit gate — and so decides only whether an
+/// unarmed repository hears about it, which is wording.
 ///
 /// Only project scopes have a work tree to ask about. A verdict that could
 /// not be taken is `could not check`, never a silent pass.
@@ -74,9 +84,8 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
             continue;
         };
         // A checkout that merely carries the files is not missing an arming
-        // nobody asked for, and its scripts are not ours to run. Asked
-        // before the probe: both cost git processes, and this runs at every
-        // session start.
+        // nobody asked for. Asked before the probe: both cost git
+        // processes, and this runs at every session start.
         if !installed_here(env, scope) {
             continue;
         }
@@ -86,8 +95,8 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
         // advice that cannot be taken, every session. The installer's own
         // refusal is exit 2, so asking it would report could-not-check
         // there for ever instead.
-        match kendex_core::guard::Repo::probe(&root) {
-            Ok(Some(_)) => {}
+        let repo = match kendex_core::guard::Repo::probe(&root) {
+            Ok(Some(repo)) => repo,
             Ok(None) => continue,
             Err(error) => {
                 report::fold(
@@ -98,27 +107,125 @@ fn fold_commit_hooks(env: &Env, checked: &mut CheckReport, scopes: &[kendex_core
                 );
                 continue;
             }
+        };
+        // Nobody armed this repository, so nothing here is ours to run and
+        // there is nothing for the package to describe. kendex says the one
+        // thing it knows from local state alone, and names the command that
+        // both arms the gate and licenses every later reading of it.
+        if !kendex_core::guard::locally_armed(&repo) {
+            report::fold(
+                checked,
+                "commit hooks",
+                Class::Drift,
+                Text::Own(format!(
+                    "commit hooks are not armed in {} — `kendex guard install` arms them, and `kendex guard check` says more",
+                    root.display()
+                )),
+            );
+            continue;
         }
-        let (class, text) = match kendex_core::guard::check(&root) {
-            // 0 armed, 1 not armed, 2 could not determine — the package's
-            // taxonomy, and the summary line is its one line of stdout.
+        let (class, text) = match kendex_core::guard::check_repo(&repo) {
             Ok(report) if report.code == 0 => continue,
-            Ok(report) => (
-                match report.code {
-                    1 => Class::Drift,
-                    _ => Class::Unknown,
-                },
-                Text::Foreign(report.stdout.join(" ")),
-            ),
-            Err(error) => (Class::Unknown, Text::Foreign(error.to_string())),
+            Ok(report) => verdict_of(&report),
+            // A declaration with nothing to run is a missing render, not an
+            // absent install: the lock already records the package, so
+            // `kendex add` would be advice about a state the reader is not
+            // in. It is drift with a remedy, which is what it was before
+            // this fold delegated, and never a check that could not be
+            // taken.
+            Err(error) => match kendex_core::guard::installer_missing(&repo) {
+                true => (
+                    Class::Drift,
+                    Text::Own(format!(
+                        "{} is declared in {} but its scripts are not there, so every commit fails — `kendex refresh` renders it again",
+                        kendex_core::guard::SKILL,
+                        root.display()
+                    )),
+                ),
+                false => (Class::Unknown, Text::Foreign(error.to_string())),
+            },
         };
         report::fold(checked, "commit hooks", class, text);
     }
 }
 
+/// How long a relayed verdict may be before kendex declines to print it.
+///
+/// The package writes one summary line whose length is its own prose plus
+/// the hooks directory, and the longest it has runs to about 400
+/// characters. This is well clear of that and nowhere near the report's
+/// own 8 KB. It exists so a script that answers with a megabyte cannot put
+/// a megabyte into `--json`.
+const VERDICT_CHARS: usize = 2000;
+
+/// The package's verdict as a report line: its class, and its own sentence.
+///
+/// The sentence is folded as `Text::Own` and therefore never cut, which is
+/// the point. Its remedy is the END of it — `run 'kendex guard install' to
+/// re-arm` — so the fragment bounding that `Text::Foreign` applies took the
+/// remedy off every line long enough to need one. What bounds it instead is
+/// the whole-report budget, which drops a line entire rather than half of
+/// it, and [`VERDICT_CHARS`] above that: too long to show is said in
+/// kendex's own words, never as a sentence stopping mid-remedy.
+///
+/// A summary line is the one thing the package promises on stdout, and it
+/// promises it only once `--check` has run. Nothing there means the script
+/// died before reaching it — a usage refusal, or `set -e` on a library it
+/// could not source — and that is a check that could not be taken however
+/// it exited. Reading such an exit 1 as the package's "not armed" verdict
+/// would present a script that never ran as a taken measurement.
+fn verdict_of(
+    report: &kendex_core::guard::GuardReport,
+) -> (
+    kendex_core::drift::report::Class,
+    kendex_core::drift::report::Text,
+) {
+    use kendex_core::drift::report::{Class, Text};
+    let said = report.stdout.join(" ");
+    let said = said.trim();
+    if said.is_empty() {
+        // The diagnostics are the package's and unbounded, so they go in
+        // the position a cut costs nothing: after the sentence that says
+        // what happened.
+        return (
+            Class::Unknown,
+            Text::Foreign(format!(
+                "the {} installer exited {} with no verdict, so commit hooks could not be checked: {}",
+                kendex_core::guard::SKILL,
+                report.code,
+                report.stderr.join(" ").trim()
+            )),
+        );
+    }
+    let class = match report.code {
+        1 => Class::Drift,
+        _ => Class::Unknown,
+    };
+    match said.chars().count() > VERDICT_CHARS {
+        true => (
+            class,
+            Text::Own(format!(
+                "the {} installer answered about {} with {} characters, too long to relay — run `kendex guard check` to read it",
+                kendex_core::guard::SKILL,
+                said.chars().take(60).collect::<String>(),
+                said.chars().count()
+            )),
+        ),
+        false => (class, Text::Own(said.to_owned())),
+    }
+}
+
 /// Whether this project's install record carries the guard package — the
 /// difference between "your hooks are not armed" and a clone that simply
-/// ships the files. Wording only: nothing here decides what may run.
+/// ships the files.
+///
+/// It is one of two conditions the fold above requires before it launches
+/// the package's script, so widening it widens what `kendex check` runs
+/// unattended. It is the weaker of the two by design and cannot stand
+/// alone: this file arrives with the fetch, so a checkout can write one
+/// saying anything, and `guard::locally_armed` is what a checkout cannot
+/// forge. Narrowing execution further is safe; loosening this without
+/// reading that one is not.
 fn installed_here(env: &Env, scope: &kendex_core::model::Scope) -> bool {
     kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope)).is_ok_and(|lock| {
         // Enabled, not merely recorded: a declaration switched off is

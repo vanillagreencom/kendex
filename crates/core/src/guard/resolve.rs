@@ -27,9 +27,11 @@ use super::{SKILL, guard_err};
 /// The package searches the same list, from a single definition in
 /// `lib/skill-roots.sh` that the installer bakes into the helper it writes.
 /// A repository where the shim finds a script and kendex finds a different
-/// one would gate commits one way and report them another. Neither list is
-/// pinned to the other: the crate's is derived from the adapters, and the
-/// package's from its own installer.
+/// one would gate commits one way and report them another, so
+/// `guard_skill_roots::the_packages_own_list_is_the_same_roots_in_the_same_
+/// order` holds the two to the same roots in the same order — and
+/// `…covers_every_harness_skills_surface` holds the package's list to the
+/// adapters as well, so neither is ever only compared to its twin.
 pub const SKILL_ROOTS: [&str; 7] = [
     ".agents/skills",
     ".claude/skills",
@@ -205,10 +207,16 @@ fn project_root(repo: &super::Repo) -> Option<PathBuf> {
 /// commit hook as often as from a terminal.
 pub(super) fn bind(dir: &Path, relative: &str) -> Result<(super::Repo, Installed)> {
     let repo = super::Repo::at(dir)?;
-    let Some(installed) = Installed::resolve(&repo, relative) else {
+    let installed = installed_or_err(&repo, relative)?;
+    Ok((repo, installed))
+}
+
+/// The package's script in a repository already resolved.
+pub(super) fn installed_or_err(repo: &super::Repo, relative: &str) -> Result<Installed> {
+    let Some(installed) = Installed::resolve(repo, relative) else {
         // A package that is here but cannot run is a broken install, and
         // says so; one that is not here at all is a different sentence.
-        return Err(match Installed::present(&repo) {
+        return Err(match Installed::present(repo) {
             Some(dir) => guard_err(
                 "hooks",
                 format!(
@@ -226,5 +234,5 @@ pub(super) fn bind(dir: &Path, relative: &str) -> Result<(super::Repo, Installed
             ),
         });
     };
-    Ok((repo, installed))
+    Ok(installed)
 }

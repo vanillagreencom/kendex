@@ -390,8 +390,8 @@ lives in one capability table read by core and UI.
   that drops a package runs its declared uninstaller before the files go (`engine_common::apply_report`, the one
   executor of an `EngineReport`), and `guard run <hook>` execs its script with git's redirects passed through, the
   one child not scrubbed because it is a hook body naming the snapshot judged. `guard check` asks the package too.
-  `kendex check` asks it too, once per project whose lock declares the package: the `--check` sentence and its exit
-  relayed, so no second grammar for "armed" exists in the crate to drift from the package's own.
+  `kendex check` prints that same `--check`, sentence and exit, where a project's lock enables the skill AND the
+  helper is already in `.git/hooks` — git clones none, so that file is the local arming that licenses the run.
   So there is one implementation of every verdict and one policy dialect:
   the flat `GROWTH_GUARDS_*` / `SIZE_RATCHET_*` keys, baselines and
   excludes the scripts read from the commit. Every enabled check runs
@@ -743,8 +743,8 @@ lives in one capability table read by core and UI.
   could-not-check (unknown outranks drift), `--quiet` bounded and silent
   when clean, `--json` for machines. It reads manifest, lock, the per-scope
   drift snapshot (`core/drift/snapshot.rs`) and per-mirror fetch stamps — no
-  source trees materialized, no catalogs hashed, no per-package
-  subprocesses. A declaration with no lock entry whose files already sit in
+  source trees materialized, no catalogs hashed, and the guards' `--check`
+  the only subprocess. A declaration with no lock entry whose files sit in
   place gets its own section, stating what a stat proves and carrying the
   plan as remedy. `updates`, `refresh`, `apply` and the detached `kendex
   source refresh --stale` it spawns (TTL 6h, per-mirror lock, no stdio,

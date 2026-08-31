@@ -107,10 +107,6 @@ change came from an outside contributor.
   mutant as a survivor, when the caller shares a build cache. Everything it
   wrote to a copy is now stamped past the build before it, so cargo rebuilds.
 
-- `kendex check` names every stranded commit-hook file, not the first and half
-  of the next. A deep checkout path — macOS temp directories, most nested
-  clones — ran the line past a length limit meant for text from outside kendex.
-
 - A blocked declaration now names every position its take-over empties. A
   tree read through a tool's own link sits at two, and `apply --plan` named
   one while `--replace-unmanaged` moved both.
@@ -132,7 +128,7 @@ change came from an outside contributor.
 
 - `kendex remove`, and any CLI apply, refresh or unsubscribe that drops a
   package, runs its declared uninstaller before the files go, so dropping
-  `growth-guards` disarms the commit hooks. `kendex check` names shims left behind.
+  `growth-guards` disarms the commit hooks.
 
 - A refresh cuts opencode.json's `kendex-hook-` `instructions` rows down to
   what it renders now, so a row kendex wrote leaves with its render. Every
@@ -229,9 +225,6 @@ change came from an outside contributor.
 - The `harness-ci` wiring guide covers a lane that reads a path family beside
   the render verdict; the single-gate condition it shipped skipped that lane
   whenever the classifying job died.
-- `kendex check` reads a repository's hook files itself instead of running
-  its guard scripts, so reading a clone's status executes none of its code.
-  It answers armed, not armed, or cannot tell, and never guesses.
 - A commit hook that lost its execute bit no longer reads as armed. Git
   skips such a hook silently, so the harness gate stood aside for a gate
   that ran nothing and the commit went through unchecked.
