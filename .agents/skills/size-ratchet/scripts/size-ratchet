@@ -1685,27 +1685,38 @@ snapshot_rows_at() { # PATH — 0 when the snapshot still holds a row set there
 # and the change touches a settings source — the only way a commit moves the
 # setting, since the environment is not something a commit can land.
 #
-# Two escapes keep the shape from swallowing the legitimate cases, and both
-# are what the bootstraps and the pure move actually are.
+# What HEAD holds a row set at decides the rest, and the count is the whole
+# judgment. It is taken over HEAD's tree, not over the change.
 #
-# A candidate byte-identical to some blob HEAD already carries is the pure
-# move: those rows are HEAD's rows, so no row rose to reach them, and the
-# rewrite is the next commit's business.
+# NONE is every bootstrap. An unborn HEAD is excluded above; a baseline this
+# change introduces leaves HEAD with no rows to route around; a placeholder
+# committed empty is not a row set. None of the three can hide a raise,
+# because none has a HEAD row to raise from.
 #
-# HEAD holding no row set ANYWHERE is every bootstrap. An unborn HEAD is
-# excluded above; a baseline this change introduces leaves HEAD with no rows
-# to route around; a placeholder committed empty is not a row set. None of the
-# three can hide a raise, because none has a HEAD row to raise from. That last
-# test is the expensive one and it runs last, behind conditions that are false
-# on every run in a repo whose baseline carries rows at its configured path —
-# which is every run that is not a bootstrap or a repoint.
+# EXACTLY ONE is the only case where a match proves anything. That row set is
+# the baseline HEAD used — nothing else at HEAD is one — so a candidate
+# byte-identical to it carries HEAD's own rows and no row rose to reach them.
+# That is the pure repoint, and it passes.
+#
+# TWO OR MORE cannot be told apart here. A candidate equal to SOME blob at
+# HEAD proves nothing once more than one is a row set: an unrelated tracked
+# file holding the RAISED rows is byte-identical too, and matching it would
+# launder exactly the raise this refuses. Ambiguity fails closed, and the
+# remedy is the same two-commit split every other refusal here asks for.
+#
+# The scan is the expensive test and it runs last, behind conditions that are
+# false on every run in a repo whose baseline carries rows at its configured
+# path — which is every run that is not a bootstrap or a repoint.
 baseline_repointed() { # CANDIDATE-BASELINE — violations on stdout
   [ -z "$HEAD_BASELINE" ] || return 0 # HEAD has rows here; rows_raised judges them
   head_is_born "looking for a repointed baseline" || return 0
   [ "$(count_nonempty_lines "$1")" -gt 0 ] || return 0 # no rows arriving to judge
   diff_touches_settings || return 0
-  candidate_is_head_blob "$1" && return 0
-  head_holds_a_row_set || return 0
+  count_head_row_sets
+  case "$HEAD_ROW_SETS" in
+    0) return 0 ;;                                    # a bootstrap, not a repoint
+    1) candidate_is_prior_baseline "$1" && return 0 ;; # the pure repoint
+  esac
   # "-" placeholders, never empty fields: report() reads these rows with
   # tab-IFS, and whitespace IFS collapses consecutive tabs.
   printf '%s\t%s\t%s\t%s\n' "REPOINTED" "$BASELINE_FILE" "-" "-"
@@ -1719,11 +1730,22 @@ baseline_repointed() { # CANDIDATE-BASELINE — violations on stdout
 # consults only itself, /dev/null selects no source at all, and the dotenv
 # layer applies wherever a TOML layer does.
 diff_touches_settings() { # — 0 when a settings source is in the change
-  local p src
+  local p src explicit
   case "${SIZE_RATCHET_SETTINGS_FILE:-}" in
     /dev/null) return 1 ;;
     "") set -- ".kendex/settings.toml" "kendex.settings.toml" ".env.local" ;;
-    *) set -- "$SIZE_RATCHET_SETTINGS_FILE" ".env.local" ;;
+    *)
+      # The two built-in names above are already what the index spells. An
+      # explicit one is whatever the caller typed, and the resolver honours
+      # `./x`, `sub/../x` and `a/b/../../x` as the same source, so the raw
+      # spelling is compared to nothing git ever records.
+      explicit="$(settings_source_repo_path "$SIZE_RATCHET_SETTINGS_FILE")"
+      if [ -n "$explicit" ]; then
+        set -- "$explicit" ".env.local"
+      else
+        set -- ".env.local"
+      fi
+      ;;
   esac
   list_changed_paths "treat a repointed baseline as absent"
   while IFS= read -r -d '' p || [ -n "$p" ]; do
@@ -1735,32 +1757,55 @@ diff_touches_settings() { # — 0 when a settings source is in the change
   return 1
 }
 
-# Whether FILE is byte-identical to a blob HEAD already carries, anywhere.
-# The hash is computed for the baseline's own path so any filter configured
-# for it resolves the same way it did when the blob was written.
-candidate_is_head_blob() { # FILE
-  local h
-  h="$(git hash-object --path "$BASELINE_FILE" -- "$1")" || collection_error "could not hash the candidate baseline to tell whether HEAD already carries it"
-  [ -n "$h" ] || collection_error "hashing the candidate baseline produced no object id — refusing to treat it as new"
-  git ls-tree -r HEAD >"$TMP/head.tree" || collection_error "could not list HEAD's blobs to tell whether the candidate baseline is one of them"
-  # `blob` explicitly: a gitlink entry carries a COMMIT id in the same column,
-  # and a baseline is never one.
-  awk -v h="$h" '$2 == "blob" && $3 == h { found = 1; exit } END { exit !found }' "$TMP/head.tree"
+# A settings source as the INDEX would spell it, or "" when no commit can
+# change it. sr_settings_normalize_path is the resolver's own normalizer, so
+# the two agree on which spellings name one file; it is read from the
+# vendored lib rather than reimplemented, and nothing is added there — that
+# copy is pinned byte-identical across three skills.
+settings_source_repo_path() { # PATH — repo-relative canonical path, or ""
+  local p="$1" norm
+  case "$p" in
+    "$REPO_ROOT"/*) p="${p#"$REPO_ROOT"/}" ;; # inside the repo, spelled absolutely
+    /*) return 0 ;;                           # outside it; no commit reaches it
+  esac
+  norm="$(sr_settings_normalize_path "$p")"
+  case "$norm" in
+    "" | ".." | "../"*) return 0 ;; # leaves the repository, so git records nothing
+    *) printf '%s' "$norm" ;;
+  esac
 }
 
-# Whether HEAD carries a row set at any path other than the configured one.
+# Whether FILE is byte-identical to the ONE row set HEAD carries, which
+# count_head_row_sets has already named at $HEAD_ROW_SET_PATH. Asking about
+# that blob and no other is the point: a candidate equal to just any blob
+# HEAD holds proves nothing about the rows it replaces.
+candidate_is_prior_baseline() { # FILE
+  [ -n "$HEAD_ROW_SET_PATH" ] || collection_error "asked whether the candidate baseline is HEAD's, with no HEAD row set named — refusing to treat it as a pure repoint"
+  git show "HEAD:$HEAD_ROW_SET_PATH" >"$TMP/prior.head" || collection_error "could not read $HEAD_ROW_SET_PATH from HEAD to compare it with the candidate baseline"
+  cmp -s -- "$TMP/prior.head" "$1"
+}
+
+# How many paths HEAD carries a row set at, other than the configured one,
+# counted no further than 2 — "more than one" is the whole answer past that,
+# and the tree is not worth walking for a number nothing reads. Sets
+# HEAD_ROW_SETS and, when it is 1, HEAD_ROW_SET_PATH.
+#
 # git grep narrows first — a row set is a file of row-shaped lines, so a file
 # with no such line cannot be one — and only the survivors are read in full.
 # That keeps the walk off HEAD's whole tree, which this would otherwise
 # inflate blob by blob.
-head_holds_a_row_set() { # — 0 when HEAD holds one
+HEAD_ROW_SETS=0
+HEAD_ROW_SET_PATH=""
+count_head_row_sets() { # — sets HEAD_ROW_SETS (0, 1, or 2) and HEAD_ROW_SET_PATH
   local p grep_status=0
+  HEAD_ROW_SETS=0
+  HEAD_ROW_SET_PATH=""
   # stderr is NOT suppressed: exit >= 2 is a search that could not run, and
   # the refusal below quotes the code while git's own line says why.
   git grep -I -l -z -E -e "$BASELINE_ROW_RE" HEAD >"$TMP/rowish.paths" || grep_status=$?
   case "$grep_status" in
     0) ;;
-    1) return 1 ;; # no path at HEAD holds even one row-shaped line
+    1) return 0 ;; # no path at HEAD holds even one row-shaped line
     *) collection_error "could not search HEAD for a baseline row set (git grep exit $grep_status) — refusing to treat HEAD as carrying none" ;;
   esac
   while IFS= read -r -d '' p || [ -n "$p" ]; do
@@ -1768,9 +1813,16 @@ head_holds_a_row_set() { # — 0 when HEAD holds one
     [ -n "$p" ] || continue
     [ "$p" != "$BASELINE_FILE" ] || continue
     git show "HEAD:$p" >"$TMP/rowish.blob" || collection_error "could not read $p from HEAD to tell whether it holds baseline rows"
-    blob_is_row_set "$TMP/rowish.blob" && return 0
+    blob_is_row_set "$TMP/rowish.blob" || continue
+    HEAD_ROW_SETS=$((HEAD_ROW_SETS + 1))
+    if [ "$HEAD_ROW_SETS" -eq 1 ]; then
+      HEAD_ROW_SET_PATH="$p"
+    else
+      HEAD_ROW_SET_PATH="" # ambiguous, and no path may stand for the baseline
+      return 0
+    fi
   done <"$TMP/rowish.paths"
-  return 1
+  return 0
 }
 
 # A change that moves a class from lines to bytes (or back) leaves HEAD's rows

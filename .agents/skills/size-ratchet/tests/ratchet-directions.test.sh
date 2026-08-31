@@ -680,6 +680,64 @@ run_frozen
 [ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
   && ok "a row set HEAD holds elsewhere makes a first baseline read as a repoint, and it fails closed" \
   || bad "an unrelated HEAD row set makes a first baseline fail closed" "rc=$RC out=$OUT"
+# Matching just any blob HEAD carries proves nothing about the rows being
+# replaced. Here an UNRELATED tracked file already holds the raised rows byte
+# for byte, so an escape asking "is this some HEAD blob?" answers yes and
+# launders the very raise this refuses. Two row sets at HEAD is ambiguous, and
+# ambiguity fails closed.
+new_repo copycollision
+mkdir -p "$R/tools"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/a.tsv"
+printf 'x.test.txt\t20\n' >"$R/data.tsv"
+settings_baseline tools/a.tsv
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: baseline row 15, and an unrelated row set already holding 20"
+mkfile x.test.txt 20
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+# The premise: the candidate really is byte-identical to a blob HEAD carries.
+[ "$(git -C "$R" show :tools/b.tsv)" = "$(git -C "$R" show HEAD:data.tsv)" ] \
+  && ok "the candidate is byte-identical to an unrelated blob HEAD carries, which is the trap" \
+  || bad "the candidate matches an unrelated HEAD blob" "$(git -C "$R" show :tools/b.tsv)"
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a candidate matching an unrelated HEAD blob does not escape the refusal" \
+  || bad "a candidate matching an unrelated HEAD blob does not escape" "rc=$RC out=$OUT"
+
+# The resolver honours `./x`, `sub/../x` and `a/b/../../x` as the same source
+# (lib/settings.sh, sr_settings_normalize_path), and git records none of them.
+# A refusal comparing the raw spelling against the index sees no settings
+# change at all, so a repoint through an alias walks straight past it.
+#
+# --staged, because that is the lane staged-scope.test.sh pins these spellings
+# in: it resolves a source through the INDEX by normalized path, so a spelling
+# whose intermediate directory does not exist still names the committed file.
+run_aliased() { # SETTINGS-FILE-SPELLING
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 SIZE_RATCHET_FROZEN_CLASSES='*.test.*' \
+    SIZE_RATCHET_SETTINGS_FILE="$1" RATCHET_RAISE=1 "$SR" --staged 2>&1)" || RC=$?
+}
+relocating_repo copyaliased x.test.txt 15 15
+mkfile x.test.txt 20
+copy_repoint x.test.txt 20
+for spelling in "./kendex.settings.toml" "sub/../kendex.settings.toml" "a/b/../../kendex.settings.toml"; do
+  run_aliased "$spelling"
+  [ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+    && ok "a repoint named through '$spelling' is still refused" \
+    || bad "a repoint named through '$spelling' is refused" "rc=$RC out=$OUT"
+  # …and the spelling really was the source that answered: the run resolved
+  # its baseline THROUGH that file, so the refusal is about the same repoint
+  # and not a settings read that quietly fell back to the built-in default.
+  case "$OUT" in *"baseline tools/b.tsv"*) ok "and '$spelling' is the source the run actually read" ;; *) bad "'$spelling' is the source the run read" "$OUT" ;; esac
+done
+# The control that the canonical spelling was never the thing being tested.
+run_aliased "kendex.settings.toml"
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "control: the canonical spelling is refused the same way" \
+  || bad "control: the canonical spelling is refused" "rc=$RC out=$OUT"
 
 echo "=== and the three bootstraps still pass: none of them removes a row set ==="
 # Each legitimately leaves HEAD with no rows at the configured path, and each
