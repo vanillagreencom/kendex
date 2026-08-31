@@ -43,6 +43,14 @@ semver = "1"
 # two delivery paths for one AppImage hold the same bar.
 minisign-verify = "0.2"
 base64 = "0.22"
+# Where a markdown document's blocks are, and which of its backticks pair
+# into a code span. A safety rule reads a switch inside a span as a mention
+# and one outside it as a use, so the reading has to be markdown's own: a
+# hand-written walk is correct for the shapes it models and silently
+# fail-open for every one it does not. This is the parser rustdoc reads
+# with. The HTML writer and the CLI's argument parsing come with it by
+# default and neither is wanted, so both are off.
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

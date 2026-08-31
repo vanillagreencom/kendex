@@ -2,7 +2,6 @@ pub mod agent;
 mod blocks;
 pub mod command;
 mod fences;
-mod marks;
 pub mod permission;
 pub mod skill;
 pub mod validate;

@@ -1,6 +1,12 @@
 //! What a line's code marks are: the fence that opens or closes a block,
-//! and the inline spans a run of backticks quotes. Where a document's
-//! blocks stand, and how far a span reaches across lines, is [`super::blocks`].
+//! and the inline spans a run of backticks quotes, each read from that
+//! line alone.
+//!
+//! This is the prose rewrite's reader and nothing else's. The audit's
+//! reading of the same marks is [`super::blocks`], which asks a markdown
+//! parser rather than a line, so the two do not agree on every document
+//! and are not meant to: what a rewrite may safely leave alone is a
+//! narrower question than where a span really reaches.
 
 /// A fence line: any leading whitespace, then three or more backticks or
 /// tildes. `bare` — nothing but whitespace after the run — is what makes a

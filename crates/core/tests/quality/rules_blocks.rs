@@ -473,35 +473,39 @@ fn safety_bypass_opens_a_block_at_a_tag_that_entered_a_deeper_quote() {
     );
 }
 
-/// A tag naming a raw-text element opens no whole-tag block: markdown gives
-/// those their own kind, and a line failing that kind's start condition
-/// opens nothing at all. Taking `<textarea/>` for a whole tag started a
-/// block that runs to the next blank line, threw away the span below it,
-/// and reported the switch that span quoted.
+/// A whole tag alone on its line opens a block whatever its name.
+/// `<textarea/>` starts no raw-text block — the character behind the name
+/// is neither whitespace nor `>` — and markdown's prose excludes the four
+/// raw-text names from the whole-tag kind as well, so on the page it opens
+/// nothing. No implementation reads it that way: `pulldown-cmark` and
+/// commonmark.js both open the whole-tag block, whose reach is the next
+/// blank line. The line under it is the block's own text, the span it
+/// would have carried is gone, and the switch that span quoted is
+/// reported — over-counting, which is the safe side of this ledger.
 ///
-/// The control is the second case: written so the raw-text kind does start,
-/// the block holds its content and the marks in there are not markdown's.
+/// The control is the second case: the kind ends at a blank line, so a
+/// paragraph past one carries its span and its switch is a mention again.
 #[test]
-fn safety_bypass_opens_no_block_at_a_raw_text_tag_that_holds_nothing() {
-    let empty = skill(&[(
+fn safety_bypass_opens_a_block_at_a_raw_text_tag_that_holds_nothing() {
+    let under = skill(&[(
         "SKILL.md",
         "<textarea/>\nThe bypass is `git commit --no-verify`, never run it.\n",
     )]);
-    assert!(
-        !rules_hit(&empty).contains(&"safety-bypass"),
-        "{:?}",
-        empty.findings
-    );
-
-    let holding = skill(&[(
-        "SKILL.md",
-        "<textarea>\nThe bypass is `git commit --no-verify`, never run it.\n</textarea>\n",
-    )]);
     assert_eq!(
-        severity_of(&holding, "safety-bypass"),
+        severity_of(&under, "safety-bypass"),
         Some(Severity::Critical),
         "{:?}",
-        holding.findings
+        under.findings
+    );
+
+    let past = skill(&[(
+        "SKILL.md",
+        "<textarea/>\n\nThe bypass is `git commit --no-verify`, never run it.\n",
+    )]);
+    assert!(
+        !rules_hit(&past).contains(&"safety-bypass"),
+        "{:?}",
+        past.findings
     );
 }
 
@@ -657,36 +661,38 @@ fn safety_bypass_opens_no_fence_four_spaces_past_a_quote() {
     );
 }
 
-/// A raw-text block ends on any of the four closing tags, not only on the
-/// one that opened it. Markdown says so in as many words — the end
-/// condition is a line holding `</pre>`, `</script>`, `</style>` or
-/// `</textarea>`, "case-insensitive; it need not match the start tag" —
-/// so what stands under a mismatched close really is a paragraph, and the
-/// switch its span quotes really is a mention.
+/// A raw-text block ends on the closing tag of its own name. Markdown
+/// says otherwise in as many words — the end condition is a line holding
+/// `</pre>`, `</script>`, `</style>` or `</textarea>`, "case-insensitive;
+/// it need not match the start tag" — and `pulldown-cmark` requires the
+/// match, so a `</pre>` under a `<script>` leaves the block open and the
+/// paragraph below it is read as the script's own text. The switch that
+/// paragraph's span quoted is reported: over-counting, the safe side, on
+/// a shape that stands nowhere in the shipped tree. Correcting the parser
+/// by hand here would be the walk this module exists to have deleted.
 ///
-/// The control is the second case: a block still holds everything up to
-/// its close, and the marks in there are the script's rather than
-/// markdown's.
+/// The control is the second case: the block does end at its own closing
+/// tag, and the paragraph under that carries the span again.
 #[test]
-fn safety_bypass_ends_a_raw_text_block_at_any_of_its_closing_tags() {
+fn safety_bypass_ends_a_raw_text_block_at_a_closing_tag_of_its_own_name() {
     let mismatched = skill(&[(
         "SKILL.md",
         "<script>\nfoo\n</pre>\nThe bypass is `git commit --no-verify`, never run it.\n",
     )]);
-    assert!(
-        !rules_hit(&mismatched).contains(&"safety-bypass"),
+    assert_eq!(
+        severity_of(&mismatched, "safety-bypass"),
+        Some(Severity::Critical),
         "{:?}",
         mismatched.findings
     );
 
-    let held = skill(&[(
+    let matched = skill(&[(
         "SKILL.md",
-        "<script>\nThe bypass is `git commit --no-verify`, never run it.\n</script>\n",
+        "<script>\nfoo\n</script>\nThe bypass is `git commit --no-verify`, never run it.\n",
     )]);
-    assert_eq!(
-        severity_of(&held, "safety-bypass"),
-        Some(Severity::Critical),
+    assert!(
+        !rules_hit(&matched).contains(&"safety-bypass"),
         "{:?}",
-        held.findings
+        matched.findings
     );
 }

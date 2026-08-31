@@ -1,30 +1,68 @@
-//! Where a document's blocks are, so the prose rewrite leaves code alone,
-//! the fork walk reads a block's whitespace as content, and a run of
-//! backticks reaches only as far as the block it opened in.
+//! Where a document's blocks are, so the fork walk reads a block's
+//! whitespace as content, and how far a run of backticks reaches, so a
+//! switch quoted by a code span is told from one standing in the open.
 //!
-//! Markdown answers that from what stands open at each line — which
-//! containers, and whether a paragraph is still running — not from the two
-//! lines in hand. A lazy blockquote continuation drops its `>` and stays in
-//! the same paragraph, and an indented line may not interrupt an open
-//! paragraph, so neither question can be asked of a pair of neighbours.
-//! This is a walk of the whole document for that reason.
+//! Both answers are markdown's own, read off `pulldown-cmark`'s events.
+//! A span's reach is settled by every construct in the language at once —
+//! a table cell, a link reference definition, an HTML block, a list
+//! item's content column, a tab's expanded width, an autolink holding a
+//! backtick — and a walk written here is correct for the shapes it models
+//! and silently wrong for the rest. The failure direction is fail-open in
+//! a safety score: an unmodelled boundary lets two backticks pair across
+//! it, and a switch standing between them is scored as a mention rather
+//! than as a use.
+//!
+//! Which dialect is read is its own decision, and a security one:
+//! [`EXTENSIONS`] says why, and why the list is short.
 
-use super::fences::{code_spans, fence_marker};
-use super::marks::{
-    Html, atx_heading, html_closes, html_opens, indented, list_marker, quote_depth,
-    setext_underline, thematic_break,
-};
+use std::ops::Range;
+
+use pulldown_cmark::{Event, Options, Parser, Tag};
+
+/// The markdown this reading is of: CommonMark, plus tables. A table's
+/// header and delimiter rows open a block together, and each cell is a
+/// leaf block of its own, so a reader without them pairs backticks across
+/// a cell boundary and quotes text no reader sees quoted.
+///
+/// **An extension is a security decision here, not a fidelity one.** Every
+/// one of them can turn an indented code block into prose, and inside a
+/// code block a backtick is the shell's own character while in prose it
+/// pairs into a span — so a construct that buys an extension its boundary
+/// also buys an attacker a line that stops a switch counting. Footnotes
+/// are the worked example and the reason this list is one long: under
+/// `ENABLE_FOOTNOTES`, `[^a]: note` above an indented block makes the
+/// block that definition's prose, and one line at the top of a document
+/// cleared every switch below it. No file in this repository defines a
+/// footnote, so the option bought nothing and cost that. Tables earn
+/// their place on use — the shipped tree is full of them — and their
+/// boundary moves toward reporting rather than away from it.
+///
+/// So an option goes on only where the tree shows the construct in use and
+/// the reading it buys does not quiet a switch. Strikethrough, task lists
+/// and math each fail the first test and change no boundary anyway.
+const EXTENSIONS: Options = Options::ENABLE_TABLES;
 
 /// Which lines of `text` stand inside a code block: between a fence's
-/// markers, or under the first line of a run indented four spaces or a
-/// tab. A block's own first line is not inside it — what stands above
-/// that line is prose, and the blank between them separates the two.
+/// markers, or under the first line of a run indented four columns. A
+/// block's own first line is not inside it — what stands above that line
+/// is prose, and the blank between them separates the two.
 ///
 /// Inside a block a blank line is a line of the block's own text; outside
 /// one it separates paragraphs and carries nothing a reader would miss.
+/// That is the whole of what the caller asks: a line carrying anything at
+/// all is kept either way.
 pub fn inside_a_block(text: &str) -> Vec<bool> {
-    let lines: Vec<&str> = text.lines().collect();
-    place(&lines).into_iter().map(|line| line.inside).collect()
+    let lines = line_spans(text);
+    let mut inside = vec![false; lines.len()];
+    for block in code_blocks(text) {
+        // The first line the block touches is the one it opened on — a
+        // fence's markers, or the first indented line — and the caller
+        // reads that line as prose.
+        for at in reached(&lines, &block).skip(1) {
+            inside[at] = true;
+        }
+    }
+    inside
 }
 
 /// The code spans of each line of `text`, as byte ranges local to its own
@@ -32,220 +70,180 @@ pub fn inside_a_block(text: &str) -> Vec<bool> {
 /// read together rather than one at a time: a line a span crosses whole is
 /// quoted for its whole length.
 ///
-/// The reach is one leaf block, not the whole document. A run that meets
-/// no match before its block ends quotes nothing, which is what stops one
+/// A span is where markdown puts one and nowhere else. A backtick inside a
+/// code block, an HTML block, an autolink or a link destination is a byte
+/// of that construct rather than a delimiter, and a run that meets no
+/// match before its block ends quotes nothing — which is what stops one
 /// stray backtick from reaching forward for a partner and quoting
-/// everything in between — and a run reaching across a boundary would pair
-/// two backticks markdown reads as literal characters and quote a whole
-/// line nobody quoted. Lines carrying no inline content are left empty:
-/// in a code block the marks are the shell's, not markdown's.
+/// everything in between.
 pub fn code_spans_by_line(text: &str) -> Vec<Vec<(usize, usize)>> {
-    let lines: Vec<&str> = text.lines().collect();
-    let placed = place(&lines);
+    let lines = line_spans(text);
     let mut spans: Vec<Vec<(usize, usize)>> = vec![Vec::new(); lines.len()];
-    let mut from = 0;
-    while from < lines.len() {
-        let Some(block) = placed[from].block else {
-            from += 1;
+    for (event, span) in Parser::new_ext(text, EXTENSIONS).into_offset_iter() {
+        if !matches!(event, Event::Code(_)) {
             continue;
-        };
-        let mut to = from;
-        while to + 1 < lines.len() && placed[to + 1].block == Some(block) {
-            to += 1;
         }
-        let joined = lines[from..=to].join("\n");
-        for (start, end) in code_spans(&joined) {
-            let mut base = 0;
-            for (offset, line) in lines[from..=to].iter().enumerate() {
-                let last = base + line.len();
-                if start < last && end > base {
-                    spans[from + offset].push((start.max(base) - base, end.min(last) - base));
-                }
-                base = last + 1;
-            }
+        for at in reached(&lines, &span) {
+            let (start, end) = lines[at];
+            spans[at].push((span.start.max(start) - start, span.end.min(end) - start));
         }
-        from = to + 1;
     }
     spans
 }
 
-/// One line's place in the document. `inside` is a line standing inside a
-/// code block, where whitespace is content a person can edit rather than
-/// separation between sections. `block` numbers the leaf block whose
-/// inline content the line carries, and is `None` wherever a line carries
-/// none — a blank line, a code block's own text, a thematic break, a
-/// fence's opening line, a raw HTML block.
+/// Every code block in `text`, as a byte range of `text`. Fenced and
+/// indented alike: both are code, and the caller's question is about the
+/// whitespace inside them rather than about how they were opened.
+fn code_blocks(text: &str) -> Vec<Range<usize>> {
+    Parser::new_ext(text, EXTENSIONS)
+        .into_offset_iter()
+        .filter(|(event, _)| matches!(event, Event::Start(Tag::CodeBlock(_))))
+        .map(|(_, range)| range)
+        .collect()
+}
+
+/// Which lines a byte range reaches, as an index range into `lines`.
 ///
-/// The two readings differ over one line and say so by being separate
-/// fields: the line an indented block opens on is code the safety rules
-/// read, and is not a line whose whitespace the fork walk may take for a
-/// block's own.
-struct Placed {
-    inside: bool,
-    block: Option<usize>,
-}
-
-/// The paragraph standing open: the blockquote depth it runs at, and the
-/// block its lines belong to. Depth is what tells a lazy continuation,
-/// which drops markers, from a quote opening inside prose, which adds one.
-#[derive(Clone, Copy)]
-struct Paragraph {
-    depth: usize,
-    block: usize,
-}
-
-/// A fenced block standing open: what will close it, and the blockquote
-/// depth its opening line stood at.
-struct Fence {
-    marker: char,
-    run: usize,
-    depth: usize,
-}
-
-/// A raw HTML block standing open, with the depth its opening line stood
-/// at.
-struct Raw {
-    kind: Html,
-    depth: usize,
-}
-
-fn place(lines: &[&str]) -> Vec<Placed> {
-    let mut placed: Vec<Placed> = lines
-        .iter()
-        .map(|_| Placed {
-            inside: false,
-            block: None,
-        })
-        .collect();
-    walk(lines, &mut placed);
-    placed
-}
-
-/// Numbers the leaf blocks the lines carry and marks the ones a code block
-/// holds.
+/// A blank line is a byte range of no width, and one standing inside a
+/// code block has to count as reached — it is a line of the block's own
+/// text. So a line is reached where it starts before the range ends and
+/// ends past where the range starts, which admits a zero-width line
+/// inside the range and leaves out the one at its end.
 ///
-/// A line is asked which container it stands in before it is asked what it
-/// is. Everything a line can be — a fence's marker, a tag, an indent, a
-/// heading — is read past the blockquote markers it carries, and a block
-/// already open owns the markers it opened at and no others. Only a
-/// paragraph continues lazily; a fence and a raw HTML block end where their
-/// container stops, because a line that has dropped a marker has left them.
+/// Nothing is reached by ending exactly where the range starts, so the
+/// one comparison serves a code block and a code span alike. A block's
+/// range starts at or after the first byte of the line it opens on — a
+/// fence's marker or an indented run's first content byte, and a fence
+/// may open partway along a line, as the one after a list marker does —
+/// and every earlier line ends before that line begins. A span's range
+/// starts on a backtick, which is nobody's line ending.
 ///
-/// A run of indented lines is a block of its own, but only where no
-/// paragraph stands open: markdown does not let four spaces interrupt one,
-/// so under an open paragraph the same line is the paragraph's next line.
-/// Every line from the one that opened such a block to the last it holds is
-/// inside it, blank lines among them included — they are the block's, not
-/// separation between blocks — and a blank run trailing it belongs to
-/// whatever follows.
-fn walk(lines: &[&str], placed: &mut [Placed]) {
-    let mut fence: Option<Fence> = None;
-    let mut raw: Option<Raw> = None;
-    let mut code: Option<(usize, usize)> = None;
-    let mut open: Option<Paragraph> = None;
-    let mut next = 0;
-    for (at, line) in lines.iter().enumerate() {
-        let (depth, rest) = quote_depth(line, usize::MAX);
-        if let Some(held) = &fence {
-            match depth < held.depth {
-                true => fence = None,
-                false => {
-                    placed[at].inside = true;
-                    let (_, content) = quote_depth(line, held.depth);
-                    if closes(held, content) {
-                        fence = None;
-                    }
-                    open = None;
-                    code = None;
-                    continue;
-                }
+/// `lines` is sorted and disjoint, so the lines reached are one run and
+/// each end of it is a search rather than a scan. A scan costs every line
+/// for every range, which over a document of many small blocks is
+/// quadratic in the whole document rather than in one block.
+fn reached(lines: &[(usize, usize)], range: &Range<usize>) -> Range<usize> {
+    let from = lines.partition_point(|(_, end)| *end <= range.start);
+    let to = lines.partition_point(|(start, _)| *start < range.end);
+    from..to.max(from)
+}
+
+/// Each line of `text` as a byte range of `text` itself, one range per line
+/// `str::lines` yields and in its order. The range ends before the line's
+/// terminator, and before the `\r` of a `\r\n` — that byte is not part of
+/// the line, and a caller indexing the line by these offsets would be one
+/// out on every line after the first if it were.
+fn line_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut start = 0;
+    for (at, byte) in text.bytes().enumerate() {
+        if byte != b'\n' {
+            continue;
+        }
+        let end = match at > start && text.as_bytes()[at - 1] == b'\r' {
+            true => at - 1,
+            false => at,
+        };
+        spans.push((start, end));
+        start = at + 1;
+    }
+    if start < text.len() {
+        spans.push((start, text.len()));
+    }
+    spans
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{code_spans_by_line, inside_a_block, line_spans};
+
+    /// The two readings are handed to callers that zip them against
+    /// `str::lines`, so a range list one line short or one line long
+    /// silently pairs every line below it with another line's answer.
+    /// Each ending is checked: none, one, a run, and the `\r` that
+    /// `str::lines` takes off but the byte offsets still carry.
+    #[test]
+    fn every_line_gets_one_range_holding_its_own_bytes() {
+        for text in [
+            "",
+            "one",
+            "one\n",
+            "one\ntwo",
+            "one\n\n\ntwo\n",
+            "one\r\ntwo\r\n",
+            "\r\n",
+        ] {
+            let spans = line_spans(text);
+            let lines: Vec<&str> = text.lines().collect();
+            assert_eq!(spans.len(), lines.len(), "{text:?}");
+            for (line, (start, end)) in lines.iter().zip(&spans) {
+                assert_eq!(&text[*start..*end], *line, "{text:?}");
             }
+            assert_eq!(inside_a_block(text).len(), lines.len(), "{text:?}");
+            assert_eq!(code_spans_by_line(text).len(), lines.len(), "{text:?}");
         }
-        if let Some(held) = &raw {
-            match depth < held.depth {
-                true => raw = None,
-                false => {
-                    let (_, content) = quote_depth(line, held.depth);
-                    if html_closes(held.kind, content) {
-                        raw = None;
-                    }
-                    open = None;
-                    code = None;
-                    continue;
-                }
-            }
-        }
-        if line.trim().is_empty() {
-            open = None;
-            continue;
-        }
-        // The paragraph this line could continue: one standing at this
-        // depth or shallower. A line entering a deeper quote has left the
-        // paragraph above it whatever else the line turns out to be, so
-        // every question below asks this rather than whether any
-        // paragraph at all is open.
-        let running = open.filter(|para| depth <= para.depth);
-        // A fence's marker stands at most three spaces into its container,
-        // and a fourth is the indented code block instead. This walk knows
-        // one container, so the cap is measurable exactly where a
-        // blockquote's markers have been taken off. At the top level it is
-        // not: nothing here tells a document's own indent from a list
-        // item's content column, and a fenced block inside a list item
-        // starts four in, which is the common shape in a real skill.
-        if !(depth > 0 && indented(rest))
-            && let Some((marker, run, _)) = fence_marker(rest)
-        {
-            fence = Some(Fence { marker, run, depth });
-            open = None;
-            code = None;
-            continue;
-        }
-        if let Some(kind) = html_opens(rest, running.is_some()) {
-            raw = (!html_closes(kind, rest)).then_some(Raw { kind, depth });
-            open = None;
-            code = None;
-            continue;
-        }
-        // A thematic break, a setext underline and a blockquote marker with
-        // nothing behind it each end the block above them and carry no
-        // inline content of their own.
-        let underline = running.is_some_and(|para| para.depth == depth) && setext_underline(rest);
-        if thematic_break(rest) || underline || rest.trim().is_empty() {
-            open = None;
-            code = None;
-            continue;
-        }
-        let continues = running.is_some() && !atx_heading(rest) && !list_marker(rest);
-        if !continues && indented(rest) {
-            if let Some((held, from)) = code
-                && held == depth
-            {
-                placed[from + 1..=at]
-                    .iter_mut()
-                    .for_each(|line| line.inside = true);
-            }
-            code = Some((depth, at));
-            open = None;
-            continue;
-        }
-        code = None;
-        match (continues, running) {
-            (true, Some(para)) => placed[at].block = Some(para.block),
-            _ => {
-                placed[at].block = Some(next);
-                // An ATX heading is one line and a block of its own, so it
-                // leaves nothing open for the line below to continue.
-                open = (!atx_heading(rest)).then_some(Paragraph { depth, block: next });
-                next += 1;
+    }
+
+    /// `reached` narrows to a run by two searches rather than by reading
+    /// every line, which is what keeps a document of many small blocks
+    /// linear. A search is only sound while the run really is contiguous,
+    /// so this holds it against the filter it replaced — the same
+    /// predicate, read line by line — over every byte range of a document
+    /// carrying each shape the two callers hand it: a fence, an indented
+    /// run, blank lines inside a block and outside one, a span crossing a
+    /// newline, and a fence opened partway along a list marker's line.
+    #[test]
+    fn the_lines_a_range_reaches_are_the_lines_that_pass_the_filter() {
+        let text = concat!(
+            "para `one` two\n\n    indented\n\n    more\n\nafter\n\n",
+            "```sh\n\ngit commit\n```\n\n",
+            "- ```\n  held\n  ```\n\n",
+            "say `git commit\n--no-verify` now\n"
+        );
+        let lines = super::line_spans(text);
+        for start in 0..=text.len() {
+            for end in start..=text.len() {
+                let range = start..end;
+                let want: Vec<usize> = lines
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (from, to))| *from < range.end && *to > range.start)
+                    .map(|(at, _)| at)
+                    .collect();
+                let got: Vec<usize> = super::reached(&lines, &range).collect();
+                assert_eq!(got, want, "{range:?}");
             }
         }
     }
-}
 
-/// Whether this line closes the open fence: the same marker, a run at
-/// least as long, and nothing behind it.
-fn closes(fence: &Fence, content: &str) -> bool {
-    !(fence.depth > 0 && indented(content))
-        && fence_marker(content)
-            .is_some_and(|(marker, run, bare)| marker == fence.marker && run >= fence.run && bare)
+    /// A blank line between two indented chunks is the block's own text
+    /// and the one trailing it is not, which is the whole of what the
+    /// fork walk asks this function. The line the block opens on is
+    /// prose, and so is the paragraph above it.
+    #[test]
+    fn a_blank_line_is_inside_the_block_that_holds_it() {
+        assert_eq!(
+            inside_a_block("para\n\n    one\n\n    two\n\nafter\n"),
+            vec![false, false, false, true, true, false, false]
+        );
+        assert_eq!(
+            inside_a_block("```sh\n\ngit commit\n```\n"),
+            vec![false, true, true, true]
+        );
+    }
+
+    /// A span crossing a newline is quoted on both lines, each range
+    /// local to its own line and stopping at that line's last byte. A
+    /// `\r\n` is the case that tells a local offset from a global one.
+    #[test]
+    fn a_span_crossing_a_newline_is_cut_at_each_line_it_holds() {
+        assert_eq!(
+            code_spans_by_line("say `git commit\n--no-verify` now\n"),
+            vec![vec![(4, 15)], vec![(0, 12)]]
+        );
+        assert_eq!(
+            code_spans_by_line("say `git commit\r\n--no-verify` now\r\n"),
+            vec![vec![(4, 15)], vec![(0, 12)]]
+        );
+    }
 }
