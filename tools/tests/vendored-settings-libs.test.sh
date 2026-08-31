@@ -46,9 +46,10 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; [ $# -lt 2 ] || printf '
 DIVERGENT="setting settings_source dotenv_layer"
 #   setting          — the resolution ladder itself: per-key exceptions and
 #                      the *_SETTINGS_FILE name differ by skill.
-#   settings_source  — both index-materializing copies read the staged blob,
-#                      but growth-guards writes it through a temp file and
-#                      renames; size-ratchet redirects straight onto it.
+#   settings_source  — growth-guards shares one index dir across a hook
+#                      lane's sibling checks, so its temp-and-rename keeps a
+#                      killed child's partial out of a later sibling's read;
+#                      size-ratchet's dies with its own single-reader run.
 #   dotenv_layer     — growth-guards routes the env file through
 #                      settings_source; review-gate reads the path directly.
 
