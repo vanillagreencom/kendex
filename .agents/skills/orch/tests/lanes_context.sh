@@ -486,6 +486,8 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-108") | .status' <<<"$OUT")" "no_st
   "a codex percentage over 100 is not read as a context figure"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-108") | .context_used_pct' <<<"$OUT")" "null" \
   "an out-of-range codex reading carries no number"
+assert_contains "$(jq -r '.[] | select(.lane=="ken-108") | .detail' <<<"$OUT")" "does not end in a valid codex context figure" \
+  "the refusal states what it checked, on the pane whose figure nothing is covering"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-128") | .context_used_pct' <<<"$OUT")" "null" \
   "an out-of-range codex line refuses rather than falling through to a match above it"
 
