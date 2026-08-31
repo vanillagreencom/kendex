@@ -196,11 +196,19 @@ fi
 # one at a time, so a rewrap of the bullet cannot red this and the loss of any
 # one form is its own diagnosis. Bot-facing files are the glob, not a list, so
 # an instruction file added later is covered the day it lands.
+#
+# An absent file is its own diagnosis, not a missing substring: grep on a path
+# that is gone reports a read error and a "no longer states" line, which sends
+# the reader looking for a deleted sentence in a deleted file.
 REPLY_FORMS=('Fixed in <sha>' 'Declined: <reason>' 'Tracked: KEN-<n>')
-for form in "${REPLY_FORMS[@]}"; do
-  grep -qF -- "$form" AGENTS.md ||
-    say "AGENTS.md no longer states the reply form '$form' — the bot-facing files point readers there for it"
-done
+if [ ! -f AGENTS.md ]; then
+  say "AGENTS.md is gone — it holds the one copy of the reply contract the bot-facing files point at"
+else
+  for form in "${REPLY_FORMS[@]}"; do
+    grep -qF -- "$form" AGENTS.md ||
+      say "AGENTS.md no longer states the reply form '$form' — the bot-facing files point readers there for it"
+  done
+fi
 
 # A file may point at AGENTS.md; it may not restate the forms.
 #
@@ -211,8 +219,11 @@ done
 # conditioned on the thing it protects passes by deleting that thing.
 REPLY_POINTER='§ Code Review Rules is the contract. Read it there.'
 for f in .github/copilot-instructions.md review-bots.md; do
-  grep -qF -- "$REPLY_POINTER" "$f" ||
+  if [ ! -f "$f" ]; then
+    say "$f is gone — a bot-facing file the reply contract is pointed from; move the pointer before deleting it"
+  elif ! grep -qF -- "$REPLY_POINTER" "$f"; then
     say "$f no longer points at AGENTS.md for the reply contract — delete nothing here without moving the pointer"
+  fi
 done
 # The ban is wider than the pointer: every bot-facing file, from the same
 # working set the content rules above scan, so a staged instruction file is

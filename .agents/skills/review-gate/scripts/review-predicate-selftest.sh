@@ -163,7 +163,7 @@ run() { # case-name, expected-verdict, expected-exit
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" 2>/dev/null)"
   rc=$?
-  verdict="${line#verdict=}"; verdict="${verdict%% *}"
+  LAST_LINE="$line"; verdict="${line#verdict=}"; verdict="${verdict%% *}"
   if [ "$rc" != "$want_exit" ]; then
     echo "FAIL  $name: exit $rc, wanted $want_exit" >&2
     failures=$((failures + 1))
@@ -390,6 +390,10 @@ echo "--- mechanism layer (forced configuration)"
 # has become unconditionally true and every case below is meaningless.
 reset
 run "no evidence at all" awaiting
+# The changelog's one claim about this status is that it names the head.
+cases=$((cases + 1))
+case "$LAST_LINE" in *"$HEAD"*) echo "ok    the awaiting detail names the head sha (awaiting)" ;;
+  *) echo "FAIL  the awaiting detail drops the head sha: $LAST_LINE" >&2; failures=$((failures + 1)) ;; esac
 
 reset
 export GH_SHIM_FAIL=reviews
@@ -1422,16 +1426,12 @@ CFG_GATE_MODE="off"
 run "mode off: approved without evaluating anything" approved
 # The detail is the attestation CONTRACT, not decoration: statuses converged
 # from this verdict must say the gate is disabled, never imply a review
-# happened — pin the exact line.
-off_line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
-  REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_MODE=off \
-  GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$AUTHOR" \
-  "$predicate" 2>/dev/null)"
+# happened — pin the exact line the case above emitted.
 cases=$((cases + 1))
-if [ "$off_line" = "verdict=approved detail=review gate disabled by settings (REVIEW_GATE_MODE=off)" ]; then
+if [ "$LAST_LINE" = "verdict=approved detail=review gate disabled by settings (REVIEW_GATE_MODE=off)" ]; then
   echo "ok    mode off: the attestation detail is exact (statuses never imply a review)"
 else
-  echo "FAIL  mode off attestation detail drifted: '$off_line'" >&2
+  echo "FAIL  mode off attestation detail drifted: '$LAST_LINE'" >&2
   failures=$((failures + 1))
 fi
 if [ -f "$fixtures/.urls.log" ] && [ -s "$fixtures/.urls.log" ]; then

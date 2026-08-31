@@ -40,7 +40,31 @@ git -C "$R" symbolic-ref HEAD refs/heads/main
 git -C "$R" config user.email test@example.com
 git -C "$R" config user.name test
 git -C "$R" config core.hooksPath "$TMP/nohooks"
-echo '# fixture' >"$R/AGENTS.md"
+# The reply-contract block judges every run, so the fixture carries the three
+# files it is about in the state it accepts: AGENTS.md holds the one copy of
+# the forms, one per line so a dropped form is a dropped line, and each
+# bot-facing file points at it without restating any. The forms and the
+# pointer are written out here rather than read back from guard — a list read
+# from the script under test passes whatever that script names.
+REPLY_FORMS=('Fixed in <sha>' 'Declined: <reason>' 'Tracked: KEN-<n>')
+REPLY_POINTER='`AGENTS.md` § Code Review Rules is the contract. Read it there.'
+BOT_FACING=(review-bots.md .github/copilot-instructions.md)
+mkdir -p "$R/.github"
+reply_fixture() { # the accepted state of all three files
+  printf '%s\n' \
+    '# fixture' \
+    '' \
+    '## Code Review Rules' \
+    '' \
+    '- Author replies are `Fixed in <sha>`,' \
+    '  `Declined: <reason>`, or' \
+    '  `Tracked: KEN-<n>` / `#<n>`.' >"$R/AGENTS.md"
+  local f
+  for f in "${BOT_FACING[@]}"; do
+    printf '%s\n' "# fixture $f" '' "$REPLY_POINTER" >"$R/$f"
+  done
+}
+reply_fixture
 ln -s ../AGENTS.md "$R/.claude/CLAUDE.md"
 : >"$R/tools/size-ratchet-baseline.tsv"
 printf '%s\n' \
@@ -296,6 +320,91 @@ case "$ratchet_keys" in
   *RATCHET_RAISE*) ok "control: the derivation reaches RATCHET_RAISE, the key with no SIZE_ prefix" ;;
   *) bad "the derivation reaches RATCHET_RAISE" "derived:$ratchet_keys" ;;
 esac
+
+echo "=== the reply contract has one copy, in AGENTS.md, pointed at from the bot files ==="
+# The failing direction first. Each case mutates one file of the accepted
+# fixture and asserts the arm that owns that mutation, so the green pass at
+# the end of the section is evidence rather than a check that cannot fail.
+reply_run() { # — stage the caller's mutation of the fixture and run guard
+  git -C "$R" add -A
+  run_guard
+}
+
+for drop in "${REPLY_FORMS[@]}"; do
+  reply_fixture
+  grep -vF -- "$drop" "$R/AGENTS.md" >"$TMP/agents"
+  mv "$TMP/agents" "$R/AGENTS.md"
+  reply_run
+  others=0
+  for other in "${REPLY_FORMS[@]}"; do
+    [ "$other" = "$drop" ] && continue
+    [[ "$OUT" == *"reply form '$other'"* ]] && others=$((others + 1))
+  done
+  [ "$RC" != 0 ] && [[ "$OUT" == *"AGENTS.md no longer states the reply form '$drop'"* ]] && [ "$others" = 0 ] \
+    && ok "AGENTS.md losing $drop reds, naming that form and no other" \
+    || bad "AGENTS.md losing $drop reds, naming that form and no other" "rc=$RC others=$others out=$OUT"
+done
+
+reply_fixture
+rm -f "$R/AGENTS.md"
+reply_run
+[ "$RC" != 0 ] && [[ "$OUT" == *"AGENTS.md is gone"* ]] && [[ "$OUT" != *"No such file or directory"* ]] \
+  && ok "an absent AGENTS.md reds on the absence, with no grep read error in the output" \
+  || bad "an absent AGENTS.md reds on the absence, with no grep read error in the output" "rc=$RC out=$OUT"
+
+for f in "${BOT_FACING[@]}"; do
+  reply_fixture
+  grep -vF -- "$REPLY_POINTER" "$R/$f" >"$TMP/bot"
+  mv "$TMP/bot" "$R/$f"
+  reply_run
+  [ "$RC" != 0 ] && [[ "$OUT" == *"$f no longer points at AGENTS.md for the reply contract"* ]] \
+    && ok "$f without the pointer sentence reds" \
+    || bad "$f without the pointer sentence reds" "rc=$RC out=$OUT"
+
+  reply_fixture
+  rm -f "$R/$f"
+  reply_run
+  [ "$RC" != 0 ] && [[ "$OUT" == *"$f is gone"* ]] && [[ "$OUT" != *"No such file or directory"* ]] \
+    && ok "an absent $f reds on the absence, with no grep read error in the output" \
+    || bad "an absent $f reds on the absence, with no grep read error in the output" "rc=$RC out=$OUT"
+
+  # The drifted wording the ban exists to catch: a full restatement sharing not
+  # one of the three forms verbatim, so only its shape is left to judge — two
+  # forms named together on one line.
+  reply_fixture
+  printf '%s\n' 'Answer a finding with a commit sha, `Declined: <reason>`, or `Tracked: KEN-<n>`; a tracking claim naming no issue reds the gate.' >>"$R/$f"
+  reply_run
+  [ "$RC" != 0 ] && [[ "$OUT" == *"$f restates the reply contract on 1 line(s) naming two or more forms together"* ]] \
+    && ok "$f restating two forms on one line reds" \
+    || bad "$f restating two forms on one line reds" "rc=$RC out=$OUT"
+
+  # A single form is how a file cites one rule; the ban must not reach it.
+  reply_fixture
+  printf '%s\n' 'A finding class already answered `Declined: <reason>` on this PR is not re-raised.' >>"$R/$f"
+  reply_run
+  [ "$RC" = 0 ] \
+    && ok "$f citing one form on a line passes" \
+    || bad "$f citing one form on a line passes" "rc=$RC out=$OUT"
+done
+
+# The glob arm measures nothing once every file it can match is gone, and says
+# so rather than passing on an empty set. The removal is committed: guard's
+# working set is the index plus the staged diff, so a staged deletion still
+# carries the path and only a landed one empties the glob.
+reply_fixture
+rm -f "${BOT_FACING[@]/#/$R/}"
+git -C "$R" add -A
+git -C "$R" commit -q -m "chore: the bot-facing files leave the tree"
+run_guard
+[ "$RC" != 0 ] && [[ "$OUT" == *"no bot-facing instruction file matched the reply-contract glob"* ]] \
+  && ok "a working set with no bot-facing file reds instead of passing on nothing" \
+  || bad "a working set with no bot-facing file reds instead of passing on nothing" "rc=$RC out=$OUT"
+
+reply_fixture
+reply_run
+[ "$RC" = 0 ] \
+  && ok "AGENTS.md holding the forms and both bot files pointing at it passes" \
+  || bad "AGENTS.md holding the forms and both bot files pointing at it passes" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
