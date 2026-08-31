@@ -11,11 +11,14 @@ use std::fs;
 use super::*;
 
 /// Every harness that withholds a tool from an agent that is not a
-/// planner, and the tool it withholds.
-const ROLE_KEYED: [(HarnessId, &str); 3] = [
-    (HarnessId::Claude, "AskUserQuestion"),
-    (HarnessId::Pi, "question"),
-    (HarnessId::Opencode, "question"),
+/// planner: the tool it withholds, and one it denies a subagent whatever
+/// the role. The second is what makes the first readable — a rendering
+/// that stated no deny line at all would satisfy every "does not contain"
+/// on its own, so each case asserts the baseline is there first.
+const ROLE_KEYED: [(HarnessId, &str, &str); 3] = [
+    (HarnessId::Claude, "AskUserQuestion", "Agent"),
+    (HarnessId::Pi, "question", "subagent"),
+    (HarnessId::Opencode, "question", "task"),
 ];
 
 const ALL_THREE: &str = "\"claude\", \"pi\", \"opencode\"";
@@ -74,7 +77,7 @@ const PLANNER: &str =
 #[allow(clippy::unwrap_used)]
 fn renaming_a_fork_onto_planner_and_off_it_keeps_every_harnesss_deny() {
     let w = forked_world(ROLELESS);
-    for (harness, tool) in ROLE_KEYED {
+    for (harness, tool, _) in ROLE_KEYED {
         assert!(
             denied(&w, harness, "rev").contains(tool),
             "the fixture has to start with the deny the rename must not drop on {harness:?}"
@@ -84,7 +87,7 @@ fn renaming_a_fork_onto_planner_and_off_it_keeps_every_harnesss_deny() {
     let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "rev", "planner").unwrap();
     apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
-    for (harness, tool) in ROLE_KEYED {
+    for (harness, tool, _) in ROLE_KEYED {
         assert!(
             denied(&w, harness, "planner").contains(tool),
             "the deny is the role's, so it survives the move onto that name on {harness:?}"
@@ -98,7 +101,7 @@ fn renaming_a_fork_onto_planner_and_off_it_keeps_every_harnesss_deny() {
     let plan = fork::rename_fork(&w.env, &w.scope, ItemKind::Agent, "planner", "my-rev").unwrap();
     apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
-    for (harness, tool) in ROLE_KEYED {
+    for (harness, tool, _) in ROLE_KEYED {
         assert!(
             denied(&w, harness, "my-rev").contains(tool),
             "and it survives the move back off that name on {harness:?}"
@@ -114,9 +117,14 @@ fn renaming_a_fork_onto_planner_and_off_it_keeps_every_harnesss_deny() {
 #[allow(clippy::unwrap_used)]
 fn a_forked_planner_keeps_its_questions_under_a_new_name() {
     let w = agent_world(ALL_THREE, PLANNER, "", "");
-    for (harness, tool) in ROLE_KEYED {
+    for (harness, tool, baseline) in ROLE_KEYED {
+        let denies = denied(&w, harness, "rev");
         assert!(
-            !denied(&w, harness, "rev").contains(tool),
+            denies.contains(baseline),
+            "a rendering stating no deny line would pass every assertion below on {harness:?}: {denies:?}"
+        );
+        assert!(
+            !denies.contains(tool),
             "the fixture starts with the planner's own {tool} on {harness:?}"
         );
     }
@@ -135,13 +143,18 @@ fn a_forked_planner_keeps_its_questions_under_a_new_name() {
     apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
-    for (harness, tool) in ROLE_KEYED {
+    for (harness, tool, baseline) in ROLE_KEYED {
+        let denies = denied(&w, harness, "rev-mine");
         assert!(
-            !denied(&w, harness, "rev-mine").contains(tool),
+            denies.contains(baseline),
+            "the copy has to state a deny list at all before it can be read on {harness:?}: {denies:?}"
+        );
+        assert!(
+            !denies.contains(tool),
             "the copy declares the role, so it keeps {tool} on {harness:?} under its new name"
         );
         assert_eq!(
-            denied(&w, harness, "rev-mine"),
+            denies,
             denied(&w, harness, "rev"),
             "and denies exactly what the original denies on {harness:?}"
         );

@@ -107,8 +107,8 @@ Deny-only. `allowed-subagents` and `deny-tools` have to agree, so they are
 resolved together: engineers delegate to `scout` by default and every other
 role is a leaf. `subagent`, `get_subagent_result`, `steer_subagent` and
 `stop_subagent` are always denied; `delegate_subagent` is denied too unless
-delegation was declared; everything but the planner denies `question`, and a
-reviewer also denies `tasks_write`.
+delegation was declared; everything but a `role: planner` agent denies
+`question`, and a `role: reviewer` agent also denies `tasks_write`.
 
 An `AllowOnly` intent is a hard refusal for this harness: nothing is
 rendered and the reason names both fixes — set an explicit `deny-tools`

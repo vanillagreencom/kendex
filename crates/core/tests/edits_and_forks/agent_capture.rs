@@ -529,9 +529,10 @@ fn an_indented_first_line_keeps_its_indentation() {
 
 /// A person may replace the whole rendering, frontmatter and all, with
 /// their own prose. The capture writes the publisher's frontmatter back
-/// around those words rather than refusing, and the project's own denies
-/// still reach the copy: a fork is never wider than the installation it
-/// was made from.
+/// around those words rather than refusing, and the deny the project
+/// declared in kendex.toml still reaches the copy. What the person states
+/// in the file itself is another question, answered by the carry tests in
+/// `agent_settings`: this file states nothing.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rendering_replaced_with_prose_still_forks() {
@@ -552,6 +553,6 @@ fn a_rendering_replaced_with_prose_still_forks() {
     assert!(settled.contains("My own notes,"), "{settled}");
     assert!(
         deny_line(&settled, "disallowedTools:").contains("Bash"),
-        "the fork is still no wider than the installation: {settled}"
+        "the declared deny reaches the copy: {settled}"
     );
 }

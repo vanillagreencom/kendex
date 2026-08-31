@@ -68,7 +68,7 @@ are `read`, `edit`, `glob`, `grep`, `bash`, `task`, `skill`, `lsp`,
 
 An allowlist is expressed by denying everything else over exactly that set.
 `skill` stays allowed, and an entry that maps to no known permission warns. Subagents always
-deny `task`, and everything but the planner denies `question`.
+deny `task`, and everything but a `role: planner` agent denies `question`.
 
 ## Hooks
 

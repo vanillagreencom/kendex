@@ -1,2 +1,3 @@
-- `planner` is a role name now, so a custom hook whose selector spells it gates
-  every agent with `role: planner`, not only the agent named `planner`.
+- **Breaking:** a hook selector spelling `planner` names a population now: it
+  gates every `role: planner` agent, follows no rename, reaches no copy. Point
+  it at the agent by another name first.

@@ -2,6 +2,7 @@
 .github/workflows/skill-tests.yml	533
 crates/core/src/engine/detach.rs	424
 crates/core/src/error.rs	503
+crates/core/src/mapping.rs	411
 crates/core/src/settings_file.rs	408
 hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650

@@ -78,7 +78,7 @@ Everything after the frontmatter is the agent's system prompt. Pane tasks move t
 
 kendex-installed engineer agents default to denying `subagent` so they cannot orchestrate fleets, but they still need to spend a fresh context window on reconnaissance work. `delegate_subagent` is the bridge: available only to child agent sessions launched by this extension, single-dispatch only, bg-only (targets with `pane: true` are rejected), and restricted to the targets listed in the caller agent's `allowed-subagents:` frontmatter — missing or unlisted targets fail with an inventory error.
 
-kendex defaults `allowed-subagents` to `scout` for `engineer` agents and leaves it empty — delegation denied — for `analyst`, `reviewer`, and `manager` agents. Customize per agent in `kendex.toml`; an explicit empty list overrides the engineer default, and the matching agent file is regenerated without `allowed-subagents:` and gains `delegate_subagent` back in `deny-tools` so the child never sees the tool.
+kendex defaults `allowed-subagents` to `scout` for `engineer` agents and leaves it empty — delegation denied — for every other role and for an agent declaring none. Customize per agent in `kendex.toml`; an explicit empty list overrides the engineer default, and the matching agent file is regenerated without `allowed-subagents:` and gains `delegate_subagent` back in `deny-tools` so the child never sees the tool.
 
 ```toml
 [agent-frontmatter.pi]
