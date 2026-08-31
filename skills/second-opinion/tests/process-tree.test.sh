@@ -4,6 +4,16 @@
 # may TERMINATE. Every case builds a real tree — a CLI with a child of its own
 # — and asks what survives, because every defect this guards was invisible to a
 # suite that watched only exit codes.
+#
+# A GREEN LINUX RUN IS NOT EVIDENCE FOR THIS FILE. Process groups, signal
+# delivery and the availability of `timeout` differ between Linux and macOS,
+# and cases here have passed on one while failing on the other. This is the
+# suite to run on a mac before believing a change to the teardown paths;
+# everything else in the skill is portable enough that Linux answers for it.
+#
+# Cases that need a facility the host may not have SKIP OUT LOUD, naming what
+# is missing. A silent pass would be worse than a failure: it would report
+# green for a platform where the case never ran.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -110,6 +120,16 @@ echo "=== a per-CLI timeout takes the CLI's children with it ==="
 # The caller CAPTURES stdout, so a surviving grandchild holds that pipe open.
 # This measures the caller's wall time, not just the status: the defect was a
 # 2-second timeout returning after the child's full 600.
+#
+# NEEDS A TIMEOUT BINARY, and stock macOS ships neither `timeout` nor
+# `gtimeout`. Without one the runtime says so and runs the CLI unbounded, so
+# this case would measure the CLI's own lifetime and report the teardown
+# defect it is named for — a false accusation that costs a debugging cycle on
+# the platform hardest to reach. The next case covers the same teardown with
+# no binary at all, so skipping here loses nothing but the timeout path.
+if ! command -v timeout >/dev/null 2>&1 && ! command -v gtimeout >/dev/null 2>&1; then
+  printf 'SKIP: per-CLI timeout case needs timeout or gtimeout; this host has neither\n'
+else
 : > "$TMP_ROOT/tree.ready"; : > "$TMP_ROOT/tree.kid"
 start=$(date +%s)
 rc=0
@@ -128,6 +148,7 @@ await_gone "$kid" || fail "the CLI's child $kid survived the timeout"
 ok "the timeout took the CLI's child with it"
 [[ $rc -ne 0 ]] || fail "a timed-out CLI must not read as success"
 ok "the timed-out run exits non-zero (rc=$rc)"
+fi
 
 echo "=== the CLI's leader exiting first does not end the teardown ==="
 # A leader that exits while its child runs on is the ordinary shape of a CLI
@@ -166,15 +187,35 @@ grep -q 'process_group_alive() { kill -0 "$1" 2>/dev/null; }' "$LEADER_MUTANT" \
   || fail "the leader-probe control did not replace the group probe"
 ok "the leader-probe control probes the leader instead of the group"
 # capture_group_run <runtime> <label>: capture group-run's stdout under a hard
-# bound, and report whether it returned or was still held. The bound is what
-# makes the hang measurable in seconds instead of the child's full lifetime.
-capture_group_run() { # RUNTIME LABEL -> "rc"
-  local runtime="$1" label="$2" rc=0
+# bound and report 124 if the capture was still held when the bound expired.
+# The capture has to be a COMMAND SUBSTITUTION — a survivor holding that pipe
+# open is the failure under test, and a file redirect would never show it.
+#
+# The bound is polled rather than delegated to `timeout`, which stock macOS
+# does not ship: borrowing the binary here would make this control fail with
+# "command not found" on the one platform it most needs to run.
+capture_group_run() { # RUNTIME LABEL -> "rc", 124 when the capture outran the bound
+  local runtime="$1" label="$2" rc=0 end job stray
   : > "$TMP_ROOT/$label.ready"; : > "$TMP_ROOT/$label.kid"
   CLI_READY_FILE="$TMP_ROOT/$label.ready" CLI_KID_FILE="$TMP_ROOT/$label.kid" \
-    timeout 8 bash -c \
-    'out=$("$1" group-run "$2" orphan-codex < /dev/null); printf %s "$out" > "$3"' \
-    _ "$runtime" "$TMP_ROOT/$label.stderr" "$TMP_ROOT/$label.out" || rc=$?
+    bash -c 'out=$("$1" group-run "$2" orphan-codex < /dev/null); printf %s "$out" > "$3"' \
+    _ "$runtime" "$TMP_ROOT/$label.stderr" "$TMP_ROOT/$label.out" &
+  job=$!
+  end=$(($(date +%s) + 8))
+  while kill -0 "$job" 2>/dev/null; do
+    if [[ $(date +%s) -ge $end ]]; then
+      kill -KILL "$job" 2>/dev/null || true
+      wait "$job" 2>/dev/null || true
+      # Release the tree the bound left behind: killing the capture does not
+      # reach the CLI's child, and it would otherwise hold on for its own life.
+      stray="$(cat < "$TMP_ROOT/$label.kid" 2>/dev/null || true)"
+      [[ -z "$stray" ]] || kill -KILL "$stray" 2>/dev/null || true
+      printf '124'
+      return 0
+    fi
+    sleep 0.2
+  done
+  wait "$job" || rc=$?
   printf '%s' "$rc"
 }
 real_rc="$(capture_group_run "$RUNTIME" ctl-real)"
