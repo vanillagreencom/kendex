@@ -157,25 +157,75 @@ pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
 /// naming whichever finished last, and anything already at that name —
 /// another install's record, a link somebody else chose, a pipe — is left
 /// exactly as it is rather than opened.
+///
+/// The one taken name that is nobody's record is an empty one, and it is
+/// this function that can leave it: the name is published before the bytes
+/// are in it. Every later run would find that name taken too, so nothing
+/// would ever repair it and the app would refuse a command it does own
+/// until `kendex update` rewrote the record. So a write that fails takes
+/// the name back with it, and a claim found empty is taken back here.
 fn write_the_first_run(env: &Env, running: &Path) -> Result<(), String> {
-    use std::io::Write as _;
     let file = env.installed_command_file();
     let Some(parent) = file.parent() else {
         return Err(format!("{} names no directory", file.display()));
     };
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("{} could not be created: {error}", parent.display()))?;
-    match std::fs::OpenOptions::new()
+    match claim_the_record(&file, running) {
+        // Taken, which is the ordinary answer: every run after the first
+        // gets it.
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        answered => return answered.map_err(|error| written(&file, &error)),
+    }
+    // Somebody's record, and this run is not the first. Judged by one
+    // `symlink_metadata`, which is the whole read the steady state pays:
+    // a name with bytes in it is left alone — an unreadable one included,
+    // which `kendex update` rewrites — and a link or a fifo is not a
+    // regular file however long it is, so neither is followed or opened.
+    if !an_unfilled_claim(&file) {
+        return Ok(());
+    }
+    // The empty name goes back and is claimed again. A removal that will
+    // not happen, or a name taken again behind this one, leaves the record
+    // as it was found: this run recorded nothing, and the next one makes
+    // the same repair.
+    if std::fs::remove_file(&file).is_err() {
+        return Ok(());
+    }
+    match claim_the_record(&file, running) {
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        answered => answered.map_err(|error| written(&file, &error)),
+    }
+}
+
+/// Take the name and fill it, or leave nothing at it.
+///
+/// `create_new` is what makes the claim, and it publishes the name before
+/// the bytes are written. A write that fails would strand that name, so it
+/// is given back here and the caller answers the write's own error.
+fn claim_the_record(file: &Path, running: &Path) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut handle = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&file)
-    {
-        Ok(mut handle) => handle
-            .write_all(format!("{}\n", running.display()).as_bytes())
-            .map_err(|error| format!("{} could not be written: {error}", file.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(error) => Err(format!("{} could not be written: {error}", file.display())),
-    }
+        .open(file)?;
+    handle
+        .write_all(format!("{}\n", running.display()).as_bytes())
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(file);
+        })
+}
+
+/// Whether that name is a claim nothing ever filled in: a regular file
+/// with nothing in it. Read as the name itself rather than as whatever it
+/// leads to, and never opened — a fifo would hold a run that opened it.
+fn an_unfilled_claim(file: &Path) -> bool {
+    std::fs::symlink_metadata(file).is_ok_and(|entry| entry.is_file() && entry.len() == 0)
+}
+
+/// The one sentence for a record that would not be written.
+fn written(file: &Path, error: &std::io::Error) -> String {
+    format!("{} could not be written: {error}", file.display())
 }
 
 #[cfg(test)]
