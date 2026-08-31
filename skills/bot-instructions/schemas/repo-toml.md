@@ -96,12 +96,21 @@ is a valid glob and every validator passes. One holding `#` becomes a comment in
 `.coderabbit.yaml`. A ban list closes the shapes someone thought of; a character
 class closes the rest.
 
+**Path shape, on top of the class.** Refused: a leading `/`, a trailing `/`, a
+`..` component, and an empty component. The class does not cover these — `.`
+and `/` are both allowed characters, so `../**` and `/src/**` are made of
+nothing but permitted bytes — and they are the two shapes that matter most:
+`path_filters` hands these patterns to `git sparse-checkout`, and a `..` there
+is a path-escape in the one place this package gives its own strings to a
+checkout tool. Leading `/` is refused because it is an anchoring form the
+engines read differently.
+
 The metacharacters the class leaves out are worth naming for the error message:
-a brace (`{`, `}`), extglob (`!(`, `@(`, `+(`, `?(`, `*(`), a comma, a leading
-`/`, a `..` component, a backslash, a leading `!`, and a double quote. A comma
-because Copilot's `applyTo` splits on it and CodeRabbit's multi-glob join uses
-braces; the rest because at least one engine reads them differently from the
-others, and a pattern that means two things is worse than one that is rejected.
+a brace (`{`, `}`), extglob (`!(`, `@(`, `+(`, `?(`, `*(`), a comma, a
+backslash, a leading `!`, and a double quote. A comma because Copilot's
+`applyTo` splits on it and CodeRabbit's multi-glob join uses braces; the rest
+because at least one engine reads them differently from the others, and a
+pattern that means two things is worse than one that is rejected.
 
 An empty glob list is an error wherever a glob list is required.
 
@@ -122,10 +131,8 @@ than rendering a partly understood file.
 
 `summary` is prose about this repo, not doctrine. Anything in it that would be
 true of another repo belongs in a doctrine block instead. It is under the same
-content refusals as `[[surface]] instructions`: no line may begin with `#` or
-`---`, and none may carry the marker text. Every string this package renders
-into a structured file is under those refusals, and the list of which strings
-they are is the one below.
+content refusals as `[[surface]] instructions`; the table below says which
+those are, for every string this package renders into a structured file.
 
 ### `[bots]`
 
@@ -172,9 +179,15 @@ on.
 | `qodo_commands` | array of string | `["/agentic_review"]` | `[github_app] pr_commands` |
 | `qodo_push_trigger` | bool | `false` | `[github_app] handle_push_trigger` |
 
-Each `qodo_commands` entry is a bare verb from the set Qodo documents —
-`/review`, `/agentic_review`, `/describe`, `/improve` — and nothing else. No
-whitespace, no `--`. A `pr_commands` entry carries inline
+Each `qodo_commands` entry is a bare verb, and the set is `/review` and
+`/agentic_review`. Those are the two review commands, and the two whose sections
+this render writes guidance into; `qodo-parity` rejects a `pr_commands` entry
+whose section carries no guidance, so admitting `/describe` or `/improve` here
+would document a value that renders and then fails its own validator with no fix
+available inside the TOML. A repo wanting either configures it outside this
+package.
+
+No whitespace and no `--` in an entry. A `pr_commands` entry carries inline
 `--section.key=value` overrides, which is how Qodo's own examples are written,
 so `/review --pr_reviewer.extra_instructions=""` would null the guidance the
 render just wrote while `qodo-parity` passed: that validator compares the two
@@ -263,19 +276,53 @@ frontmatter key but `include` and `exclude`, so an `adopt` over it would drop a
 repo's check prerequisites for good. A `name` colliding with another
 surface, or producing a path another output already claims, is an error.
 
-`instructions` may not begin a line with `#`, with `---`, or with the marker
-text. Each of those restructures at least one output: a heading ends the
-`AGENTS.md` owned region, `---` opens frontmatter, and the marker decides which
-files this package owns.
+`instructions` is under the heading, frontmatter and marker refusals below.
+Each restructures at least one output: a heading ends the `AGENTS.md` owned
+region, `---` opens frontmatter, and the marker decides which files this package
+owns.
 
-**The content refusals, in one place.** They apply to `[repo] summary`,
-`[[surface]] instructions`, and every `[doctrine.append]` and
-`[doctrine.replace]` value: no line beginning `#`, `---`, or the marker text.
-`[[exclusions.path]] reason` carries its own pair, refusing a newline and
-`-->`, because it renders inside an HTML comment. `[repo] name` and every glob
-are under their character classes above. `toml-schema` lists all of them, so
-each ships a red control; a refusal stated here and absent from that list would
-ship with nothing proving it fires.
+## The content refusals
+
+One row per input string, one column per refusal class. Everything that judges
+these — `toml-schema`, `agents-section`, and the Escaping paragraphs in
+`renders.md` — cites this table rather than restating it, so a predicate written
+here is the only predicate.
+
+| Input string | heading | frontmatter | marker | comment-close | character class |
+|--------------|---------|-------------|--------|---------------|-----------------|
+| `[repo] name` | – | – | – | – | single line, `[A-Za-z0-9._-]` |
+| `[repo] summary` | yes | yes | yes | – | – |
+| `[[surface]] instructions` | yes | yes | yes | – | – |
+| `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | yes | – | – |
+| doctrine block text | yes | yes | yes | – | – |
+| `[[exclusions.path]] reason` | – | – | yes | yes | single line |
+| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | the glob dialect above |
+
+The predicates, written once:
+
+- **heading** — a line whose first non-whitespace character is `#` after three
+  or fewer leading spaces. That is what markdown reads as a heading, and the
+  wide form is the one the outputs need: a line indented two spaces before `#`
+  ends the `AGENTS.md` owned region just as surely as one in column zero, so a
+  narrower input rule would pass a value the render then refuses.
+- **frontmatter** — a line that is exactly `---`, which opens or closes YAML
+  frontmatter in a `.instructions.md` file.
+- **marker** — a line carrying the marker text, which is what decides which
+  files this package owns.
+- **comment-close** — `-->`, which would end the HTML comment a `reason` is
+  rendered inside and put the rest of the value on a line of its own.
+- **character class** — as stated for `[repo] name` and for globs above.
+
+**Render-side second checks.** `renders.md` re-checks the heading class when it
+assembles the `AGENTS.md` region and the Copilot file, because doctrine text
+does not come through this file at all and so is not covered by any input
+refusal. It does not re-check frontmatter or marker there, and that is a
+decision rather than an omission: neither can reach those two outputs from
+doctrine without also reaching a `.instructions.md` file, where the frontmatter
+the generator emits is fixed and the marker is written by the generator itself.
+
+Every row is one clause with one control, and § Controls' count is checkable
+against this table.
 
 Two surfaces may match the same file. Macroscope stacks both, CodeRabbit may
 apply both `path_instructions` entries, and Copilot may load both files. No bot

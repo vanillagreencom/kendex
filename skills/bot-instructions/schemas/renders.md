@@ -4,10 +4,9 @@ One section per output. Each names the exact path, what the generator owns
 inside it, which doctrine blocks it carries and in what order, and how repo
 text from `bot-instructions.toml` is escaped into that file's syntax.
 
-Doctrine block ids are `scope`, `rounds`, `severity`, `no-preferences`,
-`declined`, `reply-contract`, `render-out-of-scope`, `trust-model`. They are
-defined in the skill's SKILL.md § Doctrine, and the parse rule that finds them
-is stated there.
+Doctrine block ids are the `###` headings of the doctrine source, whose parse
+rule is SKILL.md § Doctrine. The routing table below is the only other place
+they are written down, and `doctrine-routing` holds the two to the same set.
 
 ## Common rules
 
@@ -98,9 +97,10 @@ of this knowledge, and two copies drift.
 | `trust-model` | 7 | – (b) | – (a) | – | 3 | 7 | – (c) | 7 |
 | `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8 |
 
-`[repo] summary` follows the last block in `copilot-instructions`, both
-`pr_agent` `[review_agent]` keys, `pr_agent extra`, and `macroscope
-doctrine.md`.
+`[repo] summary` placement, since the destinations differ: it opens
+`copilot-instructions`, immediately after the `# <repo name>` line and before
+every block. Everywhere else it follows the last block — both `pr_agent`
+`[review_agent]` keys, `pr_agent extra`, and `macroscope doctrine.md`.
 
 **(a) `.coderabbit.yaml` carries one block.** CodeRabbit reaches the rest
 through `knowledge_base.code_guidelines.filePatterns` naming `AGENTS.md`.
@@ -181,10 +181,10 @@ being gone.
 
 **Escaping.** Markdown, passed through. A line that markdown would read as a
 heading ends the owned region at the next render, so the generator refuses any
-doctrine or repo line whose first non-whitespace character is `#` when it
-follows three or fewer leading spaces. `bot-instructions.toml` refuses the same
-shape at input time; this is the second check because doctrine text does not
-come through that file.
+doctrine or repo line matching the heading predicate in `repo-toml.md` § The
+content refusals. That file refuses the same predicate at input time; this is
+the second check because doctrine text does not come through it, and that table
+records which classes get a second check here and which do not.
 
 ## `.github/copilot-instructions.md`
 
@@ -195,7 +195,8 @@ Read by Copilot code review, repo-wide, from the pull request's head branch.
 **Body.**
 
 1. The marker comment.
-2. `# <repo name>` followed by `[repo] summary`.
+2. `# <repo name>` followed by `[repo] summary`, which the routing table's
+   placement note names as this destination's opening rather than its close.
 3. `# Code review calibration`, then the blocks the `copilot-instructions`
    column of the routing table carries, in its order, as `##` subsections.
 4. `## Reply contract`, one sentence pointing at `AGENTS.md` § Code Review
@@ -213,8 +214,8 @@ the routing table's note (b) says which and why.
 (default 6000). Over it, the render fails naming the character count and the
 budget. GitHub documents no numeric cap here; see `references/limits.md`.
 
-**Escaping.** Markdown, passed through, with the same heading refusal as above
-so a repo string cannot forge a section.
+**Escaping.** Markdown, passed through, with the same heading predicate as
+above so a repo string cannot forge a section.
 
 ## `.github/instructions/<name>.instructions.md`
 
@@ -376,10 +377,10 @@ since a gate reading author replies is a compliance rule. Every block in `extra`
 is in one of the two `[review_agent]` keys and the reverse, which is the
 property `qodo-parity` checks.
 
-`render-out-of-scope` leads all three, and this is the one place doctrine is
-rendered ahead of everything else. Qodo has no per-path exclusion for review
-content: its ignore surface is pull-request level plus
-`allow_only_specific_folders`, an
+`render-out-of-scope` takes position 1 in the two columns that carry it, which
+is the one place doctrine is rendered ahead of everything else; the table says
+which those are. Qodo has no per-path exclusion for review content: its ignore
+surface is pull-request level plus `allow_only_specific_folders`, an
 allowlist gating whether analysis runs at all. Prose is the only exclusion
 mechanism this bot has.
 

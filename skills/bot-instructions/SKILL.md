@@ -149,17 +149,37 @@ when `codex` goes false. An unmarked file at one of those paths is the repo's
 own, whatever the flags say, and `adopt` is how one becomes managed. Retiring a
 surface or a bot otherwise leaves a file every bot keeps loading.
 
-**Symlinks are refused at open time, not before it.** Resolving a path, checking
-it, then opening it proves the property about the path and not about the file
-the write lands on. So every output is created or replaced without following a
-final symlink, with containment inside the repo root re-checked on the file that
-was actually opened, and every input is read the same way:
-`bot-instructions.toml`, the doctrine source, the resolved install manifest, the
-vendored schema, and the existing `AGENTS.md`. Inputs matter as much as outputs
-here, because the posture this package prescribes points a trusted generator at
-an untrusted tree, and an input's contents reach rendered output and a `check`
-finding. This repo's own convention is the precedent: it opens without following
-and re-checks the opened file rather than the name.
+**Every open is contained, and the rule is about opens rather than about
+outputs.** Resolving a path, checking it, then opening it proves the property
+about the name and not about the file the open lands on, so the property is held
+at the open. Two halves, and both are needed:
+
+- **No component may redirect.** Walking from a repo-root descriptor, each
+  component is opened relative to the previous one with directory and no-follow
+  flags. A symlink anywhere in the path fails, not only a final one: with
+  `.github/instructions` a symlink out of the tree, refusing only the last
+  component creates or truncates a file outside the repo root and any check
+  after that fires too late. Containment is then a property of how the
+  descriptor was reached rather than something re-derived from the opened file,
+  which is what makes it checkable at all — re-deriving a path from a descriptor
+  needs a different mechanism on each platform this repo targets.
+- **Every open, not every write.** `render` writes, but `check` mostly reads:
+  `drift` opens each path the TOML produces, `orphan` walks
+  `.github/instructions/**` and `.macroscope/correctness/**` testing each file
+  for the marker, `agents-section` walks the repo for nested `AGENTS.md`, and
+  `adopt` opens the markdown files the ones it takes over point at. Those sets
+  are named by the tree under judgment. A symlink at any of those paths is
+  followed by a trusted reader, and its bytes are quoted into a `check` finding
+  in a CI log — a disclosure route no write-side rule covers, because nothing is
+  written.
+
+A path that fails is a finding naming the path, and a `check` finding never
+quotes a region out of a file that failed the open: what gets reported is the
+containment failure, not the contents.
+
+This repo's own convention is the precedent for the no-follow half — it opens
+without following and re-checks the opened file's type rather than the name. The
+walk from a root descriptor is the part it does not have.
 
 ## A pull request changing its own review
 
