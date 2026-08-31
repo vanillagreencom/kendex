@@ -66,32 +66,49 @@ at a tty, which makes plain `mv` and `mv -f` indistinguishable to a headless
 suite — how a prompting `gg_install_file` shipped green.
 
 `gg_pty_run CAP SCRIPT_FILE` runs a bash script file with fds 0, 1 and 2 on a
-pseudo-terminal, setting `GG_PTY_RC` to that script's own exit status and
-`GG_PTY_OUT` to its combined output. `terminal-paths.test.sh` is where such a
-case goes and where the probe's own rules are pinned; its `pty_call` is the
-wrapper shape a new one copies. Two rules hold, and a probe that drops either
-is worse than no probe:
+pseudo-terminal. `GG_PTY_STATE` says what became of the session: `ok` (it ran
+to its own end), `capped` (the cap fired), or `gone` (it died before its own
+last line). `GG_PTY_RC` is the session's own exit status and is EMPTY in the
+other two states, because the helper claims no status values of its own and a
+probe may exit anything, 124 included. `GG_PTY_OUT` is the session's output.
+A non-zero return means the call never started, and `GG_PTY_ERR` names why.
+`terminal-paths.test.sh` is where such a case goes and where the probe's own
+rules are pinned; its `pty_call` is the wrapper shape a new one copies. Two
+rules hold, and a probe that drops either is worse than no probe:
 
 - **Stdin redirected.** The spawner reads `/dev/null`, so a prompt is
   answered by EOF the moment it is written and pre-fix code declines and
   reports — a measurement. Without it the session waits for a person who is
   not there.
-- **A time cap.** The session is killed by process group after `CAP` seconds
-  and comes back as `GG_PTY_RC=124`. A probe that HANGS yields no measurement
-  at all, so a mutation run scores it as not killed and prints a silent miss
-  rather than a wedge.
+- **A time cap.** After `CAP` seconds the session's process group is killed,
+  the spawner's after it, and the state comes back `capped`. Both `script`
+  grammars put the session in a group of its own, so killing the spawner
+  alone leaves the stuck child behind: a body ignoring `SIGHUP` survives the
+  pty closing and outlives the scratch directory. A probe that HANGS yields
+  no measurement at all, so a mutation run scores it as not killed and prints
+  a silent miss rather than a wedge. `gg_pty_form`'s own spawner probe runs
+  under the same cap, since a `script` that blocks would otherwise wedge the
+  suite before a case ran.
 
 Assert on the effect the branch has, not on the spawner's status: a `mv`
 answered no exits 1 on GNU and 0 on BSD — silently, with nothing on stderr —
-so the destination's content is the portable claim, and `!= 124` is the
-separate claim that the probe failed rather than wedged. The two platforms
-diverge under the helper as well, which is why it normalizes both: the status
-travels in a file because BSD `script` has no util-linux `-e`, and the output
-starts at a marker because BSD echoes the end-of-file this helper delivers
-into the typescript ahead of the session's first line. The grammar itself is
-chosen by running each and asking the session whether its own fds are a
-terminal, never by a version banner. A host with no working spawner is a red,
-not a skip: a case that cannot reach the terminal branch is not covering it.
+so the destination's content is the portable claim, and `GG_PTY_STATE = ok`
+is the separate claim that the probe ran rather than wedged. Pair every such
+negative with positive evidence that the code under test was entered at all,
+the way the mutant control echoes a marker before the call it measures: an
+unreplaced destination is also what a session that never got there leaves
+behind. Assert the premise inside the session too — a destination that denies
+write is what makes `mv` prompt, and at euid 0 mode `0444` is not enforced, so
+without that check a root run covers nothing and says nothing.
+
+The two platforms diverge under the helper as well, which is why it
+normalizes both: the status travels in a file because BSD `script` has no
+util-linux `-e`, and the output starts at a marker because BSD echoes the
+end-of-file this helper delivers into the typescript ahead of the session's
+first line. The grammar itself is chosen by running each and asking the
+session whether its own fds are a terminal, never by a version banner. A host
+with no working spawner is a red, not a skip: a case that cannot reach the
+terminal branch is not covering it.
 
 ## Design
 
