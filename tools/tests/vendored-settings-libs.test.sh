@@ -100,7 +100,7 @@ prefix_of() { # FILE
 # exit for any divergence — the controls below run this against deliberately
 # edited copies of the tree and require that exit.
 check_tree() { # ROOT
-  local root="$1" rc=0 rel skill first parent copies prefix names n i seen opens closes unprefixed
+  local root="$1" rc=0 rel skill first parent copies prefix names n i seen opens closes unprefixed repeated
   local scratch="$TMP/map.$$.$RANDOM"
 
   # --- 1. every source has its render, byte for byte, in both families ---
@@ -174,6 +174,14 @@ check_tree() { # ROOT
       rc=1
     fi
     names="$(grep -oE "^${prefix}_[A-Za-z0-9_]+\(\)" "$root/skills/$skill/scripts/lib/settings.sh" | sed "s/^${prefix}_//; s/()\$//" || true)"
+    # body_of reads a name's FIRST definition, while bash runs its last, so a
+    # repeated one makes the copy behave differently from what is compared —
+    # an ordinary copy-paste or merge accident, not a spelling.
+    repeated="$(printf '%s\n' $names | sort | uniq -d | tr '\n' ' ' || true)"
+    if [ -n "$repeated" ]; then
+      echo "skills/$skill/scripts/lib/settings.sh defines ${prefix}_ helpers more than once, and bash runs the LAST while this compares the first: ${repeated% }"
+      rc=1
+    fi
     if [ -z "$names" ]; then
       echo "skills/$skill/scripts/lib/settings.sh declares no ${prefix}_ functions at all"
       rc=1
@@ -264,11 +272,15 @@ check_tree "$control" >/dev/null 2>&1 \
 # reds NAME EXPECT_SUBSTRING STAGE — STAGE mutates the control tree, the
 # check must fail and say why, and the tree is restored afterwards.
 reds() {
-  local name="$1" want="$2" out
+  local name="$1" want="$2" out status=0
   ( eval "$3" )
-  # check_tree is EXPECTED to fail here; its output is what is read.
-  out="$(check_tree "$control" 2>&1 || true)"
-  if [ -n "$out" ] && printf '%s' "$out" | grep -qF -- "$want"; then
+  # BOTH halves are required. A check that printed its diagnostic and still
+  # returned 0 would leave every control here green while the pin accepted
+  # the divergence, so the status is read as well as the words.
+  out="$(check_tree "$control" 2>&1)" || status=$?
+  if [ "$status" -eq 0 ]; then
+    bad "$name — check_tree returned 0" "${out:-check_tree said nothing}"
+  elif printf '%s' "$out" | grep -qF -- "$want"; then
     ok "$name"
   else
     bad "$name — no diagnostic carrying: $want" "${out:-check_tree said nothing}"
@@ -336,9 +348,11 @@ restore skills review-gate settings.sh
 # These two arms are about the declarations themselves, so the control names
 # a helper that does not need excusing and requires the check to say so.
 declares_stale() { # NAME EXPECT_SUBSTRING VAR EXTRA
-  local out
-  out="$(eval "$3=\"\$$3 $4\"; check_tree \"\$control\"" 2>&1 || true)"
-  if printf '%s' "$out" | grep -qF -- "$2"; then
+  local out status=0
+  out="$(eval "$3=\"\$$3 $4\"; check_tree \"\$control\"" 2>&1)" || status=$?
+  if [ "$status" -eq 0 ]; then
+    bad "$1 — check_tree returned 0" "${out:-check_tree said nothing}"
+  elif printf '%s' "$out" | grep -qF -- "$2"; then
     ok "$1"
   else
     bad "$1 — no diagnostic carrying: $2" "${out:-check_tree said nothing}"
@@ -396,14 +410,25 @@ reds "an UNPREFIXED top-level helper fails, never escapes the comparison" \
      >>"$control/skills/review-gate/scripts/lib/settings.sh"'
 restore skills review-gate settings.sh
 
+# And a REPEATED definition, which body_of reads the first of while bash runs
+# the last. The duplicate is written multi-line and balanced on purpose: a
+# one-liner has no column-zero `}` and would red on brace parity instead,
+# leaving this arm proven by the wrong guard.
+reds "a REPEATED helper definition fails, never compares only the first" \
+  "bash runs the LAST while this compares the first" \
+  'printf "\nrg_bom_guard() {\n  return 0\n}\n" \
+     >>"$control/skills/review-gate/scripts/lib/settings.sh"'
+restore skills review-gate settings.sh
+
 # The glob itself: a root carrying no copy must red, not pass with nothing
 # compared. This is the arm that keeps a moved path from reading as clean.
 mkdir -p "$TMP/empty"
-empty_out="$(check_tree "$TMP/empty" 2>&1 || true)"
-if printf '%s' "$empty_out" | grep -qF -- "nothing was compared"; then
+empty_status=0
+empty_out="$(check_tree "$TMP/empty" 2>&1)" || empty_status=$?
+if [ "$empty_status" -ne 0 ] && printf '%s' "$empty_out" | grep -qF -- "nothing was compared"; then
   ok "a root carrying no copy fails, never passes with nothing compared"
 else
-  bad "a root carrying no copy fails, never passes with nothing compared" "${empty_out:-check_tree said nothing}"
+  bad "a root carrying no copy fails, never passes with nothing compared (status $empty_status)" "${empty_out:-check_tree said nothing}"
 fi
 
 # No control may leave the tree mutated: every arm above would otherwise be
