@@ -42,25 +42,37 @@ git -C "$R" config user.name test
 git -C "$R" config core.hooksPath "$TMP/nohooks"
 # The reply-contract block judges every run, so the fixture carries the three
 # files it is about in the state it accepts: AGENTS.md holds the one copy of
-# the forms, one per line so a dropped form is a dropped line, and each
-# bot-facing file points at it by name and section. The forms and the pointer
-# sentence are written out here rather than read back from guard — a list read
-# from the script under test passes whatever that script names, and the
-# sentence is this suite's document, not guard's predicate.
+# the forms in the contract bullet, one form per continuation line so a dropped
+# form is a dropped line, and each bot-facing file points at it by name and
+# section. The section also carries the do-not-re-raise bullet the real
+# AGENTS.md carries, because that bullet spells `Declined: <reason>` outside
+# the contract: dropping that form from the contract leaves the neighbour
+# standing, which is the arrangement the bullet scope exists to survive. The
+# forms and the pointer sentence are written out here rather than read back
+# from guard — a list read from the script under test passes whatever that
+# script names, and the sentence is this suite's document, not guard's
+# predicate.
 REPLY_FORMS=('Fixed in <sha>' 'Declined: <reason>' 'Tracked: KEN-<n>')
 REPLY_POINTER='`AGENTS.md` § Code Review Rules is the contract. Read it there.'
+DECOY_BULLET='- Do not re-raise a finding class answered `Declined: <reason>` on this PR'
 BOT_FACING=(review-bots.md .github/copilot-instructions.md)
 mkdir -p "$R/.github"
-reply_fixture() { # the accepted state of all three files
+reply_fixture() { # the accepted state of all three files; with $1, the contract bullet omits that form
+  local omit="${1-}" line f
   printf '%s\n' \
     '# fixture' \
     '' \
     '## Code Review Rules' \
     '' \
-    '- Author replies are `Fixed in <sha>`,' \
-    '  `Declined: <reason>`, or' \
-    '  `Tracked: KEN-<n>` / `#<n>`.' >"$R/AGENTS.md"
-  local f
+    "$DECOY_BULLET" \
+    '  unless the relevant code changed since.' \
+    '- Author replies are one of' >"$R/AGENTS.md"
+  for line in '  `Fixed in <sha>`,' '  `Declined: <reason>`, or' '  `Tracked: KEN-<n>` / `#<n>`.'; do
+    if [ -n "$omit" ]; then
+      case "$line" in *"$omit"*) continue ;; esac
+    fi
+    printf '%s\n' "$line" >>"$R/AGENTS.md"
+  done
   for f in "${BOT_FACING[@]}"; do
     printf '%s\n' "# fixture $f" \
       'Read this alongside AGENTS.md; it is not loaded as working instructions.' \
@@ -333,20 +345,37 @@ reply_run() { # — stage the caller's mutation of the fixture and run guard
   run_guard
 }
 
+# A form is dropped by rewriting the contract bullet, not by deleting every
+# line of the file that carries the literal: the second shape would take the
+# do-not-re-raise bullet with it, and so would pass whether or not the arm
+# reads past the contract.
 for drop in "${REPLY_FORMS[@]}"; do
-  reply_fixture
-  grep -vF -- "$drop" "$R/AGENTS.md" >"$TMP/agents"
-  mv "$TMP/agents" "$R/AGENTS.md"
+  reply_fixture "$drop"
   reply_run
   others=0
   for other in "${REPLY_FORMS[@]}"; do
     [ "$other" = "$drop" ] && continue
     [[ "$OUT" == *"reply form '$other'"* ]] && others=$((others + 1))
   done
-  [ "$RC" != 0 ] && [[ "$OUT" == *"AGENTS.md § Code Review Rules no longer states the reply form '$drop'"* ]] && [ "$others" = 0 ] \
-    && ok "AGENTS.md losing $drop reds, naming that form and no other" \
-    || bad "AGENTS.md losing $drop reds, naming that form and no other" "rc=$RC others=$others out=$OUT"
+  [ "$RC" != 0 ] && [[ "$OUT" == *"reply-contract bullet no longer states the reply form '$drop'"* ]] && [ "$others" = 0 ] \
+    && ok "the contract bullet losing $drop reds, naming that form and no other" \
+    || bad "the contract bullet losing $drop reds, naming that form and no other" "rc=$RC others=$others out=$OUT"
 done
+
+# Anti-vacuous for the case above that carries the decoy: the neighbour bullet
+# has to still spell the dropped form, or that case proves nothing about scope.
+reply_fixture 'Declined: <reason>'
+grep -qF -- "$DECOY_BULLET" "$R/AGENTS.md" \
+  && ok "control: the do-not-re-raise bullet still spells Declined: <reason> after that drop" \
+  || bad "control: the do-not-re-raise bullet still spells Declined: <reason> after that drop" "$(cat "$R/AGENTS.md")"
+
+# The run ends at the bullet after the contract as well as the one before it.
+reply_fixture 'Tracked: KEN-<n>'
+printf '%s\n' '- File the remainder as `Tracked: KEN-<n>` once the round closes.' >>"$R/AGENTS.md"
+reply_run
+[ "$RC" != 0 ] && [[ "$OUT" == *"reply-contract bullet no longer states the reply form 'Tracked: KEN-<n>'"* ]] \
+  && ok "a form dropped from the contract and spelled by the bullet under it reds" \
+  || bad "a form dropped from the contract and spelled by the bullet under it reds" "rc=$RC out=$OUT"
 
 reply_fixture
 rm -f "$R/AGENTS.md"
@@ -382,41 +411,72 @@ for f in "${BOT_FACING[@]}"; do
     || bad "$f pointing the same sentence at another file reds" "rc=$RC out=$OUT"
 done
 
-# Deleting a form is the one mutation a whole-file substring search does
-# catch, so these two are what stand between the arm and a green AGENTS.md
-# with no contract in it. First: the section is gone and its forms survive as
-# a glossary entry calling that spelling retired.
-reply_fixture
-printf '%s\n' \
-  '# fixture' \
-  '' \
-  '## Glossary' \
-  '' \
-  'Historical note: older repos spelled replies `Fixed in <sha>`,' \
-  '`Declined: <reason>`, or `Tracked: KEN-<n>`; that convention is retired here.' >"$R/AGENTS.md"
-reply_run
-[ "$RC" != 0 ] && [[ "$OUT" == *"AGENTS.md has no § Code Review Rules section"* ]] \
-  && ok "a glossary reciting all three forms with the section gone reds" \
-  || bad "a glossary reciting all three forms with the section gone reds" "rc=$RC out=$OUT"
+# Deleting a form outright is the one mutation a whole-file substring search
+# catches. These four are what stand between the arm and a green AGENTS.md
+# with no contract in it: the bullet is gone and the three forms survive
+# somewhere else in the file. Each defeats one predicate this arm has worn in
+# turn — a whole-file search, a heading-to-heading slice, that slice's `## `
+# exit rule, and that slice's start rule re-arming on a repeated heading — and
+# all four red on the one diagnosis, because the arm reads the bullet and no
+# heading at all.
+gutted_probe() { # LABEL — the AGENTS.md that replaces the fixture's arrives on stdin
+  local label="$1"
+  reply_fixture
+  cat >"$R/AGENTS.md"
+  reply_run
+  [ "$RC" != 0 ] && [[ "$OUT" == *"AGENTS.md has no '- Author replies are' bullet"* ]] \
+    && ok "$label" \
+    || bad "$label" "rc=$RC out=$OUT"
+}
 
-# Second: the section is still there, and the forms have moved out of it. This
-# is the one the slice exists for — a heading check alone passes it.
-reply_fixture
-printf '%s\n' \
-  '# fixture' \
-  '' \
-  '## Code Review Rules' \
-  '' \
-  'Raise only defects in the changed lines.' \
-  '' \
-  '## Glossary' \
-  '' \
-  'Replies were once written `Fixed in <sha>`,' \
-  '`Declined: <reason>`, or `Tracked: KEN-<n>`.' >"$R/AGENTS.md"
-reply_run
-[ "$RC" != 0 ] && [[ "$OUT" == *"AGENTS.md § Code Review Rules no longer states the reply form 'Fixed in <sha>'"* ]] \
-  && ok "forms moved out of the section into a later one red" \
-  || bad "forms moved out of the section into a later one red" "rc=$RC out=$OUT"
+gutted_probe "the section gone and the forms recited in a glossary reds" <<'MD'
+# fixture
+
+## Glossary
+
+Historical note: older repos spelled replies `Fixed in <sha>`,
+`Declined: <reason>`, or `Tracked: KEN-<n>`; that convention is retired here.
+MD
+
+gutted_probe "the section kept and the forms moved into a later ## section reds" <<'MD'
+# fixture
+
+## Code Review Rules
+
+Raise only defects in the changed lines.
+
+## Glossary
+
+Replies were once written `Fixed in <sha>`,
+`Declined: <reason>`, or `Tracked: KEN-<n>`.
+MD
+
+gutted_probe "the forms recited under a following # heading reds" <<'MD'
+# fixture
+
+## Code Review Rules
+
+- Do not re-raise a finding class answered `Declined: <reason>` on this PR
+  unless the relevant code changed since.
+
+# Appendix
+
+Retired spellings: `Fixed in <sha>`, `Declined: <reason>`,
+`Tracked: KEN-<n>`.
+MD
+
+gutted_probe "a repeated ## Code Review Rules heading reciting the forms reds" <<'MD'
+# fixture
+
+## Code Review Rules
+
+Raise only defects in the changed lines.
+
+## Code Review Rules
+
+Replies were once written `Fixed in <sha>`, `Declined: <reason>`, or
+`Tracked: KEN-<n>`; that convention is retired here.
+MD
 
 # The pointer's two-file list is a decision, not an oversight: a path-scoped
 # instruction file carries no reply-contract section and is not asked to point

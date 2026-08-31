@@ -44,18 +44,29 @@ split_template() { # FILE — writes $TMP/body and $TMP/block
   ' BODY="$TMP/body" BLOCK="$TMP/block" "$1"
 }
 
-# One anchor per line. A numbered edit runs from its "N. " line to the next
-# blank line, is unwrapped onto one line, and gives up every quoted string
-# whose preceding word is not "with".
+# One record per line, `EDIT<TAB>ANCHOR`. A numbered edit runs from its "N. "
+# line to the next blank line, is unwrapped onto one line, and gives up every
+# quoted string whose preceding word is not "with". Each edit also emits one
+# record with an empty anchor, so an edit that yields nothing is still counted:
+# the anchor rule is a heuristic over English and several ordinary phrasings
+# read a real anchor as replacement text ("beginning with", "starting with"),
+# put it in quotes this pattern cannot match (typographic ones), or elide it to
+# nothing (a leading ellipsis). Which of those it is does not matter downstream
+# — an edit contributing no anchor is the failure, whatever emptied it.
 anchors() { # BLOCK-FILE
   awk '
-    /^[0-9]+\. / { buf = $0; collecting = 1; next }
-    collecting && /^[[:space:]]*$/ { print buf; collecting = 0; buf = ""; next }
+    /^[0-9]+\. / {
+      if (collecting) print num "\t" buf
+      num = $0; sub(/\..*/, "", num); buf = $0; collecting = 1; next
+    }
+    collecting && /^[[:space:]]*$/ { print num "\t" buf; collecting = 0; buf = ""; next }
     collecting { sub(/^[[:space:]]+/, ""); buf = buf " " $0 }
-    END { if (collecting) print buf }
-  ' "$1" | awk '
+    END { if (collecting) print num "\t" buf }
+  ' "$1" | awk -F'\t' '
     {
-      line = $0
+      num = $1
+      line = $2
+      print num "\t"
       while (match(line, /"[^"]*"/)) {
         before = substr(line, 1, RSTART - 1)
         quoted = substr(line, RSTART + 1, RLENGTH - 2)
@@ -64,25 +75,40 @@ anchors() { # BLOCK-FILE
         e = index(quoted, "…")
         if (e > 0) quoted = substr(quoted, 1, e - 1)
         sub(/[[:space:]]+$/, "", quoted)
-        if (quoted != "") print quoted
+        if (quoted != "") print num "\t" quoted
       }
     }
   '
 }
 
-check_anchors() { # FILE LABEL expect-pass|expect-fail
-  local file="$1" label="$2" expect="$3" missing="" n=0 a
+# expect-dark:N asserts the per-edit floor itself: edit N is present in the
+# block and contributes no anchor. Without it a phrasing that empties one edit
+# subtracts silently from the global count and the suite still reports green.
+check_anchors() { # FILE LABEL expect-pass|expect-fail|expect-dark:N
+  local file="$1" label="$2" expect="$3" missing="" dark="" seen="" armed="" n=0 num a want=""
+  case "$expect" in expect-dark:*) want="${expect#expect-dark:}" ;; esac
   split_template "$file"
-  while IFS= read -r a; do
+  while IFS=$'\t' read -r num a; do
+    case " $seen " in *" $num "*) ;; *) seen="$seen $num" ;; esac
     [ -n "$a" ] || continue
     n=$((n + 1))
+    case " $armed " in *" $num "*) ;; *) armed="$armed $num" ;; esac
     grep -qF -- "$a" "$TMP/body" || missing="$missing
         $a"
   done < <(anchors "$TMP/block")
-  if [ "$n" -eq 0 ]; then
-    bad "$label" "the extractor found no anchors at all — it is measuring nothing"
+  for num in $seen; do
+    case " $armed " in *" $num "*) ;; *) dark="$dark $num" ;; esac
+  done
+  if [ -z "$seen" ]; then
+    bad "$label" "the extractor found no numbered edits at all — it is measuring nothing"
+  elif [ -n "$want" ]; then
+    case " $dark " in
+      *" $want "*) ok "$label" ;;
+      *) bad "$label" "edit $want still yielded an anchor; dark:${dark:- none}" ;;
+    esac
   elif [ "$expect" = expect-pass ]; then
-    [ -z "$missing" ] && ok "$label ($n anchors)" || bad "$label" "no body line carries:$missing"
+    [ -z "$dark" ] && [ -z "$missing" ] && ok "$label ($n anchors)" \
+      || bad "$label" "no anchor from edit(s):${dark:- none}; no body line carries:${missing:- none}"
   else
     [ -n "$missing" ] && ok "$label" || bad "$label" "$n anchors all matched; the control proved nothing"
   fi
@@ -113,6 +139,24 @@ check_anchors "$TMP/wrapped.md" "control: an anchor the body wraps across two li
 sed 's/^\*\*Do not stay silent instead\.\*\*/**Never stay silent instead.**/' \
   "$TEMPLATE" >"$TMP/reworded.md"
 check_anchors "$TMP/reworded.md" "control: a reworded body paragraph reds its anchor" expect-fail
+
+# And the phrasing that empties one edit rather than mismatching it: the
+# anchor moved behind the word "with", where the extraction rule reads it as
+# replacement text. The global count falls by one and every remaining anchor
+# still matches, so only the per-edit floor sees this.
+awk '
+  /^3\. REPLACE the second routing bullet \("The fix lands in these vendored bytes":$/ {
+    print "3. REPLACE the second routing bullet, the one beginning with \"The fix lands"
+    print "   in these vendored bytes\", with:"
+    dropping = 1
+    next
+  }
+  dropping && /^   REVIEW SUMMARY BODY\) with:$/ { dropping = 0; next }
+  { print }
+' "$TEMPLATE" >"$TMP/beginning-with.md"
+grep -qF -- 'the one beginning with "The fix lands' "$TMP/beginning-with.md" ||
+  { echo "FATAL: the control did not rephrase edit 3" >&2; exit 1; }
+check_anchors "$TMP/beginning-with.md" "control: an edit whose only quote follows the word with goes dark, and reds" expect-dark:3
 
 echo "=== the recipe states the number of edits it carries ==="
 # A spelled-out count in prose goes stale the next time an edit is added; this
