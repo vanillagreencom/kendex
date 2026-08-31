@@ -310,12 +310,12 @@ $(printf '%s\n' "$badheaders" | sed 's/^/        /')"
   else
     ok "every table header parses as a lone [name]"
   fi
-  # Every settings reader refuses a BOM-prefixed file whole (lib/settings.sh
-  # rg_bom_guard): the BOM is neither whitespace nor `[` nor a key
-  # character, so the first line would misclassify. Findings below a BOM
-  # describe that corrupted read — remove the BOM first.
+  # A BOM is neither whitespace nor `[` nor a key character to any settings
+  # reader, so it misclassifies the line it hides: a BOM'd `[env]` header
+  # leaves the whole table read by nothing, and no reader says so. Findings
+  # below a BOM describe that corrupted read — remove the BOM first.
   if [ "$(head -c 3 < "$sf" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
-    bad "$sf starts with a UTF-8 byte-order mark; remove it (every settings reader refuses the file whole)"
+    bad "$sf starts with a UTF-8 byte-order mark; remove it (it hides the line it precedes from every settings reader)"
   else
     ok "no UTF-8 byte-order mark before the first line"
   fi

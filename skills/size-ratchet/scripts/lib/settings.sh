@@ -75,24 +75,6 @@ sr_dotenv_value() { # RAW — value on stdout; nonzero on an unsupported shape
   return 1
 }
 
-# A source is skipped only when it is ABSENT. A path that exists as
-# something else — directory, FIFO, socket, device — fails -f exactly like
-# an absent one, and a symlink that does not resolve fails -e as well as -f,
-# so -L is what sees it at all: either shape would skip a configured source
-# with nothing said and let a lower-precedence value decide. The /dev/null
-# force-defaults handle never reaches here — sr_setting answers it before any
-# source is consulted.
-sr_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error otherwise
-  { [ -e "$1" ] || [ -L "$1" ]; } || return 0
-  [ ! -f "$1" ] || return 0
-  if [ ! -e "$1" ]; then
-    echo "::error::$1: settings source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
-  else
-    echo "::error::$1: settings source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
-  fi
-  return 1
-}
-
 # Lexically normalize a repo-relative path: drop empty and `.` segments, and
 # let `..` pop the segment before it. Pure string surgery — no symlink
 # resolution, Bash 3.2-safe. The index records canonical paths, so a source
@@ -240,17 +222,6 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
   printf '%s' "$copy"
 }
 
-# A UTF-8 byte-order mark is neither whitespace nor `[` nor a key character
-# to any reader here, so a BOM-prefixed first line silently misfiles the
-# header or assignment it hides. Refuse the source whole, same discipline
-# as the header rule. Read via stdin so the path is never an operand.
-sr_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
-  if [ "$(head -c 3 < "$1" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
-    echo "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
-    return 1
-  fi
-}
-
 # One read discipline for every settings probe: grep exits 0/1 are
 # measurements, anything else is an unreadable source and fails loud —
 # falling through to a lower-precedence layer would silently change the
@@ -276,9 +247,8 @@ sr_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
 # resolver silently returns defaults. awk failing to read the source is an
 # unreadable source and fails loud, same discipline as sr_settings_grep.
 sr_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
-                 # malformed header or leading BOM; 2 + ::error when unreadable
+                 # malformed header or assignment; 2 + ::error when unreadable
   local status=0
-  sr_bom_guard "$1" || return 1
   awk -v src="$1" '
     /^[[:space:]]*\[/ && !/^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
       printf "::error::%s:%d: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", src, NR > "/dev/stderr"
@@ -338,39 +308,14 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       return 1
       ;;
   esac
-  # Every applicable TOML source is validated BEFORE any source answers:
-  # kendex-env validates before its parent-env skip, and a malformed
-  # committed file must fail identically whatever the session exports or
-  # .env.local says — an override must never let a broken file pass
-  # silently. The list is the same one extraction walks below: an explicit
+  # The source list extraction walks below: an explicit
   # SIZE_RATCHET_SETTINGS_FILE consults only itself (set-but-EMPTY is
-  # unset: "" names no file), and /dev/null selects no sources at all, so
-  # nothing is checked for it.
+  # unset: "" names no file), and /dev/null selects no sources at all.
   if [ "${SIZE_RATCHET_SETTINGS_FILE:-}" != "/dev/null" ]; then
     if [ -n "${SIZE_RATCHET_SETTINGS_FILE:-}" ]; then
       set -- "$SIZE_RATCHET_SETTINGS_FILE"
     else
       set -- ".kendex/settings.toml" "kendex.settings.toml"
-    fi
-    for file in "$@"; do
-      file="$(sr_settings_source "$file")" || return 1
-      sr_settings_usable "$file" || return 1
-      if [ -f "$file" ]; then
-        sr_env_table "$file" >/dev/null || return 1
-      fi
-    done
-    # The dotenv layer is probed for usability too: an exported key must
-    # not mask a broken .env.local (directory, dangling symlink, BOM,
-    # unreadable bytes) — every PRESENT source fails loud, the clause the
-    # generic loader honors before re-asserting process values.
-    file="$(sr_settings_source ".env.local")" || return 1
-    sr_settings_usable "$file" || return 1
-    if [ -f "$file" ]; then
-      sr_bom_guard "$file" || return 1
-      if [ ! -r "$file" ]; then
-        echo "::error::$file: unreadable while resolving a setting (permission denied)" >&2
-        return 1
-      fi
     fi
   fi
   # Indirect expansion, not eval: a non-literal NAME must never become code.
@@ -393,9 +338,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # semantics), optional surrounding quotes stripped. Parsed, never sourced.
   local local_env=""
   local_env="$(sr_settings_source ".env.local")" || return 1
-  sr_settings_usable "$local_env" || return 1
   if [ -f "$local_env" ]; then
-    sr_bom_guard "$local_env" || return 1
     status=0
     matches="$(sr_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$local_env")" || status=$?
     [ "$status" -le 1 ] || return 1
@@ -410,11 +353,11 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     fi
   fi
   # Nested project settings override the root file (the standard loader
-  # order); the positional list was built — and every present file already
-  # validated whole — before any source answered, above.
+  # order); the positional list was built above, before any source answered.
+  # sr_env_table validates the WHOLE table, so a duplicate or non-contract
+  # assignment anywhere in the file it reads fails the resolution here.
   for file in "$@"; do
   file="$(sr_settings_source "$file")" || return 1
-  sr_settings_usable "$file" || return 1
   if [ -f "$file" ]; then
     table="$(sr_env_table "$file")" || return 1
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real

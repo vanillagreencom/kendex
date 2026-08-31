@@ -230,86 +230,16 @@ run_raw || true
   && ok "an unrelated duplicated key is exit 2" \
   || bad "unrelated duplicated key is exit 2" "rc=$RC out=$OUT"
 
-# The BOM is neither whitespace nor `[` nor a key character: a BOM'd [env]
-# header would hide the whole table behind the silent built-in 400, and a
-# BOM'd first dotenv assignment would silently skip the layer.
-printf '\357\273\277[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
-run_raw || true
-[ "$RC" -eq 2 ] && case "$OUT" in *"byte-order mark"*) true ;; *) false ;; esac \
-  && ok "a BOM-prefixed settings file is exit 2, not an invisible table" \
-  || bad "BOM settings file is exit 2" "rc=$RC out=$OUT"
-
-printf '[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
-printf '\357\273\277SIZE_RATCHET_THRESHOLD=8\n' > "$R/.env.local"
-run_raw || true
-[ "$RC" -eq 2 ] && case "$OUT" in *"byte-order mark"*) true ;; *) false ;; esac \
-  && ok "a BOM-prefixed .env.local is exit 2, not a skipped layer" \
-  || bad "BOM .env.local is exit 2" "rc=$RC out=$OUT"
-rm -f "$R/.env.local"
-
-# kendex-env validates before its parent-env skip; an exported value must
-# never let a broken committed file pass silently.
-printf '[env]\nDUP = "a"\nDUP = "b"\n' > "$R/kendex.settings.toml"
-run_raw SIZE_RATCHET_THRESHOLD=9 || true
-[ "$RC" -eq 2 ] && case "$OUT" in *"assigned more than once"*) true ;; *) false ;; esac \
-  && ok "an exported value does not mask a malformed settings file" \
-  || bad "env override over malformed file" "rc=$RC out=$OUT"
-printf '[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
-
-# ...and it must not mask a BROKEN .env.local either: the layer's
-# usability is part of every resolution, same as the generic loader.
-mkdir -p "$R/.env.local"
-run_raw SIZE_RATCHET_THRESHOLD=9 || true
-[ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
-  && ok "an exported value does not mask a DIRECTORY at .env.local" \
-  || bad "env override over broken .env.local" "rc=$RC out=$OUT"
-rmdir "$R/.env.local"
-
-echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
-# A directory (FIFO/socket/device are the same shape) fails -f exactly like
-# an absent file, so the configured settings would be skipped with nothing
-# said and the built-in 400 would decide.
-new_repo nonregular
+echo "=== a symlinked settings file reads its target ==="
+new_repo symlinked
 mkfile f.txt 20
 git -C "$R" add -A
-mkdir -p "$R/nonregular.dir"
-run_raw SIZE_RATCHET_SETTINGS_FILE=nonregular.dir || true
-[ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
-  && ok "a DIRECTORY settings path is exit 2, not a silent built-in default" \
-  || bad "a DIRECTORY settings path is exit 2" "rc=$RC out=$OUT"
-
-if mkfifo "$R/nonregular.fifo" 2>/dev/null; then
-  run_raw SIZE_RATCHET_SETTINGS_FILE=nonregular.fifo || true
-  [ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
-    && ok "a FIFO settings path is exit 2, not a silent built-in default" \
-    || bad "a FIFO settings path is exit 2" "rc=$RC out=$OUT"
-  rm -f "$R/nonregular.fifo"
-else
-  echo "  skip  mkfifo unavailable — FIFO shape not exercised"
-fi
-
-# A symlink that does not resolve fails -e as well as -f, so an existence
-# test alone never sees it — the same silent-defaults trap one shape over.
-ln -s missing.toml "$R/dangling.settings.toml"
-run_raw SIZE_RATCHET_SETTINGS_FILE=dangling.settings.toml || true
-[ "$RC" -eq 2 ] && case "$OUT" in *"does not resolve"*) true ;; *) false ;; esac \
-  && ok "a DANGLING symlink settings path is exit 2, not a silent built-in default" \
-  || bad "a DANGLING symlink settings path is exit 2" "rc=$RC out=$OUT"
-
-ln -s cycle-b.settings.toml "$R/cycle-a.settings.toml"
-ln -s cycle-a.settings.toml "$R/cycle-b.settings.toml"
-run_raw SIZE_RATCHET_SETTINGS_FILE=cycle-a.settings.toml || true
-[ "$RC" -eq 2 ] && case "$OUT" in *"does not resolve"*) true ;; *) false ;; esac \
-  && ok "a CYCLIC symlink settings path is exit 2, not a silent built-in default" \
-  || bad "a CYCLIC symlink settings path is exit 2" "rc=$RC out=$OUT"
-
-# A RESOLVING symlink is an ordinary install shape and must still read.
 printf '[env]\nSIZE_RATCHET_THRESHOLD = "15"\n' >"$R/link-target.settings.toml"
 ln -s link-target.settings.toml "$R/link.settings.toml"
 run_raw SIZE_RATCHET_SETTINGS_FILE=link.settings.toml || true
 [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 15"*) true ;; *) false ;; esac \
-  && ok "a RESOLVING symlink reads its target (control: 20 > 15 fails; 400 would have passed)" \
-  || bad "a RESOLVING symlink reads its target (control)" "rc=$RC out=$OUT"
+  && ok "a RESOLVING symlink reads its target (20 > 15 fails; 400 would have passed)" \
+  || bad "a RESOLVING symlink reads its target" "rc=$RC out=$OUT"
 
 # Controls: the two shapes that MUST still resolve to the built-in default.
 run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null || true
@@ -344,33 +274,15 @@ run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null SIZE_RATCHET_THRESHOLD=5 || true
   && ok "an explicit environment variable still wins over the sentinel" \
   || bad "sentinel vs environment" "rc=$RC out=$OUT"
 
-echo "=== an EXISTING non-regular ENV-FILE source never falls through ==="
-# .env.local is probed with -f like the settings file, so a directory or an
-# unresolvable symlink there is skipped exactly like an absent one and a
-# lower-precedence value silently decides.
-new_repo nonregularenv
+echo "=== an ABSENT env file falls through to the settings file ==="
+new_repo absentenv
 mkfile f.txt 20
 git -C "$R" add -A
 printf '[env]\nSIZE_RATCHET_THRESHOLD = "30"\n' >"$R/kendex.settings.toml"
-
-mkdir -p "$R/.env.local"
-run_raw || true
-[ "$RC" -eq 2 ] && case "$OUT" in *".env.local: settings source exists but is not a regular file"*) true ;; *) false ;; esac \
-  && ok "a DIRECTORY at .env.local is exit 2 (falling through would have read 30 and passed)" \
-  || bad "a DIRECTORY at .env.local is exit 2" "rc=$RC out=$OUT"
-rmdir "$R/.env.local"
-
-ln -s missing.env "$R/.env.local"
-run_raw || true
-[ "$RC" -eq 2 ] && case "$OUT" in *".env.local: settings source is a symlink that does not resolve"*) true ;; *) false ;; esac \
-  && ok "a DANGLING .env.local symlink is exit 2, not a silent skip" \
-  || bad "a DANGLING .env.local symlink is exit 2" "rc=$RC out=$OUT"
-rm -f "$R/.env.local"
-
 run_raw || true
 [ "$RC" -eq 0 ] && case "$OUT" in *"threshold 30"*) true ;; *) false ;; esac \
-  && ok "control: with .env.local absent the settings file still supplies 30" \
-  || bad "control: an absent env file falls through to the settings file" "rc=$RC out=$OUT"
+  && ok "with .env.local absent the settings file supplies 30" \
+  || bad "an absent env file falls through to the settings file" "rc=$RC out=$OUT"
 
 echo "=== an UNREADABLE settings source fails loud, never falls through ==="
 # grep exits 0/1 are measurements; anything else means the source could not

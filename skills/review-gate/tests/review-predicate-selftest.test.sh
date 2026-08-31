@@ -747,10 +747,10 @@ else
 fi
 
 # A CYCLIC symlink override fails -f (which dereferences the whole chain)
-# while very much existing — and because rg_setting also gates on -f, an
-# unguarded run would silently resolve EVERY key to built-in defaults and
-# test the wrong settings. The startup guard must refuse before any layer
-# runs; same contract for a dangling link.
+# while very much existing — and rg_setting gates on -f too, so an unguarded
+# run would silently resolve EVERY key to built-in defaults and test the
+# wrong settings. The selftest's own startup precondition must refuse before
+# any layer runs; same contract for a dangling link.
 if passed cyclic; then
   note "selftest passed with a CYCLIC symlinked override — the unresolvable-override guard no longer refuses"
 else
@@ -777,9 +777,9 @@ else
 fi
 
 # An EXISTING NON-REGULAR override (a directory here; a FIFO or socket is
-# the same shape) fails -f without being a symlink: without rg_setting's
-# refusal every key quietly resolves to its built-in default and the whole
-# run green-lights settings nobody configured.
+# the same shape) fails -f without being a symlink: without the startup
+# precondition every key quietly resolves to its built-in default and the
+# whole run green-lights settings nobody configured.
 if passed nonregular; then
   note "selftest passed with a DIRECTORY as the settings override — the non-regular-override guard no longer refuses"
 else

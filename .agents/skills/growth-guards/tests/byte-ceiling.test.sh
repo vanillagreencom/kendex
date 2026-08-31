@@ -238,48 +238,13 @@ OUT="$(cd "$R" && GROWTH_GUARDS_BYTE_CEILING_KB=5 "$BC" 2>&1)" && RC=0 || RC=$?
 [ "$RC" -eq 0 ] && ok "environment overrides the settings file (5 passes where 3 failed)" \
   || bad "environment overrides the settings file" "rc=$RC out=$OUT"
 
-echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
-# A directory (FIFO/socket/device are the same shape) fails -f exactly like
-# an absent file, so the configured settings would be skipped with nothing
-# said and the built-in 200 KB would decide.
-mkdir -p "$R/nonregular.dir"
-OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=nonregular.dir "$BC" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
-  && ok "a DIRECTORY settings path is exit 2, not a silent built-in default" \
-  || bad "a DIRECTORY settings path is exit 2" "rc=$RC out=$OUT"
-
-if mkfifo "$R/nonregular.fifo" 2>/dev/null; then
-  OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=nonregular.fifo "$BC" 2>&1)" && RC=0 || RC=$?
-  [ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
-    && ok "a FIFO settings path is exit 2, not a silent built-in default" \
-    || bad "a FIFO settings path is exit 2" "rc=$RC out=$OUT"
-  rm -f "$R/nonregular.fifo"
-else
-  echo "  skip  mkfifo unavailable — FIFO shape not exercised"
-fi
-
-# A symlink that does not resolve fails -e as well as -f, so an existence
-# test alone never sees it — the same silent-defaults trap one shape over.
-ln -s missing.toml "$R/dangling.settings.toml"
-OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=dangling.settings.toml "$BC" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"does not resolve"*) true ;; *) false ;; esac \
-  && ok "a DANGLING symlink settings path is exit 2, not a silent built-in default" \
-  || bad "a DANGLING symlink settings path is exit 2" "rc=$RC out=$OUT"
-
-ln -s cycle-b.settings.toml "$R/cycle-a.settings.toml"
-ln -s cycle-a.settings.toml "$R/cycle-b.settings.toml"
-OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=cycle-a.settings.toml "$BC" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"does not resolve"*) true ;; *) false ;; esac \
-  && ok "a CYCLIC symlink settings path is exit 2, not a silent built-in default" \
-  || bad "a CYCLIC symlink settings path is exit 2" "rc=$RC out=$OUT"
-
-# A RESOLVING symlink is an ordinary install shape and must still read.
+echo "=== a symlinked settings file reads its target ==="
 printf '[env]\nGROWTH_GUARDS_BYTE_CEILING_KB = "3"\n' >"$R/link-target.settings.toml"
 ln -s link-target.settings.toml "$R/link.settings.toml"
 OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=link.settings.toml "$BC" 2>&1)" && RC=0 || RC=$?
 [ "$RC" -eq 1 ] && case "$OUT" in *"ceiling 3 KB"*) true ;; *) false ;; esac \
-  && ok "a RESOLVING symlink reads its target (control: 4 KB > 3 fails; 200 would have passed)" \
-  || bad "a RESOLVING symlink reads its target (control)" "rc=$RC out=$OUT"
+  && ok "a RESOLVING symlink reads its target (4 KB > 3 fails; 200 would have passed)" \
+  || bad "a RESOLVING symlink reads its target" "rc=$RC out=$OUT"
 
 # Controls: the two shapes that MUST still resolve to the built-in default
 # (200 KB, under which the 4 KB addition passes).
@@ -290,7 +255,6 @@ OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=/dev/null "$BC" 2>&1)" && RC=0 || 
 OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=absent.settings.toml "$BC" 2>&1)" && RC=0 || RC=$?
 [ "$RC" -eq 0 ] && ok "an ABSENT plain file still falls back to the built-in default (control)" \
   || bad "an ABSENT plain file still falls back to the built-in default (control)" "rc=$RC out=$OUT"
-rmdir "$R/nonregular.dir"
 
 echo "=== settings: an unreadable source fails loud, never falls through ==="
 if [ "$(id -u)" -eq 0 ]; then
@@ -309,28 +273,11 @@ else
   rm "$R/.env.local"
 fi
 
-echo "=== an EXISTING non-regular ENV-FILE source never falls through ==="
-# .env.local is probed with -f like the settings file, so a directory or an
-# unresolvable symlink there is skipped exactly like an absent one and a
-# lower-precedence value silently decides.
-mkdir -p "$R/.env.local"
-run_bc_default
-[ "$RC" -eq 2 ] && case "$OUT" in *".env.local: settings source exists but is not a regular file"*) true ;; *) false ;; esac \
-  && ok "a DIRECTORY at .env.local is exit 2 (falling through would have read 3 from the settings file)" \
-  || bad "a DIRECTORY at .env.local is exit 2" "rc=$RC out=$OUT"
-rmdir "$R/.env.local"
-
-ln -s missing.env "$R/.env.local"
-run_bc_default
-[ "$RC" -eq 2 ] && case "$OUT" in *".env.local: settings source is a symlink that does not resolve"*) true ;; *) false ;; esac \
-  && ok "a DANGLING .env.local symlink is exit 2, not a silent skip" \
-  || bad "a DANGLING .env.local symlink is exit 2" "rc=$RC out=$OUT"
-rm -f "$R/.env.local"
-
+echo "=== an ABSENT env file falls through to the settings file ==="
 run_bc_default
 [ "$RC" -eq 1 ] && case "$OUT" in *"ceiling 3 KB"*) true ;; *) false ;; esac \
-  && ok "control: with .env.local absent the settings file still supplies 3" \
-  || bad "control: an absent env file falls through to the settings file" "rc=$RC out=$OUT"
+  && ok "with .env.local absent the settings file supplies 3" \
+  || bad "an absent env file falls through to the settings file" "rc=$RC out=$OUT"
 
 echo "=== fail-closed: a broken blob measurement terminates, never passes ==="
 new_repo measure

@@ -118,34 +118,5 @@ printf '[env]\nUNRELATED = "a"\nUNRELATED = "b"\nGROWTH_GUARDS_TT = "v"\n' >"$R/
 resolve GROWTH_GUARDS_TT "dflt"
 [ "$RC" -ne 0 ] && grep -q "UNRELATED is assigned more than once" "$TMP/err" && ok "an unrelated duplicated key fails the read" || bad "unrelated duplicated key" "rc=$RC out=$OUT"
 
-echo "=== a leading UTF-8 BOM fails loud, never parses as content ==="
-# The BOM is neither whitespace nor `[` nor a key character: a BOM'd [env]
-# header would hide the whole table behind silent defaults, and a BOM'd
-# first dotenv assignment would silently skip the layer.
-printf '\357\273\277[env]\nGROWTH_GUARDS_TT = "hidden"\n' >"$R/kendex.settings.toml"
-resolve GROWTH_GUARDS_TT "dflt"
-[ "$RC" -ne 0 ] && grep -q "byte-order mark" "$TMP/err" && ok "a BOM-prefixed settings file is a config error, not an invisible table" || bad "BOM settings file" "rc=$RC out=$OUT"
-
-printf '[env]\nGROWTH_GUARDS_TT = "fromrepo"\n' >"$R/kendex.settings.toml"
-printf '\357\273\277GROWTH_GUARDS_TT=first\n' >"$R/.env.local"
-resolve GROWTH_GUARDS_TT "dflt"
-[ "$RC" -ne 0 ] && grep -q "byte-order mark" "$TMP/err" && ok "a BOM-prefixed .env.local is a config error, not a skipped layer" || bad "BOM .env.local" "rc=$RC out=$OUT"
-rm -f "$R/.env.local"
-
-echo "=== a malformed lower file fails even under a higher-precedence override ==="
-# kendex-env validates before its parent-env skip; an exported value must
-# never let a broken committed file pass silently.
-printf '[env]\nDUP = "a"\nDUP = "b"\n' >"$R/kendex.settings.toml"
-resolve GROWTH_GUARDS_TT "dflt" "GROWTH_GUARDS_TT=explicit"
-[ "$RC" -ne 0 ] && grep -q "assigned more than once" "$TMP/err" && ok "an exported value does not mask a malformed settings file" || bad "env override over malformed file" "rc=$RC out=$OUT"
-
-# ...and it must not mask a BROKEN .env.local either: the layer's
-# usability is part of every resolution, same as the generic loader.
-printf '[env]\nGROWTH_GUARDS_TT = "fromrepo"\n' >"$R/kendex.settings.toml"
-mkdir -p "$R/.env.local"
-resolve GROWTH_GUARDS_TT "dflt" "GROWTH_GUARDS_TT=explicit"
-[ "$RC" -ne 0 ] && grep -q "not a regular file" "$TMP/err" && ok "an exported value does not mask a DIRECTORY at .env.local" || bad "env override over broken .env.local" "rc=$RC out=$OUT"
-rmdir "$R/.env.local"
-
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

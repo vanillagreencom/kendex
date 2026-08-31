@@ -36,6 +36,22 @@ predicate="$here/review-predicate.sh"
 [ -x "$predicate" ] || { echo "not executable: $predicate" >&2; exit 1; }
 . "$here/lib/settings.sh"
 
+# An override naming something other than a regular file is a harness
+# precondition, not a settings layer: the resolver skips a path `-f` cannot
+# see, so every key below would answer its built-in default and the run
+# would green-light settings nobody configured. `/dev/null` and an absent
+# path are callers asking for defaults; a directory or a link that does not
+# resolve is neither.
+case "${REVIEW_GATE_SETTINGS_FILE:-}" in
+  '' | /dev/null) : ;;
+  *)
+    if { [ -e "$REVIEW_GATE_SETTINGS_FILE" ] || [ -L "$REVIEW_GATE_SETTINGS_FILE" ]; } && [ ! -f "$REVIEW_GATE_SETTINGS_FILE" ]; then
+      echo "REVIEW_GATE_SETTINGS_FILE '$REVIEW_GATE_SETTINGS_FILE' is not a regular file (directory, FIFO, socket, device, or a link that does not resolve); the selftest would run on built-in defaults" >&2
+      exit 1
+    fi
+    ;;
+esac
+
 # ------------------------------------------------------------ active config ---
 # Resolved exactly as the predicate resolves it, from the invoking repo's
 # environment/settings. The configured layer generates its cases from these.

@@ -200,9 +200,9 @@ dir="$DIR"
 printf '\n[env] # comment\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
 expect_fail "a header the loader cannot parse is its own finding" "$dir" "table header(s) the loader cannot parse"
 
-# Every settings reader refuses a BOM-prefixed file whole, so the BOM is
-# its own finding — without it the report would blame lines the corrupted
-# read never classified.
+# A BOM hides the line it precedes from every settings reader with nothing
+# said, so it is its own finding — without it the report would blame lines
+# the corrupted read never classified.
 sandbox
 dir="$DIR"
 printf '\357\273\277[env]\nREVIEW_GATE_THREADS = "off"\n' >"$dir/kendex.settings.toml"

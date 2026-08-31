@@ -65,7 +65,7 @@ skills/github/scripts/lib/github-api.sh	943
 skills/github/scripts/lib/verify-lib.sh	415
 skills/github/tests/git-diff-summary-cfg-test-declaration.test.sh	2128
 skills/growth-guards/scripts/install-git-hooks	535
-skills/growth-guards/scripts/lib/settings.sh	467
+skills/growth-guards/scripts/lib/settings.sh	410
 skills/iced-rs/examples/changelog/src/changelog.rs	418
 skills/iced-rs/examples/color_palette/src/main.rs	479
 skills/iced-rs/examples/custom_shader/src/scene/pipeline.rs	584
@@ -120,12 +120,11 @@ skills/review-gate/tests/e2e-sandbox.sh	898
 skills/review-gate/tests/pr-watch.test.sh	1158
 skills/review-gate/tests/review-predicate-selftest.test.sh	929
 skills/review-gate/tests/review-writer-template.test.sh	923
-skills/second-opinion/scripts/second-opinion	2627
+skills/second-opinion/scripts/second-opinion	2624
 skills/second-opinion/scripts/second-opinion-runtime	420
 skills/second-opinion/tests/cli-failure-gate.test.sh	1211
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999
 skills/second-opinion/tests/review-dual-model.test.sh	1516
-skills/size-ratchet/scripts/lib/settings.sh	456
 skills/size-ratchet/scripts/size-ratchet	1815
 skills/worktree/scripts/worktree	4961
 skills/worktree/scripts/worktree-session-guard	1197
