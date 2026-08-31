@@ -260,9 +260,18 @@ fn a_registry_refusal_after_the_build_removes_only_the_folder_it_made() {
     let refused = author::create(&env, &request(&made, License::Mit)).unwrap_err();
     unlock();
 
+    // `can_register` and `register` word a duplicate row identically, so
+    // the refusal that must NOT have fired is named rather than the one
+    // that did: a duplicate would refuse before `build_in` and this would
+    // stop reaching the removal it exists to pin.
+    let said = refused.to_string();
     assert!(
-        !refused.to_string().contains("left behind"),
-        "the folder came back, so the error is the registry's own: {refused}"
+        !said.contains("already under Mine"),
+        "the refusal has to be the registry's write, not its duplicate check: {said}"
+    );
+    assert!(
+        !said.contains("left behind"),
+        "and the folder came back, so the error is the registry's own: {said}"
     );
     assert!(!made.exists(), "the folder this call made is gone");
     assert_eq!(
