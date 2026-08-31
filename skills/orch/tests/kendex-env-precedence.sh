@@ -230,7 +230,10 @@ esac
 # source (directory, dangling symlink, unreadable file) fails the load
 # loud, naming the path — silently treating it as absent would let a
 # lower-precedence value decide, the same fail-open the rg/gg/sr resolver
-# family refuses.
+# family refuses. The .env.local case carries the same rule one step
+# further: that file is SOURCED, and the shell status of that `source` is
+# the whole of the guarantee. A single `|| return 0` on it drops the layer
+# with nothing said, and only a source that actually fails catches it.
 s8_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside the project dir
   local name="$1" stage="$2" want="$3" code=0 err proj="$TMP_ROOT/proj8"
   rm -rf "$proj"
@@ -253,6 +256,10 @@ s8_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside the project dir
 s8_case "a DIRECTORY at .env.local" 'mkdir .env.local' ".env.local: source exists but is not a regular file"
 s8_case "a DANGLING SYMLINK at kendex.settings.toml" 'ln -s missing.toml kendex.settings.toml' "kendex.settings.toml: source is a symlink that does not resolve"
 s8_case "a DIRECTORY at .kendex/settings.toml" 'mkdir -p .kendex/settings.toml' "settings.toml: source exists but is not a regular file"
+# A .env.local the shell cannot parse: the load must carry the failure out,
+# never swallow it and resolve on the layers below. Unlike the unreadable
+# arm this one needs no non-root guard — root cannot parse it either.
+s8_case "a MALFORMED .env.local the shell cannot source" 'printf "A=(\n" > .env.local' ".env.local: line "
 if [ "$(id -u)" -eq 0 ]; then
   printf '  skip  scenario 8: unreadable-source pin needs a non-root reader (chmod 000 cannot deny root)\n'
 else
