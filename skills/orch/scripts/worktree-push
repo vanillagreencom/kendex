@@ -18,9 +18,10 @@
 #     form `dropped:<recorded-sha>` when the mapping is `dropped` — the
 #     commit no longer exists on the branch, so publishers must omit it or
 #     cite the upstream equivalent, never print it as a live SHA;
-#   - remaps each fix-round base_sha in the external authorization and worktree
-#     recovery copy together, refusing divergent copies, ambiguous same-subject
-#     mappings, or a dropped base whose exact replacement snapshot is unknown;
+#   - remaps the active fix-round base_sha in the external authorization and
+#     worktree recovery copy together, refusing divergent copies, ambiguous
+#     same-subject mappings, or a dropped base whose exact replacement snapshot
+#     is unknown;
 #   - prints one `sha-reconcile:` summary line naming what changed.
 #
 # The rebase happens BEFORE the network push, so a rejected push can still
@@ -178,12 +179,17 @@ authorization_mapping_is_unambiguous() {
 }
 
 reconcile_round_authorizations() {
-	local map_json="$1" auth_dir auth round_id recovery base_sha new_sha
+	local map_json="$1" active_round_id="$2" auth_dir auth round_id recovery base_sha new_sha
 	local auth_tmp recovery_tmp auth_backup recovery_backup
+	[[ -n "$active_round_id" ]] || return 0
+	[[ "$active_round_id" =~ ^[A-Za-z0-9._-]+$ && "$active_round_id" != *..* ]] || {
+		printf 'worktree-push: workflow state has invalid dev_round_id: %s\n' "$active_round_id" >&2
+		return 1
+	}
 	auth_dir="$git_common_dir/kendex/dev-round-authorizations"
 	[[ -d "$auth_dir" ]] || return 0
-	for auth in "$auth_dir/$state_key-"*.json; do
-		[[ -e "$auth" || -L "$auth" ]] || continue
+	auth="$auth_dir/$state_key-$active_round_id.json"
+	if [[ -e "$auth" || -L "$auth" ]]; then
 		[[ -f "$auth" && ! -L "$auth" ]] || {
 			printf 'worktree-push: round authorization is not a regular file: %s\n' "$auth" >&2
 			return 1
@@ -191,13 +197,13 @@ reconcile_round_authorizations() {
 		base_sha="$(jq -er 'select((.base_sha? | type) == "string" and .base_sha != "") | .base_sha' "$auth")" || {
 			printf 'worktree-push: authorization has no usable base_sha: %s\n' "$auth" >&2
 			return 1
-		}
-		new_sha="$(jq -r --arg base "$base_sha" '.[$base] // empty' <<<"$map_json")" || return 1
-		[[ -n "$new_sha" ]] || continue
+	}
+	new_sha="$(jq -r --arg base "$base_sha" '.[$base] // empty' <<<"$map_json")" || return 1
+		[[ -n "$new_sha" ]] || return 0
 		authorization_mapping_is_unambiguous "$base_sha" "$map_json" || return 1
 		round_id="$(jq -r '.round_id // ""' "$auth")" || return 1
-		[[ "$round_id" =~ ^[A-Za-z0-9._-]+$ && "$round_id" != *..* ]] || {
-			printf 'worktree-push: invalid round id in authorization %s\n' "$auth" >&2
+		[[ "$round_id" == "$active_round_id" ]] || {
+			printf 'worktree-push: authorization round %s does not match active dev round %s\n' "$round_id" "$active_round_id" >&2
 			return 1
 		}
 		recovery="$worktree_abs/tmp/dev-round-$state_key-$round_id.json"
@@ -256,7 +262,7 @@ reconcile_round_authorizations() {
 			return 1
 		fi
 		rm -f "$auth_backup" "$recovery_backup"
-	done
+	fi
 }
 
 # Apply one map (a JSON object of old->new) to workflow state atomically and
@@ -266,8 +272,9 @@ reconcile_round_authorizations() {
 # against the entry's original value so one push's mappings cannot chain
 # through each other.
 reconcile_map() {
-	local map_json="$1" report
-	reconcile_round_authorizations "$map_json" || return 1
+	local map_json="$1" report round_id
+	round_id="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.dev_round_id // ""')" || return 1
+	reconcile_round_authorizations "$map_json" "$round_id" || return 1
 	report="$(WTP_MAP="$map_json" "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update-report "$issue" '
 		def remap($map): . as $sha
 		  | reduce ($map | to_entries[]) as $e ($sha;

@@ -210,7 +210,8 @@ assert_eq "$(jq -r '.reason' <<<"$before_restack")" "unapproved_additions" \
 restack_state="$TMP_ROOT/restack-state"
 mkdir -p "$restack_state"
 (cd "$restack_state" && "$STATE" init KEN-RESTACK --agent generalist \
-  --worktree "$restack_wt" --branch main >/dev/null)
+  --worktree "$restack_wt" --branch main >/dev/null \
+  && "$STATE" set KEN-RESTACK dev_round_id 1-1)
 STUB_PUSH_STDOUT="rebase-map: $restack_old $restack_base" \
   run_push "$restack_state" --worktree "$restack_wt" --issue KEN-RESTACK
 assert_eq "$RUN_RC" "0" "restack map and authorization reconciliation succeed together"
@@ -224,15 +225,16 @@ assert_eq "$(jq -r '.reason' <<<"$after_restack")" "valid" \
 
 "$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 2-2 --item 1 stale >/dev/null
 stale_auth="$restack_wt/.git/kendex/dev-round-authorizations/KEN-RESTACK-2-2.json"
-jq --arg base "$OLD_A" '.base_sha = $base' "$stale_auth" > "$TMP_ROOT/stale-auth.json"
-mv "$TMP_ROOT/stale-auth.json" "$stale_auth"
 rm -f "$restack_wt/tmp/dev-round-KEN-RESTACK-2-2.json"
-STUB_PUSH_STDOUT="rebase-map: $restack_old $restack_base" \
+STUB_PUSH_STDOUT="rebase-map: $restack_head $restack_base" \
   run_push "$restack_state" --worktree "$restack_wt" --issue KEN-RESTACK
-assert_eq "$RUN_RC" "0" "stale authorization missing recovery does not block an unrelated map"
+assert_eq "$RUN_RC" "0" "mapped historical authorization missing recovery does not block the current round"
+assert_eq "$(jq -r '.base_sha' "$stale_auth")" "$restack_head" \
+  "historical authorization is not remapped"
 
 "$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 3-3 --item 1 active >/dev/null
 rm -f "$restack_wt/tmp/dev-round-KEN-RESTACK-3-3.json"
+(cd "$restack_state" && "$STATE" set KEN-RESTACK dev_round_id 3-3)
 STUB_PUSH_STDOUT="rebase-map: $restack_head $restack_base" \
   run_push "$restack_state" --worktree "$restack_wt" --issue KEN-RESTACK
 assert_eq "$RUN_RC" "1" "active authorization missing recovery fails reconciliation closed"
@@ -245,6 +247,7 @@ rm -f "$restack_wt/.git/kendex/dev-round-authorizations/KEN-RESTACK-3-3.json" \
 divergent_recovery="$restack_wt/tmp/dev-round-KEN-RESTACK-4-4.json"
 jq '.adds = ["tools/not-authorized"]' "$divergent_recovery" > "$TMP_ROOT/divergent-recovery.json"
 mv "$TMP_ROOT/divergent-recovery.json" "$divergent_recovery"
+(cd "$restack_state" && "$STATE" set KEN-RESTACK dev_round_id 4-4)
 STUB_PUSH_STDOUT="rebase-map: $restack_head $restack_base" \
   run_push "$restack_state" --worktree "$restack_wt" --issue KEN-RESTACK
 assert_eq "$RUN_RC" "1" "divergent authorization copies fail reconciliation closed"
@@ -431,6 +434,7 @@ git -C "$wt" commit -q --allow-empty -m alias-restack
 alias_new="$(git -C "$wt" rev-parse HEAD)"
 (cd "$work" \
   && "$STATE" init issue-7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null \
+  && "$STATE" set issue-7 dev_round_id 5-5 \
   && "$STATE" append issue-7 fixed_items "{\"description\":\"fix\",\"commit\":\"${alias_old:0:7}\",\"source\":\"pr-review\"}")
 STUB_PUSH_STDOUT="rebase-map: $alias_old $alias_new" run_push "$work" --worktree "$wt" --issue 7
 assert_eq "$RUN_RC" "0" "a bare-numeric issue binds to its issue-N state instead of refusing"
@@ -534,7 +538,8 @@ duplicate_second="$(git -C "$duplicate_wt" rev-parse HEAD)"
 duplicate_state="$TMP_ROOT/duplicate-subject-state"
 mkdir -p "$duplicate_state"
 (cd "$duplicate_state" && "$STATE" init KEN-DUPLICATE --agent generalist \
-  --worktree "$duplicate_wt" --branch main >/dev/null)
+  --worktree "$duplicate_wt" --branch main >/dev/null \
+  && "$STATE" set KEN-DUPLICATE dev_round_id 1-1)
 STUB_PUSH_STDOUT="rebase-map: $duplicate_first $duplicate_second
 rebase-map: $duplicate_second dropped" \
   run_push "$duplicate_state" --worktree "$duplicate_wt" --issue KEN-DUPLICATE
