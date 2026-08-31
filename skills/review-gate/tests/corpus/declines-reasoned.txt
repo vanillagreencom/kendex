@@ -48,3 +48,10 @@ Declined: загрузчик никогда не читает этот ключ
 # reach it.
 Declined under this PR's freeze. You are right about the mechanism, and it fails in the safe direction.
 Declined under this PR's freeze. Real, and it costs a diagnostic rather than a verdict.
+
+# --- the new passing-checks words, each inside a real reason --------------
+# Paired with the must-catch section that added them. The subtraction has to
+# leave a mechanism standing even when it carries one of those words.
+Declined: lint already rejects that shape, so the branch you name never compiles.
+Declined: the build script strips the flag before the parser reads it, so the checks you name never see it.
+Declined: CI never reaches that path — the workflow filter excludes the directory you name.

@@ -108,3 +108,33 @@ Declined: KEN-881
 Declined: see KEN-881
 Declined: tracked in KEN-123
 Declined: #1801
+
+# --- a passing-checks claim is a test count in other clothes --------------
+# Same content-free assertion as "tests pass" above: it says a suite ran, not
+# that the finding is wrong. The list read "tests" and "suites" and nothing
+# else, so every spelling below cleared the gate. Residue like "checks" or
+# "ci" is ordinary filler, not the suite NAME that draws the known limit.
+Declined: all checks pass
+Declined: the checks pass
+Declined: checks pass
+Declined: all checks are green
+Declined: all checks passing
+Declined: all checks pass on this head
+Declined: CI is green
+Declined: CI passes
+Declined: ci is passing
+Declined: CI is green at this head
+Declined: the build passes
+Declined: build is green
+Declined: it builds fine
+Declined: it compiles
+Declined: the pipeline is green
+Declined: the pipeline passes
+Declined: lint passes
+Declined: lint is clean
+Declined: the workflow passes
+Declined: the job is green
+Declined: typecheck passes
+Declined: validation passes
+Declined: coverage is fine
+Declined: everything passes
