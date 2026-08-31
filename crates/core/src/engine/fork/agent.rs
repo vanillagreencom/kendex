@@ -27,28 +27,36 @@ mod prose;
 mod wrapper;
 
 use super::ForkOf;
+use super::stated::{Stated, carried_edits, stated, uncarried as uncarried_settings};
 use crate::engine::agent_carry::{AgentCarry, agent_carry};
 use prose::prose;
 use wrapper::{Wrapper, wrapper};
 
-/// One captured agent: the source-form bytes for the local source, and the
-/// catalog values that have to reach the manifest with them.
+/// One captured agent: the source-form bytes for the local source, the
+/// catalog values that have to reach the manifest with them, and whatever
+/// the person's own file states that no manifest entry can hold.
 pub(super) struct CapturedAgent {
     pub bytes: Vec<u8>,
     pub carry: Option<AgentCarry>,
+    /// The catalog revision the captured bytes were read at. Every tool the
+    /// copy answers for has to be installed from it, or one capture cannot
+    /// speak for all of them.
+    pub read_at: Option<String>,
+    /// What the fork will not reproduce, named. Empty is the ordinary
+    /// answer; anything in it goes on the plan, because a restriction the
+    /// copy drops without saying so is the one thing a fork must not do.
+    pub uncarried: Vec<String>,
 }
 
-/// The agent as the local source should hold it. `installed_as` is the
-/// name the fork will render under — the original's for a fork in place,
-/// the person's choice for one beside it — because a harness's own deny
-/// rules read the name, and the wrapper that finds the person's prose is
-/// read under the name the file was written with.
+/// The agent as the local source should hold it: the publisher's
+/// frontmatter around the person's own prose, with the settings they
+/// changed in the generated file folded into the carry so the copy renders
+/// what the file on disk states.
 pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent> {
     let ForkOf {
         env,
         scope,
         manifest,
-        decl,
         name,
         harness,
         ..
@@ -58,6 +66,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         agent: publisher,
         carry,
         overrides,
+        read_at,
     } = published(of)?;
     // What the project and the catalog put around this agent's own prose,
     // as the file on disk was written with it, and as the fork will write
@@ -84,12 +93,50 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         }
     })?;
     let bytes = source_form(&published, &edited_text, name, read.as_ref())?;
-    // Parsed for its diagnostics alone: source form the parser refuses is
-    // source form the next apply refuses too, and saying so now beats
-    // writing it into the local source and failing there.
-    parse_source_agent(&String::from_utf8_lossy(&bytes))
-        .map_err(|problem| unreadable(name, &decl.source, problem))?;
-    Ok(CapturedAgent { bytes, carry })
+    // What the person changed in the generated file, against what the fork
+    // would render in its place. The harness may refuse this agent's
+    // permission intent, in which case the fork installs no file for it at
+    // all: no rendering to compare against, and no edit to that rendering
+    // to carry.
+    let Some(rendering) = render(scope, &publisher, harness, &around) else {
+        return Ok(CapturedAgent {
+            bytes,
+            carry,
+            read_at,
+            uncarried: Vec::new(),
+        });
+    };
+    // Frontmatter that will not read is not the same answer as frontmatter
+    // stating nothing: what the person set cannot be read, so it cannot be
+    // carried, and the plan says so rather than the copy going quietly
+    // wider.
+    let (on_disk, unreadable) = match stated(harness, &edited_text) {
+        Ok(on_disk) => (on_disk, Vec::new()),
+        Err(problem) => (
+            Stated::default(),
+            vec![format!(
+                "every setting its {} file states: its frontmatter cannot be read ({problem})",
+                harness.display_name()
+            )],
+        ),
+    };
+    let after =
+        stated(harness, &rendering).map_err(|problem| CoreError::ForkWrapperUnreadable {
+            name: crate::names::shown(name),
+            harness: harness.display_name().to_owned(),
+            problem: format!("its own rendering reads back as {problem}"),
+        })?;
+    let mut uncarried = unreadable;
+    uncarried.extend(uncarried_settings(&on_disk, &after, harness));
+    let carry = carry
+        .unwrap_or_default()
+        .over(harness.name(), carried_edits(&on_disk, &after));
+    Ok(CapturedAgent {
+        bytes,
+        carry: (!carry.is_empty()).then_some(carry),
+        read_at,
+        uncarried,
+    })
 }
 
 /// The agent as its catalog published it, at the commit this installation
@@ -105,6 +152,8 @@ struct Published {
     /// name. Reading the manifest alone would call them already lost and
     /// refuse a fork that carries them perfectly well.
     overrides: FrontmatterOverrides,
+    /// The revision the catalog was read at.
+    read_at: Option<String>,
 }
 
 fn published(of: &ForkOf) -> Result<Published> {
@@ -138,6 +187,7 @@ fn published(of: &ForkOf) -> Result<Published> {
     let bytes = sealed.read(&path)?;
     let in_scope = crate::engine::ScopeSkills::of(env, scope, manifest)?;
     Ok(Published {
+        read_at: commit,
         agent: parse_source_agent(&String::from_utf8_lossy(&bytes))
             .map_err(|problem| unreadable(name, &decl.source, problem))?,
         carry: agent_carry(manifest, &sealed, &config, name, &bytes, &in_scope)?,

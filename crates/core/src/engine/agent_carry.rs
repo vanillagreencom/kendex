@@ -29,6 +29,36 @@ impl AgentCarry {
         self.skills.clone()
     }
 
+    /// Whether this carries nothing, so nothing has to reach the manifest.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.skills.is_empty() && self.frontmatter.is_empty()
+    }
+
+    /// Fold one harness's overrides in above whatever is already carried
+    /// for it. `extra` wins per field, the way the project's own entry
+    /// wins over the catalog's default when both are read from disk.
+    ///
+    /// The one producer of a record for a harness the catalog never
+    /// configured: the person's own edits to a generated file are read off
+    /// that file, not out of any catalog, so nothing else can put them in
+    /// the carry.
+    pub(crate) fn over(mut self, harness: &str, extra: FrontmatterOverrides) -> AgentCarry {
+        if extra == FrontmatterOverrides::default() {
+            return self;
+        }
+        match self
+            .frontmatter
+            .iter_mut()
+            .find(|(name, _)| name == harness)
+        {
+            Some((_, carried)) => {
+                *carried = crate::render::agent::merge_overrides(Some(carried), Some(&extra));
+            }
+            None => self.frontmatter.push((harness.to_owned(), extra)),
+        }
+        self
+    }
+
     /// Write the carried values into the manifest under `name`. Skills
     /// land only where the manifest has nothing of its own, since an
     /// entry already governs; frontmatter folds in over what is there,
@@ -38,7 +68,8 @@ impl AgentCarry {
     /// for a harness the catalog configured this agent under: where the
     /// catalog configured none and the project did, the carry's whole
     /// record is the person's edit alone, and writing that over the
-    /// project's entry drops the denies it held.
+    /// project's entry drops the denies it held. [`over`](Self::over) is
+    /// what puts such a record there.
     pub(crate) fn apply(self, manifest: &mut Manifest, name: &str) {
         if !self.skills.is_empty() && !manifest.agent_skills.contains_key(name) {
             manifest.agent_skills.insert(name.to_owned(), self.skills);

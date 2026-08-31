@@ -69,7 +69,12 @@ pub fn fork_beside(
         },
         &edited,
     )?;
-    let Captured { files, carry } = captured;
+    let Captured {
+        files,
+        carry,
+        read_at,
+        uncarried,
+    } = captured;
     let mut ops = capture_ops(env, scope, kind, new_name, &edited, named(files, new_name)?)?;
     let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
     // An agent's configuration is keyed by its installed name, so a copy
@@ -103,9 +108,23 @@ pub fn fork_beside(
             .rev = Some(commit);
     }
 
+    // One capture, read at one revision, is what every tool renders from
+    // once the copy lands — so every tool it answers for has to be at that
+    // revision now. Proven before any of it reaches disk.
+    if kind == ItemKind::Agent {
+        let declared = manifest
+            .declared(kind)
+            .get(new_name)
+            .unwrap_or_else(|| unreachable!("declared above"));
+        super::revision::one_revision(env, scope, &manifest, declared, name, read_at.as_deref())?;
+    }
+
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
-        description: format!("record the fork of {name} as {new_name} in kendex.toml").into(),
+        description: super::recorded(
+            format!("record the fork of {name} as {new_name} in kendex.toml"),
+            &uncarried,
+        ),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,

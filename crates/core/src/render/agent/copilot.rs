@@ -1,7 +1,7 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, hooks_prose, skills_prose};
 use crate::harness::models::resolve_model;
 use crate::model::{HarnessId, Scope};
-use crate::render::permission::{Access, PermissionIntent};
+use crate::render::permission::PermissionIntent;
 use crate::render::vocab::{copilot_tool_name, rewrite_prose};
 use crate::render::{RenderWarning, yaml_quoted, yaml_scalar};
 
@@ -31,7 +31,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     if let Some(id) = &resolved.id {
         push(format!("model: {}", yaml_scalar(id)));
     }
-    if let Some(allow) = access(agent).allow {
+    if let Some(allow) = allowed(agent) {
         match allow.is_empty() {
             true => push("tools: []".to_owned()),
             false => {
@@ -81,18 +81,16 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     }
 }
 
-/// What Copilot's own rules leave this agent able to use. Its frontmatter
-/// carries an allowlist and no deny list, so a deny intent restricts
-/// nothing here — the rendering warns about exactly that.
-fn access(agent: &EffectiveAgent) -> Access {
-    Access {
-        allow: match &agent.permissions {
-            PermissionIntent::AllowOnly { allow, .. } => {
-                Some(allow.iter().map(|tool| copilot_tool_name(tool)).collect())
-            }
-            _ => None,
-        },
-        deny: Vec::new(),
+/// The tool allowlist Copilot writes, or `None` where the author stated
+/// no allowlist. Copilot's frontmatter carries an allowlist and no deny
+/// list, so a deny intent restricts nothing here — the rendering warns
+/// about exactly that.
+fn allowed(agent: &EffectiveAgent) -> Option<Vec<String>> {
+    match &agent.permissions {
+        PermissionIntent::AllowOnly { allow, .. } => {
+            Some(allow.iter().map(|tool| copilot_tool_name(tool)).collect())
+        }
+        _ => None,
     }
 }
 

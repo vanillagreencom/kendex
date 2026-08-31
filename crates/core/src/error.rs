@@ -254,6 +254,13 @@ pub enum CoreError {
     #[error("`{name}` can't be your copy's name: {problem}")]
     ForkNameUnusable { name: String, problem: String },
 
+    /// A fork beside refused before writing anything: the copy is one file
+    /// every targeted tool renders from, and they are not all at the
+    /// revision it was read at. A revision the capture did not read can
+    /// state tools its own does not, so that rendering's denies are lost.
+    #[error("keeping '{name}' as your own cannot answer for {problem}")]
+    ForkRevisionsDiffer { name: String, problem: String },
+
     /// A fork refused before writing anything: the generated document
     /// around this agent's prose does not read back as the sections the
     /// renderer wrote, so there is no telling the person's own words from

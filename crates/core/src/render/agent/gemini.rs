@@ -1,7 +1,7 @@
 use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, hooks_prose, skills_prose};
 use crate::harness::models::resolve_model;
 use crate::model::{HarnessId, Scope};
-use crate::render::permission::{Access, PermissionIntent};
+use crate::render::permission::PermissionIntent;
 use crate::render::vocab::{gemini_tool_name, rewrite_prose};
 use crate::render::{RenderWarning, yaml_quoted, yaml_scalar};
 
@@ -37,7 +37,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
         "model: {}",
         yaml_scalar(resolved.id.as_deref().unwrap_or("inherit"))
     ));
-    if let Some(allow) = access(agent).allow {
+    if let Some(allow) = allowed(agent) {
         match allow.is_empty() {
             true => push("tools: []".to_owned()),
             false => {
@@ -87,18 +87,16 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
     }
 }
 
-/// What Gemini's own rules leave this agent able to use. Its frontmatter
-/// carries an allowlist and no deny list, so a deny intent restricts
-/// nothing here — the rendering warns about exactly that.
-fn access(agent: &EffectiveAgent) -> Access {
-    Access {
-        allow: match &agent.permissions {
-            PermissionIntent::AllowOnly { allow, .. } => {
-                Some(allow.iter().map(|tool| gemini_tool_name(tool)).collect())
-            }
-            _ => None,
-        },
-        deny: Vec::new(),
+/// The tool allowlist Gemini writes, or `None` where the author stated no
+/// allowlist. Gemini's frontmatter carries an allowlist and no deny list,
+/// so a deny intent restricts nothing here — the rendering warns about
+/// exactly that.
+fn allowed(agent: &EffectiveAgent) -> Option<Vec<String>> {
+    match &agent.permissions {
+        PermissionIntent::AllowOnly { allow, .. } => {
+            Some(allow.iter().map(|tool| gemini_tool_name(tool)).collect())
+        }
+        _ => None,
     }
 }
 

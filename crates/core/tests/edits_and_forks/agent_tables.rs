@@ -55,23 +55,29 @@ fn forking_beside_carries_the_projects_denies_without_taking_them() {
 }
 
 /// A carry holds a frontmatter record only for a harness the catalog
-/// configured this agent under, and it states only what that catalog set.
-/// Written over the entry the rekey just copied it would take the
-/// project's denies off the copy — the widening the fork exists to
-/// prevent, arriving through the table meant to carry it. It folds in
-/// field by field instead, so both sides survive.
+/// configured this agent under, plus whatever the person edited into the
+/// generated file. Where the catalog configured none and the project did,
+/// that record is the person's edit alone, so writing it over the entry
+/// the rekey just copied takes the project's denies off the copy — the
+/// widening the fork exists to prevent, arriving through the table meant
+/// to carry it. It folds in field by field instead, so both sides survive.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_beside_keeps_a_deny_the_catalog_never_configured() {
     let w = agent_world(
         "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
-        // The catalog configures a colour and nothing else, so the carry
-        // holds a Claude record that states no denies at all.
-        "[agent-frontmatter.claude]\nrev = { color = \"green\" }\n",
+        "---\nname: rev\ndescription: agent rev\ncolor: blue\n---\nUpstream body.\n",
+        "",
         "[agent-frontmatter.claude]\nrev = { deny-tools = [\"Bash\"] }\n",
     );
-    edit_body(&rendered(&w, HarnessId::Claude, "rev"));
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("color: blue", "color: magenta")
+            .replace("Upstream body.", "My body."),
+    )
+    .unwrap();
 
     let plan = fork::fork_beside(
         &w.env,
@@ -99,8 +105,8 @@ fn forking_beside_keeps_a_deny_the_catalog_never_configured() {
     );
     assert_eq!(
         record.color.as_deref(),
-        Some("green"),
-        "and the catalog default the carry brought: {record:?}"
+        Some("magenta"),
+        "and the edit that rode in beside it: {record:?}"
     );
     let copy = fs::read_to_string(rendered(&w, HarnessId::Claude, "rev-mine")).unwrap();
     assert!(
