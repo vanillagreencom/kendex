@@ -278,3 +278,86 @@ fn an_unreadable_hooks_directory_is_could_not_check_not_a_not_armed_claim() {
         "the line does not say the check could not be taken: {text}"
     );
 }
+
+/// A skills directory that will not open is a search that did not happen,
+/// never evidence that nothing is rendered.
+///
+/// "The package is declared and its scripts are not there" is a definite
+/// claim with a definite remedy, and the only thing that supports it is
+/// every candidate answering `NotFound`. A directory the search could not
+/// enter holds an unknown number of copies, so folding it into "nothing
+/// here" prescribes `kendex refresh` for a repository nobody looked at —
+/// the same shape as reading `EACCES` off the hooks directory as unarmed.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_skills_directory_it_cannot_read_is_could_not_check_not_a_missing_render() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    // The render goes, which is the state whose remedy is an apply. The
+    // lock still declares the package and the shims are still armed, so
+    // the fold reaches the search.
+    for base in kendex_core::guard::SEARCH_ROOTS {
+        let copy = root.join(base).join(kendex_core::guard::SKILL);
+        match copy.is_symlink() {
+            true => std::fs::remove_file(&copy).unwrap(),
+            false if copy.exists() => std::fs::remove_dir_all(&copy).unwrap(),
+            false => {}
+        }
+    }
+    // The control: with every root readable, this is the missing-render
+    // verdict and its remedy.
+    let out = run(home, &root, "kendex", &["check"]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(
+        commit_hooks_line(&said(&out)).contains("kendex refresh"),
+        "{}",
+        said(&out)
+    );
+
+    // One searched root, unopenable. Nothing else changes.
+    let locked = root.join(".agents/skills");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&locked).is_ok() {
+        // Permission bits do not stop this process — running as root, where
+        // there is no unreadable directory to build.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let out = run(home, &root, "kendex", &["check"]);
+    let text = said(&out);
+    let code = out.status.code();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(code, Some(2), "could-not-check was not reported: {text}");
+    // The commit-hooks line only. The drift report's own missing-on-disk
+    // section names the same remedy for the deleted render, and that line
+    // is true — what must not appear is a claim about the hooks made off a
+    // search that never happened.
+    let line = commit_hooks_line(&text);
+    assert!(
+        !line.contains("kendex refresh"),
+        "an unreadable directory was reported as a repository with no render: {line}"
+    );
+    assert!(
+        line.contains("could not be checked"),
+        "the line does not say the check could not be taken: {line}"
+    );
+}
+
+/// The one indented line under the report's `commit hooks:` heading.
+#[allow(clippy::expect_used)]
+fn commit_hooks_line(text: &str) -> String {
+    text.lines()
+        .skip_while(|line| !line.starts_with("commit hooks:"))
+        .nth(1)
+        .expect("the report carries a commit hooks line")
+        .to_owned()
+}

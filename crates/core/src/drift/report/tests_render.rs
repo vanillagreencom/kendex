@@ -4,7 +4,7 @@
 use super::tests::{
     env_in, manifest_with_remote, package, project_scope, snapshot_with, write_manifest,
 };
-use super::text::{FOREIGN_CHARS, shown};
+use super::text::{FOREIGN_CHARS, RELAYED_CHARS, shown};
 use super::*;
 use crate::drift::snapshot::PackageSnapshot;
 
@@ -192,6 +192,95 @@ fn foreign_text_folded_in_is_still_bounded() {
     let line = &report.sections[0].lines[0].text;
     assert_eq!(line.chars().count(), FOREIGN_CHARS, "{}", line.len());
     assert_eq!(report.status, CheckStatus::Unknown);
+}
+
+/// A relayed line past the bound is REPLACED, never trimmed.
+///
+/// The distinction the third variant exists for. A fragment may be cut,
+/// because a line is composed around it and turns on the prose; a relayed
+/// verdict carries its remedy at its own end, so a trim hands the reader a
+/// sentence that reads finished and is missing the half worth having. Past
+/// the bound they get kendex saying so and naming who to ask.
+///
+/// The class and the status are the delegating caller's and are untouched:
+/// this decides what a line SAYS, never what the run exited.
+#[test]
+fn a_relayed_line_past_the_bound_is_replaced_rather_than_cut() {
+    let mut report = check_report();
+    // A fixed length, not one derived from the constant: a payload sized
+    // against `RELAYED_CHARS` grows with it, so raising the bound left this
+    // green and the bound unproven. 4000 is the same absolute size the
+    // fragment bound is pinned at below.
+    let payload = "the growth-guards installer said something very long. ".repeat(75);
+    assert_eq!(payload.chars().count(), 4050);
+    assert!(
+        payload.chars().count() > RELAYED_CHARS,
+        "the bound is now looser than this fixture can reach: {RELAYED_CHARS}"
+    );
+    fold(
+        &mut report,
+        "commit hooks",
+        Class::Drift,
+        Text::Relayed {
+            producer: "the growth-guards installer".to_owned(),
+            line: payload.clone(),
+        },
+    );
+
+    let line = &report.sections[0].lines[0].text;
+    assert!(
+        line.contains("too long to show here"),
+        "the reader is not told what happened: {line}"
+    );
+    assert!(
+        line.contains("the growth-guards installer"),
+        "the reader is not told who to ask: {line}"
+    );
+    // Not one character of it, so no reader can act on a fragment of a
+    // sentence that was never shown to them whole.
+    assert!(
+        !line.contains("said something very long"),
+        "the payload was carried after all: {line}"
+    );
+    assert!(
+        line.chars().count() < RELAYED_CHARS,
+        "the replacement is a sentence, not a trim: {} characters",
+        line.chars().count()
+    );
+    assert_eq!(report.status, CheckStatus::Drift);
+    assert_eq!(report.status.exit_code(), 1);
+    assert_eq!(report.sections[0].lines[0].class, Class::Drift);
+}
+
+/// And within the bound it is carried whole, which is the case the bound
+/// exists to protect.
+///
+/// Every verdict any delegated script actually writes is here, remedy and
+/// all. A cap set low enough to catch them would trade the defect this
+/// variant closed for the one it replaced.
+#[test]
+fn a_relayed_line_within_the_bound_keeps_its_every_word() {
+    let mut report = check_report();
+    let verdict = format!(
+        "growth-guards git hooks: NOT armed — {} ({}); run 'kendex guard install' to re-arm",
+        "helper kendex-guards was not written by this installer, ".repeat(4),
+        "/a/path".repeat(20)
+    );
+    assert!(verdict.chars().count() > FOREIGN_CHARS, "past the cut");
+    assert!(verdict.chars().count() < RELAYED_CHARS, "inside the bound");
+    fold(
+        &mut report,
+        "commit hooks",
+        Class::Unknown,
+        Text::Relayed {
+            producer: "the growth-guards installer".to_owned(),
+            line: verdict.clone(),
+        },
+    );
+
+    assert_eq!(report.sections[0].lines[0].text, verdict);
+    assert_eq!(report.status, CheckStatus::Unknown);
+    assert_eq!(report.status.exit_code(), 2);
 }
 
 /// A clean report to fold a verdict into — what `check` returns for a

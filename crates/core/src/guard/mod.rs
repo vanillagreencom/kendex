@@ -60,8 +60,9 @@ const HELPER: &str = "kendex-guards";
 /// report to the harness's own kill; this gives up first, and the fold
 /// classes the refusal as a verdict it could not take. Ten seconds is far
 /// longer than a read of two files and a `cmp`, so only a wedged script
-/// reaches it. `guard_timeout_fits_the_hook_budget` holds it under the
-/// frontmatter rather than beside a comment about it.
+/// reaches it. The two numbers are held together by
+/// `guard_timeout_budget::the_guard_check_timeout_fits_inside_the_hooks_budget`,
+/// which reads the frontmatter, rather than by this comment citing it.
 ///
 /// [`check`], [`install`] and [`uninstall`] are verbs somebody typed, under
 /// no budget but the person's patience, and keep the ordinary timeout: a

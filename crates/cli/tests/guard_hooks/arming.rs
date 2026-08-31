@@ -400,9 +400,13 @@ fn check_relays_the_packages_words_about_a_foreign_hook() {
     );
     let text = said(&out);
     assert!(text.contains("commit hooks"), "{text}");
-    // The whole sentence, not a phrase near its front: a relay keeping only
-    // the first part of the line passes every `contains` on a phrase, and
-    // what the end of this line carries is the remedy.
+    // The whole sentence, not a phrase near its front. This fixture's line
+    // is short enough that no bound would have cut it, so what this pins is
+    // provenance — every word came from the package — and not the bounding.
+    // Where the bounding is pinned is
+    // `the_packages_exit_two_is_could_not_check_and_its_sentence_survives_whole`,
+    // which asserts its own line outruns the fragment cut before relying on
+    // it, and `tests_render::a_relayed_line_past_the_bound_is_replaced_rather_than_cut`.
     assert!(
         text.contains(&sentence),
         "the package's own sentence was not relayed whole:\n{text}\nit said: {sentence}"
