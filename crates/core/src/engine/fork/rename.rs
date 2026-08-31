@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{SKILL_NAME_FILES, local_item, named_bytes, vacant_name};
+use super::{SKILL_NAME_FILES, forkable_kind, local_item, named_bytes, vacant_name};
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::engine::agent_carry::{OldName, rekey_agent_tables};
 use crate::engine::ops::manifest_for_mutation;
@@ -16,6 +16,11 @@ use crate::model::{ItemKind, Scope};
 /// name: dependents and bundles refer to the old one, and a rename that
 /// breaks them is not a rename, it is a removal wearing one's clothes.
 pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &str) -> Result<Plan> {
+    // A fork entry does not prove the kind: detach writes one for every
+    // kind it converts, and the manifest's own table takes any of them, so
+    // a rename has no capture step behind it to refuse an unsupported kind
+    // later. It is refused here, before the table is read.
+    forkable_kind(kind, old)?;
     let mut manifest = manifest_for_mutation(env, scope)?;
     if !manifest
         .forks

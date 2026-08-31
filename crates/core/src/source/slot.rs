@@ -37,16 +37,18 @@ pub(crate) fn local_slot(root: &Path, kind: ItemKind, name: &str) -> PathBuf {
 /// directory, where the planner would refuse both names and sweep the one
 /// that was there.
 ///
-/// A filesystem that will not answer is not an empty slot: the read goes
-/// through the one three-valued probe, so an unreadable ancestor reaches
-/// the caller as a refusal rather than as vacancy.
+/// A filesystem that will not answer is not an empty slot. Both halves
+/// keep the third answer — the probe for the leaf and the scan for a
+/// folding neighbour — because they fail on different modes: a parent that
+/// will not be searched stops the probe, and one that will not be listed
+/// stops the scan while the probe reads absent.
 ///
 /// The one occupancy rule, asked by fork-beside and by rename of the name
 /// they are about to claim. Adoption may replace the item already in the
 /// slot, so it asks [`slot_unreachable`] alone: what the slot holds is its
 /// business, whether the source can read it back is not.
 pub(crate) fn slot_free(slot: &Path) -> Result<bool> {
-    Ok(crate::fs::entry(slot)?.is_none() && crate::names::folding_sibling(slot).is_none())
+    Ok(crate::fs::entry(slot)?.is_none() && crate::names::folding_sibling(slot)?.is_none())
 }
 
 /// Why nothing at `slot` can be read back through this scope's local

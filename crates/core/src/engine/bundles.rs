@@ -268,7 +268,7 @@ fn disagreement(
     second: &str,
     theirs: &ItemDecl,
 ) -> Option<ItemWarning> {
-    let method = |decl: &ItemDecl| decl.method.unwrap_or(manifest.install.method);
+    let method = |decl: &ItemDecl| super::desired::effective_method(decl, manifest);
     let mut differ = Vec::new();
     if held.decl.source != theirs.source {
         differ.push("which catalog it comes from");

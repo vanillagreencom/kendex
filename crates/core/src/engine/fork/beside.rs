@@ -5,8 +5,8 @@
 //! the user chose.
 
 use super::{
-    Capture, Captured, ForkOf, capture, capture_ops, carries_name, edited_rendering, named_bytes,
-    provenance, vacant_name,
+    Capture, Captured, ForkOf, capture, capture_ops, carries_name, edited_rendering, forkable_kind,
+    named_bytes, provenance, vacant_name,
 };
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::engine::agent_carry::{OldName, rekey_agent_tables};
@@ -39,6 +39,11 @@ pub fn fork_beside(
     new_name: &str,
     rev: Option<&str>,
 ) -> Result<Plan> {
+    // Before the name is judged: every question below is asked in terms of
+    // how this kind renders, and the capture refuses an unsupported one
+    // several statements later, by which point the name has already been
+    // answered for in a vocabulary that does not fit it.
+    forkable_kind(kind, name)?;
     let mut manifest = manifest_for_mutation(env, scope)?;
     let Some(decl) = manifest.declared(kind).get(name).cloned() else {
         return Err(CoreError::NotDeclared {

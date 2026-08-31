@@ -114,7 +114,7 @@ pub(super) fn capture_to_local(
     // A sibling that folds to the same name on a case- or composition-folding
     // filesystem would alias or overwrite this one on macOS or Windows, even
     // where an exact-path check on this planning host sees no collision.
-    if let Some(sibling) = crate::names::folding_sibling(target) {
+    if let Some(sibling) = crate::names::folding_sibling(target)? {
         return occupied(sibling);
     }
     if target.exists() {

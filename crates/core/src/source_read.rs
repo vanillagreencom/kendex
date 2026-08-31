@@ -186,10 +186,14 @@ impl SealedSource {
     ///
     /// A name the directory will not hand over is an error, never a
     /// shorter listing: a caller about to decide what a write would land
-    /// on top of must not read an unknown answer as an empty directory. A
-    /// caller drawing rows takes the same answer and draws none of that
-    /// directory, which is what it already does when the directory itself
-    /// cannot be opened.
+    /// on top of must not read an unknown answer as an empty directory.
+    /// Every caller takes that same answer and does one of two things with
+    /// it. A listing drops the rows of that directory and draws the rest,
+    /// which is what it already does when the directory itself cannot be
+    /// opened. A walk carries the refusal up, so one unhandable name costs
+    /// the discovery pass, the README lookup or the extension search whole
+    /// — which is the direction a reader of those wants when the answer is
+    /// unknown.
     pub fn entries(&self, dir: &Path) -> Result<Vec<PathBuf>> {
         self.contained(dir)?;
         let mut entries: Vec<PathBuf> = Vec::new();

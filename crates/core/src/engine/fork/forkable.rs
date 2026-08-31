@@ -4,9 +4,35 @@
 use std::path::PathBuf;
 
 use crate::env::Env;
+use crate::error::{CoreError, Result};
 use crate::model::{HarnessId, ItemKind, Scope};
 
 use super::skill_content_path;
+
+/// Whether a fork can take this kind at all, or why not. Only a skill and
+/// an agent are stored in the local source in a form the source parser
+/// reads back, so only those two have a fork path — and every question a
+/// fork asks about a name, its destinations included, is asked in terms of
+/// how that kind renders. A fork entry does not prove the kind: detach
+/// writes one for every kind it converts, and the manifest's own
+/// `[forks.<kind>.<name>]` table takes any of them, so the gate is asked of
+/// the kind rather than read off the table.
+pub(crate) fn forkable_kind(kind: ItemKind, name: &str) -> Result<()> {
+    match kind {
+        ItemKind::Skill | ItemKind::Agent => Ok(()),
+        other => Err(unsupported_kind(other, name)),
+    }
+}
+
+/// The refusal [`forkable_kind`] gives, for the one caller that has
+/// already matched the two kinds it admits and needs the error rather
+/// than the question.
+pub(crate) fn unsupported_kind(kind: ItemKind, name: &str) -> CoreError {
+    CoreError::ItemNotInSource {
+        name: name.to_owned(),
+        source_name: format!("fork does not support {} yet", kind.name()),
+    }
+}
 
 /// Whether keeping an edit as a fork can capture this rendering: a skill's
 /// canonical tree always round-trips, an agent's only from the tools whose

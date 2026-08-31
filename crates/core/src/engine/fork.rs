@@ -26,7 +26,7 @@ mod stated;
 mod vacant;
 use agent::capture_agent;
 pub use beside::fork_beside;
-use forkable::{ambiguous_skill_tree, source_form};
+use forkable::{ambiguous_skill_tree, forkable_kind, source_form, unsupported_kind};
 pub use forkable::{forkable_harness, forkable_rendering};
 use provenance::{installed_commit, provenance};
 pub use rename::rename_fork;
@@ -159,12 +159,7 @@ fn edited_rendering(
             };
             existing_or_disabled(dir.join(crate::render::agent::file_name(harness, name)))
         }
-        other => {
-            return Err(CoreError::ItemNotInSource {
-                name: name.to_owned(),
-                source_name: format!("fork does not support {} yet", other.name()),
-            });
-        }
+        other => return Err(unsupported_kind(other, name)),
     };
     if edited.is_symlink() || !edited.exists() {
         return Err(CoreError::ItemNotFound {

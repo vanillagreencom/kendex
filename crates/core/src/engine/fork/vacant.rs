@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use super::local_item;
 use crate::engine::desired::{
-    native_dir, refusal_reason, skill_canonical, skill_dir, target_harnesses,
+    effective_method, native_dir, refusal_reason, skill_canonical, skill_dir, target_harnesses,
 };
 use crate::engine::desired_agent::written_at;
 use crate::env::Env;
@@ -133,9 +133,12 @@ fn same_slot(a: &str, b: &str) -> bool {
 /// `.disabled`. A disabled skill keeps its directory and renames
 /// `SKILL.md` inside it, so its destination is the same either way.
 ///
-/// Only a skill and an agent reach here: `edited_rendering` refuses every
-/// other kind before a name is ever asked about, and a rename needs a fork
-/// entry, which only that path writes.
+/// Only a skill and an agent reach here, because `forkable_kind` refuses
+/// every other one at the top of both fork paths. That gate is the reason
+/// two arms answer for every kind there is: a fork entry does not prove
+/// the kind — detach writes one for every kind it converts, and the
+/// manifest table takes any of them — so nothing downstream of the gate
+/// re-derives what a hook or a command would render to.
 fn render_targets(
     env: &Env,
     scope: &Scope,
@@ -148,7 +151,7 @@ fn render_targets(
     if kind == ItemKind::Skill {
         targets.push(skill_canonical(env, scope, name));
     }
-    let method = decl.method.unwrap_or(manifest.install.method);
+    let method = effective_method(decl, manifest);
     for harness in target_harnesses(decl, manifest, kind, scope) {
         let dir = match kind {
             ItemKind::Skill => skill_dir(env, scope, harness, method),

@@ -151,7 +151,7 @@ fn put(dest: &Path, bytes: &[u8]) -> Result<()> {
 /// A sibling whose name folds to the destination's spelling occupies it on
 /// a case-insensitive filesystem — refused before the copy, naming both.
 fn fold_collision(dest: &Path, name: &str) -> Result<()> {
-    let Some(sibling) = crate::names::folding_sibling(dest) else {
+    let Some(sibling) = crate::names::folding_sibling(dest)? else {
         return Ok(());
     };
     let sibling = sibling

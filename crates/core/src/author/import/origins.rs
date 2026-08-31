@@ -254,7 +254,7 @@ pub(super) fn resolve_selection(
                 continue;
             }
             let notices = match group.licensed_source() {
-                Some((source, _, _)) => notice_files(env, &row.scope, source),
+                Some((source, _, _)) => notice_files(env, &row.scope, source)?,
                 None => Vec::new(),
             };
             return Ok(ResolvedSelection {
@@ -276,32 +276,39 @@ pub(super) fn resolve_selection(
 
 /// Root-level licence and attribution files of one catalog — the evidence
 /// that must travel with copied bytes.
-pub(super) fn notice_files(env: &Env, scope: &Scope, source: &str) -> Vec<(String, Vec<u8>)> {
+///
+/// A read the source refuses is the refusal, not an empty list. Every
+/// other listing in this crate answers an unreadable directory by drawing
+/// no rows, which costs a surface some rows; here it would copy somebody's
+/// bytes with their licence left behind and say nothing. A source that is
+/// not resolvable at all is a different answer: it has no root to carry
+/// evidence from, and the import's own provenance rules judge that.
+pub(super) fn notice_files(
+    env: &Env,
+    scope: &Scope,
+    source: &str,
+) -> Result<Vec<(String, Vec<u8>)>> {
     let manifest = scope_manifest(env, scope);
     let Ok(crate::source::SourceState::Ready(resolved)) =
         crate::source::resolve(env, scope, source, &manifest)
     else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let Ok(sealed) = SealedSource::open(&resolved.root) else {
-        return Vec::new();
-    };
-    let Ok(entries) = sealed.entries(&resolved.root) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut notices = Vec::new();
-    for entry in entries {
+    for entry in sealed.entries(&resolved.root)? {
         let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
         let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
         if matches!(stem.as_str(), "LICENSE" | "LICENCE" | "NOTICE" | "COPYING")
             && sealed.is_file(&entry)
-            && let Ok(bytes) = sealed.read(&entry)
         {
-            notices.push((name.to_owned(), bytes));
+            notices.push((name.to_owned(), sealed.read(&entry)?));
         }
     }
     notices.sort();
-    notices
+    Ok(notices)
 }

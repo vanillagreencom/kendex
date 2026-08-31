@@ -174,8 +174,7 @@ fn installation_paths(
         // write to different directories for a tool that reads both, so the
         // question is asked the same way the install answers it.
         ItemKind::Skill => {
-            let copies =
-                decl.method.unwrap_or(manifest.install.method) == crate::manifest::Method::Copy;
+            let copies = desired::effective_method(decl, manifest) == crate::manifest::Method::Copy;
             let mut paths = Vec::new();
             if !copies {
                 paths.push(desired::skill_canonical(env, scope, name));
@@ -228,7 +227,7 @@ fn declared_paths(
     // declaration hides whatever else lives there from the inventory of
     // content nothing manages — the same mistake as claiming to own it.
     if kind == ItemKind::Skill
-        && decl.method.unwrap_or(manifest.install.method) != crate::manifest::Method::Copy
+        && desired::effective_method(decl, manifest) != crate::manifest::Method::Copy
     {
         paths.push(desired::skill_canonical(env, scope, name));
     }

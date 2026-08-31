@@ -235,12 +235,12 @@ pub(super) fn file_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<Str
 /// dead rows and, for a deceptive name, one whose shown spelling is not the
 /// name that lands on disk.
 ///
-/// A directory this cannot read draws no rows for that directory, and the
-/// rest of the listing still draws: a listing says what a source offers,
-/// and one unreadable sibling must not take the readable items of the same
-/// kind out of `add --all` and out of place resolution. Nothing deciding
-/// what a write would destroy asks this — that reads the disk, through
-/// `SealedSource::entries`, where a refused read is an error.
+/// A directory this cannot read whole — the directory itself, or one name
+/// inside it — draws no rows for that directory, and the rest of the
+/// listing still draws. The reading is the strict one either way; what
+/// separates this from a guard is only what each does with the refusal,
+/// and a listing that cannot say what a source offers there says nothing
+/// rather than half of it.
 fn nested_names(
     sealed: &SealedSource,
     dir: &str,

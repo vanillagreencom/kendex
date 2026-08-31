@@ -31,6 +31,14 @@ pub fn own_dir(env: &Env, scope: &Scope, harness: HarnessId, kind: ItemKind) -> 
     item_dirs(a, kind, scope, env).pop()
 }
 
+/// How this declaration is delivered: its own choice, or the scope's
+/// default where it made none. One owner, because [`skill_dir`] holds the
+/// pass that plans a write and the check that proves its destination free
+/// to one directory only while both resolve the method the same way.
+pub(crate) fn effective_method(decl: &ItemDecl, manifest: &Manifest) -> crate::manifest::Method {
+    decl.method.unwrap_or(manifest.install.method)
+}
+
 /// Where a skill lands for one harness under this delivery method. A copy
 /// is a tree only this tool reads, so it goes in the tool's own directory
 /// where it has one; a symlink goes in the shared tree every tool reads.

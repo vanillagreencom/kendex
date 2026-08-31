@@ -6,6 +6,7 @@ use std::fs;
 
 use super::{entry, find, seeded, selection, skill, target};
 use crate::author::import::{CandidateGroup, ImportSelection, apply, inventory};
+use crate::error::CoreError;
 use crate::model::{HarnessId, ItemKind, Scope};
 
 /// One name offered by two provenances with identical bytes is one origin
@@ -164,6 +165,38 @@ fn licence_evidence_files_travel_with_the_copy() {
     );
     let notice = fs::read_to_string(target.join("NOTICES/cat/LICENSE")).unwrap();
     assert_eq!(notice, "MIT text here\n");
+}
+
+/// A catalog whose root will not be listed carries no evidence this can
+/// see, and a copy made anyway would take somebody's bytes and leave their
+/// licence behind. Every other listing answers an unreadable directory by
+/// drawing no rows; this one refuses, because there is no surface for the
+/// person to notice the omission on.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_catalog_that_will_not_be_listed_refuses_rather_than_copying_bare() {
+    use std::os::unix::fs::PermissionsExt;
+    let (tmp, env, scope) = seeded();
+    let catalog = tmp.path().join("catalog");
+    fs::write(catalog.join("LICENSE"), "MIT text here\n").unwrap();
+    let scopes = [scope];
+    let target = target(&env, &tmp, "mine-unreadable");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let gh = find(&candidates, "gh");
+    let chosen = selection(gh, true);
+
+    fs::set_permissions(&catalog, fs::Permissions::from_mode(0o311)).unwrap();
+    // Root lists any directory whatever its mode, so there the denial under
+    // test does not exist and the evidence simply travels.
+    let denied = !rustix::process::geteuid().is_root();
+    let asked = apply(&env, &scopes, &target, &[chosen]);
+    fs::set_permissions(&catalog, fs::Permissions::from_mode(0o755)).unwrap();
+
+    match denied {
+        true => assert!(matches!(asked, Err(CoreError::Io { .. })), "{asked:?}"),
+        false => assert!(asked.is_ok(), "{asked:?}"),
+    }
 }
 
 /// The target must not sit inside a tree the bytes come from.

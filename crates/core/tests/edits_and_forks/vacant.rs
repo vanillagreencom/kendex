@@ -467,7 +467,7 @@ fn fork_beside_refuses_a_slot_the_filesystem_will_not_describe() {
     fs::set_permissions(&local, fs::Permissions::from_mode(0o755)).unwrap();
 
     match denied {
-        true => assert!(matches!(asked, Err(CoreError::Io { .. })), "{asked:?}"),
+        true => assert!(matches!(asked, Err(CoreError::Io { .. })), "GOT {asked:?}"),
         false => assert!(asked.is_ok(), "{asked:?}"),
     }
 }
@@ -562,7 +562,94 @@ fn fork_beside_refuses_a_render_destination_it_cannot_describe() {
     fs::set_permissions(&shared, fs::Permissions::from_mode(0o755)).unwrap();
 
     match denied {
-        true => assert!(matches!(asked, Err(CoreError::Io { .. })), "{asked:?}"),
+        true => assert!(matches!(asked, Err(CoreError::Io { .. })), "GOT {asked:?}"),
         false => assert!(asked.is_ok(), "{asked:?}"),
     }
+}
+
+/// A kind with no fork path is refused before its name is judged. Every
+/// question `vacant_name` asks is asked in terms of how the kind renders,
+/// so a hook answered in a skill's vocabulary is answered wrongly — and
+/// the capture that would have refused it runs several statements later.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_refuses_an_unsupported_kind_before_it_judges_the_name() {
+    let (w, _one, _two) = edited_world();
+    let refused = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Hook,
+        "gh",
+        HarnessId::Claude,
+        // An illegal name, so a refusal about the name would be the one
+        // that came back if the kind were judged second.
+        "a/b/c",
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::ItemNotInSource { source_name, .. }
+            if source_name.contains("fork does not support")),
+        "{refused:?}"
+    );
+}
+
+/// A fork entry does not prove the kind. Detach writes one for every kind
+/// it converts, so a command carries `[forks.command.<name>]` without the
+/// fork path ever running — and a rename has no capture step behind it to
+/// refuse the kind later. Left ungated, the rename judges a Gemini
+/// command's destinations as if they were an agent's `.md`, misses the
+/// stranger at the `.toml` the render actually writes, and records a name
+/// that installs nowhere while stranding the old file.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn rename_refuses_a_kind_no_fork_path_supports() {
+    let w = world();
+    let command = w.upstream.join("commands/deploy.md");
+    fs::create_dir_all(command.parent().unwrap()).unwrap();
+    fs::write(&command, "---\ndescription: deploy\n---\nShip it.\n").unwrap();
+    // Commands install only from a catalog that declares kendex's layout.
+    fs::write(w.upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"gemini\"]\nmethod = \"symlink\"\n\n[commands.deploy]\nsource = \"cat\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let rendered = w.home.join("app/.gemini/commands/deploy.toml");
+    assert!(
+        rendered.is_file(),
+        "the fixture proves nothing unless the command renders to a .toml, \
+         which is not the spelling render_targets would derive for it"
+    );
+
+    // Detach converts it to a local package and records the fork entry.
+    let plan = kendex_core::engine::detach::source(&w.env, &w.scope, "cat").unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    assert!(
+        manifest_text(&w).contains("[forks.command.deploy]"),
+        "the fixture proves nothing unless detach wrote a command fork entry: {}",
+        manifest_text(&w)
+    );
+
+    // A stranger sits where the renamed command would render.
+    let stray = w.home.join("app/.gemini/commands/renamed.toml");
+    fs::write(&stray, "not kendex's").unwrap();
+    let before = manifest_text(&w);
+
+    let refused =
+        fork::rename_fork(&w.env, &w.scope, ItemKind::Command, "deploy", "renamed").unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::ItemNotInSource { source_name, .. }
+            if source_name.contains("fork does not support")),
+        "{refused:?}"
+    );
+    assert_eq!(manifest_text(&w), before, "nothing was recorded");
+    assert_eq!(fs::read_to_string(&stray).unwrap(), "not kendex's");
+    assert!(rendered.is_file(), "the original was left where it was");
 }

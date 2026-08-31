@@ -8,7 +8,8 @@ use crate::model::{HarnessId, ItemKind, Scope};
 use crate::render::skill::render_skill;
 
 use super::desired::{
-    Artifact, Desired, DesiredState, ItemCtx, native_dir, skill_canonical, skill_dir,
+    Artifact, Desired, DesiredState, ItemCtx, effective_method, native_dir, skill_canonical,
+    skill_dir,
 };
 
 /// One physical skill surface and the harnesses that read it. Every tool but
@@ -101,7 +102,7 @@ fn surface_groups(ctx: &ItemCtx, method: Method) -> Vec<SurfaceGroup> {
 
 pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {
     let enabled = ctx.decl.enabled;
-    let method = ctx.decl.method.unwrap_or(ctx.manifest.install.method);
+    let method = effective_method(ctx.decl, ctx.manifest);
     let groups = surface_groups(ctx, method);
     if groups.is_empty() {
         super::settings_scan::seeds_nothing(
