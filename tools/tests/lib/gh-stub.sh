@@ -48,6 +48,14 @@
 # point of that suite, and moving it in here would bury it. Those suites read
 # `gh_stub_calls` and assert on the argv, or keep a bespoke fake.
 
+# _gh_stub_seed — stage the three identity answers. Install and reset both
+# start from them, so the seeded owner/repo is written in one place.
+_gh_stub_seed() {
+  gh_stub_answer auth-status 'Logged in'
+  gh_stub_answer api-user 'test-user'
+  gh_stub_answer repo-view '{"owner":{"login":"owner"},"name":"repo","nameWithOwner":"owner/repo"}'
+}
+
 # gh_stub_install DIR — write DIR/gh and export STUB_DIR beside it.
 #
 # The three identity answers are seeded because a suite that needs one is not
@@ -151,9 +159,7 @@ STUB
   chmod +x "$bin/gh" || return 1
 
   : >"$STUB_DIR/gh.calls"
-  gh_stub_answer auth-status 'Logged in'
-  gh_stub_answer api-user 'test-user'
-  gh_stub_answer repo-view '{"owner":{"login":"owner"},"name":"repo","nameWithOwner":"owner/repo"}'
+  _gh_stub_seed
 }
 
 # _gh_stub_key VERB — the staged-file stem for VERB, registering a selector
@@ -192,18 +198,28 @@ _gh_stub_key() {
 gh_stub_answer() {
   local key
   key="$(_gh_stub_key "$1")" || return 1
-  rm -f "$STUB_DIR/$key".[0-9]*.out "$STUB_DIR/$key".[0-9]*.err \
-    "$STUB_DIR/$key".[0-9]*.status "$STUB_DIR/$key.count"
+  rm -f "${STUB_DIR:?}/$key".[0-9]*.out "${STUB_DIR:?}/$key".[0-9]*.err \
+    "${STUB_DIR:?}/$key".[0-9]*.status "${STUB_DIR:?}/$key.count"
   printf '%s\n' "$2" >"$STUB_DIR/$key.0.out"
 }
 
 # gh_stub_answer_seq VERB TEXT — TEXT answers the NEXT unstaged call of VERB.
 # A call past the last staged one is refused, which is what makes "the code
 # polled once more than it should have" a failure rather than a repeat.
+#
+# Staging after a call of VERB has already been served starts a NEW sequence:
+# the served count and the earlier answers go, and TEXT becomes the first
+# answer. A scenario that restages a verb the previous scenario consumed is
+# saying "from here, this", and serving the previous scenario's unconsumed
+# answer instead would be a suite going green over the wrong response.
 gh_stub_answer_seq() {
   local key n=1
   key="$(_gh_stub_key "$1")" || return 1
-  rm -f "$STUB_DIR/$key.0.out"
+  if [ -f "${STUB_DIR:?}/$key.count" ]; then
+    rm -f "${STUB_DIR:?}/$key".[0-9]*.out "${STUB_DIR:?}/$key".[0-9]*.err \
+      "${STUB_DIR:?}/$key".[0-9]*.status "${STUB_DIR:?}/$key.count"
+  fi
+  rm -f "${STUB_DIR:?}/$key.0.out"
   while [ -f "$STUB_DIR/$key.$n.out" ]; do n=$((n + 1)); done
   printf '%s\n' "$2" >"$STUB_DIR/$key.$n.out"
 }
@@ -212,8 +228,8 @@ gh_stub_answer_seq() {
 gh_stub_fail() {
   local key
   key="$(_gh_stub_key "$1")" || return 1
-  rm -f "$STUB_DIR/$key".[0-9]*.out "$STUB_DIR/$key".[0-9]*.err \
-    "$STUB_DIR/$key".[0-9]*.status "$STUB_DIR/$key.count"
+  rm -f "${STUB_DIR:?}/$key".[0-9]*.out "${STUB_DIR:?}/$key".[0-9]*.err \
+    "${STUB_DIR:?}/$key".[0-9]*.status "${STUB_DIR:?}/$key.count"
   : >"$STUB_DIR/$key.0.out"
   printf '%s' "$2" >"$STUB_DIR/$key.0.status"
   [ "$#" -lt 3 ] || printf '%s\n' "$3" >"$STUB_DIR/$key.0.err"
@@ -226,10 +242,8 @@ gh_stub_calls() { cat "$STUB_DIR/gh.calls" 2>/dev/null; }
 # reseed the identity answers. A suite calls this between scenarios so one
 # scenario's leftovers cannot answer the next one's calls.
 gh_stub_reset() {
-  rm -f "$STUB_DIR"/*.out "$STUB_DIR"/*.err "$STUB_DIR"/*.status \
-    "$STUB_DIR"/*.count "$STUB_DIR"/*.selectors "$STUB_DIR/gh.calls"
+  rm -f "${STUB_DIR:?}"/*.out "${STUB_DIR:?}"/*.err "${STUB_DIR:?}"/*.status \
+    "${STUB_DIR:?}"/*.count "${STUB_DIR:?}"/*.selectors "${STUB_DIR:?}/gh.calls"
   : >"$STUB_DIR/gh.calls"
-  gh_stub_answer auth-status 'Logged in'
-  gh_stub_answer api-user 'test-user'
-  gh_stub_answer repo-view '{"owner":{"login":"owner"},"name":"repo","nameWithOwner":"owner/repo"}'
+  _gh_stub_seed
 }

@@ -116,6 +116,75 @@ else
   ok "must-fail: the one-word key does not rescue an exhausted sequence"
 fi
 
+echo "=== restaging a verb that was already served starts a new sequence ==="
+
+# A scenario that stages an answer for a verb the previous scenario already
+# consumed is saying "from here, this". Serving the earlier staging instead
+# is the fail-open shape: the suite goes green over the wrong response.
+gh_stub_reset
+gh_stub_answer pr-list 'first-scenario'
+gh pr list >/dev/null
+gh pr list >/dev/null
+gh_stub_answer_seq pr-list 'second-scenario'
+status=0
+out="$(gh pr list 2>&1)" || status=$?
+eq "$status" "0" "a sequence staged over a consumed answer is not refused"
+eq "$out" "second-scenario" "the new sequence answers from its first element"
+
+# The same, with a partly consumed sequence: the unconsumed tail of the old
+# one must not answer the new scenario's call.
+gh_stub_reset
+gh_stub_answer_seq pr-list 'old-one'
+gh_stub_answer_seq pr-list 'old-two'
+eq "$(gh pr list)" "old-one" "the old sequence answers its first call"
+gh_stub_answer_seq pr-list 'new-one'
+eq "$(gh pr list)" "new-one" "restaging drops the old sequence's unconsumed tail"
+if gh pr list >/dev/null 2>&1; then
+  bad "a second call was answered" "the new sequence holds one element"
+else
+  ok "must-fail: the new sequence ends where it was staged to end"
+fi
+
+# The control: staging twice before any call still APPENDS, so the rule above
+# is about a served call and not about every restaging clobbering the last.
+gh_stub_reset
+gh_stub_answer_seq pr-list 'page-one'
+gh_stub_answer_seq pr-list 'page-two'
+eq "$(gh pr list)" "page-one" "must-fail control: an unserved verb still appends (1)"
+eq "$(gh pr list)" "page-two" "must-fail control: an unserved verb still appends (2)"
+
+echo "=== a staging helper aborts when STUB_DIR is empty ==="
+
+# The helpers delete by glob under $STUB_DIR. An empty STUB_DIR would make
+# those globs absolute — `rm -f /*.out` — so the expansion has to abort the
+# shell instead. Each helper is run in a subshell, which is what the abort
+# ends.
+aborts_empty() { # aborts_empty HELPER [ARGS...]
+  local status=0 out
+  out="$(
+    export STUB_DIR=""
+    "$@" 2>&1
+  )" || status=$?
+  if [ "$status" -ne 0 ] && [ "${out#*STUB_DIR}" != "$out" ]; then
+    ok "must-fail: $1 aborts on an empty STUB_DIR"
+  else
+    bad "$1 did not abort on an empty STUB_DIR" "status=$status out=$out"
+  fi
+}
+
+aborts_empty gh_stub_answer pr-list x
+aborts_empty gh_stub_answer_seq pr-list x
+aborts_empty gh_stub_fail pr-list 1
+aborts_empty gh_stub_reset
+
+# The control: the same calls succeed with STUB_DIR set, so the aborts above
+# are about the empty value and not about the helpers being broken.
+gh_stub_reset
+status=0
+{ gh_stub_answer pr-list x && gh_stub_answer_seq pr-list y &&
+  gh_stub_fail pr-list 1 && gh_stub_reset; } || status=$?
+eq "$status" "0" "must-fail control: the same helpers succeed with STUB_DIR set"
+
 echo "=== a selector picks between calls of one verb ==="
 
 gh_stub_reset
