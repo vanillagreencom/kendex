@@ -104,12 +104,12 @@ fn a_git_that_refuses_to_answer_is_kept_word_for_word() {
     assert!(at.contains("git"), "{at}");
 }
 
-/// Where the git it found is installed, said alongside the version it
-/// reported. On a Mac a newer git can sit in another directory while
+/// Where the git it found keeps its programs, said alongside the version
+/// it reported. On a Mac a newer git can sit in another directory while
 /// the one kendex reaches is Xcode's, and a refusal naming only the
 /// version tells that person to install what they already have.
 #[test]
-fn a_refusal_names_where_the_git_it_found_is_installed() {
+fn a_refusal_names_where_the_git_it_found_keeps_its_programs() {
     let xcode = "/Library/Developer/CommandLineTools/usr/libexec/git-core";
     let refusal = below_floor(&Probe::Answered {
         line: "git version 2.39.5 (Apple Git-154)".to_owned(),

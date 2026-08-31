@@ -159,11 +159,13 @@ fn probed(call: Hardened) -> Probe {
     Probe::Answered { line, installed }
 }
 
-/// Where the git that just answered keeps its programs — asked of that
-/// git, never resolved out of `PATH` a second time. A second resolution
-/// could name a different file than the one that ran, and the whole point
-/// of saying it is that a person who installed a newer git elsewhere can
-/// see that this is not the one kendex reached.
+/// Where the git that just answered keeps its programs, asked of git
+/// rather than worked out here: kendex searches no directories of its own
+/// and reads no `PATH`, it runs `git --exec-path` and repeats the answer.
+/// A second spawn, resolved the way the first one was.
+///
+/// Worth saying at all because a person who installed a newer git
+/// elsewhere can see from it that this is not the one kendex reached.
 fn exec_path() -> Option<String> {
     let output = Hardened::git(&["--exec-path"], None).run().ok()?;
     let path = collapsed(&output.stdout);
@@ -195,16 +197,19 @@ fn below_floor(probe: &Probe) -> Option<String> {
         "kendex needs git {want_major}.{want_minor} or newer to write a checkout: it is the first git that can be told to read no attributes, and one that cannot be told converts the files in silence"
     );
     match probe {
+        // `clears` and nothing beside it, so the memo and the refusal
+        // cannot come to differ: a line one keeps and the other rejects
+        // would be remembered and then refused at every later checkout.
+        Probe::Answered { line, .. } if clears(line) => None,
         Probe::Answered { line, installed } => match version_of(line) {
-            Some(found) if found >= GIT_FLOOR => None,
-            // Where it came from, when there is a where: a Mac that has a
-            // newer git in another directory is otherwise told to install
-            // what it already has.
+            // Which git it was, when git said: a Mac that has a newer one
+            // in another directory is otherwise told to install what it
+            // already has.
             Some((major, minor)) => Some(format!(
                 "this host runs git {major}.{minor}{}, and {needed}",
                 installed
                     .as_deref()
-                    .map_or(String::new(), |at| format!(", installed at {at}"))
+                    .map_or(String::new(), |at| format!(", whose programs live at {at}"))
             )),
             None => Some(format!(
                 "this host's git did not say which version it is, answering \"{line}\", and {needed}"
