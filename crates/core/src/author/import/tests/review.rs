@@ -237,14 +237,27 @@ fn a_symlinked_licence_refuses_rather_than_copying_bare() {
 /// at the destination, so the copy refuses rather than going out without
 /// it. Read either way round it is the same harm — a package published
 /// with somebody's licence left behind.
-#[cfg(unix)]
+///
+/// What this needs is a filesystem that will hold such a name, which is
+/// narrower than a platform: macOS enforces UTF-8 at the filesystem layer
+/// and refuses to create one at all, so the case cannot build its own
+/// precondition there. Compiled out where it cannot run rather than
+/// skipped inside a passing run, because a skip reported as a pass is how
+/// a case stops covering anything without saying so.
+#[cfg(target_os = "linux")]
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_licence_name_no_utf8_spells_refuses_rather_than_copying_bare() {
     use std::os::unix::ffi::OsStrExt;
     let (tmp, env, scope) = seeded();
     let odd = std::ffi::OsStr::from_bytes(b"LICENSE.\xff");
-    fs::write(tmp.path().join("catalog").join(odd), "MIT text here\n").unwrap();
+    // The precondition, said rather than unwrapped: a filesystem that
+    // will not hold the name is the one thing that makes this case
+    // meaningless, so it names itself rather than panicking on a line
+    // that reads like setup.
+    fs::write(tmp.path().join("catalog").join(odd), "MIT text here\n").unwrap_or_else(|error| {
+        panic!("this filesystem will not hold a non-UTF-8 name, which the case needs: {error}")
+    });
     let scopes = [scope];
     let target = target(&env, &tmp, "mine-odd-licence");
     let candidates = inventory(&env, &scopes).unwrap();
