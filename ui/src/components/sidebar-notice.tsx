@@ -89,8 +89,9 @@ export function SidebarNotice() {
           )}
           {/* The app is kendex's to replace and the command beside it is
               not, so Update now moves one and leaves the other. Said
-              before the button is pressed, because afterwards the app has
-              restarted and the card is gone. */}
+              before the button is pressed, because an install that
+              restarts takes the card with it; an install that answers
+              instead leaves the card up and this is read again for it. */}
           {commandChannel === null ? null : commandChannel.kind ===
             "unknown" ? (
             // Nothing named the installer, so there is no name to print

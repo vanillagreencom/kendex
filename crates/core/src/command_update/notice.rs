@@ -10,10 +10,12 @@ use super::{CommandBeside, CommandHalf};
 use crate::install_channel::InstallChannel;
 use crate::names::shown;
 
-/// What the sidebar card says about the `kendex` command beside the app,
-/// before Update now is pressed — afterwards the app has restarted and
-/// there is no card left to say it on. `None` where there is nothing to
-/// say: no command here, or one Update now carries across itself.
+/// What the sidebar card says about the `kendex` command beside the app.
+/// Read before Update now is pressed, and read again after an install that
+/// answered rather than restarting, which leaves the card up with this the
+/// only thing on it that can still be true. An install that restarts takes
+/// the card with it. `None` where there is nothing to say: no command
+/// here, or one Update now carries across itself.
 ///
 /// Every string is fixed text decided by which arm ran, save the path,
 /// which names one file to a person who may have several — the rule the
@@ -103,7 +105,7 @@ impl CommandNotice {
                 "{installed}; the kendex command the notice described is not beside this app any more, so nothing was carried across"
             ),
             (CommandHalf::Untouched, Some(_)) => format!(
-                "{installed}; the kendex command beside this app is no longer the one the notice described, so it was left on the release it is on — the notice now says what is there"
+                "{installed}; the kendex command beside this app is no longer the one the notice described, so it was left on the release it is on"
             ),
             (CommandHalf::Moved, _) => format!(
                 "{installed}; the kendex command beside this app is no longer the one the notice described, so it was carried across rather than left where the notice said it would be"

@@ -133,12 +133,14 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
         ? { installing: false, note: response.data }
         : { installing: false, error: response.error },
     );
-    // Either answer is about a command that may have moved, and both point
-    // the person at this card for what is there. Read again so that is
-    // true, and so a retry acts on the answer rather than repeating the
-    // same sentence.
+    // Either answer is about a command that may have moved, so what the
+    // card says about it is read again — and a read that failed says
+    // nothing rather than guessing, the same rule the first read follows.
+    // Kept, the description would be the one drawn before the install, and
+    // the card would be describing a machine as it no longer is with no
+    // action left on it to ask again.
     const fresh = await settled(commands.appUpdateCommandChannel());
-    if (fresh.status === "ok") set({ commandChannel: fresh.data });
+    set({ commandChannel: fresh.status === "ok" ? fresh.data : null });
   },
 
   openNotes: async () => {

@@ -333,6 +333,33 @@ describe("a replacement that went through", () => {
     expect(() => offer(container, APP_UPDATE_INSTALL_LABEL)).toThrow();
     expect(container.textContent).toContain(APP_UPDATE_COMMAND_UNKNOWN_NOTE);
   });
+
+  // A read that failed says nothing rather than guessing, which is the
+  // rule the first read follows too. Kept, the description on the card
+  // would be the one drawn before the install — a machine as it no longer
+  // is, with the action gone so nobody can ask again.
+  it("drops the command description it could not read again", async () => {
+    const left = "kendex 5.1.0 is installed and starts on the next launch";
+    vi.mocked(commands.appUpdateInstall).mockResolvedValue({
+      status: "ok",
+      data: left,
+    });
+    const container = await show({ kind: "direct" }, { kind: "unknown" });
+    expect(container.textContent).toContain(APP_UPDATE_COMMAND_UNKNOWN_NOTE);
+    vi.mocked(commands.appUpdateCommandChannel).mockResolvedValue({
+      status: "error",
+      error: "the command beside this app could not be read",
+    });
+
+    await press(container, APP_UPDATE_INSTALL_LABEL);
+    await settle();
+
+    expect(container.textContent).toContain(left);
+    expect(useNoticeStore.getState().commandChannel).toBeNull();
+    expect(container.textContent).not.toContain(
+      APP_UPDATE_COMMAND_UNKNOWN_NOTE,
+    );
+  });
 });
 
 describe("what pressing Update now hands the engine", () => {

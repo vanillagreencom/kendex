@@ -865,10 +865,12 @@ export type CatalogSummary = {
 };
 
 /**
- *  What the sidebar card says about the `kendex` command beside the app,
- *  before Update now is pressed — afterwards the app has restarted and
- *  there is no card left to say it on. `None` where there is nothing to
- *  say: no command here, or one Update now carries across itself.
+ *  What the sidebar card says about the `kendex` command beside the app.
+ *  Read before Update now is pressed, and read again after an install that
+ *  answered rather than restarting, which leaves the card up with this the
+ *  only thing on it that can still be true. An install that restarts takes
+ *  the card with it. `None` where there is nothing to say: no command
+ *  here, or one Update now carries across itself.
  * 
  *  Every string is fixed text decided by which arm ran, save the path,
  *  which names one file to a person who may have several — the rule the
