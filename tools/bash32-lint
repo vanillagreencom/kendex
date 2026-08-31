@@ -109,9 +109,11 @@ PATTERN="$PATTERN"'|\$\{@\}'
 #     continuation, which a line-oriented scan does not see.
 #   - what a BSD utility rejects in its argv — `dirname --`, `basename --`,
 #     `chmod` with a mode the GNU one accepts. A review-gate copy of this set
-#     once carried `(dirname|basename) +--( |$)`; it is not here, because that
-#     rule is proven by running, not by reading, the argument
-#     skills/growth-guards/tests/bsd-argv-install.test.sh makes for chmod.
+#     once carried `(dirname|basename) +--( |$)`; no BSD-argv shape is in
+#     scope here. One of them is proven by running instead of by reading:
+#     skills/growth-guards/tests/bsd-argv-install.test.sh executes the real
+#     installer under a BSD chmod shim. `dirname --` and `basename --` have
+#     neither a rule here nor a shim there, and are live in shipped scripts.
 #   - whether a script RUNS under Bash 3.2. Nothing here does; CI is Linux on
 #     Bash 5 and `bash -n` is that same shell. A clean scan says the source
 #     carries no construct named above, and says nothing further.
@@ -119,13 +121,6 @@ PATTERN="$PATTERN"'|\$\{@\}'
 die() {
   printf 'bash32-lint: %s\n' "$1" >&2
   exit 2
-}
-
-listed() { # listed NEEDLE LIST
-  local n="$1" e
-  shift
-  for e in $1; do [ "$e" = "$n" ] && return 0; done
-  return 1
 }
 
 # is_shell FILE — by extension, or by a shebang naming sh or bash.
@@ -175,6 +170,21 @@ at_root() { # at_root PATH — a roster path, read from the toplevel.
   esac
 }
 
+# excepted DIR LIST — is DIR one of LIST's directories? Compared as resolved
+# physical paths, never as strings: `skills/linear/scripts` and
+# `$PWD/skills/linear/scripts` name one directory, and an exception that holds
+# under one spelling of a directory and not another is not an exception.
+excepted() {
+  local n="" e="" abs=""
+  n="$(cd "$1" >/dev/null && pwd -P)" || die "$1 could not be resolved"
+  for e in $2; do
+    abs="$(cd "$(at_root "$e")" >/dev/null && pwd -P)" ||
+      die "the exception $e could not be resolved"
+    [ "$abs" = "$n" ] && return 0
+  done
+  return 1
+}
+
 # The exceptions are judged before anything is scanned: a stale one excuses a
 # directory nobody is checking.
 for d in $NO_SCAN $NO_SHELL; do
@@ -185,7 +195,7 @@ done
 dirs=""
 for d in "$@"; do
   [ -d "$d" ] || die "$d is not a directory"
-  listed "$d" "$NO_SCAN" && continue
+  excepted "$d" "$NO_SCAN" && continue
   dirs="$dirs $d"
 done
 [ -n "$dirs" ] || die "no directory left to scan"
@@ -194,7 +204,7 @@ done
 # proof can plant a construct in each rather than repeating the roster.
 if [ "$LIST_ONLY" = yes ]; then
   for d in $dirs; do
-    listed "$d" "$NO_SHELL" && continue
+    excepted "$d" "$NO_SHELL" && continue
     printf '%s\n' "$d"
   done
   exit 0
@@ -219,11 +229,11 @@ for d in $dirs; do
 $listing
 EOF
   if [ -z "$found" ]; then
-    listed "$d" "$NO_SHELL" ||
+    excepted "$d" "$NO_SHELL" ||
       die "$d holds no shell file, so this lint would read nothing there"
     continue
   fi
-  listed "$d" "$NO_SHELL" &&
+  excepted "$d" "$NO_SHELL" &&
     die "$d is declared to hold no shell file, but it does now — drop the exception"
   files="$files$found"
   scanned=$((scanned + 1))

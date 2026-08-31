@@ -78,8 +78,16 @@ out=$(cd "$REPO" && "$WORKTREE_SCRIPT" push some-id -h)
 assert_eq "$?" 0 "worktree push some-id -h exits 0"
 assert_contains "$out" "Usage: worktree push" "late -h prints the push help"
 
-# Every form above ran against a repository carrying that .env.local, so the
-# marker answers for all of them at once.
+out=$(cd "$REPO" && "$WORKTREE_SCRIPT" list --help)
+assert_contains "$out" "Usage: worktree list" "list --help prints the list help"
+out=$(cd "$REPO" && "$WORKTREE_SCRIPT" path --help)
+assert_contains "$out" "Usage: worktree path" "path --help prints help, not an issue lookup"
+out=$(cd "$REPO" && "$WORKTREE_SCRIPT" exists -h)
+assert_contains "$out" "worktree exists" "exists -h prints help, not an issue lookup"
+
+# Every help form run inside $REPO is above this line, so the marker answers
+# for all of them at once. The one that runs below it, `check --help`, is the
+# spelling the 16-command loop already ran here.
 if [[ -e "$TMP_ROOT/env-executed" ]]; then
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n' "help sourced the project .env.local"
@@ -87,13 +95,6 @@ else
   PASS=$((PASS + 1))
   printf '  ok    %s\n' "no help form sourced the project .env.local"
 fi
-
-out=$(cd "$REPO" && "$WORKTREE_SCRIPT" list --help)
-assert_contains "$out" "Usage: worktree list" "list --help prints the list help"
-out=$(cd "$REPO" && "$WORKTREE_SCRIPT" path --help)
-assert_contains "$out" "Usage: worktree path" "path --help prints help, not an issue lookup"
-out=$(cd "$REPO" && "$WORKTREE_SCRIPT" exists -h)
-assert_contains "$out" "worktree exists" "exists -h prints help, not an issue lookup"
 
 # Per-command help needs no repository at all. The top-level form is
 # tools/tests/help-inert.test.sh's; these three resolve a worktree when they

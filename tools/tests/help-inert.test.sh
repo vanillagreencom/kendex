@@ -126,12 +126,22 @@ stage_tree() {
     rm -rf -- "${dest:?}/.agents/skills/$s/tests"
   done
   # A stub `gh` and a stub `codex` keep every run local: a data row must load
-  # project configuration, and it may not reach the network to do it. The
-  # Linear CLI reaches the network through curl rather than gh, so run_row
-  # strips the credentials that would let it get that far.
+  # project configuration, and it may not reach the network to do it. A row may
+  # legitimately reach for those two, so they simply refuse.
   printf '#!/bin/sh\nexit 1\n' >"$dest/bin/gh"
   printf '#!/bin/sh\nexit 1\n' >"$dest/bin/codex"
-  chmod +x "$dest/bin/gh" "$dest/bin/codex"
+  # curl is the channel the Linear CLI reaches the network through, and NO row
+  # here has any business making an HTTP request at all. So the stub logs its
+  # argv and every loop below reds on a non-empty log. The stub is its own
+  # control where an enumerated list of credential variables is not: it cannot
+  # go stale when the CLI grows another credential source, and it names the
+  # call rather than trusting that none was made.
+  cat >"$dest/bin/curl" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >>"$dest/curl-called"
+exit 1
+STUB
+  chmod +x "$dest/bin/gh" "$dest/bin/codex" "$dest/bin/curl"
 }
 
 # stage DEST — stage_tree inside a fixture git repository whose .env.local
@@ -143,17 +153,19 @@ stage() {
   printf 'touch "%s/env-executed"\n' "$dest" >"$dest/.env.local" || return 1
 }
 
-# run_row REPO SKILL SCRIPT ARGS — the command's combined output, with the
-# marker cleared first. Prints the exit status on the last line.
+# run_row REPO SKILL SCRIPT ARGS — the command's combined output, with both
+# markers cleared first. Prints the exit status on the last line.
 #
 # The credential channels are stripped rather than inherited: a data row runs
 # the command for real, and `create --title -h` under an ambient
 # LINEAR_API_KEY would reach Linear and create an issue titled `-h`. The row
-# needs only that the run load project configuration and then fail.
+# needs only that the run load project configuration and then fail. The list
+# is the belt; the curl stub staged above is the braces, and it is the half
+# that reds when the list stops being complete.
 run_row() {
   local repo="$1" skill="$2" script="$3" out="" status=0
   shift 3
-  rm -f "$repo/env-executed"
+  rm -f "$repo/env-executed" "$repo/curl-called"
   out="$(cd "$repo" && PATH="$repo/bin:$PATH" \
     env -u LINEAR_API_KEY -u LINEAR_API_KEY_OVERRIDE -u LINEAR_TEAM \
       -u GH_TOKEN -u GITHUB_TOKEN \
@@ -174,7 +186,10 @@ check_help() {
     result="$(run_row "$repo" "$ROW_SKILL" "$ROW_SCRIPT" $ROW_ARGS)"
     status="${result##*$'\n'}"
     out="${result%$'\n'*}"
-    if [ "$status" -ne 0 ]; then
+    if [ -e "$repo/curl-called" ]; then
+      HELP_FAILURES="$HELP_FAILURES$ROW_SKILL $ROW_SCRIPT $ROW_ARGS: reached the network through curl
+"
+    elif [ "$status" -ne 0 ]; then
       HELP_FAILURES="$HELP_FAILURES$ROW_SKILL $ROW_SCRIPT $ROW_ARGS: exited $status
 "
     elif [ "${out#*"$ROW_TOKEN"}" = "$out" ]; then
@@ -204,7 +219,10 @@ check_data() {
     result="$(run_row "$repo" "$ROW_SKILL" "$ROW_SCRIPT" $ROW_ARGS)"
     status="${result##*$'\n'}"
     out="${result%$'\n'*}"
-    if [ "$status" -eq 0 ]; then
+    if [ -e "$repo/curl-called" ]; then
+      DATA_FAILURES="$DATA_FAILURES$ROW_SKILL $ROW_SCRIPT $ROW_ARGS: reached the network through curl
+"
+    elif [ "$status" -eq 0 ]; then
       # An expected failure, asserted rather than swallowed: these commands are
       # missing required arguments, and a run that started succeeding would mean
       # the flag had been taken as help after all.
@@ -241,6 +259,25 @@ $HELP_ROWS
 EOF
 }
 
+# norepo_missing — the skills norepo_rows yields no row for. § 3 scores its
+# whole set with one aggregate ok, so a skill that stops contributing a row
+# leaves § 3 reporting that help works outside a repository over less than
+# SKILLS, with every remaining row still passing. Held to SKILLS the way the
+# table itself is in § 1.
+norepo_missing() {
+  local s rows="" missing=""
+  rows="
+$(norepo_rows)" || return 1
+  for s in $SKILLS; do
+    case "$rows" in
+    *"
+$s:"*) continue ;;
+    esac
+    missing="$missing $s"
+  done
+  printf '%s' "$missing"
+}
+
 # check_norepo DIR — the same `--help` forms against a tree in no repository.
 NOREPO_FAILURES=""
 check_norepo() {
@@ -252,7 +289,10 @@ check_norepo() {
     result="$(run_row "$dir" "$ROW_SKILL" "$ROW_SCRIPT" --help)"
     status="${result##*$'\n'}"
     out="${result%$'\n'*}"
-    if [ "$status" -ne 0 ]; then
+    if [ -e "$dir/curl-called" ]; then
+      NOREPO_FAILURES="$NOREPO_FAILURES$ROW_SKILL --help: reached the network through curl
+"
+    elif [ "$status" -ne 0 ]; then
       NOREPO_FAILURES="$NOREPO_FAILURES$ROW_SKILL --help: exited $status
 "
     elif [ "${out#*"$ROW_TOKEN"}" = "$out" ]; then
@@ -295,6 +335,21 @@ $s:"*) ok "$s is covered by the table" ;;
   esac
 done
 
+# The stubs guard nothing unless they are what the fixture's PATH resolves.
+# Asserted rather than assumed: a stub that did not land leaves the real
+# binary running with an empty log behind it, which is the shape the curl
+# check exists to close.
+for tool in gh codex curl; do
+  found=""
+  found="$(cd "$REPO" && PATH="$REPO/bin:$PATH" command -v "$tool" 2>/dev/null)" ||
+    found=""
+  if [ "$found" = "$REPO/bin/$tool" ]; then
+    ok "the fixture resolves $tool to its stub"
+  else
+    bad "the fixture resolves $tool to '$found', not $REPO/bin/$tool"
+  fi
+done
+
 if check_help "$REPO"; then
   ok "every help form prints its command index and sources no project .env.local"
 else
@@ -320,8 +375,11 @@ fi
 
 # --- 3. help needs no repository at all ---------------------------------
 NOREPO="$TMP/norepo"
+norepo_gap="$(norepo_missing)"
 if ! stage_tree "$NOREPO"; then
   bad "the no-repository fixture could not be staged"
+elif [ -n "$norepo_gap" ]; then
+  bad "no --help row is selected for:$norepo_gap — § 3 would report success over less than SKILLS"
 elif noroot="$(cd "$NOREPO" && git rev-parse --show-toplevel 2>/dev/null)"; then
   # The precondition, asserted: without it the loop would run every row INSIDE
   # a repository and still report that help works without one.
