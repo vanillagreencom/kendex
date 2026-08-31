@@ -52,20 +52,20 @@ export const readOf = (
  *  An answer a side-effect produced ranks by when it LANDS instead — it
  *  reports the state its own work made, newer than anything still in flight.
  *  Spell that `order.lands(order.begin())` at the landing itself, which also
- *  supersedes every read still out. */
+ *  supersedes every read still out.
+ *
+ *  Asking is the whole of it: `lands` reads the counter and writes nothing,
+ *  so a ticket answers the same way however often it is asked. It carries
+ *  no once-only rule because no caller needs one — each takes a ticket as
+ *  its read begins and asks once when that read answers. */
 export function readOrder(): {
   begin: () => number;
   lands: (ticket: number) => boolean;
 } {
   let begun = 0;
-  let landed = 0;
   return {
     begin: () => ++begun,
-    lands: (ticket) => {
-      if (ticket !== begun || ticket <= landed) return false;
-      landed = ticket;
-      return true;
-    },
+    lands: (ticket) => ticket === begun,
   };
 }
 
