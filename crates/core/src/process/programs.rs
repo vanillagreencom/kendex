@@ -53,12 +53,15 @@ impl Hardened {
     /// `core.worktree` in the mirror, so the write lands in the directory
     /// named here and nowhere else.
     ///
-    /// The one call that writes a working tree kendex then reads, so the
-    /// one that settles line endings — `super::MATERIALISING` says why it
-    /// goes here and nowhere else. Every other constructor above is either
-    /// an inspection or has no working tree to write: `git_bare` attaches
-    /// none, and the only clone kendex makes is `--mirror`, which is bare
-    /// for the same reason. Conversion happens where git writes files.
+    /// The checkout's own constructor, so the one that settles line
+    /// endings — `super::MATERIALISING` says why it goes here and nowhere
+    /// else. The steps `remote::store::check_out` takes around the write
+    /// need the same working tree pinned and come through here too; the
+    /// write is the one among them the settings are for. Every other
+    /// constructor above is either an inspection or has no working tree to
+    /// write: `git_bare` attaches none, and the only clone kendex makes is
+    /// `--mirror`, which is bare for the same reason. Conversion happens
+    /// where git writes files.
     pub fn git_into(git_dir: &Path, work_tree: &Path, args: &[&str]) -> Hardened {
         let mut pinned = vec![
             OsString::from("--git-dir"),

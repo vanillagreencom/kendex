@@ -12,12 +12,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use sha2::{Digest, Sha256};
-
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::fs::atomic_write;
 use crate::process::Hardened;
+
+mod attributes;
+mod signature;
+
+pub use signature::tree_signature;
 
 /// Where the fetched objects live: one bare mirror per repository.
 const MIRRORS: &str = "mirrors";
@@ -128,10 +131,17 @@ pub fn lock_repo(env: &Env, key: &str) -> Result<CacheGuard> {
 }
 
 fn run(git: Hardened) -> Result<()> {
+    captured(git).map(|_| ())
+}
+
+/// The same, handing back what the call printed. Bytes rather than text:
+/// git prints a path as the bytes it stored, and a blob is not text at
+/// all, so neither survives a trip through lossy UTF-8.
+fn captured(git: Hardened) -> Result<Vec<u8>> {
     let command = git.label().to_owned();
     let output = git.run()?;
     if output.status.success() {
-        Ok(())
+        Ok(output.stdout)
     } else {
         Err(CoreError::GitFailed {
             command,
@@ -245,7 +255,7 @@ pub fn has_commit(mirror: &Path, commit: &str) -> bool {
 /// A signature alone says the bytes are the ones that were written, never
 /// that they are the ones `check_out` writes now. The number rises
 /// whenever `check_out` changes what it writes for a commit.
-const RECEIPT_RULES: &str = "kendex-checkout 1";
+const RECEIPT_RULES: &str = "kendex-checkout 2";
 
 /// A published checkout, if the cache holds this commit unmodified under
 /// today's materialization rules. A mismatch is not an error, an
@@ -317,76 +327,19 @@ pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<Path
 /// — the only file in the mirror this touches. `git worktree` is
 /// deliberately unused: it would leave admin state in the mirror and a
 /// `.git` pointer inside a directory that is meant to be plain content.
+///
+/// A catalog's own `.gitattributes` decides nothing about what lands: it
+/// is held out of the write and laid down afterwards, so the checkout is
+/// the bytes the source committed on every machine. [`attributes`] says
+/// why that is the answer rather than a setting.
 fn check_out(into: &Path, mirror: &Path, commit: &str) -> Result<()> {
     fs::create_dir_all(into).map_err(|e| CoreError::io(into, e))?;
     run(Hardened::git_bare(mirror, &["read-tree", commit]))?;
+    let withheld = attributes::withhold(mirror, into)?;
     run(Hardened::git_into(
         mirror,
         into,
         &["checkout-index", "--all", "--force"],
-    ))
-}
-
-/// SHA-256 over a tree as sorted path + kind + content. Symlinks hash their
-/// target text, never what it points at: a catalog may ship a link that
-/// dangles here, and reading through it would either fail or pull in bytes
-/// from the host.
-pub fn tree_signature(root: &Path) -> Result<String> {
-    let mut hasher = Sha256::new();
-    hash_entry(&mut hasher, root, Path::new(""))?;
-    let mut out = String::new();
-    for byte in hasher.finalize() {
-        use std::fmt::Write as _;
-        let _ = write!(out, "{byte:02x}");
-    }
-    Ok(out)
-}
-
-fn hash_entry(hasher: &mut Sha256, path: &Path, rel: &Path) -> Result<()> {
-    let meta = fs::symlink_metadata(path).map_err(|e| CoreError::io(path, e))?;
-    let name = rel.to_string_lossy();
-    if meta.is_symlink() {
-        let target = fs::read_link(path).map_err(|e| CoreError::io(path, e))?;
-        hasher.update(b"l\0");
-        hasher.update(name.as_bytes());
-        hasher.update([0]);
-        hasher.update(target.to_string_lossy().as_bytes());
-        hasher.update([0]);
-    } else if meta.is_dir() {
-        hasher.update(b"d\0");
-        hasher.update(name.as_bytes());
-        hasher.update([0]);
-        let mut entries: Vec<PathBuf> = fs::read_dir(path)
-            .map_err(|e| CoreError::io(path, e))?
-            .flatten()
-            .map(|entry| entry.path())
-            .collect();
-        entries.sort();
-        for entry in entries {
-            let Some(file_name) = entry.file_name() else {
-                continue;
-            };
-            hash_entry(hasher, &entry, &rel.join(file_name))?;
-        }
-    } else {
-        hasher.update(b"f\0");
-        hasher.update(name.as_bytes());
-        hasher.update([0]);
-        hasher.update([executable(&meta)]);
-        hasher.update(&fs::read(path).map_err(|e| CoreError::io(path, e))?);
-        hasher.update([0]);
-    }
-    Ok(())
-}
-
-/// The one permission bit git records, and the one a hook script needs.
-#[cfg(unix)]
-fn executable(meta: &fs::Metadata) -> u8 {
-    use std::os::unix::fs::PermissionsExt;
-    u8::from(meta.permissions().mode() & 0o100 != 0)
-}
-
-#[cfg(not(unix))]
-fn executable(_meta: &fs::Metadata) -> u8 {
-    0
+    ))?;
+    attributes::restore(mirror, into, &withheld)
 }

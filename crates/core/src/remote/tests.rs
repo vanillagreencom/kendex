@@ -325,6 +325,144 @@ fn a_failed_checkout_publishes_nothing() {
     assert!(leftovers.is_empty(), "staging left behind: {leftovers:?}");
 }
 
+/// A catalog checks out the bytes it committed, whatever its own
+/// `.gitattributes` asks for. The two rules are placed to be told apart:
+/// `eol.txt` is converted by the root file and `SKILL.md` is rewritten by
+/// the nested one, so a checkout that honoured either says which. The
+/// second is the one that made this a defect rather than a preference —
+/// the driver's `smudge` command lives in configuration, so honouring it
+/// gives one commit different bytes on two machines.
+///
+/// The hash is the whole claim. It is over a tree with no link and no
+/// executable in it, the two things a checkout can spell differently
+/// across platforms, so Linux, macOS and Windows all owe this number.
+///
+/// A control keeps it from passing for the wrong reason: the same commit
+/// materialized the way git would materialize it, against the same mirror
+/// and the same host configuration, comes out converted and rewritten.
+#[test]
+fn a_catalogs_own_attributes_do_not_decide_what_it_checks_out() {
+    const SKILL: &str = "---\nname: gh\n---\nv1\n";
+    let f = fixture();
+    fs::write(f.upstream.join(".gitattributes"), "eol.txt text eol=crlf\n").unwrap();
+    fs::write(f.upstream.join("eol.txt"), "one\ntwo\n").unwrap();
+    fs::write(
+        f.upstream.join("skills/.gitattributes"),
+        "gh/SKILL.md filter=demo\n",
+    )
+    .unwrap();
+    commit(&f.upstream, "attributes");
+    let published = sync(&f.env, REPO, None).unwrap();
+    let key = key_for(&f.env);
+    let mirror = store::mirror_dir(&f.env, &key);
+
+    // The host half of the arrangement: a machine that defines the driver
+    // the catalog reaches for. `git hash-object` stands in for a smudge
+    // command because it is the one program every host running this
+    // already has.
+    let smudge = "git hash-object -t blob --stdin";
+    let set = Hardened::git_bare(&mirror, &["config", "filter.demo.smudge", smudge])
+        .run()
+        .unwrap();
+    assert!(set.status.success());
+
+    // The pin is not the mirror's HEAD, and the tree HEAD names holds no
+    // attributes file at all: taking one out of the index must be about
+    // the commit being written and not about what the repository points
+    // at now.
+    fs::remove_file(f.upstream.join(".gitattributes")).unwrap();
+    fs::remove_file(f.upstream.join("skills/.gitattributes")).unwrap();
+    commit(&f.upstream, "no attributes");
+    sync(&f.env, REPO, None).unwrap();
+
+    // Published before the driver existed, so it is re-materialized under
+    // it rather than served from the receipt.
+    fs::remove_dir_all(&published.root).unwrap();
+    fs::remove_file(store::receipt_path(&f.env, &key, &published.commit)).unwrap();
+    let root = store::publish(&f.env, &key, &mirror, &published.commit).unwrap();
+
+    assert_eq!(fs::read(root.join("eol.txt")).unwrap(), b"one\ntwo\n");
+    assert_eq!(
+        fs::read(root.join("skills/gh/SKILL.md")).unwrap(),
+        SKILL.as_bytes()
+    );
+    assert_eq!(
+        fs::read(root.join(".gitattributes")).unwrap(),
+        b"eol.txt text eol=crlf\n"
+    );
+    assert_eq!(
+        fs::read(root.join("skills/.gitattributes")).unwrap(),
+        b"gh/SKILL.md filter=demo\n"
+    );
+    assert_eq!(
+        store::tree_signature(&root).unwrap(),
+        "4a7d5d6b36d50b5095a29d7da4e051ba354c3a9e00595d9fa40611eee51b9057"
+    );
+
+    let elsewhere = tempfile::tempdir().unwrap();
+    let control = elsewhere.path().join("control");
+    fs::create_dir_all(&control).unwrap();
+    assert!(
+        Hardened::git_bare(&mirror, &["read-tree", &published.commit])
+            .run()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        Hardened::git_into(&mirror, &control, &["checkout-index", "--all", "--force"])
+            .run()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert_eq!(
+        fs::read(control.join("eol.txt")).unwrap(),
+        b"one\r\ntwo\r\n",
+        "the eol rule was not live, so the checkout proves nothing"
+    );
+    assert_ne!(
+        fs::read(control.join("skills/gh/SKILL.md")).unwrap(),
+        SKILL.as_bytes(),
+        "the smudge driver was not live, so the checkout proves nothing"
+    );
+}
+
+/// An attributes file is written back the way git records it, not merely
+/// as bytes. Git keeps one permission bit and whether an entry is a link,
+/// `tree_signature` hashes both, and a checkout missing either is not the
+/// commit. Unix-only because those are the two things a Windows checkout
+/// cannot spell — which is why the tree the hash above is taken over holds
+/// neither.
+#[cfg(unix)]
+#[test]
+fn an_attributes_file_is_written_back_in_the_mode_it_was_committed_in() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let f = fixture();
+    fs::write(f.upstream.join("rules"), "* text eol=crlf\n").unwrap();
+    std::os::unix::fs::symlink("rules", f.upstream.join(".gitattributes")).unwrap();
+    let nested = f.upstream.join("skills/.gitattributes");
+    fs::write(&nested, "nothing.txt text\n").unwrap();
+    fs::set_permissions(&nested, fs::Permissions::from_mode(0o755)).unwrap();
+    commit(&f.upstream, "attributes");
+
+    let root = sync(&f.env, REPO, None).unwrap().root;
+
+    let link = root.join(".gitattributes");
+    assert!(link.is_symlink(), "the link was written as a file");
+    assert_eq!(fs::read_link(&link).unwrap(), Path::new("rules"));
+    let nested = root.join("skills/.gitattributes");
+    assert_eq!(fs::read(&nested).unwrap(), b"nothing.txt text\n");
+    assert!(
+        fs::metadata(&nested).unwrap().permissions().mode() & 0o111 != 0,
+        "the executable bit did not survive"
+    );
+    // The `* text eol=crlf` the link points at is the only rule that
+    // reaches SKILL.md, and it reached nothing.
+    assert_eq!(body(&root), "---\nname: gh\n---\nv1\n");
+}
+
 /// Two resolvers must not materialize one repository at once. A refresh is
 /// told the cache is busy rather than sitting on someone else's download,
 /// while a read — which never has to write anything — answers what it can

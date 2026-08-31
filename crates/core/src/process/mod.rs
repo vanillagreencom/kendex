@@ -102,15 +102,13 @@ const PINNED: &[&str] = &["protocol.ext.allow=never"];
 /// `core.attributesFile` is emptied here, which is git's documented unset,
 /// and `GIT_ATTR_NOSYSTEM` in the environment takes the system file out.
 ///
-/// That is the boundary, and it is the line worth holding rather than
-/// narrowing the claim again: what the *host* says is silenced, what the
-/// *catalog* says is not. A repository's own committed `.gitattributes`
-/// still decides — `* text eol=crlf` still gets CRLF, and an attribute
-/// selecting `filter=<driver>` still reaches for a `smudge` command that
-/// lives in configuration, so one commit can land differently on a host
-/// defining that driver. Neither is bypassed, because whose intent wins
-/// between a catalog author and the machine reading them is a product
-/// question rather than this module's. KEN-850 owns it.
+/// What the *catalog* says is silenced too, and elsewhere: a repository's
+/// own committed `.gitattributes` outranks every setting on a command
+/// line, so it is not answered by one. `remote::store::check_out` takes
+/// those files out of the index before git writes the tree and lays their
+/// committed bytes down afterwards, which leaves no rule in force for any
+/// path. Between the two, a catalog checks out the bytes it committed on
+/// every machine.
 ///
 /// It goes nowhere else, and the reach is the point rather than an
 /// oversight. A call that only *inspects* a repository is asking what that
