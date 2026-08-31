@@ -66,12 +66,14 @@ impl Hardened {
     /// value belongs to the repository — the empty tree of that mirror's
     /// object format — and because a caller that has to name it cannot
     /// forget to; `remote::store::attribute_source` is where the value
-    /// comes from, and it refuses rather than hand back a value a git too
-    /// old for the option would ignore. It goes on the command line as the global option and not as
-    /// `attr.tree` or `GIT_ATTR_SOURCE`, which do the same thing on a git
-    /// that knows them: an option a git is too old to know is refused by
-    /// name, where an unknown config key or environment variable is
-    /// ignored without a word and the checkout converts in silence.
+    /// comes from, and a git too old for the option is refused there,
+    /// before this call is spawned, so the reader gets a sentence naming
+    /// the version they have rather than git's usage wall. It goes on the
+    /// command line as the global option and not as `attr.tree` or
+    /// `GIT_ATTR_SOURCE`, which do the same thing on a git that knows
+    /// them: an option a git is too old to know is refused by name, where
+    /// an unknown config key or environment variable is ignored without a
+    /// word and the checkout converts in silence.
     pub fn git_into(
         git_dir: &Path,
         work_tree: &Path,

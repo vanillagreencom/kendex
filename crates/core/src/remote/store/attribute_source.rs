@@ -7,7 +7,7 @@
 //! the same: kendex refuses rather than writing a checkout git was free to
 //! convert.
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, PoisonError};
 
 use super::stdout;
 use crate::error::{CoreError, Result};
@@ -17,7 +17,7 @@ use crate::process::Hardened;
 /// attributes from, or the refusal that stops the write before a file
 /// exists.
 pub(super) fn for_commit(commit: &str) -> Result<&'static str> {
-    pinned(git_version(), commit)
+    pinned(git_version().as_deref(), commit)
 }
 
 /// Both halves of naming that tree are asked here — the id, and the git
@@ -58,14 +58,39 @@ fn refused(commit: &str, reason: String) -> CoreError {
 /// that cannot be wrong in silence.
 const GIT_FLOOR: (u32, u32) = (2, 41);
 
-/// Asked once, at the first checkout: a host does not change its git
-/// mid-run, and every answer after the first would cost a process to
-/// learn what this one already knows.
-fn git_version() -> Option<&'static str> {
-    static REPORTED: OnceLock<Option<String>> = OnceLock::new();
-    REPORTED
-        .get_or_init(|| stdout(Hardened::git(&["--version"], None)))
-        .as_deref()
+/// Asked once and then remembered — but only once it answers.
+///
+/// A host does not change its git mid-run, so an answer is worth a process
+/// once and never again: a long session materializes many commits and only
+/// the first of them spends a spawn. A failure is worth nothing, though,
+/// and remembering one would be worse than not asking. `stdout` says
+/// `None` for a spawn that did not happen as readily as for a git that is
+/// not there, and a Mac without the command line tools installed has a
+/// `/usr/bin/git` shim that exits non-zero until they are: remembered,
+/// that one refusal would tell the user to install git and then keep
+/// refusing after they had. So the answer is kept and the failure is not,
+/// and the next checkout asks again.
+///
+/// The lock is held across the asking, not merely around the remembering,
+/// so two publishes starting together spend one spawn between them rather
+/// than one each. On the path that fails they each spend one, which is the
+/// path that ends in a refusal either way.
+fn git_version() -> Option<String> {
+    static REPORTED: Mutex<Option<String>> = Mutex::new(None);
+    remembered(&REPORTED, || stdout(Hardened::git(&["--version"], None)))
+}
+
+/// The remembering itself, given the cell to remember in, so that what it
+/// keeps and what it does not can be shown without a git that fails.
+fn remembered(
+    cell: &Mutex<Option<String>>,
+    ask: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let mut kept = cell.lock().unwrap_or_else(PoisonError::into_inner);
+    if kept.is_none() {
+        *kept = ask();
+    }
+    kept.clone()
 }
 
 /// What a `git --version` line earns, or `None` when it clears the floor.
@@ -76,12 +101,21 @@ fn below_floor(reported: Option<&str>) -> Option<String> {
     let needed = format!(
         "kendex needs git {want_major}.{want_minor} or newer to write a checkout: it is the first git that can be told to read no attributes, and one that cannot be told converts the files in silence"
     );
-    match reported.and_then(version_of) {
-        Some(found) if found >= GIT_FLOOR => None,
-        Some((major, minor)) => Some(format!("this host runs git {major}.{minor}, and {needed}")),
+    match reported.map(|line| (line, version_of(line))) {
+        Some((_, Some(found))) if found >= GIT_FLOOR => None,
+        Some((_, Some((major, minor)))) => {
+            Some(format!("this host runs git {major}.{minor}, and {needed}"))
+        }
+        // Answered, but not with anything a version could be read out of.
+        Some((line, None)) => Some(format!(
+            "this host's git did not say which version it is, answering \"{line}\", and {needed}"
+        )),
+        // Never answered at all, which is a different thing and almost
+        // never the user's git: a checkout runs only after a clone or a
+        // fetch already spawned git here, so the probe is what did not come
+        // back. Saying so keeps the refusal off the wrong suspect.
         None => Some(format!(
-            "this host's git did not say which version it is, answering {}, and {needed}",
-            reported.map_or("nothing at all".to_owned(), |line| format!("\"{line}\""))
+            "kendex could not run git --version here, and {needed}"
         )),
     }
 }
@@ -137,36 +171,90 @@ fn no_attributes(commit: &str) -> Result<&'static str> {
 mod tests {
     use super::*;
 
-    /// The version line every host answers with, read the way the floor has to
-    /// read it. A git below the floor cannot be installed on the machine
-    /// running this, so the sentence is held to here instead — including on
-    /// the shapes real hosts print: Apple's command line tools carry a build
-    /// suffix, and the Windows build carries a fourth number.
+    /// The number, written out rather than read back off the constant. The
+    /// floor is a promise the README and a **Breaking:** changelog line
+    /// both make in words, so a test that formats its expectation from
+    /// `GIT_FLOOR` checks the sentence against its own echo and holds
+    /// nothing. Both neighbours are named, because 2.40 is the value most
+    /// likely to be reached for by mistake: it is the release that taught
+    /// `git check-attr` a tree-ish, one short of the release that taught
+    /// git itself the option.
+    ///
+    /// The lines are the shapes real hosts print: Apple's command line
+    /// tools carry a build suffix, the Windows build carries a fourth
+    /// number. A git below the floor cannot be installed on the machine
+    /// running this, so the sentence is held to here instead.
     #[test]
     fn a_git_below_the_floor_is_refused_by_both_versions() {
-        let (major, minor) = GIT_FLOOR;
-        let needed = format!("git {major}.{minor} or newer");
+        const NEEDED: &str = "git 2.41 or newer";
 
         assert_eq!(below_floor(Some("git version 2.41.0")), None);
         assert_eq!(below_floor(Some("git version 2.55.0")), None);
         assert_eq!(below_floor(Some("git version 3.0.0")), None);
 
         for (line, found) in [
+            ("git version 2.40.1", "git 2.40"),
             ("git version 2.39.5 (Apple Git-154)", "git 2.39"),
             ("git version 2.34.1", "git 2.34"),
             ("git version 1.9.1", "git 1.9"),
         ] {
             let refusal = below_floor(Some(line)).expect("a git below the floor was accepted");
             assert!(refusal.contains(found), "{line}: {refusal}");
-            assert!(refusal.contains(&needed), "{line}: {refusal}");
+            assert!(refusal.contains(NEEDED), "{line}: {refusal}");
         }
 
-        // A version nothing could read is refused too: proceeding would spend
-        // the refusal on git's own usage wall, which names no version at all.
-        for unreadable in [None, Some(""), Some("git version"), Some("hg 5.9")] {
-            let refusal = below_floor(unreadable).expect("an unreadable version was accepted");
-            assert!(refusal.contains(&needed), "{unreadable:?}: {refusal}");
+        // An answer nothing could read is refused too, and separately from
+        // no answer at all: only the first is about the user's git.
+        for unreadable in ["", "git version", "hg 5.9"] {
+            let refusal = below_floor(Some(unreadable)).expect("an unreadable answer was accepted");
+            assert!(refusal.contains(unreadable), "{unreadable:?}: {refusal}");
+            assert!(refusal.contains(NEEDED), "{unreadable:?}: {refusal}");
         }
+        let silent = below_floor(None).expect("a silent probe was accepted");
+        assert!(silent.contains("could not run git --version"), "{silent}");
+        assert!(silent.contains(NEEDED), "{silent}");
+    }
+
+    /// An answer is kept, a failure is not. Remembering a failure would
+    /// outlive its cause: a Mac whose `/usr/bin/git` shim exits non-zero
+    /// until the command line tools are installed would be told to install
+    /// them and then refused all the same, for the rest of the session.
+    /// The keeping is what bounds the asking, so the count is asserted
+    /// with it: one spawn for a host that answers, however many checkouts
+    /// follow.
+    #[test]
+    fn only_an_answer_is_remembered_and_only_asked_for_once() {
+        let cell = Mutex::new(None);
+        let probes = std::cell::Cell::new(0);
+        let ask = |answer: Option<&str>| {
+            remembered(&cell, || {
+                probes.set(probes.get() + 1);
+                answer.map(str::to_owned)
+            })
+        };
+
+        assert_eq!(ask(None), None);
+        assert_eq!(ask(None), None);
+        assert_eq!(
+            probes.get(),
+            2,
+            "a failure was remembered instead of asked again"
+        );
+
+        let answer = Some("git version 2.55.0");
+        assert_eq!(ask(answer).as_deref(), answer);
+        for _ in 0..29 {
+            assert_eq!(
+                ask(None).as_deref(),
+                answer,
+                "the answer was not kept, so every checkout would ask again"
+            );
+        }
+        assert_eq!(
+            probes.get(),
+            3,
+            "the answer cost one asking and the 29 checkouts after it cost none"
+        );
     }
 
     /// The floor is asked before anything else about a checkout, and a git
@@ -196,9 +284,14 @@ mod tests {
     #[test]
     fn a_refusal_reads_as_one_sentence_about_what_kendex_declined() {
         let commit = "abc1234";
+        // Every refusal the module can write, not a sample of them: the
+        // one branch left out is the one a space run lands in next.
+        let said = |reported| refused(commit, below_floor(reported).unwrap()).to_string();
         let refusals = [
             no_attributes(commit).unwrap_err().to_string(),
-            refused(commit, below_floor(Some("git version 2.34.1")).unwrap()).to_string(),
+            said(Some("git version 2.34.1")),
+            said(Some("hg 5.9")),
+            said(None),
         ];
         for refusal in refusals {
             assert!(
