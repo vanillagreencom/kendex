@@ -90,7 +90,7 @@ Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
 
 Arguments: --project-order
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
 </delegation_format>
 
 Fill `Worktree:` and its `Worktree Check:` with the caller's absolute repo root, per § 4.1.
@@ -150,7 +150,7 @@ Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
 
 Arguments: --project "[PROJECT_NAME]" | --team | --issues [FILE_PATH]
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
 Tracker: [TRACKER] [OWNER/REPO]
 </delegation_format>
 

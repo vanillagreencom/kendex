@@ -18,6 +18,11 @@
 # leaving the agent with nothing to run. A future wording change is made in
 # $CANON and at every site together, or the lint reds.
 #
+# Both sides of the comparison are physical paths. `git-context` derives
+# the delegated path with `git rev-parse --show-toplevel`, so the check
+# runs `pwd -P`: a bare `pwd` prints the logical path and would halt a
+# correct delegate whose shell entered the checkout through a symlink.
+#
 # Two rules are enforced inside a `<delegation_format>` block:
 #
 #   1. A `Worktree: [TOKEN]` line is followed on the very next line by the
@@ -68,7 +73,7 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 # The canonical check line, with @TOKEN@ standing in for the block's own
 # placeholder name. This is the single source of truth for the sentence;
 # the shipped docs must match it character for character.
-CANON='Worktree Check: `pwd` before any repo-relative command. It must print [@TOKEN@]; your shell can start in another lane'"'"'s worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.'
+CANON='Worktree Check: `pwd -P` before any repo-relative command. It must print [@TOKEN@]; your shell can start in another lane'"'"'s worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.'
 
 # scan_worktree_precondition <file>
 # Emits one "file:line: ..." line per defect, per the two rules above.
@@ -158,12 +163,15 @@ done
 
 # --- Part b: the lint has teeth -------------------------------------------
 
-# probe <name> <body> → prints scratch-file path.
+# probe <name> <body> [tag_indent] → prints scratch-file path.
 # Writes a standalone delegation block containing <body> (printf %b, so \n
 # splits it into lines) under $TMP_ROOT, removed by the EXIT trap.
+# <tag_indent> is prefixed to both tags, so a probe can put the block itself
+# off column zero the way dev-fix.md nests one in a numbered step; it
+# defaults to empty, which is what every probe but b.6 wants.
 probe() {
   scratch="$TMP_ROOT/probe-$1.md"
-  printf '<delegation_format>\n%b\n</delegation_format>\n' "$2" > "$scratch"
+  printf '%s<delegation_format>\n%b\n%s</delegation_format>\n' "${3-}" "$2" "${3-}" > "$scratch"
   printf '%s' "$scratch"
 }
 
@@ -280,6 +288,17 @@ else
   fail "lint MISSED a remedy an absolute path cannot deliver"
 fi
 
+# b.17 — the pre-fix sentence, identical but for a bare `pwd`. The delegated
+# path is physical (`git rev-parse --show-toplevel`), so a logical `pwd` halts
+# a correct delegate whose shell reached the checkout through a symlink. The
+# logical form must not come back unnoticed.
+LOGICAL="${CHECK//pwd -P/pwd}"
+if reports "$(scan_worktree_precondition "$(probe logical "Worktree: [WORKTREE_PATH]\n$LOGICAL")")" "$UNCANON"; then
+  pass "lint flags a check measuring the cwd with a bare pwd"
+else
+  fail "lint MISSED a check comparing a logical pwd against a physical path"
+fi
+
 # b.13 — RULE 2. A block with no Worktree:/Worktree Check: pair at all IS
 # flagged, whatever it hands over: a placeholder the caller fills with a
 # repo path is invisible to any matcher, so no block is out of scope.
@@ -299,13 +318,19 @@ else
 fi
 
 # b.6 — an indented delegation block (dev-fix.md nests one in a numbered
-# step) is scanned, not skipped for its leading whitespace. Rule 2 flags this
-# same fixture the moment the indent tolerance breaks, so the assertion names
-# rule 1's message. The indent stays in the fixture; it is the thing tested.
-if reports "$(scan_worktree_precondition "$(probe indented '   Worktree: [WORKTREE_PATH]\n   Round ID: [DEV_ROUND_ID]')")" "$UNCANON"; then
-  pass "lint scans an indented delegation block"
+# step) is scanned, not skipped for its leading whitespace. The TAGS are
+# indented too, not just the body: tags at column zero leave both matchers'
+# tolerance untested. The fixture draws one message from each side of the
+# block — the uncanonical line is reported only if the opening tag let the
+# scan in, the unclosed one only if the closing tag was recognised — so
+# restricting EITHER matcher to column zero reds this probe. Rule 2 stays
+# silent here (the block does carry a Worktree: line), so neither assertion
+# can be satisfied by the other rule. The indent is the thing tested.
+INDENTED="$(scan_worktree_precondition "$(probe indented '   Worktree: [WORKTREE_PATH]\n   Round ID: [DEV_ROUND_ID]\n   Worktree: [WORKTREE_PATH]' '   ')")"
+if reports "$INDENTED" "$UNCANON" && reports "$INDENTED" "$UNCLOSED"; then
+  pass "lint scans an indented delegation block, opening tag to closing tag"
 else
-  fail "rule 1 MISSED an indented Worktree: line"
+  fail "lint MISSED an indented delegation block"
 fi
 
 # --- Part c: both trees are actually scanned ------------------------------

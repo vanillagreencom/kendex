@@ -51,7 +51,7 @@ With several references, convert to a bulleted list under one `**Research**:` he
 
 ## 5. Analyze Impact
 
-Run exactly one flow, unless it escalates.
+Run exactly one flow, unless it escalates. In either flow, fill `Worktree:` and its `Worktree Check:` with the caller's absolute repo root, main checkout included.
 
 ### 5.1 Targeted
 
@@ -61,7 +61,7 @@ Delegate to the domain agent:
 Analyze the impact of these research findings on your domain.
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
 
 Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 
@@ -89,7 +89,7 @@ Delegate the same analysis to every affected domain agent in parallel, minus the
 Synthesize the domain reports into a cross-cutting impact analysis.
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
 
 Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 
