@@ -210,38 +210,80 @@ gg_resolve_path() { # FLAG-VALUE KEY DEFAULT LABEL — normalized path on stdout
   gg_config_path "$raw" "$4"
 }
 
+gg_file_mode() { # FILE — its permission bits as octal digits; GNU stat, then BSD
+  stat -c '%a' -- "$1" 2>/dev/null || stat -f '%Lp' -- "$1" 2>/dev/null
+}
+
+# What a failing install step printed, folded into the guard's own diagnostic.
+# A bare `cat:` or `mv:` line ahead of that names the SYMPTOM, and a reader
+# takes the first line they see as the cause — so the tool's words arrive
+# inside the line saying what was being done. gg_scrubbed: another program's
+# bytes on their way to a terminal.
+gg_install_why() { # ERRFILE — " (TEXT)" or nothing
+  local said=""
+  said="$(head -n 1 -- "$1" 2>/dev/null)" || said=""
+  [ -n "$said" ] || return 0
+  printf ' (%s)' "$(gg_scrubbed "$said")"
+}
+
 # Replace DEST with SRC's bytes through a rename inside DEST's own directory.
 # A direct redirect onto DEST, or a rename that crosses a filesystem (where mv
 # degrades to copy-then-unlink), leaves DEST TRUNCATED behind an interrupt —
 # and a truncated policy file is read as a complete one, which for a ratchet
 # baseline loosens the gate instead of failing it.
 gg_install_file() { # SRC DEST LABEL
-  local src="$1" dest="$2" label="$3"
+  local src="$1" dest="$2" label="$3" mode="" err=""
+  # Where each step's stderr is captured. Every caller in this family arms
+  # gg_tmpdir; one that has not is a programming error, and says so rather
+  # than writing to what `$GG_TMP/install.err` means with GG_TMP empty.
+  [ -n "${GG_TMP:-}" ] && [ -d "$GG_TMP" ] \
+    || gg_collection_error "gg_install_file needs gg_tmpdir called first — $label was not replaced"
+  err="$GG_TMP/install.err"
+  # The destination's mode is READ here and applied after the write, never
+  # carried onto the staging file in between: a destination without owner-write
+  # would otherwise fail the write on a file this process just created, and
+  # report a staging error for what is the destination's mode. Reading it
+  # rather than `cp -p`-ing it also keeps a destination owned by somebody else
+  # installable, which `cp -p` refuses over ownership it cannot preserve.
+  if [ -f "$dest" ]; then
+    # `|| mode=""`, never a bare assignment: errexit exits the whole run on a
+    # failing command substitution in one, with stat's status and no
+    # diagnostic — the fail-silent the case below replaces. Nothing to relay
+    # there: gg_file_mode silences both probes, the first being the one
+    # EXPECTED to fail wherever the second answers. A mode that cannot be read
+    # is not one to guess at — the rename would narrow a tracked file every
+    # clone reads, silently.
+    mode="$(gg_file_mode "$dest")" || mode=""
+    case "$mode" in
+      "" | *[!0-7]*) gg_collection_error "could not read the mode of $(gg_shown "$dest") — $label was not replaced" ;;
+    esac
+  fi
   # mktemp, never a name derived from the pid: the staging file lands in a
   # directory the repository controls, a predictable name can already be
   # sitting there, and `cp` writes THROUGH a symlink — so a planted
   # `.gg-install.<pid>.<name>` link would redirect the write anywhere the
   # user can reach. mktemp creates the file itself, exclusively.
-  GG_INSTALL_TMP="$(mktemp "$dest.gg-install.XXXXXX")" \
-    || gg_collection_error "could not stage the replacement for $label beside $(gg_shown "$dest")"
-  # An existing destination keeps its own mode. mktemp creates the staging
-  # file readable by its owner alone, so a rename over a tracked file every
-  # clone reads would narrow it in passing; `cp -p` is the portable way to
-  # take a mode, and the content it brings with it is truncated below.
-  if [ -f "$dest" ] && ! cp -p -- "$dest" "$GG_INSTALL_TMP"; then
+  GG_INSTALL_TMP="$(mktemp "$dest.gg-install.XXXXXX" 2>"$err")" \
+    || gg_collection_error "could not stage the replacement for $label beside $(gg_shown "$dest")$(gg_install_why "$err")"
+  # `2>` BEFORE the output redirect: redirections are applied left to right, so
+  # a failure of the one onto the staging file is reported on whatever stderr
+  # is at that moment — the terminal, if the capture came second.
+  if ! cat -- "$src" 2>"$err" >"$GG_INSTALL_TMP"; then
     rm -f -- "$GG_INSTALL_TMP"
     GG_INSTALL_TMP=""
-    gg_collection_error "could not take $label's mode from $(gg_shown "$dest")"
+    gg_collection_error "could not stage the replacement for $label beside $(gg_shown "$dest")$(gg_install_why "$err")"
   fi
-  if ! cat -- "$src" >"$GG_INSTALL_TMP"; then
+  # No `--` after the mode: chmod's mode is a non-option argument, so a BSD
+  # chmod stops option parsing there and reads the `--` as a file name.
+  if [ -n "$mode" ] && ! chmod "$mode" "$GG_INSTALL_TMP" 2>"$err"; then
     rm -f -- "$GG_INSTALL_TMP"
     GG_INSTALL_TMP=""
-    gg_collection_error "could not stage the replacement for $label beside $(gg_shown "$dest")"
+    gg_collection_error "could not give the replacement for $label $(gg_shown "$dest")'s mode ($mode)$(gg_install_why "$err")"
   fi
-  if ! mv -- "$GG_INSTALL_TMP" "$dest"; then
+  if ! mv -- "$GG_INSTALL_TMP" "$dest" 2>"$err"; then
     rm -f -- "$GG_INSTALL_TMP"
     GG_INSTALL_TMP=""
-    gg_collection_error "could not replace $label at $(gg_shown "$dest") — inspect the file before trusting it"
+    gg_collection_error "could not replace $label at $(gg_shown "$dest")$(gg_install_why "$err") — inspect the file before trusting it"
   fi
   GG_INSTALL_TMP=""
 }

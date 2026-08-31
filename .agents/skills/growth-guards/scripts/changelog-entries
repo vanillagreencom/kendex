@@ -99,9 +99,9 @@ than being an entry.
 
 --collate judges, and on a clean verdict folds every accepted fragment into
 the record's [Unreleased] section under the heading its own section names,
-then deletes the fragment files and any directory that empties. The release
-commit is its only caller. It refuses, writing nothing, when the index and
-the working tree disagree about the record or any fragment: the fold
+then deletes the fragment files and the section directory each leaves empty.
+The release commit is its only caller. It refuses, writing nothing, when the
+index and the working tree disagree about the record or any fragment: the fold
 publishes the files on disk and the judgement measured the ones git carries.
 The record is replaced whole or not at all.
 

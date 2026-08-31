@@ -140,8 +140,9 @@ switch the check off is to drop it from `GROWTH_GUARDS_CHECKS`.
 `--collate` judges, and on a clean verdict folds in what it just accepted:
 each fragment into the record's `[Unreleased]` section, under the heading its
 own section names, in Keep a Changelog order and filename order within a
-section, then the fragment files and any directory they empty are deleted. A
-refused run writes nothing. The release commit is its only caller.
+section, then the fragment files and the section directory each leaves empty
+are deleted. A refused run writes nothing. The release commit is its only
+caller.
 
 It is one run, not a caller and a judge, because "which paths are fragments,
 which section each is in, which paths this judgement covers, and where in the

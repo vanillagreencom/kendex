@@ -15,10 +15,11 @@ One CHANGELOG entry per file. Two branches never write the same
   `AGENTS.md` says about a CHANGELOG entry holds: it is for consumers, it
   states an outcome, and a **Breaking:** change carries its migration note
   inline.
-- **Release**: `changelog-entries --collate` folds every fragment git carries into
-  `## [Unreleased]` in `CHANGELOG.md` under its section heading, in Keep a
-  Changelog order and filename order within a section, then deletes the
-  fragments. Two headings for one section collapse into a single heading,
+- **Release**: `.agents/skills/growth-guards/scripts/changelog-entries
+  --collate` folds every fragment git carries into `## [Unreleased]` in
+  `CHANGELOG.md` under its section heading, in Keep a Changelog order and
+  filename order within a section, then deletes the fragments and the section
+  directory each leaves empty. Two headings for one section collapse into one,
   emitted in Keep a Changelog order and carrying their blocks in file order.
 
 The format has one judge: the growth-guards `changelog-entries` lane, pointed

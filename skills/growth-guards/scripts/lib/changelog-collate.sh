@@ -31,8 +31,8 @@
 # behind.
 #
 # Needs lib/common.sh and lib/changelog-grammar.sh sourced first, and runs on
-# the state the walk filled in: GG_TMP/frags.z, RECORD, RECORD_SHA and the
-# GG_RECORD_* bounds.
+# the state the walk and the record scope filled in: GG_TMP/frags.z, RECORD,
+# RECORD_SHA, RECORD_NOTE and the GG_RECORD_* bounds.
 #
 # Sourced, never executed.
 
@@ -44,15 +44,6 @@ gg_section_heading() { # SECTION — its Keep a Changelog heading text
   printf '%s%s' "$(printf '%s' "$first" | LC_ALL=C tr '[:lower:]' '[:upper:]')" "${1#?}"
 }
 
-# FILE — its content with edge blank lines dropped and interior runs capped at
-# one, so a section the record spells under two headings comes out as one list.
-gg_collate_trim() {
-  LC_ALL=C awk '
-    /[^[:space:]]/ { if (held) print ""; held = 0; print; started = 1; next }
-    started { held = 1 }
-  ' "$1"
-}
-
 # The collated record, on stdout. Every part carries its own failure out: the
 # caller runs this as the left operand of ||, where the shell suppresses
 # errexit and would otherwise pass off the last command's status as the whole
@@ -60,7 +51,7 @@ gg_collate_trim() {
 gg_collate_assemble() {
   local sec
   cat "$GG_TMP/collate.pre" || return 1
-  gg_collate_trim "$GG_TMP/collate.lead" || return 1
+  cat "$GG_TMP/collate.lead" || return 1
   for sec in $GG_SECTIONS; do
     if [ -s "$GG_TMP/collate.sec.$sec" ] || [ -s "$GG_TMP/collate.frag.$sec" ]; then
       printf '\n### %s\n\n' "$(gg_section_heading "$sec")" || return 1
@@ -79,8 +70,15 @@ gg_changelog_collate() { # folds this run's accepted fragments into the record
   nl="
 "
 
+  # RECORD_NOTE rides every line this function reports on. It is the record
+  # scope saying which way it stood down — HEAD carries no record yet, HEAD's
+  # copy is not one this can be compared against and why, or the declaration
+  # bypassed the comparison — and the release operator is the reader who most
+  # needs it, because this run is the one writing the record. The fold's line
+  # stands in for the cap verdict below, so a note dropped here is dropped
+  # from the release entirely.
   if [ "$checked" -eq 0 ]; then
-    echo "changelog-entries: no fragments — nothing to collate"
+    echo "changelog-entries: no fragments — nothing to collate$RECORD_NOTE"
     return 0
   fi
   # A collation with nowhere to fold into refuses rather than writing some
@@ -162,7 +160,13 @@ ${shown%"$nl"}"
   printf '%s' "$GG_RECORD_SECLINES" >"$GG_TMP/collate.secline"
 
   # Split at those numbers: the part above the heading, that section's lead
-  # and per-section bodies, and the released versions below it.
+  # and per-section bodies, and the released versions below it. Every part of
+  # the section — its lead as much as each body — goes through the ONE rule
+  # that drops edge blank lines and caps interior runs at one, which is why
+  # `out` is seeded at the lead and there is no branch here that writes a
+  # line untrimmed. Trimming is what makes a section the record spells under
+  # two headings come out as one list, and a second spelling of it is the
+  # drift this lane exists without.
   LC_ALL=C awk -v tmp="$GG_TMP" -v start="$GG_RECORD_START" -v end="$GG_RECORD_END" \
     -v table="$GG_TMP/collate.secline" '
     BEGIN {
@@ -172,13 +176,11 @@ ${shown%"$nl"}"
     }
     NR <= start { print > (tmp "/collate.pre"); next }
     end > 0 && NR >= end { print > (tmp "/collate.post"); next }
-    NR in secline { out = tmp "/collate.sec." secline[NR]; insec = 1; started = 0; held = 0; next }
-    insec {
+    NR in secline { out = tmp "/collate.sec." secline[NR]; started = 0; held = 0; next }
+    {
       if ($0 ~ /[^[:space:]]/) { if (held) print "" > out; held = 0; print > out; started = 1 }
       else if (started) { held = 1 }
-      next
     }
-    { print > out }
   ' "$RECORD" || rc=$?
   [ "$rc" -eq 0 ] \
     || gg_collection_error "$(gg_shown "$RECORD") could not be split (awk exit $rc) — nothing was written"
@@ -209,5 +211,5 @@ ${survivors%"$nl"}"
   done <"$GG_TMP/collate.dirs"
 
   if [ "$count" -eq 1 ]; then noun=entry; else noun=entries; fi
-  echo "changelog-entries: folded $count $noun into $(gg_shown "$RECORD")'s [Unreleased] section"
+  echo "changelog-entries: folded $count $noun into $(gg_shown "$RECORD")'s [Unreleased] section$RECORD_NOTE"
 }
