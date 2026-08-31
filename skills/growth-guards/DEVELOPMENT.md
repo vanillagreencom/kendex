@@ -116,8 +116,7 @@ block every commit.
 `kendex guard install`, `kendex guard uninstall` and `kendex guard check`
 invoke it directly. So does `kendex check`, but only where
 `.git/hooks/kendex-guards` is already there: git clones no hooks, so that
-file is a local arming, and a clone without one is reported not armed with
-nothing executed.
+file is a local act, and without it nothing here is run.
 
 `--check` is the read-only counterpart: it writes nothing — not even the
 hooks directory — and answers whether the shims are armed. `0`: the helper

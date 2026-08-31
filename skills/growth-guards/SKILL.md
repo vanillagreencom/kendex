@@ -84,10 +84,10 @@ The `kendex guard` verbs invoke this installer: `install`, `uninstall`
 repository-level: every work tree and nested project shares one hooks
 directory, so an uninstall from any of them disarms the repository. Disarm
 before removing this skill: shims whose scripts are gone block every commit. `kendex check` prints
-this installer's own `--check` verdict, and asks for it only where the
-helper below is already in the hooks directory: git clones no hooks, so that
-file is a local act, and without it a clone reports not armed and runs
-nothing out of the checkout. The verdicts are:
+this installer's own `--check` verdict, and asks for it only where
+`.git/hooks/kendex-guards` is already there: git clones no hooks, so that
+file is a local act, and without it nothing is run out of the checkout at
+all. The verdicts are:
 (0 armed in `.git/hooks`; 1 drifted, absent, or `core.hooksPath` set and
 empty, which switches git hooks off; 2 could not determine — an unreadable
 hooks directory, or any `core.hooksPath` naming a directory, which is

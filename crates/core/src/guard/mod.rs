@@ -13,9 +13,12 @@
 //! There was a second engine here — a native reader of hook files with its
 //! own grammar for what "armed" means, kept in step with the package's by
 //! hand. It never was in step. Every fix landed on one side, and the review
-//! round after found the other. So there is one engine, it is the one that
-//! runs on a machine which never installed kendex, and every verdict about
-//! a repository's shims comes out of [`check`] — `kendex check` included.
+//! round after found the other. So the package owns every verdict about
+//! what the shims ARE, on every surface, `kendex check` included. What
+//! kendex may still say for itself is only what it can reach from local
+//! state without running anything — whether this repository holds a helper
+//! at all, whether the declared package is rendered — and each such
+//! sentence hands the reading back to `kendex guard check`.
 //!
 //! Exit taxonomy, the family contract the package defines and this module
 //! relays unchanged: 0 clean, 1 violations, 2 the check could not run. Both
@@ -49,16 +52,21 @@ const INSTALLER: &str = "scripts/install-git-hooks";
 /// The helper the installer writes into the hooks directory.
 const HELPER: &str = "kendex-guards";
 
-/// What a read-only `--check` gets, and why it is not the default.
+/// What the session-start `--check` gets, and why it is not the default.
 ///
-/// [`check`] is on the session-start path, whose whole harness budget is 20
-/// seconds (`drift::hook`). The default 120 would be spent inside that
-/// budget and lose the entire drift report to the harness's own kill; this
-/// gives up first, and a caller folds the refusal as a verdict it could not
-/// take. Ten seconds is far longer than a read of two files and a `cmp`,
-/// so only a wedged script reaches it. `install` and `uninstall` write, are
-/// invoked deliberately, and keep the ordinary timeout.
-const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+/// [`check_repo`] is the fold's call, and the fold runs inside a harness
+/// budget of 20 seconds (`drift::hook`'s `HOOK_SCRIPT` frontmatter). The
+/// default 120 would be spent inside that budget and lose the whole drift
+/// report to the harness's own kill; this gives up first, and the fold
+/// classes the refusal as a verdict it could not take. Ten seconds is far
+/// longer than a read of two files and a `cmp`, so only a wedged script
+/// reaches it. `guard_timeout_fits_the_hook_budget` holds it under the
+/// frontmatter rather than beside a comment about it.
+///
+/// [`check`], [`install`] and [`uninstall`] are verbs somebody typed, under
+/// no budget but the person's patience, and keep the ordinary timeout: a
+/// cold or networked filesystem is slow, not wedged.
+pub const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Room for the whole chain, which ends in whatever the repository pointed
 /// `GROWTH_GUARDS_PRE_COMMIT_LOCAL` at — a cold clippy build, in this repo,
@@ -188,27 +196,53 @@ pub fn uninstall(dir: &Path) -> Result<GuardReport> {
 ///
 /// `symlink_metadata`, so a dangling link still counts: something local
 /// made it, and the package's checker is the one that grades it.
-pub fn locally_armed(repo: &Repo) -> bool {
+///
+/// Three states, not two. `NotFound` is an answer — nothing of this
+/// package's is there. Every other error is the absence of one, and it is
+/// returned rather than folded into `false`: an unreadable hooks directory
+/// answered `false` alongside a plain absence, and the caller turned that
+/// into a positive verdict about a repository whose commits were gated
+/// perfectly well.
+pub fn locally_armed(repo: &Repo) -> Result<bool> {
     let helper = repo.common_dir.join("hooks").join(HELPER);
-    std::fs::symlink_metadata(&helper).is_ok()
+    match std::fs::symlink_metadata(&helper) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(CoreError::io(&helper, error)),
+    }
 }
 
-/// Whether the package's installer is reachable from this repository.
+/// Whether any copy of the package's installer is where this repository
+/// would look for it.
 ///
 /// For a caller that already knows the project DECLARED the package: a
-/// declaration with nothing to run is a missing render, whose remedy is an
-/// apply, and not the absent install [`bind`] would name.
-pub fn installer_missing(repo: &Repo) -> bool {
-    Installed::resolve(repo, INSTALLER).is_none()
+/// declaration with nothing at all to run is a missing render, whose remedy
+/// is an apply, and not the absent install [`bind`] would name.
+///
+/// Three states for the same reason [`locally_armed`] has three. Every
+/// candidate answering `NotFound` is the only evidence that there is
+/// nothing here; a directory that would not open is a search that did not
+/// happen, and reporting it as "nothing rendered" would name a remedy for
+/// a state nobody looked at.
+///
+/// Presence, not executability. This is reached only after [`bind`] has
+/// already refused, and bind's own two sentences separate a copy that
+/// cannot run from no copy at all — so what is left to establish here is
+/// whether anything is there.
+pub fn installer_present(repo: &Repo) -> Result<bool> {
+    resolve::any_candidate(repo, INSTALLER)
 }
 
 /// Ask the package whether this repository is armed, and relay its answer.
 ///
 /// Its `--check` is read-only and speaks the whole vocabulary — armed,
-/// drifted, unverifiable. There is no second opinion to have: the only
-/// reader of a hook file anywhere in this product is the script that wrote
-/// it, so `kendex guard check` and the commit-hook line of `kendex check`
-/// are both this call.
+/// drifted, unverifiable. The only reader of a hook file anywhere in this
+/// product is the script that wrote it, so every claim about what the shims
+/// ARE comes from here, and `kendex guard check` and the commit-hook line
+/// of `kendex check` are both this call. A caller that cannot reach this —
+/// nothing local armed the repository, the render is gone, the directory
+/// would not open — says what it read and names this verb, never what the
+/// shims are.
 ///
 /// It runs a script out of the checkout, so a caller reaching it without
 /// somebody asking for it needs a license first. An install record is not
@@ -217,14 +251,15 @@ pub fn installer_missing(repo: &Repo) -> bool {
 /// session-start fold in `commands::check` asks it before this. A guard
 /// verb somebody typed is its own license and asks nothing.
 pub fn check(dir: &Path) -> Result<GuardReport> {
-    installer(dir, &["--check"], Some(CHECK_TIMEOUT))
+    installer(dir, &["--check"], None)
 }
 
-/// The same `--check` over a repository the caller already resolved.
+/// The same `--check` over a repository the caller already resolved, under
+/// the session-start bound.
 ///
-/// `Repo::at` costs two git children and the search below costs a third;
-/// a caller that probed this repository a moment ago has already paid them,
-/// and the session-start fold pays them once per project scope.
+/// Resolving a repository and finding the package costs five git children
+/// on this path, and taking a `Repo` the caller already probed removes two
+/// of them. The fold pays the rest once per project scope.
 pub fn check_repo(repo: &Repo) -> Result<GuardReport> {
     let installed = installed_or_err(repo, INSTALLER)?;
     run_installer(repo, &installed, &["--check"], Some(CHECK_TIMEOUT))

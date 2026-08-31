@@ -106,12 +106,14 @@ fn a_root_for_every_harness_skills_surface() {
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn the_packages_own_list_is_the_same_roots_in_the_same_order() {
+    let ours: Vec<String> = kendex_core::guard::SEARCH_ROOTS
+        .iter()
+        .map(|root| (*root).to_owned())
+        .collect();
+    let theirs = package_skill_roots();
     assert_eq!(
-        package_skill_roots(),
-        kendex_core::guard::SEARCH_ROOTS,
-        "the package searches {:?} and kendex searches {:?}",
-        package_skill_roots(),
-        kendex_core::guard::SEARCH_ROOTS
+        theirs, ours,
+        "the package searches {theirs:?} and kendex searches {ours:?}"
     );
 }
 
@@ -140,23 +142,17 @@ fn the_packages_own_list_covers_every_harness_skills_surface() {
 
 /// `GG_SKILL_ROOTS` out of the package's single definition of it.
 #[allow(clippy::expect_used, clippy::unwrap_used)]
-fn package_skill_roots() -> Vec<&'static str> {
-    // Leaked so the tokens can be compared against a `[&str; N]` without
-    // either side being rebuilt into an owned shape first. One read, one
-    // string, for the life of the test binary.
+fn package_skill_roots() -> Vec<String> {
     let definition = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../skills/growth-guards/scripts/lib/skill-roots.sh")
         .canonicalize()
         .unwrap();
-    let text: &'static str = Box::leak(
-        std::fs::read_to_string(&definition)
-            .unwrap()
-            .into_boxed_str(),
-    );
+    let text = std::fs::read_to_string(&definition).unwrap();
     text.lines()
         .find_map(|line| line.strip_prefix("GG_SKILL_ROOTS=\""))
         .and_then(|rest| rest.strip_suffix('"'))
         .expect("the package declares GG_SKILL_ROOTS as one quoted string")
         .split_whitespace()
+        .map(str::to_owned)
         .collect()
 }

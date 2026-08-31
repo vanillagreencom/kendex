@@ -14,16 +14,32 @@ use super::*;
 /// because the two need different treatment and neither reading is safe to
 /// guess.
 pub enum Text {
-    /// Kendex's own sentence, over a set this code bounds — the two hook
-    /// lanes and their helper, a scope root. Scrubbed and redacted, never
-    /// cut: the whole point of such a line is to name files a person then
-    /// edits by hand, so half of one is not a shorter report but a wrong
-    /// one. What bounds it is [`render_plain`]'s whole-report budget, which
-    /// drops a line entire rather than leaving part of a path behind.
+    /// Kendex's own sentence, over a set this code bounds — a scope root, a
+    /// name this crate validated. Scrubbed and redacted, never cut: the
+    /// whole point of such a line is to name things a person then acts on,
+    /// so half of one is not a shorter report but a wrong one. What bounds
+    /// it is [`render_plain`]'s whole-report budget, which drops a line
+    /// entire rather than leaving part of a path behind.
     Own(String),
-    /// Words from outside — an error's message, a source's own text.
-    /// Nothing here bounds how much of it there may be, so [`shown`] does.
+    /// A FRAGMENT from outside — a name off a source, the tail of an
+    /// error — composed into a sentence of kendex's own. Nothing outside
+    /// bounds how much of it there may be, so [`shown`] does, and a cut
+    /// costs the end of a fragment the line does not turn on.
     Foreign(String),
+    /// A WHOLE line another program wrote, relayed rather than described.
+    ///
+    /// The case the two above could not hold. It is foreign, so it needs
+    /// the same scrubbing and a bound; and it is a sentence rather than a
+    /// fragment, so cutting it is never right — the growth-guards verdict
+    /// carries its remedy at the end, and the fragment bound took the
+    /// remedy off every line long enough to need one. So this bounds by
+    /// SUBSTITUTION: past [`RELAYED_CHARS`] the reader gets kendex's own
+    /// sentence saying so and naming who to ask, never half of somebody
+    /// else's.
+    ///
+    /// `producer` is kendex's own noun phrase for whoever wrote the line,
+    /// and says how to read it in full; `line` is their bytes.
+    Relayed { producer: String, line: String },
 }
 
 /// Fold in a verdict this module will not take itself. [`check`] launches
@@ -38,6 +54,7 @@ pub fn fold(report: &mut CheckReport, title: &str, class: Class, text: Text) {
         text: match text {
             Text::Own(text) => printable(&text),
             Text::Foreign(text) => shown(&text),
+            Text::Relayed { producer, line } => relayed(&producer, &line),
         },
         remedy: None,
     };
@@ -74,6 +91,31 @@ pub(super) const FOREIGN_CHARS: usize = 300;
 /// line naming files to delete with the second one spelled half way.
 pub(super) fn shown(raw: &str) -> String {
     printable(&raw.chars().take(FOREIGN_CHARS).collect::<String>())
+}
+
+/// How long a relayed line may be before the report declines to carry it.
+///
+/// Generous against every verdict any delegated script actually writes —
+/// the longest growth-guards has runs to about 400 characters — because
+/// the point is not to trim, it is to have an answer for a program that
+/// answers with a megabyte. A report line is one line, and `--json`
+/// carries whatever this returns.
+pub(super) const RELAYED_CHARS: usize = 2000;
+
+/// A whole relayed line, scrubbed and never cut.
+///
+/// Past the bound the line is REPLACED, not trimmed: a verdict stopping
+/// mid-remedy reads as a verdict, and the reader acts on the half they were
+/// given. What they get instead says the length, names who to ask, and
+/// leaves the line's class and the run's exit code exactly as they were.
+fn relayed(producer: &str, line: &str) -> String {
+    let length = line.chars().count();
+    match length > RELAYED_CHARS {
+        true => printable(&format!(
+            "{producer} answered with {length} characters, too long to show here"
+        )),
+        false => printable(line),
+    }
 }
 
 /// The same scrubbing with no cut: control characters become spaces so

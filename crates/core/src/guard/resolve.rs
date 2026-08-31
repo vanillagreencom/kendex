@@ -211,6 +211,30 @@ pub(super) fn bind(dir: &Path, relative: &str) -> Result<(super::Repo, Installed
     Ok((repo, installed))
 }
 
+/// Whether any root this repository searches holds the named script at
+/// all, and only where every root could actually be looked at.
+///
+/// `Ok(false)` means every candidate answered `NotFound`, which is the one
+/// reading that supports telling somebody nothing is rendered here. An
+/// error is a search that did not happen and is returned as one.
+///
+/// Stat, not [`is_executable`], which cannot say why it said no. What a
+/// copy that is there but will not run means is [`bind`]'s sentence, and
+/// this is only ever asked after that sentence has been written.
+pub(super) fn any_candidate(repo: &super::Repo, relative: &str) -> Result<bool> {
+    for root in search_roots(repo) {
+        for base in SKILL_ROOTS {
+            let script = root.join(base).join(SKILL).join(relative);
+            match std::fs::symlink_metadata(&script) {
+                Ok(_) => return Ok(true),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(crate::error::CoreError::io(&script, error)),
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// The package's script in a repository already resolved.
 pub(super) fn installed_or_err(repo: &super::Repo, relative: &str) -> Result<Installed> {
     let Some(installed) = Installed::resolve(repo, relative) else {

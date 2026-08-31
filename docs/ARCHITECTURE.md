@@ -743,8 +743,8 @@ lives in one capability table read by core and UI.
   could-not-check (unknown outranks drift), `--quiet` bounded and silent
   when clean, `--json` for machines. It reads manifest, lock, the per-scope
   drift snapshot (`core/drift/snapshot.rs`) and per-mirror fetch stamps — no
-  source trees materialized, no catalogs hashed, and the guards' `--check`
-  the only subprocess. A declaration with no lock entry whose files sit in
+  source trees materialized, no catalogs hashed, the guards' `--check` the
+  only per-package subprocess. A declaration with no lock entry whose files sit in
   place gets its own section, stating what a stat proves and carrying the
   plan as remedy. `updates`, `refresh`, `apply` and the detached `kendex
   source refresh --stale` it spawns (TTL 6h, per-mirror lock, no stdio,

@@ -1,10 +1,12 @@
 //! Putting the gate in place, taking it away, and reporting on it — the
 //! verbs, and what `kendex check` says about a repository in each state.
 //!
-//! One verdict, one voice. `kendex guard check` and the commit-hook line of
-//! `kendex check` are the same call to the package's `--check`, so what is
-//! asserted here is relay: the package's own sentence and its own exit
-//! code, not a kendex paraphrase of either.
+//! Two things are asserted, and the line between them is the rule. Where
+//! the package answers, what is asserted is relay: its own sentence and its
+//! own exit code, never a kendex paraphrase. Where it cannot be reached —
+//! nothing local armed the repository, the render is gone, a directory
+//! would not open — kendex says only what it read off local state and names
+//! `kendex guard check`, and what is asserted is that it claims no more.
 
 use crate::test_util::{rooted, source_path};
 
@@ -36,10 +38,14 @@ fn disarming_leaves_a_pre_existing_hook_behind() {
 /// `kendex check` reports an unarmed repository and says nothing about an
 /// armed one.
 ///
-/// Unarmed is the one verdict kendex composes itself, because nothing has
+/// Unarmed is a verdict kendex composes itself, because nothing has
 /// licensed it to ask the package: no helper in the hooks directory means
-/// nobody here ran the installer. Once one is there the package answers,
-/// and an armed repository has nothing to report.
+/// nothing local armed it. What it may therefore SAY is only what it read —
+/// `kendex guard install` is not named, because under a configured
+/// `core.hooksPath` the installer stands down and writes nothing, and a
+/// remedy that cannot be taken would then be offered every session for
+/// ever. The package is invited instead. Once a helper is there the package
+/// answers, and an armed repository has nothing to report.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_reports_whether_the_shims_are_armed() {
@@ -55,10 +61,19 @@ fn check_reports_whether_the_shims_are_armed() {
         "{}",
         said(&unarmed)
     );
-    assert!(said(&unarmed).contains("not armed"), "{}", said(&unarmed));
     assert!(
-        said(&unarmed).contains("kendex guard install"),
-        "the remedy is named: {}",
+        said(&unarmed).contains("carries nothing"),
+        "it says what local state shows: {}",
+        said(&unarmed)
+    );
+    assert!(
+        said(&unarmed).contains("kendex guard check"),
+        "it hands the reading back to the package: {}",
+        said(&unarmed)
+    );
+    assert!(
+        !said(&unarmed).contains("kendex guard install"),
+        "it names a remedy that can stand down: {}",
         said(&unarmed)
     );
 
@@ -394,116 +409,6 @@ fn check_relays_the_packages_words_about_a_foreign_hook() {
     );
 }
 
-/// Arm through the package's own installer.
-///
-/// Not a hand-written approximation: the check compares against the exact
-/// bytes that installer writes, so a fixture that guesses at them is
-/// testing the guess. This is the same call `kendex guard install` makes.
-#[allow(clippy::unwrap_used)]
-fn arm_by_hand(root: &std::path::Path) {
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
-    let out = std::process::Command::new(&installer)
-        .args(["--repo", &root.to_string_lossy()])
-        // Run from the fixture: git's own environment reaches this child,
-        // and a test binary invoked from another checkout would otherwise
-        // hand it that repository.
-        .current_dir(root)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "install-git-hooks: {}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-/// An installer that says whether anything ran it, in place of the real one.
-#[allow(clippy::unwrap_used)]
-fn installer_that_announces_itself(root: &std::path::Path, marker: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
-    std::fs::write(
-        &installer,
-        format!("#!/usr/bin/env bash\ntouch {}\nexit 0\n", marker.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-/// A clone nobody armed executes none of its own code, however loudly it
-/// declares this package.
-///
-/// The whole trust boundary in one fixture. `.kendex-lock.json` sits under
-/// the work tree, so a repository can ship one declaring growth-guards as
-/// an enabled skill — that is what a real install leaves behind, and what
-/// anyone can commit. The hooks directory is the other half, and git clones
-/// it for nobody: with no helper in it, nothing here has been licensed, and
-/// `kendex check` must reach its verdict from local state alone.
-///
-/// The marker file is the assertion. A report that merely reads right can
-/// be produced by a script that already ran.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn check_runs_nothing_out_of_a_repository_nobody_armed() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = &rooted(&tmp);
-    let root = repo(home);
-    // A real install: the lock genuinely declares the package. Nothing is
-    // armed, which is the state a fresh clone of such a repository is in.
-    install_package(home, &root, &["growth-guards"]);
-    assert!(
-        !root.join(".git/hooks/kendex-guards").exists(),
-        "the fixture is unarmed"
-    );
-    let marker = home.join("installer-ran");
-    installer_that_announces_itself(&root, &marker);
-
-    let out = run(home, &root, "kendex", &["check"]);
-    assert!(
-        !marker.exists(),
-        "check ran a script out of a repository nobody armed: {}",
-        said(&out)
-    );
-    // And it still says the useful thing, from local state alone.
-    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("not armed"), "{}", said(&out));
-}
-
-/// An armed repository that declares nothing executes nothing either.
-///
-/// The other half of the gate, and the one whose failure would be silent:
-/// here the package's `--check` would exit 0, so a regression that dropped
-/// the declaration test would relay a clean verdict and look exactly like a
-/// pass. Only the marker file tells the two apart.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn check_runs_nothing_where_no_project_declared_the_package() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = &rooted(&tmp);
-    let root = repo(home);
-    std::fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
-    install_package_undeclared(&root, &["growth-guards"]);
-    arm_by_hand(&root);
-    assert!(
-        root.join(".git/hooks/kendex-guards").is_file(),
-        "the fixture is armed"
-    );
-    let marker = home.join("installer-ran");
-    installer_that_announces_itself(&root, &marker);
-
-    let out = run(home, &root, "kendex", &["check"]);
-    assert!(
-        !marker.exists(),
-        "check ran the package for a project that never declared it: {}",
-        said(&out)
-    );
-    assert!(!said(&out).contains("commit hooks"), "{}", said(&out));
-}
-
 /// The package's exit codes become the report's classes, exit 2 included.
 ///
 /// `core.hooksPath` set to a directory is the everyday exit 2: every husky
@@ -584,7 +489,12 @@ fn the_packages_exit_two_is_could_not_check_and_its_sentence_survives_whole() {
 #[allow(clippy::unwrap_used)]
 fn an_installer_that_could_not_run_is_never_relayed_as_a_verdict() {
     let tmp = tempfile::tempdir().unwrap();
-    let home = &rooted(&tmp);
+    // Deep on purpose: the shell names an absolute path, so the composed
+    // line has to outrun the fragment bound for the assertion at the foot
+    // of this test to be about anything.
+    let home = &rooted(&tmp)
+        .join("a-directory-named-to-outrun-the-three-hundred-character-fragment-bound");
+    std::fs::create_dir_all(home).unwrap();
     let root = repo(home);
     install_package(home, &root, &["growth-guards"]);
     let armed = run(home, &root, "kendex", &["guard", "install"]);
@@ -625,6 +535,22 @@ fn an_installer_that_could_not_run_is_never_relayed_as_a_verdict() {
     assert!(
         line.contains("could not be checked"),
         "the line does not say what happened: {line:?}"
+    );
+    // The package's own diagnosis is at the END of that line, which is
+    // where a fragment bound would take it: the composed sentence alone
+    // runs past 110 characters before the shell's message begins, and the
+    // shell names an absolute path.
+    let (_, complaint) = line
+        .split_once("its own words were: ")
+        .unwrap_or_else(|| panic!("the package's own words are relayed:\n{text}"));
+    assert!(
+        line.chars().count() > 300,
+        "this fixture only pins the bound while its line outruns it: {} characters",
+        line.chars().count()
+    );
+    assert!(
+        complaint.contains("hook-check.sh"),
+        "the diagnosis was cut off the end of the line: {line:?}"
     );
 }
 
@@ -672,5 +598,63 @@ fn a_declared_package_with_no_render_is_drift_naming_the_render() {
     assert!(
         !text.contains("kendex add"),
         "it names an install the lock already records: {text}"
+    );
+}
+
+/// An installer that exits 0 without a verdict is not a clean repository.
+///
+/// The package writes its summary only once `--check` runs, so a script cut
+/// short says nothing and carries whatever status the shell last set —
+/// truncated at a clean `}` boundary that is exit 0. Read exit-first, the
+/// fold reported `all clear` about a repository it never looked at, on the
+/// one line whose own module doc says a check reporting all clear while
+/// nothing gates commits is worse than no check.
+///
+/// The cut is at a real boundary of the real script rather than a stub, so
+/// what is pinned is the state a truncated sync actually leaves.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_installer_that_exits_zero_with_no_verdict_is_not_all_clear() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    // The control: whole and armed is silence, exit 0.
+    let clean = run(home, &root, "kendex", &["check"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
+
+    // Cut at the last `}` that closes a function before the script's own
+    // work begins. Every earlier boundary behaves the same way; this one is
+    // asserted to be a clean parse that says nothing.
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let whole = std::fs::read_to_string(&installer).unwrap();
+    let cut: Vec<&str> = whole.lines().take(57).collect();
+    std::fs::write(&installer, format!("{}\n", cut.join("\n"))).unwrap();
+    let direct = std::process::Command::new(&installer)
+        .args(["--repo", &root.to_string_lossy()])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert_eq!(
+        (direct.status.code(), direct.stdout.len()),
+        (Some(0), 0),
+        "the fixture is an exit 0 with no verdict, not a syntax error: {}",
+        String::from_utf8_lossy(&direct.stderr)
+    );
+
+    let out = run(home, &root, "kendex", &["check"]);
+    let text = said(&out);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a repository nobody checked was reported clean: {text}"
+    );
+    assert!(text.contains("commit hooks"), "{text}");
+    assert!(
+        text.contains("no verdict"),
+        "the line does not say what happened: {text}"
     );
 }

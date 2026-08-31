@@ -15,6 +15,7 @@ mod test_util;
 use test_util::source_path;
 
 mod arming;
+mod consent;
 mod gating;
 
 use std::path::{Path, PathBuf};
