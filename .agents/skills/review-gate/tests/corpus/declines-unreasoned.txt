@@ -80,6 +80,11 @@ Declined: no change
 Declined: nothing to do
 Declined: not applicable
 Declined: n/a
+# The not-actionable label, in both punctuations. It says no more about
+# whether the finding reproduces than the labels above it, and a reply table
+# that hands an agent this string on its own hands out a red gate.
+Declined: not actionable
+Declined, not actionable.
 # The apostrophized forms. Punctuation normalization runs first, so these
 # reach the list as "won t fix" — the spelling the entry has to match.
 Declined: won't fix
@@ -96,3 +101,10 @@ Declined: this is a false positive
 Declined: a1fa74dca
 Declined: at this head
 Declined: fixed
+# A tracker id is an identifier too. Naming the issue you filed says nothing
+# about whether the finding reproduces, and a reply that is only the id is
+# not `Tracked: KEN-n` either.
+Declined: KEN-881
+Declined: see KEN-881
+Declined: tracked in KEN-123
+Declined: #1801

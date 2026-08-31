@@ -24,6 +24,9 @@ Declined: won't fix, because the shape you name is refused by the loader one lan
 Declined: a false positive — the arm you quote runs only when the lock is already held.
 Declined: the caller is tracked by the loader before the branch you name can run.
 Declined: the tracker id in that path is validated by the loader, so the shape cannot reach it.
+Declined: not actionable, because the loader refuses that shape before the branch you name runs.
+Declined: the guard refuses this path already, filed KEN-881 for the docs.
+Declined: see the loader, which rejects that shape before this branch runs.
 
 # --- from #1837 and #1873, real declines that must keep working -----------
 Declined: this refuses today rather than letting anything through. Measured on the committed tree, the armed fixture exits 2 and the unarmed run exits 2.

@@ -73,10 +73,11 @@ track-word. `untracked-claim` is that reply claiming tracking and naming no
 issue. `unreasoned-decline` is that reply declining and naming no mechanism:
 the reason is empty, or is nothing but non-reason tokens and filler. The
 tokens are the labels and the freeze procedure that answer a finding without
-disproving it, plus bare shas and bare numbers. A token INSIDE a real reason
-is untouched, because the test is subtraction: only a reply that was nothing
-else reduces to empty. Being vocabulary, it ends where the residue becomes
-NAMES — the suite a bare count belongs to, or a label spelled as a sentence.
+disproving it, plus bare shas, numbers and tracker ids. A token INSIDE a real
+reason is untouched, because the test is subtraction: only a reply that was
+nothing else reduces to empty. Being vocabulary, it ends where the residue
+becomes NAMES — the suite a bare count belongs to, or a label spelled as a
+sentence.
 
 THE CORPUS IS THE CONTRACT, NOT THIS LIST. tests/corpus/ holds what the gate
 must catch, what it must pass, and that KNOWN LIMIT. Add a label by writing
@@ -1384,6 +1385,11 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # non-reason tokens and the words carrying no content alone; a reply whose
 # reason strips to nothing is counted, which is what leaves a token INSIDE a
 # real reason harmless. Widen this list from tests/corpus/, never alone.
+#
+# Tracker ids go first, while each is still one token and still uppercase:
+# punctuation normalization would otherwise leave the letters behind, and
+# `Declined: KEN-881` would read as a stated reason of "ken". The shape is
+# the untracked-claim term's, so the two cannot disagree about what an id is.
 t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
   def declined: test("^\\s*declined\\b"; "i");
   def tracking: test("(?i)\\btrack(ed|ing|s)?\\b");
@@ -1392,12 +1398,13 @@ t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decli
   def standing_decline: [replies[] | select(disposition or declined or tracking)] | last // empty;
   def reason_left:
     sub("(?i)^\\s*declined\\b"; "")
+    | gsub("[A-Z][A-Z0-9]+-[0-9]+|#[0-9]+"; " ")
     | ascii_downcase
     | gsub("[^a-z0-9]+"; " ")
-    | gsub("\\b(frozen|freezes?|freezing|cap|capped|round [0-9]+|round|rounds|tests?|suites?|pass|passes|passed|passing|green|count|out of scope|scope|pre existing|preexisting|existing|flagged separately|flagged|separately|as discussed|discussed|noted|won ?t ?fix|false positives?|by design|design|not applicable|n a|no change|nothing to do|later|known|intentional|deliberate|works as intended|as intended|intended|owners?|instruction(s|ed)?|previous|pushe[sd]?|push|last|head|disposition(ed|s)?|findings?|fix(es|ed)?|track(s|ed|ing|er)?|filed|filing|logged)\\b"; " ")
+    | gsub("\\b(frozen|freezes?|freezing|cap|capped|round [0-9]+|round|rounds|tests?|suites?|pass|passes|passed|passing|green|count|out of scope|scope|pre existing|preexisting|existing|flagged separately|flagged|separately|as discussed|discussed|noted|won ?t ?fix|false positives?|by design|design|not applicable|n a|actionable|no change|nothing to do|later|known|intentional|deliberate|works as intended|as intended|intended|owners?|instruction(s|ed)?|previous|pushe[sd]?|push|last|head|disposition(ed|s)?|findings?|fix(es|ed)?|track(s|ed|ing|er)?|filed|filing|logged)\\b"; " ")
     | gsub("\\b[0-9a-f]{7,40}\\b"; " ")
     | gsub("\\b[0-9]+\\b"; " ")
-    | gsub("\\b(a|an|the|this|that|these|those|it|its|is|are|was|were|be|been|for|in|on|at|to|of|and|or|but|so|we|i|you|your|pr|prs|here|now|all|full|whole|entire|complete|still|already|yes|no|not|do|does|did|has|have|had|under|per|within|as|after|rather|than|every|set|s|t)\\b"; " ")
+    | gsub("\\b(a|an|the|this|that|these|those|it|its|is|are|was|were|be|been|for|in|on|at|to|of|and|or|but|so|we|i|you|your|pr|prs|here|now|all|full|whole|entire|complete|still|already|yes|no|not|do|does|did|has|have|had|under|per|within|as|after|rather|than|see|every|set|s|t)\\b"; " ")
     | gsub("^ +| +$"; "");
   if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean")
     or ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0

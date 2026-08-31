@@ -236,5 +236,28 @@ else
 fi
 
 echo
+echo "--- must-fail probe: the tracker-id strip, removed ---"
+# Same jq with the tracker-id strip dropped. Without it the punctuation pass
+# splits KEN-881 and the number pass takes only the digits, so "ken" survives
+# as a stated reason. The bare reference must stop being counted here while a
+# label keeps counting, so the count is this strip's rather than the term's.
+UNSTRIPPED="$(sed '/gsub("\[A-Z\]\[A-Z0-9\]+-\[0-9\]+|#\[0-9\]+"; " ")/d' <<<"$prog")"
+if [ "$UNSTRIPPED" = "$prog" ]; then
+  bad "probe planted nothing" "the tracker-id strip did not match"
+else
+  sprog="$UNSTRIPPED"
+  spage() { jq -r "$sprog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"; }
+
+  out=$(spage "$(thread true "$(human 'Declined: KEN-881')")")
+  not_counted "$out" && ok "removed: the bare tracker id reads as a reason again" || bad "removed: the bare tracker id reads as a reason again" "$out"
+
+  out=$(spage "$(thread true "$(human 'Declined: tracked in KEN-123')")")
+  not_counted "$out" && ok "removed: so does the id behind a track-word" || bad "removed: so does the id behind a track-word" "$out"
+
+  out=$(spage "$(thread true "$(human 'Declined: frozen')")")
+  counted "$out" && ok "removed: a label still counts" || bad "removed: a label still counts" "$out"
+fi
+
+echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ] || exit 1

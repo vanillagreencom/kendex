@@ -336,9 +336,11 @@ A thread is new when its `threads[].id` is not in `known`. No new threads → §
 |---------|----------|
 | Applied | `Fixed in [SHA]` |
 | Skipped (decision) | `Declined: contradicts [DECISION_ID]` |
-| Skipped (not actionable) | `Declined: not actionable` |
+| Skipped (not actionable) | `Declined: [REASON]` |
 | Blocked or issue created | `Tracked: [ISSUE_ID]` (issue exists first) |
 | Question | The finding's `draft_response` |
+
+`[REASON]` is what § 6.3 defines, the passing state or the false premise the finding rests on. A reply of only "not actionable" is a label, and the gate counts a label-only decline as unreasoned.
 
 Use inline `--body` only for plain strings; Markdown with backticks or fences goes to a file and `--body-file` (`post-reply` for threads, `post-comment` for PR-level). Number lists `1.` `2.` `3.`, never `#N`.
 
