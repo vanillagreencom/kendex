@@ -27,32 +27,38 @@ mod prose;
 mod wrapper;
 
 use super::ForkOf;
-use super::stated::{carried_edits, stated, unreproduced};
+use super::stated::{carried_edits, dropped, stated, uncleared};
 use crate::engine::agent_carry::{AgentCarry, agent_carry};
 use prose::prose;
 use wrapper::{Wrapper, wrapper};
 
-/// One captured agent: the source-form bytes for the local source and the
+/// One captured agent: the source-form bytes for the local source, and the
 /// catalog values that have to reach the manifest with them.
 pub(super) struct CapturedAgent {
     pub bytes: Vec<u8>,
     pub carry: Option<AgentCarry>,
-    /// The catalog revision the captured bytes were read at. Every tool the
-    /// copy answers for has to be installed from it, or one capture cannot
-    /// speak for all of them.
+    /// The catalog revision those bytes were read at. Every harness the
+    /// fork answers for has to be installed from it, or one capture
+    /// cannot speak for all of them.
     pub read_at: Option<String>,
 }
 
-/// The agent as the local source should hold it: the publisher's
-/// frontmatter around the person's own prose, with the settings they
-/// changed in the generated file folded into the carry so the copy renders
-/// what the file on disk states.
+/// The agent as the local source should hold it. `installed_as` is the
+/// name the fork will render under — the original's for a fork in place,
+/// the person's choice for one beside it — because a harness's own deny
+/// rules read the name, and a fork that lands under a different one has
+/// to be compared under that name or the comparison proves nothing.
+///
+/// Refuses before returning anything where the rendering on disk keeps
+/// tools from the agent that the fork would hand back.
 pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent> {
     let ForkOf {
         env,
         scope,
         manifest,
+        decl,
         name,
+        installed_as,
         harness,
         ..
     } = *of;
@@ -88,65 +94,53 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         }
     })?;
     let bytes = source_form(&published, &edited_text, name, read.as_ref())?;
-    // The harness may refuse this agent's permission intent, in which case
-    // the fork installs no file for it at all: no rendering to compare
-    // against, and no edit to a rendering to carry.
-    let Some(rendering) = render(scope, &publisher, harness, &around) else {
-        return Ok(CapturedAgent {
-            bytes,
-            carry,
-            read_at,
-        });
-    };
-    let refused = |problem: String| CoreError::ForkKeysUncarried {
+    let captured = parse_source_agent(&String::from_utf8_lossy(&bytes))
+        .map_err(|problem| unreadable(name, &decl.source, problem))?;
+    let refused = |problem: String| CoreError::ForkWidensAccess {
         name: crate::names::shown(name),
-        problem: format!("its {} file: {problem}", harness.display_name()),
+        problem,
     };
-    // Frontmatter that will not read is not the same answer as frontmatter
-    // stating nothing. What the person set cannot be read, so it cannot be
-    // shown carried either, and reading its absent values as deliberate
-    // clearings would write overrides they never asked for.
-    let on_disk = stated(harness, &edited_text)
-        .map_err(|problem| refused(format!("its frontmatter cannot be read ({problem})")))?;
-    let after = stated(harness, &rendering)
-        .map_err(|problem| CoreError::ForkWrapperUnreadable {
-            name: crate::names::shown(name),
-            harness: harness.display_name().to_owned(),
-            problem: format!("its own rendering reads back as {problem}"),
-        })?
-        .unwrap_or_default();
-    // A file stating no frontmatter at all is a document the person wrote
-    // over the top of the rendering: it states no setting to carry, and
-    // there was never a rendered value in it to change or take away.
-    let Some(on_disk) = on_disk else {
+    let on_disk = stated(harness, &edited_text).map_err(|problem| {
+        // Frontmatter that will not parse is not the same answer as
+        // frontmatter stating nothing: what the person restricted cannot be
+        // read, so it cannot be proven carried either.
+        refused(format!(
+            "the tool settings its {} file states: its frontmatter cannot be read ({problem})",
+            harness.display_name()
+        ))
+    })?;
+    // The harness may refuse this agent's permission intent, in which case
+    // the fork installs no file for it at all: no wider artifact to compare
+    // against, and no rendering to read the person's edits back off.
+    let named = SourceAgent {
+        name: installed_as.to_owned(),
+        ..captured.clone()
+    };
+    let Some(rendering) = render(scope, &named, harness, &around) else {
         return Ok(CapturedAgent {
             bytes,
             carry,
             read_at,
         });
     };
-    let edits = carried_edits(&on_disk, &after);
-    // Proven, not assumed: the agent is rendered once more with those
-    // overrides folded in, and every key the person's file still spells
-    // differently is one nothing could carry. Asking the rendering rather
-    // than a list kept here is what makes a key this module never heard of
-    // — `description:`, a hook block, one a renderer grows tomorrow —
-    // refuse instead of reverting to the publisher's value in silence.
-    if on_disk.is_rendering()
-        && let Some(reproduced) = render(scope, &publisher, harness, &around.over(&edits))
-    {
-        let keys = unreproduced(&edited_text, &rendering, &reproduced)
-            .map_err(|problem| refused(format!("its frontmatter cannot be read ({problem})")))?;
-        if !keys.is_empty() {
-            return Err(refused(format!(
-                "the {} setting{} it states that kendex.toml has no field for: {}",
-                keys.len(),
-                if keys.len() == 1 { "" } else { "s" },
-                keys.join(", ")
-            )));
-        }
+    let after = stated(harness, &rendering)
+        .map_err(|problem| refused(format!("its own rendering reads back as {problem}")))?;
+    if let Some(problem) = dropped(&on_disk, &after, harness) {
+        return Err(refused(problem));
     }
-    let carry = carry.unwrap_or_default().over(harness.name(), edits);
+    let cleared = uncleared(&on_disk, &after);
+    if !cleared.is_empty() {
+        return Err(refused(format!(
+            "the {} setting{} deleted from its {} file: {}",
+            cleared.len(),
+            if cleared.len() == 1 { "" } else { "s" },
+            harness.display_name(),
+            cleared.join(", ")
+        )));
+    }
+    let carry = carry
+        .unwrap_or_default()
+        .over(harness.name(), carried_edits(&on_disk, &after));
     Ok(CapturedAgent {
         bytes,
         carry: (!carry.is_empty()).then_some(carry),
@@ -256,24 +250,10 @@ struct Around<'a> {
     hooks: Vec<&'a crate::manifest::CustomHook>,
 }
 
-impl Around<'_> {
-    /// The same surroundings with the person's own edits folded in above
-    /// them, which is what the copy will render from once the carry
-    /// reaches the manifest.
-    fn over(&self, edits: &FrontmatterOverrides) -> Around<'_> {
-        Around {
-            skills: self.skills.clone(),
-            overrides: merge_overrides(Some(&self.overrides), Some(edits)),
-            launch: self.launch.clone(),
-            additional: self.additional.clone(),
-            hooks: self.hooks.clone(),
-        }
-    }
-}
-
 /// One rendering of this agent for this harness, or `None` where the
 /// harness refuses its permission intent. A refusal installs nothing at
-/// all, so there is no wrapper to read a body out of.
+/// all, so there is no wider artifact to compare against and no wrapper to
+/// read a body out of.
 fn render(
     scope: &Scope,
     source: &SourceAgent,

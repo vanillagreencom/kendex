@@ -55,12 +55,11 @@ fn forking_beside_carries_the_projects_denies_without_taking_them() {
 }
 
 /// A carry holds a frontmatter record only for a harness the catalog
-/// configured this agent under, plus whatever the person edited into the
-/// generated file. Where the catalog configured none and the project did,
-/// that record is the person's edit alone, so writing it over the entry
-/// the rekey just copied takes the project's denies off the copy — the
-/// widening the fork exists to prevent, arriving through the table meant
-/// to carry it. It folds in field by field instead, so both sides survive.
+/// configured this agent under. Where the catalog configured none and the
+/// project did, the whole carried record is the person's own edit, so
+/// writing it over the entry the rekey just copied takes the project's
+/// denies off the copy — the widening the fork exists to prevent, arriving
+/// through the table meant to carry it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_beside_keeps_a_deny_the_catalog_never_configured() {

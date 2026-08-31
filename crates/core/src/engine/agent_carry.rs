@@ -37,11 +37,6 @@ impl AgentCarry {
     /// Fold one harness's overrides in above whatever is already carried
     /// for it. `extra` wins per field, the way the project's own entry
     /// wins over the catalog's default when both are read from disk.
-    ///
-    /// The one producer of a record for a harness the catalog never
-    /// configured: the person's own edits to a generated file are read off
-    /// that file, not out of any catalog, so nothing else can put them in
-    /// the carry.
     pub(crate) fn over(mut self, harness: &str, extra: FrontmatterOverrides) -> AgentCarry {
         if extra == FrontmatterOverrides::default() {
             return self;
@@ -68,8 +63,9 @@ impl AgentCarry {
     /// for a harness the catalog configured this agent under: where the
     /// catalog configured none and the project did, the carry's whole
     /// record is the person's edit alone, and writing that over the
-    /// project's entry drops the denies it held. [`over`](Self::over) is
-    /// what puts such a record there.
+    /// project's entry drops the denies it held. `uncleared` refuses a
+    /// deliberate deletion before anything reaches here, so nothing folded
+    /// back in is a value the person took away.
     pub(crate) fn apply(self, manifest: &mut Manifest, name: &str) {
         if !self.skills.is_empty() && !manifest.agent_skills.contains_key(name) {
             manifest.agent_skills.insert(name.to_owned(), self.skills);

@@ -1,37 +1,72 @@
-//! What one rendered agent file states about itself, and what a fork can
-//! carry of it.
-//!
-//! A person tightening a generated file states the edit in the harness's
-//! own keys — `disallowedTools:`, `deny-tools:`, `tools:`,
-//! `allowed-subagents:`, and the scalars beside them. The source form has
-//! no spelling for any of those, so a capture that took the publisher's
-//! frontmatter and nothing else would hand every one of them back. The
-//! `[agent-frontmatter.<harness>]` table is where they live once the fork
-//! stops rendering from the catalog, and [`carried_edits`] is what puts
-//! them there.
-//!
-//! Both sides are read by the same reader: the file on disk, and the
-//! rendering the fork would write in its place. Reading them the same way
-//! is what keeps each harness's own rules — Claude's fleet denies, Pi's
-//! delegation set — counting on both sides rather than reading as an edit
-//! the person never made.
-//!
-//! One rule decides the rest. [`unreproduced`] renders the agent again
-//! with the carry folded in and asks which keys the file on disk still
-//! spells differently. Every key in that answer is one no override could
-//! reproduce, and the fork refuses naming them. Nothing is dropped, and
-//! no hand-kept list decides which keys are even looked at — a key a
-//! renderer grows, or one this module has never heard of, lands in the
-//! difference like any other.
+//! What a rendered agent file says about itself, and what a fork would
+//! change about it. Every harness writes tool access and the agent's
+//! settings in its own keys, so both the file on disk and the file the
+//! fork would render are read here, by one reader, and compared. Reading
+//! them the same way is what makes each harness's own rules — Claude's
+//! fleet denies, Pi's delegation set — count on both sides rather than
+//! read as a difference.
 
 use crate::manifest::FrontmatterOverrides;
 use crate::model::HarnessId;
-use crate::render::permission::{Access, same_tool};
+use crate::render::permission::{Access, Widened};
 
 /// The one value an override can state that means "no effort at all": the
 /// renderers filter it out rather than writing it, which is what makes a
 /// deleted effort key the single clearing this table can carry.
 const NO_EFFORT: &str = "none";
+
+/// What the fork would give the agent back that the rendering on disk
+/// keeps from it, said in the words the refusal prints. `None` is the
+/// answer that lets the fork run.
+///
+/// Both sides are read out of a rendered file by the same reader: the
+/// fork's side is generated here from what it will actually hold, so the
+/// harness's own deny rules — Claude's fleet denies, Pi's delegation set —
+/// count on both sides and never read as a difference.
+pub(super) fn dropped(on_disk: &Stated, after: &Stated, harness: HarnessId) -> Option<String> {
+    let given_back = match after.access.widened_over(&on_disk.access) {
+        // The file states an allowlist and the fork would state none, so
+        // what comes back is every tool the harness offers — a set no
+        // reading of either file can name.
+        Widened::PastAnAllowlist(kept) => {
+            return Some(format!(
+                "the tool allowlist its {} file states: {}",
+                harness.display_name(),
+                kept.join(", ")
+            ));
+        }
+        Widened::Tools(tools) => tools,
+        Widened::No => Vec::new(),
+    };
+    // A hook the person put in the file gates tool use from inside it, and
+    // no override table holds one — a hook is a `[[custom-hooks]]` entry
+    // with a selector, not a field. One the fork would not run again is a
+    // restriction it cannot carry.
+    let ungated: Vec<String> = on_disk
+        .hooks
+        .iter()
+        .filter(|gate| !after.hooks.contains(gate))
+        .map(Gate::shown)
+        .collect();
+    if !ungated.is_empty() {
+        return Some(format!(
+            "the {} gate{} its {} file sets on tool use: {}",
+            ungated.len(),
+            if ungated.len() == 1 { "" } else { "s" },
+            harness.display_name(),
+            ungated.join(", ")
+        ));
+    }
+    (!given_back.is_empty()).then(|| {
+        format!(
+            "the {} tool{} its {} file keeps from it: {}",
+            given_back.len(),
+            if given_back.len() == 1 { "" } else { "s" },
+            harness.display_name(),
+            given_back.join(", ")
+        )
+    })
+}
 
 /// What one rendered agent file states in the keys a fork has to answer
 /// for: its tool access, and the settings a fork can hand back as an
@@ -48,6 +83,10 @@ pub(super) struct Stated {
     /// Pi's delegation list: which child agents this one may invoke. An
     /// allowlist like `tools`, in a key only Pi writes.
     subagents: Option<Vec<String>>,
+    /// Every gate the file's own hook block sets. Claude gates tool use on
+    /// these from inside the agent file, so one stated here and not in the
+    /// fork's rendering is a gate the fork drops.
+    hooks: Vec<Gate>,
     color: Option<String>,
     effort: Option<String>,
     model: Option<String>,
@@ -56,24 +95,20 @@ pub(super) struct Stated {
     background: Option<bool>,
 }
 
-/// What the file states, in three answers this type keeps apart. `Some`
-/// is a frontmatter block that reads. `None` is a file opening no block at
-/// all: it states nothing, and a person who replaced the whole rendering
-/// with prose took no setting away. `Err` is the third — a block that
-/// opens and never ends, the other reading [`crate::frontmatter::split`]
-/// reports the same error for. What it states cannot be read, so it cannot
-/// be shown carried either, and the caller refuses rather than reading an
-/// absent value as a deliberate clearing.
-pub(super) fn stated(
-    harness: HarnessId,
-    text: &str,
-) -> std::result::Result<Option<Stated>, String> {
+/// What the file states, or why it could not be read. The one reading
+/// that is no failure is a file opening no frontmatter block at all: it
+/// states nothing, and a person who replaced the whole rendering with
+/// prose took no tools away. A block that opens and never ends is the
+/// other answer [`crate::frontmatter::split`] reports the same error for,
+/// and it is frontmatter that will not read — whatever it restricts cannot
+/// be proven carried, so the caller refuses on it.
+pub(super) fn stated(harness: HarnessId, text: &str) -> std::result::Result<Stated, String> {
     let (allow_key, deny_key) = permission_keys(harness);
     let yaml = match crate::frontmatter::split(text) {
         Ok((yaml, _)) => yaml,
         Err(problem) => match crate::frontmatter::opens(text) {
             true => return Err(problem),
-            false => return Ok(None),
+            false => return Ok(Stated::default()),
         },
     };
     let parsed = crate::frontmatter::parse_tolerant(yaml)?;
@@ -87,7 +122,7 @@ pub(super) fn stated(
             .and_then(crate::frontmatter::Value::as_str)
             .map(|text| text.trim().to_owned())
     };
-    Ok(Some(Stated {
+    Ok(Stated {
         rendering: is_rendering(harness, &parsed.map),
         access: Access {
             allow: allow_key.and_then(|key| parsed.map.string_list(key)),
@@ -98,22 +133,79 @@ pub(super) fn stated(
         subagents: (harness == HarnessId::Pi)
             .then(|| parsed.map.string_list("allowed-subagents"))
             .flatten(),
+        hooks: match parsed.map.get("hooks") {
+            Some(block) => gates(block),
+            None => Vec::new(),
+        },
         color: scalar("color"),
         effort: scalar("effort"),
         model: scalar("model"),
         isolation: scalar("isolation"),
         memory: scalar("memory"),
         background: scalar("background").and_then(|value| value.parse().ok()),
-    }))
+    })
 }
 
-/// Whether the file this states is the harness's own rendering rather than
-/// a document the person wrote over the top of it. Only a rendering has
-/// keys the fork has to reproduce: in one somebody authored, there was
-/// never a rendered value to change or take away.
-impl Stated {
-    pub(super) fn is_rendering(&self) -> bool {
-        self.rendering
+/// One gate a hook block sets: the scope it applies to and the command it
+/// runs there. All three parts identify it. A matcher widened from `Bash`
+/// to `*`, or an event moved from `PostToolUse` to `PreToolUse`, is a
+/// different gate under the same command, and reading only the command
+/// calls the two the same and lets the stricter one be discarded.
+#[derive(PartialEq)]
+struct Gate {
+    event: String,
+    matcher: String,
+    command: String,
+}
+
+impl Gate {
+    /// How the refusal names it.
+    fn shown(&self) -> String {
+        format!(
+            "{} on {} running {}",
+            self.event, self.matcher, self.command
+        )
+    }
+}
+
+/// The gates a hook block sets, read as the block's own shape: an event,
+/// the matchers under it, and the commands under each.
+fn gates(value: &crate::frontmatter::Value) -> Vec<Gate> {
+    use crate::frontmatter::Value;
+    let Value::Map(events) = value else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (event, by_matcher) in events.entries() {
+        let Value::Map(matchers) = by_matcher else {
+            continue;
+        };
+        for (matcher, entries) in matchers.entries() {
+            out.extend(commands(entries).into_iter().map(|command| Gate {
+                event: event.to_owned(),
+                matcher: matcher.to_owned(),
+                command,
+            }));
+        }
+    }
+    out
+}
+
+/// Every `command:` under one matcher, at whatever depth the entries nest
+/// them. Read by key rather than by shape: what matters is which commands
+/// would run, not how the harness spells the list.
+fn commands(value: &crate::frontmatter::Value) -> Vec<String> {
+    use crate::frontmatter::Value;
+    match value {
+        Value::Map(map) => map
+            .entries()
+            .flat_map(|(key, value)| match (key, value.as_str()) {
+                ("command", Some(command)) => vec![command.trim().to_owned()],
+                _ => commands(value),
+            })
+            .collect(),
+        Value::List(items) => items.iter().flat_map(commands).collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -150,9 +242,10 @@ fn carries(harness: HarnessId, key: &str) -> bool {
     )
 }
 
-/// The person's own edits to this file, as overrides for this harness. A
-/// value the fork already renders is not an edit and gets no entry: an
-/// override written on every fork would bury the ones that mean something.
+/// The person's own edits to those settings, as overrides for this
+/// harness. A value the fork already renders is not an edit and gets no
+/// entry: an override written on every fork would bury the ones that mean
+/// something.
 pub(super) fn carried_edits(on_disk: &Stated, after: &Stated) -> FrontmatterOverrides {
     let kept = |stated: &Option<String>, rendered: &Option<String>| {
         stated.clone().filter(|_| stated != rendered)
@@ -162,13 +255,8 @@ pub(super) fn carried_edits(on_disk: &Stated, after: &Stated) -> FrontmatterOver
         // Deleting the key is an edit like changing it. An override says
         // what a value is and never that there is none, so this is the one
         // deletion it can state: every renderer reads `none` as no effort.
-        //
-        // Only in a rendering, where there was a value to delete. In a
-        // document somebody wrote there never was one, and reading its
-        // absence as a clearing writes an override the person never asked
-        // for and strips the effort the publisher set.
         effort: match (&on_disk.effort, &after.effort) {
-            (None, Some(_)) if on_disk.rendering => Some(NO_EFFORT.to_owned()),
+            (None, Some(_)) => Some(NO_EFFORT.to_owned()),
             (stated, rendered) => kept(stated, rendered),
         },
         model: kept(&on_disk.model, &after.model),
@@ -177,122 +265,48 @@ pub(super) fn carried_edits(on_disk: &Stated, after: &Stated) -> FrontmatterOver
         background: on_disk
             .background
             .filter(|_| on_disk.background != after.background),
-        // Every tool the file denies that the fork's own rendering does
-        // not. The difference rather than the whole list, because
-        // `deny-tools` is unioned into what the renderer computes: writing
-        // the generated denies back as overrides would state as the
-        // person's what the renderer produces on its own.
-        deny_tools: added(&on_disk.access.deny, &after.access.deny),
-        // An allowlist replaces the source's outright, so the file's own
-        // list reproduces the file. Only the file naming one is an edit:
-        // an override states what the allowlist is and never that there is
-        // none, so a deleted one is named by `uncarried` instead.
-        allow_tools: match (&on_disk.access.allow, &after.access.allow) {
-            (Some(stated), rendered) => (Some(stated) != rendered.as_ref()).then(|| stated.clone()),
-            (None, _) => None,
-        },
         // Narrowing the delegation list is the same edit as narrowing the
         // tool list, and unlike a scalar its clearing is representable:
         // an empty allowlist is what the renderer reads as no delegation
-        // at all, so a deleted key rides as one — again only where there
-        // was a rendered list to delete.
+        // at all, so a deleted key rides as one.
         allowed_subagents: match (&on_disk.subagents, &after.subagents) {
-            (None, Some(_)) if on_disk.rendering => Some(Vec::new()),
+            (None, Some(_)) => Some(Vec::new()),
             (Some(stated), rendered) => (Some(stated) != rendered.as_ref()).then(|| stated.clone()),
-            (None, _) => None,
+            (None, None) => None,
         },
         ..FrontmatterOverrides::default()
     }
 }
 
-/// The tools `stated` names that `rendered` does not, under either side's
-/// spelling. `None` where it names none, which is what leaves the override
-/// unwritten.
-fn added(stated: &[String], rendered: &[String]) -> Option<Vec<String>> {
-    let extra: Vec<String> = stated
-        .iter()
-        .filter(|tool| !rendered.iter().any(|kept| same_tool(kept, tool)))
-        .cloned()
-        .collect();
-    (!extra.is_empty()).then_some(extra)
-}
-
-/// Every key the person changed in the generated file that the carry does
-/// not reproduce.
-///
-/// Three renderings answer it, all read as whole frontmatter maps so that
-/// nothing here decides which keys are worth looking at. `rendered` is
-/// what the fork writes carrying nothing, so what `on_disk` spells
-/// differently from it is exactly what the person changed. `reproduced` is
-/// the same rendering with the carry folded in, so a key they changed that
-/// still does not read back as their own is one no override could hold.
-///
-/// A key they did not change is not asked about, because the copy may
-/// differ there for a reason they asked for: clearing Pi's delegation list
-/// puts `delegate_subagent` back in the deny list, which is the edit
-/// landing rather than a second edit going missing.
-///
-/// A key no override has a field for — `description:`, a hook block, one
-/// a renderer grows tomorrow — reaches the answer without this being
-/// taught about it, which is the whole point of asking the renderings.
-pub(super) fn unreproduced(
-    on_disk: &str,
-    rendered: &str,
-    reproduced: &str,
-) -> std::result::Result<Vec<String>, String> {
-    let map = |text: &str| -> std::result::Result<crate::frontmatter::Map, String> {
-        let (yaml, _) = crate::frontmatter::split(text)?;
-        Ok(crate::frontmatter::parse_tolerant(yaml)?.map)
-    };
-    let (mine, bare, mended) = (map(on_disk)?, map(rendered)?, map(reproduced)?);
-    let mut keys: Vec<String> = differing(&mine, &bare)
-        .into_iter()
-        .filter(|key| !alike(mine.get(key), mended.get(key)))
-        .collect();
-    keys.sort();
-    keys.dedup();
-    Ok(keys)
-}
-
-/// Every key the two maps spell differently, in either direction. A key
-/// one states and the other does not is a difference like any other: an
-/// added key and a deleted one are both edits.
-fn differing(mine: &crate::frontmatter::Map, theirs: &crate::frontmatter::Map) -> Vec<String> {
-    let mut keys: Vec<String> = mine
-        .entries()
-        .filter(|(key, value)| !alike(Some(value), theirs.get(key)))
-        .map(|(key, _)| key.to_owned())
-        .collect();
-    keys.extend(
-        theirs
-            .entries()
-            .filter(|(key, _)| mine.get(key).is_none())
-            .map(|(key, _)| key.to_owned()),
-    );
-    keys
-}
-
-/// Whether two readings of one key state the same thing, absence included.
-/// A renderer writes a list as one comma-separated scalar and a person
-/// editing it by hand spaces and orders it their own way, so a scalar is
-/// compared as the set of what it names rather than as its text. A value
-/// holding no comma names one thing, which makes this the plain comparison
-/// for every other key.
-fn alike(a: Option<&crate::frontmatter::Value>, b: Option<&crate::frontmatter::Value>) -> bool {
-    match (a, b) {
-        (Some(a), Some(b)) => match (a.as_str(), b.as_str()) {
-            (Some(a), Some(b)) => named(a) == named(b),
-            _ => a == b,
-        },
-        (None, None) => true,
-        _ => false,
+/// The settings the person deleted from the generated file that no
+/// override can state as deleted, so the fork would put the publisher's
+/// value back. Naming them is a refusal, the same as a tool restriction
+/// the fork cannot carry: a deletion is the restrictive direction of the
+/// very edit a fork exists to keep.
+pub(super) fn uncleared(on_disk: &Stated, after: &Stated) -> Vec<&'static str> {
+    // Nothing was deleted from a file the person wrote themselves: there
+    // was never a rendered value in it to remove.
+    if !on_disk.rendering {
+        return Vec::new();
     }
-}
-
-fn named(value: &str) -> Vec<&str> {
-    let mut names: Vec<&str> = value.split(',').map(str::trim).collect();
-    names.sort_unstable();
-    names
+    let deleted =
+        |stated: &Option<String>, rendered: &Option<String>| stated.is_none() && rendered.is_some();
+    let mut lost = Vec::new();
+    for (key, gone) in [
+        ("color", deleted(&on_disk.color, &after.color)),
+        ("model", deleted(&on_disk.model, &after.model)),
+        ("isolation", deleted(&on_disk.isolation, &after.isolation)),
+        ("memory", deleted(&on_disk.memory, &after.memory)),
+        (
+            "background",
+            on_disk.background.is_none() && after.background.is_some(),
+        ),
+    ] {
+        if gone {
+            lost.push(key);
+        }
+    }
+    lost
 }
 
 /// The frontmatter keys a harness states tool access in: an allowlist, a

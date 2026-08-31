@@ -113,21 +113,79 @@ const READ_ONLY_TOOLS: &[&str] = &[
 /// A tool policy: an optional allowlist and a deny list, in whatever tool
 /// names the surface stating it uses. `allow: None` is that surface's own
 /// default — every tool it offers — never nothing at all.
+///
+/// One type for a policy read off a rendered file and a policy derived from
+/// a declaration, so [`Access::widened_over`] is the only answer to whether
+/// access grew.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Access {
     pub allow: Option<Vec<String>>,
     pub deny: Vec<String>,
 }
 
+/// How one policy compares against a stricter one.
+#[derive(Debug, PartialEq)]
+pub enum Widened {
+    /// Nothing the stricter policy kept away is handed over.
+    No,
+    /// The tools handed back, named.
+    Tools(Vec<String>),
+    /// The stricter policy named an allowlist and this one names none, so
+    /// what comes back is every tool the surface offers — a set neither
+    /// policy can enumerate. The allowlist that was kept is all there is to
+    /// say about it.
+    PastAnAllowlist(Vec<String>),
+}
+
+impl Access {
+    /// Whether this policy hands the tool over: it neither denies it nor
+    /// keeps an allowlist that leaves it out.
+    pub fn grants(&self, tool: &str) -> bool {
+        if holds(&self.deny, tool) {
+            return false;
+        }
+        match &self.allow {
+            Some(allow) => holds(allow, tool),
+            None => true,
+        }
+    }
+
+    /// What this policy hands back that `stricter` kept away.
+    pub fn widened_over(&self, stricter: &Access) -> Widened {
+        let mut back: Vec<String> = stricter
+            .deny
+            .iter()
+            .filter(|tool| self.grants(tool))
+            .cloned()
+            .collect();
+        match (&stricter.allow, &self.allow) {
+            (Some(kept), None) => return Widened::PastAnAllowlist(kept.clone()),
+            (Some(kept), Some(allowed)) => {
+                for tool in allowed {
+                    if !holds(kept, tool) && !holds(&back, tool) {
+                        back.push(tool.clone());
+                    }
+                }
+            }
+            (None, _) => {}
+        }
+        match back.is_empty() {
+            true => Widened::No,
+            false => Widened::Tools(back),
+        }
+    }
+}
+
+/// Whether a tool list names this tool, under either side's spelling.
+fn holds(tools: &[String], tool: &str) -> bool {
+    tools.iter().any(|kept| same_tool(kept, tool))
+}
+
 pub fn normalize(tool: &str) -> String {
     tool.trim().to_ascii_lowercase().replace(['_', '-'], "")
 }
 
-/// Whether two spellings name the same tool. The one owner of that
-/// question: the merge that unions denies and the capture that carries
-/// them have to agree on it, or a spelling one side folds together is a
-/// difference the other reports.
-pub(crate) fn same_tool(a: &str, b: &str) -> bool {
+fn same_tool(a: &str, b: &str) -> bool {
     normalize(a) == normalize(b)
 }
 
@@ -166,6 +224,56 @@ mod tests {
             PermissionIntent::effective(&source, Some(&wider), None),
             PermissionIntent::allow_only(wider.clone())
         );
+    }
+
+    #[test]
+    fn widening_counts_a_returned_deny_and_an_allowlist_entry_the_stricter_side_lacked() {
+        let strict = Access {
+            allow: None,
+            deny: vec!["AskUserQuestion".into(), "Bash".into()],
+        };
+        let same = Access {
+            allow: None,
+            deny: vec!["ask-user-question".into(), "Bash".into()],
+        };
+        assert_eq!(same.widened_over(&strict), Widened::No);
+        let loose = Access {
+            allow: None,
+            deny: vec!["Bash".into()],
+        };
+        assert_eq!(
+            loose.widened_over(&strict),
+            Widened::Tools(vec!["AskUserQuestion".into()])
+        );
+        // Narrowing is never widening: an extra deny reads as no change.
+        let narrower = Access {
+            allow: None,
+            deny: vec!["AskUserQuestion".into(), "Bash".into(), "Read".into()],
+        };
+        assert_eq!(narrower.widened_over(&strict), Widened::No);
+    }
+
+    #[test]
+    fn dropping_an_allowlist_widens_past_naming_what_came_back() {
+        let strict = Access {
+            allow: Some(vec!["Read".into()]),
+            deny: Vec::new(),
+        };
+        assert_eq!(
+            Access::default().widened_over(&strict),
+            Widened::PastAnAllowlist(vec!["Read".into()])
+        );
+        // Gaining an entry the stricter list never held is named outright.
+        let wider = Access {
+            allow: Some(vec!["Read".into(), "Bash".into()]),
+            deny: Vec::new(),
+        };
+        assert_eq!(
+            wider.widened_over(&strict),
+            Widened::Tools(vec!["Bash".into()])
+        );
+        // Adding an allowlist where there was none only narrows.
+        assert_eq!(strict.widened_over(&Access::default()), Widened::No);
     }
 
     #[test]

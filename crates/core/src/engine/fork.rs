@@ -72,6 +72,7 @@ pub fn fork(
             decl: &decl,
             kind,
             name,
+            installed_as: name,
             harness,
         },
         &edited,
@@ -198,7 +199,8 @@ struct Captured {
 }
 
 /// One fork's inputs, gathered so the capture side reads them in one
-/// place.
+/// place. `installed_as` is the name the fork will answer to — the
+/// original's for a fork in place, the person's choice for one beside it.
 struct ForkOf<'a> {
     env: &'a Env,
     scope: &'a Scope,
@@ -206,6 +208,7 @@ struct ForkOf<'a> {
     decl: &'a manifest::ItemDecl,
     kind: ItemKind,
     name: &'a str,
+    installed_as: &'a str,
     harness: HarnessId,
 }
 

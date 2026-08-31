@@ -254,19 +254,12 @@ pub enum CoreError {
     #[error("`{name}` can't be your copy's name: {problem}")]
     ForkNameUnusable { name: String, problem: String },
 
-    /// A fork beside refused before writing anything: the copy is one file
-    /// every targeted tool renders from, and they are not all at the
-    /// revision it was read at. A revision the capture did not read can
-    /// state tools its own does not, so that rendering's denies are lost.
-    #[error("keeping '{name}' as your own cannot answer for {problem}")]
-    ForkRevisionsDiffer { name: String, problem: String },
-
-    /// A fork refused before writing anything: the rendering states
-    /// settings kendex.toml has no field for, so the copy would revert
-    /// them to the publisher's. Refused rather than named on a plan, which
-    /// only one of the two surfaces prints.
-    #[error("keeping '{name}' as your own cannot carry {problem}")]
-    ForkKeysUncarried { name: String, problem: String },
+    /// A fork refused before writing anything: the rendering on disk keeps
+    /// tools from this agent that the fork would hand back. Landing it
+    /// would leave the person an agent more permissive than the one they
+    /// forked, which is the one thing a fork must never do.
+    #[error("keeping '{name}' as your own cannot carry {problem} — nothing was written")]
+    ForkWidensAccess { name: String, problem: String },
 
     /// A fork refused before writing anything: the generated document
     /// around this agent's prose does not read back as the sections the

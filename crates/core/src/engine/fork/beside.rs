@@ -65,6 +65,7 @@ pub fn fork_beside(
             decl: &decl,
             kind,
             name,
+            installed_as: new_name,
             harness,
         },
         &edited,
@@ -83,10 +84,6 @@ pub fn fork_beside(
     // and goes on rendering under the name it always had.
     rekey_agent_tables(&mut manifest, kind, name, new_name, OldName::Kept);
     if let Some(carry) = carry {
-        // The catalog's own per-harness defaults reach the manifest only
-        // through this, and the copy stops reading the catalog — so they
-        // land under the new name or the very next apply renders a
-        // different agent there.
         carry.apply(&mut manifest, new_name);
     }
 
@@ -107,9 +104,9 @@ pub fn fork_beside(
             .rev = Some(commit);
     }
 
-    // One capture, read at one revision, is what every tool renders from
-    // once the copy lands — so every tool it answers for has to be at that
-    // revision now. Proven before any of it reaches disk.
+    // One capture, read at one revision, is what every harness renders from
+    // once the fork lands, so every harness it answers for has to be at
+    // that revision now. Proven before any of it reaches disk.
     if kind == ItemKind::Agent {
         let declared = manifest
             .declared(kind)

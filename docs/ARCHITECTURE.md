@@ -68,19 +68,18 @@ lives in one capability table read by core and UI.
 3. Content hashes cover source bytes plus the manifest sections that shape
    an artifact — editing a shared key invalidates dependents.
 4. Locks record durable provenance; same-source reinstall is a no-op,
-   cross-source name collision is a hard error naming the original. A name is
-   claimed by a lock entry or by a not-yet-applied manifest entry — both
-   collide. The one sanctioned rebind is a confirmed fork: remote to `local`,
-   in `[forks.<kind>.<name>]`. A fork keeps its installed name so dependents
-   and bundles resolve; one beside (`fork_beside`) takes a chosen name, `name:`
-   rewritten to match, leaving the original in place. An agent's bytes come
-   from its published file at the installed commit, with the catalog's tables
-   and the person's own overrides and edits; what no entry holds refuses the
-   fork, naming those keys, and so does a copy beside whose tools sit at
-   different revisions. The new name is proven free before the first durable
-   write — no declaration, lock entry, folding neighbour, occupied destination,
-   or configuration it carries — and a namespaced one nests in no package and
-   reaches its slot through no link.
+   cross-source name collision is a hard error naming the original. A name
+   is claimed by a lock entry or by a not-yet-applied manifest entry —
+   both collide. The one sanctioned rebind is a fork the user confirmed: remote
+   to `local`, recorded in `[forks.<kind>.<name>]`. A fork keeps the installed
+   name so dependents and bundles resolve; one made beside (`fork_beside`)
+   takes a chosen name, `name:` rewritten to match, leaving the original on its
+   source. An agent's bytes come from its published file at the installed
+   commit, with the catalog's tables and the person's own overrides; a rendering
+   restricting it further is refused. The new name is proven free before the
+   first durable write — no declaration, lock entry, folding neighbour, or
+   occupied destination — and a namespaced one neither nests inside a local
+   package nor reaches its slot through a link.
 5. Enable/disable is non-destructive and lossless: file-backed kinds
    toggle by rename; kinds embedded in shared config files toggle by a
    structured edit that preserves every unrelated key. Uninstalling the

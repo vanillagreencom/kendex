@@ -65,7 +65,7 @@ pub(super) fn one_revision(
     if elsewhere.is_empty() {
         return Ok(());
     }
-    Err(CoreError::ForkRevisionsDiffer {
+    Err(CoreError::ForkWidensAccess {
         name: crate::names::shown(name),
         problem: format!(
             "the tool settings {} state{}: {} — this copy is taken from {}, and a published file at one revision does not say what another one restricts. Refresh so every tool sits at the same revision, then keep it",
