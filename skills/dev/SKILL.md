@@ -31,18 +31,19 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
 
 ## Engineering Rules
 
-- Scope is the reported symptom. Every behavioral surface a change touches must trace to a line in the report — if you cannot name that line, keep it out of this change. Two exceptions: mechanical enablers of landing it (locks, changelog, baselines, dismissal renewals) ride without a line, and a defect the change introduces or arms is in scope by definition.
+- Scope is the reported symptom. Every behavioral surface a change touches must trace to a line in the report — if you cannot name that line, keep it out of this change. Two exceptions: the mechanical enablers of landing it — locks, changelog, baselines, dismissal renewals, that list and nothing else, never code that runs at runtime — ride without a line, and a defect the change introduces or arms is in scope by definition unless Step 0 of [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) excludes it.
 - Prefer deleting code to abstracting it. Three similar lines beat a premature abstraction. A new dependency needs a one-line justification in its commit message.
 - Every behavior change ships with a test that fails without it.
 - An `else` that "shouldn't happen" is a bug: assert or return an error, never continue silently.
 - Plain words over jargon: name things by what they do. Comments say why, never what or when — no temporal markers, no references to the change that wrote them. Commit bodies explain intent, never narrate the diff.
 - Delete unused code completely — no compat shims, no `_renamed` vars, no "removed" comments.
-- Never re-implement a judgment another component owns — delegate. Delegation impossible = design escalation in your return, never a twin.
+- No migration or compat code. A layout, schema or cache change is one changelog line and a fresh install; nothing reads an artifact an older version wrote, and a finding asking to carry one forward is declined.
+- Before adding a function, parser, stub or loop, grep the repo for the verb it performs. A second copy of that verb, in any language, is a twin and never delegation: call the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.
 - Stale docs are bugs: contradicting a committed doc means updating it in the same change.
 
 ## Round Contract
 
-Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR — the orchestrator does that after review passes. A finding on a mechanism this diff introduces or arms is a fix whatever the round; a `Declined:` there states the passing state or the false premise, never a label or a test count.
+Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR — the orchestrator does that after review passes. A finding on a mechanism this diff introduces or arms is a fix whatever the round, unless Step 0 of the disposition flow excludes it; a `Declined:` there states the passing state or the false premise, never a label or a test count.
 
 **The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 
