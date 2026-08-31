@@ -15,6 +15,8 @@ Ad-hoc whole-codebase reviewer fanout. No PR, no issue, no diff, no fix delegati
 
 Not a git worktree → report `review-codebase requires a git worktree` and **END**. Otherwise use the output as `WT_PATH` and `mkdir -p "$WT_PATH/tmp"`.
 
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root [DIR]`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+
 ## 2. Delegate
 
 `[AGENTS]` is every `reviewer-*` agent this harness exposes; use the full list and do not path-filter. None available → report `No reviewer agents installed; cannot run codebase review` and **END**.

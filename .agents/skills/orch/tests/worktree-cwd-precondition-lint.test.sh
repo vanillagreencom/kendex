@@ -23,7 +23,7 @@
 # runs `pwd -P`: a bare `pwd` prints the logical path and would halt a
 # correct delegate whose shell entered the checkout through a symlink.
 #
-# Two rules are enforced inside a `<delegation_format>` block:
+# Three rules are enforced:
 #
 #   1. A `Worktree: [TOKEN]` line is followed on the very next line by the
 #      canonical `Worktree Check:` line for that same TOKEN.
@@ -33,33 +33,86 @@
 #      then missed blocks whose paths are placeholders the caller fills.
 #      The pair costs two lines on a delegation that never touches the
 #      repo, and uniform is the only rule that cannot be wrong.
+#   3. A doc carrying a block also carries the canonical fill line, held in
+#      $CANON_FILL by the same equality predicate. The pair is worth
+#      nothing if the value poured into it is not what `pwd -P` prints, and
+#      the workflows resolved that value to `.` or to "the current
+#      directory", so a filled delegation halted in a CORRECT checkout. The
+#      fill line names `git-context repo-root`, whose `--show-toplevel`
+#      output is absolute and physical, so both sides of the comparison
+#      agree by construction. Rules 1 and 2 read inside a
+#      `<delegation_format>` block; rule 3 reads the doc around it.
 #
-# Scope is every skill doc that can carry a delegation, in BOTH trees: the
-# `skills/` source and the `.agents/skills/` render agents actually load.
-# Deriving the scan root from this file's own location would leave each
-# copy scanning only its own half, and CI runs the source copy alone — the
-# render would ship unguarded with the suite green. Tests are excluded:
+# Scope is every skill doc that can carry a delegation, in BOTH trees where
+# both exist: the `skills/` source and the `.agents/skills/` render agents
+# actually load. Deriving the scan root from this file's own location would
+# leave each copy scanning only its own half, and CI runs the source copy
+# alone, so the render would ship unguarded with the suite green. An
+# INSTALLED layout has no `skills/` at all (the CLI integration check runs
+# this suite from `.agents/skills/orch/tests/`); there the lint scans the
+# one tree it has and names that mode in its output, so no reader mistakes
+# an installed run for a full one. A `skills/` tree whose render is missing
+# is a defect, not an installed layout, and stays red. Tests are excluded:
 # their probe fixtures carry deliberately broken blocks. A `Worktree:`
 # mention in prose or in a fenced example is not a delegation and is not
 # scanned.
 set -euo pipefail
 
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-# The nearest ancestor holding both trees. Walked, not counted in `../`,
-# so the source copy and the render copy resolve to the same repo root and
-# scan the same two directories.
-REPO_ROOT="$TEST_DIR"
-while [ "$REPO_ROOT" != "/" ]; do
-  if [ -d "$REPO_ROOT/skills" ] && [ -d "$REPO_ROOT/.agents/skills" ]; then break; fi
-  REPO_ROOT="$(dirname "$REPO_ROOT")"
-done
-if [ "$REPO_ROOT" = "/" ]; then
-  printf 'FAIL  no ancestor of %s holds both skills/ and .agents/skills/\n' "$TEST_DIR" >&2
+# resolve_roots <start_dir>
+# Prints "<mode> <root>" for the layout above <start_dir>, or a diagnostic
+# and returns 1. Walked, not counted in `../`, so the source copy and the
+# render copy resolve to the same root and scan the same directories.
+#
+# The walk anchors on `.agents/skills`, never on a bare directory named
+# `skills`: a render tree's own parent holds one, so a search for that name
+# alone matches inside the render and would read an installed tree as a
+# source checkout. Once the render root is known, `skills/` beside it
+# decides the mode. A tree holding `skills/` and no render reaches neither
+# arm and fails, which is what keeps a missing render a defect.
+resolve_roots() {
+  local start dir render_root="" src_root=""
+  start="$(cd "$1" && pwd -P)"
+  dir="$start"
+  while [ "$dir" != "/" ]; do
+    if [ -d "$dir/.agents/skills" ]; then render_root="$dir"; break; fi
+    dir="$(dirname "$dir")"
+  done
+  if [ -n "$render_root" ]; then
+    if [ -d "$render_root/skills" ]; then
+      printf 'both %s\n' "$render_root"
+    else
+      printf 'installed %s\n' "$render_root"
+    fi
+    return 0
+  fi
+  dir="$start"
+  while [ "$dir" != "/" ]; do
+    if [ -d "$dir/skills" ]; then src_root="$dir"; break; fi
+    dir="$(dirname "$dir")"
+  done
+  if [ -n "$src_root" ]; then
+    printf '%s holds skills/ but no .agents/skills/ render beside it\n' "$src_root"
+    return 1
+  fi
+  printf 'no ancestor of %s holds .agents/skills/\n' "$start"
+  return 1
+}
+
+if ! RESOLVED="$(resolve_roots "$TEST_DIR")"; then
+  printf 'FAIL  %s\n' "$RESOLVED" >&2
   exit 1
 fi
+MODE="${RESOLVED%% *}"
+REPO_ROOT="${RESOLVED#* }"
 SOURCE_ROOT="$REPO_ROOT/skills"
 RENDER_ROOT="$REPO_ROOT/.agents/skills"
+if [ "$MODE" = both ]; then
+  SCAN_ROOTS=("$SOURCE_ROOT" "$RENDER_ROOT")
+else
+  SCAN_ROOTS=("$RENDER_ROOT")
+fi
 
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -74,6 +127,10 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 # placeholder name. This is the single source of truth for the sentence;
 # the shipped docs must match it character for character.
 CANON='Worktree Check: `pwd -P` before any repo-relative command. It must print [@TOKEN@]; your shell can start in another lane'"'"'s worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.'
+
+# The canonical fill line, verbatim. It carries no per-block token: `[DIR]`
+# is literal in every doc, so the whole line is compared as it stands.
+CANON_FILL='Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root [DIR]`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.'
 
 # scan_worktree_precondition <file>
 # Emits one "file:line: ..." line per defect, per the two rules above.
@@ -108,6 +165,24 @@ scan_worktree_precondition() {
   ' "$1"
 }
 
+# scan_worktree_fill <file>
+# Emits one defect line when a doc opens a delegation block but never states,
+# outside every block, that the delegated path comes from `git-context
+# repo-root`. Equality against $CANON_FILL is the whole predicate, so a
+# resolution reworded back to `.` or to the current directory reds.
+scan_worktree_fill() {
+  awk -v f="$1" -v canon="$CANON_FILL" '
+    function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    /^[[:space:]]*<delegation_format>[[:space:]]*$/ { indel = 1; hasblock = 1; next }
+    /^[[:space:]]*<\/delegation_format>[[:space:]]*$/ { indel = 0; next }
+    !indel { if (trim($0) == canon) hasfill = 1 }
+    END {
+      if (hasblock && !hasfill)
+        printf "%s: carries a delegation block but no canonical Worktree fill line\n", f
+    }
+  ' "$1"
+}
+
 # scan_trees <root>...
 # Emits every defect line found in every non-test *.md under the given
 # roots. A missing root is itself a defect: the caller asked for a tree
@@ -120,6 +195,7 @@ scan_trees() {
     fi
     find "$root" -name '*.md' -not -path '*/tests/*' | sort | while IFS= read -r doc; do
       scan_worktree_precondition "$doc"
+      scan_worktree_fill "$doc"
     done
   done
 }
@@ -134,13 +210,18 @@ count_blocks() {
 }
 
 echo "=== orch delegation worktree-cwd-precondition lint ==="
+if [ "$MODE" = both ]; then
+  printf 'mode: source checkout, scanning skills/ and .agents/skills/ under %s\n' "$REPO_ROOT"
+else
+  printf 'mode: INSTALLED layout, scanning .agents/skills/ only under %s (no skills/ tree)\n' "$REPO_ROOT"
+fi
 
 # --- Part a: every shipped delegation block carries the precondition -------
 # Every skill doc in BOTH trees, not one skill's workflows and not the half
 # this copy of the test sits in: a delegation that hands over a worktree is
 # checked wherever it lives. Tests are excluded — their probe fixtures carry
 # deliberately broken blocks.
-offenders="$(scan_trees "$SOURCE_ROOT" "$RENDER_ROOT")"
+offenders="$(scan_trees "${SCAN_ROOTS[@]}")"
 if [ -z "$offenders" ]; then
   pass "every delegated Worktree: line is followed by its canonical Worktree Check"
 else
@@ -151,7 +232,7 @@ fi
 # The precondition is worth nothing if no delegation carries it, and one
 # tree going missing is the same vacuity a level up — so each tree is
 # counted on its own and an empty population in EITHER reds.
-for root in "$SOURCE_ROOT" "$RENDER_ROOT"; do
+for root in "${SCAN_ROOTS[@]}"; do
   label="${root#$REPO_ROOT/}"
   blocks="$(count_blocks "$root")"
   if [ "$blocks" -gt 0 ]; then
@@ -343,7 +424,7 @@ TWO="$TMP_ROOT/two-trees"
 mkdir -p "$TWO/skills/x" "$TWO/.agents/skills/x"
 GOOD="Worktree: [WORKTREE_PATH]\n$CHECK"
 BROKEN='Worktree: [WORKTREE_PATH]'
-write_half() { printf '<delegation_format>\n%b\n</delegation_format>\n' "$2" > "$TWO/$1/x/y.md"; }
+write_half() { printf '%s\n\n<delegation_format>\n%b\n</delegation_format>\n' "$CANON_FILL" "$2" > "$TWO/$1/x/y.md"; }
 
 # c.1 — control: both halves carry the check, nothing is flagged. Without
 # this the two probes below could red for any reason at all.
@@ -381,12 +462,107 @@ else
   fail "two-tree scan MISSED a missing scan root"
 fi
 
-# c.5 — the real run reached both trees, so parts a and b judged the shipped
-# render and not just the source.
-if [ "$(count_blocks "$SOURCE_ROOT")" -gt 0 ] && [ "$(count_blocks "$RENDER_ROOT")" -gt 0 ]; then
-  pass "the shipped scan covered skills/ and .agents/skills/ alike"
+# c.5 — the real run reached every tree its mode names, so parts a and b
+# judged the shipped render and not just the source.
+if [ "$MODE" = both ]; then
+  if [ "$(count_blocks "$SOURCE_ROOT")" -gt 0 ] && [ "$(count_blocks "$RENDER_ROOT")" -gt 0 ]; then
+    pass "the shipped scan covered skills/ and .agents/skills/ alike"
+  else
+    fail "one of the two shipped trees carried no delegation block"
+  fi
 else
-  fail "one of the two shipped trees carried no delegation block"
+  if [ "$(count_blocks "$RENDER_ROOT")" -gt 0 ]; then
+    pass "installed layout: the shipped scan covered .agents/skills/"
+  else
+    fail "installed layout: .agents/skills/ carried no delegation block"
+  fi
+fi
+
+# --- Part d: the scan root resolves to the layout it is actually in --------
+# Three layouts stay distinct. Two trees is the source checkout and the CI
+# path. One tree is the installed layout the CLI integration check runs this
+# suite from, where no top-level skills/ exists. A skills/ tree whose render
+# is missing is neither: it is the fail-open this lint was tightened to
+# catch, and it must stay red rather than degrade to a one-tree scan.
+LAYOUTS="$TMP_ROOT/layouts"
+mkdir -p "$LAYOUTS/both/skills/x" "$LAYOUTS/both/.agents/skills/orch/tests"
+mkdir -p "$LAYOUTS/inst/.agents/skills/orch/tests"
+mkdir -p "$LAYOUTS/src/skills/orch/tests"
+
+# d.1 — both halves present: two-tree mode, rooted where both live.
+if [ "$(resolve_roots "$LAYOUTS/both/.agents/skills/orch/tests")" = "both $LAYOUTS/both" ]; then
+  pass "a root holding both trees resolves to two-tree mode"
+else
+  fail "a root holding both trees did not resolve to two-tree mode"
+fi
+
+# d.2 — the installed layout: one tree, named as such, no walk to /.
+if [ "$(resolve_roots "$LAYOUTS/inst/.agents/skills/orch/tests")" = "installed $LAYOUTS/inst" ]; then
+  pass "an installed root with no skills/ resolves to one-tree mode"
+else
+  fail "an installed root did not resolve to one-tree mode"
+fi
+
+# d.3 — skills/ present, render missing. This must NOT be read as installed.
+if src_only="$(resolve_roots "$LAYOUTS/src/skills/orch/tests")"; then
+  fail "a skills/ tree with no render was accepted instead of reported"
+elif reports "$src_only" "$LAYOUTS/src holds skills/ but no .agents/skills/ render beside it"; then
+  pass "a skills/ tree with no render is reported, not degraded to one tree"
+else
+  fail "a skills/ tree with no render drew the wrong diagnostic"
+fi
+
+# --- Part e: the delegated path is resolved before it fills the pair -------
+# The check is worth nothing if the value handed to it is not what `pwd -P`
+# prints. The workflows resolved it to `.` or to "the current directory", so
+# a delegate filled from them halted in a CORRECT checkout. The fill line is
+# held by the same equality predicate as the check line.
+NOFILL='carries a delegation block but no canonical Worktree fill line'
+
+# e.1 — a delegating doc that never says where the path comes from IS
+# flagged, even with a perfect check line inside the block.
+if reports "$(scan_worktree_fill "$(probe nofill "Worktree: [WORKTREE_PATH]\n$CHECK")")" "$NOFILL"; then
+  pass "lint flags a delegating doc carrying no fill line"
+else
+  fail "lint MISSED a delegating doc with no fill line"
+fi
+
+# e.2 — the canonical fill line is accepted.
+FILLED="$TMP_ROOT/probe-filled.md"
+printf '%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' "$CANON_FILL" "$CHECK" > "$FILLED"
+if [ -z "$(scan_worktree_fill "$FILLED")" ]; then
+  pass "lint accepts a doc carrying the canonical fill line"
+else
+  fail "lint false-flagged the canonical fill line"
+fi
+
+# e.3 — the shipped defect, spelled out: the fill line resolves the delegated
+# path to the current directory. `pwd -P` prints an absolute physical path
+# and can never equal a relative one, so this halts every correct delegate.
+RELFILL='Fill `Worktree:` and its `Worktree Check:` with the current directory. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.'
+RELATIVE="$TMP_ROOT/probe-relative-fill.md"
+printf '%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' "$RELFILL" "$CHECK" > "$RELATIVE"
+if reports "$(scan_worktree_fill "$RELATIVE")" "$NOFILL"; then
+  pass "lint flags a fill line resolving the delegated path to the current directory"
+else
+  fail "lint MISSED a delegated path resolved to the current directory"
+fi
+
+# e.4 — the fill line inside the block does not count: it has to be the
+# doc's instruction to the filler, not a line the delegate reads as content.
+INBLOCK="$TMP_ROOT/probe-inblock-fill.md"
+printf '<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n%s\n</delegation_format>\n' "$CHECK" "$CANON_FILL" > "$INBLOCK"
+if reports "$(scan_worktree_fill "$INBLOCK")" "$NOFILL"; then
+  pass "lint does not count a fill line buried inside the delegation block"
+else
+  fail "lint counted a fill line inside the block"
+fi
+
+# e.5 — a doc carrying no delegation is asked for no fill line.
+if [ -z "$(scan_worktree_fill "$PROSE")" ]; then
+  pass "lint asks no fill line of a doc carrying no delegation"
+else
+  fail "lint demanded a fill line of a non-delegating doc"
 fi
 
 echo

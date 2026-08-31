@@ -15,7 +15,7 @@ The full session from inside a worktree: implement → review → submit → fin
    .agents/skills/orch/scripts/git-context issue-from-branch .
    ```
 
-   Resolve `TRACKER` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution). Set `WORKTREE_PATH` to the current directory.
+   Resolve `TRACKER` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution). Set `WORKTREE_PATH` to `git-context repo-root .`.
 
 2. **Refuse containers** — Linear only, before any state exists. Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)) to:
 

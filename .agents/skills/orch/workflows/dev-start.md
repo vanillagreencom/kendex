@@ -27,7 +27,9 @@ Resolve `TRACKER` first — `github` skips the Linear-only container preflight.
 
 Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)). A container is refused before anything is initialized, with its unblocked children surfaced as the startable items. A `(one PR)` ancestor promotion is TERMINAL for this invocation: stop and route to `/orch start [PARENT_ID]` rather than continuing with the child's id. A blocked child stops with its live blockers named. Caller context `audit_bundle: true` is equivalent to the `(one PR)` marker: skip the refusal for that parent and carry `Audit Bundle: yes` in the delegation. Managed callers already ran this gate.
 
-Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH`: inside a worktree use the current directory; from the main repo use `worktree path [ISSUE_ID]` when it exists, and ask the user before creating one when it does not.
+Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` as `git-context repo-root [DIR]`. Inside a worktree `[DIR]` is `.`; from the main repo it is `worktree path [ISSUE_ID]` when that exists, and ask the user before creating one when it does not.
+
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root [DIR]`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
 
 Initialize state unless it exists:
 

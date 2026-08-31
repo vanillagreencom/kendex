@@ -100,7 +100,8 @@ Worktree: [WORKTREE_PATH]
 Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
 </delegation_format>
 
-Fill `Worktree:` and its `Worktree Check:` with the caller's absolute repo root, main checkout included.
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root [DIR]`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+`[DIR]` is the caller's own checkout, main checkout included.
 
 Materialize the returned artifact the same way as audit-issues § 4.2. Read `hierarchy_recommendation`, `cross_project_findings`, `architecture_gaps[]`, `organized_issues[]`, and `project_placement`.
 
