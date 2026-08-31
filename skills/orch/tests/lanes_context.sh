@@ -613,7 +613,7 @@ assert_eq "$(jq -r '.[] | select(.lane=="ken-126") | .status' <<<"$OUT")" "no_st
   "the same pane with no codex status line at all answers the same way"
 assert_eq "$(jq -r '.[] | select(.lane=="ken-126") | .context_used_pct' <<<"$OUT")" "null" \
   "the two halves agree rather than differing by what sits above the dialog"
-assert_contains "$(jq -r '.[] | select(.lane=="ken-125") | .detail' <<<"$OUT")" "does not end in a codex status line" \
+assert_contains "$(jq -r '.[] | select(.lane=="ken-125") | .detail' <<<"$OUT")" "does not end in a valid codex context figure" \
   "the refusal names what it could not read, not a missing figure of either shape"
 
 # 27. And the same confusion in the other direction. A codex status line

@@ -234,7 +234,7 @@ lane_context_collect() {
       fi
       if ! parsed="$(lane_context_parse "$cmd" <<<"$screen")"; then
         case "$cmd" in
-          codex) detail="the screen does not end in a codex status line; whatever moved it — a dialog over the footer, a redraw caught mid-frame — is covering the figure" ;;
+          codex) detail="the screen does not end in a valid codex context figure; the last non-empty row is the only row a codex reading is taken from" ;;
           *claude) detail="the screen carries no claude status line" ;;
           *) detail="the screen carries neither harness's context figure" ;;
         esac
