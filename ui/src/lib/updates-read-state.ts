@@ -3,19 +3,24 @@ import type { ReadState } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
 
 /** What every predicate here reads: how the last read of the standing went,
- *  and whether the explicit check that replaces it is running. */
+ *  and whether one that will replace it is on its way — an explicit check,
+ *  or an ordinary reload from a mount or a return to the window. */
 interface PageState {
   read: ReadState;
   checking: boolean;
+  reading: boolean;
 }
 
 /** Whether the rows on screen are not to be acted on, page-wide: the first
- *  read has not answered or the last one failed, or a check is running. A
- *  settling follow flip is not here — it replaces every row too but holds
- *  only its own scope, so ask `rowUnsettled` whether a given row may be
- *  acted on. */
+ *  read has not answered, the last one failed, or one that will replace
+ *  every row is on its way. A landed read is not enough on its own — a
+ *  mount or a return to the window starts a reload over rows that landed
+ *  perfectly well, and the answer it brings back is what the captured
+ *  values would be committed against. A settling follow flip is not here:
+ *  it replaces every row too but holds only its own scope, so ask
+ *  `rowUnsettled` whether a given row may be acted on. */
 export const unsettled = (state: PageState): boolean =>
-  state.read.status !== "landed" || state.checking;
+  state.read.status !== "landed" || state.checking || state.reading;
 
 /** Whether a write is already running in this row's own place. The apply
  *  behind a Follow source flip moves what is installed in that scope and

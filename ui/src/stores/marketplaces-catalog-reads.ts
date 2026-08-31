@@ -9,6 +9,7 @@ import {
   type CatalogSummary,
   commands,
 } from "@/bindings";
+import { settled } from "@/lib/settled";
 import {
   bundleKey,
   catalogDrops,
@@ -76,7 +77,11 @@ async function settle<F extends Exclude<keyof ReadCaches, "readErrors">>(
   >,
 ): Promise<void> {
   const began = catalogDrops.since();
-  const response = await read();
+  // `settled` so a transport rejection lands as this read's own error
+  // rather than escaping: these loaders are called with `void` from
+  // effects, so a rejection would leave the slot empty, no reason under
+  // its key, and the page loading forever with nothing to retry from.
+  const response = await settled(read());
   if (catalogDrops.stale(began)) {
     return settle(set, field, key, errorKey, read);
   }

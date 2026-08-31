@@ -4,6 +4,7 @@ import { useMarketplacesStore } from "./marketplaces";
 import {
   catalogKey,
   dropCatalogCaches,
+  readErrorKey,
   subscription,
 } from "./marketplaces-shared";
 
@@ -29,6 +30,33 @@ const offered = (name: string) => [
     collision: null,
   },
 ];
+
+// The loaders are called with `void` from effects, so a rejection that
+// escapes is one nothing catches: no answer under the key, no reason under
+// the error key, and a page that goes on loading with nothing to retry
+// from. It lands as this read's own failure instead.
+describe("a catalog read the bridge could not make", () => {
+  beforeEach(() => {
+    useMarketplacesStore.setState({ packages: {}, readErrors: {} });
+    vi.mocked(commands.marketplacePackages).mockReset();
+  });
+
+  it("leaves the reason under its own key rather than throwing", async () => {
+    vi.mocked(commands.marketplacePackages).mockRejectedValue(
+      new Error("the bridge is gone"),
+    );
+
+    await expect(
+      useMarketplacesStore.getState().loadPackages(catalog),
+    ).resolves.toBeUndefined();
+
+    const state = useMarketplacesStore.getState();
+    expect(state.readErrors[readErrorKey(key, "packages")]).toBe(
+      "the bridge is gone",
+    );
+    expect(state.packages[key]).toBeUndefined();
+  });
+});
 
 describe("a read that outlives a cache drop", () => {
   beforeEach(() => {

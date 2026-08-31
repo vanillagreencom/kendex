@@ -69,6 +69,7 @@ interface FollowStore {
   pendingFollows: PendingFollow[];
   read: ReadState;
   checking: boolean;
+  reading: boolean;
   reload: () => Promise<void>;
 }
 

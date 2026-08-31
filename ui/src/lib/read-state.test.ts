@@ -72,6 +72,34 @@ describe("readOrder", () => {
     expect(order.lands(third)).toBe(true);
   });
 
+  // The same ticket read the other way: what tells a page its rows are
+  // about to be replaced. Nothing is out before the first read, and a
+  // landed read leaves nothing out.
+  it("is outstanding from a read beginning until its answer lands", () => {
+    const order = readOrder();
+    expect(order.outstanding()).toBe(false);
+
+    const ticket = order.begin();
+    expect(order.outstanding()).toBe(true);
+
+    order.lands(ticket);
+    expect(order.outstanding()).toBe(false);
+  });
+
+  // A superseded read landing does not clear it: the newer one is still
+  // out, and its answer is the one about to replace the rows.
+  it("stays outstanding while a newer read is still on its way", () => {
+    const order = readOrder();
+    const older = order.begin();
+    const newer = order.begin();
+
+    order.lands(older);
+    expect(order.outstanding()).toBe(true);
+
+    order.lands(newer);
+    expect(order.outstanding()).toBe(false);
+  });
+
   // Each store holds its own, so one store's reads cannot rank against
   // another's.
   it("ranks reads only against the standing they are about", () => {

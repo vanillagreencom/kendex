@@ -54,18 +54,30 @@ export const readOf = (
  *  Spell that `order.lands(order.begin())` at the landing itself, which also
  *  supersedes every read still out.
  *
- *  Asking is the whole of it: `lands` reads the counter and writes nothing,
- *  so a ticket answers the same way however often it is asked. It carries
- *  no once-only rule because no caller needs one — each takes a ticket as
- *  its read begins and asks once when that read answers. */
+ *  A ticket answers the same way however often it is asked, so there is no
+ *  once-only rule to break: each caller takes one as its read begins and
+ *  asks once when that read answers.
+ *
+ *  `outstanding` is the same fact read the other way — a ticket taken and
+ *  not yet landed is a read still on its way, which is what tells a page
+ *  that the rows under its buttons are about to be replaced. It is the
+ *  ordering rule answering that question rather than a second flag counted
+ *  beside it, so the two cannot disagree. */
 export function readOrder(): {
   begin: () => number;
   lands: (ticket: number) => boolean;
+  outstanding: () => boolean;
 } {
   let begun = 0;
+  let landed = 0;
   return {
     begin: () => ++begun,
-    lands: (ticket) => ticket === begun,
+    lands: (ticket) => {
+      if (ticket !== begun) return false;
+      landed = ticket;
+      return true;
+    },
+    outstanding: () => begun !== landed,
   };
 }
 

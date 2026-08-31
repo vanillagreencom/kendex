@@ -67,6 +67,7 @@ const meta = (installedAt: string | null): PackageMeta_Serialize => ({
 const SETTLED: UpdatesStanding = {
   read: READ_LANDED,
   checking: false,
+  reading: false,
   pendingFollows: [],
 };
 

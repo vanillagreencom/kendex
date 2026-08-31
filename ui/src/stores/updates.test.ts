@@ -260,6 +260,55 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().read.error).toBeNull();
   });
 
+  // A mount or a return to the window reloads over rows that landed
+  // perfectly well. The read state stays `landed` throughout — the rows
+  // are still the last answer — so nothing in it says the values under
+  // the buttons are about to be replaced. An update accepted in that
+  // window commits a `latest.commit` the landing is about to change.
+  it("refuses an update while an ordinary reload is in flight", async () => {
+    let landRead!: (
+      value: Awaited<ReturnType<typeof commands.updatesOverview>>,
+    ) => void;
+    vi.mocked(commands.updatesOverview)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          landRead = resolve;
+        }),
+      )
+      // Anything the refusal is supposed to prevent would re-read behind
+      // its own commit; answering that keeps a broken guard failing on the
+      // assertion rather than hanging on a parked promise.
+      .mockResolvedValue({
+        status: "ok",
+        data: { rows: [row({})], warnings: [], lastFetched: null },
+      });
+    useUpdatesStore.setState({ rows: [row({})], read: READ_LANDED });
+    const reloading = useUpdatesStore.getState().reload();
+
+    // The rows are still the last landed answer, which is exactly the
+    // state that used to let this through.
+    expect(useUpdatesStore.getState().read.status).toBe("landed");
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+
+    await useUpdatesStore.getState().updateOne(row({ pinned: true }));
+
+    expect(commands.packageSetRev).not.toHaveBeenCalled();
+    expect(commands.packageUpdate).not.toHaveBeenCalled();
+    expect(useProblemsStore.getState().dialog.message).toBe(
+      UPDATE_NEEDS_CHECK_NOTE,
+    );
+
+    // And the bar lifts with the landing, rather than outliving it.
+    landRead({
+      status: "ok",
+      data: { rows: [row({})], warnings: [], lastFetched: null },
+    });
+    await reloading;
+    expect(useUpdatesStore.getState().reading).toBe(false);
+  });
+
   // A failed mute may still have committed before erroring, so the store
   // re-reads rather than trusting either story: here the truth confirms
   // the kept rows, and nothing is marked stale.

@@ -48,6 +48,7 @@ export function usePackagePlaces(
   // each render is a new value on every store touch.
   const updatesRead = useUpdatesStore((s) => s.read);
   const checking = useUpdatesStore((s) => s.checking);
+  const reading = useUpdatesStore((s) => s.reading);
   const pendingFollows = useUpdatesStore((s) => s.pendingFollows);
   // Who owns each copy. Read beside the records rather than trusted from
   // an earlier visit: installing refreshes the scan and the audit and
@@ -115,7 +116,7 @@ export function usePackagePlaces(
       name,
       rows,
       read?.metas ?? {},
-      { read: updatesRead, checking, pendingFollows },
+      { read: updatesRead, checking, reading, pendingFollows },
       // A read that failed leaves the store's older rows in place, and
       // those say nothing about who owns these copies now. Passing none
       // holds the removal controls closed rather than deriving a

@@ -258,6 +258,7 @@ describe("pageUpdateWithheld", () => {
   ) => ({
     read: READ_LANDED,
     checking: false,
+    reading: false,
     pendingFollows: [],
     ...over,
   });

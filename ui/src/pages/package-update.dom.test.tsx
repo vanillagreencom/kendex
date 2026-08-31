@@ -349,6 +349,7 @@ describe("the package page's Update", () => {
       const said = host.textContent ?? "";
       const reason = pageUpdateWithheld(stale, {
         checking: false,
+        reading: false,
         pendingFollows: [],
         ...standing,
       });
