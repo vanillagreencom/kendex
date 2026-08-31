@@ -15,21 +15,21 @@ use crate::model::{ItemKind, Scope};
 /// Whether the user's hands are (or may be) on this installation's bytes.
 /// Automatic removals — refusals, sweeps, orphan cleanup nobody named —
 /// only take content they can prove is ours: every content path must hash
-/// to what apply last wrote. A record from before that hash existed cannot
-/// prove anything, so any content present holds — except a hook's, where
-/// anchor-less records are the common stock and holding them would exempt
-/// those hooks from cleanup for good. Explicitly asked-for removals are
-/// not gated here: the trash keeps what they take.
+/// to what apply last wrote. A record that cannot prove that holds
+/// whatever content is present, hooks included. Explicitly asked-for
+/// removals are not gated here: the trash keeps what they take.
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
-    // A hook's anchor still proves its bytes wherever the record kept one,
-    // and a hook is the one kind where an anchor-less record licenses
-    // nothing: reading "no anchor" as "hands off" would quietly exempt
-    // every older hook install, on every harness, from every sweep.
-    let holdable = match entry.kind {
-        ItemKind::Skill | ItemKind::Agent | ItemKind::Command => true,
-        ItemKind::Hook => entry.rendered_hash.is_some(),
-        _ => false,
-    };
+    // A hook with no anchor used to sweep, read as the common stock of
+    // older installs that holding would exempt from cleanup for good. The
+    // version floor makes that reading false: a lock this build did not
+    // write is refused before any of this runs, so an absent anchor is no
+    // longer an old install. It is a current record this build cannot
+    // account for, and a removal that cannot prove the bytes are ours does
+    // not take them. The rule is the anchor, not the harness.
+    let holdable = matches!(
+        entry.kind,
+        ItemKind::Skill | ItemKind::Agent | ItemKind::Command | ItemKind::Hook
+    );
     if !holdable {
         return false;
     }
@@ -236,9 +236,8 @@ pub(super) fn orphans(
         }
         // An automatic removal (a sweep, an unfiltered orphan cleanup)
         // never takes bytes a record could vouch for and does not —
-        // `edit_holds`' doc draws that line, and names the anchor-less
-        // non-pi hook whose record vouches for nothing; only naming the
-        // item, or asking for edits to be discarded, takes what it holds.
+        // `edit_holds`' doc draws that line; only naming the item, or
+        // asking for edits to be discarded, takes what it holds.
         if !named && !options.overwrite_edited && edit_holds(env, scope, entry) {
             drift.push(DriftRow {
                 kind: entry.kind,

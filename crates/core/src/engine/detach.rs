@@ -235,33 +235,16 @@ fn edited_items(
 }
 
 /// Whether the user has edited this installation's bytes, for the kinds detach
-/// can lose bytes for. The engine's own check covers skills, agents, commands
-/// and anchored hooks; an anchor-less non-pi hook record holds nothing there,
-/// so the sweep can still clean it up — but detach can lose bytes, so here any
-/// present file of such a record's holds.
+/// can lose bytes for. The engine's own check answers it: skills, agents,
+/// commands and hooks alike hold wherever the record cannot prove the bytes
+/// on disk are what apply wrote, which is the same line an automatic removal
+/// draws. Detach carried a second arm of its own while an anchor-less hook
+/// record held nothing there; it holds now, so the arm said nothing the
+/// engine's check had not already said.
 /// (An MCP server is a config entry with no standalone file — its edits are not
 /// detected here, the one gap that remains.)
 fn install_edited(env: &Env, scope: &Scope, entry: &crate::lock::LockEntry) -> bool {
-    if super::removal::edit_holds(env, scope, entry) {
-        return true;
-    }
-    if entry.kind != ItemKind::Hook {
-        return false;
-    }
-    let owned = super::owned::installed(env, scope, entry);
-    let present: Vec<_> = owned
-        .files
-        .iter()
-        .filter(|path| !path.is_symlink() && path.exists())
-        .collect();
-    match &entry.rendered_hash {
-        None => !present.is_empty(),
-        Some(rendered) => present.iter().any(|path| {
-            crate::hash::hash_tree(path)
-                .map(|disk| &disk != rendered)
-                .unwrap_or(true)
-        }),
-    }
+    super::removal::edit_holds(env, scope, entry)
 }
 
 /// The names an "edited packages" refusal lists — kind and name, so an edited

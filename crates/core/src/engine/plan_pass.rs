@@ -110,11 +110,10 @@ pub(super) fn plan_refusals(
         let mut removals = Vec::new();
         if let Some(entry) = lock.entries.get(&key) {
             // A refused rendering takes its previous installation off disk
-            // — unless the user's edits are in it. Wherever the record can
-            // carry that promise (`edit_holds` names the anchor-less
-            // non-pi hook it cannot vouch for), edited bytes are not an
-            // automatic casualty of an upstream change, so they hold and
-            // the conflict says why.
+            // — unless the user's edits are in it, or the record cannot
+            // prove they are not (`edit_holds` draws that line). Edited
+            // bytes are not an automatic casualty of an upstream change,
+            // so they hold and the conflict says why.
             if removal::edit_holds(env, scope, entry) {
                 drift.push(DriftRow {
                     kind: refusal.kind,

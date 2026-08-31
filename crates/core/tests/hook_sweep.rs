@@ -1,8 +1,9 @@
 //! What the orphan sweep may take of a hook's installation. An anchored
-//! record proves its bytes and holds an edit; a record from before the
-//! anchor proves nothing and so holds nothing, on every harness alike —
-//! reading "no anchor" as "hands off" would exempt every older install
-//! from cleanup for good.
+//! record proves its bytes: an untouched script goes, an edited one holds
+//! as a conflict. A record carrying no anchor proves nothing, and after
+//! this build's version floor it is not an older install but a current
+//! record this build cannot account for, so it holds too — on every
+//! harness alike, because the rule is the anchor and not the harness.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -13,8 +14,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use kendex_core::apply;
-use kendex_core::engine::{PlanOptions, audit, plan_apply};
+use kendex_core::engine::{DriftCause, PlanOptions, audit, plan_apply};
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::lock::LOCK_VERSION;
 use kendex_core::model::Scope;
 
 const GUARD: &str = "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: check shell commands\n# ---\nexit 0\n";
@@ -149,8 +151,8 @@ fn sweep(f: &Fixture) -> kendex_core::engine::EngineReport {
 /// An anchored record still proves its bytes before the sweep takes
 /// them: an edited script is the person's work and holds as a conflict,
 /// exactly as an edited skill or agent would, while an untouched one
-/// goes. The anchor-less exemption below is for records that cannot
-/// prove anything, never a license to take what a record disproves.
+/// goes. This is the arm where a record can answer; the one below is
+/// where it cannot.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_sweep_proves_an_anchored_hook_before_taking_it() {
@@ -191,14 +193,16 @@ fn the_sweep_proves_an_anchored_hook_before_taking_it() {
     }
 }
 
-/// A record from before hooks carried an anchor names no rendered hash and
-/// no registration. It proves nothing, so it holds nothing, and the sweep
-/// takes what it installed — on pi as on every other harness. Reading "no
-/// anchor" as "hands off" would quietly exempt every older hook install
-/// from cleanup for good.
+/// A hook entry with no rendered hash and no registration, in a lock at
+/// this build's own version. It is not an older record: the version floor
+/// refuses a lock this build did not write, so one of those never reaches
+/// the sweep. It is a current record that names no anchor, which proves
+/// nothing about the bytes on disk — so the sweep leaves them, on pi as on
+/// every other harness. A sweep that cannot prove the script is kendex's
+/// must not trash it.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_sweep_takes_a_hook_whose_record_has_no_anchor() {
+fn the_sweep_holds_a_hook_whose_current_record_has_no_anchor() {
     for harness in [Harness::Claude, Harness::Pi] {
         let f = fixture_for(harness);
         apply_now(&f);
@@ -214,16 +218,26 @@ fn the_sweep_takes_a_hook_whose_record_has_no_anchor() {
             registry.display()
         );
 
-        // The lock as an older kendex left it: the entry, minus the fields
-        // later versions anchor ownership with.
+        // Take the anchor out and leave the version alone. The record
+        // stays one this build wrote and would read; what it no longer
+        // does is say which bytes apply put on disk.
         let lock_path = f.project.join(".kendex-lock.json");
         let mut lock: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
         let entry = lock["entries"][harness.lock_key()]
             .as_object_mut()
             .unwrap_or_else(|| panic!("no entry for {}", harness.lock_key()));
+        assert!(
+            entry.contains_key("renderedHash"),
+            "the anchor must be there to take out: {entry:?}"
+        );
         entry.remove("renderedHash");
         entry.remove("registration");
+        assert_eq!(
+            lock["version"],
+            serde_json::json!(LOCK_VERSION),
+            "this record is current, not old — an old one never reaches the sweep"
+        );
         fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
 
         undeclare(&f);
@@ -232,21 +246,21 @@ fn the_sweep_takes_a_hook_whose_record_has_no_anchor() {
             report
                 .drift
                 .iter()
-                .all(|row| !row.detail.contains("edited")),
-            "an anchor-less record is not an edit: {:?}",
+                .any(|row| matches!(row.cause, Some(DriftCause::LocalEdit))),
+            "a record that cannot vouch for the bytes holds them: {:?}",
             report.drift
         );
         apply::execute(&f.env, &report.plan).unwrap();
 
         assert!(
-            !script.exists(),
-            "the sweep takes the script: {}",
+            script.is_file(),
+            "the sweep leaves the script: {}",
             script.display()
         );
         let after = fs::read_to_string(&registry).unwrap();
         assert!(
-            !after.contains("guard.sh"),
-            "and nothing is left registered to run it: {after}"
+            after.contains("guard.sh"),
+            "and leaves it registered to run: {after}"
         );
     }
 }

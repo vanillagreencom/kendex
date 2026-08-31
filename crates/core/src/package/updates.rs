@@ -228,9 +228,8 @@ fn edited_items(
         // A plan the scope cannot produce (a broken manifest, an
         // unreadable source) must not fail open — reporting nothing edited
         // is exactly when edit detection could not run. Fall back to the
-        // conservative per-entry hold, which holds whatever a record could
-        // prove clean and cannot — `edit_holds` names the anchor-less
-        // non-pi hook record that can prove nothing and holds nothing.
+        // conservative per-entry hold, which holds whatever a record
+        // cannot prove clean.
         Err(_) => lock
             .entries
             .values()
