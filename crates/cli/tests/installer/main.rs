@@ -6,6 +6,10 @@
 mod desktop;
 mod icons;
 
+#[path = "../../../test_util.rs"]
+mod test_util;
+use test_util::{SUDO_STUB, install_stub};
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -105,10 +109,6 @@ case "$1" in
 esac
 "#;
 
-/// A test that reaches for sudo is about to write outside its temp dir, so
-/// it fails here instead.
-const SUDO: &str = "#!/bin/sh\necho 'installer test tried to escalate' >&2\nexit 1\n";
-
 /// A network that cannot answer the release lookup. That lookup is the one
 /// pipeline in the installer, and the reason the script does not lean on
 /// `pipefail` to notice a failure inside it.
@@ -188,7 +188,8 @@ fn installer_output(
         &curl.replace("__ROOT__", &source_root.display().to_string()),
     );
     write_stub(&stubs, "uname", UNAME);
-    write_stub(&stubs, "sudo", SUDO);
+    write_stub(&stubs, "sudo", SUDO_STUB);
+    write_stub(&stubs, "install", &install_stub(tmp.path()));
 
     prepare(tmp.path());
 

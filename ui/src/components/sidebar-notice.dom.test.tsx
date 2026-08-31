@@ -270,9 +270,12 @@ describe("the action each channel allows", () => {
     );
     // Nothing on the card invites a person to run anything as root.
     expect(container.textContent).not.toContain("sudo");
-    // And nothing promises the named file is what moves: install.sh picks
-    // its bin directory off PATH membership, which need not be that file.
-    expect(container.textContent).toContain("bin directory your PATH selects");
+    // And nothing claims where the installer writes: which directory it
+    // picks is the script's rule, and a card restating it is a second
+    // spelling that can go stale.
+    expect(container.textContent).toContain(
+      "reinstalls kendex to the directory it picks, which need not be this one",
+    );
   });
 
   // Nothing kendex could name owns it, so the card says the command is

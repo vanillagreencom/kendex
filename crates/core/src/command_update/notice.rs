@@ -43,8 +43,10 @@ pub enum CommandNotice {
 /// The invocation `install.sh` publishes for itself. The script is the
 /// source of it and this is its only spelling in Rust;
 /// `crates/cli/tests/install_script.rs` reads it out of the script's own
-/// header and fails when the two drift, the way the `bindir` constants in
-/// this crate are already pinned.
+/// header and compares it against what the card offers, so the two cannot
+/// drift — the way the `bindir` constants in this crate are pinned through
+/// `command_candidates`, and through the public surface rather than by
+/// exposing the constant.
 ///
 /// It names no path, which is the whole of why it is this and not a
 /// command aimed at the file. `sudo kendex update` resolves a bare name
@@ -58,15 +60,16 @@ pub enum CommandNotice {
 /// What it costs: `kendex update` holds every download to the release key
 /// before it writes, and this re-run does not — `install.sh` says so in
 /// its own header, because minisign is not on a machine that has installed
-/// nothing. So the offer trades a signature check for the escalation, and
-/// takes that trade because the command it replaces put a path the account
-/// controls in front of a root shell, which is the worse of the two. The
+/// nothing. What keeping the key check would have cost is the offer above:
+/// `sudo` at the recorded path, which hands a root shell a name the account
+/// arranges. So the trade is an unverified download against a local
+/// privilege escalation, and the escalation is the worse of the two. The
 /// card is text a person reads; nothing here runs either one.
 ///
 /// It installs to the `bindir` the script picks from `PATH` membership,
 /// which need not be the file the card names — the copy beside it says so
 /// rather than promising that file moves.
-pub const INSTALLER_RERUN: &str = "curl -fsSL https://kendex.ai/install.sh | sh";
+const INSTALLER_RERUN: &str = "curl -fsSL https://kendex.ai/install.sh | sh";
 
 impl CommandNotice {
     /// What the card owes a person about this command, or `None` where it

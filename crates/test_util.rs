@@ -74,3 +74,57 @@ pub fn no_record_on_this_runner() -> bool {
 pub fn no_record_on_this_runner() -> bool {
     false
 }
+
+/// What a fixture puts on `PATH` so a run of `install.sh` cannot reach past
+/// its own temp directory.
+///
+/// Every suite that drives the script appends the host's own `PATH`, so the
+/// two commands the script writes through are resolvable outside the
+/// fixture: `sudo`, when the `bindir` it chose is not writable, and
+/// `install`, which does the write either way. On a machine whose
+/// `/usr/local/bin` the invoking account can write — the Homebrew layout —
+/// the script needs no privilege at all to land a fixture's stub binary on
+/// the host's `kendex`, and on one with passwordless or cached `sudo` the
+/// elevated branch reaches it too. Both are refused here rather than left
+/// to whether a suite happens to pick that directory.
+///
+/// A test reaching for `sudo` is about to write outside its temp dir, so it
+/// fails at the stub.
+#[allow(
+    dead_code,
+    reason = "every test binary includes this whole module and uses the part it needs"
+)]
+pub const SUDO_STUB: &str = "#!/bin/sh\necho 'installer test tried to escalate' >&2\nexit 1\n";
+
+/// `install`, refusing any destination outside `root` and otherwise doing
+/// what the script asked. Unlike `sudo` this cannot simply fail: the
+/// script's ordinary write goes through it, and the run under test is the
+/// one that succeeds.
+///
+/// Reads the flags `install.sh` passes — `-D`, and `-m MODE` — and treats
+/// the last two arguments as source and destination, which is the only
+/// form the script uses.
+#[allow(
+    dead_code,
+    clippy::expect_used,
+    reason = "every test binary includes this whole module and uses the part it needs"
+)]
+pub fn install_stub(root: &Path) -> String {
+    format!(
+        "#!/bin/sh\n\
+         mode=0755\n\
+         while [ $# -gt 2 ]; do\n\
+         \x20 case \"$1\" in\n\
+         \x20   -m) mode=\"$2\"; shift 2 ;;\n\
+         \x20   -*) shift ;;\n\
+         \x20   *) break ;;\n\
+         \x20 esac\n\
+         done\n\
+         case \"$2\" in\n\
+         \x20 {root}/*) ;;\n\
+         \x20 *) echo \"installer test tried to write outside its fixture: $2\" >&2; exit 1 ;;\n\
+         esac\n\
+         mkdir -p \"$(dirname \"$2\")\" && cp \"$1\" \"$2\" && chmod \"$mode\" \"$2\"\n",
+        root = root.display()
+    )
+}

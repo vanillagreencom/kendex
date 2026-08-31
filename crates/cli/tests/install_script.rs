@@ -11,7 +11,7 @@ use std::process::Command;
 
 #[path = "../../test_util.rs"]
 mod test_util;
-use test_util::rooted;
+use test_util::{SUDO_STUB, install_stub, rooted};
 
 #[allow(clippy::unwrap_used)]
 fn write_exe(path: &Path, body: &str) {
@@ -75,6 +75,10 @@ fn run_install_in(
         &fake.join("uname"),
         &format!("#!/bin/sh\ncase \"$1\" in -s) echo {os} ;; -m) echo {arch} ;; esac\n"),
     );
+    // The host's own `PATH` is appended below, so both commands the script
+    // writes through resolve outside the fixture. Neither may reach past it.
+    write_exe(&fake.join("sudo"), SUDO_STUB);
+    write_exe(&fake.join("install"), &install_stub(home));
     // Logs the URL; `-o FILE` gets a runnable stand-in for the download,
     // and the release lookup gets a tag.
     let miss = fail.map_or(String::new(), |(url, code)| {
@@ -304,14 +308,24 @@ fn published_invocation(script: &str) -> String {
 /// the script publishes leaves them with nothing that works, and `curl`
 /// failing inside a pipe into `sh` still exits 0.
 ///
-/// Read against the script itself, the way the `bindir` list above is.
+/// Read against the script itself, the way the `bindir` list above is, and
+/// through the card rather than the constant behind it: an arm that stopped
+/// offering the invocation would pass an equality check against that
+/// constant and fail a person just as completely.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_card_offers_the_invocation_the_script_publishes() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+    let card = kendex_core::command_update::CommandNotice::for_card(
+        &kendex_core::command_update::CommandBeside::NeedsPrivilege("/usr/local/bin/kendex".into()),
+    );
+    let Some(kendex_core::command_update::CommandNotice::NeedsPrivilege { command, .. }) = card
+    else {
+        panic!("the card owes a command kendex cannot write an installer, and offered {card:?}");
+    };
     assert_eq!(
         published_invocation(&fs::read_to_string(&script).unwrap()),
-        kendex_core::command_update::INSTALLER_RERUN,
+        command,
         "install.sh publishes one invocation and the update card offers another"
     );
 }
@@ -332,6 +346,14 @@ fn a_re_run_installs_where_path_membership_puts_it_not_at_a_named_file() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let (output, _) = run_install_in(HOST_UNAME, "x86_64", None, &home, &["/usr/local/bin"]);
+    // Asked first, because it is the answer a drifted script gives: a run
+    // that chose the system directory stops at the stub, and reading the
+    // destination first would report only that it never said one.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("tried to escalate") && !stderr.contains("outside its fixture"),
+        "install.sh reached past the fixture: {stderr}"
+    );
     let said = String::from_utf8_lossy(&output.stdout);
     let installed = said
         .lines()

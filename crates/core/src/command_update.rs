@@ -38,7 +38,7 @@ use crate::update_feed::{ReleaseFeed, signature_url, verify_signature};
 mod notice;
 mod record;
 
-pub use notice::{CommandNotice, INSTALLER_RERUN};
+pub use notice::CommandNotice;
 pub use record::{InstalledCommand, record_command, record_first_run, recorded_command};
 
 /// What `install.sh` installs the command as. Windows has no command
