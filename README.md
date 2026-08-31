@@ -79,9 +79,10 @@ the command; get the app with the cask below.
   same one git uses to run a hook there.
 
 Installing a package from a git repository needs git 2.41 or newer; kendex
-refuses on anything older, naming the version it found and where that git is
-installed. Ubuntu 22.04, Debian 12 and the command line tools of Xcode 16 and
-earlier ship older ones. A package on a local path needs no git at all.
+refuses on anything older, naming the version it found and where that git
+keeps its programs. Ubuntu 22.04, Debian 12 and the command line tools of
+Xcode 16 and earlier ship older ones. A package on a local path needs no git
+at all.
 
 For the CLI on its own: `brew install vanillagreencom/kendex/kendex-cli`,
 `yay -S kendex`, or the curl
