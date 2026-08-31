@@ -103,7 +103,7 @@ fn allowed_subagents(agent: &EffectiveAgent) -> Vec<String> {
 /// the intent, the refusal [`generate`] returns: nothing is installed, so
 /// there is no access to compare. Pi's surface is deny-only over an
 /// open-ended vocabulary, so the policy is all deny and no allowlist.
-pub(super) fn access(agent: &EffectiveAgent) -> Result<Access, String> {
+fn access(agent: &EffectiveAgent) -> Result<Access, String> {
     if matches!(agent.permissions, PermissionIntent::AllowOnly { .. }) {
         return Err(
             "Pi cannot express a tool allowlist and denying by complement would widen access — set an explicit deny-tools override for Pi or exclude Pi from this agent's harnesses"
@@ -130,7 +130,7 @@ fn deny_tools(agent: &EffectiveAgent, allowed: &[String]) -> Vec<String> {
     if allowed.is_empty() {
         tools.push("delegate_subagent".to_owned());
     }
-    if agent.source.name != "planner" {
+    if agent.source.role != Some(Role::Planner) {
         tools.push("question".to_owned());
     }
     if agent.source.role == Some(Role::Reviewer) {
@@ -312,7 +312,9 @@ mod tests {
 
     #[test]
     fn planner_keeps_questions_and_overrides_win_over_source() {
-        let source = source("planner", "analyst", "opus");
+        // Named for nothing in particular: `role:` is what keeps the
+        // question, so a planner under any name keeps it.
+        let source = source("strategist", "planner", "opus");
         let scope = Scope::Project {
             root: "/tmp/proj".into(),
         };

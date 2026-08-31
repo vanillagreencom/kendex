@@ -5,7 +5,6 @@
 
 mod access;
 mod agent_capture;
-mod agent_settings;
 mod agent_tables;
 mod agent_wrapper;
 mod available;

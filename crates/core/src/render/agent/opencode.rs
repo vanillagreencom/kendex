@@ -1,8 +1,8 @@
-use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, hooks_prose, skills_prose};
+use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, Role, hooks_prose, skills_prose};
 use crate::harness::models::resolve_model;
 use crate::manifest::FrontmatterOverrides;
 use crate::model::{HarnessId, Scope};
-use crate::render::permission::{Access, PermissionIntent};
+use crate::render::permission::PermissionIntent;
 use crate::render::vocab::{opencode_permission, rewrite_prose};
 use crate::render::yaml_scalar;
 
@@ -77,27 +77,16 @@ fn mode(o: &FrontmatterOverrides) -> &str {
     }
 }
 
-/// What OpenCode's own rules leave this agent able to use. Its `permission:`
-/// map is deny-only — an allowlist is already enumerated into denies over
-/// the known permission set — so the policy names no allow side. The
-/// advisories [`denied_permissions`] raises belong to the rendering that
-/// writes the file; a proof raising them again would say everything twice.
-pub(super) fn access(agent: &EffectiveAgent) -> Access {
-    Access {
-        allow: None,
-        deny: denied_permissions(agent, mode(&agent.overrides), &mut Vec::new()),
-    }
-}
-
 /// Every permission OpenCode's loader knows; the deny set for an allowlist
 /// is enumerated over exactly these.
 const KNOWN_PERMISSIONS: [&str; 10] = [
     "read", "edit", "glob", "grep", "bash", "task", "skill", "lsp", "question", "webfetch",
 ];
 
-/// Subagents never spawn further agents, and only the planner may interrupt
-/// the user. Primary agents keep both. Policy denies win even over an
-/// allowlist entry — restriction always beats permission. An allowlist that
+/// Subagents never spawn further agents, and only an agent declared
+/// `role: planner` may interrupt the user. Primary agents keep both. Policy
+/// denies win even over an allowlist entry — restriction always beats
+/// permission. An allowlist that
 /// maps to no known permission still denies every built-in: `tools:
 /// mcp__x` grants exactly the MCP tool, not the MCP tool plus everything.
 fn denied_permissions(
@@ -108,7 +97,7 @@ fn denied_permissions(
     let mut tools: Vec<String> = Vec::new();
     if mode == "subagent" {
         tools.push("task".to_owned());
-        if agent.source.name != "planner" {
+        if agent.source.role != Some(Role::Planner) {
             tools.push("question".to_owned());
         }
     }
@@ -237,7 +226,12 @@ mod tests {
 
     #[test]
     fn planner_keeps_questions_and_hex_color_passes_through() {
-        let source = source("planner");
+        // Named for nothing in particular: `role:` is what keeps the
+        // question, so a planner under any name keeps it.
+        let source = parse_source_agent(
+            "---\nname: strategist\ndescription: OpenCode agent\nmodel: opus\nrole: planner\ncolor: green\neffort: high\n---\nBody text.\n",
+        )
+        .unwrap();
         let scope = Scope::Global;
         let mut agent = effective(&source, &scope);
         agent.overrides = FrontmatterOverrides {

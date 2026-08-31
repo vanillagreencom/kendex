@@ -90,7 +90,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
 /// What Gemini's own rules leave this agent able to use. Its frontmatter
 /// carries an allowlist and no deny list, so a deny intent restricts
 /// nothing here — the rendering warns about exactly that.
-pub(super) fn access(agent: &EffectiveAgent) -> Access {
+fn access(agent: &EffectiveAgent) -> Access {
     Access {
         allow: match &agent.permissions {
             PermissionIntent::AllowOnly { allow, .. } => {

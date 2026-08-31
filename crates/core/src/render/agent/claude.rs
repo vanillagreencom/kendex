@@ -1,4 +1,4 @@
-use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, default_pane};
+use super::{EffectiveAgent, GENERATED_BANNER, RenderedAgent, Role, default_pane};
 use crate::harness::models::resolve_model;
 use crate::model::HarnessId;
 use crate::render::permission::{Access, PermissionIntent};
@@ -97,7 +97,7 @@ pub fn generate(agent: &EffectiveAgent) -> RenderedAgent {
 /// What Claude's own rules leave this agent able to use: the intent's
 /// allowlist in Claude's tool names, and [`deny_list`]. The rendering
 /// writes these two lines out of this, so nothing states the policy twice.
-pub(super) fn access(agent: &EffectiveAgent) -> Access {
+fn access(agent: &EffectiveAgent) -> Access {
     Access {
         allow: match &agent.permissions {
             PermissionIntent::AllowOnly { allow, .. } => {
@@ -109,11 +109,11 @@ pub(super) fn access(agent: &EffectiveAgent) -> Access {
     }
 }
 
-/// `Agent` is always denied to subagents; `AskUserQuestion` unless this is
-/// the planner; the intent's extra denies append after.
+/// `Agent` is always denied to subagents; `AskUserQuestion` unless the
+/// author declared `role: planner`; the intent's extra denies append after.
 fn deny_list(agent: &EffectiveAgent) -> Vec<String> {
     let mut deny = vec!["Agent".to_owned()];
-    if agent.source.name != "planner" {
+    if agent.source.role != Some(Role::Planner) {
         deny.push("AskUserQuestion".to_owned());
     }
     for tool in agent.permissions.denies() {
@@ -199,8 +199,10 @@ mod tests {
     #[test]
     fn planner_keeps_questions_and_custom_hooks_render_native() {
         let mut source = engineer();
-        source.name = "planner".into();
-        source.role = Some(Role::Analyst);
+        // Named for nothing in particular: `role:` is what keeps the
+        // question, so a planner under any name keeps it.
+        source.name = "strategist".into();
+        source.role = Some(Role::Planner);
         let scope = Scope::Global;
         let hook = CustomHook {
             name: None,

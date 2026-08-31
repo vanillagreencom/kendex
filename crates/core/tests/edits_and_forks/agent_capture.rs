@@ -526,3 +526,32 @@ fn an_indented_first_line_keeps_its_indentation() {
         "the code block lost its indentation: {source:?}"
     );
 }
+
+/// A person may replace the whole rendering, frontmatter and all, with
+/// their own prose. The capture writes the publisher's frontmatter back
+/// around those words rather than refusing, and the project's own denies
+/// still reach the copy: a fork is never wider than the installation it
+/// was made from.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_rendering_replaced_with_prose_still_forks() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-frontmatter.claude]\nrev = { deny-tools = [\"Bash\"] }\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    fs::write(&file, "My own notes, and nothing the harness reads.\n").unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let settled = fs::read_to_string(&file).unwrap();
+    assert!(settled.contains("My own notes,"), "{settled}");
+    assert!(
+        deny_line(&settled, "disallowedTools:").contains("Bash"),
+        "the fork is still no wider than the installation: {settled}"
+    );
+}

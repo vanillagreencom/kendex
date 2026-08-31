@@ -15,14 +15,12 @@ use crate::manifest::{self, INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_source_root;
 
-mod access;
 mod agent;
 mod beside;
 mod forkable;
 mod provenance;
 mod rename;
 mod skill_tree;
-mod stated;
 mod vacant;
 use agent::capture_agent;
 pub use beside::fork_beside;
@@ -72,7 +70,6 @@ pub fn fork(
             decl: &decl,
             kind,
             name,
-            installed_as: name,
             harness,
         },
         &edited,
@@ -192,17 +189,10 @@ enum Capture {
 struct Captured {
     files: Capture,
     carry: Option<crate::engine::agent_carry::AgentCarry>,
-    /// The agent's own source form, for the access proof. `None` for a
-    /// skill: a skill states no tool policy for a name to widen.
-    agent: Option<crate::render::agent::SourceAgent>,
-    /// The catalog revision that source form was read at, read only
-    /// alongside `agent`.
-    read_at: Option<String>,
 }
 
 /// One fork's inputs, gathered so the capture side reads them in one
-/// place. `installed_as` is the name the fork will answer to — the
-/// original's for a fork in place, the person's choice for one beside it.
+/// place.
 struct ForkOf<'a> {
     env: &'a Env,
     scope: &'a Scope,
@@ -210,7 +200,6 @@ struct ForkOf<'a> {
     decl: &'a manifest::ItemDecl,
     kind: ItemKind,
     name: &'a str,
-    installed_as: &'a str,
     harness: HarnessId,
 }
 
@@ -219,8 +208,6 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
         ItemKind::Skill => Captured {
             files: Capture::Tree(source_form(crate::capture::read_tree(edited)?)),
             carry: None,
-            agent: None,
-            read_at: None,
         },
         // Every other kind is turned away by `edited_rendering` first, so
         // what reaches here is an agent.
@@ -229,8 +216,6 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
             Captured {
                 files: Capture::File(captured.bytes),
                 carry: captured.carry,
-                agent: Some(captured.agent),
-                read_at: captured.read_at,
             }
         }
     })

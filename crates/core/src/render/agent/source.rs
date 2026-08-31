@@ -9,6 +9,7 @@ pub enum Role {
     Engineer,
     Analyst,
     Manager,
+    Planner,
 }
 
 impl Role {
@@ -18,6 +19,7 @@ impl Role {
             "engineer" => Some(Role::Engineer),
             "analyst" => Some(Role::Analyst),
             "manager" => Some(Role::Manager),
+            "planner" => Some(Role::Planner),
             _ => None,
         }
     }
@@ -28,6 +30,7 @@ impl Role {
             Role::Engineer => "engineer",
             Role::Analyst => "analyst",
             Role::Manager => "manager",
+            Role::Planner => "planner",
         }
     }
 }
@@ -78,7 +81,7 @@ pub fn parse_source_agent(text: &str) -> Result<SourceAgent, String> {
             "role" => match scalar(value) {
                 Some(role) => {
                     agent.role = Some(Role::parse(&role).ok_or_else(|| {
-                        format!("unknown role '{role}' (reviewer|engineer|analyst|manager)")
+                        format!("unknown role '{role}' (reviewer|engineer|analyst|manager|planner)")
                     })?);
                 }
                 None => agent.warnings.push("empty `role:` ignored".to_owned()),
@@ -118,9 +121,9 @@ pub fn parse_source_agent(text: &str) -> Result<SourceAgent, String> {
     Ok(agent)
 }
 
-/// v1's pane default: Engineer agents and the planner run in a visible pane.
+/// v1's pane default: Engineer and Planner agents run in a visible pane.
 pub fn default_pane(agent: &SourceAgent) -> bool {
-    agent.role == Some(Role::Engineer) || agent.name == "planner"
+    matches!(agent.role, Some(Role::Engineer | Role::Planner))
 }
 
 #[cfg(test)]

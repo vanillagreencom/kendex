@@ -75,11 +75,11 @@ lives in one capability table read by core and UI.
    name so dependents and bundles resolve; one made beside (`fork_beside`)
    takes a chosen name, `name:` rewritten to match, leaving the original on its
    source. An agent's bytes come from its published file at the installed
-   commit, with the catalog's tables and the person's own overrides; a rendering
-   restricting it further is refused. The new name is proven free before the
-   first durable write — no declaration, lock entry, folding neighbour, occupied
-   destination, or deny any targeted tool keys on it — and a namespaced one
-   neither nests inside a local package nor reaches its slot through a link.
+   commit, with the catalog's tables and the person's own overrides. The new
+   name is proven free before the first durable write — no declaration, lock
+   entry, folding neighbour, occupied destination, or configuration it already
+   carries — and a namespaced one neither nests inside a local package nor
+   reaches its slot through a link.
 5. Enable/disable is non-destructive and lossless: file-backed kinds
    toggle by rename; kinds embedded in shared config files toggle by a
    structured edit that preserves every unrelated key. Uninstalling the

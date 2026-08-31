@@ -11,6 +11,7 @@ fn default_role_skills(role: Option<Role>) -> &'static [&'static str] {
         Some(Role::Analyst) => &["linear", "github"],
         Some(Role::Engineer) => &["dev", "github", "worktree"],
         Some(Role::Manager) => &["project-management", "linear", "dev", "github", "worktree"],
+        Some(Role::Planner) => &["linear", "github"],
         None => &[],
     }
 }

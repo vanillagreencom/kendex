@@ -3,7 +3,6 @@
 
 use std::path::{Path, PathBuf};
 
-use super::access::{Side, no_catalog, refuse_if_widened};
 use super::{SKILL_NAME_FILES, local_item, named_bytes, vacant_name};
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::engine::agent_carry::{OldName, rekey_agent_tables};
@@ -12,7 +11,6 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest;
 use crate::model::{ItemKind, Scope};
-use crate::render::agent::{SourceAgent, parse_source_agent};
 
 /// Rename a fork. Only a fork nothing depends on may change its installed
 /// name: dependents and bundles refer to the old one, and a rename that
@@ -53,7 +51,6 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
         });
     }
 
-    let before = manifest.clone();
     let (from, to) = (
         local_item(env, scope, kind, old),
         local_item(env, scope, kind, new),
@@ -69,9 +66,6 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
     if let Some(escape) = crate::source::slot_escapes(env, scope, &from)? {
         return Err(escape);
     }
-    // Read before the move takes the path: the proof below runs against
-    // the declaration the rename will write, which is not settled yet.
-    let renamed = renamed_agent(kind, &from)?;
     let mut ops = Vec::new();
     if from.exists() {
         let stamped = stamp_name(kind, &from, &to, new)?;
@@ -106,11 +100,6 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
     // project's tool denies, without its instructions, and outside its own
     // hooks.
     rekey_agent_tables(&mut manifest, kind, old, new, OldName::Gone);
-    // Nothing has been written yet; the declaration the rename will write
-    // is what the proof reads.
-    if let Some(source) = &renamed {
-        prove_access(scope, &before, &manifest, kind, source, old, new)?;
-    }
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
         description: format!("record the rename to {new} in kendex.toml").into(),
@@ -121,64 +110,6 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
         },
     });
     Plan::landed(scope.clone(), ops)
-}
-
-/// Refuse a rename that widens the agent's access. A harness's own deny
-/// rules read the agent's name, so a rename can take a built-in
-/// restriction off it on every harness it targets.
-///
-/// The two manifests are the whole of both sides, with no carry to fold
-/// in: only a fork already reading the local source can be renamed, and
-/// whatever a catalog contributed to it moved into the manifest when it
-/// was forked. The rekey the caller has already run moved every one of
-/// those records to the new name, so the sides differ in the name alone.
-///
-/// That one local file is also what every harness already renders from, so
-/// there is no catalog revision behind this source form for them to sit at
-/// odds over — the obligation a capture has to discharge does not arise.
-fn prove_access(
-    scope: &Scope,
-    before: &manifest::Manifest,
-    after: &manifest::Manifest,
-    kind: ItemKind,
-    source: &SourceAgent,
-    old: &str,
-    new: &str,
-) -> Result<()> {
-    let Some(decl) = after.declared(kind).get(new) else {
-        return Err(CoreError::NotDeclared {
-            kind,
-            name: new.to_owned(),
-        });
-    };
-    refuse_if_widened(
-        scope,
-        decl,
-        source,
-        Side {
-            manifest: before,
-            name: old,
-        },
-        Side {
-            manifest: after,
-            name: new,
-        },
-        no_catalog(),
-    )
-}
-
-/// The agent whose access this rename has to prove, or `None` where there
-/// is none to prove: only an agent has a tool policy for a name to widen,
-/// and only a plain file in the local source renders at all. Source form
-/// the parser refuses is `None` for the same reason — the apply reads it
-/// with this same parser and installs nothing for it, so no name it moves
-/// under leaves a wider artifact behind.
-fn renamed_agent(kind: ItemKind, from: &Path) -> Result<Option<SourceAgent>> {
-    if kind != ItemKind::Agent || !from.is_file() {
-        return Ok(None);
-    }
-    let text = std::fs::read_to_string(from).map_err(|e| CoreError::io(from, e))?;
-    Ok(parse_source_agent(&text).ok())
 }
 
 /// The writes that leave the renamed fork answering to `new`. Moving the
