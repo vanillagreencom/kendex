@@ -359,6 +359,66 @@ case "$SUMMARY" in
   *) bad "the verdict did not survive on the first line" "$SUMMARY" ;;
 esac
 
+echo "=== the repository's own path cannot break the summary either ==="
+# The value was escaped first; the hooks directory is the same class of
+# bytes and reaches the same one-line summary. A repository whose path
+# carries a newline ends that line early, and one carrying ESC hands the
+# terminal control codes — from the name of the directory being reported.
+# $'\n' rather than a capture: $(...) strips the newline, which would leave
+# this fixture testing an ordinary path — the very class being pinned.
+NL=$'\n'
+ESCB=$'\033'
+WILD="$TMP/re${NL}po${ESCB}x"
+mkdir -p "$WILD/.agents/skills"
+git -C "$WILD" -c init.defaultBranch=main init -q
+git -C "$WILD" config user.email test@example.com
+git -C "$WILD" config user.name test
+cp -R "$SKILL_DIR" "$WILD/.agents/skills/growth-guards"
+ln -s "$SKILL_DIR/../size-ratchet" "$WILD/.agents/skills/size-ratchet"
+[ -d "$WILD/.git" ] && ok "the control: a repository really does live at a newline-and-ESC path" \
+  || bad "the wild-path repository was not created" ""
+
+SUMMARY=""; RC=0
+SUMMARY="$("$WILD/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$WILD" 2>/dev/null)" || RC=$?
+[ "$RC" -eq 0 ] && ok "an install under that path succeeds" \
+  || bad "install under a wild path" "rc=$RC out=$SUMMARY"
+[ "$(printf '%s' "$SUMMARY" | wc -l)" -eq 0 ] \
+  && ok "and its summary is one line, though the path it names is two" \
+  || bad "the install summary broke into several lines" "$(printf '%s' "$SUMMARY" | cat -v)"
+
+# The armed verdict names the hooks directory, so it carries the path too.
+SUMMARY=""; RC=0
+SUMMARY="$("$WILD/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$WILD" --check 2>/dev/null)" || RC=$?
+[ "$RC" -eq 0 ] && ok "the check reports it armed" || bad "wild-path check armed" "rc=$RC out=$SUMMARY"
+[ "$(printf '%s' "$SUMMARY" | wc -l)" -eq 0 ] \
+  && ok "and that verdict is one line as well" \
+  || bad "the armed verdict broke into several lines" "$(printf '%s' "$SUMMARY" | cat -v)"
+case "$SUMMARY" in
+  *"$ESCB"*) bad "a raw ESC byte from the repository path reached the summary" "$(printf '%s' "$SUMMARY" | cat -v)" ;;
+  *) ok "and no raw ESC byte from the path reaches the reader" ;;
+esac
+
+# The drifted lane folds its reasons into that same line, and those name the
+# directory as well.
+rm -f "$WILD/.git/hooks/pre-commit"
+SUMMARY=""; RC=0
+SUMMARY="$("$WILD/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$WILD" --check 2>/dev/null)" || RC=$?
+[ "$RC" -eq 1 ] && ok "a drifted install under that path checks 1" \
+  || bad "wild-path drift checks 1" "rc=$RC out=$SUMMARY"
+[ "$(printf '%s' "$SUMMARY" | wc -l)" -eq 0 ] \
+  && ok "and the drift verdict is one line too" \
+  || bad "the drift verdict broke into several lines" "$(printf '%s' "$SUMMARY" | cat -v)"
+case "$SUMMARY" in
+  *"pre-commit is missing"*) ok "and it still says what drifted" ;;
+  *) bad "the reason did not survive on the line" "$(printf '%s' "$SUMMARY" | cat -v)" ;;
+esac
+
+# The must-fail control: the path really does span two lines, so the pins
+# above are not passing on a directory name with nothing to lose.
+[ "$(printf '%s' "$WILD" | wc -l)" -eq 1 ] \
+  && ok "must-fail: the repository path itself spans two lines" \
+  || bad "the wild path is one line after all" "$(printf '%s' "$WILD" | cat -v)"
+
 echo "=== a repository path that begins with a dash is a path ==="
 # `cd "$REPO"` reads a leading dash as an option: `--repo -P` became `cd -P`,
 # which succeeds in the WRONG directory rather than failing. `--` ends the

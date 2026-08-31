@@ -343,7 +343,7 @@ for drop in "${REPLY_FORMS[@]}"; do
     [ "$other" = "$drop" ] && continue
     [[ "$OUT" == *"reply form '$other'"* ]] && others=$((others + 1))
   done
-  [ "$RC" != 0 ] && [[ "$OUT" == *"AGENTS.md no longer states the reply form '$drop'"* ]] && [ "$others" = 0 ] \
+  [ "$RC" != 0 ] && [[ "$OUT" == *"AGENTS.md § Code Review Rules no longer states the reply form '$drop'"* ]] && [ "$others" = 0 ] \
     && ok "AGENTS.md losing $drop reds, naming that form and no other" \
     || bad "AGENTS.md losing $drop reds, naming that form and no other" "rc=$RC others=$others out=$OUT"
 done
@@ -381,6 +381,55 @@ for f in "${BOT_FACING[@]}"; do
     && ok "$f pointing the same sentence at another file reds" \
     || bad "$f pointing the same sentence at another file reds" "rc=$RC out=$OUT"
 done
+
+# Deleting a form is the one mutation a whole-file substring search does
+# catch, so these two are what stand between the arm and a green AGENTS.md
+# with no contract in it. First: the section is gone and its forms survive as
+# a glossary entry calling that spelling retired.
+reply_fixture
+printf '%s\n' \
+  '# fixture' \
+  '' \
+  '## Glossary' \
+  '' \
+  'Historical note: older repos spelled replies `Fixed in <sha>`,' \
+  '`Declined: <reason>`, or `Tracked: KEN-<n>`; that convention is retired here.' >"$R/AGENTS.md"
+reply_run
+[ "$RC" != 0 ] && [[ "$OUT" == *"AGENTS.md has no § Code Review Rules section"* ]] \
+  && ok "a glossary reciting all three forms with the section gone reds" \
+  || bad "a glossary reciting all three forms with the section gone reds" "rc=$RC out=$OUT"
+
+# Second: the section is still there, and the forms have moved out of it. This
+# is the one the slice exists for — a heading check alone passes it.
+reply_fixture
+printf '%s\n' \
+  '# fixture' \
+  '' \
+  '## Code Review Rules' \
+  '' \
+  'Raise only defects in the changed lines.' \
+  '' \
+  '## Glossary' \
+  '' \
+  'Replies were once written `Fixed in <sha>`,' \
+  '`Declined: <reason>`, or `Tracked: KEN-<n>`.' >"$R/AGENTS.md"
+reply_run
+[ "$RC" != 0 ] && [[ "$OUT" == *"AGENTS.md § Code Review Rules no longer states the reply form 'Fixed in <sha>'"* ]] \
+  && ok "forms moved out of the section into a later one red" \
+  || bad "forms moved out of the section into a later one red" "rc=$RC out=$OUT"
+
+# The pointer's two-file list is a decision, not an oversight: a path-scoped
+# instruction file carries no reply-contract section and is not asked to point
+# at one. This is what would red if someone widened the loop without saying so.
+reply_fixture
+mkdir -p "$R/.github/instructions"
+printf '%s\n' '---' 'applyTo: "crates/**"' '---' '' 'Flag no line-oriented pass over TOML text.' \
+  >"$R/.github/instructions/crates.instructions.md"
+reply_run
+[ "$RC" = 0 ] \
+  && ok "a path-scoped .github/instructions file without the pointer passes, deliberately" \
+  || bad "a path-scoped .github/instructions file without the pointer passes, deliberately" "rc=$RC out=$OUT"
+rm -rf "$R/.github/instructions"
 
 reply_fixture
 reply_run
