@@ -184,12 +184,18 @@ fn relayed(producer: &str, line: String) -> kendex_core::drift::report::Text {
 /// The no-verdict rule is asked FIRST, ahead of every exit-code arm, and
 /// that ordering is the point. A summary line is the one thing the package
 /// promises on stdout, and it promises it only once `--check` has run:
-/// nothing there means the script died before reaching it, and no exit code
-/// it happens to carry makes that a measurement. Read exit-first, an
-/// `install-git-hooks` truncated at a clean `}` boundary exits 0 with an
-/// empty stdout and the whole fold reported `all clear` about a repository
-/// it never checked; exit 1 became the package's "not armed"; and every
-/// arm added later would have had to remember the same thing again.
+/// arriving without one means the script died before reaching it, and no
+/// exit code it happens to carry makes that a measurement. Read exit-first,
+/// an `install-git-hooks` truncated at a clean `}` boundary exits 0 and the
+/// whole fold reported `all clear` about a repository it never checked;
+/// exit 1 became the package's "not armed"; and every arm added later would
+/// have had to remember the same thing again.
+///
+/// What is asked is whether the line IS the summary, not whether stdout
+/// held anything. Silence is one way to arrive without a verdict and not
+/// the only one: a half-synced installer that prints something of its own
+/// and exits 0 walked straight past a guard that only tested for emptiness,
+/// and `all clear` came back about hooks nobody had looked at.
 fn verdict_of(
     report: &kendex_core::guard::GuardReport,
 ) -> Option<(
@@ -201,9 +207,9 @@ fn verdict_of(
     // wrote two does not have the second silently dropped.
     let said = report.stdout.join(" ");
     let said = said.trim();
-    if said.is_empty() {
-        // The diagnostics are the package's own, and its stderr is where
-        // its shell put the reason.
+    if !said.starts_with(SUMMARY) {
+        // The diagnostics are the package's own, and whichever stream its
+        // shell put them on is where the reason is.
         return Some((
             Class::Unknown,
             relayed(
@@ -211,7 +217,7 @@ fn verdict_of(
                 format!(
                     "the growth-guards installer exited {} with no verdict, so commit hooks could not be checked — its own words were: {}",
                     report.code,
-                    report.stderr.join(" ").trim()
+                    words_of(report)
                 ),
             ),
         ));
@@ -243,6 +249,36 @@ fn verdict_of(
             ),
         )),
     }
+}
+
+/// The prefix on the package's summary line, and the whole of what tells a
+/// verdict from anything else that reached stdout.
+///
+/// A derivation rather than a copy of the list, because a copy goes stale
+/// unread: the lines `install-git-hooks` writes to stdout are what
+/// `grep -n echo` on that script shows once the `>&2` lines are dropped,
+/// and the `--check` summaries are the ones under `if [ "$MODE" = "check" ]`.
+/// Its warnings and diagnostics go to stderr instead (`--help` says so), so
+/// stdout carrying something without this prefix is a run that stopped
+/// before it reached a verdict.
+///
+/// Held to the script rather than to this comment by the fixtures that
+/// drive the real package and expect an armed repository to report nothing:
+/// a prefix that stopped matching folds a clean check as could-not-check,
+/// and those go red.
+const SUMMARY: &str = "growth-guards git hooks:";
+
+/// Whatever the installer put on either stream, for a line that has to
+/// carry words in place of a verdict. Both streams, because a run that
+/// never reached its summary may have said why on either of them.
+fn words_of(report: &kendex_core::guard::GuardReport) -> String {
+    let streams = [report.stdout.join(" "), report.stderr.join(" ")];
+    streams
+        .iter()
+        .map(|stream| stream.trim())
+        .filter(|stream| !stream.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The package's verdict with whatever it wrote alongside, or the verdict

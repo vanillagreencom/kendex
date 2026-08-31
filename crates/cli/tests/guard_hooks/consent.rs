@@ -231,6 +231,56 @@ fn an_unarmable_repository_is_never_told_to_run_an_install_that_stands_down() {
     );
 }
 
+/// Exit 0 carrying words that are not a verdict is not a clean repository.
+///
+/// The sibling of the truncated-installer case in `arming`, and the half
+/// of it a guard testing for EMPTY stdout could not see. A script that
+/// stopped mid-sync after printing something of its own exits 0 with
+/// stdout that is not the package's summary, and reading the exit code
+/// first reported `all clear` about hooks nobody had looked at.
+///
+/// The stub prints and exits rather than being a cut of the real script,
+/// because what is under test is the shape of what reached stdout: a
+/// truncation that happens to print is one way to get here and the arm has
+/// to hold for any of them.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn exit_zero_with_words_that_are_not_a_verdict_is_not_all_clear() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    // The control: whole and armed is silence, exit 0.
+    let clean = run(home, &root, "kendex", &["check"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
+
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    std::fs::write(&installer, "#!/usr/bin/env bash\necho loading\nexit 0\n").unwrap();
+    std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let out = run(home, &root, "kendex", &["check"]);
+    let text = said(&out);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a repository nobody checked was reported clean: {text}"
+    );
+    let line = commit_hooks_line(&text);
+    assert!(
+        line.contains("no verdict"),
+        "the line does not say what happened: {line}"
+    );
+    assert!(
+        line.contains("loading"),
+        "what the installer did say is not carried: {line}"
+    );
+}
+
 /// A verdict pointing at stderr arrives with the stderr it points at.
 ///
 /// The same setting as the case above, from the other side of it: armed
