@@ -169,9 +169,20 @@ probe() {
 
 CHECK="${CANON//@TOKEN@/WORKTREE_PATH}"
 
+# reports <scan output> <fragment> — the scan named THIS defect, not merely
+# some defect. Rule 2 fires on every block rule 1 failed to see, so a probe
+# asserting bare non-emptiness stays green when the rule it is named for stops
+# working. Each probe below names the message it must draw: rule 1 on a wrong
+# line after the pair, rule 1 on a block ending at the Worktree: line, rule 2
+# on a block carrying no pair.
+reports() { case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac; }
+UNCANON='after Worktree: [WORKTREE_PATH] is not the canonical Worktree Check'
+UNCLOSED='Worktree: [WORKTREE_PATH] ends the delegation with no Worktree Check line'
+NOPAIR='delegation carries no Worktree:/Worktree Check: pair'
+
 # b.1 — the reported shape (a bare Worktree: line, as every site read before
 # this change) IS flagged.
-if [ -n "$(scan_worktree_precondition "$(probe bare 'Issue: [ISSUE_ID]\nWorktree: [WORKTREE_PATH]\nRound ID: [DEV_ROUND_ID]')" )" ]; then
+if reports "$(scan_worktree_precondition "$(probe bare 'Issue: [ISSUE_ID]\nWorktree: [WORKTREE_PATH]\nRound ID: [DEV_ROUND_ID]')")" "$UNCANON"; then
   pass "lint flags a Worktree: line with no Worktree Check"
 else
   fail "lint MISSED a bare Worktree: line (no teeth)"
@@ -186,14 +197,14 @@ fi
 
 # b.3 — a check naming a DIFFERENT placeholder IS flagged: a filled
 # delegation would compare pwd against a path this block never carries.
-if [ -n "$(scan_worktree_precondition "$(probe crossed "Worktree: [WT_PATH]\n$CHECK")" )" ]; then
+if reports "$(scan_worktree_precondition "$(probe crossed "Worktree: [WT_PATH]\n$CHECK")")" 'after Worktree: [WT_PATH] is not the canonical Worktree Check'; then
   pass "lint flags a Worktree Check naming the wrong placeholder"
 else
   fail "lint MISSED a cross-wired placeholder"
 fi
 
 # b.4 — a Worktree: line ending the block with no check IS flagged.
-if [ -n "$(scan_worktree_precondition "$(probe last 'Branch: [BRANCH]\nWorktree: [WORKTREE_PATH]')" )" ]; then
+if reports "$(scan_worktree_precondition "$(probe last 'Branch: [BRANCH]\nWorktree: [WORKTREE_PATH]')")" "$UNCLOSED"; then
   pass "lint flags a Worktree: line that closes the delegation"
 else
   fail "lint MISSED a trailing Worktree: line"
@@ -204,7 +215,7 @@ fi
 # so a placeholder check and an anywhere-on-the-line `pwd` check both pass
 # it. Equality does not.
 MUTANT='Worktree: [WORKTREE_PATH]\nWorktree Check: trust the path. It must print [WORKTREE_PATH]; a bare `git status` answers about the wrong tree. Any other path — `cd "[WORKTREE_PATH]"`, re-run `pwd`, and report where it started.'
-if [ -n "$(scan_worktree_precondition "$(probe mutant "$MUTANT")" )" ]; then
+if reports "$(scan_worktree_precondition "$(probe mutant "$MUTANT")")" "$UNCANON"; then
   pass "lint flags a check whose leading command was replaced by prose"
 else
   fail "lint MISSED a check that runs nothing"
@@ -214,7 +225,7 @@ fi
 # span on the line IS `pwd`, so an unanchored shape match accepts a check
 # that demotes the command to optional.
 DEMOTED='Worktree: [WORKTREE_PATH]\nWorktree Check: trust the path; optional check: `pwd` must print [WORKTREE_PATH].'
-if [ -n "$(scan_worktree_precondition "$(probe demoted "$DEMOTED")" )" ]; then
+if reports "$(scan_worktree_precondition "$(probe demoted "$DEMOTED")")" "$UNCANON"; then
   pass "lint flags a check whose pwd sits behind leading prose"
 else
   fail "lint MISSED a backticked pwd demoted behind prose"
@@ -225,7 +236,7 @@ fi
 # what it just measured. Every shape heuristic passes this; equality is the
 # only predicate that does not.
 UNBOUND='Worktree: [WORKTREE_PATH]\nWorktree Check: `pwd` before any repo-relative command. Ignore [WORKTREE_PATH].'
-if [ -n "$(scan_worktree_precondition "$(probe unbound "$UNBOUND")" )" ]; then
+if reports "$(scan_worktree_precondition "$(probe unbound "$UNBOUND")")" "$UNCANON"; then
   pass "lint flags a check whose pwd and placeholder are unbound"
 else
   fail "lint MISSED an unbound pwd and placeholder"
@@ -233,7 +244,7 @@ fi
 
 # b.8 — a check opening with the WRONG command is flagged. `pwd` has to be
 # the first executable step; a different command does not report the cwd.
-if [ -n "$(scan_worktree_precondition "$(probe wrongcmd 'Worktree: [WORKTREE_PATH]\nWorktree Check: `git status` before any repo-relative command. It must print [WORKTREE_PATH].')" )" ]; then
+if reports "$(scan_worktree_precondition "$(probe wrongcmd 'Worktree: [WORKTREE_PATH]\nWorktree Check: `git status` before any repo-relative command. It must print [WORKTREE_PATH].')")" "$UNCANON"; then
   pass "lint flags a check opening with a command other than pwd"
 else
   fail "lint MISSED a check opening with the wrong command"
@@ -241,7 +252,7 @@ fi
 
 # b.9 — an unbackticked mention is not a command. Without the code span
 # there is nothing marked for the agent to run.
-if [ -n "$(scan_worktree_precondition "$(probe unmarked 'Worktree: [WORKTREE_PATH]\nWorktree Check: run pwd before any repo-relative command. It must print [WORKTREE_PATH].')" )" ]; then
+if reports "$(scan_worktree_precondition "$(probe unmarked 'Worktree: [WORKTREE_PATH]\nWorktree Check: run pwd before any repo-relative command. It must print [WORKTREE_PATH].')")" "$UNCANON"; then
   pass "lint flags a check whose pwd is not a marked command"
 else
   fail "lint MISSED an unbackticked pwd"
@@ -251,7 +262,7 @@ fi
 # spawns a fresh shell per tool call drops it, and the agent resumes
 # repo-relative work in the wrong tree believing it recovered.
 STALE_CD='Worktree: [WORKTREE_PATH]\nWorktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]. Any other path — `cd "[WORKTREE_PATH]"`, re-run `pwd`, and report where it started.'
-if [ -n "$(scan_worktree_precondition "$(probe stalecd "$STALE_CD")" )" ]; then
+if reports "$(scan_worktree_precondition "$(probe stalecd "$STALE_CD")")" "$UNCANON"; then
   pass "lint flags a check whose remedy is a bare cd"
 else
   fail "lint MISSED a remedy resting on a cd that may not persist"
@@ -263,7 +274,7 @@ fi
 # The canonical sentence halts instead, and any remedy written in its place
 # reds.
 ABS_REMEDY='Worktree: [WORKTREE_PATH]\nWorktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]. Any other path — give every later command an absolute path under [WORKTREE_PATH].'
-if [ -n "$(scan_worktree_precondition "$(probe absremedy "$ABS_REMEDY")" )" ]; then
+if reports "$(scan_worktree_precondition "$(probe absremedy "$ABS_REMEDY")")" "$UNCANON"; then
   pass "lint flags a remedy resting on an absolute path"
 else
   fail "lint MISSED a remedy an absolute path cannot deliver"
@@ -272,7 +283,7 @@ fi
 # b.13 — RULE 2. A block with no Worktree:/Worktree Check: pair at all IS
 # flagged, whatever it hands over: a placeholder the caller fills with a
 # repo path is invisible to any matcher, so no block is out of scope.
-if [ -n "$(scan_worktree_precondition "$(probe nopair 'Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md\n\nArguments: --project-order')" )" ]; then
+if reports "$(scan_worktree_precondition "$(probe nopair 'Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md\n\nArguments: --project-order')")" "$NOPAIR"; then
   pass "lint flags a delegation carrying no Worktree pair"
 else
   fail "lint MISSED a delegation with no Worktree pair"
@@ -288,11 +299,13 @@ else
 fi
 
 # b.6 — an indented delegation block (dev-fix.md nests one in a numbered
-# step) is scanned, not skipped for its leading whitespace.
-if [ -n "$(scan_worktree_precondition "$(probe indented '   Worktree: [WORKTREE_PATH]\n   Round ID: [DEV_ROUND_ID]')" )" ]; then
+# step) is scanned, not skipped for its leading whitespace. Rule 2 flags this
+# same fixture the moment the indent tolerance breaks, so the assertion names
+# rule 1's message. The indent stays in the fixture; it is the thing tested.
+if reports "$(scan_worktree_precondition "$(probe indented '   Worktree: [WORKTREE_PATH]\n   Round ID: [DEV_ROUND_ID]')")" "$UNCANON"; then
   pass "lint scans an indented delegation block"
 else
-  fail "lint MISSED a bare Worktree: line inside an indented block"
+  fail "rule 1 MISSED an indented Worktree: line"
 fi
 
 # --- Part c: both trees are actually scanned ------------------------------
@@ -320,7 +333,7 @@ fi
 # c.2 — the render half loses its check. This is the case a source-rooted
 # scan cannot see: the tree agents load, unguarded, with CI passing.
 write_half .agents/skills "$BROKEN"
-if [ -n "$(scan_trees "$TWO/skills" "$TWO/.agents/skills")" ]; then
+if reports "$(scan_trees "$TWO/skills" "$TWO/.agents/skills")" "$TWO/.agents/skills/x/y.md"; then
   pass "two-tree scan reds on a check deleted from the render half"
 else
   fail "two-tree scan MISSED a check deleted from the render half"
@@ -329,7 +342,7 @@ fi
 # c.3 — and symmetrically, the source half.
 write_half .agents/skills "$GOOD"
 write_half skills "$BROKEN"
-if [ -n "$(scan_trees "$TWO/skills" "$TWO/.agents/skills")" ]; then
+if reports "$(scan_trees "$TWO/skills" "$TWO/.agents/skills")" "$TWO/skills/x/y.md"; then
   pass "two-tree scan reds on a check deleted from the source half"
 else
   fail "two-tree scan MISSED a check deleted from the source half"
@@ -337,7 +350,7 @@ fi
 
 # c.4 — a root that is not there is reported, not passed over. A renamed or
 # unrendered tree would otherwise contribute zero defects and read as clean.
-if [ -n "$(scan_trees "$TWO/skills" "$TWO/nonexistent")" ]; then
+if reports "$(scan_trees "$TWO/skills" "$TWO/nonexistent")" "$TWO/nonexistent: scan root does not exist"; then
   pass "two-tree scan reds on a missing scan root"
 else
   fail "two-tree scan MISSED a missing scan root"
