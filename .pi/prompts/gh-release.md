@@ -22,11 +22,12 @@ Added entry; major only when asked).
 1. `git fetch origin && git status --short` — must be clean and at
    `origin/main`. `gh release list --limit 1` — the last tag.
 2. `git log --oneline <last-tag>..HEAD` — confirm there is something to
-   ship; finalize `CHANGELOG.md`: run `tools/changelog-collate` to fold the
-   `changelog.d` fragments into `## [Unreleased]`, rename that heading to
+   ship; finalize `CHANGELOG.md`: run
+   `.agents/skills/growth-guards/scripts/changelog-entries --collate` to fold
+   the `changelog.d` fragments into `## [Unreleased]`, rename that heading to
    `## [X.Y.Z] - YYYY-MM-DD`, and open a fresh empty `## [Unreleased]`. A
-   nonzero exit from the collator halts the release: read its message, fix
-   the fragment or `CHANGELOG.md`, run it again.
+   nonzero exit halts the release: read its message, fix the fragment or
+   `CHANGELOG.md`, run it again.
 3. Bump the three version sites; `cargo build -q`; `tools/guard`.
 4. Commit with exactly `Cargo.toml Cargo.lock crates/app/tauri.conf.json
    CHANGELOG.md changelog.d`, carrying the collation declaration:

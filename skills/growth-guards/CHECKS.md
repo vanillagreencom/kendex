@@ -137,19 +137,22 @@ Paths matching no tracked file are a clean pass: a repository with no
 fragments has nothing to judge. An empty list is a config error; the way to
 switch the check off is to drop it from `GROWTH_GUARDS_CHECKS`.
 
-`--list` judges, and on a clean verdict writes to standard output — every
-human line going to standard error — one NUL-terminated record per line of
-business: `fragment<TAB>SECTION<TAB>PATH` for each accepted fragment, and
-when the record scope is on, `record<TAB>PATH` for the collated record
-followed by the shape this run accepted it in —
-`record-unreleased<TAB>LINE`, one `record-section<TAB>LINE<TAB>NAME` per
-level-3 heading inside the section, and `record-end<TAB>LINE` for the first
-line past it. A refused run lists nothing. NUL, so a path carrying a newline
-survives the read. That output is the whole answer to "which paths are
-fragments, which section each is in, which paths this judgement covers, and
-where in the record the entries go", so a collator folds in exactly what this
-check accepted, guards exactly what it measured, and splits at the numbers it
-was given, rather than deriving any of it a second time.
+`--collate` judges, and on a clean verdict folds in what it just accepted:
+each fragment into the record's `[Unreleased]` section, under the heading its
+own section names, in Keep a Changelog order and filename order within a
+section, then the fragment files and any directory they empty are deleted. A
+refused run writes nothing. The release commit is its only caller.
+
+It is one run, not a caller and a judge, because "which paths are fragments,
+which section each is in, which paths this judgement covers, and where in the
+record the entries go" are answers this check already holds — a collator
+deriving any of them a second time is a second grammar, and the one that
+folds entries under a fenced example of the heading. The fold reads each
+fragment and the record from the WORKING TREE while the judgement measured
+what git carries, so it refuses, writing nothing, when the two disagree about
+any path this run judged. The record is replaced whole or not at all: the
+fold writes a staging file beside it and renames, and an interrupt leaves
+nothing behind.
 
 ### The record
 

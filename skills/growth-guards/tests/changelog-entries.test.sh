@@ -2,9 +2,9 @@
 # Pins for scripts/changelog-entries, the one judge of a repository's
 # changelog over two scopes: a fragment is a real text file under a section
 # directory holding exactly one list item within the character cap, every
-# other tracked path in the fragment tree is refused, --list is what the
-# collator folds in, and the collated record gains no line under [Unreleased]
-# that HEAD does not carry.
+# other tracked path in the fragment tree is refused, and the collated record
+# gains no line under [Unreleased] that HEAD does not carry. Its --collate
+# write path is pinned next door in changelog-collate.test.sh.
 # The configured globs decide what is read, content comes from the index, and
 # a scan that could not complete is exit 2. Every green assertion is paired
 # with a control that proves it can fail.
@@ -428,61 +428,6 @@ run_ce_env 'GROWTH_GUARDS_CHANGELOG_RECORD=changelog.d/CHANGELOG.md'
 [ "$RC" -eq 1 ] && case "$OUT" in *"changelog.d/NOTES.md is in the fragment tree but is not a fragment"*) true ;; *) false ;; esac \
   && ok "control: another file in that same place is swept" \
   || bad "control: another file in that same place is swept" "rc=$RC out=$OUT"
-
-echo "=== --list is what the collator folds in and what it guards ==="
-new_repo listing
-printf -- '- One.\n' | frag fixed ken-1.md
-printf -- '- Two.\n' | frag added ken-2.md
-printf '# changelog.d\n' >"$R/changelog.d/README.md"
-printf '# Changelog\n\n## [Unreleased]\n' >"$R/CHANGELOG.md"
-stage
-TAB="$(printf '\t')"
-LIST=""
-LIST_RC=0
-LIST="$(cd "$R" && "$CE" --list 2>/dev/null | tr '\0' '\n')" || LIST_RC=$?
-[ "$LIST_RC" -eq 0 ] || bad "a clean run lists" "rc=$LIST_RC"
-case "$LIST" in *"fragment${TAB}added${TAB}changelog.d/added/ken-2.md"*) ok "each fragment record carries the section the judge decided" ;;
-  *) bad "each fragment record carries the section the judge decided" "$LIST" ;; esac
-case "$LIST" in *"fragment${TAB}fixed${TAB}changelog.d/fixed/ken-1.md"*) ok "and the path beside it" ;;
-  *) bad "and the path beside it" "$LIST" ;; esac
-# The record goes with them, so a caller guards the paths this run judged
-# rather than a list it spells a second time.
-case "$LIST" in *"record${TAB}CHANGELOG.md"*) ok "the record is named too" ;;
-  *) bad "the record is named too" "$LIST" ;; esac
-case "$LIST" in *README*) bad "the README is not listed as a fragment" "$LIST" ;; *) ok "the README is not listed as a fragment" ;; esac
-# The record's accepted shape goes with it, so the collator splits at numbers
-# this run decided rather than reading the file for them a second time.
-case "$LIST" in *"record-unreleased${TAB}"*) ok "where the record's section begins is listed" ;;
-  *) bad "where the record's section begins is listed" "$LIST" ;; esac
-case "$LIST" in *"record-end${TAB}"*) ok "and where it ends" ;;
-  *) bad "and where it ends" "$LIST" ;; esac
-[ "$(printf '%s\n' "$LIST" | grep -c .)" -eq 5 ] && ok "nothing else is listed" \
-  || bad "nothing else is listed" "$LIST"
-OFFLIST="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_RECORD= "$CE" --list 2>/dev/null | tr '\0' '\n')"
-case "$OFFLIST" in
-  *record*) bad "no record record where that scope is off" "$OFFLIST" ;;
-  *) ok "no record record where that scope is off" ;;
-esac
-# NUL-terminated, not newline-terminated: that is the whole guarantee a path
-# carrying a newline rests on, and a terminator swap must not go unnoticed.
-RAW="$(cd "$R" && "$CE" --list 2>/dev/null | od -An -c | tr -s ' ')"
-[ "$(printf '%s' "$RAW" | grep -c '\\0')" -ge 1 ] \
-  && case "$RAW" in *'\n'*) false ;; *) true ;; esac \
-  && ok "every record ends in NUL and none in a newline" \
-  || bad "every record ends in NUL and none in a newline" "$RAW"
-OUT=""
-RC=0
-OUT="$(cd "$R" && "$CE" --list 2>&1 >/dev/null)" || RC=$?
-case "$OUT" in *"changelog-entries: OK"*) ok "the human verdict goes to standard error in list mode" ;;
-  *) bad "the human verdict goes to standard error in list mode" "$OUT" ;; esac
-# A refused run lists nothing: a caller must never fold in a set this run was
-# still going to refuse something from.
-printf 'prose\n' >"$R/changelog.d/fixed/bad.md"
-stage
-LIST_RC=0
-LIST="$(cd "$R" && "$CE" --list 2>/dev/null)" || LIST_RC=$?
-[ "$LIST_RC" -eq 1 ] && [ -z "$LIST" ] && ok "a refused run lists nothing" \
-  || bad "a refused run lists nothing" "rc=$LIST_RC list=$LIST"
 
 echo "=== the pattern says where the section sits, and at what depth ==="
 # One rule for every pattern shape: a pattern is <root...>/<section>/<name>,

@@ -113,11 +113,23 @@ gg_collation_declared() { # 0 when this run is the release commit's own write
 # measurement rather than a verdict.
 GG_RECORD_WHY=""
 GG_RECORD_HARD=0
-gg_record_accepts() { # PARSED-FILE [BOUNDS-OUT] — 0 when the copy is a record this guard accepts
-  local file="$1" out="${2:-}" rc=0 kind a b low
+# Where the accepted section is, kept for the collation that folds into it:
+# the heading's own line, the first line past the section (0 when the file
+# ends inside it), and one `LINE<TAB>section` row per level-3 heading in it.
+# Only the copy asked to `keep` fills them — the staged one — so HEAD's parse,
+# which runs after it, cannot overwrite the numbers the write splits at.
+GG_RECORD_START=0
+GG_RECORD_END=0
+GG_RECORD_SECLINES=""
+gg_record_accepts() { # PARSED-FILE [keep] — 0 when the copy is a record this guard accepts
+  local file="$1" keep="${2:-}" rc=0 kind a b low
   GG_RECORD_WHY=""
   GG_RECORD_HARD=0
-  [ -z "$out" ] || : >"$out"
+  if [ "$keep" = keep ]; then
+    GG_RECORD_START=0
+    GG_RECORD_END=0
+    GG_RECORD_SECLINES=""
+  fi
   LC_ALL=C awk -v emit=bounds "$GG_UNRELEASED_AWK" <"$file" >"$GG_TMP/bounds" || rc=$?
   case "$rc" in
     0) : ;;
@@ -143,7 +155,8 @@ gg_record_accepts() { # PARSED-FILE [BOUNDS-OUT] — 0 when the copy is a record
   esac
   while IFS="$GG_TAB" read -r kind a b; do
     case "$kind" in
-      unreleased | end) ;;
+      unreleased) [ "$keep" != keep ] || GG_RECORD_START="$a" ;;
+      end) [ "$keep" != keep ] || GG_RECORD_END="$a" ;;
       section)
         low="$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]')"
         # Heading TEXT, so it may hold anything a line holds.
@@ -151,18 +164,16 @@ gg_record_accepts() { # PARSED-FILE [BOUNDS-OUT] — 0 when the copy is a record
           GG_RECORD_WHY="names '$(gg_scrubbed "$b")' under [Unreleased], which is not a Keep a Changelog section"
           return 1
         fi
-        b="$low"
+        # Line numbers, never a heading to search for again: lib/changelog-collate.sh
+        # splits the record at these, rather than asking the grammar a second
+        # time and getting an opinion that agreed until it did not. A section
+        # name is one of GG_SECTIONS, so it holds no newline and the rows can
+        # be a plain string.
+        [ "$keep" != keep ] || GG_RECORD_SECLINES="$GG_RECORD_SECLINES$a$GG_TAB$low
+"
         ;;
       *) gg_collection_error "the changelog grammar emitted a boundary this judge does not understand: $(gg_shown "$kind")" ;;
     esac
-    # The accepted records, NUL-terminated, in the grammar's own spelling:
-    # `record-unreleased<TAB>LINE`, `record-section<TAB>LINE<TAB>NAME`
-    # lowercased, `record-end<TAB>LINE`. A file and not a variable, because a
-    # shell variable cannot hold the NUL that separates them.
-    # tools/changelog-collate reads them off --list and splits the record
-    # there, rather than asking the grammar again and getting a second
-    # opinion that agreed until it did not.
-    [ -z "$out" ] || printf 'record-%s\t%s%s\0' "$kind" "$a" "${b:+$(printf '\t%s' "$b")}" >>"$out"
   done <"$GG_TMP/bounds"
   return 0
 }
@@ -172,7 +183,7 @@ gg_record_accepts() { # PARSED-FILE [BOUNDS-OUT] — 0 when the copy is a record
 # verdict. Returns nonzero either way so the caller stops rather than
 # comparing a document it has already rejected.
 gg_record_structure() { # 0 when the staged record's shape is one a release can fold into
-  if gg_record_accepts "$GG_TMP/record.index" "$GG_TMP/bounds.z"; then
+  if gg_record_accepts "$GG_TMP/record.index" keep; then
     return 0
   fi
   [ "$GG_RECORD_HARD" -eq 0 ] || gg_collection_error "$(gg_shown "$RECORD") $GG_RECORD_WHY"

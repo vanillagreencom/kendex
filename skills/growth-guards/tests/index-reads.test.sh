@@ -352,6 +352,27 @@ call 'gg_install_file "'"$ROOT"'/src.tsv" tools/dest.tsv "the fixture"'
   && ok "a successful install leaves no residue beside the destination" \
   || bad "a successful install leaves no residue beside the destination" "$(find "$R/tools" -name '.gg-install*')"
 
+# mktemp creates the staging file readable by its owner alone, so a rename
+# that does not take the destination's mode narrows a tracked file every
+# clone reads. The control is the same call against a destination that does
+# not exist yet, where there is no mode to take.
+filemode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+chmod 644 "$R/tools/dest.tsv"
+call 'gg_install_file "'"$ROOT"'/src.tsv" tools/dest.tsv "the fixture"'
+[ "$RC" -eq 0 ] && [ "$(filemode "$R/tools/dest.tsv")" = 644 ] \
+  && ok "an existing destination keeps its own mode" \
+  || bad "an existing destination keeps its own mode" "rc=$RC mode=$(filemode "$R/tools/dest.tsv")"
+chmod 755 "$R/tools/dest.tsv"
+call 'gg_install_file "'"$ROOT"'/src.tsv" tools/dest.tsv "the fixture"'
+[ "$RC" -eq 0 ] && [ "$(filemode "$R/tools/dest.tsv")" = 755 ] \
+  && ok "control: a mode neither the staging default nor the umask gives is kept too" \
+  || bad "control: a mode neither the staging default nor the umask gives is kept too" "rc=$RC mode=$(filemode "$R/tools/dest.tsv")"
+rm -f "$R/tools/fresh.tsv"
+call 'gg_install_file "'"$ROOT"'/src.tsv" tools/fresh.tsv "the fixture"'
+[ "$RC" -eq 0 ] && [ "$(cat "$R/tools/fresh.tsv")" = "REPLACEMENT" ] \
+  && ok "control: a destination that does not exist yet installs with no mode to take" \
+  || bad "control: a destination that does not exist yet installs with no mode to take" "rc=$RC out=$OUT"
+
 # A planted staging file must not redirect the write. cp writes THROUGH a
 # symlink, so a staging name the repository can predict is an arbitrary-file
 # overwrite waiting for the next --update. The writer publishes its own pid

@@ -224,6 +224,15 @@ gg_install_file() { # SRC DEST LABEL
   # user can reach. mktemp creates the file itself, exclusively.
   GG_INSTALL_TMP="$(mktemp "$dest.gg-install.XXXXXX")" \
     || gg_collection_error "could not stage the replacement for $label beside $(gg_shown "$dest")"
+  # An existing destination keeps its own mode. mktemp creates the staging
+  # file readable by its owner alone, so a rename over a tracked file every
+  # clone reads would narrow it in passing; `cp -p` is the portable way to
+  # take a mode, and the content it brings with it is truncated below.
+  if [ -f "$dest" ] && ! cp -p -- "$dest" "$GG_INSTALL_TMP"; then
+    rm -f -- "$GG_INSTALL_TMP"
+    GG_INSTALL_TMP=""
+    gg_collection_error "could not take $label's mode from $(gg_shown "$dest")"
+  fi
   if ! cat -- "$src" >"$GG_INSTALL_TMP"; then
     rm -f -- "$GG_INSTALL_TMP"
     GG_INSTALL_TMP=""

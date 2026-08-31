@@ -22,6 +22,13 @@
 # bypasses that comparison and nothing else: what the record IS — a real file
 # holding measurable text — is judged whether or not a collation is running.
 #
+# --collate is that write, and the release commit is its only caller: on a
+# clean verdict it folds the fragments this run just accepted into the
+# record's [Unreleased] section and deletes them (lib/changelog-collate.sh).
+# In this process, off this run's answers, so the sections, the fragment set
+# and the record's boundaries have one spelling rather than a collator's
+# second one that agrees until it does not.
+#
 # A fragment is one entry, so measuring one is joining its lines: CR
 # stripped, whitespace runs collapsed to one space, counted in characters —
 # UTF-8 sequences count once, so an em dash costs what it reads as, and an
@@ -55,6 +62,8 @@ source "$SCRIPT_DIR/lib/settings.sh"
 source "$SCRIPT_DIR/lib/changelog-grammar.sh"
 # shellcheck source=lib/changelog-record-scope.sh
 source "$SCRIPT_DIR/lib/changelog-record-scope.sh"
+# shellcheck source=lib/changelog-collate.sh
+source "$SCRIPT_DIR/lib/changelog-collate.sh"
 
 # The sections a fragment's directory may name, and the test for membership
 # in them, are lib/changelog-grammar.sh's GG_SECTIONS and gg_is_section: the
@@ -63,7 +72,7 @@ source "$SCRIPT_DIR/lib/changelog-record-scope.sh"
 
 usage() {
   cat <<'EOF'
-usage: changelog-entries [--list]
+usage: changelog-entries [--collate]
 
 Two scopes, one judge.
 
@@ -88,16 +97,13 @@ changelog.d); a pattern carrying no glob at all names one file and roots
 nowhere, and a README.md directly under a root documents the format rather
 than being an entry.
 
---list judges, and on a clean verdict writes to standard output, every human
-line going to standard error, one NUL-terminated record per line of business:
-"fragment<TAB>SECTION<TAB>PATH" for each accepted fragment and, when that
-scope is on, "record<TAB>PATH" for the collated record followed by its
-accepted shape — "record-unreleased<TAB>LINE", "record-section<TAB>LINE<TAB>NAME"
-for each level-3 heading inside the section, and "record-end<TAB>LINE" for the
-first line past it. NUL, so a path carrying a newline survives. That output is
-what the collator folds in and what it guards against an unstaged edit, so one
-grammar decides which paths are fragments, which section each is in, which
-paths the whole judgement covers, and where in the record the entries go.
+--collate judges, and on a clean verdict folds every accepted fragment into
+the record's [Unreleased] section under the heading its own section names,
+then deletes the fragment files and any directory that empties. The release
+commit is its only caller. It refuses, writing nothing, when the index and
+the working tree disagree about the record or any fragment: the fold
+publishes the files on disk and the judgement measured the ones git carries.
+The record is replaced whole or not at all.
 
 Tracked content is read from the index; text that is not valid UTF-8 is a
 collection error. Paths matching no tracked file are a clean pass.
@@ -120,24 +126,18 @@ Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
 }
 
-LIST=0
+COLLATE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help)
       usage
       exit 0
       ;;
-    --list) LIST=1 ;;
+    --collate) COLLATE=1 ;;
     *) gg_config_error "unknown argument $(gg_shown "$1") (see --help)" ;;
   esac
   shift
 done
-
-# The machine list keeps the original standard output; in list mode every
-# human line goes to standard error, so a caller reading the list reads only
-# the list.
-exec 3>&1
-[ "$LIST" -eq 0 ] || exec 1>&2
 
 gg_repo_root_cd
 
@@ -153,7 +153,11 @@ PATTERNS_SHOWN="$GG_CHANGELOG_SHOWN"
 RECORD="$GG_CHANGELOG_RECORD"
 
 gg_tmpdir
-: >"$GG_TMP/list.z"
+# Every accepted fragment, NUL-terminated as "SECTION<TAB>PATH" in index
+# order: what --collate folds in and what it guards against an unstaged edit.
+# A file and not a variable, because a shell variable cannot hold the NUL that
+# lets a path carrying a newline survive.
+: >"$GG_TMP/frags.z"
 
 checked=0
 violations=0
@@ -256,7 +260,7 @@ while IFS= read -r -d '' rec; do
     continue
   fi
   checked=$((checked + 1))
-  printf 'fragment\t%s\t%s\0' "$sec" "$f" >>"$GG_TMP/list.z"
+  printf '%s\t%s\0' "$sec" "$f" >>"$GG_TMP/frags.z"
   status=0
   LC_ALL=C awk "$GG_ENTRY_AWK" <"$GG_TMP/blob" >"$GG_TMP/report" || status=$?
   [ "$status" -eq 0 ] || gg_collection_error "could not measure the entry in $(gg_shown "$f") (awk exit $status)"
@@ -286,18 +290,13 @@ if [ "$violations" -gt 0 ]; then
   echo "changelog-entries: $violations violation(s) — cap $CAP characters, $checked fragment(s) measured"
   exit 1
 fi
-# Only past the verdict: a caller must never fold in a list this run was
-# still going to refuse something from. The record goes with it, so the
-# caller guards the same paths this run judged.
-if [ "$LIST" -eq 1 ]; then
-  cat -- "$GG_TMP/list.z" >&3
-  if [ -n "$RECORD" ]; then
-    printf 'record\t%s\0' "$RECORD" >&3
-    # Where the entries go, decided once by the run that accepted the record.
-    # A caller that re-derived them would be a second grammar over the same
-    # file, which is the split this scope exists to close.
-    [ ! -s "$GG_TMP/bounds.z" ] || cat -- "$GG_TMP/bounds.z" >&3
-  fi
+# Only past the verdict: the fold must never publish a set this run was still
+# going to refuse something from. Its own line is the verdict a release
+# reads — what was folded in and where — so it stands in for the cap report
+# below rather than following it.
+if [ "$COLLATE" -eq 1 ]; then
+  gg_changelog_collate
+  exit 0
 fi
 if [ "$checked" -eq 0 ]; then
   echo "changelog-entries: OK — no tracked file matches GROWTH_GUARDS_CHANGELOG_PATHS ($PATTERNS_SHOWN)$RECORD_NOTE"

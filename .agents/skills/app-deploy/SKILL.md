@@ -9,9 +9,10 @@ summary: "Releases a kendex version: bumps versions, finalizes the changelog, ta
 1. Bump the workspace `version` in `Cargo.toml` and the version in
    `crates/app/tauri.conf.json` — both must equal the tag minus the `v`,
    or the update feed no-ops or loops.
-2. Run `tools/changelog-collate` to fold the `changelog.d` fragments into
-   `CHANGELOG.md`'s `Unreleased`. A nonzero exit halts the release: read its
-   message, fix the fragment or `CHANGELOG.md`, run it again. Then move those
+2. Run `.agents/skills/growth-guards/scripts/changelog-entries --collate` to
+   fold the `changelog.d` fragments into `CHANGELOG.md`'s `Unreleased`. A
+   nonzero exit halts the release: read its message, fix the fragment or
+   `CHANGELOG.md`, run it again. Then move those
    entries under a new `## [<version>] - <date>` heading, leaving an empty
    `## [Unreleased]` above it; confirm every breaking change carries its
    **Breaking** call-out and migration note.

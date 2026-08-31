@@ -24,6 +24,10 @@ docs live in README.md.
 - `scripts/lib/changelog-record-scope.sh` — the record half of the
   `changelog-entries` judge: one tracked file against HEAD's copy, kept apart
   from the fragment-tree walk it shares nothing with but a verdict
+- `scripts/lib/changelog-collate.sh` — the write half, run by
+  `changelog-entries --collate` on the verdict those two just reached: it
+  folds the accepted fragments into the record and deletes them, and decides
+  nothing about either
 - `scripts/lib/hook-check.sh` — the read-only verdict `install-git-hooks
   --check` returns over the shims this installer writes
 - `scripts/lib/hooks-path.sh` — where git reads hooks from, and whether

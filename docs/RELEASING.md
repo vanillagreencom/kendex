@@ -148,16 +148,17 @@ Entries are written one file at a time, under
 Nothing edits `CHANGELOG.md` by hand: the growth-guards `changelog-entries`
 lane refuses a line under `## [Unreleased]` that HEAD does not already carry.
 
-Before tagging, run `tools/changelog-collate`. It folds every fragment git
-carries into `## [Unreleased]` under its section heading, in Keep a Changelog
-order and filename order within a section, then deletes the fragments; no
-fragments is a no-op. Exit codes follow the guard family: 0 clean, 1 a
-fragment or a record the judge refuses, 2 could not run — the collation asks
-the `changelog-entries` lane which paths are fragments, where the record's
-`## [Unreleased]` section begins and ends, and which headings sit inside it,
-then folds in exactly those; nothing is written until every one passes, so
-`CHANGELOG.md` is replaced whole or not at all. A record with no section, or
-one naming a heading that is no Keep a Changelog section, is the judge's
+Before tagging, run `.agents/skills/growth-guards/scripts/changelog-entries
+--collate`. It folds every fragment git carries into `## [Unreleased]` under
+its section heading, in Keep a Changelog order and filename order within a
+section, then deletes the fragments; no fragments is a no-op. Exit codes
+follow the guard family: 0 clean, 1 a fragment or a record the judge refuses,
+2 could not run — the fold is that same judging run writing what it just
+accepted, so which paths are fragments, where the record's `## [Unreleased]`
+section begins and ends, and which headings sit inside it are answers it
+already has; nothing is written until every one passes, so `CHANGELOG.md` is
+replaced whole or not at all. A record with no section, or one naming a
+heading that is no Keep a Changelog section, is the judge's
 refusal at the commit that wrote it rather than a surprise at the tag. It
 reads each fragment, and `CHANGELOG.md` itself, from the working tree, so it
 also refuses a `changelog.d` or a `CHANGELOG.md` the index and the disk
