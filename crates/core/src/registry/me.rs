@@ -68,20 +68,20 @@ struct WireMe {
 /// identity as `Offline`, and errors only with nothing cached to serve. A
 /// credential gone by the time the answer lands is `SignedOut` too, and
 /// nothing is written back over the sign-out. Everything this read
-/// settles belongs to one sign-in: the cache it opens with, the call it
-/// sends, and the answer it caches. That sign-in is named on the
-/// credential, so what is compared is the name and not the tokens, which
-/// move. A rotation keeps the name whichever call performed it, so it
-/// settles as usual and leaves a cache the next read can still use. Only
-/// a different sign-in is refused as retryable, because then the identity
-/// in hand is the previous account's.
+/// settles belongs to one sign-in: the cache it opens with and the
+/// credential still installed when it settles. That sign-in is named on
+/// the credential, so what is compared is the name and not the tokens,
+/// which move. A rotation keeps the name whichever call performed it, so
+/// it settles as usual and leaves a cache the next read can still use.
+/// Only a different sign-in is refused as retryable, because then the
+/// identity in hand is the previous account's.
 pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<AccountState> {
     let Some(credential) = store.load()? else {
         return Ok(AccountState::SignedOut);
     };
     // The sign-in's own name, which a rotation carries and only a new
-    // sign-in changes. The cache read next, the call sent after it, and
-    // the answer settled at the end all have to be this one.
+    // sign-in changes. The cache read next and the credential installed
+    // when this settles both have to be this one.
     let issued_under = credential.sign_in;
     // Keyed to this sign-in, so a generation the previous one left behind
     // is not a cache at all here.
@@ -91,7 +91,7 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
         .as_ref()
         .and_then(|(generation, _)| generation.etag.clone());
     let url = format!("{}/api/v1/me", base_url());
-    let (fetched, answered_for) = match client::with_access(fetch, store, |access| {
+    let fetched = match client::with_access(fetch, store, |access| {
         fetch.get_auth(&url, etag.as_deref(), Some(access))
     }) {
         // Logout won a race with this read: the re-login state without
@@ -107,10 +107,7 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
                 sign_in: issued_under,
             });
         }
-        Ok(authenticated) => (Ok(authenticated.response), authenticated.credential.sign_in),
-        // Nothing came back, so the cache is the whole answer, and it
-        // belongs to whoever was signed in when the read began.
-        Err(error) => (Err(error), issued_under.clone()),
+        fetched => fetched,
     };
     // A sign-out that landed while this read was in flight already forgot
     // the cache; settling now would write the identity straight back. The
@@ -120,13 +117,12 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
     };
     // Existence is not identity: a sign-out followed by a sign-in leaves
     // a credential here too, and nothing here belongs to either of them.
-    // One name over two spans. The answer has to carry the sign-in
-    // `cached` was read under, and that sign-in has to be the one still
+    // The sign-in `cached` was read under has to be the one still
     // installed. A sign-in landing before the call leaves the previous
     // account's identity in hand, which a 304 gives back whole and any
     // failure serves as offline; one landing after settles this answer
     // under a stranger. A rotation is neither, because it keeps the name.
-    if answered_for != issued_under || installed.sign_in != issued_under {
+    if installed.sign_in != issued_under {
         return Err(sign_in_changed("reading your account"));
     }
     let loaded = cache.settle(cached, fetched, parse, |response| {

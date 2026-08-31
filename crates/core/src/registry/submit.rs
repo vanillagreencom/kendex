@@ -106,8 +106,7 @@ pub fn submit(fetch: &dyn Fetch, store: &dyn CredentialStore, repo: &str) -> Res
     let url = format!("{}/api/v1/submissions", base_url());
     let response = with_access(fetch, store, |access| {
         fetch.post_json_auth(&url, &body, Some(access))
-    })?
-    .response;
+    })?;
     if response.status == 201 {
         return serde_json::from_slice(&response.body).map_err(|error| {
             CoreError::RegistryMalformed {
@@ -122,8 +121,7 @@ pub fn submissions(fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<Vec
     let url = format!("{}/api/v1/submissions", base_url());
     let response = with_access(fetch, store, |access| {
         fetch.get_auth(&url, None, Some(access))
-    })?
-    .response;
+    })?;
     if response.status == 200 {
         let wire: WireSubmissions = serde_json::from_slice(&response.body).map_err(|error| {
             CoreError::RegistryMalformed {

@@ -371,6 +371,39 @@ fn a_release_that_cannot_be_verified(home: &Path, target: &str) {
     .unwrap();
 }
 
+/// A family update moves the app and the command to one release, and what
+/// says the pair arrived together afterwards is that the app reports the
+/// version `kendex --version` prints. The app bundle carries its version in
+/// `crates/app/tauri.conf.json` and the command bakes its own, so the two
+/// are one release only while this holds.
+///
+/// Read off the built binary rather than off `CARGO_PKG_VERSION`: what the
+/// person sees after the update is what the command prints, and a build
+/// that printed something else would pass a comparison of two constants.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_app_version_is_the_one_kendex_version_prints() {
+    let conf: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/tauri.conf.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let app_version = conf["version"]
+        .as_str()
+        .expect("the app bundle names a version");
+
+    let said = Command::new(env!("CARGO_BIN_EXE_kendex"))
+        .arg("--version")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        String::from_utf8_lossy(&said.stdout).trim(),
+        format!("kendex {app_version}"),
+        "the app ships {app_version} and the command answers otherwise"
+    );
+}
+
 /// The feed is unsigned text naming a host, so what it offers has to be
 /// held to the release key before it lands on the running command.
 #[test]

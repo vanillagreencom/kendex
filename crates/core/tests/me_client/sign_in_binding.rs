@@ -194,36 +194,6 @@ impl CredentialStore for JammingStore<'_> {
     }
 }
 
-/// A store where somebody signs in again between every read: each load
-/// hands back a credential no earlier read saw. It drives the branch that
-/// gives up after two retries under newer tokens.
-struct RestlessStore {
-    reads: Cell<u32>,
-}
-
-impl CredentialStore for RestlessStore {
-    fn save(&self, _credential: &Credential) -> Result<()> {
-        Ok(())
-    }
-    fn load(&self) -> Result<Option<Credential>> {
-        let read = self.reads.get() + 1;
-        self.reads.set(read);
-        Ok(Some(Credential {
-            endpoint: "https://kendex.ai".to_owned(),
-            access_token: format!("kxa_{read}"),
-            refresh_token: format!("kxr_{read}"),
-            capabilities: vec![],
-            sign_in: format!("sign-in-{read}"),
-        }))
-    }
-    fn clear(&self) -> Result<()> {
-        Ok(())
-    }
-    fn refresh_guard(&self) -> Result<Box<dyn CredentialRefreshGuard + '_>> {
-        Ok(Box::new(MemoryGuard))
-    }
-}
-
 fn other_account() -> Credential {
     Credential {
         endpoint: "https://kendex.ai".to_owned(),
@@ -256,33 +226,6 @@ fn logout_winning_the_race_reads_as_signed_out() {
         *fetch.calls.borrow(),
         1,
         "no refresh is attempted once logout won"
-    );
-}
-
-#[test]
-fn a_sign_out_landing_mid_read_is_never_written_back() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let env = env_in(dir.path());
-    // The opening check and with_access both still see the credential; by
-    // the time the answer is settled, sign-out has cleared it.
-    let store = VanishingStore {
-        loads_before_gone: RefCell::new(2),
-        credential: Credential {
-            endpoint: "https://kendex.ai".to_owned(),
-            access_token: "kxa_old".to_owned(),
-            refresh_token: "kxr_old".to_owned(),
-            capabilities: vec![],
-            sign_in: ADA.to_owned(),
-        },
-    };
-    let fetch = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
-    assert_eq!(
-        me::load(&env, &fetch, &store).expect("load"),
-        AccountState::SignedOut
-    );
-    assert!(
-        !env.registry_cache_dir().join("me.cache.json").exists(),
-        "a read finishing after sign-out must leave no identity on disk"
     );
 }
 
@@ -545,55 +488,6 @@ fn a_sign_in_that_cannot_clear_the_cache_still_reports_success() {
             .refresh_token,
         "kxr_other",
         "the sign-in this call reported is the one the machine holds"
-    );
-}
-
-#[test]
-fn a_rejection_after_a_rotation_is_not_the_next_account_s_expiry() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let env = env_in(dir.path());
-    // Four reads carry this sign-in: the read's own, the call's, the
-    // locked re-read, and the check before the rotation is saved. The
-    // fifth is the one that decides whether the rejection is an expiry,
-    // and by then somebody else is signed in.
-    let store = SwitchingStore::after(4);
-    let fetch = Canned::new(vec![
-        ok(401, None, r#"{"error":"invalid_token"}"#),
-        ok(
-            200,
-            None,
-            r#"{"access_token":"kxa_new","refresh_token":"kxr_new","capabilities":[]}"#,
-        ),
-        ok(401, None, r#"{"error":"invalid_token"}"#),
-    ]);
-    let refused = me::load(&env, &fetch, &store)
-        .expect_err("one account's rejection is not another account's expiry");
-    assert!(
-        matches!(refused, CoreError::RegistryUnavailable { .. }),
-        "the sign-in moved under this call, so the read is retryable: got {refused:?}"
-    );
-}
-
-#[test]
-fn a_rejection_under_a_newer_token_is_not_the_next_account_s_expiry() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let env = env_in(dir.path());
-    // Every read finds a newer credential, so the call keeps retrying
-    // under somebody else's token until it gives up. Whoever is signed in
-    // by then never had a request rejected.
-    let store = RestlessStore {
-        reads: Cell::new(0),
-    };
-    let fetch = Canned::new(vec![
-        ok(401, None, r#"{"error":"invalid_token"}"#),
-        ok(401, None, r#"{"error":"invalid_token"}"#),
-        ok(401, None, r#"{"error":"invalid_token"}"#),
-    ]);
-    let refused = me::load(&env, &fetch, &store)
-        .expect_err("a rejection under a token that keeps moving is nobody's expiry");
-    assert!(
-        matches!(refused, CoreError::RegistryUnavailable { .. }),
-        "the sign-in moved under this call, so the read is retryable: got {refused:?}"
     );
 }
 

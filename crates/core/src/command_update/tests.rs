@@ -7,6 +7,7 @@
 //! record that was never written.
 
 use super::*;
+use crate::env::Env;
 use crate::install_channel::Host;
 use record::{Write, record_as};
 
@@ -63,20 +64,9 @@ fn a_release_is_out_under(home: &Path) -> (String, PathBuf) {
     (file_url(&home.join("feed.json")), installed)
 }
 
-/// The command half, against a record store this test owns. Most arms
-/// never read it; the one that does is the refresh after a write.
+/// The command half, under this suite's release key and target.
 fn across(beside: &CommandBeside, feed: &str, release: &str) -> Result<CommandHalf, String> {
-    let store = tempfile::tempdir().unwrap();
-    across_in(&Env::host_rooted(store.path()), beside, feed, release)
-}
-
-fn across_in(
-    env: &Env,
-    beside: &CommandBeside,
-    feed: &str,
-    release: &str,
-) -> Result<CommandHalf, String> {
-    bring_command_across(env, beside, feed, release, TARGET, TEST_KEY)
+    bring_command_across(beside, feed, release, TARGET, TEST_KEY)
 }
 
 /// The whole point of the family update: the command a person runs ends
@@ -150,9 +140,7 @@ fn a_release_with_no_command_for_this_target_stops_the_family() {
     let dir = tempfile::tempdir().unwrap();
     let (feed_url, installed) = a_release_is_out(&dir);
 
-    let store = tempfile::tempdir().unwrap();
     let refused = bring_command_across(
-        &Env::host_rooted(store.path()),
         &CommandBeside::Ours(installed.clone()),
         &feed_url,
         RELEASE,
@@ -267,13 +255,6 @@ impl HostProbe for Machine {
             .map_or_else(|| path.to_owned(), |(_, to)| to.clone())
     }
 
-    /// One file, one digest: what a path holds stands in for the bytes at
-    /// it, so two different files never carry one identity.
-    fn digest(&self, path: &Path) -> Option<String> {
-        self.is_command(path)
-            .then(|| crate::hash::sha256_hex(path.display().to_string().as_bytes()))
-    }
-
     fn on_path(&self, _: &str) -> bool {
         false
     }
@@ -292,20 +273,13 @@ fn candidates(paths: &[&str]) -> Vec<PathBuf> {
 /// and the found path is a different file, which reads `NotOurs` and fails
 /// the assertion just as loudly.
 fn located(machine: &Machine, probed: &[PathBuf], installed: &str) -> CommandBeside {
-    command_beside_app(machine, probed, &[], Some(&recorded(machine, installed)))
+    command_beside_app(machine, probed, &[], Some(&recorded(installed)))
 }
 
-/// The record an installer would have left for a file on this machine:
-/// where it installed, and the digest of what is there now.
-fn recorded(machine: &Machine, path: &str) -> InstalledCommand {
-    let path = PathBuf::from(path);
+/// The record an installer would have left for a file on this machine.
+fn recorded(path: &str) -> InstalledCommand {
     InstalledCommand {
-        digest: machine
-            .digest(&machine.resolve(&path))
-            // Nothing at that path to take an identity from — a record of
-            // a file this machine does not have.
-            .unwrap_or_else(|| "0".repeat(64)),
-        path,
+        path: PathBuf::from(path),
     }
 }
 
@@ -422,9 +396,9 @@ fn a_command_no_installer_recorded_is_never_replaced() {
 /// record is what refused the wrapper, and not a fixture that could never
 /// have been carried in the first place.
 ///
-/// The record is rewritten for what landed, too: leave it naming the bytes
-/// that were replaced and the next release finds a command it owns and
-/// cannot prove, which refuses an update nobody had to be refused.
+/// The record is rewritten for what landed, too: it has to keep naming the
+/// command the app just replaced, or the next release finds one it cannot
+/// prove and refuses an update nobody had to be refused.
 #[test]
 fn the_command_an_installer_recorded_is_carried_across() {
     // The rewrite this asserts is `across_in`'s own, through the entry
@@ -437,7 +411,7 @@ fn the_command_an_installer_recorded_is_carried_across() {
     }
     let dir = tempfile::tempdir().unwrap();
     let (env, command) = a_kendex_on_this_machine(&dir);
-    record_as(&env, Write::Installed(&command), false).unwrap();
+    record_as(&env, Write::Command(&command), false).unwrap();
     let probed = vec![command.clone()];
 
     let beside = command_beside_app(&Host, &probed, &[], recorded_command(&env).as_ref());
@@ -445,14 +419,14 @@ fn the_command_an_installer_recorded_is_carried_across() {
 
     let (feed_url, _) = a_release_is_out(&dir);
     assert_eq!(
-        across_in(&env, &beside, &feed_url, RELEASE).unwrap(),
+        across(&beside, &feed_url, RELEASE).unwrap(),
         CommandHalf::Moved
     );
     assert_eq!(std::fs::read(&command).unwrap(), OFFERED);
     assert_eq!(
-        recorded_command(&env).unwrap().digest,
-        crate::hash::sha256_hex(OFFERED),
-        "the record still names the bytes that were replaced"
+        recorded_command(&env).map(|record| record.path),
+        Some(command.clone()),
+        "the record stopped naming the command that was replaced"
     );
     assert_eq!(
         command_beside_app(&Host, &probed, &[], recorded_command(&env).as_ref()),
@@ -460,42 +434,6 @@ fn the_command_an_installer_recorded_is_carried_across() {
         "a release the app just installed is not one it has to refuse next time"
     );
 }
-
-/// The harm the record exists to stop, arrived at through the record
-/// itself: a path is a name, and the file behind a name can be replaced.
-/// Remove what kendex installed, put a wrapper of your own at that path,
-/// and every question about the path answers yes — so the digest is what
-/// has to answer no, and the wrapper is left as its author wrote it.
-#[test]
-fn a_different_file_at_the_recorded_path_is_not_the_recorded_command() {
-    let dir = tempfile::tempdir().unwrap();
-    let (env, command) = a_kendex_on_this_machine(&dir);
-    record_as(&env, Write::Installed(&command), false).unwrap();
-    let probed = vec![command.clone()];
-
-    // The control: what the same lookup says while the recorded bytes are
-    // still there. Without it, an assertion below passes for a fixture
-    // that was never carried in the first place.
-    assert_eq!(
-        command_beside_app(&Host, &probed, &[], recorded_command(&env).as_ref()),
-        CommandBeside::Ours(Host.resolve(&command))
-    );
-
-    std::fs::write(&command, SOMEONE_ELSES).unwrap();
-    let beside = command_beside_app(&Host, &probed, &[], recorded_command(&env).as_ref());
-
-    assert_eq!(beside, CommandBeside::NotOurs(InstallChannel::Unknown));
-    let (feed_url, _) = a_release_is_out(&dir);
-    assert_eq!(
-        across(&beside, &feed_url, RELEASE).unwrap(),
-        CommandHalf::Untouched
-    );
-    assert_eq!(std::fs::read(&command).unwrap(), SOMEONE_ELSES);
-}
-
-/// A second wrapper, written where the first one was: the bytes differ,
-/// so the digest differs, and the path they share proves nothing.
-const SOMEONE_ELSES: &[u8] = b"#!/bin/sh\nexec /opt/other/kendex \"$@\"\n";
 
 /// A record naming one command says nothing about another. Someone with
 /// an install.sh kendex and a wrapper of their own on `PATH` ahead of it
@@ -505,12 +443,12 @@ fn a_record_of_one_command_does_not_vouch_for_another() {
     let dir = tempfile::tempdir().unwrap();
     let (env, wrapper) = a_kendex_on_this_machine(&dir);
     let theirs = Path::new("/home/pat/.local/bin/kendex");
-    record_as(&env, Write::Command(theirs, WRAPPER), false).unwrap();
+    record_as(&env, Write::Command(theirs), false).unwrap();
 
     assert_eq!(
         command_beside_app(&Host, &[wrapper], &[], recorded_command(&env).as_ref()),
         CommandBeside::NotOurs(InstallChannel::Unknown),
-        "the digest matches the bytes and the path does not"
+        "a record of another path vouched for this one"
     );
 }
 
@@ -546,8 +484,7 @@ fn a_recorded_command_no_other_route_reaches_is_still_found() {
 /// `install.sh` writes `/usr/local/bin` with `sudo` whenever that is the
 /// first of its two directories on `PATH`, and the desktop app runs
 /// unprivileged. The command there is kendex's — an installer recorded
-/// it, digest and all — and what is missing is the privilege to replace
-/// it. Called not ours, that reads as a command kendex has no claim on and
+/// it — and what is missing is the privilege to replace it. Called not ours, that reads as a command kendex has no claim on and
 /// names nothing a person can do; called what it is, the card can name the
 /// one command that moves it.
 #[test]

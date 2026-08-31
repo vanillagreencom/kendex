@@ -16,12 +16,10 @@ use super::*;
 const WRAPPER: &[u8] = b"#!/bin/sh\nexec /opt/kendex/kendex \"$@\"\n";
 
 /// A record this build cannot read is not a record it acts on. The file
-/// carries two lines and both have to be what they claim: one absolute
-/// path, and one SHA-256. A half-written record, a relative path, or a
-/// digest that is not one reads as no record rather than as a record with
-/// a field to work around.
+/// carries one absolute path, so nothing written and a relative path both
+/// read as no record rather than as a record with a field to work around.
 #[test]
-fn a_record_that_is_not_a_path_and_a_digest_is_no_record() {
+fn a_record_that_is_not_an_absolute_path_is_no_record() {
     let dir = tempfile::tempdir().unwrap();
     let env = Env::host_rooted(dir.path());
     let file = env.installed_command_file();
@@ -36,30 +34,18 @@ fn a_record_that_is_not_a_path_and_a_digest_is_no_record() {
         true => r"C:\Program Files\kendex\kendex.exe",
         false => "/usr/local/bin/kendex",
     };
-    let digest = crate::hash::sha256_hex(WRAPPER);
-    for written in [
-        String::new(),
-        "  \n".to_owned(),
-        // The path alone: the whole of the record before the digest
-        // existed, and a build that acted on it would replace by name.
-        format!("{installed}\n"),
-        format!("bin/kendex\n{digest}\n"),
-        format!("{installed}\n{}\n", &digest[..63]),
-        format!("{installed}\n{}z\n", &digest[..63]),
-        format!("{installed}\n{digest}{digest}\n"),
-    ] {
+    for written in [String::new(), "  \n".to_owned(), "bin/kendex\n".to_owned()] {
         std::fs::write(&file, &written).unwrap();
         assert_eq!(recorded_command(&env), None, "{written:?}");
     }
 
     // The control: the same file, well formed, is read. Without it every
     // assertion above passes for a reader that returns `None` always.
-    record_as(&env, Write::Command(Path::new(installed), WRAPPER), false).unwrap();
+    record_as(&env, Write::Command(Path::new(installed)), false).unwrap();
     assert_eq!(
         recorded_command(&env),
         Some(InstalledCommand {
             path: PathBuf::from(installed),
-            digest,
         })
     );
 }
@@ -101,65 +87,6 @@ fn a_first_run_vouches_for_its_own_file_and_no_other() {
     );
 }
 
-/// A staging name left behind by a run that died between the link and the
-/// unlink is a second name for the record itself. Written to rather than
-/// created, the record is truncated and filled in with whatever the next
-/// run was staging — the first-writer contract undone by its own cleanup
-/// not having happened.
-///
-/// Driven through the name supply rather than through a real crash: what
-/// varies is which name a staging write is offered, and the case is the
-/// one where the first offer is taken.
-#[test]
-fn a_staging_name_left_behind_is_never_written_through() {
-    let dir = tempfile::tempdir().unwrap();
-    let record = dir.path().join("installed-command");
-    std::fs::write(&record, "the record already here\n").unwrap();
-    // What a crash leaves: the staging name still pointing at the record.
-    let leftover = dir.path().join("installed-command.stale");
-    std::fs::hard_link(&record, &leftover).unwrap();
-    let free = dir.path().join("installed-command.free");
-
-    let offers = std::sync::atomic::AtomicUsize::new(0);
-    let staged = stage("the next run's record\n", || {
-        match offers.fetch_add(1, std::sync::atomic::Ordering::Relaxed) {
-            0 => leftover.clone(),
-            _ => free.clone(),
-        }
-    })
-    .unwrap();
-
-    assert_eq!(staged, free, "the taken name was staged under");
-    assert_eq!(
-        std::fs::read_to_string(&record).unwrap(),
-        "the record already here\n",
-        "the record was written through its other name"
-    );
-    assert_eq!(
-        std::fs::read_to_string(&free).unwrap(),
-        "the next run's record\n"
-    );
-}
-
-/// Every name taken is a failure, not a silent overwrite of the last one
-/// offered. The message names how many were tried, because the state it
-/// describes is a directory nobody has swept.
-#[test]
-fn a_staging_write_with_no_free_name_fails() {
-    let dir = tempfile::tempdir().unwrap();
-    let taken = dir.path().join("installed-command.taken");
-    std::fs::write(&taken, "someone else's\n").unwrap();
-
-    let why = stage("mine\n", || taken.clone()).unwrap_err();
-
-    assert!(why.contains(&STAGING_ATTEMPTS.to_string()), "{why}");
-    assert_eq!(
-        std::fs::read_to_string(&taken).unwrap(),
-        "someone else's\n",
-        "the taken name was written anyway"
-    );
-}
-
 /// A run acting as root writes no record, wherever `HOME` points it.
 ///
 /// The case: `sudoers` carrying `env_keep HOME`, so an elevated `kendex
@@ -189,7 +116,7 @@ fn a_run_acting_as_root_writes_no_record() {
     std::fs::write(&running, WRAPPER).unwrap();
 
     record_as(&env, Write::FirstRun(&running), true).unwrap();
-    record_as(&env, Write::Command(&running, WRAPPER), true).unwrap();
+    record_as(&env, Write::Command(&running), true).unwrap();
     assert!(
         !file.exists(),
         "{} was written by a root run",
@@ -208,15 +135,14 @@ fn a_run_acting_as_root_writes_no_record() {
         recorded_command(&env),
         Some(InstalledCommand {
             path: running.clone(),
-            digest: crate::hash::sha256_hex(WRAPPER),
         }),
         "the bootstrap did not write where the root arm was asked not to"
     );
-    let replaced = b"the bytes that replaced it";
-    record_as(&env, Write::Command(&running, replaced), false).unwrap();
+    let elsewhere = dir.path().join("bin/kendex");
+    record_as(&env, Write::Command(&elsewhere), false).unwrap();
     assert_eq!(
-        recorded_command(&env).unwrap().digest,
-        crate::hash::sha256_hex(replaced),
+        recorded_command(&env).map(|record| record.path),
+        Some(elsewhere),
         "the update write did not land where the root arm was asked not to"
     );
 }
@@ -230,7 +156,7 @@ fn a_run_acting_as_root_writes_no_record() {
 /// from the syscall, not from [`acting_as_root`], which is the function
 /// whose wiring is in question.
 ///
-/// All three, because the seam takes the identity as an argument and an
+/// Both, because the seam takes the identity as an argument and an
 /// argument can be a literal. One entry passing its process's answer says
 /// nothing about the next: `record_command` is the write `kendex update`
 /// makes after the bytes land, and a constant there is this defect back
@@ -246,12 +172,9 @@ fn a_run_acting_as_root_writes_no_record() {
 #[cfg(unix)]
 fn every_public_write_follows_this_process_uid() {
     let privileged = rustix::process::geteuid().is_root();
-    let entries: [(&str, &dyn Fn(&Env, &Path) -> Result<(), String>); 3] = [
-        ("record_command", &|env, path| {
-            record_command(env, path, WRAPPER)
-        }),
+    let entries: [(&str, &dyn Fn(&Env, &Path) -> Result<(), String>); 2] = [
+        ("record_command", &record_command),
         ("record_first_run", &record_first_run),
-        ("record_installed", &record_installed),
     ];
 
     // A home of its own for each: a record already there is what
@@ -267,8 +190,8 @@ fn every_public_write_follows_this_process_uid() {
         write(&env, &running).unwrap();
 
         assert_eq!(
-            recorded_command(&env).map(|record| record.digest),
-            (!privileged).then(|| crate::hash::sha256_hex(WRAPPER)),
+            recorded_command(&env).map(|record| record.path),
+            (!privileged).then(|| running.clone()),
             "{entry} did not follow this process's uid (root: {privileged})"
         );
     }
@@ -284,8 +207,8 @@ fn every_public_write_follows_this_process_uid() {
     record_as(&env, Write::FirstRun(&running), !privileged).unwrap();
 
     assert_eq!(
-        recorded_command(&env).map(|record| record.digest),
-        privileged.then(|| crate::hash::sha256_hex(WRAPPER)),
+        recorded_command(&env).map(|record| record.path),
+        privileged.then(|| running.clone()),
         "the write does the same thing whichever identity it is told"
     );
 }

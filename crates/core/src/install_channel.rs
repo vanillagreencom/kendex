@@ -181,10 +181,6 @@ pub trait HostProbe {
     /// the path it was exec'd with, symlinks intact.
     fn resolve(&self, path: &Path) -> PathBuf;
 
-    /// The plain SHA-256 of a file's bytes, absent where it cannot be read.
-    /// A name kendex once answered to says nothing about what answers now.
-    fn digest(&self, path: &Path) -> Option<String>;
-
     /// Whether a command is on `PATH`.
     fn on_path(&self, command: &str) -> bool;
 
@@ -224,12 +220,6 @@ impl HostProbe for Host {
 
     fn resolve(&self, path: &Path) -> PathBuf {
         std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
-    }
-
-    fn digest(&self, path: &Path) -> Option<String> {
-        std::fs::read(path)
-            .ok()
-            .map(|b| crate::hash::sha256_hex(&b))
     }
 
     fn on_path(&self, command: &str) -> bool {

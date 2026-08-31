@@ -447,12 +447,6 @@ fn missing_asset_message_never_calls_current_or_older_available() {
 /// run is the one place that knows. So it records the path, on a run that
 /// updated and on one that found nothing to do, which is how an install
 /// made before the record existed gains one.
-///
-/// And it records what is at that path, not only the path: a name outlives
-/// whatever answered to it, so the digest is what tells this binary from
-/// the next file to arrive under its name. Which means the record has to
-/// follow the write — left naming the bytes this run replaced, it would
-/// refuse the app the command it just brought current.
 #[test]
 fn an_update_records_the_command_it_is_running_as() {
     if no_record_on_this_runner() {
@@ -482,21 +476,14 @@ fn an_update_records_the_command_it_is_running_as() {
             kendex_core::command_update::recorded_command(&env),
             Some(kendex_core::command_update::InstalledCommand {
                 path: installed.clone(),
-                digest: kendex_core::hash::sha256_hex(OFFERED),
             }),
             "force: {force}"
-        );
-        assert_ne!(
-            kendex_core::hash::sha256_hex(OFFERED),
-            kendex_core::hash::sha256_hex(INSTALLED),
-            "the two digests have to differ or the assertion above proves nothing"
         );
     }
 }
 
-/// A run that finds nothing to do still records, and records the bytes
-/// that are there — the path is what an install made before this record
-/// existed is missing, and the digest is what makes it usable.
+/// A run that finds nothing to do still records: the path is what an
+/// install made before this record existed is missing.
 #[test]
 fn a_run_with_nothing_to_do_records_the_bytes_already_installed() {
     if no_record_on_this_runner() {
@@ -530,10 +517,7 @@ fn a_run_with_nothing_to_do_records_the_bytes_already_installed() {
     assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED);
     assert_eq!(
         kendex_core::command_update::recorded_command(&env),
-        Some(kendex_core::command_update::InstalledCommand {
-            path: installed,
-            digest: kendex_core::hash::sha256_hex(INSTALLED),
-        })
+        Some(kendex_core::command_update::InstalledCommand { path: installed })
     );
 }
 

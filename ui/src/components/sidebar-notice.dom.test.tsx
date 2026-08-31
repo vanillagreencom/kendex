@@ -302,33 +302,14 @@ describe("the action each channel allows", () => {
 });
 
 describe("a replacement that did not happen", () => {
-  // The engine refuses an install whose command changed since the card was
-  // drawn, and it can only tell that if it is handed what the card said.
-  // Handing it nothing would leave every such install going ahead on an
-  // answer the person never saw.
-  it("hands the engine the note the card is showing", async () => {
-    vi.mocked(commands.appUpdateInstall).mockResolvedValue({
-      status: "ok",
-      data: null,
-    });
-    const showing: CommandNotice = {
-      kind: "managed",
-      manager: "Homebrew",
-      command: "brew upgrade kendex-cli",
-    };
-    const container = await show({ kind: "direct" }, showing);
-    await press(container, APP_UPDATE_INSTALL_LABEL);
-    expect(commands.appUpdateInstall).toHaveBeenCalledWith(showing);
-  });
-
-  // The refusal tells the person the notice now says what is there, so the
-  // card has to read again — otherwise the sentence is false and pressing
-  // Update now again meets the same refusal forever.
-  it("reads the command again after a refusal, so the note is true", async () => {
+  // The card is the only surface left saying what happens to the command
+  // beside the app, and a failed install is where that answer is most
+  // likely to have moved. Left unread, the card the person is looking at
+  // describes a machine that has since changed.
+  it("reads the command again after a failure, so the note is true", async () => {
     vi.mocked(commands.appUpdateInstall).mockResolvedValue({
       status: "error",
-      error:
-        "the kendex command beside this app is no longer the one the notice described",
+      error: "the release could not be verified",
     });
     const changed: CommandNotice = { kind: "unknown" };
     const container = await show({ kind: "direct" }, null);
@@ -342,7 +323,7 @@ describe("a replacement that did not happen", () => {
 
     expect(useNoticeStore.getState().commandChannel).toEqual(changed);
     expect(container.textContent).toContain(APP_UPDATE_COMMAND_UNKNOWN_NOTE);
-    expect(container.textContent).toContain("no longer the one the notice");
+    expect(container.textContent).toContain("could not be verified");
   });
 
   it("says why on the card and leaves the action to try again", async () => {

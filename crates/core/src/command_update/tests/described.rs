@@ -96,7 +96,7 @@ fn nothing_installed_and_the_running_app_both_read_absent() {
             &only_the_app,
             &probed,
             &[image.clone()],
-            Some(&recorded(&only_the_app, &image.display().to_string()))
+            Some(&recorded(&image.display().to_string()))
         ),
         CommandBeside::Absent
     );
@@ -124,7 +124,7 @@ fn a_windows_app_on_path_is_never_taken_for_the_command() {
             &machine,
             &probed,
             &[],
-            Some(&recorded(&machine, &exe.display().to_string()))
+            Some(&recorded(&exe.display().to_string()))
         ),
         CommandBeside::Ours(exe.clone()),
         "the fixture has to reach the app before the exclusion can be what stops it"
@@ -134,7 +134,7 @@ fn a_windows_app_on_path_is_never_taken_for_the_command() {
             &machine,
             &probed,
             &[exe.clone()],
-            Some(&recorded(&machine, &exe.display().to_string()))
+            Some(&recorded(&exe.display().to_string()))
         ),
         CommandBeside::Absent
     );

@@ -31,7 +31,6 @@ use std::time::Duration;
 
 use semver::Version;
 
-use crate::env::Env;
 use crate::install_channel::{HostProbe, InstallChannel, package_owner};
 use crate::process::Hardened;
 use crate::update_feed::{ReleaseFeed, signature_url, verify_signature};
@@ -40,9 +39,7 @@ mod notice;
 mod record;
 
 pub use notice::CommandNotice;
-pub use record::{
-    InstalledCommand, record_command, record_first_run, record_installed, recorded_command,
-};
+pub use record::{InstalledCommand, record_command, record_first_run, recorded_command};
 
 /// What `install.sh` installs the command as. Windows has no command
 /// beside the app — the installer carries the app alone — so the name
@@ -153,13 +150,10 @@ pub fn command_candidates(home: &Path, path_var: Option<&OsStr>) -> Vec<PathBuf>
 /// the path it judges is the one it is running from; this function found
 /// its path by name, and a name is a guess until something confirms it.
 ///
-/// The record is read from both ends. It is searched as well as checked,
+/// The record is read from both ends: it is searched as well as checked,
 /// so a command installed where neither `PATH` nor `install.sh` would put
 /// it — `~/.cargo/bin/kendex`, under an app a Finder launch hands the four
-/// system directories — is reachable at all; and it is a path *and* a
-/// digest, because a path is a name and names outlive the files that held
-/// them. Remove the recorded binary, drop a wrapper or a retargeted
-/// symlink at that path, and the path still compares equal.
+/// system directories — is reachable at all.
 pub fn command_beside_app(
     probe: &dyn HostProbe,
     candidates: &[PathBuf],
@@ -167,7 +161,7 @@ pub fn command_beside_app(
     installed: Option<&InstalledCommand>,
 ) -> CommandBeside {
     let running: Vec<PathBuf> = running.iter().map(|path| probe.resolve(path)).collect();
-    let record = installed.map(|record| (probe.resolve(&record.path), record.digest.as_str()));
+    let record = installed.map(|record| probe.resolve(&record.path));
     // Last in the search, because everything ahead of it is what a shell
     // resolves first, and that is the copy a person actually runs.
     let searched = candidates.iter().chain(installed.map(|r| &r.path));
@@ -185,10 +179,7 @@ pub fn command_beside_app(
         if let Some(owner) = package_owner(&resolved, probe) {
             return CommandBeside::NotOurs(owner);
         }
-        let ours = record.as_ref().is_some_and(|(path, digest)| {
-            *path == resolved && probe.digest(&resolved).as_deref() == Some(*digest)
-        });
-        if !ours {
+        if record.as_ref() != Some(&resolved) {
             // Nothing proves it ours. Refusing costs a person one command;
             // being wrong costs them their file.
             return CommandBeside::NotOurs(InstallChannel::Unknown);
@@ -218,7 +209,6 @@ pub fn command_beside_app(
 /// included: the app cannot write that directory, and the card named it
 /// before Update now was pressed.
 pub fn bring_command_across(
-    env: &Env,
     beside: &CommandBeside,
     feed_url: &str,
     release: &str,
@@ -247,14 +237,11 @@ pub fn bring_command_across(
     command
         .install_at(path, public_key)
         .map_err(command_half_failed)?;
-    // The record now names bytes that are gone, so it is rewritten for the
-    // bytes that replaced them. A rewrite that fails costs the next
-    // app-driven update, never this one: the record stops matching, the
-    // app then refuses a command it does own rather than replacing one it
-    // does not, and any `kendex update` run restores it. That is why this
-    // is not an error — the command is across, and saying otherwise would
-    // send a person to press a button that has already done its work.
-    let _ = record_command(env, path, &command.bytes);
+    // Nothing is recorded here. The record is what made this command
+    // `Ours` in the first place, and it names the path rather than the
+    // bytes, so a replacement at that path leaves it saying what it
+    // already said — under the spelling the record carries, which a
+    // rewrite from the resolved path would trade for a link's target.
     Ok(CommandHalf::Moved)
 }
 

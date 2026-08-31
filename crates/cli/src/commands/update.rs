@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use kendex_core::command_update::{fetch, record_command, record_installed, replace_executable};
+use kendex_core::command_update::{fetch, record_command, replace_executable};
 use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
 use kendex_core::names::shown;
@@ -96,7 +96,7 @@ fn run_on(
     // is fetched, so a machine that installed before this record existed
     // gains it from any run — including one that finds nothing to do — and
     // the desktop app can carry the command across from then on.
-    if let Err(why) = record_installed(env, current_exe) {
+    if let Err(why) = record_command(env, current_exe) {
         say(&format!(
             "the desktop app will not update this command until it can be recorded: {why}"
         ));
@@ -158,15 +158,6 @@ fn run_on(
     });
     if let Err(error) = installed {
         return Err(command_failure(latest, app_replaced, &error).into());
-    }
-    // The record above named the bytes that were here; these are the bytes
-    // that replaced them. Left stale it stops matching, and the app then
-    // refuses a command it does own — the safe direction, and one the next
-    // run of this command undoes either way.
-    if let Err(why) = record_command(env, current_exe, &binary) {
-        say(&format!(
-            "the desktop app will not update this command until it can be recorded: {why}"
-        ));
     }
     out(&format!("updated to {latest}"));
     Ok(())

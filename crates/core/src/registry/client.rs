@@ -7,19 +7,6 @@ use crate::registry::credentials::{Credential, CredentialStore};
 use crate::registry::login::TokenPair;
 use crate::registry::{Fetch, FetchResponse, base_url};
 
-/// One answer and the credential it finally went out under.
-///
-/// A call reaches that credential three ways: it answers under what it
-/// opened with, it rotates to a replacement it made itself, or it adopts
-/// one another writer installed while it was in flight. A rotation keeps
-/// `sign_in`; the other two carry whatever sign-in they belong to. So a
-/// caller that read state before the call compares that state's sign-in
-/// against this credential's, and the three routes need no telling apart.
-pub struct Authenticated {
-    pub response: FetchResponse,
-    pub credential: Credential,
-}
-
 /// Run one authenticated call, refreshing a rejected access token once.
 /// Refresh rotation is locked across processes and saved before retry.
 /// Every path that answers `SignInExpired` removes the rejected credential
@@ -32,14 +19,11 @@ pub fn with_access(
     fetch: &dyn Fetch,
     store: &dyn CredentialStore,
     call: impl Fn(&str) -> Result<FetchResponse>,
-) -> Result<Authenticated> {
+) -> Result<FetchResponse> {
     let opened_under = required(store.load()?)?;
     let first = call(&opened_under.access_token)?;
     if first.status != 401 {
-        return Ok(Authenticated {
-            response: first,
-            credential: opened_under,
-        });
+        return Ok(first);
     }
     rotate_after_rejection(fetch, store, &call, opened_under)
 }
@@ -49,7 +33,7 @@ fn rotate_after_rejection(
     store: &dyn CredentialStore,
     call: &impl Fn(&str) -> Result<FetchResponse>,
     mut rejected: Credential,
-) -> Result<Authenticated> {
+) -> Result<FetchResponse> {
     let mut newer_retries = 0;
     loop {
         let refresh_guard = store.refresh_guard()?;
@@ -58,12 +42,7 @@ fn rotate_after_rejection(
             drop(refresh_guard);
             let retried = call(&locked.access_token)?;
             if retried.status != 401 {
-                // Somebody else installed this credential mid-call. The
-                // answer is theirs, and carries their sign-in.
-                return Ok(Authenticated {
-                    response: retried,
-                    credential: locked,
-                });
+                return Ok(retried);
             }
             if newer_retries == 1 {
                 return Err(rejected_access(store, &locked));
@@ -82,7 +61,7 @@ fn rotate_locked(
     call: &impl Fn(&str) -> Result<FetchResponse>,
     credential: Credential,
     refresh_guard: Box<dyn crate::registry::credentials::CredentialRefreshGuard + '_>,
-) -> Result<Authenticated> {
+) -> Result<FetchResponse> {
     let pair = match refresh(fetch, &credential.refresh_token) {
         Ok(pair) => pair,
         Err(Refused::Definitive(why)) => {
@@ -114,10 +93,7 @@ fn rotate_locked(
     if second.status == 401 {
         return Err(rejected_access(store, &rotated));
     }
-    Ok(Authenticated {
-        response: second,
-        credential: rotated,
-    })
+    Ok(second)
 }
 
 /// Commit a completed device login without racing refresh or logout, and
@@ -185,7 +161,8 @@ enum Removal {
     Done,
     /// Another writer's family is installed; nothing was touched.
     Moved,
-    /// It may still be installed: the store refused a read or a delete.
+    /// It may still be installed: the store refused the guard, the read,
+    /// or the delete.
     Failed(CoreError),
 }
 

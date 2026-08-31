@@ -211,12 +211,6 @@ impl kendex_core::install_channel::HostProbe for OnlyWritable {
         path.to_owned()
     }
 
-    /// Nothing routed through this fake asks either: `for_app` judges a
-    /// path, never the bytes at it.
-    fn digest(&self, _: &std::path::Path) -> Option<String> {
-        None
-    }
-
     fn on_path(&self, _: &str) -> bool {
         false
     }
@@ -319,7 +313,7 @@ fn the_app_s_own_image_is_never_the_command_it_carries() {
     // `AppImage(None)` rather than `WindowsInstaller`, because on Windows
     // this process's own executable is excluded too and a test binary is
     // not the app.
-    kendex_core::command_update::record_installed(&env, &image).unwrap();
+    kendex_core::command_update::record_command(&env, &image).unwrap();
     assert_eq!(
         command_beside(&env, &AppInstall::AppImage(None), Some(&path_var)),
         ours
@@ -352,93 +346,4 @@ fn the_running_executable_is_excluded_where_the_updater_names_no_path() {
         vec![inside, image],
         "neither the mounted executable nor the image it came from is the command"
     );
-}
-
-/// One machine with a `kendex` command an installer recorded, and the
-/// notice the card would have drawn for it.
-#[allow(clippy::unwrap_used)]
-fn a_recorded_command(dir: &tempfile::TempDir) -> (Env, std::ffi::OsString, PathBuf) {
-    let bin = dir.path().join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    let command = bin.join("kendex");
-    std::fs::write(&command, b"the kendex command an installer put here").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let env = Env::host_rooted(dir.path());
-    kendex_core::command_update::record_installed(&env, &command).unwrap();
-    (env, std::ffi::OsString::from(&bin), command)
-}
-
-/// A card is on screen for as long as a person leaves it there, and what
-/// is at a path in that time is not this app's to control. The lookup runs
-/// again when Update now is pressed, so it can answer differently from the
-/// card — and going ahead on the new answer replaces the app, restarts it,
-/// and takes away the only surface that could have said the command was
-/// left behind. So the install is refused instead, before anything is
-/// written.
-///
-/// Driven through the real lookup rather than a described state: the file
-/// at the recorded path is replaced between the two reads, which is the
-/// finding's own scenario.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_command_that_changed_under_the_card_refuses_the_install() {
-    if no_record_on_this_runner() {
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let (env, path_var, command) = a_recorded_command(&dir);
-    let install = AppInstall::AppImage(None);
-    let drawn = command_beside(&env, &install, Some(&path_var));
-    let card = CommandNotice::for_card(&drawn);
-
-    // The control: unchanged, the install goes ahead exactly as before.
-    assert_eq!(card, None, "a recorded command is the app's to carry");
-    still_as_shown(&drawn, card.as_ref()).unwrap();
-
-    // Someone replaces the recorded binary with a wrapper of their own.
-    std::fs::write(&command, b"#!/bin/sh\nexec /opt/kendex/kendex \"$@\"\n").unwrap();
-    let now = command_beside(&env, &install, Some(&path_var));
-    assert_eq!(
-        CommandNotice::for_card(&now),
-        Some(CommandNotice::Unknown),
-        "the fixture only means something if the answer actually changed"
-    );
-
-    let refused = still_as_shown(&now, card.as_ref()).unwrap_err();
-    assert!(
-        refused.contains("no longer the one the notice"),
-        "{refused}"
-    );
-    assert!(refused.contains("nothing was updated"), "{refused}");
-}
-
-/// The other direction, and why it is refused too: the card said the app
-/// moves alone, and the command has since become one this app would
-/// replace. Going ahead would write over a file the person was told would
-/// be left where it is.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_command_that_became_ours_under_the_card_refuses_too() {
-    if no_record_on_this_runner() {
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let (env, path_var, command) = a_recorded_command(&dir);
-    let install = AppInstall::AppImage(None);
-    // Nothing recorded yet, as far as this card knows.
-    let card = Some(CommandNotice::Unknown);
-
-    let now = command_beside(&env, &install, Some(&path_var));
-
-    assert_eq!(
-        now,
-        CommandBeside::Ours(Host.resolve(&command)),
-        "the fixture only means something if the answer actually changed"
-    );
-    let refused = still_as_shown(&now, card.as_ref()).unwrap_err();
-    assert!(refused.contains("nothing was updated"), "{refused}");
 }
