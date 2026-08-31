@@ -315,3 +315,91 @@ describe("audit store run() actions", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 });
+
+// An audit reads every scope over seconds while the page it started from
+// leaves its buttons live. A command that lands in between read its scope
+// later, so the audit's answer is already out of date when it arrives.
+describe("an audit that lands after a command it cannot answer for", () => {
+  const settled: AuditView = { ...emptyView, drift: [], plan: ["settled"] };
+  const stale: AuditView = { ...emptyView, drift: [], plan: ["stale"] };
+
+  beforeEach(() => {
+    useAuditStore.setState({
+      // A view to replace: a command's response lands into the scope it
+      // already holds.
+      views: [emptyView],
+      auditing: false,
+      error: null,
+      read: READ_LANDED,
+      busy: false,
+      auditedAt: null,
+      backgroundFailureAnnounced: false,
+    });
+    vi.clearAllMocks();
+  });
+
+  const park = <T>() => {
+    let land: (value: T) => void = () => {};
+    const parked = new Promise<T>((resolve) => {
+      land = resolve;
+    });
+    return { parked, land: (value: T) => land(value) };
+  };
+
+  it("keeps the command's view rather than putting the row back", async () => {
+    const audit = park<{ status: "ok"; data: AuditView[] }>();
+    vi.mocked(commands.auditAll).mockReturnValue(
+      audit.parked as ReturnType<typeof commands.auditAll>,
+    );
+    vi.mocked(commands.removeItem).mockResolvedValue({
+      status: "ok",
+      data: settled,
+    });
+
+    const running = useAuditStore.getState().refresh();
+    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
+    audit.land({ status: "ok", data: [stale] });
+    await running;
+
+    expect(useAuditStore.getState().views).toEqual([settled]);
+    // Undated, so the next visit pays for a reading that can speak for
+    // what just happened instead of reusing one that cannot.
+    expect(useAuditStore.getState().auditedAt).toBeNull();
+  });
+
+  // Dropping the read is only half of it. The command installed its own
+  // scope and nothing re-read the rest, so a stamp left standing would hold
+  // the freshness window open over the very bytes the force was about — an
+  // editor save, say, with every score still quoting the state before it.
+  it("pays for the read it dropped instead of reusing the stamp", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [stale],
+    });
+    await useAuditStore.getState().refresh();
+    expect(useAuditStore.getState().auditedAt).not.toBeNull();
+
+    const audit = park<{ status: "ok"; data: AuditView[] }>();
+    vi.mocked(commands.auditAll).mockReturnValue(
+      audit.parked as ReturnType<typeof commands.auditAll>,
+    );
+    vi.mocked(commands.removeItem).mockResolvedValue({
+      status: "ok",
+      data: settled,
+    });
+    const forced = useAuditStore.getState().refresh({ force: true });
+    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
+    audit.land({ status: "ok", data: [stale] });
+    await forced;
+
+    const dropped = vi.mocked(commands.auditAll).mock.calls.length;
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [settled],
+    });
+    // An ordinary visit, not another force: the window must not answer it.
+    await useAuditStore.getState().refresh();
+
+    expect(vi.mocked(commands.auditAll).mock.calls.length).toBe(dropped + 1);
+  });
+});

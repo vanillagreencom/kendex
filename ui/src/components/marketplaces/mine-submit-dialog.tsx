@@ -38,6 +38,7 @@ export function MineSubmitDialog({
   // on screen and points at a server that is already out of reach.
   const readError = useAccountStore((s) => s.readError);
   const refused = useAccountStore((s) => s.refused);
+  const handovers = useAccountStore((s) => s.handovers);
   const [preflight, setPreflight] = useState<SubmitPreflight | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +62,10 @@ export function MineSubmitDialog({
     if (!preflight?.candidate) return;
     setBusy(true);
     setError(null);
+    // The account this submit goes out under. What comes back is read
+    // against it, so an expiry that lands after the sign-in was replaced
+    // cannot end the account that replaced it.
+    const since = handovers();
     void commands.mineSubmit(preflight.candidate).then((answer) => {
       setBusy(false);
       if (answer.status === "error") {
@@ -71,7 +76,7 @@ export function MineSubmitDialog({
         // An expired sign-in takes the offer away with it: the footer
         // reads the account, so this dialog stops offering a submit
         // nothing can carry and offers the sign-in that fixes it.
-        refused(answer.error);
+        refused(answer.error, since);
         return;
       }
       setSubmitted(answer.data.status);

@@ -6,6 +6,7 @@ import {
   commands,
   type SubmissionRow,
 } from "@/bindings";
+import { readOrder } from "@/lib/read-state";
 
 /** The submissions half of the account store. */
 export interface Submissions {
@@ -21,17 +22,37 @@ export const noSubmissions: Submissions = {
   submissionsError: null,
 };
 
-/** Make the read and answer what it writes.
+/** Submissions reads in the order they were asked for. Only the newest may
+ *  land: the tab polls on a timer and a submit that just landed asks again,
+ *  so two are routinely out at once and the slower is not the truer one. */
+const order = readOrder();
+
+/** Makes the read and writes what it answers, or writes nothing at all
+ *  where its answer may not be written.
  *
- *  `refused` decides what a refusal says about the account itself: the poll
- *  shows nothing of its own, so a session that died between ticks would
- *  otherwise go on being polled invisibly. */
+ *  A read a newer one overtook says nothing, refusal included: both are
+ *  about the same credential and the newer one is the later word on it.
+ *  Neither does one whose credential changed hands while it was coming,
+ *  which is about nobody on screen. `handovers` is read before the call and
+ *  again after it, and `refused` decides what a refusal says about the
+ *  account itself — the poll shows nothing of its own, so a session that
+ *  died between ticks would otherwise go on being polled invisibly.
+ *
+ *  `write` is taken rather than returned so that it runs in the same
+ *  continuation as the guards. Handing an answer back across an await puts
+ *  a microtask between the check and the write, and a sign-out landing in
+ *  it ends the account after the guards have already let the rows through. */
 export const readSubmissions = async (
-  refused: (refusal: AccountCallRefused) => void,
-): Promise<Partial<Submissions>> => {
+  handovers: () => number,
+  refused: (refusal: AccountCallRefused, since: number) => void,
+  write: (fields: Partial<Submissions>) => void,
+): Promise<void> => {
+  const ticket = order.begin();
+  const before = handovers();
   const answer = await commands.mineSubmissions();
-  if (answer.status === "error") refused(answer.error);
-  return fromSubmissionsRead(answer);
+  if (!order.lands(ticket) || before !== handovers()) return;
+  if (answer.status === "error") refused(answer.error, before);
+  write(fromSubmissionsRead(answer));
 };
 
 /** What a read's answer writes.

@@ -203,6 +203,63 @@ describe("updates store", () => {
     useUpdatesStore.setState({ checking: false });
   });
 
+  // Reads land in any order, and they overlap on every ordinary path: the
+  // startup effect against the page's own mount, the focus rescan against
+  // both. Without ordering a slow early one landing last overwrites a
+  // fresher answer and stamps its stale rows current.
+  it("discards a slow load that lands after a fresher check", async () => {
+    let resolveLoad!: (
+      value: Awaited<ReturnType<typeof commands.updatesOverview>>,
+    ) => void;
+    vi.mocked(commands.updatesOverview).mockReturnValue(
+      new Promise((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    const loading = useUpdatesStore.getState().reload();
+
+    const fresh = [row({ name: "fresh" })];
+    vi.mocked(commands.updatesRefresh).mockResolvedValue({
+      status: "ok",
+      data: { rows: fresh, warnings: [], lastFetched: null },
+    });
+    await useUpdatesStore.getState().check();
+
+    resolveLoad({
+      status: "ok",
+      data: { rows: [row({ name: "stale" })], warnings: [], lastFetched: null },
+    });
+    await loading;
+
+    expect(useUpdatesStore.getState().rows).toEqual(fresh);
+    expect(useUpdatesStore.getState().read.status).toBe("landed");
+  });
+
+  // The whole read state rides on the ordering, not just the rows: an
+  // older landing that cleared a newer failure would take the unconfirmed
+  // banner off the page and re-enable every write it holds back.
+  it("discards a slow failed load landing after a fresher answer", async () => {
+    let rejectLoad!: (reason: Error) => void;
+    vi.mocked(commands.updatesOverview).mockReturnValue(
+      new Promise((_, reject) => {
+        rejectLoad = reject;
+      }),
+    );
+    const loading = useUpdatesStore.getState().reload();
+
+    vi.mocked(commands.updatesRefresh).mockResolvedValue({
+      status: "ok",
+      data: { rows: [row({})], warnings: [], lastFetched: null },
+    });
+    await useUpdatesStore.getState().check();
+
+    rejectLoad(new Error("ipc down"));
+    await loading;
+
+    expect(useUpdatesStore.getState().read.status).toBe("landed");
+    expect(useUpdatesStore.getState().read.error).toBeNull();
+  });
+
   // A failed mute may still have committed before erroring, so the store
   // re-reads rather than trusting either story: here the truth confirms
   // the kept rows, and nothing is marked stale.

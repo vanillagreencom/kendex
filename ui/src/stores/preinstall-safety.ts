@@ -5,7 +5,7 @@ import {
   type ItemKind,
   type PackageSafety,
 } from "@/bindings";
-import { catalogKey } from "./marketplaces-shared";
+import { catalogDrops, catalogKey } from "./marketplaces-shared";
 
 /** One offered package's identity across every marketplace query. */
 export const safetyKey = (
@@ -36,8 +36,12 @@ const queued = new Set<string>();
 let draining = false;
 
 /** Empty the cache and the queue — called when any mutation can have moved
- * a catalog, so no score describes the commit before the change. */
+ * a catalog, so no score describes the commit before the change. The bump
+ * is here rather than only in the caller: a scan already in flight would
+ * otherwise land in the slot this just emptied, and `want` short-circuits
+ * on a stored score, so nothing would ever ask again. */
 export function resetPreinstallSafety() {
+  catalogDrops.moved();
   queue.length = 0;
   queued.clear();
   usePreinstallSafety.setState({ scores: {} });
@@ -58,12 +62,18 @@ export const usePreinstallSafety = create<PreinstallSafetyState>(
           while (queue.length > 0) {
             const item = queue.shift();
             if (!item) break;
+            const began = catalogDrops.since();
             try {
               const response = await commands.marketplacePackagePreview(
                 item.catalog,
                 item.kind,
                 item.name,
               );
+              // A drop while this was in flight emptied the slot it would
+              // fill, and cleared `queued` with it: storing the old score
+              // would pin the commit before the change, and dropping it
+              // costs nothing because the next mount of the row asks again.
+              if (catalogDrops.stale(began)) continue;
               if (response.status === "ok") {
                 set((state) => ({
                   scores: {

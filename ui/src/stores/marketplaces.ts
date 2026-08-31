@@ -10,18 +10,17 @@ import {
   type MarketplaceRow,
   type Scope,
 } from "@/bindings";
-import { READ_PENDING, type ReadState, readOf } from "@/lib/read-state";
+import {
+  READ_PENDING,
+  type ReadState,
+  readOf,
+  readOrder,
+} from "@/lib/read-state";
 import { rescanEverything } from "@/lib/rescan";
 import { settled } from "@/lib/settled";
+import { catalogReads } from "./marketplaces-catalog-reads";
 import { type InstallActions, installActions } from "./marketplaces-install";
-import {
-  bundleKey,
-  catalogKey,
-  dropCatalogCaches,
-  openLead,
-  readErrorKey,
-  without,
-} from "./marketplaces-shared";
+import { dropCatalogCaches, openLead } from "./marketplaces-shared";
 import { sourceActions } from "./marketplaces-sources";
 
 export {
@@ -36,75 +35,6 @@ export {
   subscribedKeys,
   subscription,
 } from "./marketplaces-shared";
-
-// The marketplaces store's cached reads: each answer lands under its own
-// key, and each failure under its own error key, so a later success
-// elsewhere never erases why a different read produced nothing.
-
-/** The slice of the store these reads write. */
-interface ReadCaches {
-  packages: Record<string, AvailablePackage[]>;
-  summaries: Record<string, CatalogSummary>;
-  about: Record<string, AboutView>;
-  bundles: Record<string, BundleDetail>;
-  readErrors: Record<string, string>;
-}
-
-type SetReads = (fn: (state: ReadCaches) => Partial<ReadCaches>) => void;
-
-function catalogReads(set: SetReads) {
-  return {
-    loadPackages: (catalog: Catalog) => {
-      const key = catalogKey(catalog);
-      return settle(set, "packages", key, readErrorKey(key, "packages"), () =>
-        commands.marketplacePackages(catalog),
-      );
-    },
-    loadSummary: (catalog: Catalog) => {
-      const key = catalogKey(catalog);
-      return settle(set, "summaries", key, readErrorKey(key, "summary"), () =>
-        commands.marketplaceSummary(catalog),
-      );
-    },
-    loadAbout: (catalog: Catalog) => {
-      const key = catalogKey(catalog);
-      return settle(set, "about", key, readErrorKey(key, "about"), () =>
-        commands.marketplaceAbout(catalog),
-      );
-    },
-    loadBundle: (catalog: Catalog, name: string) => {
-      const key = bundleKey(catalog, name);
-      return settle(set, "bundles", key, key, () =>
-        commands.marketplaceBundle(catalog, name),
-      );
-    },
-  };
-}
-
-/** One cached read: the answer lands under its key, a failure under its
- * error key. */
-async function settle<F extends Exclude<keyof ReadCaches, "readErrors">>(
-  set: SetReads,
-  field: F,
-  key: string,
-  errorKey: string,
-  read: () => Promise<
-    | { status: "ok"; data: ReadCaches[F][string] }
-    | { status: "error"; error: string }
-  >,
-): Promise<void> {
-  const response = await read();
-  if (response.status === "ok") {
-    set((state) => ({
-      [field]: { ...state[field], [key]: response.data },
-      readErrors: without(state.readErrors, errorKey),
-    }));
-  } else {
-    set((state) => ({
-      readErrors: { ...state.readErrors, [errorKey]: response.error },
-    }));
-  }
-}
 
 interface MarketplacesState extends InstallActions {
   rows: MarketplaceRow[];
@@ -148,6 +78,12 @@ interface MarketplacesState extends InstallActions {
   checkForUpdates: () => Promise<void>;
 }
 
+// Overview reads overlap — Home's mount-time load against the page's own, a
+// retry button against either, every mutation re-reading behind them — and an
+// older one landing last would stamp its rows current and clear the notice
+// saying they are not.
+const overviewOrder = readOrder();
+
 export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   rows: [],
   packages: {},
@@ -162,7 +98,9 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   load: async () => {
     // A failed read — refusal or rejection, via `settled` — still answers:
     // the kept rows stay, and `read` says they are last-known.
+    const ticket = overviewOrder.begin();
     const response = await settled(commands.marketplacesOverview());
+    if (!overviewOrder.lands(ticket)) return;
     if (response.status === "ok") {
       set({ rows: response.data, read: readOf(response), error: null });
     } else {

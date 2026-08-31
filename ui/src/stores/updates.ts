@@ -11,7 +11,12 @@ import {
   nothingToUpdateToastLabel,
   UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
-import { READ_PENDING, type ReadState, readOf } from "@/lib/read-state";
+import {
+  READ_PENDING,
+  type ReadState,
+  readOf,
+  readOrder,
+} from "@/lib/read-state";
 import { rescanEverything } from "@/lib/rescan";
 import { caught, settled } from "@/lib/settled";
 import {
@@ -73,6 +78,10 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
 
   const reportUpdate = (error: string) => showError(UPDATE_ERROR_TITLE, error);
 
+  // Reads of the standing overlap: startup against the page's own mount,
+  // the focus rescan against both, every mutation re-reading behind them.
+  const order = readOrder();
+
   // The one place a read of the standing lands, however it went. A failure
   // — a returned refusal and a rejected call alike, via `settled` — keeps
   // the rows it had along with the age they had: a check that could not run
@@ -80,11 +89,16 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
   // true, and `read` says they are not confirmed. The rows wear every flip
   // whose write has not answered, so a landing cannot bounce a switch back
   // under the hand that moved it.
+  //
+  // `ticket` ranks this answer against the other reads out: an older one
+  // landing last writes nothing at all, rows and read state alike.
   const land = (
+    ticket: number,
     response:
       | { status: "ok"; data: UpdatesReport_Serialize }
       | { status: "error"; error: string },
   ) => {
+    if (!order.lands(ticket)) return;
     if (response.status === "ok") {
       set({
         rows: withPending(response.data.rows, get().pendingFollows),
@@ -104,7 +118,8 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     showError(UPDATE_ERROR_TITLE, UPDATE_NEEDS_CHECK_NOTE);
 
   const reload = async () => {
-    land(await settled(commands.updatesOverview()));
+    const ticket = order.begin();
+    land(ticket, await settled(commands.updatesOverview()));
   };
 
   return {
@@ -125,7 +140,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       set({ checking: true });
       try {
         const response = await settled(commands.updatesRefresh());
-        land(response);
+        // A fetch reports the state its own work produced, so it ranks by
+        // when it lands: no read still out saw anything newer than this.
+        land(order.begin(), response);
         if (response.status === "error")
           showError(UPDATE_ERROR_TITLE, response.error);
       } finally {
@@ -215,8 +232,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         ),
       );
       if (response.status === "ok") {
-        // The command answers with the overview it just rebuilt.
-        land(response);
+        // The command answers with the overview it just rebuilt, so it
+        // outranks every read begun before this moment.
+        land(order.begin(), response);
         return;
       }
       showError(UPDATE_ERROR_TITLE, response.error);

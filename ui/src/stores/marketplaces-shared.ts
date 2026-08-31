@@ -2,7 +2,16 @@
 // collision-free subscription key, and the invalidation every catalog-moving
 // mutation runs.
 import type { Catalog, MarketplaceRow, Scope } from "@/bindings";
+import { invalidations } from "@/lib/read-state";
 import { resetPreinstallSafety } from "./preinstall-safety";
+
+/** Bumped by every cache drop. A read that began before one describes a
+ * checkout that may no longer be the one installed from, and every derived
+ * cache keys on presence rather than freshness — a stale answer landing in
+ * the emptied slot would pin the commit before the change for the session,
+ * with nothing left to ask again. Shared with the pre-install scores, which
+ * the same drop clears. */
+export const catalogDrops = invalidations();
 
 /** One subscription's cache key: where it lives plus its alias, encoded so
  * a root or alias containing the delimiter can never collide with another
@@ -84,6 +93,7 @@ export function without<T>(
  * summary says which subscription a page carries on as, and a mutation is
  * exactly what changes that answer. */
 export function dropCatalogCaches(set: (partial: object) => void) {
+  catalogDrops.moved();
   set({
     packages: {},
     bundles: {},

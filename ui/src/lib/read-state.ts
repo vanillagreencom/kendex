@@ -32,3 +32,63 @@ export const readOf = (
   response: { status: "ok" } | { status: "error"; error: string },
 ): ReadState =>
   response.status === "ok" ? READ_LANDED : readFailed(response.error);
+
+/** Orders the landings of overlapping reads of one standing, so the newest
+ *  answer is the one on screen.
+ *
+ *  Reads of the same thing overlap on every ordinary path: the app's startup
+ *  effect against the page's own mount, the focus rescan against whatever is
+ *  already out, a mutation's re-read behind both. Of two answers the
+ *  later-begun read saw the newer state, so only the newest-begun read may
+ *  write. An older one says nothing even when it answers first, because a
+ *  read known to be superseded has nothing to add and its landing would
+ *  flicker the wrong state onto the page on its way past.
+ *
+ *  The whole [ReadState] rides on this, not just the rows: an older landing
+ *  overwriting a newer failure clears the banner that says the rows are
+ *  unconfirmed, and every predicate reading `status` re-enables the writes
+ *  that banner exists to hold back.
+ *
+ *  An answer a side-effect produced ranks by when it LANDS instead — it
+ *  reports the state its own work made, newer than anything still in flight.
+ *  Spell that `order.lands(order.begin())` at the landing itself, which also
+ *  supersedes every read still out. */
+export function readOrder(): {
+  begin: () => number;
+  lands: (ticket: number) => boolean;
+} {
+  let begun = 0;
+  let landed = 0;
+  return {
+    begin: () => ++begun,
+    lands: (ticket) => {
+      if (ticket !== begun || ticket <= landed) return false;
+      landed = ticket;
+      return true;
+    },
+  };
+}
+
+/** What a read may no longer answer for. Where [readOrder] asks which of two
+ *  reads is newer, this asks whether what a read was about still exists: a
+ *  cache emptied because a mutation moved every catalog, a credential that
+ *  changed hands. A read that began before the change describes a state that
+ *  is gone, however new its answer is.
+ *
+ *  Keyed caches need this and not the ordering: two reads under different
+ *  keys are not competing answers, and ranking them would drop the second
+ *  key's. */
+export function invalidations(): {
+  moved: () => void;
+  since: () => number;
+  stale: (at: number) => boolean;
+} {
+  let at = 0;
+  return {
+    moved: () => {
+      at += 1;
+    },
+    since: () => at,
+    stale: (began) => began !== at,
+  };
+}

@@ -2,7 +2,12 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 import { create } from "zustand";
 import { type AuditView, commands } from "@/bindings";
-import { READ_PENDING, type ReadState, readOf } from "@/lib/read-state";
+import {
+  invalidations,
+  READ_PENDING,
+  type ReadState,
+  readOf,
+} from "@/lib/read-state";
 import { settled } from "@/lib/settled";
 import { auditRunner, type ItemActions, itemActions } from "./audit-items";
 
@@ -29,7 +34,14 @@ interface AuditState extends ItemActions {
 const AUDIT_FRESH_FOR_MS = 60_000;
 
 export const useAuditStore = create<AuditState>((set, get) => {
-  const run = auditRunner(set, get);
+  // The rule, in the one place that can hold it: a reading is kept only
+  // when no command attempt started or ended while it ran. Reading every
+  // scope takes seconds, a command writes throughout its own run, and it
+  // may have written whatever it went on to answer. No item action forces
+  // an audit of its own — the runner refreshes the scan alone — so nothing
+  // else would correct a reading that put an adopted or removed row back.
+  const attempts = invalidations();
+  const run = auditRunner(set, get, attempts.moved);
 
   // The audit in flight, and the one forced request waiting behind it.
   // These are the truth about what is running, not the `auditing` flag: the
@@ -39,12 +51,24 @@ export const useAuditStore = create<AuditState>((set, get) => {
   let queued: Promise<void> | null = null;
 
   const audit = async (): Promise<void> => {
+    const asked = attempts.since();
     set({ auditing: true });
     try {
       // `settled` lands a rejected call as the same failed audit as a
       // returned refusal, which keeps Home's attention section off its
       // skeleton, the same as the scan.
       const response = await settled(commands.auditAll());
+      // Answered for a moment before something the reader did, so it
+      // answers for nothing now — this read's own failure arm included,
+      // since a read that did not finish is not news about the state it
+      // left behind. The stamp goes with it: a command installs its own
+      // scope and nothing re-reads the rest, so a stamp left standing would
+      // hold the freshness window open over a machine this cannot speak
+      // for, and every later unforced visit would reuse it.
+      if (attempts.stale(asked)) {
+        set({ auditedAt: null });
+        return;
+      }
       if (response.status === "ok") {
         set({
           views: response.data,
