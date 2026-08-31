@@ -14,11 +14,14 @@
 # appending its own entry, binding the entry through a file so the finding's
 # own text never enters a shell word.
 #
-# NOT pinned: the suppression rule itself. It is one sentence at each of three
-# sites — review-pr's re-review delegation, its QA delegation, and the reviewer
-# package's own § Re-Review Rounds — and every element that once stood for it
-# here (`do NOT re-report`, `unless`, `verbatim`, `suppressed`, `list`) is a
-# word of that sentence. review-bots.md bans sentence-pinning lints on
+# NARROWER SURFACE THAN THE PREDECESSOR, deliberately: it also read
+# `../reviewer/SKILL.md`. What it read there was the suppression rule itself,
+# one sentence at each of three sites — review-pr's re-review delegation, its
+# QA delegation, and the reviewer package's own § Re-Review Rounds — and every
+# element that once stood for it here (`do NOT re-report`, `unless`,
+# `verbatim`, `suppressed`, `list`) is a word of that sentence. With the
+# sentence pins gone the reviewer file carries no identifier this suite could
+# read, so it is off the surface rather than scanned for nothing. review-bots.md bans sentence-pinning lints on
 # markdown, and a rephrase that keeps the contract must not redden a suite. The
 # expansions below are the half of the contract a token can carry, and the half
 # a reviewer cannot obey without.

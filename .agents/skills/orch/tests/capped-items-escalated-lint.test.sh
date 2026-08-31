@@ -16,9 +16,11 @@
 # below it, so no token separates them, and the `escalated_items` schema row's
 # cycle-cap provenance carries no token present only when that clause is.
 #
-# The cap refusal `workflow-state` prints is not mirrored here either:
-# `workflow-state-cycle-cap.sh` asserts those tokens on the message the script
-# actually emits, which is what proves the refusal reachable.
+# NARROWER SURFACE THAN THE PREDECESSOR, deliberately: it also read
+# `scripts/workflow-state` to mirror the cap refusal's tokens.
+# `workflow-state-cycle-cap.sh` asserts them on the message the script actually
+# emits, which is what proves the refusal reachable; a doc-side copy proves
+# only that two files agree.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 

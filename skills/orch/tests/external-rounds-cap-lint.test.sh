@@ -98,9 +98,15 @@ rule "the Restart check presents its three options at the cap" \
 # containment. `check` carries no automatic control, so each gets its own
 # probe below.
 
-# counter_writers FILE... — "basename:count" per file holding the increment.
+# counter_writers FILE... — "basename:count" per file holding the increment,
+# counting OCCURRENCES rather than matching lines. `grep -c` counts lines, so
+# two increments written on one line reported as one writer and the counter
+# advanced twice per pass behind a green guard — which is the whole of what
+# this invariant exists to catch.
 counter_writers() {
-  grep -cF -- "$COUNTER" "$@" 2>/dev/null | grep -v ':0$' | sed 's|.*/||' || true
+  grep -oF -- "$COUNTER" "$@" 2>/dev/null \
+    | sed 's|.*/||' | cut -d: -f1 | LC_ALL=C sort | uniq -c \
+    | awk '{ print $2 ":" $1 }' || true
 }
 # Two callers incrementing the counter spend two units per round, and the
 # documented four-round budget is silently halved.
@@ -112,25 +118,43 @@ check "the round counter has exactly one writer" \
 restart_region() {
   awk '/^   \*\*Restart check\.\*\*/ { on = 1; print; next } on && (/^   \*\*/ || /^#/) { on = 0 } on' "$1"
 }
+# occurrences PATTERN FILE — every occurrence, not every matching line. This
+# invariant is a containment, which line counting answers correctly since a
+# line sits either inside the region or outside it; occurrences are used anyway
+# so both counting invariants in this file read the same way and neither
+# invites the question again.
+occurrences() { grep -oF -- "$1" | wc -l | tr -d ' '; }
 # A standing changes_requested verdict outlives a disposition, so a restart arm
 # that goes around the check returns that same verdict and triages past the cap
 # forever.
 restarts_all_checked() {
   local total inside
-  total="$(grep -cF 'restart step 1' "$1" || true)"
-  inside="$(restart_region "$1" | grep -cF 'restart step 1' || true)"
+  total="$(occurrences 'restart step 1' <"$1" || true)"
+  inside="$(restart_region "$1" | occurrences 'restart step 1' || true)"
   [ "$total" -ge 1 ] && [ "$total" -eq "$inside" ]
 }
 check "every restart of the wait is the Restart check's own" \
   restarts_all_checked "$SUBMIT"
 
-# Teeth for both, each planting the shape its invariant forbids.
+# Teeth for both, each planting the shape its invariant forbids. The writer
+# duplicate is planted on ONE LINE, in the file that legitimately holds the
+# only writer: a control planting it in a second file would be killed by the
+# line-counting method this rule just replaced, and would certify the method
+# rather than the contract.
 PROBE="$MD_TMP/probe"
 mkdir -p "$PROBE"
 cp "$SKILL_DIR"/workflows/*.md "$PROBE/"
-printf '\n```bash\n.agents/skills/orch/scripts/workflow-state %s\n```\n' "$COUNTER" \
-  >>"$PROBE/submit-pr.md"
-check "the writer count flags a second writer" \
+# awk with index(), not sed: the counter carries `[ISSUE_ID]`, which a BRE
+# reads as a character class rather than as the literal it is.
+md_tok="$COUNTER" awk '
+  BEGIN { tok = ENVIRON["md_tok"] }
+  !done_ && index($0, tok) { print $0 "; ws " tok; done_ = 1; next }
+  { print }
+' "$SKILL_DIR/workflows/review-pr-comments.md" >"$PROBE/review-pr-comments.md"
+check "the writer probe planted a same-line duplicate" \
+  test "$(occurrences "$COUNTER" <"$PROBE/review-pr-comments.md")" \
+     -eq "$(( $(occurrences "$COUNTER" <"$SKILL_DIR/workflows/review-pr-comments.md") + 1 ))"
+check "the writer count flags a second writer on one line" \
   test "$(counter_writers "$PROBE"/*.md)" != 'review-pr-comments.md:1'
 
 cp "$SUBMIT" "$PROBE/restart-arm.md"

@@ -19,10 +19,11 @@
 # alongside the rest of that twin's contract. `workflows/oversee.md` § End
 # spirals points at the section instead of restating it.
 #
-# The file channel these writes use is not re-proved here: the cause carrying
-# an apostrophe and the one carrying a double quote are round-tripped through
-# the real script by `workflow-state-update-args.sh`, which is what shows the
-# channel works rather than that a doc describes it.
+# NARROWER SURFACE THAN THE PREDECESSOR, deliberately: it also ran
+# `scripts/workflow-state` to prove the file channel these writes use. The
+# cause carrying an apostrophe and the one carrying a double quote are
+# round-tripped through the real script by `workflow-state-update-args.sh`,
+# which is what shows the channel works rather than that a doc describes it.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
