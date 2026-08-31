@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # The one scan for Bash 4+ syntax in the shell this repository ships.
 #
-# Nine skills carried a copy of this scan and a tenth was inlined in a github
-# suite. The copies were justified by skills installing independently, so a
-# judge inside one skill is absent from an install that skips it. No consumer
-# runs those suites: .github/workflows/skill-tests.yml proves quality at the
-# source precisely so consuming repos can drop tracked vendoring. The judge
-# belongs where the proving happens, and there is one of it.
+# A copy of this scan used to sit in the tests/ of each skill that wanted one,
+# with a further one inlined in a github suite. The copies were justified by
+# skills installing independently, so a judge inside one skill is absent from
+# an install that skips it. No consumer runs those suites:
+# .github/workflows/skill-tests.yml proves quality at the source precisely so
+# consuming repos can drop tracked vendoring. The judge belongs where the
+# proving happens, and there is one of it.
 #
-# Usage: tools/bash32-lint [DIR...]
+# Usage: tools/bash32-lint [--list | --pattern] [DIR...]
 #   no argument   scan the roster below
 #   DIR...        scan those directories instead
+#   --list        print the roster the discovery resolved to
+#   --pattern     print the pattern set this scan runs
 # Exit: 0 clean, 1 a construct was found, 2 the scan could not run — and a
 # scan that did not run is never read as a clean tree.
 #
@@ -28,10 +31,13 @@ set -uo pipefail
 #
 # The two exceptions are declared, with the reason, because a roster that
 # discovers its members cannot tell a directory that is exempt from one that
-# quietly emptied out. Each is checked below: a stale entry, or one whose
-# reason has expired, ends the run.
+# quietly emptied out. A stale entry ends the run for either of them, checked
+# below. The reason is checked below for NO_SHELL only; NO_SCAN's is held
+# elsewhere, named with it.
 #
-# NO_SCAN — the skill demands the runtime this set forbids.
+# NO_SCAN — the skill demands the runtime this set forbids. That demand is
+# what skills/linear/tests/bash4-runtime-contract.test.sh asserts, so the
+# reason expiring reds there rather than here.
 NO_SCAN="skills/linear/scripts"
 # NO_SHELL — a scripts/ that legitimately holds no shell file at all.
 NO_SHELL="skills/deep-research/scripts"
@@ -101,6 +107,11 @@ PATTERN="$PATTERN"'|\$\{@\}'
 #   - a construct assembled at runtime — eval, a command in a variable, a
 #     heredoc piped to bash — and a declaration split over a backslash
 #     continuation, which a line-oriented scan does not see.
+#   - what a BSD utility rejects in its argv — `dirname --`, `basename --`,
+#     `chmod` with a mode the GNU one accepts. A review-gate copy of this set
+#     once carried `(dirname|basename) +--( |$)`; it is not here, because that
+#     rule is proven by running, not by reading, the argument
+#     skills/growth-guards/tests/bsd-argv-install.test.sh makes for chmod.
 #   - whether a script RUNS under Bash 3.2. Nothing here does; CI is Linux on
 #     Bash 5 and `bash -n` is that same shell. A clean scan says the source
 #     carries no construct named above, and says nothing further.
@@ -122,8 +133,20 @@ is_shell() {
   case "$1" in
   *.sh | *.bash) return 0 ;;
   esac
+  # A file that cannot be read is not a file that is not shell. head fails
+  # with its stderr suppressed, grep matches nothing, and the answer would be
+  # "not shell" — dropping every unreadable extensionless entry point in
+  # silence. Say which one it was instead.
+  [ -r "$1" ] || die "$1 could not be read, so it was never classified"
   head -n 1 -- "$1" 2>/dev/null | grep -qE '^#!.*[/ ](ba)?sh([[:space:]]|$)'
 }
+
+# --pattern prints the set the scan runs, so a proof judges the same string
+# this program greps with rather than lifting it back out of the file's text.
+if [ "${1-}" = "--pattern" ]; then
+  printf '%s\n' "$PATTERN"
+  exit 0
+fi
 
 LIST_ONLY=no
 if [ "${1-}" = "--list" ]; then
@@ -131,17 +154,32 @@ if [ "${1-}" = "--list" ]; then
   shift
 fi
 
-ROOT=""
+# The toplevel is resolved whatever the arguments are, because the exception
+# entries below are roster paths and mean the same directory from any cwd. A
+# DIR the caller named is theirs, and stays relative to where they stand: with
+# arguments nothing cds, so nothing moves underneath them.
+#
+# A run outside a repository therefore ends here rather than scanning: the
+# exceptions could not be judged, and a scan whose roster went unchecked is
+# not a clean tree either.
+ROOT="$(git rev-parse --show-toplevel)" || die "not in a git repository"
 if [ "$#" -eq 0 ]; then
-  ROOT="$(git rev-parse --show-toplevel)" || die "not in a git repository"
   cd "$ROOT" || die "cannot enter $ROOT"
   set -- skills/*/scripts skills/review-gate/tests skills/orch/tests/lib
 fi
 
+at_root() { # at_root PATH — a roster path, read from the toplevel.
+  case "$1" in
+  /*) printf '%s' "$1" ;;
+  *) printf '%s/%s' "$ROOT" "$1" ;;
+  esac
+}
+
 # The exceptions are judged before anything is scanned: a stale one excuses a
 # directory nobody is checking.
 for d in $NO_SCAN $NO_SHELL; do
-  [ -d "$d" ] || die "$d is a declared exception but is not a directory — the entry is stale"
+  [ -d "$(at_root "$d")" ] ||
+    die "$d is a declared exception but is not a directory — the entry is stale"
 done
 
 dirs=""
@@ -166,12 +204,19 @@ files=""
 scanned=0
 for d in $dirs; do
   found=""
+  # The file list is part of the answer the same way grep's status is: a find
+  # that hit an unreadable subdirectory returns a shorter list, and reading
+  # that as the directory's contents scans less than it reports.
+  listing=""
+  status=0
+  listing="$(find "$d" -type f | LC_ALL=C sort)" || status=$?
+  [ "$status" -eq 0 ] || die "the file list for $d could not be built (exited $status)"
   while IFS= read -r f; do
     is_shell "$f" || continue
     found="$found$f
 "
   done <<EOF
-$(find "$d" -type f | LC_ALL=C sort)
+$listing
 EOF
   if [ -z "$found" ]; then
     listed "$d" "$NO_SHELL" ||

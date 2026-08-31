@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # One `gh` fake for the shell suites, answering from files a test stages.
 #
-# Thirteen suites carried a hand-written `gh` heredoc and every one of them
-# opened with the same three answers — `auth status` says logged in, `api
-# user` names somebody, `repo view` names owner/repo — followed by a `case`
-# over the verbs that suite cared about and a refusal for everything else.
-# The variation lived in a per-suite pile of STUB_* environment knobs, so a
-# scenario was read by tracing which knob a case branch happened to consult.
+# The shell suites each wrote their own `gh` heredoc: a `case` over the
+# handful of verbs that suite needed, seeded with whichever identity answers
+# its code path asked for — `auth status`, `api user`, `repo view` — and a
+# refusal for the rest. The answer sets differ per suite, so the duplication
+# was never in them; it was in the scaffolding around them, and in a per-suite
+# pile of STUB_* environment knobs that made a scenario something you read by
+# tracing which knob a case branch happened to consult.
 #
 # Here the shape is inverted: the stub has no knowledge of any suite. A test
 # STAGES an answer for a verb, and the stub serves it. Nothing is staged for
@@ -49,8 +50,8 @@
 
 # gh_stub_install DIR — write DIR/gh and export STUB_DIR beside it.
 #
-# The three identity answers are seeded because every suite needs them and
-# none is asserting on them; restage any of them to say something else.
+# The three identity answers are seeded because a suite that needs one is not
+# asserting on it; restage any of them to say something else.
 gh_stub_install() {
   local bin="$1"
   mkdir -p "$bin" || return 1
