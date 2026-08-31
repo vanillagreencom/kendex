@@ -69,6 +69,16 @@ describe("SubscribedTab with nothing to list", () => {
     expect(html).not.toContain(esc(MARKETPLACES_CHECK_FAILED_TITLE));
   });
 
+  // Before the first read answers there is nothing to report either way.
+  // "No marketplaces yet" here asserts an emptiness nobody has checked, and
+  // the failure state names a failure that has not happened.
+  it("says neither while the first read is still out", () => {
+    stub.read = { status: "pending", error: null };
+    const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
+    expect(html).not.toContain(MARKETPLACES_EMPTY_TITLE);
+    expect(html).not.toContain(esc(MARKETPLACES_CHECK_FAILED_TITLE));
+  });
+
   it("shows the failure with the retry when the read failed, not the pitch", () => {
     stub.read = { status: "failed", error: "offline" };
     const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);

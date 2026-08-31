@@ -42,9 +42,12 @@ export const asOffline = (account: AccountState): SettledAccount | null =>
 
 /** Whether a settled read leaves a standing expiry where it is.
  *
- *  A read that finds no credential is the refusal's own doing: the call
- *  that expired removed the credential, so the read that follows finds
- *  nothing and says nothing new. Every other answer is a credential this
- *  read found on the machine, which the expiry was never about. */
+ *  Only a signed-out answer does. `me::load` forgets the cached identity on
+ *  every `SignInExpired`, including the arm where the store would not give
+ *  the credential up, so no later read can serve a cached name: it either
+ *  finds nothing and says signed out, or reaches the server and answers for
+ *  whatever credential is really there. Signed out is therefore the one
+ *  answer that says nothing new, and every other is news the verdict was
+ *  never about. */
 export const keepsExpiry = (held: AccountState, read: AccountState): boolean =>
   held.kind === "expired" && read.kind === "signed-out";

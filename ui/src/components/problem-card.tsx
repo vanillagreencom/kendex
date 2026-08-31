@@ -39,7 +39,7 @@ export function ProblemCard({ problem }: { problem: Problem }) {
         <Button
           size="sm"
           variant="outline"
-          onClick={() => void rescanEverything()}
+          onClick={() => void rescanEverything({ announce: true })}
         >
           Rescan
         </Button>

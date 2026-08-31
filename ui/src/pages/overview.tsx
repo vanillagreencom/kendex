@@ -84,7 +84,7 @@ export function OverviewPage() {
       size="sm"
       variant="outline"
       disabled={scanning}
-      onClick={() => void rescanEverything()}
+      onClick={() => void rescanEverything({ announce: true })}
     >
       {SCAN_AGAIN_LABEL}
     </Button>

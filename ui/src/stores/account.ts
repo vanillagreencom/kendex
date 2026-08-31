@@ -128,8 +128,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       return;
     }
     const held = get().account;
-    // The refusal that expired the credential removed it, so the read that
-    // follows finds nothing and does not get to unsay the verdict.
+    // A read that comes back signed out found nothing, which is what the
+    // expiry already said; it does not get to unsay the verdict. Any other
+    // answer reached the server, or a credential really on the machine.
     if (keepsExpiry(held, answer.ok)) {
       set({ readError: null });
       return;

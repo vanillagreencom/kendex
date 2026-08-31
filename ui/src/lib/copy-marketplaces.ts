@@ -8,5 +8,3 @@ export const MARKETPLACES_CHECK_FAILED_TITLE =
 export const MARKETPLACES_EMPTY_TITLE = "No marketplaces yet";
 export const MARKETPLACES_UNCONFIRMED_TITLE =
   "These are the last subscriptions kendex could check";
-export const MARKETPLACES_NEEDS_CHECK_NOTE =
-  "Changing subscriptions needs a check that succeeds first";

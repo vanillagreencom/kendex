@@ -2,7 +2,7 @@
 // collision-free subscription key, and the invalidation every catalog-moving
 // mutation runs.
 import type { Catalog, MarketplaceRow, Scope } from "@/bindings";
-import { invalidations } from "@/lib/read-state";
+import { invalidations, type ReadState } from "@/lib/read-state";
 import { resetPreinstallSafety } from "./preinstall-safety";
 
 /** Bumped by every cache drop. A read that began before one describes a
@@ -121,18 +121,26 @@ export async function openLead(scope: Scope, source: string, lead: string) {
 }
 
 /** What a page browsing a bare repository offers, decided from the live
- * subscription list and the repository's canonical key. Until the key is
- * known — from the directory's row or the summary, never the requested
- * spelling, which may differ in case — nothing can be matched, so
- * Subscribe, which a declared repository would refuse, is not offered on a
- * guess. */
+ * subscription list and the repository's canonical key.
+ *
+ * Two things have to be known first, or Subscribe is offered on a guess and
+ * a declared repository refuses it. The key, which comes from the
+ * directory's row or the summary and never from the requested spelling,
+ * which may differ in case. And a first read of the list: before one
+ * answers there are no rows to look in, so every repository would look
+ * undeclared. A read that failed is different — rows kept from a better one
+ * are what this machine last knew, and acting on them is what the engine is
+ * there to refuse. */
 export type RepoActionKind = "checking" | "subscribe" | "turn-on" | "refresh";
 
 export function repoAction(
   rows: MarketplaceRow[],
+  read: ReadState,
   repoKey: string | null,
 ): { kind: RepoActionKind; holder: MarketplaceRow | null } {
-  if (repoKey === null) return { kind: "checking", holder: null };
+  if (repoKey === null || read.status === "pending") {
+    return { kind: "checking", holder: null };
+  }
   const holder = declaredHolder(rows, repoKey);
   if (!holder) return { kind: "subscribe", holder: null };
   return { kind: holder.enabled ? "refresh" : "turn-on", holder };

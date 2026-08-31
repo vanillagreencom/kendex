@@ -30,8 +30,10 @@ export function UnsubscribeDialog({
 }) {
   const unsubscribe = useMarketplacesStore((s) => s.unsubscribe);
   const busy = useMarketplacesStore((s) => s.busy);
-  // The read can fail underneath an open dialog; the store action refuses
-  // stale rows regardless, and this keeps the button honest about it.
+  // The read can fail underneath an open dialog, leaving this one named
+  // from rows nobody could confirm. It confirms anyway: the engine has the
+  // manifest and refuses a source that is not there, which the dialog then
+  // shows in place of the success.
   const [preview, setPreview] = useState<UnsubscribePreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [keep, setKeep] = useState(true);

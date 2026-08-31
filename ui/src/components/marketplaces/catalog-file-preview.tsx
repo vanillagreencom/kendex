@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   type Catalog,
   commands,
@@ -8,11 +7,8 @@ import {
 import { FileContent } from "@/components/package/file-preview";
 import { StatusNote } from "@/components/status-note";
 import { Skeleton } from "@/components/ui/skeleton";
-
-type State =
-  | { status: "loading" }
-  | { status: "error"; error: string }
-  | ({ status: "ok" } & ItemSource);
+import { useOrderedRead } from "@/lib/use-ordered-read";
+import { catalogKey } from "@/stores/marketplaces";
 
 /** One offered file of a package nobody has installed yet, rendered the
  * way the installed package page renders its files. */
@@ -27,27 +23,10 @@ export function CatalogFilePreview({
   name: string;
   path: string;
 }) {
-  const [state, setState] = useState<State>({ status: "loading" });
-
-  useEffect(() => {
-    // The address can change under an in-flight read, and the answer to the
-    // one before it must not land on the file now on screen.
-    let current = true;
-    setState({ status: "loading" });
-    void commands
-      .marketplacePackageFile(catalog, kind, name, path)
-      .then((response) => {
-        if (!current) return;
-        setState(
-          response.status === "ok"
-            ? { status: "ok", ...response.data }
-            : { status: "error", error: response.error },
-        );
-      });
-    return () => {
-      current = false;
-    };
-  }, [catalog, kind, name, path]);
+  const state = useOrderedRead<ItemSource>(
+    `${catalogKey(catalog)}::${kind}::${name}::${path}`,
+    () => commands.marketplacePackageFile(catalog, kind, name, path),
+  );
 
   if (state.status === "loading") {
     return (
@@ -65,5 +44,5 @@ export function CatalogFilePreview({
       </StatusNote>
     );
   }
-  return <FileContent {...state} />;
+  return <FileContent {...state.data} />;
 }

@@ -53,6 +53,7 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
 
 describe("a Community row's Subscribed marker", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     useMarketplacesStore.setState({
       rows: [],
       read: READ_PENDING,
@@ -90,6 +91,38 @@ describe("a Community row's Subscribed marker", () => {
 
   it("ignores path subscriptions, which are no repository", () => {
     expect(subscribedKeys([row("", null)]).size).toBe(0);
+  });
+
+  // The client-side "these rows are not current" refusal is gone: the
+  // action goes out and the engine is the judge. That trade only holds if
+  // the refusal is honoured here — an unsubscribe that reported failure
+  // and then dropped the caches, reloaded and toasted success would tell
+  // the person a subscription went that is still there.
+  it("honours a refused unsubscribe rather than claiming it landed", async () => {
+    const { toast } = await import("sonner");
+    useMarketplacesStore.setState({
+      rows: [row("Acme/Kit", "acme/kit")],
+      read: READ_LANDED,
+      summaries: { kept: { provenance: "acme/kit" } as never },
+    });
+    vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
+      status: "error",
+      error: "an edited package is in the way",
+    });
+
+    const ok = await useMarketplacesStore
+      .getState()
+      .unsubscribe({ scope: "global" }, "kit", false, false);
+
+    expect(ok).toBe(false);
+    expect(useMarketplacesStore.getState().error).toBe(
+      "an edited package is in the way",
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    // Nothing committed, so the rows and the caches stand.
+    expect(commands.marketplacesOverview).not.toHaveBeenCalled();
+    expect(useMarketplacesStore.getState().summaries.kept).toBeDefined();
+    expect(useMarketplacesStore.getState().rows).toHaveLength(1);
   });
 
   it("clears once an unsubscribe lands, whatever the directory snapshot said", async () => {

@@ -2,6 +2,7 @@
 // the summaries that decide which subscription the page carries on as.
 import { describe, expect, it, vi } from "vitest";
 import { commands, type MarketplaceRow } from "@/bindings";
+import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
 import { useMarketplacesStore } from "./marketplaces";
 import { catalogKey, declaredHolder, repoAction } from "./marketplaces-shared";
 
@@ -37,6 +38,35 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   mode: null,
 });
 
+// The client-side "these rows are not current" refusal is gone: the action
+// goes out and the engine is the judge. That trade only holds if a refusal
+// is honoured here — a toggle that reported failure and dropped every
+// catalog cache anyway would leave the pages re-reading behind a write that
+// never happened.
+describe("a toggle the engine refuses", () => {
+  it("says why, and changes nothing behind it", async () => {
+    const { toast } = await import("sonner");
+    useMarketplacesStore.setState({
+      rows: [row("acme/kit", "acme/kit")],
+      summaries: { kept: { provenance: "acme/kit" } as never },
+    });
+    vi.mocked(commands.sourceToggle).mockResolvedValue({
+      status: "error",
+      error: "the settings file is read-only",
+    });
+
+    await useMarketplacesStore
+      .getState()
+      .toggle({ scope: "global" }, "kit", false);
+
+    expect(toast.error).toHaveBeenCalledWith("the settings file is read-only");
+    // Nothing committed, so nothing downstream re-reads: the caches stand
+    // and the overview is not asked again.
+    expect(commands.marketplacesOverview).not.toHaveBeenCalled();
+    expect(useMarketplacesStore.getState().summaries.kept).toBeDefined();
+  });
+});
+
 describe("a bare repository page's action", () => {
   it("offers Turn on, not Subscribe, once its subscription is turned off", async () => {
     // Turning the held subscription off: the summary re-reads as bare, and
@@ -65,8 +95,29 @@ describe("a bare repository page's action", () => {
     const disabled = { ...row("acme/kit", "acme/kit"), enabled: false };
     // The page was opened as "Acme/Kit": before the summary or the directory
     // row supplies the canonical key, no spelling is compared.
-    expect(repoAction([disabled], null).kind).toBe("checking");
-    expect(repoAction([disabled], "acme/kit").kind).toBe("turn-on");
+    expect(repoAction([disabled], READ_LANDED, null).kind).toBe("checking");
+    expect(repoAction([disabled], READ_LANDED, "acme/kit").kind).toBe(
+      "turn-on",
+    );
+  });
+
+  // Before the first read answers there are no rows to look in, so every
+  // repository would look undeclared and Subscribe would be offered over
+  // one this machine already holds — which the engine then refuses as a
+  // duplicate, with the person having pressed a button for nothing.
+  it("stays neutral while the first read of the list is still out", () => {
+    expect(repoAction([], READ_PENDING, "acme/kit").kind).toBe("checking");
+    expect(repoAction([], READ_LANDED, "acme/kit").kind).toBe("subscribe");
+  });
+
+  // A read that failed is not the same: the rows it kept are what this
+  // machine last knew, and the engine refuses anything they were wrong
+  // about. Holding the page neutral there would leave no way back.
+  it("acts on rows a failed read left, rather than going neutral", () => {
+    const declared = row("acme/kit", "acme/kit");
+    expect(repoAction([declared], readFailed("offline"), "acme/kit").kind).toBe(
+      "refresh",
+    );
   });
 
   it("offers Subscribe only when nothing declares the repository", () => {

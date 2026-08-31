@@ -63,7 +63,8 @@ export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
       <div className={cn(WIDE_CONTENT_WIDTH, "space-y-8")}>
         {/* Rows kept from before a failed read stay on screen — right —
             but headed as what they are: the last read that answered, not
-            confirmed subscriptions. Their actions gate on the same flag. */}
+            confirmed subscriptions. Their actions stay live, and the
+            engine refuses whatever they turn out to be wrong about. */}
         {read.status === "failed" ? (
           <StatusNote
             tone="warning"

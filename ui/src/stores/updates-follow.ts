@@ -120,8 +120,14 @@ export function followSwitch({
       );
       if (response.status === "error") {
         // Nothing committed, so nothing is coming to replace the rows the
-        // flip painted: put the switch back where the engine still has it,
+        // flip painted: put the switch back where the click moved it from,
         // and say why now rather than in the seconds a read would take.
+        //
+        // That is the best answer available, not a certain one. The rows on
+        // screen wear the flip, so they cannot say where the engine has the
+        // switch, and a read that landed while the write was out is worn
+        // over too. What puts it beyond doubt is the next landing, which
+        // carries the engine's own answer once no flip is pending.
         set({
           rows: withPending(get().rows, [{ ...flip, pinned: row.pinned }]),
         });

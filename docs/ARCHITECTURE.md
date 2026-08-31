@@ -512,8 +512,8 @@ lives in one capability table read by core and UI.
   landing wears it, so a read cannot bounce it — over its own scope's rows
   only (`lib/updates-read-state.ts::rowUnsettled`), the apply reaching only
   what is installed there. A refused write says so at once and puts the
-  switch back where the engine has it, so no row ever wears a position the
-  engine did not take. An edited place is never updated over:
+  switch back where the click moved it from; the next landing carries the
+  engine's own answer. An edited place is never updated over:
   its row says so and offers the install beside it where a newer version
   the source still carries can land, and a
   link to the package page otherwise; the fork-or-discard choice lives on

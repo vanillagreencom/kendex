@@ -67,8 +67,47 @@ describe("installedSafety", () => {
     expect(result?.findings.map((f) => f.rule)).toEqual(["curl-pipe-sh"]);
   });
 
-  // Rows that tie on score leave the first one standing, so the merge
-  // never churns between two equal readings.
+  // The score is 100 less what the findings cost, so one critical costs
+  // what several lighter hits do and every ruined reading floors at 0. On a
+  // tie the harsher row has to win, or the order the backend returned rows
+  // in decides which findings a reader ever sees.
+  it("breaks a tied score by the worse severity, whatever the row order", () => {
+    const gentler = row("claude", 75, [
+      finding("wide-glob", "high"),
+      finding("env-read", "medium"),
+    ]);
+    const harsher = row("codex", 75, [finding("curl-pipe-sh", "critical")]);
+
+    const harsherLast = installedSafety(
+      [view([gentler, harsher])],
+      "skill",
+      "github",
+      [GLOBAL],
+    );
+    const harsherFirst = installedSafety(
+      [view([harsher, gentler])],
+      "skill",
+      "github",
+      [GLOBAL],
+    );
+
+    expect(harsherLast?.findings.map((f) => f.rule)).toEqual(["curl-pipe-sh"]);
+    expect(harsherFirst?.findings.map((f) => f.rule)).toEqual(["curl-pipe-sh"]);
+  });
+
+  it("keeps both readings apart at the floor, where every score is 0", () => {
+    const one = row("claude", 0, [finding("wide-glob", "high")]);
+    const many = row("codex", 0, [finding("curl-pipe-sh", "critical")]);
+
+    const result = installedSafety([view([one, many])], "skill", "github", [
+      GLOBAL,
+    ]);
+
+    expect(result?.findings.map((f) => f.rule)).toEqual(["curl-pipe-sh"]);
+  });
+
+  // The control: rows that match on score and on severity leave the first
+  // one standing, so the merge never churns between two equal readings.
   it("leaves the standing row alone when nothing separates them", () => {
     const first = row("claude", 75, [finding("wide-glob", "high")]);
     const second = row("codex", 75, [finding("env-read", "high")]);

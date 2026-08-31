@@ -210,23 +210,21 @@ describe("when the check could not run", () => {
   });
 });
 
-// The audit answered for the machine, but not for this place. The reading on
-// screen is whatever that place last said, and nothing has confirmed it
-// since — so it must not read as the current one.
+// The audit answered for the machine, but not for this place: a corrupt
+// lock, a manifest from a newer kendex. Core answers for such a scope with
+// the error and nothing else — `AuditView::failed` sends an empty `safety`
+// — so there is no score to show, and a blank panel would read as a place
+// the check found nothing wrong in.
 describe("when only this package's place could not be read", () => {
-  it("dates the kept reading and offers the retry, with no whole-audit failure", async () => {
-    const takenAt = Date.now() - 3 * 60 * 60 * 1000;
-    act(() => {
-      useAuditStore.setState({
-        views: [
-          {
-            ...view([gh]),
-            error: { kind: "lock-corrupt", message: "lock is not JSON" },
-          },
-        ],
-        auditedAt: takenAt,
-        read: READ_LANDED,
-      });
+  it("says the check failed there and offers the retry", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          ...view([]),
+          error: { kind: "lock-corrupt", message: "lock is not JSON" },
+        },
+      ],
     });
 
     const host = mount(
@@ -234,10 +232,12 @@ describe("when only this package's place could not be read", () => {
     );
     await settle();
 
-    expect(host.textContent).toContain("58/100");
-    expect(host.textContent).toContain("3h ago");
-    expect(host.textContent).toContain(staleSafetyNote(takenAt));
+    expect(host.textContent).toContain(SAFETY_CHECK_FAILED);
+    expect(host.textContent).toContain("lock is not JSON");
     expect(host.textContent).toContain(SAFETY_RETRY_LABEL);
+    // Not "nothing found here", which is the one claim the audit did not
+    // make about this place.
+    expect(host.textContent).not.toContain(SAFETY_NOT_READ);
   });
 
   it("says nothing about staleness for a place that answered", async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { commands, type PackageView, type Scope } from "@/bindings";
 import { MarkdownView } from "@/components/markdown-view";
 import { AvailableAside } from "@/components/marketplaces/available-aside";
@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { useOrderedRead } from "@/lib/use-ordered-read";
 import { cn } from "@/lib/utils";
 import { catalogKey, useMarketplacesStore } from "@/stores/marketplaces";
 import { type AvailableRef, useNavStore } from "@/stores/nav";
@@ -44,34 +45,30 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   const rows = useMarketplacesStore((s) => s.rows);
   const install = useMarketplacesStore((s) => s.install);
   const busy = useMarketplacesStore((s) => s.busy);
-  const [view, setView] = useState<PackageView | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [destination, setDestination] = useState<Scope | null>(null);
   const [choice, setChoice] = useState<Choice>({
     harnesses: null,
     method: null,
   });
 
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  // Null until the catalog is ready: a repository's first fetch holds the
+  // store's lock, and a read racing it would be refused.
+  const address = ready ? `${catalogKey(catalog)}::${kind}::${name}` : null;
+  const read = useOrderedRead<PackageView>(address, () =>
+    commands.marketplacePackagePreview(catalog, kind, name),
+  );
+  const view = read.status === "ok" ? read.data : null;
+  const error = read.status === "error" ? read.error : null;
 
-  useEffect(() => {
-    if (!ready) return;
-    // The address can change under an in-flight read — a repository page
-    // carrying on as the subscription it just gained — and the older
-    // answer must not land on top of the newer one.
-    let current = true;
-    setView(null);
-    setError(null);
-    setSelectedFile(null);
-    void commands.marketplacePackagePreview(catalog, kind, name).then((r) => {
-      if (!current) return;
-      if (r.status === "ok") setView(r.data);
-      else setError(r.error);
-    });
-    return () => {
-      current = false;
-    };
-  }, [catalog, ready, kind, name]);
+  // The chosen file carries the address it was chosen under, so a move to
+  // another package shows that package's files rather than a path from the
+  // one before it.
+  const [chosen, setChosen] = useState<{ at: string; file: string } | null>(
+    null,
+  );
+  const selectedFile = chosen?.at === address ? chosen.file : null;
+  const selectFile = (file: string) =>
+    setChosen(address === null ? null : { at: address, file });
 
   const Icon = kindIcon(kind);
   const scope = catalog.by === "subscription" ? catalog.scope : null;
@@ -210,7 +207,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
               repo={repo}
               view={view}
               selectedFile={selectedFile}
-              onSelectFile={setSelectedFile}
+              onSelectFile={selectFile}
             />{" "}
           </div>
         </div>
