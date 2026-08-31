@@ -76,7 +76,7 @@ Error output:
 [truncated error logs]
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. On any other path, report where the shell started and give every later command an absolute path under [WORKTREE_PATH], because a bare `cd` may not survive into the next tool call.
+Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
 Worktree Lease: [WORKTREE_LEASE]
 
 1. Verify possession before changing anything: `.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --expect-gen [WORKTREE_LEASE]`. Any non-zero exit ends the round here — change nothing and report its stderr verbatim.
@@ -109,7 +109,7 @@ Merge queue CI failure — integration issue across stacked PRs.
 
 Draft PR: #[PR_NUMBER]
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. On any other path, report where the shell started and give every later command an absolute path under [WORKTREE_PATH], because a bare `cd` may not survive into the next tool call.
+Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
 Stack: [PRs in the stack with their domains]
 
 Error output:

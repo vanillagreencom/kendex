@@ -5,11 +5,14 @@
 # and both noticed only after a confusing downstream failure.
 #
 # The cure is a precondition the agent runs before anything repo-relative,
-# and this lint holds it as ONE canonical sentence rather than as a set of
-# shape rules. Every shipped check line is byte-identical apart from the
-# block's own placeholder token, so the test carries that sentence in
-# $CANON with `@TOKEN@` where the token goes, and each site must equal it
-# with its own token substituted in. Equality is the whole predicate:
+# and it HALTS: a tool like `tools/guard` re-derives the repo from the
+# process cwd, so no path spelling makes a wrong-tree shell safe and there
+# is no remedy for the check to get right. This lint holds the precondition
+# as ONE canonical sentence rather than as a set of shape rules. Every
+# shipped check line is byte-identical apart from the block's own
+# placeholder token, so the test carries that sentence in $CANON with
+# `@TOKEN@` where the token goes, and each site must equal it with its own
+# token substituted in. Equality is the whole predicate:
 # nothing infers "opens with a command", "mentions pwd", or "names the
 # token", so no prose mutation can satisfy the letter of a heuristic while
 # leaving the agent with nothing to run. A future wording change is made in
@@ -25,14 +28,33 @@
 #      happens to be. A block whose paths are all placeholders is out of
 #      scope: the caller resolves those, and the lint cannot judge them.
 #
-# Scope is every skill doc that can carry a delegation, not one directory.
-# Tests are excluded: their probe fixtures carry deliberately broken
-# blocks. A `Worktree:` mention in prose or in a fenced example is not a
-# delegation and is not scanned.
+# Scope is every skill doc that can carry a delegation, in BOTH trees: the
+# `skills/` source and the `.agents/skills/` render agents actually load.
+# Deriving the scan root from this file's own location would leave each
+# copy scanning only its own half, and CI runs the source copy alone — the
+# render would ship unguarded with the suite green. Tests are excluded:
+# their probe fixtures carry deliberately broken blocks. A `Worktree:`
+# mention in prose or in a fenced example is not a delegation and is not
+# scanned.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILLS_ROOT="$(cd "$TEST_DIR/../.." && pwd)"
+
+# The nearest ancestor holding both trees. Walked, not counted in `../`,
+# so the source copy and the render copy resolve to the same repo root and
+# scan the same two directories.
+REPO_ROOT="$TEST_DIR"
+while [ "$REPO_ROOT" != "/" ]; do
+  if [ -d "$REPO_ROOT/skills" ] && [ -d "$REPO_ROOT/.agents/skills" ]; then break; fi
+  REPO_ROOT="$(dirname "$REPO_ROOT")"
+done
+if [ "$REPO_ROOT" = "/" ]; then
+  printf 'FAIL  no ancestor of %s holds both skills/ and .agents/skills/\n' "$TEST_DIR" >&2
+  exit 1
+fi
+SOURCE_ROOT="$REPO_ROOT/skills"
+RENDER_ROOT="$REPO_ROOT/.agents/skills"
+
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -45,7 +67,7 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 # The canonical check line, with @TOKEN@ standing in for the block's own
 # placeholder name. This is the single source of truth for the sentence;
 # the shipped docs must match it character for character.
-CANON='Worktree Check: `pwd` before any repo-relative command. It must print [@TOKEN@]; your shell can start in another lane'"'"'s worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. On any other path, report where the shell started and give every later command an absolute path under [@TOKEN@], because a bare `cd` may not survive into the next tool call.'
+CANON='Worktree Check: `pwd` before any repo-relative command. It must print [@TOKEN@]; your shell can start in another lane'"'"'s worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.'
 
 # scan_worktree_precondition <file>
 # Emits one "file:line: ..." line per defect, per the two rules above.
@@ -103,46 +125,73 @@ count_guarded_relpath_blocks() {
   ' "$1"
 }
 
+# scan_trees <root>...
+# Emits every defect line found in every non-test *.md under the given
+# roots. A missing root is itself a defect: the caller asked for a tree
+# that is not there, and reporting nothing would read as clean.
+scan_trees() {
+  for root in "$@"; do
+    if [ ! -d "$root" ]; then
+      printf '%s: scan root does not exist\n' "$root"
+      continue
+    fi
+    find "$root" -name '*.md' -not -path '*/tests/*' | sort | while IFS= read -r doc; do
+      scan_worktree_precondition "$doc"
+    done
+  done
+}
+
+# count_sites <root> — shipped Worktree Check lines under one tree.
+count_sites() {
+  find "$1" -name '*.md' -not -path '*/tests/*' -exec grep -c '^[[:space:]]*Worktree Check:' {} + 2>/dev/null |
+    awk -F: '{ n += $NF } END { print n + 0 }'
+}
+
+# count_guarded <root> — guarded repo-relative blocks under one tree.
+count_guarded() {
+  total=0
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    total=$((total + $(count_guarded_relpath_blocks "$doc")))
+  done <<EOF
+$(find "$1" -name '*.md' -not -path '*/tests/*' | sort)
+EOF
+  printf '%d' "$total"
+}
+
 echo "=== orch delegation worktree-cwd-precondition lint ==="
 
 # --- Part a: every shipped delegation block carries the precondition -------
-# Every skill doc, not one skill's workflows: a delegation that hands over a
-# worktree is checked wherever it lives. Tests are excluded — their probe
-# fixtures carry deliberately broken blocks.
-DOCS="$(find "$SKILLS_ROOT" -name '*.md' -not -path '*/tests/*' | sort)"
-offenders=""
-sites=0
-guarded=0
-for doc in $DOCS; do
-  out="$(scan_worktree_precondition "$doc")"
-  [ -n "$out" ] && offenders="$offenders$out"$'\n'
-  n="$(grep -c '^[[:space:]]*Worktree Check:' "$doc" || true)"
-  sites=$((sites + n))
-  guarded=$((guarded + $(count_guarded_relpath_blocks "$doc")))
-done
+# Every skill doc in BOTH trees, not one skill's workflows and not the half
+# this copy of the test sits in: a delegation that hands over a worktree is
+# checked wherever it lives. Tests are excluded — their probe fixtures carry
+# deliberately broken blocks.
+offenders="$(scan_trees "$SOURCE_ROOT" "$RENDER_ROOT")"
 if [ -z "$offenders" ]; then
   pass "every delegated Worktree: line is followed by its canonical Worktree Check"
 else
   fail "delegation blocks missing the worktree cwd precondition:"
-  printf '%s' "$offenders" | sed 's/^/          /'
+  printf '%s\n' "$offenders" | sed 's/^/          /'
 fi
 
-# The precondition is worth nothing if no delegation carries it: a lint that
-# passes over zero sites is the vacuous case this asserts against.
-if [ "$sites" -gt 0 ]; then
-  pass "the scan read $sites delegated Worktree Check line(s)"
-else
-  fail "no Worktree Check lines found — the scan matched nothing to check"
-fi
-
-# The same guard for rule 2: with no shipped block naming a repo-relative
-# path, the repo-path rule passed over an empty population and proves
-# nothing.
-if [ "$guarded" -gt 0 ]; then
-  pass "the scan read $guarded repo-relative delegation block(s) carrying the pair"
-else
-  fail "no repo-relative delegation blocks found — the repo-path rule matched nothing"
-fi
+# The precondition is worth nothing if no delegation carries it, and one
+# tree going missing is the same vacuity a level up — so each tree is
+# counted on its own and an empty population in EITHER reds.
+for root in "$SOURCE_ROOT" "$RENDER_ROOT"; do
+  label="${root#$REPO_ROOT/}"
+  sites="$(count_sites "$root")"
+  guarded="$(count_guarded "$root")"
+  if [ "$sites" -gt 0 ]; then
+    pass "$label: the scan read $sites delegated Worktree Check line(s)"
+  else
+    fail "$label: no Worktree Check lines found — the scan matched nothing to check"
+  fi
+  if [ "$guarded" -gt 0 ]; then
+    pass "$label: the scan read $guarded repo-relative delegation block(s) carrying the pair"
+  else
+    fail "$label: no repo-relative delegation blocks found — the repo-path rule matched nothing"
+  fi
+done
 
 # --- Part b: the lint has teeth -------------------------------------------
 
@@ -245,6 +294,18 @@ else
   fail "lint MISSED a remedy resting on a cd that may not persist"
 fi
 
+# b.16 — nor on an absolute path. `tools/guard` re-derives the repo from
+# the process cwd on its own first line, so the path it is invoked by never
+# reaches that decision and a wrong-tree shell still judges the wrong lane.
+# The canonical sentence halts instead, and any remedy written in its place
+# reds.
+ABS_REMEDY='Worktree: [WORKTREE_PATH]\nWorktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]. Any other path — give every later command an absolute path under [WORKTREE_PATH].'
+if [ -n "$(scan_worktree_precondition "$(probe absremedy "$ABS_REMEDY")" )" ]; then
+  pass "lint flags a remedy resting on an absolute path"
+else
+  fail "lint MISSED a remedy an absolute path cannot deliver"
+fi
+
 # b.13 — RULE 2. A block that hands over a repo-relative path with no
 # Worktree:/Worktree Check: pair IS flagged: the delegate runs that path
 # wherever its shell happens to be.
@@ -284,6 +345,62 @@ if [ -n "$(scan_worktree_precondition "$(probe indented '   Worktree: [WORKTREE_
   pass "lint scans an indented delegation block"
 else
   fail "lint MISSED a bare Worktree: line inside an indented block"
+fi
+
+# --- Part c: both trees are actually scanned ------------------------------
+# A scan root derived from this file's own location would give the source
+# copy only skills/ and the render copy only .agents/skills/, and CI runs
+# the source copy alone — a check deleted from the render would ship with
+# the suite green. The fixture below is a repo root in miniature, a source
+# half and a render half, and a defect planted in EITHER half must red.
+TWO="$TMP_ROOT/two-trees"
+mkdir -p "$TWO/skills/x" "$TWO/.agents/skills/x"
+GOOD="Follow workflow: .agents/skills/x/y.md\nWorktree: [WORKTREE_PATH]\n$CHECK"
+BROKEN='Follow workflow: .agents/skills/x/y.md\nWorktree: [WORKTREE_PATH]'
+write_half() { printf '<delegation_format>\n%b\n</delegation_format>\n' "$2" > "$TWO/$1/x/y.md"; }
+
+# c.1 — control: both halves carry the check, nothing is flagged. Without
+# this the two probes below could red for any reason at all.
+write_half skills "$GOOD"
+write_half .agents/skills "$GOOD"
+if [ -z "$(scan_trees "$TWO/skills" "$TWO/.agents/skills")" ]; then
+  pass "two-tree scan is clean when both halves carry the check"
+else
+  fail "two-tree scan false-flagged two correct halves"
+fi
+
+# c.2 — the render half loses its check. This is the case a source-rooted
+# scan cannot see: the tree agents load, unguarded, with CI passing.
+write_half .agents/skills "$BROKEN"
+if [ -n "$(scan_trees "$TWO/skills" "$TWO/.agents/skills")" ]; then
+  pass "two-tree scan reds on a check deleted from the render half"
+else
+  fail "two-tree scan MISSED a check deleted from the render half"
+fi
+
+# c.3 — and symmetrically, the source half.
+write_half .agents/skills "$GOOD"
+write_half skills "$BROKEN"
+if [ -n "$(scan_trees "$TWO/skills" "$TWO/.agents/skills")" ]; then
+  pass "two-tree scan reds on a check deleted from the source half"
+else
+  fail "two-tree scan MISSED a check deleted from the source half"
+fi
+
+# c.4 — a root that is not there is reported, not passed over. A renamed or
+# unrendered tree would otherwise contribute zero defects and read as clean.
+if [ -n "$(scan_trees "$TWO/skills" "$TWO/nonexistent")" ]; then
+  pass "two-tree scan reds on a missing scan root"
+else
+  fail "two-tree scan MISSED a missing scan root"
+fi
+
+# c.5 — the real run reached both trees, so parts a and b judged the shipped
+# render and not just the source.
+if [ "$(count_sites "$SOURCE_ROOT")" -gt 0 ] && [ "$(count_sites "$RENDER_ROOT")" -gt 0 ]; then
+  pass "the shipped scan covered skills/ and .agents/skills/ alike"
+else
+  fail "one of the two shipped trees carried no Worktree Check line"
 fi
 
 echo
