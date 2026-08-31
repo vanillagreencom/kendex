@@ -103,3 +103,16 @@ run;local -A cache
 run "${@}"
 set -- "${@}"
 printf %s "${@}"
+[[ "$BASHPID" == "$$" ]]
+pid=$BASHPID
+echo "${BASHPID}"
+now=$EPOCHSECONDS
+printf '%s' "${EPOCHSECONDS}"
+started=$EPOCHREALTIME
+printf '%s' "${EPOCHREALTIME}"
+r=$SRANDOM
+printf '%s' "${SRANDOM}"
+self=$BASH_ARGV0
+printf '%s' "${BASH_ARGV0}"
+echo "$BASH_XTRACEFD"
+echo "${BASH_XTRACEFD}"

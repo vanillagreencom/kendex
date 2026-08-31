@@ -13,12 +13,15 @@
 #
 #   . "$TEST_DIR/lib/merge-queue-reaper.sh"
 #   mq_reap_own "$TMP_ROOT"
-#   trap 'mq_reap || true; rm -rf "$TMP_ROOT"' EXIT
+#   trap mq_reap_teardown EXIT
 #   trap 'exit 143' TERM HUP
 #   trap 'exit 130' INT
 #
 # The signal traps are what make the EXIT trap fire on an abort; without them
-# bash dies on TERM without running it.
+# bash dies on TERM without running it. A tree this could not clear FAILS the
+# suite — the survivors are the very condition these suites exist to catch, so
+# discarding the reap's status would leave the containment failure invisible
+# to every runner above.
 #
 # WHAT IT KILLS is decided by argv, not by a name: a process is this suite's
 # when one of its arguments is a path under the fixture root it was given.
@@ -28,8 +31,8 @@
 # concurrent suite in the same repo, running the same scripts under the same
 # names, is invisible to it.
 
-# The fixture root whose processes this suite owns. Absolute, so an argv
-# comparison is a prefix test and nothing else.
+# The fixture root whose processes this suite owns, checked here for the
+# typo a later reap could only report as an empty tree.
 mq_reap_own() {
   [[ "${1:-}" == /* && -d "$1" ]] || {
     echo "merge-queue-reaper: fixture root must be an existing absolute path (got '${1:-}')" >&2
@@ -38,50 +41,78 @@ mq_reap_own() {
   MQ_REAP_ROOT="$1"
 }
 
-# Collect into MQ_REAP_PIDS. Reads /proc without forking, so the collector
-# never sees its own helper processes; where /proc is absent it asks ps, which
-# also cannot see a fork this function does not make.
+# Collect into MQ_REAP_PIDS every process whose argv names a path under $1.
+#
+# The /proc walk runs on builtins alone, so the collector starts nothing its
+# own scan could see. The ps fallback does fork — for ps, and for the command
+# substitution around it — but the listing is captured BEFORE the scan, and
+# neither those forks' argv nor the scanning shell's carries the fixture root,
+# so nothing this function starts can match. A suite whose own script lived
+# under its fixture root would break that; the root is a mktemp directory the
+# suite fills, never the tree the suite is read from.
+#
+# BASHPID is Bash 4.0+, and bare under `set -u` it is fatal on the 3.2 macOS
+# ships — in an EXIT trap, fatal before the reap and before the cleanup after
+# it. Guarded, it collapses to $$ there, which is correct: $$ alone already
+# excludes the only shell that calls this.
 mq_reap_collect() {
-  local entry pid arg matched
+  local root="$1" entry pid arg matched listing
   MQ_REAP_PIDS=()
   if [[ -r /proc/self/cmdline ]]; then
     for entry in /proc/[0-9]*/cmdline; do
       pid="${entry#/proc/}"; pid="${pid%/cmdline}"
-      [[ "$pid" != "$$" && "$pid" != "$BASHPID" && -r "$entry" ]] || continue
+      [[ "$pid" != "$$" && "$pid" != "${BASHPID:-$$}" && -r "$entry" ]] || continue
       matched=false
       while IFS= read -r -d '' arg; do
-        [[ "$arg" == "$MQ_REAP_ROOT"/* ]] && { matched=true; break; }
+        [[ "$arg" == "$root"/* ]] && { matched=true; break; }
       done < "$entry" || true
       if $matched; then MQ_REAP_PIDS[${#MQ_REAP_PIDS[@]}]="$pid"; fi
     done
     return 0
   fi
+  listing=$(ps -e -ww -o pid=,args= 2>/dev/null) || listing=""
   while read -r pid arg; do
-    [[ "$pid" != "$$" && "$pid" != "$BASHPID" ]] || continue
-    case " $arg " in *" $MQ_REAP_ROOT"/*) MQ_REAP_PIDS[${#MQ_REAP_PIDS[@]}]="$pid" ;; esac
-  done < <(ps -e -ww -o pid=,args= 2>/dev/null || true)
+    [[ -n "$pid" && "$pid" != "$$" && "$pid" != "${BASHPID:-$$}" ]] || continue
+    case " $arg " in *" $root"/*) MQ_REAP_PIDS[${#MQ_REAP_PIDS[@]}]="$pid" ;; esac
+  done <<< "$listing"
 }
 
-# TERM first so a supervisor runs its own cleanup — which is what stops its
-# worker's process group — then KILL whatever ignored it, then say so if
-# anything still stands rather than exiting as though the tree were clear.
+# mq_reap [ROOT] — clear ROOT's fixture processes, defaulting to the root
+# mq_reap_own recorded. TERM first so a supervisor runs its own cleanup, which
+# is what stops its worker's process group; then KILL what ignored it, on a
+# census taken in that same instant rather than one taken before a sleep;
+# then say what still stands rather than returning as though the tree were
+# clear.
 mq_reap() {
-  local pid i
-  [[ -n "${MQ_REAP_ROOT:-}" ]] || return 0
-  mq_reap_collect
+  local root="${1:-${MQ_REAP_ROOT:-}}" pid i
+  [[ "$root" == /* ]] || {
+    echo "merge-queue-reaper: reap needs an absolute fixture root (got '$root')" >&2
+    return 1
+  }
+  mq_reap_collect "$root"
   for pid in ${MQ_REAP_PIDS+"${MQ_REAP_PIDS[@]}"}; do kill -TERM "$pid" 2>/dev/null || true; done
   for ((i=0; i<50; i++)); do
-    mq_reap_collect
+    mq_reap_collect "$root"
     [[ ${#MQ_REAP_PIDS[@]} -eq 0 ]] && return 0
     sleep 0.1
   done
+  mq_reap_collect "$root"
   for pid in ${MQ_REAP_PIDS+"${MQ_REAP_PIDS[@]}"}; do kill -KILL "$pid" 2>/dev/null || true; done
   for ((i=0; i<20; i++)); do
-    mq_reap_collect
+    mq_reap_collect "$root"
     [[ ${#MQ_REAP_PIDS[@]} -eq 0 ]] && return 0
     sleep 0.1
   done
   printf 'merge-queue-reaper: %d fixture process(es) survived teardown under %s: %s\n' \
-    "${#MQ_REAP_PIDS[@]}" "$MQ_REAP_ROOT" "${MQ_REAP_PIDS[*]}" >&2
+    "${#MQ_REAP_PIDS[@]}" "$root" "${MQ_REAP_PIDS[*]}" >&2
   return 1
+}
+
+# The EXIT trap itself: reap, remove the fixture root, and carry the suite's
+# own status out unless the reap failed, which is a failure of its own.
+mq_reap_teardown() {
+  local rc=$?
+  mq_reap || rc=1
+  rm -rf -- "${MQ_REAP_ROOT:?}"
+  exit "$rc"
 }

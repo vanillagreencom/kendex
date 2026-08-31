@@ -11,7 +11,7 @@ mkdir "$TMP"
 # shellcheck source=lib/merge-queue-reaper.sh
 . "$TEST_DIR/lib/merge-queue-reaper.sh"
 mq_reap_own "$TMP_ROOT"
-trap 'mq_reap || true; rm -rf "$TMP_ROOT"' EXIT
+trap mq_reap_teardown EXIT
 trap 'exit 143' TERM HUP
 trap 'exit 130' INT
 PASS=0 FAIL=0

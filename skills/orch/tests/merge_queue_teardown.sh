@@ -26,7 +26,7 @@ TMP="$(mktemp -d)"
 # shellcheck source=lib/merge-queue-reaper.sh
 . "$TEST_DIR/lib/merge-queue-reaper.sh"
 mq_reap_own "$TMP"
-trap 'mq_reap || true; rm -rf "$TMP"' EXIT
+trap mq_reap_teardown EXIT
 trap 'exit 143' TERM HUP
 trap 'exit 130' INT
 
@@ -81,7 +81,11 @@ export PATH="$VICTIM_SANDBOX/bin:$VICTIM_SEALED:$PATH"
 if [[ "$VICTIM_REAP" == 1 ]]; then
   . "$VICTIM_TESTLIB/merge-queue-reaper.sh"
   mq_reap_own "$VICTIM_SANDBOX"
-  trap 'mq_reap || true' EXIT
+  # Not mq_reap_teardown: the parent built this sandbox and reads it after the
+  # abort, so the victim clears the processes and leaves the tree standing. A
+  # tree it could not clear is still this victim's failure.
+  victim_teardown() { local rc=$?; mq_reap || rc=1; exit "$rc"; }
+  trap victim_teardown EXIT
   trap 'exit 143' TERM HUP
 fi
 unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN GH_REPO GITHUB_REPOSITORY
@@ -101,17 +105,23 @@ VICTIM
 # Abort a victim exactly the way the box's load reaper does: a signal, while
 # its supervisor is still waiting on a worker that never returns.
 run_and_abort() {
-  local sandbox="$1" reap="$2" pidout="$3" pid rc=0
+  local sandbox="$1" reap="$2" pidout="$3" pid supervisor
   VICTIM_SANDBOX="$sandbox" VICTIM_REAP="$reap" VICTIM_PIDOUT="$pidout" \
   VICTIM_SEALED="$SEALED" VICTIM_TESTLIB="$TEST_DIR/lib" VICTIM_HEAD="$HEAD" \
     bash "$TMP/victim.sh" >"$pidout.log" 2>&1 &
   pid=$!
   wait_exists "$pidout.ready" || { bad "victim never launched a supervisor (see $pidout.log)"; return 1; }
+  # The supervisor must not have raced the abort. A supervisor that had
+  # already exited on its own would satisfy "zero survivors" just as well, so
+  # the signal only lands while it is provably alive.
+  supervisor=$(cat < "$pidout")
+  ps -p "$supervisor" -o pid= >/dev/null 2>&1 || {
+    bad "supervisor $supervisor exited before the abort; the case that follows proves nothing"
+    kill -TERM "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    return 1
+  }
   kill -TERM "$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || rc=$?
-  # The supervisor must not have raced the abort: it was alive when the
-  # signal landed, or the case that follows proves nothing.
-  return 0
+  wait "$pid" 2>/dev/null || true
 }
 
 echo "=== an aborted suite leaves no supervisor behind ==="
@@ -128,7 +138,7 @@ if [[ "$leaked_count" -gt 0 ]]; then ok "an abort with no teardown leaves the su
 if ps -p "$leaked" -o pid= >/dev/null 2>&1; then ok "the leaked supervisor is the pid the launch registered"; else bad "registered supervisor pid $leaked is not the survivor"; fi
 
 # And the reaper clears exactly that: same processes, run directly.
-MQ_REAP_ROOT="$TMP/leaky" mq_reap || bad "reaper reported survivors under the leaky sandbox"
+mq_reap "$TMP/leaky" || bad "reaper reported survivors under the leaky sandbox"
 eq "$(count_supervisors "$TMP/leaky")" 0 "the reaper clears a tree an abort left behind"
 
 build_sandbox "$TMP/reaped"
@@ -136,22 +146,50 @@ run_and_abort "$TMP/reaped" 1 "$TMP/reaped.pid"
 sleep 0.5
 eq "$(count_supervisors "$TMP/reaped")" 0 "a suite aborted mid-run kills its supervisor tree on exit"
 
+# A tree the teardown could not clear is the KEN-995 condition itself, so it
+# has to reach the runner as a failing suite and not only as a printed line.
+# The reap is stubbed rather than starved: an unkillable process is not
+# something a test can arrange, and the status is what is under test.
+cat > "$TMP/escalate.sh" <<'ESC'
+set -euo pipefail
+. "$ESC_TESTLIB/merge-queue-reaper.sh"
+mq_reap_own "$ESC_ROOT"
+if [[ "$ESC_FAIL" == 1 ]]; then mq_reap() { return 1; }; fi
+trap mq_reap_teardown EXIT
+exit 0
+ESC
+run_escalation() {
+  local fail="$1" root="$TMP/escalation-$1" rc=0
+  mkdir -p "$root"
+  ESC_TESTLIB="$TEST_DIR/lib" ESC_ROOT="$root" ESC_FAIL="$fail" \
+    bash "$TMP/escalate.sh" >/dev/null 2>&1 || rc=$?
+  printf '%s %s\n' "$rc" "$([[ -d "$root" ]] && echo kept || echo removed)"
+}
+eq "$(run_escalation 1)" "1 removed" "a teardown that cannot clear the tree fails the suite and still removes the root"
+eq "$(run_escalation 0)" "0 removed" "a teardown that clears the tree leaves the suite status alone"
+
 echo "=== a supervisor whose home is deleted refuses to continue ==="
 
 # $1 sandbox, $2 issue key: launch one supervisor and print
-# "pid runtime artifact log".
+# "pid runtime artifact log". Same posture as victim.sh — the sandbox's own
+# bin and the sealed directory ahead of the ambient PATH, no inherited GitHub
+# token — so nothing these supervisors reach for resolves to a real binary.
 launch_supervisor() {
   local sb="$1" issue="$2" scripts main prep state
   scripts="$sb/orch/scripts"; main="$sb/main"
-  "$scripts/merge-queue-watch" init --worktree "$main" --issue "$issue" \
-    --branch "$(git -C "$main" branch --show-current)" >/dev/null
-  prep=$("$scripts/merge-queue-watch" prepare --worktree "$main" --issue "$issue" \
-    --repo owner/repo --pr 42 --head "$HEAD" --root "$main" --gate-mode off \
-    --recovery-count 0 --cleanup-worktree false)
-  "$scripts/merge-queue-watch" launch --root "$main" --issue "$issue" \
-    --watch-id "$(jq -r .watch_id <<<"$prep")" --poll 1 --max-wait 600 >/dev/null
-  state=$("$scripts/merge-queue-watch" inspect --root "$main" --issue "$issue")
-  jq -r '[.supervisor_pid, .runtime_dir, .artifact_path, .log_path] | @tsv' <<<"$state"
+  (
+    export PATH="$sb/bin:$SEALED:$PATH"
+    unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN GH_REPO GITHUB_REPOSITORY
+    "$scripts/merge-queue-watch" init --worktree "$main" --issue "$issue" \
+      --branch "$(git -C "$main" branch --show-current)" >/dev/null
+    prep=$("$scripts/merge-queue-watch" prepare --worktree "$main" --issue "$issue" \
+      --repo owner/repo --pr 42 --head "$HEAD" --root "$main" --gate-mode off \
+      --recovery-count 0 --cleanup-worktree false)
+    "$scripts/merge-queue-watch" launch --root "$main" --issue "$issue" \
+      --watch-id "$(jq -r .watch_id <<<"$prep")" --poll 1 --max-wait 600 >/dev/null
+    state=$("$scripts/merge-queue-watch" inspect --root "$main" --issue "$issue")
+    jq -r '[.supervisor_pid, .runtime_dir, .artifact_path, .log_path] | @tsv' <<<"$state"
+  )
 }
 alive_for() { local i; for ((i=0;i<"$2";i++)); do ps -p "$1" -o pid= >/dev/null 2>&1 || return 1; sleep 0.1; done; return 0; }
 
@@ -172,7 +210,7 @@ grep -Fq 'home_present() { true; }' "$mutant" || { bad "home-check mutation did 
 IFS=$'\t' read -r mpid mrt _ _ < <(launch_supervisor "$TMP/homeless-mutant" KEN-995-home-mutant)
 rm -rf "$mrt"
 if alive_for "$mpid" 80; then ok "without the home check the supervisor runs on past the deletion"; else bad "mutant supervisor died for a reason other than the home check"; fi
-MQ_REAP_ROOT="$TMP/homeless-mutant" mq_reap || bad "reaper reported survivors under the mutant sandbox"
+mq_reap "$TMP/homeless-mutant" || bad "reaper reported survivors under the mutant sandbox"
 
 echo "=== a wait whose repository is deleted refuses to keep polling ==="
 QW="$TMP/qw"
@@ -248,15 +286,51 @@ for name in gh ghostty tmux; do
 done
 
 echo "=== every supervisor-launching suite arms both ==="
-for suite in merge_queue_watch merge_queue_rearm_e2e merge_queue_teardown; do
-  body=$(cat "$TEST_DIR/$suite.sh")
-  if [[ "$body" == *"lib/merge-queue-reaper.sh"* && "$body" == *"mq_reap_own"* && "$body" == *'mq_reap || true'* ]]; then
-    ok "$suite arms trap-based supervisor teardown"
-  else bad "$suite launches supervisors without arming teardown"; fi
-  if [[ "$body" == *'tools/tests/lib/sealed-bin'* && "$body" == *'$SEALED:$PATH'* ]]; then
-    ok "$suite seals its PATH behind the stub directory"
-  else bad "$suite does not seal its PATH"; fi
-done
+
+# The roster is derived, never listed: a suite that starts launching real
+# supervisors and forgets to arm is caught because it is FOUND, where a list
+# would simply not hold it and still report all-ok. Launching means the suite
+# stands up its own copy of the script that detaches supervisors; the doc
+# audits that merely quote a launch command line copy no such thing.
+launching_suites() {
+  grep -lE 'cp [^#]*scripts/merge-queue-watch' "$1"/*.sh 2>/dev/null || true
+}
+# $1 suite path -> 0 armed, 1 no reaping EXIT trap, 2 an unsealed PATH. The
+# trap test names mq_reap on a trap line and nothing about how it is spelled,
+# so a suite that raises its exit status on a failed reap still passes.
+suite_arms_containment() {
+  grep -qE '^[[:space:]]*trap .*mq_reap' "$1" &&
+    grep -q 'lib/merge-queue-reaper.sh' "$1" && grep -q 'mq_reap_own' "$1" || return 1
+  grep -q 'tools/tests/lib/sealed-bin' "$1" && grep -qF '$SEALED:$PATH' "$1" || return 2
+}
+audit_arming() {
+  local suite="$1" name rc=0
+  name=$(basename "$suite" .sh)
+  suite_arms_containment "$suite" || rc=$?
+  case "$rc" in
+    0) ok "$name arms trap-based teardown and seals its PATH" ;;
+    1) bad "$name launches supervisors without arming teardown" ;;
+    *) bad "$name launches supervisors without sealing its PATH" ;;
+  esac
+}
+
+roster=$(launching_suites "$TEST_DIR")
+if [[ -n "$roster" ]]; then ok "the launching-suite roster derived a non-empty set"; else bad "no suite derived as launching supervisors; the audit below would pass vacuously"; fi
+while IFS= read -r suite; do
+  [[ -n "$suite" ]] && audit_arming "$suite"
+done <<< "$roster"
+
+# Control: the derivation must FIND a suite nobody added to any list, and the
+# audit must then fail it. A planted pair stands in for the fourth suite.
+planted="$TMP/planted"
+mkdir -p "$planted"
+cp "$TEST_DIR/merge_queue_rearm_e2e.sh" "$planted/armed_suite.sh"
+printf '#!/usr/bin/env bash\ncp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"\n' > "$planted/unarmed_suite.sh"
+planted_roster=$(launching_suites "$planted")
+case "$planted_roster" in *"$planted/unarmed_suite.sh"*) ok "the derivation finds a launching suite no list names" ;;
+  *) bad "the derivation missed a planted launching suite: $planted_roster" ;; esac
+if suite_arms_containment "$planted/unarmed_suite.sh"; then bad "an unarmed launching suite passed the audit"; else ok "an unarmed launching suite fails the audit"; fi
+if suite_arms_containment "$planted/armed_suite.sh"; then ok "an armed launching suite passes the same audit"; else bad "the audit fails a suite that arms both"; fi
 
 printf 'merge-queue-teardown: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

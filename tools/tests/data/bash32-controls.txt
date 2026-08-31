@@ -55,3 +55,11 @@ v="${arr[x[0]]}"
 run "$@"
 run ${@+"$@"}
 total=${#@}
+[[ "${BASHPID:-$$}" == "$$" ]]
+pid="${BASHPID-$$}"
+now="${EPOCHSECONDS:-0}"
+echo "$BASHPIDX"
+echo "$BASH_ARGV"
+echo "${BASH_ARGV[0]}"
+echo "$BASH_SUBSHELL"
+BASH_XTRACEFD=3

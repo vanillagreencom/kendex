@@ -87,6 +87,16 @@ PATTERN="$PATTERN"'|\|&|&>>|;;?&'
 # 3.2.57 aborts on the braced spelling with `@: unbound variable` while the
 # bare one expands to nothing. Write `"$@"`, or guard it as `${@+"$@"}`.
 PATTERN="$PATTERN"'|\$\{@\}'
+# The shell variables Bash 4 and 5 added, referenced without a guard. On
+# 3.2.57 the name simply does not exist, and every script here runs `set -u`,
+# so the reference is not a wrong value but a fatal `unbound variable` — in an
+# EXIT trap, fatal before the cleanup the trap exists for, which is how a
+# teardown can be inert on macOS and silent about it (KEN-995). Write
+# `${BASHPID:-$$}`: a guarded expansion carries its own 3.2 answer and is not
+# named here. The list is names, so adding one is a word plus its probe and
+# its control.
+BASH4_VARS='BASHPID|EPOCHSECONDS|EPOCHREALTIME|SRANDOM|BASH_ARGV0|BASH_XTRACEFD'
+PATTERN="$PATTERN"'|\$('"$BASH4_VARS"')([^A-Za-z0-9_]|$)|\$\{('"$BASH4_VARS"')\}'
 # --- pattern set: end --------------------------------------------------
 #
 # WHAT THIS CANNOT DECIDE, named so the next reader does not file it again.
