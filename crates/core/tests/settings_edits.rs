@@ -632,6 +632,17 @@ fn an_env_declared_as_an_array_of_tables_stops_the_write_and_says_why() {
             .any(|op| op.line().contains("kendex.settings.toml")),
         "nothing may be written into a file with nowhere to write"
     );
+    // Nowhere to write is not a reason to say nothing: the marked key this
+    // file does not answer is still named, and the entries reach the notes
+    // to say it with.
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.contains("REVIEWERS") && note.contains("needs this key decided")),
+        "{:?}",
+        report.notes
+    );
     apply::execute(&f.env, &report.plan).unwrap();
     assert_eq!(fs::read_to_string(settings_path(&f)).unwrap(), file);
 

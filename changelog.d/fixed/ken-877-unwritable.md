@@ -1,0 +1,1 @@
+- A `# required` key you have not set is named even where kendex cannot write `kendex.settings.toml` at all — something else in its place, or `[[env]]` in the file. It was dropped in silence there.

@@ -1,0 +1,1 @@
+- Where packages ship one key with different defaults and your `kendex.settings.toml` already sets it, the note says your line is what your scripts read, not a default none of them reads.

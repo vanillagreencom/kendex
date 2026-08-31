@@ -579,9 +579,9 @@ fn an_incomplete_declaration_is_not_a_default_to_disagree_with() {
     shipped.extend(seeded("[env]\n# Ours.\nBLOB = \"ok\"\n", "good"));
 
     assert!(
-        conflict_notes(&shipped, &all(&shipped)).is_empty(),
+        conflict_notes(&shipped, &BTreeSet::new(), &all(&shipped)).is_empty(),
         "one default is not a disagreement: {:?}",
-        conflict_notes(&shipped, &all(&shipped))
+        conflict_notes(&shipped, &BTreeSet::new(), &all(&shipped))
     );
     // The key is supplied, so nothing is refused either: no note at all.
     assert!(unterminated_notes(&shipped).is_empty());
@@ -599,10 +599,10 @@ fn an_incomplete_declaration_is_not_a_default_to_disagree_with() {
     let mut real = seeded("[env]\n# Theirs.\nBLOB = \"theirs\"\n", "one");
     real.extend(seeded("[env]\n# Ours.\nBLOB = \"ours\"\n", "two"));
     assert_eq!(
-        conflict_notes(&real, &all(&real)).len(),
+        conflict_notes(&real, &BTreeSet::new(), &all(&real)).len(),
         1,
         "{:?}",
-        conflict_notes(&real, &all(&real))
+        conflict_notes(&real, &BTreeSet::new(), &all(&real))
     );
 }
 

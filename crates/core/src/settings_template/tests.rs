@@ -148,6 +148,31 @@ fn the_required_marker_rides_with_the_value_and_nothing_else_may() {
 
     let plain = read("[env]\n# How long to wait.\nWAIT = \"900\"\n");
     assert!(plain.findings.is_empty(), "{:?}", plain.findings);
+
+    // Presentation is not folded on this side. After a value the exact
+    // word is what the seeder honours, so every other presentation of it
+    // is a template refused — and the seeder is asked in the same loop,
+    // because the check exists to keep the two from parting. Fold one and
+    // not the other and `# Required` passes review while the seeder still
+    // ignores it: the key is never written AND never reported unanswered.
+    for said in ["Required", "REQUIRED", "required.", "required:"] {
+        let template = format!("[env]\n# How long to wait.\nWAIT = \"900\" # {said}\n");
+        assert_eq!(
+            located(&template),
+            [(
+                3,
+                format!(
+                    "WAIT carries `#{said}` after its value, and the only marker a template writes there is `# required`"
+                )
+            )],
+            "{said:?}"
+        );
+        let entries = crate::settings_seed::extract_env_entries(&template);
+        assert!(
+            !entries[0].required,
+            "{said:?}: the seeder honours the exact word only: {entries:?}"
+        );
+    }
 }
 
 /// The marker on a line of its own marks nothing, and it is the mistake an

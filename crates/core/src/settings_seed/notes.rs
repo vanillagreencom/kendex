@@ -29,10 +29,21 @@ use super::{SETTINGS_FILE, SeededEnv, Seeding};
 /// that never arrives; where a pass does write, naming a different
 /// declaration than the bytes came from names the wrong package.
 ///
+/// Writing nothing has two consequences, not one, and which it is turns on
+/// whether the file already assigns the key — the ordinary case on every
+/// pass after the consumer has set it. Then their line is what their
+/// scripts read and no shipped default reaches them at all, so telling
+/// them the scripts read whichever default they carry sends them looking
+/// for a default to change instead of the line they already own.
+///
 /// Key, owners and defaults are all catalog text a download supplied, so
 /// the finished line goes through [`crate::names::shown`]: a note is read
 /// on a terminal, and nothing in it is a sequence to act on.
-pub fn conflict_notes(entries: &[SeededEnv], seeding: &Seeding) -> Vec<String> {
+pub fn conflict_notes(
+    entries: &[SeededEnv],
+    assigned: &BTreeSet<String>,
+    seeding: &Seeding,
+) -> Vec<String> {
     // Distinct defaults per key, each with its owners, both in declaration
     // order; the key order is the file's, so the notes read stably.
     //
@@ -70,17 +81,19 @@ pub fn conflict_notes(entries: &[SeededEnv], seeding: &Seeding) -> Vec<String> {
             // Whose value lands, where one does, is the chooser's answer
             // and never the first declaration: naming a skill whose bytes
             // this pass would not write points at a value that never
-            // arrives. Where the pass writes none of them, saying so is
-            // the whole of what there is to say.
+            // arrives. Where the pass writes none of them, what a person
+            // reads instead is their own line if they have one, and only a
+            // package's carried default if they do not.
             let consequence = match super::seeding_for(entries, key, seeding) {
                 Some(seeded) => format!(
-                    "where this file does not already assign it, {}'s is the one written",
+                    "where this file does not already assign it, {}'s is the one written, so set the value yourself if that is not the one you want",
                     seeded.owner
                 ),
-                None => "nothing here writes this key, so what your scripts read is whichever default they carry".to_owned(),
+                None if assigned.contains(key) => "this file already assigns it, so that value is what your scripts read and none of these defaults reaches them".to_owned(),
+                None => "nothing here writes this key, so what your scripts read is whichever default they carry, so set the value yourself if that is not the one you want".to_owned(),
             };
             crate::names::shown(&format!(
-                "{SETTINGS_FILE} {key}: packages ship different defaults — {} — {consequence}, so set the value yourself if that is not the one you want",
+                "{SETTINGS_FILE} {key}: packages ship different defaults — {} — {consequence}",
                 shown.join(", ")
             ))
         })
@@ -102,7 +115,7 @@ pub fn conflict_notes(entries: &[SeededEnv], seeding: &Seeding) -> Vec<String> {
 ///
 /// Key and owners are catalog text a download supplied, so the finished
 /// line goes through [`crate::names::shown`] like every other note.
-pub fn unanswered_notes(
+pub(super) fn unanswered_notes(
     entries: &[SeededEnv],
     assigned: &BTreeSet<String>,
     seeding: &Seeding,
@@ -192,7 +205,7 @@ pub fn seed_notes(
     assigned: &BTreeSet<String>,
     seeding: &Seeding,
 ) -> Vec<String> {
-    let mut notes = conflict_notes(entries, seeding);
+    let mut notes = conflict_notes(entries, assigned, seeding);
     notes.extend(unterminated_notes(entries));
     notes.extend(unanswered_notes(entries, assigned, seeding));
     notes

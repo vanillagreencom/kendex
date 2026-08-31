@@ -210,6 +210,13 @@ fn header(
 /// same silence one keystroke away. The text arrives trimmed of its `#`
 /// and its spacing, so those need no answer of their own.
 ///
+/// This is the one comparison here that does not ask
+/// [`crate::settings_seed::marks_required`], and the folding is why: that
+/// predicate says what the seeder honours, and a line of its own honours
+/// nothing. Widening it to match this would make `# Required` after a
+/// value a marker the seeder writes on, which is the opposite of what
+/// `marker_after_value` is for.
+///
 /// What this deliberately does not reach is a misspelling: `# requried`
 /// and `# requireds` on a line of their own stay silent, because telling
 /// those from an ordinary comment means guessing at what the author meant,
@@ -234,9 +241,15 @@ fn marker_alone(line: u32, said: &str) -> Option<TemplateFinding> {
 /// misspelling loads exactly as a correct marker does, so the loaders have
 /// no opinion on it either and the key quietly stops being one an install
 /// writes.
+///
+/// What counts as the marker is [`crate::settings_seed::marks_required`],
+/// the same predicate the seeder writes a key on, asked negated: this
+/// check is there so a spelling the seeder does not honour cannot ship,
+/// and it can only say that while the two cannot disagree about which
+/// spelling that is.
 fn marker_after_value(line: u32, key: &str, said: &str) -> Option<TemplateFinding> {
     let marker = crate::settings_seed::REQUIRED_MARKER;
-    (said != marker).then(|| TemplateFinding {
+    (!crate::settings_seed::marks_required(said)).then(|| TemplateFinding {
         line,
         problem: format!(
             "{key} carries `#{said}` after its value, and the only marker a template writes there is `# {marker}`"

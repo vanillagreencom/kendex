@@ -38,7 +38,7 @@ mod env;
 mod notes;
 mod write;
 pub use env::{EnvBlocked, env_blocked};
-pub use notes::{conflict_notes, seed_notes, unanswered_notes, unterminated_notes};
+pub use notes::{conflict_notes, seed_notes, unterminated_notes};
 pub use write::merge;
 
 pub const SETTINGS_FILE: &str = "kendex.settings.toml";
@@ -47,6 +47,29 @@ pub const SETTINGS_TEMPLATE: &str = "kendex.settings.toml.example";
 /// consumer must answer: `LINEAR_TEAM = "" # required`. Cut off before the
 /// assignment is written, so the word never reaches a consumer's file.
 pub const REQUIRED_MARKER: &str = "required";
+
+/// Whether a comment written after a value IS that marker.
+///
+/// One predicate rather than a comparison at each site. Two readings ask
+/// it and they are exact complements: [`extract_env_entries`] writes a key
+/// because it is marked, and the template check's `marker_after_value`
+/// refuses a template that spells the marker any other way. The check
+/// exists precisely so a spelling the seeder does not honour cannot ship,
+/// which it can only do while the two agree on what the marker is. Held
+/// apart they drift in silence both ways: a widened check passes
+/// `# Required` the seeder still ignores, so the key is never written and
+/// never reported either; a widened seeder writes a key the check calls a
+/// mistake.
+///
+/// The comparison is exact, and deliberately so — after a value this
+/// spelling is what is HONOURED. A marker on a comment line of its own is
+/// the other question, and `marker_alone` folds presentation there because
+/// nothing is honoured at all: the only thing to decide is whether the
+/// line is the word.
+pub(crate) fn marks_required(said: &str) -> bool {
+    said == REQUIRED_MARKER
+}
+
 /// The settings file seeding targets in this project.
 pub fn settings_file_path(project_root: &std::path::Path) -> std::path::PathBuf {
     project_root.join(SETTINGS_FILE)
@@ -188,7 +211,7 @@ pub fn extract_env_entries(template: &str) -> Vec<EnvEntry> {
                 // a multiline value has none to find.
                 let marker = row.assignment().and_then(|(_, value, at)| {
                     let (offset, said) = crate::settings_toml::trailing_comment(value)?;
-                    (said == REQUIRED_MARKER).then_some(at - row.at + offset)
+                    marks_required(said).then_some(at - row.at + offset)
                 });
                 // The assignment runs to wherever its value closes. Every
                 // line under an open value is one the walk called
@@ -308,7 +331,7 @@ impl Seeding {
 /// The declaration this pass writes for a key, or `None` where it writes
 /// none. [`writable_all`] still supplies the candidates and their order,
 /// so the choice stays the one chooser every consumer asks.
-pub fn seeding_for<'a>(
+pub(crate) fn seeding_for<'a>(
     entries: &'a [SeededEnv],
     key: &str,
     seeding: &Seeding,
