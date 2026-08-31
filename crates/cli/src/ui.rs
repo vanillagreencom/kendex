@@ -35,15 +35,19 @@
 //! interpolated into such a message is escaped where it was composed,
 //! because a break inside one would become a line of its own here.
 //!
-//! A type carries that obligation rather than a sentence here, because a
-//! sentence here was what `commands::verify` skipped.
-//! `CoreError::ManifestInvalid` holds `manifest::Finding`, whose `Display`
-//! escapes all three of its parts, so a constructor cannot hand it text
-//! nobody escaped; the CLI's own [`Lines`] wraps text a verb composed, and
-//! `grep -rn "Lines(" crates/cli/src` names every verb that does. Both
-//! escape with `kendex_core::names::shown`, which [`escaped`] is the CLI's
-//! spelling of. Everything else is a sentence carrying values nobody
-//! escaped, and is said as one line.
+//! A type carries that obligation where it can, because a sentence here is
+//! what `commands::verify` skipped. `CoreError::ManifestInvalid` holds
+//! `manifest::Finding`, whose `Display` escapes all three of its parts, so
+//! a constructor cannot hand it text nobody escaped. `CoreError::TomlParse`
+//! cannot be typed the same way — its breaks are a parser's caret diagram —
+//! so it escapes the path it names in its own `Display` and leaves the rest
+//! to `toml`, which every constructor of it hands the whole message; a
+//! constructor passing anything else is what `grep -rn "TomlParse {"
+//! crates/core/src` would show. The CLI's own [`Lines`] wraps text a verb
+//! composed, and `grep -rn "Lines(" crates/cli/src` names every verb that
+//! does. All three escape with `kendex_core::names::shown`, which
+//! [`escaped`] is the CLI's spelling of. Everything else is a sentence
+//! carrying values nobody escaped, and is said as one line.
 //!
 //! Core escapes elsewhere for its own surfaces (the app reads
 //! `names::shown` output directly, and `drift::report::text` bounds and

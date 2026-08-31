@@ -72,12 +72,21 @@ fn lines(headline: &str, error: &(dyn std::error::Error + 'static)) -> Vec<Strin
 }
 
 /// Whether this error wrote the breaks it holds: core's manifest refusal,
-/// which names one finding per line, and the CLI's own [`Lines`].
+/// which names one finding per line; its TOML refusal, which carries the
+/// parser's caret under the source line it points at; and the CLI's own
+/// [`Lines`].
+///
+/// Both core errors escape the path they name where they compose it, and
+/// neither escapes the rest — a `Finding` escapes its own three parts, and
+/// a `toml::de::Error`'s text is the parser's, written by the one crate
+/// every constructor of that variant hands it. Escaping either whole is
+/// what took the caret out from under its line.
 fn owns_its_breaks(error: &(dyn std::error::Error + 'static)) -> bool {
+    use kendex_core::error::CoreError;
     error.is::<Lines>()
         || matches!(
-            error.downcast_ref::<kendex_core::error::CoreError>(),
-            Some(kendex_core::error::CoreError::ManifestInvalid { .. })
+            error.downcast_ref::<CoreError>(),
+            Some(CoreError::ManifestInvalid { .. } | CoreError::TomlParse { .. })
         )
 }
 

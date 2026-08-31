@@ -16,7 +16,7 @@ pub enum CoreError {
         source: std::io::Error,
     },
 
-    #[error("{path}: invalid TOML: {message}")]
+    #[error("{}: invalid TOML: {message}", crate::names::shown(&path.display().to_string()))]
     TomlParse { path: PathBuf, message: String },
 
     #[error("{path}: invalid JSON: {message}")]

@@ -369,12 +369,12 @@ fn a_value_in_the_closing_refusal_cannot_forge_a_line() {
 ///
 /// The third door, and the one the two above do not reach: `verify` carries
 /// on past a scope it could not read, so its refusal is a headline of its
-/// own with the error inside it. The error still picks the door — a
-/// manifest that will not parse keeps its finding-per-line shape — but the
-/// headline is one line whatever the place is called, and every other
-/// failure is one line whatever the error holds. Composed rather than
-/// routed, a directory named `ap<break>0 checked, 0 OK, 0 failed` printed
-/// that count as a line of kendex's own verdict.
+/// own with the error inside it. The error still picks the door, and the
+/// three below take all of it: a sentence, the parser's diagram, and one
+/// finding per line. The headline is one line under every one of them,
+/// whatever the place is called. Composed rather than routed, a directory
+/// named `ap<break>0 checked, 0 OK, 0 failed` printed that count as a line
+/// of kendex's own verdict.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_scope_that_could_not_be_checked_is_named_on_one_line() {
@@ -385,11 +385,13 @@ fn a_scope_that_could_not_be_checked_is_named_on_one_line() {
     // `said`, then the whole run: the refusal is every line but the
     // closing verdict, so a count pins the door as well as the headline.
     for (manifest, findings, said_lines) in [
-        // Refused whole: `TomlParse` holds a raw path and a multi-line
-        // parser message and escapes neither, so splitting it puts both the
-        // place's break and the parser's diagram on lines of their own.
-        ("schema = 6\nthis is not toml [[[\n", 0, 2),
-        // Refused a finding at a time: the one error that wrote its breaks.
+        // Refused whole: a sentence naming the place and nothing else, so
+        // the break in the place is the only one anywhere near it.
+        ("schema = 99\n", 0, 2),
+        // Refused as the parser's diagram: the source line, the caret under
+        // it, and what the parser wanted, each on a line of its own.
+        ("schema = 6\nthis is not toml [[[\n", 0, 6),
+        // Refused a finding at a time.
         ("schema = 6\nstray-one = 1\nstray-two = 2\n", 2, 4),
     ] {
         let tmp = tempfile::tempdir().unwrap();
@@ -449,6 +451,108 @@ fn a_scope_that_could_not_be_checked_is_named_on_one_line() {
             .count();
         assert_eq!(named_findings, findings, "wrong door: {printed}");
     }
+}
+
+/// The parser's caret stays under the character it points at.
+///
+/// A `toml::de::Error` is a diagram: the source line, then a caret line
+/// under it, then what the parser wanted. The breaks are the diagram, so
+/// this refusal is split before it is escaped like the manifest one —
+/// escaped whole, the caret arrives as a literal `\n` in the middle of a
+/// sentence and points at nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_parsers_caret_lands_under_the_line_it_points_at() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\nthis is not toml [[[\n",
+    )
+    .unwrap();
+
+    let printed = said(&kendex(
+        home,
+        &project,
+        "plain",
+        &["apply", "--plan", "--scope", "project"],
+    ));
+    let printed: Vec<&str> = printed.lines().collect();
+    // The column is the parser's own, read back off the line that names
+    // it, so this compares the diagram against what it says rather than
+    // against a number written down twice.
+    let named = printed
+        .iter()
+        .find_map(|line| line.split("column ").nth(1))
+        .and_then(|rest| rest.trim().parse::<usize>().ok())
+        .unwrap_or_else(|| panic!("no column named: {printed:#?}"));
+    let at = printed
+        .iter()
+        .position(|line| line.contains("this is not toml"))
+        .unwrap_or_else(|| panic!("the source line was not shown: {printed:#?}"));
+    let source = printed[at];
+    let caret = printed
+        .get(at + 1)
+        .unwrap_or_else(|| panic!("no line under the source line: {printed:#?}"));
+    // The gutter is however wide the line number made it, read off the
+    // source line rather than assumed.
+    let gutter = source.find("| ").unwrap() + 2;
+    assert_eq!(
+        caret.find('^'),
+        Some(gutter + named - 1),
+        "the caret is not under column {named}: {printed:#?}"
+    );
+}
+
+/// And the same refusal cannot be made to forge a line.
+///
+/// Everything the parser prints is either its own words or a source line
+/// under a `N | ` gutter, so a manifest can add a line to the diagram but
+/// never a line of its own. The place is a value somebody chose, escaped
+/// where the error composes it, so a directory named for the run's verdict
+/// stays inside the sentence naming it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_manifest_cannot_write_a_line_of_the_diagram_itself() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let project = home.join("we\u{1b}[31mi\nrd");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\n0 checked, 0 OK, 0 failed \u{1b}[31m [[[\n",
+    )
+    .unwrap();
+
+    let printed = said(&kendex(
+        home,
+        &project,
+        "plain",
+        &["apply", "--plan", "--scope", "project"],
+    ));
+    assert!(
+        !printed.contains('\u{1b}'),
+        "a control character reached the terminal: {printed:?}"
+    );
+    assert!(
+        printed.contains("we\\u{1b}[31mi\\nrd/kendex.toml: invalid TOML"),
+        "the place was not named as what it is, on one line: {printed}"
+    );
+    for line in printed.lines() {
+        assert!(
+            !line.trim_start().starts_with("0 checked, 0 OK, 0 failed"),
+            "the manifest wrote a line of its own: {printed}"
+        );
+    }
+    // What it did get is a line of the diagram, under the parser's gutter.
+    assert!(
+        printed
+            .lines()
+            .any(|line| line.contains("| 0 checked, 0 OK, 0 failed \\u{1b}[31m")),
+        "the source line was not shown as what it is: {printed}"
+    );
 }
 
 /// The stdout half of the same seam. A verb's own lines go out through
