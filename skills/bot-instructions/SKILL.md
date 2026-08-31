@@ -1,9 +1,9 @@
 ---
 name: bot-instructions
-description: "Load to change what the GitHub review bots are told, or to add, render, or validate a repo's bot-instruction files."
-summary: "One doctrine source plus a per-repo TOML renders every GitHub review bot's native instruction file: AGENTS.md § Code Review Rules for Codex, Copilot repo-wide and path-scoped instructions, a full-state .coderabbit.yaml, .pr_agent.toml with best_practices.md, and a .macroscope tree. Validators cover the surfaces that fail silently."
+description: "Load to read the bot-instructions specification: the shared review doctrine, the per-repo TOML schema, the per-surface render rules, and the validators. The generator these describe is not built yet."
+summary: "Specification for a package that renders every GitHub review bot's native instruction file from one doctrine source plus a per-repo TOML: AGENTS.md § Code Review Rules for Codex, Copilot repo-wide and path-scoped instructions, a full-state .coderabbit.yaml, .pr_agent.toml with best_practices.md, and a .macroscope tree, with validators for the surfaces that fail silently. The generator is not built yet."
 license: MIT
-user-invocable: true
+user-invocable: false
 metadata:
   author: vanillagreen
   source: kendex
@@ -16,6 +16,13 @@ tags: [review]
 # Bot Instructions
 
 > **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+
+> **This package is a specification, not working software.** There is no
+> `scripts/` directory and none of the verbs below exist yet. Every command,
+> validator and render rule here is the contract the generator will be built
+> against. Until it lands, loading this skill tells you what the files should
+> say; it does not give you anything to run, which is why the package is not
+> user-invocable.
 
 Five review bots read four incompatible instruction files, and no two of them
 agree on where guidance goes. Written by hand, one repo's doctrine drifts from
@@ -93,11 +100,14 @@ The generator offers three verbs.
 - `render` writes every enabled surface from doctrine plus the repo TOML, after
   validating what it built. It builds and validates in a scratch tree first, so
   a validator failure leaves the repo untouched; a failure during the write
-  phase is reported naming every path already replaced. The validators that
-  judge repository state rather than emitted bytes read the repo, before the
-  write, so a render that would orphan a file fails instead of reporting a
-  clean pass and then orphaning it. `schemas/validators.md` § Where these run
-  is the split.
+  phase is reported naming every path already replaced. `AGENTS.md` is the
+  exception to scratch-then-replace, because it is the one output whose
+  non-owned bytes belong to the repo: what the build produces is the region's
+  body, and the write splices it into the file's bytes read at write time.
+  The validators that judge repository state rather than emitted bytes read the
+  repo, before the write, so a render that would orphan a file fails instead of
+  reporting a clean pass and then orphaning it. `schemas/validators.md` § Where
+  these run is the split.
 - `check` re-renders and compares. It reads the working tree by default; under
   `--staged` it reads the index, for every render input as well as the outputs,
   so a pre-commit lane judges one coherent staged state. Any difference is a
@@ -139,8 +149,17 @@ when `codex` goes false. An unmarked file at one of those paths is the repo's
 own, whatever the flags say, and `adopt` is how one becomes managed. Retiring a
 surface or a bot otherwise leaves a file every bot keeps loading.
 
-Every output path is resolved before it is written and refused when any
-component is a symlink or when the resolved path leaves the repo root.
+**Symlinks are refused at open time, not before it.** Resolving a path, checking
+it, then opening it proves the property about the path and not about the file
+the write lands on. So every output is created or replaced without following a
+final symlink, with containment inside the repo root re-checked on the file that
+was actually opened, and every input is read the same way:
+`bot-instructions.toml`, the doctrine source, the resolved install manifest, the
+vendored schema, and the existing `AGENTS.md`. Inputs matter as much as outputs
+here, because the posture this package prescribes points a trusted generator at
+an untrusted tree, and an input's contents reach rendered output and a `check`
+finding. This repo's own convention is the precedent: it opens without following
+and re-checks the opened file rather than the name.
 
 ## A pull request changing its own review
 
@@ -153,8 +172,7 @@ the change in the diff is not a trust boundary.
 No repo file can close that, and this package does not claim to. What a repo
 whose merge gate consumes bot output has to do instead:
 
-- Treat `bot-instructions.toml`, the doctrine source, every generated path, and
-  every `AGENTS.md` in the repo as policy paths. A push touching one
+- Treat every path in the policy set below as a policy path. A push touching one
   invalidates review evidence gathered before it, so the deciding review is the
   one that ran after the policy change was visible.
 - Require a trusted human approval on a pull request that touches a policy
@@ -163,11 +181,33 @@ whose merge gate consumes bot output has to do instead:
 - Run `check` in CI from the default branch's copy of this package, never from
   the pull request's checkout: a workflow that checks out the default branch
   for the generator and validators, then points them at the pull request's
-  tree. It reads the pull request's TOML and doctrine source, because a
-  legitimate doctrine change has to be able to land. What the trusted checkout
-  buys is that a tampered generator cannot report a clean render; it does not
-  and cannot stop a policy change, which is what the approval rule above is
-  for.
+  tree, passing `--doctrine` for the doctrine source in that tree. Inputs come
+  from the tree under judgment, because a legitimate doctrine or TOML change has
+  to be able to land; the trusted checkout supplies the code. What that buys is
+  that a tampered generator cannot report a clean render. It does not and cannot
+  stop a policy change, which is what the approval rule above is for.
+
+**The policy set**, which is every path whose bytes decide what a bot is told or
+whether a render validates. This list is the one statement of it; the checklist
+line points here rather than repeating it, so the two cannot drift.
+
+- `bot-instructions.toml`.
+- The doctrine source.
+- Every generated path.
+- Every `AGENTS.md` in the repo. Codex reads the nearest nested one, so a file
+  the root render never touches still reaches it.
+- `.bot-instructions/coderabbit-schema.json`, the vendored CodeRabbit schema.
+  Loosening it — dropping the `tone_instructions` cap, dropping the root
+  `additionalProperties: false` — turns `coderabbit-schema` green on a file
+  CodeRabbit discards whole, and it stays green on every later pull request.
+- The resolved install manifest when `[exclusions] derive_render` is true. It
+  decides which trees leave review scope, and `exclusion-consistency` derives
+  both sides of its comparison from it.
+- Every file under `.github/instructions/` and `.macroscope/correctness/`,
+  marked or not. Copilot and Macroscope load an unmarked file from the head just
+  as readily as a generated one, and nothing else here judges it.
+- Any repo-wide reviewer file the repo keeps by hand. § Adding a repo says what
+  becomes of one.
 
 Two asymmetries are worth knowing. Macroscope reads the default branch for a
 fork pull request, so a fork cannot weaken its own review the way a branch
@@ -195,8 +235,16 @@ and it is the reason the version is in the marker at all.
 
 ## Doctrine
 
-The generator locates exactly one `## Doctrine` section in this file. Zero
-sections, or more than one, is an error rather than a guess. Blocks are the
+The generator reads doctrine from a **doctrine source**: a SKILL.md carrying
+this section. It defaults to the running copy's own, and `--doctrine <path>`
+names another, which is what lets a trusted checkout render a tree whose
+doctrine has moved. The marker records the version from the doctrine source's
+frontmatter, not the running copy's, and a doctrine source with no readable
+version is an error — otherwise a doctrine change would land under a stamp
+naming doctrine it does not carry.
+
+The generator locates exactly one `## Doctrine` section in the doctrine source.
+Zero sections, or more than one, is an error rather than a guess. Blocks are the
 `###` headings inside that section, each sliced from its heading to the next
 heading at that level or above, still inside the section. A repeated block id
 inside the section is an error, and a heading found outside the section is not
@@ -277,9 +325,15 @@ recommend parsing them.
    file is the source for its `[[surface]]` blocks and exclusions: read it,
    move its repo-specific claims into the TOML, and let doctrine carry the
    rest.
-2. Run `adopt`, which names every existing file it is taking over. Read that
-   list against the TOML: a claim in one of those files that the TOML does not
-   carry is about to be deleted.
+2. Run `adopt`, which names every existing file it is taking over, and every
+   repo-root or `.github/` markdown file those files point at. That second list
+   is where a repo-wide hand-written reviewer file shows up — the kind that
+   restates doctrine and carries an accepted-trade-off list, reached only
+   because `AGENTS.md` and the Copilot file name it. Fold what it holds into
+   `[doctrine.append]` and `[[surface]]`; what will not fold stays hand-written
+   and is a policy path. Read both lists against the TOML: a claim in one of
+   those files that the TOML does not carry is about to be deleted, or to go on
+   steering reviews from outside the package.
 3. Run `render`, then read the diff. Doctrine text appearing for the first time
    is expected; a repo-specific claim disappearing means it never made it into
    the TOML.

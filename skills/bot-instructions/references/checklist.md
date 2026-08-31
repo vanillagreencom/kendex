@@ -63,8 +63,8 @@ doctrine block rather than a subset.
 - [ ] `@coderabbitai configuration` has been run once on a pull request and its
       resolved output matches the committed file. This is the only way to
       confirm the file was accepted rather than discarded.
-- [ ] The vendored schema copy the validator reads is current, and the repo
-      knows where it came from and how to refresh it. A stale copy rejects a
+- [ ] `.bot-instructions/coderabbit-schema.json` is current, and the repo knows
+      where it came from and how to refresh it. A stale copy rejects a
       newly valid file, and a copy carrying a JSON Schema keyword the validator
       does not implement blocks every render until the validator is updated.
 - [ ] Integrations the repo wants (Linear, Jira) are authorized. The file names
@@ -109,6 +109,14 @@ can still change what the file means.
       line inside an HTML comment on the assumption that anything else would be
       read as a pattern. Confirm once that the exclusions took effect.
 
+## If the repo's kendex.toml is a source catalog
+
+- [ ] `[exclusions] derive_render` reads the manifest kendex resolves, which in
+      a repo whose `kendex.toml` declares `is_source_catalog = true` is the
+      sibling `kendex-local.toml`. Confirm the rendered exclusion list actually
+      names the repo's rendered skill trees. An empty list here is the failure
+      this line exists to catch, not a repo with nothing to exclude.
+
 ## Glob dialect
 
 - [ ] An exclusion took effect on Copilot, on Qodo and on Macroscope. The
@@ -135,9 +143,13 @@ can still change what the file means.
 
 ## If the repo's gate reads bot output
 
-- [ ] `bot-instructions.toml`, the doctrine source, and every generated path
-      are policy paths in the repo's gate: a push touching one invalidates
-      review evidence gathered before it.
+- [ ] Every path in SKILL.md § A pull request changing its own review's policy
+      set is a policy path in the repo's gate: a push touching one invalidates
+      review evidence gathered before it. Work from that list rather than from a
+      copy of it — it is longer than the obvious four, and a copy here would
+      drift from it. In this repo it is what feeds
+      `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, which the gate reads from the default
+      branch and so cannot be widened by the pull request under judgment.
 - [ ] A pull request touching a policy path needs a trusted human approval. Bot
       evidence gathered under head-branch policy that same pull request wrote is
       not evidence.

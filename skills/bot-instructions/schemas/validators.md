@@ -69,12 +69,31 @@ the false confidence this file exists to prevent.
 input a person edits. A misspelled key that the reader ignores leaves the
 default in force, and the render is plausible, complete, and wrong.
 
-**Rejects.** Any key or table the schema does not define, any value of the
-wrong type, an empty glob list, a glob outside the dialect in `repo-toml.md`, a
-`reason` that is multi-line or contains `-->`, a surface name that is empty,
+**Rejects, the shape set.** Any key or table the schema does not define, any
+value of the wrong type, an empty glob list, a surface name that is empty,
 malformed, duplicated or reserved, an unknown doctrine block id in
-`[doctrine.append]` or `[doctrine.replace]`, and a `schema` value other
-than `1`.
+`[doctrine.append]` or `[doctrine.replace]`, and a `schema` value other than
+`1`.
+
+**Rejects, the content set.** Closure over keys and types leaves the contents of
+values that land in a control position, and those are where an injection goes.
+Each of these is its own clause with its own control:
+
+- A glob holding any byte outside the dialect's character class, which covers a
+  newline, a tab, another control character, leading or trailing whitespace, and
+  `#`, as well as the metacharacters the class leaves out.
+- A `[repo] name` that is multi-line or outside `[A-Za-z0-9._-]`.
+- A line beginning `#`, `---`, or the marker text in `[repo] summary`, in a
+  `[[surface]] instructions`, or in a `[doctrine.append]` or
+  `[doctrine.replace]` value.
+- A `[[exclusions.path]] reason` that is multi-line or contains `-->`.
+- A `[cadence] qodo_commands` entry outside the documented verb set, or carrying
+  whitespace or `--`.
+
+Every content refusal `repo-toml.md` states is in that list. A refusal stated
+there and missing here would ship with nothing proving it fires, which is what
+the per-clause control rule exists to make checkable by reading one paragraph
+against the other.
 
 **Rejects, the cross-flag set.** `qodo_best_practices` or `qodo_review_md` true
 while `qodo` is false. `copilot` or `coderabbit` true while `codex` is false,
@@ -98,8 +117,9 @@ config for as long as nobody re-reads the file. One over-long
 `additionalProperties: false`, so a single misspelled top-level key does it too.
 
 **Rejects.** Any deviation of the rendered file from CodeRabbit's published
-schema, validated against a copy vendored in the consuming repo rather than
-fetched at check time: an unknown top-level key, a wrong type, an enum miss
+schema, validated against the copy vendored at
+`.bot-instructions/coderabbit-schema.json` rather than fetched at check
+time: an unknown top-level key, a wrong type, an enum miss
 (`reviews.profile` is `quiet`, `chill` or `assertive`), and every documented
 length cap, of which `tone_instructions` at 250 and
 `reviews.path_instructions[].instructions` at 20,000 are the two this package
@@ -112,7 +132,9 @@ hand-written validator that ignores an unknown constraint under-validates while
 reporting success, which is the same class of failure one level up. Naming the
 keyword and failing is the only safe answer, and it means a schema refresh can
 block renders until the validator catches up: the vendored copy's provenance
-and its refresh step are a checklist line for that reason.
+and its refresh step are a checklist line for that reason. That copy is also a
+policy path, since a loosened schema turns this validator green on a file
+CodeRabbit discards whole and keeps it green afterwards.
 
 ## `coderabbit-filters`
 
@@ -134,12 +156,20 @@ the new tree is reviewed as if it were this repo's code. Findings arrive on
 files nobody here can fix, and the only signal is reviewer noise.
 
 **Rejects.** A mismatch between the derived part of the rendered exclusion set
-and the set derived fresh from the repo's own `kendex.toml`: every rendered
-`.agents/skills/<name>`, no tree declared `in-place`, plus the per-harness
-render directories the install declares. The comparison is over the derived
-part alone, because the rendered set also holds every `[[exclusions.path]]`
-entry and whole-set equality would fail on the first hand-written exclusion.
-Runs only when `[exclusions] derive_render` is true.
+and the set derived fresh from the repo's resolved install manifest: every
+rendered `.agents/skills/<name>`, no tree declared `in-place`, plus the
+per-harness render directories the install declares. The comparison is over the
+derived part alone, because the rendered set also holds every
+`[[exclusions.path]]` entry and whole-set equality would fail on the first
+hand-written exclusion. Runs only when `[exclusions] derive_render` is true.
+
+**Rejects, also.** A resolved manifest that declares no install. Reading the
+wrong file and finding nothing to exclude is indistinguishable from a repo with
+nothing to exclude, and this comparison cannot tell them apart on its own: both
+sides come back empty and agree. So emptiness is the finding. One of this
+validator's controls is a source-catalog repo, where `kendex.toml` carries the
+published catalog and `kendex-local.toml` carries the install — the shape that
+would otherwise derive nothing and pass.
 
 **Rejects, also.** An exclusion entry present in one rendered surface and
 absent from another, where both surfaces have an exclusion mechanism.
@@ -322,10 +352,10 @@ a path the TOML does not produce and that this package never wrote is neither.
 
 **Which tree.** `check` reads the working tree by default. Under `--staged` it
 reads the index — and the index for **every render input**, not only the
-outputs: `bot-instructions.toml`, the doctrine source, and `kendex.toml` when
-`derive_render` is on. A file absent from the index is that absence, not its
-worktree copy. Outputs-only would be wrong in both directions in the pre-commit
-lane this mode exists for: a commit staging a TOML change with its re-rendered
+outputs: `bot-instructions.toml`, the doctrine source, the vendored schema,
+and the resolved install manifest when `derive_render` is on. A file absent
+from the index is that absence, not its worktree copy. Outputs-only would be
+wrong in both directions in the pre-commit lane this mode exists for: a commit staging a TOML change with its re-rendered
 outputs would red, because the outputs came from the index while the render was
 built from a worktree TOML that may have moved on; and an unstaged doctrine edit
 would silently decide what the staged outputs were compared against, passing or
@@ -352,7 +382,7 @@ place they cannot fail. `orphan` looks for what the current TOML does not
 produce, and the scratch tree holds only what it does produce. `drift` compares
 a path's bytes against a fresh render, which in the scratch tree are the same
 bytes. `exclusion-consistency`'s derived-set clause compares a set against a
-fresh derivation from the same `kendex.toml` in the same run. `agents-section`'s
+fresh derivation from the same manifest in the same run. `agents-section`'s
 nested-`AGENTS.md` clause searches a repo, which the scratch tree is not. Run
 against a scratch tree, all four pass by construction and report a clean run.
 
@@ -375,7 +405,7 @@ question to answer at render time, and the run says so rather than counting them
 as passed. A render exists to change the bytes `drift` compares, so at render
 time `drift` would red on its own purpose. And `exclusion-consistency`'s derived
 clause compares a derivation against itself. Both have force in `check`, against
-a committed tree whose `kendex.toml` and whose files have moved on since someone
+a committed tree whose manifest and whose files have moved on since someone
 last rendered — which is the question they were written for.
 
 A repo wires `check` into whatever runs its other repo guards. This package

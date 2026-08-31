@@ -26,14 +26,16 @@ at the top of `.coderabbit.yaml`. Ownership is decided by the marker being
 present, never by its offset, so `render`, `adopt` and `orphan` all ask the same
 question of every output.
 
-The marker is a comment in that file's syntax naming this package, its version,
-and its input files:
-`bot-instructions.toml`, the doctrine source, and `kendex.toml` when
-`[exclusions] derive_render` is true. The comment ends with the sentence `Edit
+The marker is a comment in that file's syntax naming this package, the doctrine
+source's version, and its input files: `bot-instructions.toml`, the doctrine
+source, and the resolved install manifest when `[exclusions] derive_render` is
+true, by the path actually read. The comment ends with the sentence `Edit
 bot-instructions.toml or the doctrine source, then re-render.` A markdown
 output uses an HTML comment; YAML and TOML use `#`.
 
-The version in the marker is the one stamp a render carries. It is what makes a
+The version is the doctrine source's, not the running copy's, since
+`--doctrine` can point them at different copies and the stamp has to name the
+doctrine the file carries. It is the one stamp a render carries. It is what makes a
 repo running an older installed copy of this package visible: a version bump
 re-renders every file, and the diff says which doctrine the repo moved to. The
 marker is also how `render`, `adopt` and the `orphan` validator tell a
@@ -45,6 +47,14 @@ A failure part way through leaves the manifest, so re-running `render` finishes
 the set, and `check` reds on every path still carrying the old bytes until it
 does. What the design does not claim is an atomic multi-file replacement: no
 filesystem offers one, and a mixed tree that says so beats one that does not.
+
+`AGENTS.md` is outside that scheme, because it is the one output whose
+non-owned bytes belong to the repo. Carrying a build-phase copy of the whole
+file through validation and writing it back would discard anything written to
+it in that window — an editor, a formatter, another lane of the repo's commit
+chain — silently, in the one file this package says it does not own. So the
+build produces the region's body alone, and § `AGENTS.md` says what the write
+does with it.
 
 **No timestamps and no input hashes** in a rendered file. A render is
 reproducible from its inputs, and either would turn every unrelated re-render
@@ -145,6 +155,14 @@ gets an error naming the byte rather than a render its own guard rejects.
 never adds the heading. Guidance for the repo: add the heading by hand, then
 render.
 
+**The splice happens at write time.** The build phase produces the region's
+body; the write re-reads `AGENTS.md`, locates the owned region in those bytes,
+and replaces it there. Nothing outside the region is ever carried through the
+build, so an edit landing between the build and the write survives instead of
+being overwritten by a copy taken before it. A file whose region cannot be
+located at write time — the heading gone, or duplicated, since the build read it
+— fails naming the path rather than guessing where the region went.
+
 **Body.** The marker as an HTML comment, then a line naming the audience and
 pointing working agents elsewhere, then the blocks the `AGENTS.md` column of
 the routing table carries, as bullets in its order. That this file is also read
@@ -243,6 +261,14 @@ their schema default.
 **Head.** The `yaml-language-server` schema line, then the marker comment, then
 a sentence stating that this file is not a delta and that a global override, if
 one exists, outranks it.
+
+**The vendored schema** `coderabbit-schema` validates against lives at
+`.bot-instructions/coderabbit-schema.json`. The path is fixed by this spec
+rather than configurable, because a configurable one is repointable by the same
+pull request whose file the schema is meant to judge, and it has to be
+enumerable to sit in the policy set at all. A change to it is a policy change:
+loosened, the validator goes green on a file CodeRabbit discards whole, and
+stays green afterwards.
 
 **Keys.** Every top-level property the vendored schema defines, in this order:
 `language`, `tone_instructions`, `early_access`, `enable_free_tier`,
