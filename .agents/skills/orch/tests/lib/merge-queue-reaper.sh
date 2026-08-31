@@ -55,10 +55,14 @@ mq_reap_own() {
 # ships — in an EXIT trap, fatal before the reap and before the cleanup after
 # it. Guarded, it collapses to $$ there, which is correct: $$ alone already
 # excludes the only shell that calls this.
+#
+# MQ_REAP_FORCE_PS=1 takes the fallback on a host that has /proc, so the
+# branch every macOS run depends on is exercised where the suites actually
+# run — merge-queue-watch reaches for its own identity fallback the same way.
 mq_reap_collect() {
   local root="$1" entry pid arg matched listing
   MQ_REAP_PIDS=()
-  if [[ -r /proc/self/cmdline ]]; then
+  if [[ -r /proc/self/cmdline && "${MQ_REAP_FORCE_PS:-0}" != 1 ]]; then
     for entry in /proc/[0-9]*/cmdline; do
       pid="${entry#/proc/}"; pid="${pid%/cmdline}"
       [[ "$pid" != "$$" && "$pid" != "${BASHPID:-$$}" && -r "$entry" ]] || continue

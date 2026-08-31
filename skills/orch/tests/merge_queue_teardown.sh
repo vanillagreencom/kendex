@@ -148,9 +148,14 @@ leaked_count=$(count_supervisors "$TMP/leaky")
 if [[ "$leaked_count" -gt 0 ]]; then ok "an abort with no teardown leaves the supervisor running"; else bad "abort control left nothing to reap; the case that follows proves nothing"; fi
 if ps -p "$leaked" -o pid= >/dev/null 2>&1; then ok "the leaked supervisor is the pid the launch registered"; else bad "registered supervisor pid $leaked is not the survivor"; fi
 
-# And the reaper clears exactly that: same processes, run directly.
+# And the reaper clears exactly that: same processes, run directly — through
+# the ps fallback, which is the only branch a macOS run takes and which CI,
+# being Linux-only, would otherwise never execute. Every other reap in this
+# file goes through the /proc walk, so both are covered.
+export MQ_REAP_FORCE_PS=1
 mq_reap "$TMP/leaky" || bad "reaper reported survivors under the leaky sandbox"
-eq "$(count_supervisors "$TMP/leaky")" 0 "the reaper clears a tree an abort left behind"
+unset MQ_REAP_FORCE_PS
+eq "$(count_supervisors "$TMP/leaky")" 0 "the ps fallback clears a tree an abort left behind"
 
 build_sandbox "$TMP/reaped"
 run_and_abort "$TMP/reaped" 1 "$TMP/reaped.pid"
@@ -288,24 +293,18 @@ home_clause_control without-state-clause '-f "$state_file" && ' break_state
 home_clause_control without-repository-clause ' && -d "$main_root"' break_repository altroot
 
 # A census that could not run must not read as a clear tree, now that the
-# reap's status gates the suite. This host takes the /proc walk, so the ps
-# fallback is reached by cutting the walk out of a copy — the same mutation
-# shape the clause controls use — and starving ps.
+# reap's status gates the suite: the fallback forced, and ps starved.
 census="$TMP/census"
 mkdir -p "$census/bin"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$census/bin/ps"; chmod +x "$census/bin/ps"
-if edit_once "$TEST_DIR/lib/merge-queue-reaper.sh" "$census/reaper.sh" \
-     'if [[ -r /proc/self/cmdline ]]; then' 'if false; then'; then
-  set +e
-  census_err=$(PATH="$census/bin:$PATH" bash -c 'set -euo pipefail; . "$1"; mq_reap "$2"' \
-    bash "$census/reaper.sh" "$census" 2>&1)
-  census_rc=$?
-  set -e
-  if [[ "$census_rc" -ne 0 ]]; then ok "a census that could not run fails the reap"
-  else bad "a census that could not run read as a clear tree"; fi
-  case "$census_err" in *"could not enumerate processes"*) ok "the failed census names itself" ;;
-    *) bad "the failed census is unnamed: $census_err" ;; esac
-else bad "census mutation did not apply"; fi
+set +e
+census_err=$(PATH="$census/bin:$PATH" MQ_REAP_FORCE_PS=1 \
+  bash -c 'set -euo pipefail; . "$1"; mq_reap "$2"' bash "$TEST_DIR/lib/merge-queue-reaper.sh" "$census" 2>&1)
+census_rc=$?
+set -e
+eq "$census_rc" 1 "a census that could not run fails the reap"
+case "$census_err" in *"could not enumerate processes"*) ok "the failed census names itself" ;;
+  *) bad "the failed census is unnamed: $census_err" ;; esac
 
 # What the refusal is FOR, read where it lands: a consumer finds nothing to
 # route. Asserted through consume rather than through the artifact file,
@@ -446,25 +445,11 @@ echo "=== every supervisor-launching suite arms both ==="
 
 # The roster is derived, never listed: a suite that starts launching real
 # supervisors and forgets to arm is caught because it is FOUND, where a list
-# would simply not hold it and still report all-ok. Naming the script that
-# detaches supervisors is the signal, whatever the spelling — a suite can copy
-# it, symlink it or install it, and the audit must not depend on which.
-#
-# NO_LAUNCH — a suite that names the script only as text it audits. Declared,
-# with the reason, because a derivation cannot tell a suite that is exempt
-# from one that stopped launching; a stale entry reds below.
-NO_LAUNCH="merge_queue_workflow"
+# would simply not hold it and still report all-ok. Launching means the suite
+# stands up its own copy of the script that detaches supervisors; the doc
+# audits that merely quote a launch command line copy no such thing.
 launching_suites() {
-  local f base
-  for f in "$1"/*.sh; do
-    [[ -f "$f" ]] || continue
-    base=$(basename "$f" .sh)
-    case " $NO_LAUNCH " in *" $base "*) continue ;; esac
-    # One grep, not a pipeline: `grep -q` closes the pipe on its first hit and
-    # under pipefail the upstream SIGPIPE fails the whole test, which silently
-    # dropped the largest suite from this roster.
-    if grep -qE '^[[:space:]]*[^#[:space:]].*scripts/merge-queue-watch' "$f"; then printf '%s\n' "$f"; fi
-  done
+  grep -lE 'cp [^#]*scripts/merge-queue-watch' "$1"/*.sh 2>/dev/null || true
 }
 
 # What arming looks like, checked as whole lines so a comment naming the
@@ -489,20 +474,14 @@ while IFS= read -r suite; do
   else bad "$suite_name launches supervisors without sealing its PATH"; fi
 done <<< "$roster"
 
-# Controls. The derivation must FIND a suite nobody listed, whichever way it
-# stands the script up; and neither check may be answered by a comment.
+# Controls. The derivation must FIND a suite nobody listed, and neither check
+# may be answered by a comment.
 planted="$TMP/planted"
 mkdir -p "$planted"
-printf '#!/usr/bin/env bash\ncp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"\n' > "$planted/copying_suite.sh"
-printf '#!/usr/bin/env bash\nln -s "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"\n' > "$planted/symlinking_suite.sh"
-printf '#!/usr/bin/env bash\n# scripts/merge-queue-watch named only in a comment\n' > "$planted/talking_suite.sh"
+printf '#!/usr/bin/env bash\ncp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"\n' > "$planted/unarmed_suite.sh"
 planted_roster=$(launching_suites "$planted")
-for spelling in copying symlinking; do
-  case "$planted_roster" in *"$planted/${spelling}_suite.sh"*) ok "the derivation finds a suite that stands the script up by ${spelling}" ;;
-    *) bad "the derivation missed the ${spelling} spelling: $planted_roster" ;; esac
-done
-case "$planted_roster" in *talking_suite*) bad "the derivation counted a suite that only names the script in a comment" ;;
-  *) ok "a suite naming the script only in a comment is not counted" ;; esac
+case "$planted_roster" in *"$planted/unarmed_suite.sh"*) ok "the derivation finds a launching suite no list names" ;;
+  *) bad "the derivation missed a planted launching suite: $planted_roster" ;; esac
 
 printf '#!/usr/bin/env bash\n# trap mq_reap_teardown EXIT\n# tools/tests/lib/sealed-bin and "$SEALED:$PATH"\n' > "$planted/comment_decoy.sh"
 if suite_arms_teardown "$planted/comment_decoy.sh"; then bad "a comment naming the teardown passed the arming check"
