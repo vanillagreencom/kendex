@@ -237,7 +237,6 @@ set -e
 if [[ "$early_ack_rc" -ne 0 ]]; then ok "pass acknowledgment refuses before cleanup"; else bad "pass acknowledgment completed before cleanup"; fi
 printf 'first postmerge stopped\n' > "$TMP/first.err"
 "$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result fail --diagnostic-file "$TMP/first.err" >/dev/null
-
 prep=$(prepare ejected review 0); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "ejected verdict missing"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
@@ -251,12 +250,10 @@ prepare ejected off 0 >/dev/null 2>"$TMP/reset.err"
 reset_rc=$?
 set -e
 if [[ "$reset_rc" -ne 0 ]]; then ok "next generation cannot reset gate mode or recovery count"; else bad "recovery context reset was accepted"; fi
-
 prep=$(prepare ejected review 1); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "cap verdict missing"
 result=$(CI_FIX_MAX_CYCLES=1 "$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .status <<<"$result")" failed "recovery cap terminalizes state"
-
 verdict_case disarmed recovery
 verdict_case conflicting restack
 verdict_case dequeued triage
@@ -264,7 +261,6 @@ verdict_case dequeue_failed manual_dequeue
 verdict_case stalled recovery
 verdict_case progressing rewatch
 verdict_case not_queued rearm
-
 prep=$(prepare dequeue_failed); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "dequeue-race verdict missing"
 printf 'merged\n' > "$MODE"
@@ -274,7 +270,6 @@ eq "$(jq -r .verdict_cause <<<"$result")" merged_race "merged dequeue race recor
 "$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
 printf 'race control complete\n' > "$TMP/race.err"
 "$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result fail --diagnostic-file "$TMP/race.err" >/dev/null
-
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "head-mismatch verdict missing"
 printf '%s\n' "$HEAD_B" > "$HEAD_FILE"
@@ -283,23 +278,19 @@ eq "$(jq -r .status <<<"$result")" failed "live head mismatch blocks merged post
 eq "$(jq -r .verdict_cause <<<"$result")" head_mismatch "head mismatch names the routing cause"
 eq "$(jq -r .diagnostic.cause <<<"$result")" merged "head mismatch preserves the producer verdict"
 printf '%s\n' "$HEAD_A" > "$HEAD_FILE"
-
 prep=$(prepare malformed); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "malformed-worker error artifact missing"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .status <<<"$result")" failed "unknown worker output terminalizes failed"
 eq "$(jq -r .worker_exit_code <<<"$result")" 7 "unknown output preserves worker exit"
 if [[ "$(jq -r .diagnostic_path <<<"$result")" == /* ]]; then ok "unknown output preserves absolute producer diagnostics"; else bad "unknown output lost diagnostics"; fi
-
 prep=$(prepare closed); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; touch "$RELEASE"; wait_file "$artifact" || bad "closed verdict missing"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .status <<<"$result")" abandoned "closed verdict terminalizes abandoned"
-
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .diagnostic.cause <<<"$result")" watch_lost "missing stale artifact fails closed"
-
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause arm_failed >/dev/null
 set +e
@@ -307,7 +298,6 @@ set +e
 revive_rc=$?
 set -e
 if [[ "$revive_rc" -ne 0 ]]; then ok "failed prepared state cannot be revived by launch"; else bad "launch revived failed state"; fi
-
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 touch "$WATCH_GH_PAUSE.enabled"
 "$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >"$TMP/direct.out" 2>"$TMP/direct.err" & direct_pid=$!
@@ -317,7 +307,6 @@ touch "$WATCH_GH_PAUSE.release"
 set +e; wait "$direct_pid"; direct_rc=$?; set -e
 if [[ "$direct_rc" -ne 0 ]]; then ok "fail wins against an in-flight direct merge claim"; else bad "direct merge revived failed state"; fi
 rm -f "$WATCH_GH_PAUSE.enabled" "$WATCH_GH_PAUSE.entered" "$WATCH_GH_PAUSE.release"
-
 if [[ -n "$REAL_SETSID" ]]; then
   prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
   touch "$WATCH_SETUP_GATE.enabled"
@@ -329,7 +318,6 @@ if [[ -n "$REAL_SETSID" ]]; then
   eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" watching "launch owns setup through watching transition"
   "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
   rm -f "$WATCH_SETUP_GATE.enabled" "$WATCH_SETUP_GATE.entered" "$WATCH_SETUP_GATE.release"
-
   prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
   touch "$WATCH_SETSID_FAIL"
   set +e; "$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null 2>&1; setsid_rc=$?; set -e
@@ -342,7 +330,14 @@ if [[ -n "$REAL_SETSID" ]]; then
 else
   ok "launch setup race control skipped without setsid"
 fi
-
+prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep"); state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path); watch_dir=$(jq -r .watch_dir "$state_path"); legacy_runtime="$watch_dir/legacy-runtime"
+mkdir "$legacy_runtime"; printf '%s\n' "$watch" > "$legacy_runtime/token"
+jq --arg artifact "$watch_dir/verdict.json" --arg runtime "$legacy_runtime" '.artifact_path=$artifact|.runtime_dir=$runtime|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token,.legacy_generation)' "$state_path" > "$TMP/legacy-prepared.json"; chmod 600 "$TMP/legacy-prepared.json"; mv "$TMP/legacy-prepared.json" "$state_path"
+launch_bounded "$watch"
+legacy_state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .status <<<"$legacy_state")" watching "legacy prepared lifecycle launches after upgrade"
+[[ "$(jq -r .launch_attempt_id <<<"$legacy_state")" == "$watch-attempt-1" && "$(jq -r .runtime_dir <<<"$legacy_state")" != "$legacy_runtime" && "$(jq -r .watch_dir <<<"$legacy_state")" == "$watch_dir" ]] && ok "legacy prepared migration preserves watch cleanup identity" || bad "legacy prepared migration lost generation or cleanup identity"
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
 jq --arg attempt "$watch-attempt-1" --arg token "$watch-attempt-1-test" '.launch_attempt=1|.launch_attempt_id=$attempt|.supervisor_token=$token|.status="launching"|.setup_deadline=0|.deadline=((now|floor)+600)' "$state_path" > "$TMP/orphan.json"
@@ -432,7 +427,12 @@ rm -f -- "$WATCH_SUPERVISOR_PID_GATE.enabled" "$WATCH_SUPERVISOR_PID_GATE.entere
 if [[ "$setup_rc" -ne 0 ]]; then ok "supervisor failure before ready exits nonzero"; else bad "supervisor failure before ready exited zero"; fi
 eq "$(jq -r .verdict "$artifact")" unknown "dead supervisor publishes its setup failure"
 old_inode=$(inode "$artifact")
-retry_state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829); reserved_runtime="$(jq -r .runtime_root <<<"$retry_state")/$watch-attempt-2"; mkdir "$reserved_runtime"; touch "$reserved_runtime/interrupted-marker"
+retry_state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829); runtime_root=$(jq -r .runtime_root <<<"$retry_state"); outside_runtime="$(dirname "$(dirname "$runtime_root")")/outside-attempt-2"; mismatch_runtime="$runtime_root/other-watch-attempt-2"
+mkdir "$outside_runtime" "$mismatch_runtime"; touch "$outside_runtime/sentinel" "$mismatch_runtime/sentinel"
+set +e; "$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id ../../outside --poll 1 --max-wait 10 >/dev/null 2>&1; traversal_rc=$?; "$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id other-watch --poll 1 --max-wait 10 >/dev/null 2>&1; mismatch_rc=$?; set -e
+[[ "$traversal_rc" -ne 0 && -e "$outside_runtime/sentinel" ]] && ok "traversal watch id cannot change an external attempt path" || bad "traversal watch id changed an external attempt path"
+[[ "$mismatch_rc" -ne 0 && -e "$mismatch_runtime/sentinel" ]] && ok "mismatched watch id cannot change an attempt path" || bad "mismatched watch id changed an attempt path"
+reserved_runtime="$runtime_root/$watch-attempt-2"; mkdir "$reserved_runtime"; touch "$reserved_runtime/interrupted-marker"
 launch_bounded "$watch"
 [[ ! -e "$reserved_runtime/interrupted-marker" ]] && ok "retry reclaims only unregistered attempt runtime" || bad "interrupted reservation wedged retry"
 retry_artifact=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .artifact_path)

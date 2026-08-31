@@ -62,20 +62,29 @@ migrate_legacy_state() {
   local snapshot status watch artifact runtime watch_dir runtime_root legacy_id
   snapshot=$(state_snapshot) || die "cannot inspect durable watch generation"
   status=$(jq -r .status <<<"$snapshot")
-  [[ "$status" == launching || "$status" == watching || "$status" == launch_failed || "$status" == failed ]] || return 0
-  [[ "$(jq -r '.launch_attempt_id // empty' <<<"$snapshot")" == "" ||
-     "$(jq -r '.supervisor_token // empty' <<<"$snapshot")" == "" ||
-     "$(jq -r '.runtime_root // empty' <<<"$snapshot")" == "" ]] || return 0
+  [[ "$status" == prepared || "$status" == launching || "$status" == watching || "$status" == launch_failed || "$status" == failed ]] || return 0
+  if [[ "$status" == prepared ]]; then
+    [[ "$(jq -r '.watch_dir // empty' <<<"$snapshot")" == "" ||
+       "$(jq -r '.runtime_root // empty' <<<"$snapshot")" == "" ||
+       "$(jq -r '.launch_attempt // empty' <<<"$snapshot")" == "" ]] || return 0
+  else
+    [[ "$(jq -r '.launch_attempt_id // empty' <<<"$snapshot")" == "" ||
+       "$(jq -r '.supervisor_token // empty' <<<"$snapshot")" == "" ||
+       "$(jq -r '.runtime_root // empty' <<<"$snapshot")" == "" ]] || return 0
+  fi
   watch=$(jq -r .watch_id <<<"$snapshot"); artifact=$(jq -r .artifact_path <<<"$snapshot"); runtime=$(jq -r .runtime_dir <<<"$snapshot")
   watch_dir="${artifact%/*}"; runtime_root="$watch_dir/runtime-attempts"; legacy_id="$watch-legacy"
   [[ -n "$watch" && "$watch_dir" != "$artifact" && -d "$watch_dir" && ! -L "$watch_dir" && "$runtime" == "$watch_dir/"* ]] \
     || die "legacy durable watch paths are invalid"
   mkdir -p -- "$runtime_root" || die "cannot create migrated runtime root: $runtime_root"
   chmod 700 "$runtime_root" || die "cannot secure migrated runtime root: $runtime_root"
-  atomic_update 'if (.status|IN("launching","watching","launch_failed","failed")) and
-      ((.launch_attempt_id // "")=="" or (.supervisor_token // "")=="" or (.runtime_root // "")=="") then
-      .watch_dir=$watch_dir|.runtime_root=$runtime_root|.launch_attempt=1|.launch_attempt_id=$legacy|
-      .supervisor_token=$legacy|.legacy_generation=true|.updated_at=(now|floor) else . end' \
+  atomic_update 'if (.status=="prepared" and
+      ((.watch_dir // "")=="" or (.runtime_root // "")=="" or (.launch_attempt // null)==null)) or
+      ((.status|IN("launching","watching","launch_failed","failed")) and
+       ((.launch_attempt_id // "")=="" or (.supervisor_token // "")=="" or (.runtime_root // "")=="")) then
+      .watch_dir=$watch_dir|.runtime_root=$runtime_root|.legacy_generation=true|.updated_at=(now|floor)|
+      if .status=="prepared" then .launch_attempt=0|.launch_attempt_id=null|.supervisor_token=null
+      else .launch_attempt=1|.launch_attempt_id=$legacy|.supervisor_token=$legacy end else . end' \
     --arg watch_dir "$watch_dir" --arg runtime_root "$runtime_root" --arg legacy "$legacy_id"
 }
 fail_state() {
@@ -278,9 +287,13 @@ launch() {
   resolve_state; require_state
   exec 8>"$STATE_FILE.launch.lock"
   flock -w 10 8 || die "another launch attempt owns generation reservation"
+  snapshot=$(state_snapshot) || die "cannot snapshot prepared lifecycle"
+  [[ "$WATCH_ID" =~ ^[A-Za-z0-9._-]+$ && "$WATCH_ID" != *..* ]] || die "watch id is not path-safe: $WATCH_ID"
+  [[ "$(jq -r '.watch_id // empty' <<<"$snapshot")" == "$WATCH_ID" ]] || die "watch id does not match active lifecycle"
   migrate_legacy_state
   [[ "$poll" =~ ^[1-9][0-9]*$ && "$max_wait" =~ ^[1-9][0-9]*$ && "$poll" -le "$max_wait" ]] || die "invalid wait bounds"
   snapshot=$(state_snapshot) || die "cannot snapshot prepared lifecycle"
+  [[ "$(jq -r '.watch_id // empty' <<<"$snapshot")" == "$WATCH_ID" ]] || die "watch id changed during launch"
   status=$(jq -r .status <<<"$snapshot"); prior_attempt=$(jq -r '.launch_attempt // 0' <<<"$snapshot")
   [[ "$prior_attempt" =~ ^[0-9]+$ && ( "$status" == prepared || "$status" == launch_failed ) ]] || die "prepared claim lost"
   legacy=$(jq -r '.legacy_generation // false' <<<"$snapshot")
@@ -303,7 +316,7 @@ launch() {
     die "queue-wait is missing: $waiter; diagnostics: $log"
   fi
   runtime_root=$(jq -r .runtime_root <<<"$snapshot"); watch_dir=$(jq -r .watch_dir <<<"$snapshot")
-  if [[ "$prior_attempt" -eq 0 ]]; then
+  if [[ "$prior_attempt" -eq 0 && "$legacy" != true ]]; then
     runtime=$(jq -r .runtime_dir <<<"$snapshot"); artifact=$(jq -r .artifact_path <<<"$snapshot")
     [[ -d "$runtime" && ! -L "$runtime" && -f "$runtime/token" && "$(cat < "$runtime/token")" == "$attempt_id" ]] \
       || die "prepared attempt runtime is invalid: $runtime"
