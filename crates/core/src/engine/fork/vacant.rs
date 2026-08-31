@@ -124,8 +124,8 @@ fn same_slot(a: &str, b: &str) -> bool {
 }
 
 /// Every path an item of this kind under `name` would render to in this
-/// scope: the shared canonical tree for a skill, plus each target tool's
-/// own file or link. Each destination comes from the helper the render
+/// scope: the shared canonical tree for a skill the shared method writes,
+/// plus each target tool's own file or link. Each destination comes from the helper the render
 /// itself asks rather than a second spelling of it — `skill_dir` for a
 /// skill, which is the tool's own directory under a copy delivery and the
 /// shared tree under a symlink, and `written_at` for an agent, which
@@ -148,10 +148,16 @@ fn render_targets(
     name: &str,
 ) -> Vec<PathBuf> {
     let mut targets = Vec::new();
-    if kind == ItemKind::Skill {
+    let method = effective_method(decl, manifest);
+    // Copy keeps every tool's own directory; only the shared method puts a
+    // tree where several tools read one copy. The two methods write to
+    // different directories for a tool that reads both, so the question is
+    // asked the same way the install answers it — the same distinction
+    // `unmanaged.rs` draws for the same question.
+    let copies = method == crate::manifest::Method::Copy;
+    if kind == ItemKind::Skill && !copies {
         targets.push(skill_canonical(env, scope, name));
     }
-    let method = effective_method(decl, manifest);
     for harness in target_harnesses(decl, manifest, kind, scope) {
         let dir = match kind {
             ItemKind::Skill => skill_dir(env, scope, harness, method),

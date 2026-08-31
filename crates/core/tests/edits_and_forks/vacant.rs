@@ -702,3 +702,62 @@ fn every_fork_verb_refuses_an_unsupported_kind_alike() {
     let renamed = fork::rename_fork(&w.env, &w.scope, ItemKind::Hook, "gh", "gh-mine").unwrap_err();
     assert!(says_kind(&renamed), "{renamed:?}");
 }
+
+/// A copy delivery writes into each tool's own directory and never into
+/// the shared tree, so the shared tree is not one of the fork's
+/// destinations and a stranger sitting there is not in its way. Probing it
+/// anyway refuses a fork that would have landed cleanly — the same
+/// distinction `unmanaged.rs` draws when it asks what a declaration owns.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_ignores_the_shared_tree_for_a_copy_delivery() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let own = w.home.join("app/.claude/skills/gh");
+    assert!(
+        own.join("SKILL.md").is_file(),
+        "the fixture proves nothing unless the copy lands in the tool's own directory"
+    );
+    fs::write(
+        own.join("SKILL.md"),
+        "---\nname: gh\ndescription: mine\n---\nMy fork.\n",
+    )
+    .unwrap();
+
+    // A stranger in the shared tree, which this delivery never writes.
+    let shared = w.home.join("app/.agents/skills/gh-mine");
+    fs::create_dir_all(&shared).unwrap();
+    fs::write(shared.join("notes.md"), "not kendex's").unwrap();
+
+    let plan = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        HarnessId::Claude,
+        "gh-mine",
+        None,
+    )
+    .unwrap_or_else(|error| panic!("a path this delivery never writes refused the fork: {error}"));
+    apply::execute(&w.env, &plan).unwrap();
+    assert!(
+        w.home
+            .join("app/.kendex-local/skills/gh-mine/SKILL.md")
+            .is_file()
+    );
+    assert_eq!(
+        fs::read_to_string(shared.join("notes.md")).unwrap(),
+        "not kendex's"
+    );
+}
