@@ -184,8 +184,9 @@ export function zoomActions(
 
   async function saveZoom() {
     if (saving) {
-      // One more write follows the one running, and it writes whatever is
-      // on screen by then — which covers this ask and any made meanwhile.
+      // One more write follows the one running, and it waits for every
+      // resize still out and then asks the window, the way any other does
+      // — which covers this ask and any made meanwhile.
       again = true;
       return saving;
     }

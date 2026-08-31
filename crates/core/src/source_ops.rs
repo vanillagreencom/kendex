@@ -267,10 +267,11 @@ pub fn remove_source(env: &Env, scope: &Scope, name: &str) -> Result<EngineRepor
     if !used_by.is_empty() {
         return Err(CoreError::ManifestInvalid {
             path: manifest::manifest_path(env, scope),
-            findings: vec![format!(
-                "sources.{name}: still referenced by {} — fix: remove those items first, or disable the source instead",
-                used_by.join(", ")
-            )],
+            findings: vec![manifest::Finding {
+                location: format!("sources.{name}"),
+                problem: format!("still referenced by {}", used_by.join(", ")),
+                fix: "remove those items first, or disable the source instead".to_owned(),
+            }],
         });
     }
     manifest.sources.remove(name);

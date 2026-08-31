@@ -66,6 +66,27 @@ export function windowTakes() {
   });
 }
 
+/** One resize the test settles by hand, with a stand-in window that moves
+ *  when the reply lands rather than when the call is made.
+ *
+ *  The distinction is the whole of the commit boundary. A window already at
+ *  the new size answers `showing()` with it whether or not the commit
+ *  waited for the resize, so a fixture that moves at call time cannot tell
+ *  a commit that waits from one that does not. */
+export function pendingResize(percent: number) {
+  const out = deferred<WindowReply>();
+  vi.mocked(commands.windowSetZoom).mockReturnValueOnce(out.promise);
+  return {
+    /** The window takes the size, and is at it from here on. */
+    takes: () => {
+      windowAt(percent);
+      out.settle(ok(null));
+    },
+    /** The window refuses, and stays where it was. */
+    refuses: (why: string) => out.settle(failed(why)),
+  };
+}
+
 /** A store at 100%, a closed dialog, and a window that takes every size —
  *  including at launch, so the store opens where the stored size is. */
 export function freshZoomStore() {

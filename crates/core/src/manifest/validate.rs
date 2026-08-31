@@ -28,6 +28,18 @@ impl fmt::Display for Finding {
     }
 }
 
+/// The findings of one manifest, as the lines
+/// [`crate::error::CoreError::ManifestInvalid`] carries. The only way to
+/// build that message, so a finding cannot reach the door that keeps line
+/// breaks without going through the escape above.
+pub fn joined(findings: &[Finding]) -> String {
+    findings
+        .iter()
+        .map(Finding::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 const TOP_LEVEL: &[&str] = &[
     "schema",
     "sources",

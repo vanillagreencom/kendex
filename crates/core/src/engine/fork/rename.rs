@@ -46,10 +46,11 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
     if depended_on {
         return Err(CoreError::ManifestInvalid {
             path: manifest::manifest_path(env, scope),
-            findings: vec![format!(
-                "{}.{old}: other items depend on this name — fix: rename what depends on it first, or keep the name",
-                kind.name()
-            )],
+            findings: vec![manifest::Finding {
+                location: format!("{}.{old}", kind.name()),
+                problem: "other items depend on this name".to_owned(),
+                fix: "rename what depends on it first, or keep the name".to_owned(),
+            }],
         });
     }
 

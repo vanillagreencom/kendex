@@ -5,7 +5,7 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::print_unmanaged;
-use super::{escaped, fail, fail_lines, resolve_scopes, say, scope_label};
+use super::{fail, fail_refusal, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -40,15 +40,13 @@ pub fn run(
         let report = match (audited, lock.entries.is_empty()) {
             (Ok(report), _) => report,
             (Err(error), true) => {
-                // A manifest that will not parse names one finding per
-                // line, so this goes through the door that keeps the
-                // breaks — and the place, which is a path somebody chose,
-                // is escaped here because a break in it would become a
-                // line of its own there.
-                fail_lines(&format!(
-                    "! {} not checked: {error}",
-                    escaped(&scope_label(&scope))
-                ));
+                // The error picks its own door. A manifest that will not
+                // parse names one finding per line and keeps those breaks;
+                // every other failure here — unreadable TOML, a file that
+                // would not open — is a sentence naming a path, and a break
+                // in that path is content rather than a line of kendex's
+                // own verdict.
+                fail_refusal(&format!("! {} not checked: ", scope_label(&scope)), &error);
                 continue;
             }
             (Err(error), false) => return Err(error.into()),

@@ -46,7 +46,7 @@ use crate::scope::ScopeFilter;
 // Every human line a command says leaves through the presentation module,
 // which decides between the plain lines a script parses and the framed
 // session a terminal gets. A command never writes to a stream itself.
-pub use crate::ui::{Lines, answer, escaped, fail, fail_lines, note, out, payload, say, warn};
+pub use crate::ui::{Lines, answer, escaped, fail, fail_refusal, note, out, payload, say, warn};
 
 pub type CliResult = Result<(), Box<dyn std::error::Error>>;
 

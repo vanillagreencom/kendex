@@ -365,6 +365,92 @@ fn a_value_in_the_closing_refusal_cannot_forge_a_line() {
     }
 }
 
+/// The verb that names a scope it could not check says it on one line.
+///
+/// The third door, and the one the two above do not reach: `verify` carries
+/// on past a scope it could not read, so its refusal is a headline of its
+/// own with the error inside it. The error still picks the door — a
+/// manifest that will not parse keeps its finding-per-line shape — but the
+/// headline is one line whatever the place is called, and every other
+/// failure is one line whatever the error holds. Composed rather than
+/// routed, a directory named `ap<break>0 checked, 0 OK, 0 failed` printed
+/// that count as a line of kendex's own verdict.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_scope_that_could_not_be_checked_is_named_on_one_line() {
+    // A place named with the two characters that act on a terminal, and
+    // with the run's own closing line, which is what a forged line would
+    // be for.
+    let named = "ap\u{1b}[31mp\n0 checked, 0 OK, 0 failed";
+    // `said`, then the whole run: the refusal is every line but the
+    // closing verdict, so a count pins the door as well as the headline.
+    for (manifest, findings, said_lines) in [
+        // Refused whole: `TomlParse` holds a raw path and a multi-line
+        // parser message and escapes neither, so splitting it puts both the
+        // place's break and the parser's diagram on lines of their own.
+        ("schema = 6\nthis is not toml [[[\n", 0, 2),
+        // Refused a finding at a time: the one error that wrote its breaks.
+        ("schema = 6\nstray-one = 1\nstray-two = 2\n", 2, 4),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = &rooted(&tmp);
+        let project = home.join(named);
+        fs::create_dir_all(project.join(".claude")).unwrap();
+        fs::write(project.join("kendex.toml"), manifest).unwrap();
+
+        let printed = said(&kendex(
+            home,
+            &project,
+            "plain",
+            &["verify", "--scope", "project"],
+        ));
+        assert!(
+            !printed.contains('\u{1b}'),
+            "a control character reached the terminal: {printed}"
+        );
+        let headlines: Vec<&str> = printed
+            .lines()
+            .filter(|line| line.contains("not checked:"))
+            .collect();
+        assert_eq!(
+            headlines.len(),
+            1,
+            "the scope was named on {} lines: {printed}",
+            headlines.len()
+        );
+        assert!(
+            headlines[0].contains("ap\\u{1b}[31mp\\n0 checked"),
+            "the place was not printed as what it is: {printed}"
+        );
+        // Nothing the place is called may reach the reader as a line, and
+        // the run's real verdict is the only line that reads as one.
+        let forged: Vec<&str> = printed
+            .lines()
+            .filter(|line| line.trim_start().starts_with("0 checked, 0 OK, 0 failed"))
+            .collect();
+        assert!(
+            forged.is_empty(),
+            "a directory name forged a line: {printed}"
+        );
+        assert_eq!(
+            printed.lines().filter(|line| !line.is_empty()).count(),
+            said_lines,
+            "the refusal was said on the wrong number of lines: {printed}"
+        );
+        assert!(
+            printed.lines().any(|line| line == "nothing installed"),
+            "the run did not close on its own verdict: {printed}"
+        );
+        // The door the error chose. A manifest refusal keeps its findings
+        // on lines of their own; a parser failure is inside the headline.
+        let named_findings = printed
+            .lines()
+            .filter(|line| line.contains("unknown table or key"))
+            .count();
+        assert_eq!(named_findings, findings, "wrong door: {printed}");
+    }
+}
+
 /// The stdout half of the same seam. A verb's own lines go out through
 /// `ui::out`, and the names on them come off a tree kendex did not write:
 /// `project add` lists what is there and not managed, and that listing is

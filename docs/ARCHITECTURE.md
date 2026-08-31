@@ -295,11 +295,11 @@ lives in one capability table read by core and UI.
   zero. Every read the app starts with runs beside the others.
 - **Discovery is unsigned; one pinned key covers a document binding each
   download to its release and target.** Off the launch path, one check at a
-  time reads the feed six-hourly at most and keeps the last document,
-  following no final link; nothing gates it; debug builds alone honor
+  time per process reads the feed six-hourly at most, keeps the last document,
+  follows no final link; nothing gates it; debug builds alone honor
   `KENDEX_UPDATE_FEED`. Replacing needs the running path writable, outside a
-  system prefix; a package prefix names its command and the card says which,
-  anything else neither. Either shell carries a command it owns, marker last.
+  system prefix; a package prefix names its command, the card says which,
+  anything else neither. Either shell carries its own command, marker last.
 - Commands that touch disk, git, or a subprocess are
   `#[tauri::command(async)]`. Only window operations stay synchronous.
 - No database: manifests, locks, and native dirs are the state; scans are

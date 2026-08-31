@@ -26,19 +26,24 @@
 //! name carrying one is a name and not two lines. Structure is said by
 //! calling more than once.
 //!
-//! **A message that owns its own breaks goes through [`fail_lines`], or
-//! through [`outro_refusal`] wearing [`Lines`]**, which split first and
-//! escape each line, so the breaks reach the reader as breaks. That door
-//! carries an obligation, and it is the second half of the rule: a message
-//! printed through it has already escaped the values it interpolated,
-//! because a break inside one of those would become a line of its own
-//! here. Three places in the tree compose such a message —
-//! `CoreError::ManifestInvalid`, which names one
-//! `manifest::validate::Finding` per line and escapes its path with them;
-//! `commands::verify`; and `commands::marketplace_author` — and each
-//! escapes what it writes in with [`escaped`]. Nothing else reaches that
-//! door: an ordinary refusal carries values nobody escaped, and is said as
-//! one line.
+//! **A refusal that owns its own breaks is split before it is escaped**, so
+//! the breaks reach the reader as breaks. No call site chooses that: the
+//! error does, through [`outro_refusal`] and [`fail_refusal`], which take
+//! the error rather than its text and route on `refusal`'s own
+//! `owns_its_breaks`. What that names is the door's whole membership, and
+//! each member carries the obligation that comes with it — every value
+//! interpolated into such a message is escaped where it was composed,
+//! because a break inside one would become a line of its own here.
+//!
+//! A type carries that obligation rather than a sentence here, because a
+//! sentence here was what `commands::verify` skipped.
+//! `CoreError::ManifestInvalid` holds `manifest::Finding`, whose `Display`
+//! escapes all three of its parts, so a constructor cannot hand it text
+//! nobody escaped; the CLI's own [`Lines`] wraps text a verb composed, and
+//! `grep -rn "Lines(" crates/cli/src` names every verb that does. Both
+//! escape with `kendex_core::names::shown`, which [`escaped`] is the CLI's
+//! spelling of. Everything else is a sentence carrying values nobody
+//! escaped, and is said as one line.
 //!
 //! Core escapes elsewhere for its own surfaces (the app reads
 //! `names::shown` output directly, and `drift::report::text` bounds and
@@ -64,7 +69,7 @@ mod refusal;
 
 pub use blocks::{finish, flush, intro};
 pub use prompt::{ask, cancelled, confirm, spinner};
-pub use refusal::{Lines, outro_fail, outro_refusal};
+pub use refusal::{Lines, fail_refusal, outro_fail, outro_refusal};
 
 use std::io::{IsTerminal, Write};
 use std::sync::OnceLock;
@@ -169,10 +174,9 @@ pub(super) fn write_line(line: &str) {
 /// which is why an ordinary call site composes its line out of raw names
 /// and leaves the escape here.
 ///
-/// It is `pub` for the other half of the rule: a message that owns its
-/// line breaks and is printed through [`fail_lines`] or as a [`Lines`]
-/// refusal escapes the values it interpolates itself, because a break
-/// inside one of those would become a line of its own there.
+/// It is `pub` for the other half of the rule: a refusal that owns its line
+/// breaks escapes the values it interpolates itself, because a break inside
+/// one of those would become a line of its own where it prints.
 ///
 /// Idempotent on its own output: an escape is backslashes and letters,
 /// and neither is escaped again.
@@ -239,17 +243,11 @@ fn tell(tone: Tone, text: &str) {
     drawn(tone, &escaped(text));
 }
 
-/// A message whose line breaks are its own — an error naming one finding
-/// per line — said in the tone of something that did not happen. Split
-/// before the escape, so the breaks reach the reader as breaks.
-///
-/// The obligation this door carries is in the module doc: a message said
-/// through it has already escaped the values it interpolated, because a
-/// break inside one of those would become a line here.
-pub fn fail_lines(text: &str) {
-    for line in text.split('\n') {
-        drawn(Tone::Error, &escaped(line));
-    }
+/// One line of a refusal, already escaped. The refusal doors compose their
+/// own lines, so this is the one draw that does not escape what it is
+/// given.
+pub(super) fn drawn_fail(line: &str) {
+    drawn(Tone::Error, line);
 }
 
 /// One line, already fit to print. Plain writes the same bytes it always

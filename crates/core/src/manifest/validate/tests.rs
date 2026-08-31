@@ -321,3 +321,29 @@ review-hash = "abc"
     );
     assert!(findings.iter().all(|f| f.fix.starts_with("remove it")));
 }
+
+/// Every part of a finding is escaped, because the refusal that carries
+/// findings is the one the CLI splits into lines: a break in any of the
+/// three would become a finding of its own on the reader's screen.
+///
+/// All three, not the location alone. A finding is composed here and
+/// nowhere else — `CoreError::ManifestInvalid` takes `Finding`, not text —
+/// so a constructor that interpolates a name into `problem` or a path into
+/// `fix` is covered by this and by nothing else.
+#[test]
+fn a_finding_is_one_line_however_its_parts_are_written() {
+    let hostile = "we\nir\u{1b}[31md";
+    let finding = Finding {
+        location: hostile.to_owned(),
+        problem: format!("clashes with {hostile}"),
+        fix: format!("rename {hostile}"),
+    };
+    let said = joined(std::slice::from_ref(&finding));
+    assert_eq!(said.lines().count(), 1, "{said:?}");
+    assert!(!said.contains('\u{1b}'), "{said:?}");
+    assert_eq!(said.matches("we\\nir\\u{1b}[31md").count(), 3, "{said:?}");
+
+    // Two findings are two lines, which is the shape the door exists for.
+    let pair = joined(&[finding.clone(), finding]);
+    assert_eq!(pair.lines().count(), 2, "{pair:?}");
+}

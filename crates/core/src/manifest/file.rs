@@ -11,8 +11,7 @@ use crate::fs::{atomic_write, read_if_exists};
 use crate::model::{HarnessId, Scope};
 
 use super::{
-    DEFAULT_SOURCE_NAME, DEFAULT_SOURCE_REPO, Finding, MANIFEST_SCHEMA, Manifest, SourceDecl,
-    validate,
+    DEFAULT_SOURCE_NAME, DEFAULT_SOURCE_REPO, MANIFEST_SCHEMA, Manifest, SourceDecl, validate,
 };
 
 /// What sits at a manifest path — absent, or the one schema this build
@@ -94,7 +93,7 @@ pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {
     if !findings.is_empty() {
         return Err(CoreError::ManifestInvalid {
             path: path.to_path_buf(),
-            findings: findings.iter().map(Finding::to_string).collect(),
+            findings,
         });
     }
     let manifest: Manifest =

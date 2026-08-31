@@ -6,7 +6,7 @@ import {
   dialog,
   failed,
   freshZoomStore,
-  ok,
+  pendingResize,
   stored,
   tick,
   type WindowReply,
@@ -60,25 +60,44 @@ describe("zoom, with a resize still out", () => {
   /// resize joins after the commit has already started waiting. Waiting
   /// once is not enough: what settles the commit is that nothing new
   /// arrived while it waited.
+  ///
+  /// Both resizes are taken, which is what separates the two codepaths. A
+  /// commit that waits once reads the window between the replies and writes
+  /// the size the drag passed through; one that waits for nothing reads it
+  /// before either reply and writes the size the drag started from.
   it("waits for a resize that starts while the commit is already waiting", async () => {
-    const first = deferred<WindowReply>();
-    const second = deferred<WindowReply>();
-    vi.mocked(commands.windowSetZoom)
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise);
+    const first = pendingResize(150);
+    const second = pendingResize(160);
 
     const step = useSettingsStore.getState().setZoom(150);
     const saved = useSettingsStore.getState().saveZoom();
     const last = useSettingsStore.getState().setZoom(160);
-    // A window that takes a size is at that size: the stand-in moves with
-    // the reply, the way `windowTakes` does for the replies it makes
-    // itself.
-    windowAt(150);
-    first.settle(ok(null));
-    // Long enough for the commit to notice the first resize replied; the
-    // second has not, and it is the one that gets refused.
+    // The commit read `resizes` when it was called, so the press above
+    // joined after it. Long enough here for a commit that waits for nothing
+    // to have read the window already.
     await tick();
-    second.settle(failed("no webview"));
+    first.takes();
+    await tick();
+    second.takes();
+    await Promise.all([step, last, saved]);
+
+    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(160);
+    expect(zoom()).toBe(160);
+  });
+
+  /// The same shape with the joining resize refused: the window keeps the
+  /// size the first press put it at, and the display follows it back.
+  it("writes the size a refused joining resize left the window at", async () => {
+    const first = pendingResize(150);
+    const second = pendingResize(160);
+
+    const step = useSettingsStore.getState().setZoom(150);
+    const saved = useSettingsStore.getState().saveZoom();
+    const last = useSettingsStore.getState().setZoom(160);
+    await tick();
+    first.takes();
+    await tick();
+    second.refuses("no webview");
     await Promise.all([step, last, saved]);
 
     expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(150);
@@ -87,19 +106,20 @@ describe("zoom, with a resize still out", () => {
 
   /// Ctrl + held at the ceiling: the first press moves the display, every
   /// repeat after it asks for the size already on screen and returns at
-  /// once. The commit still has the first one to wait for.
+  /// once. The commit still has the first one to wait for, and reads the
+  /// window only once it has replied.
   it("waits for a repeat of the size already on screen that is still out", async () => {
-    const first = deferred<WindowReply>();
-    vi.mocked(commands.windowSetZoom).mockReturnValueOnce(first.promise);
+    const first = pendingResize(150);
 
     const moved = useSettingsStore.getState().setZoom(150);
     const repeat = useSettingsStore.getState().setZoom(150);
     const saved = useSettingsStore.getState().saveZoom();
-    first.settle(failed("no webview"));
+    await tick();
+    first.takes();
     await Promise.all([moved, repeat, saved]);
 
-    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(100);
-    expect(zoom()).toBe(100);
+    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(150);
+    expect(zoom()).toBe(150);
   });
 
   /// The window is the authority on the size, and a run that cannot read it

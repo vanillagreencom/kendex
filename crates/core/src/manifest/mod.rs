@@ -15,7 +15,7 @@ pub use file::{
 // its precondition first. Anywhere else, a direct save is a whole-file
 // write with no base check, the exact door `read_for_mutation` closes.
 pub(crate) use file::save;
-pub use validate::{Finding, validate};
+pub use validate::{Finding, joined, validate};
 
 /// Current manifest schema, and the only one that loads. Nothing converts
 /// an older file: each schema changed what a table means — schema 3 added

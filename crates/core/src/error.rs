@@ -31,10 +31,10 @@ pub enum CoreError {
     #[error("project not registered: {path}")]
     ProjectNotRegistered { path: PathBuf },
 
-    #[error("{}: invalid manifest:\n{}", crate::names::shown(&path.display().to_string()), findings.join("\n"))]
+    #[error("{}: invalid manifest:\n{}", crate::names::shown(&path.display().to_string()), crate::manifest::joined(findings))]
     ManifestInvalid {
         path: PathBuf,
-        findings: Vec<String>,
+        findings: Vec<crate::manifest::Finding>,
     },
 
     #[error(

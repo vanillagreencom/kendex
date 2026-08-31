@@ -30,16 +30,45 @@ impl std::fmt::Display for Lines {
 impl std::error::Error for Lines {}
 
 /// The error a run ended on, said as the line that closes it.
-///
-/// Every other error is a sentence carrying values off a catalog, a lock or
-/// a tree kendex did not write, and a break in one of those would forge a
-/// line of the run's own account of why it stopped.
 pub fn outro_refusal(error: &(dyn std::error::Error + 'static)) {
-    let text = format!("Error: {error}");
-    match owns_its_breaks(error) {
-        true => closed(&text.split('\n').map(escaped).collect::<Vec<_>>().join("\n")),
-        false => outro_fail(&text),
+    closed(&lines("Error: ", error).join("\n"));
+}
+
+/// A refusal a run says and then carries on past, under a headline the
+/// caller wrote.
+///
+/// The same choice [`outro_refusal`] makes, for the verb that names a scope
+/// it could not check and goes on to the next one. `headline` is the
+/// caller's own sentence and is escaped whole like any other: the place it
+/// names is a path somebody chose, so a break in it is content.
+pub fn fail_refusal(headline: &str, error: &(dyn std::error::Error + 'static)) {
+    for line in lines(headline, error) {
+        super::drawn_fail(&line);
     }
+}
+
+/// The lines a refusal prints on: the headline on the first, then the
+/// error's own text, escaped a line at a time where it wrote the breaks and
+/// escaped whole where it did not.
+///
+/// One place, so the two doors cannot drift apart, and no call site is
+/// handed the choice: a `&str` door is one a future caller can reach for
+/// with a message it composed out of values nobody escaped, which is
+/// exactly how `verify` came to forge a line of its own verdict.
+fn lines(headline: &str, error: &(dyn std::error::Error + 'static)) -> Vec<String> {
+    let text = error.to_string();
+    let body: Vec<String> = match owns_its_breaks(error) {
+        true => text.split('\n').map(escaped).collect(),
+        false => vec![escaped(&text)],
+    };
+    let headline = escaped(headline);
+    body.into_iter()
+        .enumerate()
+        .map(|(at, line)| match at {
+            0 => format!("{headline}{line}"),
+            _ => line,
+        })
+        .collect()
 }
 
 /// Whether this error wrote the breaks it holds: core's manifest refusal,
@@ -81,7 +110,7 @@ mod tests {
         assert!(owns_its_breaks(&Lines("one\ntwo".to_owned())));
         assert!(owns_its_breaks(&CoreError::ManifestInvalid {
             path: std::path::PathBuf::from("kendex.toml"),
-            findings: vec!["one".to_owned(), "two".to_owned()],
+            findings: Vec::new(),
         }));
 
         // A refusal composed as text, break and all. Nothing about it says
