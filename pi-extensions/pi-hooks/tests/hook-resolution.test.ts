@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { piUserDir, readConfig } from "../extensions/config.ts";
 import {
@@ -332,6 +333,104 @@ describe("pi-hooks rendered-hook resolution", () => {
 			restoreAgentDir(saved);
 			rmSync(outside, { recursive: true, force: true });
 			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	// The workspace side of the containment comparison, and the same execution
+	// path reached through it. The carrier walked for `.pi`, `.git` and the lock
+	// file; kendex discovers a project by any of seven harness marker
+	// directories (crates/core/src/discover.rs), so a project whose only marker
+	// is `.agents/` was not found, the boundary was computed against the nested
+	// cwd instead, and an absolute root symlinked into that project read as
+	// outside it.
+	test("a project marked only by .agents is a workspace a symlinked root cannot reach into", async () => {
+		const outside = mkdtempSync(join(tmpdir(), "pi-hooks-agents-outside-"));
+		const workspace = mkdtempSync(join(tmpdir(), "pi-hooks-agents-workspace-"));
+		const log = join(workspace, "payload.log");
+		const saved = process.env.PI_CODING_AGENT_DIR;
+		try {
+			// The only marker. No .pi, no .git, no lock file.
+			mkdirSync(join(workspace, ".agents"), { recursive: true });
+			const nested = join(workspace, "src", "deep");
+			mkdirSync(nested, { recursive: true });
+			plantGlobalScript(join(workspace, "inside-agent"), log, "the checkout's script ran");
+			const link = join(outside, "pi-agent");
+			symlinkSync(join(workspace, "inside-agent"), link);
+			process.env.PI_CODING_AGENT_DIR = link;
+			const handler = installToolCallHandler();
+
+			expect(existsSync(join(piUserDir(), "kendex", "hooks", "pre-commit-check.sh"))).toBe(true);
+
+			// From a subdirectory, so the walk has to find the .agents root to
+			// draw the boundary at all.
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: nested, isProjectTrusted: () => false })).toBeUndefined();
+			expect(readLog(log)).toBe("");
+		} finally {
+			restoreAgentDir(saved);
+			rmSync(outside, { recursive: true, force: true });
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	// The other direction of the same defect. `.git` was a marker here and is
+	// not one for kendex, so a vendored checkout resolved as the project and the
+	// hook rendered at the real root was never looked for: a guard that does not
+	// run and says nothing, which is the failure this whole change exists to
+	// remove.
+	test("a nested .git is not the project, so the real project's hook still runs", async () => {
+		const project = initRustRepo("pi-hooks-nested-git-");
+		const log = join(project, "payload.log");
+		try {
+			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "the project's hook ran", log });
+			const vendored = join(project, "vendor", "nested");
+			mkdirSync(join(vendored, ".git"), { recursive: true });
+			const handler = installToolCallHandler();
+
+			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(vendored)) as { block?: boolean; reason?: string };
+			expect(result).toEqual({ block: true, reason: "the project's hook ran" });
+			expect(readLog(log)).toContain("git commit -m x");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	// Not reported, found while matching the renderer, and live since round 6.
+	// kendex refuses to call home a project however it is marked, and this did
+	// not. Nearly everyone has a marker directory at home, so a session started
+	// anywhere outside a real project resolved home as the workspace, and then
+	// the global root — which lives under home — read as inside it and was
+	// withheld. The person's own guards stopped running and said nothing.
+	//
+	// Run in a child process because bun resolves homedir() once from the
+	// passwd entry rather than re-reading process.env.HOME, so relocating home
+	// in-process does not reach the code under test. The child is the whole
+	// carrier, not a helper: it installs the real handler and prints the real
+	// verdict.
+	test("home is not a workspace, so a session outside a project keeps its global guards", () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-hooks-home-"));
+		const agentDir = join(home, ".pi", "agent");
+		const log = join(agentDir, "payload.log");
+		try {
+			plantGlobalScript(agentDir, log, "the person's own script ran");
+			const scratch = join(home, "scratch");
+			mkdirSync(scratch, { recursive: true });
+			const driver = join(home, "driver.mjs");
+			writeFileSync(driver, [
+				`const { default: piHooks } = await import(${JSON.stringify(join(import.meta.dir, "..", "extensions", "hooks.ts"))});`,
+				"let handler;",
+				'piHooks({ on(event, cb) { if (event === "tool_call") handler = cb; } });',
+				`const verdict = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: ${JSON.stringify(scratch)}, isProjectTrusted: () => false });`,
+				"console.log(JSON.stringify(verdict ?? null));",
+			].join("\n"));
+
+			const env = { ...process.env, HOME: home };
+			delete env.PI_CODING_AGENT_DIR;
+			const run = spawnSync(process.execPath, [driver], { encoding: "utf8", env });
+			expect(run.status).toBe(0);
+			expect(JSON.parse(run.stdout.trim())).toEqual({ block: true, reason: "the person's own script ran" });
+			expect(readLog(log)).toContain("git commit -m x");
+		} finally {
+			rmSync(home, { recursive: true, force: true });
 		}
 	});
 

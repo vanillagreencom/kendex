@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
@@ -123,31 +123,81 @@ function canonicalPath(path: string): string | undefined {
 	}
 }
 
+/** The directories kendex treats as a harness marker, and the lock file that
+ * outranks them. Copied from `crates/core/src/discover.rs` MARKER_DIRS and
+ * `crates/core/src/lock.rs` LOCK_FILE, and held there by
+ * tests/renderer-parity.test.ts, which reads those files and fails when this
+ * list stops matching. Two carrier-side copies of a renderer rule have drifted
+ * on this branch already; a third hand-copied list with nothing holding it
+ * would be the same defect waiting. */
+export const PROJECT_MARKER_DIRS = [
+	".claude",
+	".codex",
+	".opencode",
+	".cursor",
+	".pi",
+	".agents",
+	".gemini",
+] as const;
+export const PROJECT_LOCK_FILE = ".kendex-lock.json";
+
+function isDir(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+function isFile(path: string): boolean {
+	try {
+		return statSync(path).isFile();
+	} catch {
+		return false;
+	}
+}
+
 /**
- * Walk up from `cwd` to the directory holding the project: the first ancestor
- * with a `.pi/settings.json`, else the first with a `.pi/`, `.git/`, or
- * `.kendex-lock.json` marker, else `cwd`. Mirrors the pi-output-policy
- * resolution to keep behavior identical across the kendex pi extensions.
+ * Walk up from `cwd` to the directory holding the project, the way kendex
+ * itself does it in `crates/core/src/discover.rs::project_root_from`: a
+ * `.kendex-lock.json` wins wherever it stands, otherwise the nearest ancestor
+ * carrying one of the harness marker directories, and home does not count as a
+ * project however it is marked. Nothing found is `cwd`.
  *
  * Everything that reads or runs something of the project's resolves from here,
- * so a session started in a subdirectory sees the same project as one started
- * at its root. Resolving from `cwd` alone made a nested session find nothing,
- * which for a settings file reads as no settings and for a hook script read as
- * no hook — and a hook that is not found is allowed.
+ * and it is also the boundary `actionableUserDir` measures the global root
+ * against, so both directions of a mismatch cost something. A root this misses
+ * is a project whose rendered hooks are never looked for, which is a guard that
+ * does not run and says nothing; and it is a workspace an absolute global root
+ * can be symlinked into while still reading as outside it. A root this invents
+ * is the same in reverse.
+ *
+ * `project_root_from` is the operative rule and this mirrors it.
+ * `HarnessAdapter::project_markers` looks like the rule and is not: it is
+ * declared per harness and called from nowhere in `crates/`, so a carrier
+ * following it would match a list nothing executes and would miss the five
+ * marker directories other harnesses own — a project marked only `.claude/`
+ * still gets `<project>/.pi/kendex/hooks/` rendered into it when pi is
+ * installed, because the project was found before any harness was consulted.
+ *
+ * The walk runs on canonical paths, as the renderer's does. The home test is a
+ * comparison, so both ends have to be spelled the same way, and the boundary
+ * this returns is compared against a canonicalized global root.
  */
 export function projectRoot(cwd: string): string {
-	let current = resolve(cwd);
+	const start = canonicalPath(cwd) ?? resolve(cwd);
+	const home = canonicalPath(homedir()) ?? resolve(homedir());
+	let current = start;
 	while (true) {
-		if (existsSync(join(current, ".pi", "settings.json"))) return current;
-		if (
-			existsSync(join(current, ".pi")) ||
-			existsSync(join(current, ".git")) ||
-			existsSync(join(current, ".kendex-lock.json"))
-		) {
+		if (isFile(join(current, PROJECT_LOCK_FILE))) return current;
+		// Home carries a marker directory for nearly everyone, and calling it a
+		// project would make every session outside a real one measure the global
+		// root against the directory the global root lives in.
+		if (current !== home && PROJECT_MARKER_DIRS.some((marker) => isDir(join(current, marker)))) {
 			return current;
 		}
 		const parent = dirname(current);
-		if (parent === current) return resolve(cwd);
+		if (parent === current) return start;
 		current = parent;
 	}
 }
