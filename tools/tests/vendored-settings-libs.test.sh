@@ -100,8 +100,27 @@ prefix_of() { # FILE
 # exit for any divergence — the controls below run this against deliberately
 # edited copies of the tree and require that exit.
 check_tree() { # ROOT
-  local root="$1" rc=0 rel skill first parent copies prefix names n i seen opens closes unprefixed repeated
+  local root="$1" rc=0 rel skill first parent copies prefix names n i seen opens closes unprefixed repeated path
   local scratch="$TMP/map.$$.$RANDOM"
+
+  # --- 0. every rostered copy is a real file, not a link to one ---
+  # `-f` and `cmp` both FOLLOW a symlink, so a copy replaced by a link to an
+  # identical sibling compares equal and stays on the roster — while the
+  # engine refuses that tree outright: source_read.rs takes symlink_metadata
+  # and answers a link in a catalog with SourceEscape. A pin that calls such
+  # a tree healthy is the one reading a green nobody should trust, and
+  # deduplicating identical files by link is a thing people do.
+  for parent in skills .agents/skills; do
+    for rel in kendex-env.sh settings.sh; do
+      for path in "$root/$parent"/*/scripts/lib/"$rel"; do
+        { [ -e "$path" ] || [ -L "$path" ]; } || continue
+        if [ -L "$path" ]; then
+          echo "${path#"$root/"} is a SYMLINK; each skill installs standalone, so a vendored copy is a real file — the engine refuses to read through a link in a catalog"
+          rc=1
+        fi
+      done
+    done
+  done
 
   # --- 1. every source has its render, byte for byte, in both families ---
   for rel in kendex-env.sh settings.sh; do
@@ -287,6 +306,9 @@ reds() {
   fi
 }
 restore() { # PARENT SKILL REL
+  # rm first: a control may have left a SYMLINK there, and cp would write
+  # through it into the sibling the link points at.
+  rm -f "$control/$1/$2/scripts/lib/$3"
   cp "$REPO_ROOT/$1/$2/scripts/lib/$3" "$control/$1/$2/scripts/lib/$3"
 }
 
@@ -305,6 +327,14 @@ reds "an UNLISTED seventh kendex-env.sh copy is compared, not ignored" \
    sed "s/^# Shared project/# planted/" "$REPO_ROOT/skills/orch/scripts/lib/kendex-env.sh" \
      >"$control/skills/planted/scripts/lib/kendex-env.sh"'
 rm -rf -- "${control:?}/skills/planted"
+
+# Identical content is the point: the bytes match through the link, so only
+# the file type distinguishes this tree from a healthy one.
+reds "a vendored copy replaced by a SYMLINK fails, though its bytes match" \
+  "is a SYMLINK" \
+  'rm -f "$control/skills/worktree/scripts/lib/kendex-env.sh" &&
+   ln -s ../../../orch/scripts/lib/kendex-env.sh "$control/skills/worktree/scripts/lib/kendex-env.sh"'
+restore skills worktree kendex-env.sh
 
 reds "a render that drifted from its source fails" \
   "is not its source, byte for byte" \
