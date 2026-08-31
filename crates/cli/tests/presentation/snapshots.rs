@@ -555,6 +555,45 @@ fn a_manifest_cannot_write_a_line_of_the_diagram_itself() {
     );
 }
 
+/// The line a verb puts on the screen while it waits is escaped too.
+///
+/// Its own test, and the only one here that needs a real terminal: the
+/// spinner draws through `indicatif`, which writes nothing at all down a
+/// pipe, so every other test in this file is blind to it. What it carries
+/// is the place the run is working on — a path somebody chose, and one that
+/// carries whatever the filesystem allowed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_line_shown_while_a_verb_waits_is_escaped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let named = "we\u{1b}[31mi\nrd";
+    let project = home.join(named);
+    blocked_project_at(home, &project);
+
+    let sent = kendex_on_a_terminal(home, &project, &["apply", "--plan", "--scope", "project"]);
+    // The spinner drew, so what follows is about what it drew rather than
+    // about a line nothing put on the screen. It draws on a tick a tenth of
+    // a second in, and planning this fixture takes seconds in a test build;
+    // a machine fast enough to beat it fails here rather than passing on an
+    // empty run.
+    assert!(
+        sent.contains("planning "),
+        "the spinner never reached the terminal: {sent:?}"
+    );
+    // The escape sequence alone, not the whole name: a terminal turns a
+    // break in what it is sent into a carriage return and a newline, so the
+    // name is not one run of bytes on this side however it was written.
+    assert!(
+        !sent.contains("we\u{1b}[31m"),
+        "the place reached the terminal as its own escape sequence: {sent:?}"
+    );
+    assert!(
+        sent.contains("we\\u{1b}[31mi\\nrd"),
+        "the place was not shown as what it is: {sent:?}"
+    );
+}
+
 /// The stdout half of the same seam. A verb's own lines go out through
 /// `ui::out`, and the names on them come off a tree kendex did not write:
 /// `project add` lists what is there and not managed, and that listing is

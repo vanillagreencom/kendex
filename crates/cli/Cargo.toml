@@ -31,7 +31,12 @@ url = "2"
 # The effective uid, read straight from the syscall so a suite can say why
 # it can observe no record on a runner that is already root — a read the
 # guard under test cannot answer for. Already in the workspace under core.
-rustix.workspace = true
+#
+# `pty` is for the one thing a pipe cannot show: what a terminal is sent.
+# The framed rendering's spinner draws through `indicatif`, which writes
+# nothing at all unless stderr is a terminal, so its line is invisible to
+# every other test here.
+rustix = { workspace = true, features = ["pty"] }
 
 [lints]
 workspace = true
