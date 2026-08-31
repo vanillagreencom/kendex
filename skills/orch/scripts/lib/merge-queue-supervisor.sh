@@ -1,4 +1,13 @@
 # shellcheck shell=bash
+#
+# Detached supervisor for one merge-queue launch attempt. The named failure
+# it prevents: queue-wait dying without output (crash, signal, logout) or
+# wedging on a hung GitHub read past its own budget would leave a watch
+# nothing is running and a consume that could only time out. The supervisor
+# publishes an `unknown` artifact when its worker exits unreadably and reaps
+# a worker that outlives the deadline, so every launch attempt ends in a
+# consumable artifact — and only while its own generation is still the
+# registered one, so a dead attempt can never publish over its replacement.
 
 merge_queue_supervise() {
   local state_file="$1" watch_id="$2" attempt_id="$3" runtime="$4" artifact="$5" deadline="$6"
@@ -47,7 +56,7 @@ merge_queue_supervise() {
     jq -n --arg repo "$repo" --argjson pr "$pr" --arg head "$head" --arg watch "$watch_id" --arg attempt "$attempt_id" \
       --arg reason "$reason" --argjson rc "$rc" --arg log "$log" \
       '{schema_version:1,status:"error",verdict:"unknown",repository:$repo,pr_number:$pr,
-        expected_head:$head,observed_head:"",watch_id:$watch,launch_attempt_id:$attempt,cause:$reason,
+        expected_head:$head,watch_id:$watch,launch_attempt_id:$attempt,cause:$reason,
         worker_exit_code:$rc,diagnostic_path:$log}' > "$output" || return 1
     publish_output && published=true
   }
@@ -95,7 +104,7 @@ merge_queue_supervise() {
   fi
   jq --arg repo "$repo" --argjson pr "$pr" --arg head "$head" --arg watch "$watch_id" --arg attempt "$attempt_id" --arg log "$log" \
     '. + {schema_version:1,repository:$repo,pr_number:$pr,expected_head:$head,
-      observed_head:"",watch_id:$watch,launch_attempt_id:$attempt,diagnostic_path:$log}' "$temp" > "$output"
+      watch_id:$watch,launch_attempt_id:$attempt,diagnostic_path:$log}' "$temp" > "$output"
   publish_output || return 1
   published=true; printf '%s\n' "$worker_rc" > "$runtime/terminal"; chmod 600 "$runtime/terminal"
   trap - EXIT TERM HUP INT

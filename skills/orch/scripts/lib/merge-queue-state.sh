@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 
-MERGE_QUEUE_REPORT_FILTER='{issue_id,watch_id,status,action,repository,pr_number,head_sha,worktree_branch,
+MERGE_QUEUE_REPORT_FILTER='{issue_id,watch_id,status,action,repository,pr_number,head_sha,pr_branch,
   gate_mode,recovery_count,launch_attempt,launch_attempt_id,runtime_dir,artifact_path,log_path,deadline,verdict,verdict_cause,
   lane_postmerge,cleanup,diagnostic,error:(.diagnostic.error // null),
   worker_exit_code:(.diagnostic.worker_exit_code // null),
@@ -35,7 +35,7 @@ merge_queue_cleanup_worktree() {
   local worktree helper required expected_branch owner output="" rc=0 diagnostic disposition current_branch
   local expected_common current_common resolved_worktree dirty
   worktree=$(state_value .worktree); helper="$ROOT/.agents/skills/worktree/scripts/worktree"
-  required=$(state_value .cleanup.required); expected_branch=$(state_value .worktree_branch)
+  required=$(state_value .cleanup.required); expected_branch=$(state_value .pr_branch)
   owner="$WATCH_ID-$$-$RANDOM$RANDOM"
   exec 8>"$STATE_FILE.cleanup.lock"
   flock -n 8 || die "cleanup is already owned by another process"
@@ -62,7 +62,7 @@ merge_queue_cleanup_worktree() {
     if [[ -z "$current_common" || "$current_common" != "$expected_common" ]]; then
       output="kept worktree: repository identity changed: $worktree"; disposition=kept
     elif [[ -z "$current_branch" || "$current_branch" != "$expected_branch" ]]; then
-      output="kept worktree: expected branch '$expected_branch', found '${current_branch:-detached HEAD}': $worktree"; disposition=kept
+      output="kept worktree: not on PR branch '$expected_branch' (found '${current_branch:-detached HEAD}'): $worktree"; disposition=kept
     elif [[ -n "$dirty" ]]; then
       output="kept worktree: uncommitted changes are present: $worktree"; disposition=kept
     elif [[ -z "$resolved_worktree" || "$(cd "$resolved_worktree" 2>/dev/null && pwd -P || true)" != "$worktree" ]]; then

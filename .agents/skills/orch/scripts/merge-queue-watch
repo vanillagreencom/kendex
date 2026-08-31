@@ -25,7 +25,29 @@ Usage:
 
 The durable lifecycle file lives under the shared git directory, so worktree
 cleanup cannot erase an awaiting lane acknowledgment. `consume` is the only
-verdict classifier and action claimant.
+verdict classifier and action claimant. queue-wait is the only reader of
+queue state; this script only verifies the live PR head and state before
+claiming a verdict, so a stale artifact cannot route actions for a head
+that has since moved.
+
+Phase justifications — the named failure each phase prevents:
+  supervisor (launch/__supervise): queue-wait can die without output (crash,
+    signal, logout) or wedge on a hung GitHub read past its own budget,
+    leaving a watch nothing is running and a consume that could only time
+    out. The detached supervisor publishes an `unknown` artifact when its
+    worker exits unreadably and reaps a worker that outlives the deadline,
+    so every launch attempt ends in a consumable artifact.
+  cleanup: worktree removal after a detached merge acts on state recorded
+    before the merge. Unowned removal can run twice (concurrent lanes), act
+    on a tree no longer holding the PR branch (KEN-888), or die midway and
+    be forgotten. The single-owner claim revalidates repository, PR branch,
+    and cleanliness immediately before removal and persists an interrupted
+    claim as cleanup_pending for resume.
+  acknowledge: a lane that dies after the merge leaves post-merge
+    verification undone with nothing reporting it. The lifecycle
+    terminalizes only on an explicit pass/fail acknowledgment, so oversee
+    keeps surfacing the unfinished item instead of it vanishing with the
+    lane.
 EOF
 }
 
@@ -57,35 +79,6 @@ atomic_update() {
     jq "$@" "$filter" "$STATE_FILE" > "$tmp" || { rm -f -- "$tmp"; exit 1; }
     chmod 600 "$tmp" && mv -f -- "$tmp" "$STATE_FILE"
   ) 9>"$STATE_FILE.lock"
-}
-migrate_legacy_state() {
-  local snapshot status watch artifact runtime watch_dir runtime_root legacy_id
-  snapshot=$(state_snapshot) || die "cannot inspect durable watch generation"
-  status=$(jq -r .status <<<"$snapshot")
-  [[ "$status" == prepared || "$status" == launching || "$status" == watching || "$status" == launch_failed || "$status" == failed ]] || return 0
-  if [[ "$status" == prepared ]]; then
-    [[ "$(jq -r '.watch_dir // empty' <<<"$snapshot")" == "" ||
-       "$(jq -r '.runtime_root // empty' <<<"$snapshot")" == "" ||
-       "$(jq -r '.launch_attempt // empty' <<<"$snapshot")" == "" ]] || return 0
-  else
-    [[ "$(jq -r '.launch_attempt_id // empty' <<<"$snapshot")" == "" ||
-       "$(jq -r '.supervisor_token // empty' <<<"$snapshot")" == "" ||
-       "$(jq -r '.runtime_root // empty' <<<"$snapshot")" == "" ]] || return 0
-  fi
-  watch=$(jq -r .watch_id <<<"$snapshot"); artifact=$(jq -r .artifact_path <<<"$snapshot"); runtime=$(jq -r .runtime_dir <<<"$snapshot")
-  watch_dir="${artifact%/*}"; runtime_root="$watch_dir/runtime-attempts"; legacy_id="$watch-legacy"
-  [[ -n "$watch" && "$watch_dir" != "$artifact" && -d "$watch_dir" && ! -L "$watch_dir" && "$runtime" == "$watch_dir/"* ]] \
-    || die "legacy durable watch paths are invalid"
-  mkdir -p -- "$runtime_root" || die "cannot create migrated runtime root: $runtime_root"
-  chmod 700 "$runtime_root" || die "cannot secure migrated runtime root: $runtime_root"
-  atomic_update 'if (.status=="prepared" and
-      ((.watch_dir // "")=="" or (.runtime_root // "")=="" or (.launch_attempt // null)==null)) or
-      ((.status|IN("launching","watching","launch_failed","failed")) and
-       ((.launch_attempt_id // "")=="" or (.supervisor_token // "")=="" or (.runtime_root // "")=="")) then
-      .watch_dir=$watch_dir|.runtime_root=$runtime_root|.legacy_generation=true|.updated_at=(now|floor)|
-      if .status=="prepared" then .launch_attempt=0|.launch_attempt_id=null|.supervisor_token=null
-      else .launch_attempt=1|.launch_attempt_id=$legacy|.supervisor_token=$legacy end else . end' \
-    --arg watch_dir "$watch_dir" --arg runtime_root "$runtime_root" --arg legacy "$legacy_id"
 }
 fail_state() {
   local cause="$1" detail="$2" attempt_id="${3:-}" artifact="${4:-}"
@@ -144,21 +137,6 @@ supervisor_live() {
   command=$(ps eww -p "$pid" -o command= 2>/dev/null) || return 1
   [[ " $command " == *" __supervise "* && " $command " == *" MERGE_QUEUE_SUPERVISOR_TOKEN=$supervisor_token "* ]]
 }
-legacy_supervisor_live() {
-  local pid="$1" command arg i
-  local argv=()
-  process_running "$pid" || return 1
-  if [[ -r "/proc/$pid/cmdline" ]]; then
-    while IFS= read -r -d '' arg; do argv[${#argv[@]}]="$arg"; done < "/proc/$pid/cmdline"
-    for ((i=0; i+4<${#argv[@]}; i++)); do
-      [[ "${argv[i]}" == "$SELF" && "${argv[i+1]}" == __supervise && "${argv[i+2]}" == "$STATE_FILE" &&
-         "${argv[i+3]}" == "$WATCH_ID" && "${argv[i+4]}" == "$SCRIPT_DIR/queue-wait" ]] && return 0
-    done
-    return 1
-  fi
-  command=$(ps -ww -p "$pid" -o command= 2>/dev/null) || return 1
-  [[ "$command" == *"$SELF __supervise $STATE_FILE $WATCH_ID $SCRIPT_DIR/queue-wait "* ]]
-}
 terminate_supervisor() {
   local pid="$1" attempt_id="$2" runtime="$3" artifact="$4" supervisor_token="$5" i
   supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" || return 0
@@ -175,18 +153,8 @@ terminate_supervisor() {
   done
   return 1
 }
-terminate_legacy_supervisor() {
-  local pid="$1" i
-  legacy_supervisor_live "$pid" || return 0
-  kill -TERM "$pid" 2>/dev/null || true
-  for ((i=0; i<50; i++)); do legacy_supervisor_live "$pid" || return 0; sleep 0.1; done
-  legacy_supervisor_live "$pid" || return 0
-  kill -KILL "$pid" 2>/dev/null || true
-  for ((i=0; i<20; i++)); do legacy_supervisor_live "$pid" || return 0; sleep 0.1; done
-  return 1
-}
 launch_failure() {
-  local detail="$1" attempt_id="$2" runtime="$3" artifact="$4" supervisor_token="$5" pid="${6:-}" legacy="${7:-false}" snapshot
+  local detail="$1" attempt_id="$2" runtime="$3" artifact="$4" supervisor_token="$5" pid snapshot
   atomic_update 'if .watch_id!=$watch or .launch_attempt_id!=$attempt or .runtime_dir!=$runtime or .artifact_path!=$artifact or
       .supervisor_token!=$token or
       (.status|IN("launching","watching")|not) then error("launch claim lost") else
@@ -197,8 +165,7 @@ launch_failure() {
     || die "could not claim launch recovery; inspect the active lifecycle before handback"
   snapshot=$(state_snapshot) || die "cannot snapshot claimed launch failure"
   pid=$(supervisor_pid "$runtime" "$(jq -r '.supervisor_pid // empty' <<<"$snapshot")")
-  if [[ -n "$pid" && "$legacy" == true ]]; then terminate_legacy_supervisor "$pid" || true
-  elif [[ -n "$pid" ]]; then terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" || true; fi
+  [[ -z "$pid" ]] || terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" || true
   atomic_update 'if .watch_id==$watch and .launch_attempt_id==$attempt and .status=="launch_failed"
       then .supervisor_pid=null|.updated_at=(now|floor) else error("launch failure claim changed") end' \
     --arg watch "$WATCH_ID" --arg attempt "$attempt_id"
@@ -230,9 +197,13 @@ prepare() {
   [[ "$gate" =~ ^(approval|review|off)$ && "$recovery" =~ ^[0-9]+$ ]] || die "prepare gate mode or recovery count is malformed"
   [[ "$cleanup" == true || "$cleanup" == false ]] || die "prepare cleanup flag is malformed"
   resolve_state
-  local now watch_dir artifact log runtime_root runtime attempt_id new_state old_status="" pointer worktree_branch
+  local now watch_dir artifact log runtime_root runtime attempt_id new_state old_status="" pointer pr_branch
   now=$(date +%s); WATCH_ID="$now-$$-$RANDOM$RANDOM"
-  worktree_branch=$(git -C "$worktree" branch --show-current 2>/dev/null) || die "cannot read prepared worktree branch"
+  # Cleanup binds to the PR branch recorded at init, never to whatever branch
+  # happens to be checked out when prepare runs (KEN-888): a lane that
+  # switched branches in between must not have that unrelated tree removed.
+  pr_branch=$(cd "$worktree" && "$WORKFLOW_STATE" get "$ISSUE" .branch) || die "cannot read recorded PR branch from workflow state"
+  [[ -n "$pr_branch" && "$pr_branch" != null ]] || die "workflow state records no PR branch for $ISSUE; run init --branch first"
   watch_dir="$STATE_DIR/runs/$ISSUE-$WATCH_ID"
   mkdir -- "$watch_dir" || die "cannot reserve watch directory"
   chmod 700 "$watch_dir"
@@ -243,12 +214,12 @@ prepare() {
   new_state="$watch_dir/prepared.json"
   jq -n --arg issue "$ISSUE" --arg repo "$repo" --argjson pr "$pr" --arg head "$head" \
     --arg watch "$WATCH_ID" --arg gate "$gate" --argjson recovery "$recovery" \
-    --arg root "$ROOT" --arg worktree "$(cd "$worktree" && pwd -P)" --arg worktree_branch "$worktree_branch" \
+    --arg root "$ROOT" --arg worktree "$(cd "$worktree" && pwd -P)" --arg pr_branch "$pr_branch" \
     --arg watch_dir "$watch_dir" --arg artifact "$artifact" --arg log "$log" --arg runtime_root "$runtime_root" --arg runtime "$runtime" \
     --argjson now "$now" --argjson cleanup "$cleanup" \
     '{schema_version:1,issue_id:$issue,repository:$repo,pr_number:$pr,head_sha:$head,
       watch_id:$watch,gate_mode:$gate,recovery_count:$recovery,main_repo_root:$root,
-      worktree:$worktree,worktree_branch:$worktree_branch,watch_dir:$watch_dir,artifact_path:$artifact,log_path:$log,
+      worktree:$worktree,pr_branch:$pr_branch,watch_dir:$watch_dir,artifact_path:$artifact,log_path:$log,
       runtime_root:$runtime_root,runtime_dir:$runtime,prepared_at:$now,launch_attempt:0,launch_attempt_id:null,
       status:"prepared",action:null,terminal:false,
       supervisor_pid:null,supervisor_token:null,launched_at:null,deadline:null,lane_postmerge:null,
@@ -278,7 +249,7 @@ prepare() {
 
 launch() {
   local poll=30 max_wait=2400 method pid deadline now ready log runtime waiter artifact attempt attempt_id supervisor_token
-  local snapshot status prior_attempt head runtime_root watch_dir created=false legacy recorded_pid
+  local snapshot status prior_attempt head runtime_root watch_dir created=false
   while [[ $# -gt 0 ]]; do
     case "$1" in --root) ROOT="${2:-}"; shift 2 ;; --issue) ISSUE="${2:-}"; shift 2 ;;
       --watch-id) WATCH_ID="${2:-}"; shift 2 ;; --poll) poll="${2:-}"; shift 2 ;;
@@ -290,18 +261,9 @@ launch() {
   snapshot=$(state_snapshot) || die "cannot snapshot prepared lifecycle"
   [[ "$WATCH_ID" =~ ^[A-Za-z0-9._-]+$ && "$WATCH_ID" != *..* ]] || die "watch id is not path-safe: $WATCH_ID"
   [[ "$(jq -r '.watch_id // empty' <<<"$snapshot")" == "$WATCH_ID" ]] || die "watch id does not match active lifecycle"
-  migrate_legacy_state
   [[ "$poll" =~ ^[1-9][0-9]*$ && "$max_wait" =~ ^[1-9][0-9]*$ && "$poll" -le "$max_wait" ]] || die "invalid wait bounds"
-  snapshot=$(state_snapshot) || die "cannot snapshot prepared lifecycle"
-  [[ "$(jq -r '.watch_id // empty' <<<"$snapshot")" == "$WATCH_ID" ]] || die "watch id changed during launch"
   status=$(jq -r .status <<<"$snapshot"); prior_attempt=$(jq -r '.launch_attempt // 0' <<<"$snapshot")
   [[ "$prior_attempt" =~ ^[0-9]+$ && ( "$status" == prepared || "$status" == launch_failed ) ]] || die "prepared claim lost"
-  legacy=$(jq -r '.legacy_generation // false' <<<"$snapshot")
-  if [[ "$status" == launch_failed && "$legacy" == true ]]; then
-    runtime=$(jq -r .runtime_dir <<<"$snapshot"); recorded_pid=$(jq -r '.supervisor_pid // empty' <<<"$snapshot")
-    pid=$(supervisor_pid "$runtime" "$recorded_pid")
-    [[ -z "$pid" ]] || terminate_legacy_supervisor "$pid" || die "legacy supervisor survived launch recovery teardown"
-  fi
   attempt=$((prior_attempt+1)); attempt_id="$WATCH_ID-attempt-$attempt"; supervisor_token="$attempt_id-$RANDOM$RANDOM"
   head=$(jq -r .head_sha <<<"$snapshot")
   now=$(date +%s); deadline=$((now + max_wait + 90)); log=$(jq -r .log_path <<<"$snapshot")
@@ -316,7 +278,7 @@ launch() {
     die "queue-wait is missing: $waiter; diagnostics: $log"
   fi
   runtime_root=$(jq -r .runtime_root <<<"$snapshot"); watch_dir=$(jq -r .watch_dir <<<"$snapshot")
-  if [[ "$prior_attempt" -eq 0 && "$legacy" != true ]]; then
+  if [[ "$prior_attempt" -eq 0 ]]; then
     runtime=$(jq -r .runtime_dir <<<"$snapshot"); artifact=$(jq -r .artifact_path <<<"$snapshot")
     [[ -d "$runtime" && ! -L "$runtime" && -f "$runtime/token" && "$(cat < "$runtime/token")" == "$attempt_id" ]] \
       || die "prepared attempt runtime is invalid: $runtime"
@@ -337,7 +299,7 @@ launch() {
   if ! atomic_update 'if .watch_id!=$watch or .head_sha!=$head or .status!=$status or (.launch_attempt // 0)!=$prior
       then error("prepared claim lost") else .artifact_path=$artifact|.runtime_dir=$runtime|
       .launch_attempt=$attempt|.launch_attempt_id=$attempt_id|.status="launching"|.action=null|.diagnostic=null|
-      .supervisor_pid=null|.supervisor_token=$token|.legacy_generation=false|.launch_method=$method|.launched_at=$now|
+      .supervisor_pid=null|.supervisor_token=$token|.launch_method=$method|.launched_at=$now|
       .setup_deadline=($now+10)|.deadline=$deadline|.updated_at=$now end' \
     --arg watch "$WATCH_ID" --arg head "$head" --arg status "$status" --argjson prior "$prior_attempt" \
     --arg runtime "$runtime" --arg artifact "$artifact" --arg attempt_id "$attempt_id" --arg token "$supervisor_token" --arg method "$method" \
@@ -407,9 +369,8 @@ claim() {
 
 consume() {
   parse_root_issue "$@"
-  migrate_legacy_state
   local snapshot status artifact runtime attempt_id supervisor_token pid recorded_pid deadline setup_deadline now runtime_token body live live_state
-  local observed expected repo pr verdict result cause action diag error_text exit_code diag_path unconfirmed recovery log legacy
+  local expected repo pr verdict result cause action diag error_text exit_code diag_path unconfirmed recovery log
   snapshot=$(state_snapshot) || die "cannot snapshot active launch attempt"
   WATCH_ID=$(jq -r .watch_id <<<"$snapshot"); status=$(jq -r .status <<<"$snapshot")
   case "$status" in claimed|launch_failed|failed|abandoned|awaiting_lane_postmerge|cleanup_pending|cleanup_complete|complete) consume_report; return ;; esac
@@ -419,18 +380,9 @@ consume() {
   deadline=$(jq -r '.deadline // 0' <<<"$snapshot"); setup_deadline=$(jq -r '.setup_deadline // 0' <<<"$snapshot")
   expected=$(jq -r .head_sha <<<"$snapshot"); repo=$(jq -r .repository <<<"$snapshot"); pr=$(jq -r .pr_number <<<"$snapshot")
   recovery=$(jq -r .recovery_count <<<"$snapshot"); log=$(jq -r .log_path <<<"$snapshot"); now=$(date +%s)
-  legacy=$(jq -r '.legacy_generation // false' <<<"$snapshot")
   if [[ "$status" == launching && ! -s "$artifact" ]]; then
     pid=$(supervisor_pid "$runtime" "$recorded_pid")
-    if [[ "$legacy" == true ]] && legacy_supervisor_live "$pid"; then
-      if [[ "$now" -le "$setup_deadline" ]]; then
-        jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
-      fi
-      atomic_update 'if .watch_id==$watch and .launch_attempt_id==$attempt and .legacy_generation==true and
-          .status=="launching" then .status="watching"|.supervisor_pid=$pid|.updated_at=(now|floor)
-          else error("legacy launch attempt changed") end' --arg watch "$WATCH_ID" --arg attempt "$attempt_id" \
-        --argjson pid "$pid"; status=watching
-    elif supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token"; then
+    if supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token"; then
       if [[ "$now" -le "$setup_deadline" ]]; then
         jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
       fi
@@ -442,15 +394,8 @@ consume() {
     elif [[ -z "$pid" && "$now" -le "$setup_deadline" ]]; then
       jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
     else
-      launch_failure "launching supervisor died or missed its setup deadline; see $log" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" "$recorded_pid" "$legacy"
+      launch_failure "launching supervisor died or missed its setup deadline; see $log" "$attempt_id" "$runtime" "$artifact" "$supervisor_token"
       consume_report; return
-    fi
-  fi
-  if [[ "$legacy" == true && "$status" == watching && ! -s "$artifact" ]]; then
-    pid=$(supervisor_pid "$runtime" "$recorded_pid")
-    if [[ "$now" -le "$deadline" ]] && legacy_supervisor_live "$pid"; then
-      jq -cn --arg watch "$WATCH_ID" '{status:"watching",watch_id:$watch,action:"pending"}'
-      return
     fi
   fi
   if [[ ! -s "$artifact" ]]; then
@@ -462,14 +407,13 @@ consume() {
     fi
     fail_state watch_lost "artifact missing and supervisor dead or overdue; see $log" "$attempt_id" "$artifact"
     pid=$(supervisor_pid "$runtime")
-    if [[ -n "$pid" && "$legacy" == true ]]; then terminate_legacy_supervisor "$pid" || true
-    elif [[ -n "$pid" ]]; then terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" || true; fi
+    [[ -z "$pid" ]] || terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" || true
     json_report; return
   fi
-  if ! jq -e --arg watch "$WATCH_ID" --arg attempt "$attempt_id" --arg repo "$repo" --arg head "$expected" --argjson pr "$pr" --argjson legacy "$legacy" '
+  if ! jq -e --arg watch "$WATCH_ID" --arg attempt "$attempt_id" --arg repo "$repo" --arg head "$expected" --argjson pr "$pr" '
       type=="object" and .schema_version==1 and .watch_id==$watch and
-      (.launch_attempt_id==$attempt or ($legacy and (.launch_attempt_id==null))) and .repository==$repo and
-      .pr_number==$pr and .expected_head==$head and (.observed_head|type=="string") and
+      .launch_attempt_id==$attempt and .repository==$repo and
+      .pr_number==$pr and .expected_head==$head and
       (.status|IN("complete","timeout","error")) and (.verdict|IN("merged","conflicting","ejected","disarmed","dequeued","closed","queued","not_queued","unknown"))' "$artifact" >/dev/null; then
     fail_state malformed_artifact "verdict artifact is malformed or belongs to another launch attempt" "$attempt_id" "$artifact"
     json_report; return
@@ -481,13 +425,12 @@ consume() {
   (umask 077; set -C; : > "$diag") || die "cannot create diagnostic binding"
   body=$(live_pr) || body='{"headRefOid":"","state":"UNKNOWN"}'
   live=$(jq -r '.headRefOid // ""' <<<"$body"); live_state=$(jq -r '.state // ""' <<<"$body")
-  observed=$(jq -r .observed_head "$artifact")
   jq -n --arg cause "${cause:-$verdict}" --arg error "$error_text" --arg exit "$exit_code" --arg path "$diag_path" --arg unconfirmed "$unconfirmed" \
-    --arg expected "$expected" --arg observed "$observed" --arg live "$live" --arg state "$live_state" \
+    --arg expected "$expected" --arg live "$live" --arg state "$live_state" \
     '{cause:$cause,error:(if $error=="" then null else $error end),unconfirmed_verdict:(if $unconfirmed=="" then null else $unconfirmed end),worker_exit_code:(if $exit=="" then null else ($exit|tonumber) end),
-      diagnostic_path:$path,head_verification:{expected:$expected,artifact_observed:$observed,live:$live,live_state:$state}}' > "$diag"
+      diagnostic_path:$path,head_verification:{expected:$expected,live:$live,live_state:$state}}' > "$diag"
   if [[ -z "$live" ]]; then claim failed "$verdict" live_pr_unreadable "$diag" "$attempt_id" "$artifact" "$expected" "$recovery"; rm -f -- "$diag"; return; fi
-  if [[ "$live" != "$expected" || ( -n "$observed" && "$observed" != "$expected" ) ]]; then
+  if [[ "$live" != "$expected" ]]; then
     claim failed "$verdict" head_mismatch "$diag" "$attempt_id" "$artifact" "$expected" "$recovery"; rm -f -- "$diag"; return
   fi
   if [[ "$live_state" == MERGED ]]; then claim postmerge merged merged_race "$diag" "$attempt_id" "$artifact" "$expected" "$recovery"; rm -f -- "$diag"; return; fi
@@ -510,8 +453,8 @@ consume() {
 event() {
   while [[ $# -gt 0 ]]; do case "$1" in --root) ROOT="${2:-}"; shift 2 ;; --issue) ISSUE="${2:-}"; shift 2 ;; *) die "unknown event option: $1" ;; esac; done
   [[ -n "$ROOT" && -n "$ISSUE" ]] || die "--root and --issue are required"
-  resolve_state; [[ -f "$STATE_FILE" ]] || exit 1; migrate_legacy_state
-  local snapshot status artifact runtime attempt_id supervisor_token recorded_pid pid deadline setup_deadline now legacy
+  resolve_state; [[ -f "$STATE_FILE" ]] || exit 1
+  local snapshot status artifact runtime attempt_id supervisor_token recorded_pid pid deadline setup_deadline now
   snapshot=$(state_snapshot) || exit 1; WATCH_ID=$(jq -r .watch_id <<<"$snapshot")
   status=$(jq -r .status <<<"$snapshot"); [[ "$status" == watching || "$status" == launching || "$status" == launch_failed ]] || exit 1
   [[ "$status" == launch_failed ]] && { printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; }
@@ -519,11 +462,8 @@ event() {
   attempt_id=$(jq -r '.launch_attempt_id // empty' <<<"$snapshot"); recorded_pid=$(jq -r '.supervisor_pid // empty' <<<"$snapshot")
   supervisor_token=$(jq -r '.supervisor_token // empty' <<<"$snapshot")
   deadline=$(jq -r '.deadline // 0' <<<"$snapshot"); setup_deadline=$(jq -r '.setup_deadline // 0' <<<"$snapshot")
-  legacy=$(jq -r '.legacy_generation // false' <<<"$snapshot"); now=$(date +%s); pid=$(supervisor_pid "$runtime" "$recorded_pid")
-  if [[ "$legacy" == true && "$status" == watching && ! -s "$artifact" && "$now" -le "$deadline" ]] &&
-      legacy_supervisor_live "$pid"; then exit 1; fi
+  now=$(date +%s); pid=$(supervisor_pid "$runtime" "$recorded_pid")
   if [[ "$status" == launching && ! -s "$artifact" ]]; then
-    if [[ "$legacy" == true ]] && legacy_supervisor_live "$pid"; then [[ "$now" -le "$setup_deadline" ]] && exit 1; printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; fi
     if supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token"; then [[ "$now" -le "$setup_deadline" ]] && exit 1; printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; fi
     [[ -z "$pid" && "$now" -le "$setup_deadline" ]] && exit 1
   fi
@@ -570,23 +510,20 @@ acknowledge() {
 }
 
 fail_command() {
-  local cause="" snapshot fresh attempt_id runtime artifact supervisor_token recorded_pid pid i fresh_attempt fresh_artifact legacy
+  local cause="" snapshot fresh attempt_id runtime artifact supervisor_token recorded_pid pid i fresh_attempt fresh_artifact
   while [[ $# -gt 0 ]]; do case "$1" in --root) ROOT="${2:-}"; shift 2 ;; --issue) ISSUE="${2:-}"; shift 2 ;;
     --watch-id) WATCH_ID="${2:-}"; shift 2 ;; --cause) cause="${2:-}"; shift 2 ;; *) die "unknown fail option: $1" ;; esac; done
   resolve_state; require_state; [[ "$cause" =~ ^(arm_failed|merge_blocked|launch_failed|operator_abandoned)$ ]] || die "invalid failure cause"
-  migrate_legacy_state
   for ((i=0; i<2; i++)); do
     snapshot=$(state_snapshot) || die "cannot snapshot active launch attempt"
     WATCH_ID="${WATCH_ID:-$(jq -r .watch_id <<<"$snapshot")}"
     attempt_id=$(jq -r '.launch_attempt_id // empty' <<<"$snapshot"); runtime=$(jq -r .runtime_dir <<<"$snapshot")
     artifact=$(jq -r .artifact_path <<<"$snapshot"); supervisor_token=$(jq -r '.supervisor_token // empty' <<<"$snapshot")
-    legacy=$(jq -r '.legacy_generation // false' <<<"$snapshot")
     if fail_state "$cause" "$cause" "$attempt_id" "$artifact"; then
       fresh=$(state_snapshot) || die "cannot snapshot claimed failure"
       recorded_pid=$(jq -r '.supervisor_pid // empty' <<<"$fresh")
       pid=$(supervisor_pid "$runtime" "$recorded_pid")
-      if [[ "$legacy" == true ]]; then terminate_legacy_supervisor "$pid" || true
-      else terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" || true; fi
+      terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" || true
       json_report; return
     fi
     fresh=$(state_snapshot) || die "cannot resnapshot launch attempt after failure claim loss"

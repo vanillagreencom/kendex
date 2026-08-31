@@ -330,14 +330,6 @@ if [[ -n "$REAL_SETSID" ]]; then
 else
   ok "launch setup race control skipped without setsid"
 fi
-prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep"); state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path); watch_dir=$(jq -r .watch_dir "$state_path"); legacy_runtime="$watch_dir/legacy-runtime"
-mkdir "$legacy_runtime"; printf '%s\n' "$watch" > "$legacy_runtime/token"
-jq --arg artifact "$watch_dir/verdict.json" --arg runtime "$legacy_runtime" '.artifact_path=$artifact|.runtime_dir=$runtime|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token,.legacy_generation)' "$state_path" > "$TMP/legacy-prepared.json"; chmod 600 "$TMP/legacy-prepared.json"; mv "$TMP/legacy-prepared.json" "$state_path"
-launch_bounded "$watch"
-legacy_state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829)
-eq "$(jq -r .status <<<"$legacy_state")" watching "legacy prepared lifecycle launches after upgrade"
-[[ "$(jq -r .launch_attempt_id <<<"$legacy_state")" == "$watch-attempt-1" && "$(jq -r .runtime_dir <<<"$legacy_state")" != "$legacy_runtime" && "$(jq -r .watch_dir <<<"$legacy_state")" == "$watch_dir" ]] && ok "legacy prepared migration preserves watch cleanup identity" || bad "legacy prepared migration lost generation or cleanup identity"
-"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
 jq --arg attempt "$watch-attempt-1" --arg token "$watch-attempt-1-test" '.launch_attempt=1|.launch_attempt_id=$attempt|.supervisor_token=$token|.status="launching"|.setup_deadline=0|.deadline=((now|floor)+600)' "$state_path" > "$TMP/orphan.json"
@@ -367,7 +359,7 @@ prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .a
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
 jq --arg attempt "$watch-attempt-1" --arg token "$watch-attempt-1-test" '.launch_attempt=1|.launch_attempt_id=$attempt|.supervisor_token=$token|.status="launching"|.setup_deadline=((now|floor)+10)|.deadline=((now|floor)+600)' "$state_path" > "$TMP/completed-launch.json"
 chmod 600 "$TMP/completed-launch.json"; mv "$TMP/completed-launch.json" "$state_path"
-jq -n --arg watch "$watch" --arg attempt "$watch-attempt-1" --arg head "$HEAD_A" '{schema_version:1,status:"complete",verdict:"merged",repository:"owner/repo",pr_number:42,expected_head:$head,observed_head:"",watch_id:$watch,launch_attempt_id:$attempt}' > "$artifact"
+jq -n --arg watch "$watch" --arg attempt "$watch-attempt-1" --arg head "$HEAD_A" '{schema_version:1,status:"complete",verdict:"merged",repository:"owner/repo",pr_number:42,expected_head:$head,watch_id:$watch,launch_attempt_id:$attempt}' > "$artifact"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$result")" postmerge "completed artifact outranks launching setup state"
 "$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
@@ -645,63 +637,18 @@ touch "$RELEASE"
 rm -f -- "$WATCH_REGISTRATION_GATE.enabled" "$WATCH_REGISTRATION_GATE.entered" "$WATCH_REGISTRATION_GATE.release"
 
 prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
+launch_bounded "$watch"
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
-bash -c 'while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$state_path" "$watch" "$SCRIPTS/queue-wait" 1 10 & legacy_supervisor=$!
-jq --argjson pid "$legacy_supervisor" '.status="launching"|.supervisor_pid=$pid|.setup_deadline=((now|floor)+10)|.deadline=((now|floor)+600)|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-watching.json"
-chmod 600 "$TMP/legacy-watching.json"; mv "$TMP/legacy-watching.json" "$state_path"
-result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
-eq "$(jq -r .action <<<"$result")" pending "live legacy launching remains pending"
-jq '.setup_deadline=0' "$state_path" > "$TMP/legacy-launch-expired.json"; chmod 600 "$TMP/legacy-launch-expired.json"; mv "$TMP/legacy-launch-expired.json" "$state_path"
-result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
-eq "$(jq -r .action <<<"$result")" pending "expired live legacy launch is adopted"
-eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" watching "legacy launch adoption persists watching"
-running "$legacy_supervisor" && ok "legacy watching supervisor is preserved" || bad "legacy watching supervisor was terminated"
-"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
-if ! running "$legacy_supervisor"; then ok "direct legacy failure terminates tokenless supervisor"; else bad "direct legacy failure left tokenless supervisor running"; fi
-kill "$legacy_supervisor" 2>/dev/null || true
-wait "$legacy_supervisor" 2>/dev/null || true
-
-prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
-state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
-bash -c 'while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$state_path" "$watch" "$SCRIPTS/queue-wait" 1 10 & zombie_pid=$!
+bash -c 'while :; do sleep 1; done' zombie-decoy & zombie_pid=$!
 export WATCH_PS_ZOMBIE_PID="$zombie_pid"
-jq --argjson pid "$zombie_pid" '.status="watching"|.supervisor_pid=$pid|.deadline=((now|floor)+600)|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-zombie.json"
-chmod 600 "$TMP/legacy-zombie.json"; mv "$TMP/legacy-zombie.json" "$state_path"
+jq --argjson pid "$zombie_pid" '.supervisor_pid=$pid' "$state_path" > "$TMP/zombie.json"
+chmod 600 "$TMP/zombie.json"; mv "$TMP/zombie.json" "$state_path"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .status <<<"$result")" failed "production liveness treats zombie state as exited"
 if ! running "$zombie_pid"; then ok "test liveness helper treats zombie state as exited"; else bad "test liveness helper accepted zombie state"; fi
 unset WATCH_PS_ZOMBIE_PID
 kill "$zombie_pid" 2>/dev/null || true; wait "$zombie_pid" 2>/dev/null || true
-
-prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
-state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
-jq '.status="launching"|.setup_deadline=0|.deadline=((now|floor)+600)|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-launching.json"
-chmod 600 "$TMP/legacy-launching.json"; mv "$TMP/legacy-launching.json" "$state_path"
-result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
-eq "$(jq -r .action <<<"$result")" resume_launch "orphaned legacy launch enters recovery"
-"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
-
-prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
-state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
-legacy_runtime=$(jq -r .runtime_dir "$state_path")
-printf '%s\n' "$watch" > "$legacy_runtime/token"
-bash -c 'while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$state_path" "$watch" "$SCRIPTS/queue-wait" 1 10 & legacy_retry_supervisor=$!
-jq --argjson pid "$legacy_retry_supervisor" '.status="launch_failed"|.action="launch"|.supervisor_pid=$pid|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-launch-failed.json"
-chmod 600 "$TMP/legacy-launch-failed.json"; mv "$TMP/legacy-launch-failed.json" "$state_path"
-launch_bounded "$watch"
-legacy_retry_state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829)
-eq "$(jq -r .status <<<"$legacy_retry_state")" watching "legacy launch failure retries on a migrated generation"
-[[ "$(jq -r .runtime_dir <<<"$legacy_retry_state")" != "$legacy_runtime" ]] && ok "legacy retry receives an isolated runtime" || bad "legacy retry reused legacy runtime"
-if ! running "$legacy_retry_supervisor"; then ok "legacy retry terminates old supervisor before replacement"; else bad "legacy retry left old supervisor running"; fi
-kill "$legacy_retry_supervisor" 2>/dev/null || true
-wait "$legacy_retry_supervisor" 2>/dev/null || true
-if [[ "$(jq -r .status <<<"$legacy_retry_state")" == watching ]]; then
-  legacy_retry_artifact=$(jq -r .artifact_path <<<"$legacy_retry_state")
-  touch "$RELEASE"; wait_file "$legacy_retry_artifact" || bad "legacy retry verdict missing"
-  result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
-  eq "$(jq -r .action <<<"$result")" recovery "legacy retry verdict is consumable"
-fi
-"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
+touch "$RELEASE"
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 "$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
@@ -744,6 +691,19 @@ eq "$(jq -r .cleanup.disposition <<<"$state")" kept "cleanup keeps a worktree wh
 "$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null
 git -C "$WT" switch -q watch-test
 git -C "$MAIN" branch -D foreign-cleanup >/dev/null
+
+git -C "$WT" switch -qc prepare-time-branch
+prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
+eq "$(jq -r .pr_branch <<<"$prep")" watch-test "prepare binds cleanup to the recorded PR branch, not the prepare-time checkout"
+"$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+"$SCRIPTS/merge-queue-watch" merge-pr-complete --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+"$SCRIPTS/merge-queue-watch" cleanup --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
+state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .cleanup.disposition <<<"$state")" kept "cleanup keeps a worktree prepared on a non-PR branch"
+[[ -d "$WT" ]] && ok "non-PR-branch worktree survives cleanup" || bad "cleanup removed a worktree the workflow says to keep"
+"$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-829 --watch-id "$watch" --result pass >/dev/null
+git -C "$WT" switch -q watch-test
+git -C "$MAIN" branch -D prepare-time-branch >/dev/null
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep")
 "$SCRIPTS/merge-queue-watch" direct-merged --root "$MAIN" --issue KEN-829 --watch-id "$watch" >/dev/null
