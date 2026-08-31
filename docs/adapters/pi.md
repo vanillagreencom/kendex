@@ -44,8 +44,13 @@ the three run the same bytes under Claude, Codex and Pi. It resolves the
 project the way the rest of the adapter does, from the nearest ancestor
 carrying a marker, and the global root from `PI_CODING_AGENT_DIR`; a project
 script runs only where Pi reports the workspace trusted, since spawning it
-executes what the project ships. A script the carrier finds at neither scope
-is a hook this project has not installed, and nothing runs.
+executes what the project ships. The global root is exempt from that question
+because it holds the person's own files, so the carrier uses it only where it
+is one: the variable unset or absolute, and in an untrusted workspace falling
+outside that workspace. Empty or relative it names whichever directory the
+session sits in, which would put a checkout's own script behind the exemption.
+A script the carrier finds at neither scope is a hook this project has not
+installed, and nothing runs.
 
 **The reserved names.** Pi warns on two directory names directly beside a
 root it loads and halts an interactive start until a keypress: `hooks/` on

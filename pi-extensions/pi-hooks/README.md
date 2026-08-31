@@ -8,7 +8,7 @@ Three of them are the rendered bash hooks themselves. Pi has no per-hook runner,
 
 It looks for `<project>/.pi/kendex/hooks/<name>.sh`, then `<global>/kendex/hooks/<name>.sh`, where `<global>` is `PI_CODING_AGENT_DIR` if set and `~/.pi/agent` otherwise. The project is the nearest ancestor of the session's directory holding a `.pi/`, `.git/` or `.kendex-lock.json`, so a session started in a subdirectory gets the same hooks as one started at the repository root.
 
-**A project-scope script only runs in a workspace Pi reports trusted.** Spawning it is executing code the project ships, so a clone nobody has trusted gets its guards skipped rather than its scripts run; the global root still answers, because those scripts are the person's own. A name neither root holds is a hook kendex has not installed here, and the command passes.
+**A project-scope script only runs in a workspace Pi reports trusted.** Spawning it is executing code the project ships, so a clone nobody has trusted gets its guards skipped rather than its scripts run; the global root still answers, because those scripts are the person's own. That last part is only true while `PI_CODING_AGENT_DIR` names a directory of its own, so the global root is used only when the variable is unset or absolute, and in an untrusted workspace only when it falls outside that workspace. Empty or relative, it would be whichever directory the session happens to sit in, and a checkout's script would be reached through the branch that skips the trust gate. A name neither root holds is a hook kendex has not installed here, and the command passes.
 
 That is the whole of it: no second implementation. Claude Code, Codex and Pi run the same bytes, so a change to a hook reaches all three at once.
 

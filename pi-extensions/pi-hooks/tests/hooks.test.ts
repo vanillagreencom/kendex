@@ -1,71 +1,24 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { runCargo } from "../extensions/cargo.ts";
 import piHooks from "../extensions/hooks.ts";
+import {
+	CONFIG_ID,
+	initRustRepo,
+	installToolCallHandler,
+	readLog,
+	renderedHookPath,
+	renderStub,
+	runGit,
+	trusted,
+	useIsolatedGitEnv,
+} from "./harness.ts";
 
-const CONFIG_ID = "@vanillagreen/pi-hooks";
+useIsolatedGitEnv();
 
-type ToolCallHandler = (event: { toolName: string; input: Record<string, unknown> }, ctx: Record<string, unknown>) => Promise<unknown>;
-
-function runGit(args: string[], cwd: string): void {
-	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
-	if (result.status !== 0) {
-		throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
-	}
-}
-
-function writePiConfig(project: string): void {
-	mkdirSync(join(project, ".pi"), { recursive: true });
-	writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
-		kendex: {
-			extensionManager: {
-				config: {
-					[CONFIG_ID]: {
-						enabled: true,
-						preCommitCheck: true,
-						taskCompletedCheck: false,
-						clippyTimeoutMs: 3000,
-					},
-				},
-			},
-		},
-	}, null, 2));
-}
-
-// Git reads no config of the developer's here: a global core.hooksPath
-// would disarm every fixture, and a global init.templateDir can leave git
-// init without the hooks directory the fixtures write into.
-const isolatedEnv: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
-const savedEnv: Record<string, string | undefined> = {};
-
-beforeAll(() => {
-	for (const [name, value] of Object.entries(isolatedEnv)) {
-		savedEnv[name] = process.env[name];
-		process.env[name] = value;
-	}
-});
-
-afterAll(() => {
-	for (const [name, value] of Object.entries(savedEnv)) {
-		if (value === undefined) delete process.env[name];
-		else process.env[name] = value;
-	}
-});
-
-function initRustRepo(prefix: string): string {
-	const dir = mkdtempSync(join(tmpdir(), prefix));
-	runGit(["init", "-q"], dir);
-	mkdirSync(join(dir, ".git", "hooks"), { recursive: true });
-	writePiConfig(dir);
-	mkdirSync(join(dir, "src"), { recursive: true });
-	writeFileSync(join(dir, "src", "lib.rs"), "pub fn answer() -> i32 { 42 }\n");
-	runGit(["add", "src/lib.rs"], dir);
-	return dir;
-}
 
 function initCleanRustRepo(prefix: string): string {
 	const dir = initRustRepo(prefix);
@@ -85,18 +38,6 @@ exit "\${FAKE_FMT_EXIT:-0}"
 `);
 	chmodSync(cargo, 0o755);
 	return { bin, log };
-}
-
-function installToolCallHandler(): ToolCallHandler {
-	let handler: ToolCallHandler | undefined;
-	const pi = {
-		on(event: string, cb: ToolCallHandler) {
-			if (event === "tool_call") handler = cb;
-		},
-	};
-	piHooks(pi as never);
-	if (!handler) throw new Error("tool_call handler was not registered");
-	return handler;
 }
 
 const PROBE_ARG = "--pi-hooks-reachability-probe";
@@ -157,28 +98,6 @@ function cargoLog(log: string): string {
 	return readFileSync(log, { encoding: "utf8", flag: "a+" });
 }
 
-/** The kendex render of a hook, at the project path docs/adapters/pi.md gives
- * it. The extension spawns what is here and nothing else. */
-function renderedHookPath(project: string, name: string): string {
-	return join(project, ".pi", "kendex", "hooks", `${name}.sh`);
-}
-
-/** Put a stub hook where kendex renders one. It appends the payload it read to
- * `log`, writes `stderr`, and exits `exitCode` — so the log proves the spawn
- * happened and carries what the extension sent. */
-function renderStub(project: string, name: string, opts: { exitCode: number; stderr?: string; log: string }): void {
-	const path = renderedHookPath(project, name);
-	mkdirSync(join(project, ".pi", "kendex", "hooks"), { recursive: true });
-	writeFileSync(path, [
-		"#!/usr/bin/env bash",
-		"set -euo pipefail",
-		`cat >> ${JSON.stringify(opts.log)}`,
-		...(opts.stderr ? [`echo ${JSON.stringify(opts.stderr)} >&2`] : []),
-		`exit ${opts.exitCode}`,
-	].join("\n") + "\n");
-	chmodSync(path, 0o755);
-}
-
 /** Put the repository's real hook where kendex renders it. */
 function renderRealHook(project: string, name: string): void {
 	mkdirSync(join(project, ".pi", "kendex", "hooks"), { recursive: true });
@@ -187,15 +106,6 @@ function renderRealHook(project: string, name: string): void {
 	chmodSync(renderedHookPath(project, name), 0o755);
 }
 
-function readLog(log: string): string {
-	return readFileSync(log, { encoding: "utf8", flag: "a+" });
-}
-
-/** A trusted workspace. Pi gates the project's own scripts on this, so every
- * case that expects a project-scope hook to run has to say so. */
-function trusted(cwd: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
-	return { cwd, isProjectTrusted: () => true, ...extra };
-}
 
 describe("pi-hooks pre-commit tool_call", () => {
 	test("spawns the rendered hook with the payload a PreToolUse hook is sent", async () => {
@@ -440,150 +350,6 @@ async function onPath(bin: string, run: () => Promise<void>): Promise<void> {
 		else process.env.PATH = oldPath;
 	}
 }
-
-describe("pi-hooks rendered-hook resolution", () => {
-	// A project-scope hook is code the project ships, and spawning it is
-	// executing it. Pi's trust answer is what stands between a fresh clone and
-	// arbitrary code on the session's first bash call.
-	test("an untrusted workspace does not run the project's script; a trusted one does", async () => {
-		const project = initRustRepo("pi-hooks-trust-");
-		const log = join(project, "payload.log");
-		try {
-			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "the project's script ran", log });
-			const handler = installToolCallHandler();
-
-			// Untrusted: no spawn at all, so no refusal and an empty log.
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project, isProjectTrusted: () => false })).toBeUndefined();
-			expect(readLog(log)).toBe("");
-
-			// A Pi with no trust method, and one whose trust method throws, are
-			// both untrusted: only a plain true runs the project's code.
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project })).toBeUndefined();
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project, isProjectTrusted: () => { throw new Error("no answer"); } })).toBeUndefined();
-			expect(readLog(log)).toBe("");
-
-			// The control: the same script, the same command, trusted. Without
-			// this the assertions above pass for a hook that never resolved.
-			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
-			expect(result).toEqual({ block: true, reason: "the project's script ran" });
-			expect(readLog(log)).toContain("git commit -m x");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	// Resolving `.pi` under the cwd alone found nothing from a subdirectory, and
-	// nothing found is allowed — so every guard silently switched off for a
-	// session started anywhere but the repository root.
-	test("a nested cwd resolves the same project hook as the root", async () => {
-		const project = initRustRepo("pi-hooks-nested-");
-		const log = join(project, "payload.log");
-		const nested = join(project, "crates", "core", "src");
-		mkdirSync(nested, { recursive: true });
-		try {
-			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "refused from the project root", log });
-			const handler = installToolCallHandler();
-
-			const atRoot = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean };
-			expect(atRoot.block).toBe(true);
-
-			// The same command three directories down must reach the same script.
-			const fromNested = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(nested)) as { block?: boolean; reason?: string };
-			expect(fromNested).toEqual({ block: true, reason: "refused from the project root" });
-			expect(readLog(log).split("}{").length).toBe(2);
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	test("the global root honours PI_CODING_AGENT_DIR", async () => {
-		const agentDir = mkdtempSync(join(tmpdir(), "pi-hooks-agentdir-"));
-		const project = initRustRepo("pi-hooks-globalonly-");
-		const log = join(agentDir, "payload.log");
-		const saved = process.env.PI_CODING_AGENT_DIR;
-		try {
-			// Rendered at the global root only: nothing under the project.
-			mkdirSync(join(agentDir, "kendex", "hooks"), { recursive: true });
-			const script = join(agentDir, "kendex", "hooks", "pre-commit-check.sh");
-			writeFileSync(script, `#!/usr/bin/env bash\nset -euo pipefail\ncat >> ${JSON.stringify(log)}\necho "the global hook ran" >&2\nexit 2\n`);
-			chmodSync(script, 0o755);
-			const handler = installToolCallHandler();
-
-			// Unset, the relocated root is invisible and nothing runs.
-			delete process.env.PI_CODING_AGENT_DIR;
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project))).toBeUndefined();
-			expect(readLog(log)).toBe("");
-
-			process.env.PI_CODING_AGENT_DIR = agentDir;
-			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
-			expect(result).toEqual({ block: true, reason: "the global hook ran" });
-
-			// The person's own scripts are not the project's, so the global root
-			// answers whether or not the workspace is trusted.
-			const untrusted = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: project, isProjectTrusted: () => false }) as { block?: boolean };
-			expect(untrusted.block).toBe(true);
-		} finally {
-			if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = saved;
-			rmSync(agentDir, { recursive: true, force: true });
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	// Where the two halves used to disagree. The Pi adapter reads the variable
-	// with `std::env::var().ok()`, so an empty value reaches it as `Some("")`
-	// and roots the global scope at the process cwd; this carrier read it as
-	// falsy and looked in `~/.pi/agent`. kendex rendered the global guards into
-	// one tree, the carrier searched the other, found nothing, and allowed the
-	// command — the silent-allow shape, since a hook that is not found is
-	// allowed. Both sides now name one directory.
-	test("an empty PI_CODING_AGENT_DIR roots the global scope where the renderer roots it", async () => {
-		const agentDir = mkdtempSync(join(tmpdir(), "pi-hooks-emptyvar-"));
-		const project = initRustRepo("pi-hooks-emptyroot-");
-		const log = join(agentDir, "payload.log");
-		const saved = process.env.PI_CODING_AGENT_DIR;
-		const savedCwd = process.cwd();
-		try {
-			mkdirSync(join(agentDir, "kendex", "hooks"), { recursive: true });
-			const script = join(agentDir, "kendex", "hooks", "pre-commit-check.sh");
-			writeFileSync(script, `#!/usr/bin/env bash\nset -euo pipefail\ncat >> ${JSON.stringify(log)}\necho "the cwd-rooted hook ran" >&2\nexit 2\n`);
-			chmodSync(script, 0o755);
-			const handler = installToolCallHandler();
-
-			// An empty root is a relative path on both sides, so the directory it
-			// names is whichever cwd the process has. This is the renderer's own
-			// answer for an empty value, reached from the carrier.
-			process.chdir(agentDir);
-			process.env.PI_CODING_AGENT_DIR = "";
-			const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
-			expect(result).toEqual({ block: true, reason: "the cwd-rooted hook ran" });
-
-			// The control, and the half that must not move: unset is still
-			// `~/.pi/agent`, never the cwd, so this same script is invisible.
-			delete process.env.PI_CODING_AGENT_DIR;
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project))).toBeUndefined();
-		} finally {
-			process.chdir(savedCwd);
-			if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = saved;
-			rmSync(agentDir, { recursive: true, force: true });
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	// Decided rather than inherited: a name neither root holds means kendex did
-	// not install this hook here, and the command passes. See runRenderedHook.
-	test("a hook kendex never rendered allows the command", async () => {
-		const project = initRustRepo("pi-hooks-norender-");
-		try {
-			const handler = installToolCallHandler();
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project))).toBeUndefined();
-			expect(await handler({ toolName: "bash", input: { command: "cd /tmp" } }, trusted(project))).toBeUndefined();
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-});
 
 describe("pi-hooks end-of-turn clippy", () => {
 	/** One turn that edits a `.rs` file, against an already-installed extension. */

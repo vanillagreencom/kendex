@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
-import { getBool, getNumber, piUserDir, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
+import { actionableUserDir, getBool, getNumber, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { runCommandAsync } from "./process.js";
@@ -25,13 +25,23 @@ const HOOK_BUDGET_MS = 60_000;
  * call of the session. Untrusted, the project root is skipped and the global
  * root still answers — the person's own scripts are not the project's.
  *
+ * That last sentence is an assumption, and `actionableUserDir` is what makes it
+ * true. The global branch never asks about trust, so it must not be able to
+ * point back into the workspace: an empty or relative `PI_CODING_AGENT_DIR`
+ * roots the global scope at the session's own cwd, and an untrusted clone's
+ * `kendex/hooks/<name>.sh` would then be spawned through the branch that skips
+ * the trust gate. Where the global root is not the person's own there is no
+ * global root here at all, and an untrusted workspace contributes nothing.
+ *
  * A name neither root holds is a hook this project has not installed, and the
  * caller allows the command. runRenderedHook says why that is the right answer.
  */
 function renderedHook(name: string, ctx: ExtensionContext): string | undefined {
-	const roots = projectTrusted(ctx)
-		? [join(projectRoot(ctx.cwd), ".pi", "kendex"), join(piUserDir(), "kendex")]
-		: [join(piUserDir(), "kendex")];
+	const trusted = projectTrusted(ctx);
+	const global = actionableUserDir(ctx.cwd, trusted);
+	const roots: string[] = [];
+	if (trusted) roots.push(join(projectRoot(ctx.cwd), ".pi", "kendex"));
+	if (global !== undefined) roots.push(join(global, "kendex"));
 	for (const root of roots) {
 		const script = resolve(root, "hooks", `${name}.sh`);
 		if (existsSync(script)) return script;

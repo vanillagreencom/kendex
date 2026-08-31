@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 /** Package id used as the config namespace key in `.pi/settings.json`. */
 export const CONFIG_ID = "@vanillagreen/pi-hooks";
@@ -53,6 +53,43 @@ export function piUserDir(): string {
 	const home = homedir();
 	if (!home) return resolve(".pi", "agent");
 	return resolve(home, ".pi", "agent");
+}
+
+/**
+ * Pi's global root when the carrier may act on what is in it, and `undefined`
+ * when it may not. Acting means reading this package's settings out of it or
+ * spawning a script from it; both take the contents on trust.
+ *
+ * `piUserDir` follows the renderer wherever the variable points, the cwd
+ * included, and for naming a path that is the right answer. It is the wrong
+ * answer for a decision to read or run, because the global scope is trusted
+ * unconditionally: it is where the person's own files live, never a checkout's.
+ * An empty or relative `PI_CODING_AGENT_DIR` breaks that, because the directory
+ * it names is then whichever one the session happens to sit in. Pi launched
+ * inside an untrusted clone reached that clone's own `kendex/hooks/<name>.sh`
+ * through the global branch, which never asks about trust, and spawning a hook
+ * is executing it.
+ *
+ * Two path tests, and nothing else. The variable must name a directory of its
+ * own: unset, or absolute. And where the workspace is untrusted the root must
+ * fall outside it, since a person who points the variable into a clone they
+ * have not trusted has still not trusted it. No uid is read and no parent is
+ * walked: ownership beyond these two questions is a second security model, and
+ * one of those in the carrier is enough.
+ *
+ * Withholding the global scope is the safe direction on both sides. For a hook
+ * it reads as a hook kendex did not install here, which allows the command and
+ * is the answer this carrier already gives for that. For settings it leaves
+ * DEFAULTS, and every default in this package is on.
+ */
+export function actionableUserDir(workspace: string | undefined, trusted: boolean): string | undefined {
+	const override = process.env.PI_CODING_AGENT_DIR;
+	if (override !== undefined && !isAbsolute(override)) return undefined;
+	const root = piUserDir();
+	if (trusted || workspace === undefined) return root;
+	const project = projectRoot(workspace);
+	if (root === project || root.startsWith(project + sep)) return undefined;
+	return root;
 }
 
 /**
@@ -144,9 +181,16 @@ function loadJson(path: string): unknown {
  */
 export function readConfig(cwd: string): kendexConfig {
 	const merged: kendexConfig = {};
-	const user = join(piUserDir(), "settings.json");
 	const project = projectSettingsPath(cwd);
-	const paths = projectSettingsTrusted(project) ? [user, project] : [user];
+	const trusted = projectSettingsTrusted(project);
+	// The user scope is read only from a root the carrier may act on. Without
+	// that test an empty or relative PI_CODING_AGENT_DIR put the user scope
+	// inside the session's own cwd, so a checkout could ship a settings.json
+	// switching every guard off — the same hole as spawning its script, reached
+	// by reading instead of running.
+	const global = actionableUserDir(cwd, trusted);
+	const user = global === undefined ? undefined : join(global, "settings.json");
+	const paths = [...(user === undefined ? [] : [user]), ...(trusted ? [project] : [])];
 	for (const path of paths) {
 		const parsed = loadJson(path) as
 			| { kendex?: { extensionManager?: { config?: Record<string, kendexConfig> } } }
