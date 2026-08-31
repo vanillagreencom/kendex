@@ -294,7 +294,16 @@ worker_is_ours() { # PID RUNTIME_DIR — 0 only when the pid is verifiably ours
 # which is the same leader-shaped mistake, one level up.
 stop_worker() { # PID RUNTIME_DIR
   local pid="$1" dir="$2"
-  worker_is_ours "$pid" "$dir" || return 0
+  if ! worker_is_ours "$pid" "$dir"; then
+    # A DECLINE IS NOT A NO-OP, so it does not happen quietly. Whatever the run
+    # left running keeps running, and the wait is about to delete the runtime
+    # state and return 124, so the operator reading this line is the only one
+    # left who can act on it.
+    echo "second-opinion: the run reached its deadline, but its processes could not be" >&2
+    echo "identified as this run's own, so none were signalled. Stop by hand anything" >&2
+    echo "still running from it." >&2
+    return 0
+  fi
   stop_process_group "$pid" 30
 }
 wait_for_run() {

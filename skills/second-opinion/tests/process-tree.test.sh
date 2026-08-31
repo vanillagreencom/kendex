@@ -44,6 +44,20 @@ await_file() { # PATH — up to 10s
   for _ in $(seq 1 200); do [[ -s "$1" ]] && return 0; sleep 0.05; done
   return 1
 }
+# A PID READ FROM A FIXTURE MUST BE A PID. A fixture that reaches for a builtin
+# its shell does not have — BASHPID under the 3.2 that macOS ships as /bin/bash
+# is the one that bit us — writes a blank line instead, and every assertion
+# after it then measures nothing while still reporting PASS. Checked where it is
+# captured, so the next such builtin fails loudly here rather than passing
+# quietly everywhere.
+read_pid() { # FILE LABEL -> pid on stdout
+  local file="$1" label="$2" pid
+  pid="$(cat < "$file" 2>/dev/null || true)"
+  [[ -n "$pid" ]] \
+    || fail "$label wrote no pid to ${file##*/} — a fixture builtin this shell does not have?"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || fail "$label wrote a non-numeric pid: '$pid'"
+  printf '%s' "$pid"
+}
 
 mkdir -p "$TMP_ROOT/proj/skills" "$TMP_ROOT/bin" "$TMP_ROOT/psbin" "$TMP_ROOT/work"
 git -C "$TMP_ROOT/proj" init -q
@@ -141,12 +155,11 @@ captured=$(CLI_READY_FILE="$TMP_ROOT/tree.ready" CLI_KID_FILE="$TMP_ROOT/tree.ki
   "$SECOND_OPINION" quick question --cwd "$TMP_ROOT/work" \
   2> "$TMP_ROOT/tree.stderr") || rc=$?
 elapsed=$(( $(date +%s) - start ))
-kid="$(cat < "$TMP_ROOT/tree.kid" 2>/dev/null || true)"
+kid="$(read_pid "$TMP_ROOT/tree.kid" "the timed-out CLI")"
 STRAYS+=("$kid")
 [[ $elapsed -lt 60 ]] \
   || fail "the caller waited ${elapsed}s for a 2s timeout — a survivor held the pipe open"
 ok "the capturing caller returns promptly (${elapsed}s) after a 2s timeout"
-[[ -n "$kid" ]] || fail "the CLI never recorded a child"
 await_gone "$kid" || fail "the CLI's child $kid survived the timeout"
 ok "the timeout took the CLI's child with it"
 [[ $rc -ne 0 ]] || fail "a timed-out CLI must not read as success"
@@ -166,12 +179,11 @@ captured=$(CLI_READY_FILE="$TMP_ROOT/orphan.ready" CLI_KID_FILE="$TMP_ROOT/orpha
   "$SECOND_OPINION" quick question --cwd "$TMP_ROOT/work" \
   2> "$TMP_ROOT/orphan.stderr") || rc=$?
 elapsed=$(( $(date +%s) - start ))
-orphan_kid="$(cat < "$TMP_ROOT/orphan.kid" 2>/dev/null || true)"
+orphan_kid="$(read_pid "$TMP_ROOT/orphan.kid" "the orphan CLI")"
 STRAYS+=("$orphan_kid")
 [[ $elapsed -lt 60 ]] \
   || fail "the capture waited ${elapsed}s after the CLI leader exited — the child held the pipe"
 ok "the capture returns (${elapsed}s) once the leader exits"
-[[ -n "$orphan_kid" ]] || fail "the CLI never recorded a surviving child"
 await_gone "$orphan_kid" \
   || fail "the CLI's surviving child $orphan_kid outlived the run"
 ok "the surviving child is torn down with the group"
@@ -227,7 +239,7 @@ STRAYS+=("$real_kid")
 [[ "$real_rc" != 124 ]] || fail "the shipped runtime held the capture open"
 ok "the shipped runtime releases the capture (rc=$real_rc)"
 mutant_rc="$(capture_group_run "$LEADER_MUTANT" ctl-mutant)"
-mutant_kid="$(cat < "$TMP_ROOT/ctl-mutant.kid" 2>/dev/null || true)"
+mutant_kid="$(read_pid "$TMP_ROOT/ctl-mutant.kid" "the leader-probe control CLI")"
 STRAYS+=("$mutant_kid")
 [[ "$mutant_rc" == 124 ]] \
   || fail "the leader-probe control released the capture too (rc=$mutant_rc) — the case above proves nothing"
@@ -246,7 +258,7 @@ if command -v setsid >/dev/null 2>&1; then
     > /dev/null 2> "$TMP_ROOT/sig.stderr" &
   session=$!
   await_file "$TMP_ROOT/sig.ready" || fail "the CLI never started under setsid"
-  sig_kid="$(cat < "$TMP_ROOT/sig.kid" 2>/dev/null || true)"
+  sig_kid="$(read_pid "$TMP_ROOT/sig.kid" "the signalled CLI")"
   STRAYS+=("$sig_kid")
   kill -TERM -- "-$session" 2>/dev/null || true
   wait "$session" 2>/dev/null || true
@@ -271,12 +283,11 @@ CLI_READY_FILE="$TMP_ROOT/dl.ready" CLI_KID_FILE="$TMP_ROOT/dl.kid" \
   6 false 10 quick question --target=codex --cwd "$TMP_ROOT/work" --timeout 600 \
   > "$TMP_ROOT/dl-launch.stdout" 2> "$TMP_ROOT/dl-launch.stderr"
 dl_wait="$(sed -n 's/^wait: //p' "$TMP_ROOT/dl-launch.stdout")"
-dl_pid="$(cat < "$TMP_ROOT/dl-runtime/pid")"
+dl_pid="$(read_pid "$TMP_ROOT/dl-runtime/pid" "the detached launcher")"
 STRAYS+=("$dl_pid")
 await_file "$TMP_ROOT/dl.ready" || fail "the detached CLI never started"
-dl_kid="$(cat < "$TMP_ROOT/dl.kid" 2>/dev/null || true)"
+dl_kid="$(read_pid "$TMP_ROOT/dl.kid" "the detached CLI")"
 STRAYS+=("$dl_kid")
-[[ -n "$dl_kid" ]] || fail "the detached CLI never recorded a child"
 # The worker must be a group leader for the teardown to have anything to aim
 # at; assert it rather than assume it, since this is what replaces setsid.
 [[ "$(ps -o pgid= -p "$dl_pid" 2>/dev/null | tr -d ' ')" == "$dl_pid" ]] \
@@ -327,11 +338,10 @@ run_in_window() { # RUNTIME LABEL -> "rc"
 }
 WINDOW_RUNTIME="$TMP_ROOT/window-runtime"
 widen_fork_window "$WINDOW_RUNTIME" '2>"$stderr_file" &'
-window_rc="$(run_in_window "$WINDOW_RUNTIME" win)"
-window_kid="$(cat < "$TMP_ROOT/win.kid" 2>/dev/null || true)"
+window_rc="$(run_in_window "$WINDOW_RUNTIME" fw)"
+window_kid="$(read_pid "$TMP_ROOT/fw.kid" "the fork-window CLI")"
 STRAYS+=("$window_kid")
 assert_rc "$window_rc" 143 "a signal in the fork window still ends the run"
-[[ -n "$window_kid" ]] || fail "the CLI never recorded a child"
 await_gone "$window_kid" \
   || fail "a signal in the fork window abandoned the live child $window_kid"
 ok "the child forked in that window is still stopped"
@@ -349,9 +359,8 @@ grep -q 'request_cancel() { exit "$1"; }' "$EXIT_MUTANT" \
   || fail "the exit-in-window control did not replace the deferral"
 ok "the exit-in-window control exits from the handler instead of recording"
 ctl_window_rc="$(run_in_window "$EXIT_MUTANT" ctlwin)"
-ctl_window_kid="$(cat < "$TMP_ROOT/ctlwin.kid" 2>/dev/null || true)"
+ctl_window_kid="$(read_pid "$TMP_ROOT/ctlwin.kid" "the exit-in-window control CLI")"
 STRAYS+=("$ctl_window_kid")
-[[ -n "$ctl_window_kid" ]] || fail "the control's CLI never recorded a child"
 if gone "$ctl_window_kid"; then
   fail "the exit-in-window control stopped the child too — the case above proves nothing"
 fi
@@ -381,10 +390,10 @@ win_launcher=$!
 # The pid file is written before worker-id, so its arrival proves the launcher
 # is past the fork and blocked on the FIFO.
 await_file "$TMP_ROOT/win-runtime/pid" || fail "the launcher never reached the publish window"
-win_pid="$(cat < "$TMP_ROOT/win-runtime/pid")"
+win_pid="$(read_pid "$TMP_ROOT/win-runtime/pid" "the publish-window launcher")"
 STRAYS+=("$win_pid")
 await_file "$TMP_ROOT/win.ready" || fail "the worker never started"
-win_kid="$(cat < "$TMP_ROOT/win.kid" 2>/dev/null || true)"
+win_kid="$(read_pid "$TMP_ROOT/win.kid" "the publish-window CLI")"
 STRAYS+=("$win_kid")
 grep -q '^wait:' "$TMP_ROOT/win-launch.stdout" \
   && fail "the launcher published its wait command before the window closed"
@@ -429,7 +438,7 @@ CLI_READY_FILE="$TMP_ROOT/lw.ready" CLI_KID_FILE="$TMP_ROOT/lw.kid" \
   > "$TMP_ROOT/lw-launch.stdout" 2> "$TMP_ROOT/lw-launch.stderr" &
 lw_launcher=$!
 await_file "$TMP_ROOT/lw.ready" || fail "the launcher never reached its fork window"
-lw_kid="$(cat < "$TMP_ROOT/lw.kid" 2>/dev/null || true)"
+lw_kid="$(read_pid "$TMP_ROOT/lw.kid" "the launch fork-window CLI")"
 STRAYS+=("$lw_kid")
 kill -TERM "$lw_launcher" 2>/dev/null || true
 printf 'go\n' > "$TMP_ROOT/lw.fifo"
@@ -439,7 +448,6 @@ assert_rc "$lw_rc" 143 "a signal in the launcher's fork window ends the launch"
 grep -q '^wait:' "$TMP_ROOT/lw-launch.stdout" \
   && fail "a launch cancelled in its fork window still published a wait command"
 ok "no wait command was published"
-[[ -n "$lw_kid" ]] || fail "the worker's CLI never recorded a child"
 await_gone "$lw_kid" \
   || fail "the launcher abandoned the CLI child $lw_kid forked in that window"
 ok "the worker's whole tree is stopped"
@@ -486,6 +494,11 @@ assert_rc "$rc" 124 "an elapsed deadline is still terminal"
 kill -0 "$bystander" 2>/dev/null \
   || fail "wait KILLED a process it never verified as its own worker"
 ok "the unverifiable pid was not signalled"
+# Sparing the pid is right, and doing it in silence is not: the wait is about
+# to delete the runtime state and return 124, so this line is the only record
+# that something may still be running.
+assert_contains "$TMP_ROOT/by.stderr" "its processes could not be" \
+  "the decline says so on stderr instead of returning quietly"
 
 echo "=== an unverifiable pid does not read as a running worker either ==="
 # The same root cause on the read path: believing a live-but-unverified pid
