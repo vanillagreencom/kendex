@@ -22,6 +22,10 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
+# `tests/lib` ships in the committed render too, and every doc lint sources it.
+# A Bash 4 construct entering it breaks all thirteen suites on a 3.2 host with
+# every gate green — the KEN-837 shape, one directory over.
+LIB_DIR="$(cd "$TEST_DIR/lib" && pwd)"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -205,39 +209,42 @@ probe_dir() {
     printf '%s' "$d"
 }
 
-# a.1 — the shipped scripts are clean, which is the assertion this file exists
-# to make.
-violations=""
-scan_status=0
-violations="$(scan_bash4 "$SCRIPTS_DIR")" || scan_status=$?
-if [ "$scan_status" -ne 0 ]; then
-    fail "the portability scan over $SCRIPTS_DIR could not run (exit $scan_status)"
-elif [ -n "$violations" ]; then
-    fail "Bash 4+ constructs in orch scripts (they must run under Bash 3.2):"
-    printf '%s\n' "$violations" >&2
-else
-    pass "no Bash 4+ construct in any shipped orch script"
-fi
-
-# a.2 — an absent forbidden construct means nothing when there was nothing to
-# look in: an empty scripts/ scans clean.
-shipped="$(count_scripts "$SCRIPTS_DIR")"
-if [ "$shipped" -gt 0 ]; then
-    pass "the scan read $shipped shipped orch script(s)"
-else
-    fail "no shipped script found under $SCRIPTS_DIR, so this lint read nothing"
-fi
-
-# a.3 — and every one of them parses. A construct this pattern set does not
-# name still has to be syntax.
-syntax_fail=0
-while IFS= read -r f; do
-    if ! bash -n -- "$f"; then
-        fail "bash -n $f"
-        syntax_fail=1
+# a.1 — the shipped scripts and the sourced test library are clean, which is
+# the assertion this file exists to make.
+for dir in "$SCRIPTS_DIR" "$LIB_DIR"; do
+    label="orch ${dir##*/}"
+    violations=""
+    scan_status=0
+    violations="$(scan_bash4 "$dir")" || scan_status=$?
+    if [ "$scan_status" -ne 0 ]; then
+        fail "the portability scan over $dir could not run (exit $scan_status)"
+    elif [ -n "$violations" ]; then
+        fail "Bash 4+ constructs in $label (it must run under Bash 3.2):"
+        printf '%s\n' "$violations" >&2
+    else
+        pass "no Bash 4+ construct in $label"
     fi
-done < <(find "$SCRIPTS_DIR" -type f | LC_ALL=C sort)
-[ "$syntax_fail" -eq 1 ] || pass "every shipped orch script parses under bash -n"
+
+    # a.2 — an absent forbidden construct means nothing when there was nothing
+    # to look in: an empty directory scans clean.
+    shipped="$(count_scripts "$dir")"
+    if [ "$shipped" -gt 0 ]; then
+        pass "the scan read $shipped file(s) under $label"
+    else
+        fail "no file found under $dir, so this lint read nothing there"
+    fi
+
+    # a.3 — and every one of them parses. A construct this pattern set does not
+    # name still has to be syntax.
+    syntax_fail=0
+    while IFS= read -r f; do
+        if ! bash -n -- "$f"; then
+            fail "bash -n $f"
+            syntax_fail=1
+        fi
+    done < <(find "$dir" -type f | LC_ALL=C sort)
+    [ "$syntax_fail" -eq 1 ] || pass "every file under $label parses under bash -n"
+done
 
 # b.1-b.3 — teeth, one per pattern group, injected as code the way KEN-837's
 # `local -A` arrived.

@@ -106,6 +106,9 @@ check "line_has requires every token on ONE line" \
 # --- the planted-control machinery ----------------------------------------
 # `md_report` is what every lint trusts to prove its rules can go red. Run it
 # as a sub-suite against fixtures whose verdicts are known.
+# Every capture below is `|| true`-guarded: the sub-suite's exit status is the
+# case's subject, and an unguarded one aborts this file under `set -e` before
+# md_report prints which checks failed.
 subsuite() {
   local script="$MD_TMP/sub-$1.sh"
   local fixture="$2"
@@ -140,7 +143,7 @@ MD
 # SECOND line of the section repeats is toothless, since striking the matched
 # line leaves the other standing; and a rule holding another rule's first
 # token overlaps with it.
-out="$(subsuite good "$RULES" 'rule "alpha" "$FIX" "## Rules" "alpha" "beta"')"
+out="$(subsuite good "$RULES" 'rule "alpha" "$FIX" "## Rules" "alpha" "beta"')" || true
 check "a sound rule passes with its control" \
   grep -q "goes red alone when its token is dropped" <<<"$out"
 
@@ -170,7 +173,7 @@ check "one file under two spellings still reports the overlap" \
 # bash fence, so a prose mention of an invocation cannot stand in for running
 # it.
 out="$(subsuite fencedok "$RULES" \
-  'rule_fenced "runs it" "$FIX" "## Rules" "run --with-a-flag"')"
+  'rule_fenced "runs it" "$FIX" "## Rules" "run --with-a-flag"')" || true
 check "rule_fenced matches a fenced command" grep -q "  ok    runs it" <<<"$out"
 
 PROSE="$MD_TMP/prose-only.md"
@@ -211,7 +214,7 @@ check "the longer heading is still reachable by its own full text" \
 # true by construction and can never go red.
 ORDER="$MD_TMP/order.md"
 printf 'alpha here\nmiddle\nbeta here\n' >"$ORDER"
-out="$(subsuite ordergood "$ORDER" 'order "sound" "$FIX" "alpha" "beta"')"
+out="$(subsuite ordergood "$ORDER" 'order "sound" "$FIX" "alpha" "beta"')" || true
 check "a sound order rule passes with its control" \
   grep -q "goes red when" <<<"$out"
 
@@ -228,7 +231,7 @@ SCAN_B="$MD_TMP/scan-b.md"
 printf '# A\n\nclean\n' >"$SCAN_A"
 printf '# B\n\nclean\n' >"$SCAN_B"
 out="$(subsuite forbidall "$SCAN_A" \
-  "forbid \"no banned word\" 'banned' 'the banned word' \"\$FIX\" \"$SCAN_B\"")"
+  "forbid \"no banned word\" 'banned' 'the banned word' \"\$FIX\" \"$SCAN_B\"")" || true
 check "a forbid control flags its sample in every registered file" \
   grep -q "flags its sample in all 2 file(s)" <<<"$out"
 

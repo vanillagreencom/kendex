@@ -31,13 +31,15 @@ echo "=== orch review disposition-by-rule lint ==="
 
 # Scoped to the fix-disposition sections, so an unrelated ask elsewhere does
 # not trip this and the lint stays honest about WHERE the regression lands.
+# Matched case-insensitively: a reintroduced `apply fixes?` menu is the menu
+# whatever case its author wrote it in.
 # review-pr.md is the PR-gating twin — same findings, same reviewers, same rule
 # — and its § 7 handles QA items by explicit reference to the § 4 pattern.
-absent "review § 4 presents no selection menu over findings" \
+absent_i "review § 4 presents no selection menu over findings" \
   "$WF" "## 4. Present And Fix" "$MENU" "$SAMPLE"
-absent "review-pr § 4 presents no selection menu over findings" \
+absent_i "review-pr § 4 presents no selection menu over findings" \
   "$PR" "## 4. Handle Review Items" "$MENU" "$SAMPLE"
-absent "review-pr § 7 presents no selection menu over QA findings" \
+absent_i "review-pr § 7 presents no selection menu over QA findings" \
   "$PR" "## 7. Handle QA Items" "$MENU" "$SAMPLE"
 
 # The positive statements, so an edit cannot drop the rule and leave only the

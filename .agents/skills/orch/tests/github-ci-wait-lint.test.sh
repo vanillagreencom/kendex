@@ -11,9 +11,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
 echo "=== orch/dev/github ci-wait routing lint ==="
 
+# Whitespace is matched by class, not by one literal space: a run of spaces or
+# a tab between the router and the subcommand is the same bad route.
 forbid "no doc routes ci-wait through github.sh" \
-  'github\.sh( -C [^ ]+)? ci[-_]?wait' \
-  'Wait for CI with `github.sh ci-wait 296 --json`.' \
+  'github\.sh[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?ci[-_]?wait' \
+  'Wait for CI with `github.sh  ci-wait 296 --json`.' \
   "$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md "$SKILL_DIR"/references/*.md \
   "$SKILLS_ROOT/dev/SKILL.md" "$SKILLS_ROOT"/dev/workflows/*.md \
   "$SKILLS_ROOT/github/SKILL.md"

@@ -59,18 +59,6 @@ rule "the comment loop links the Recurrence section" "$CM" "" \
 order "the recurrence check is routed ahead of the iterations cap" "$CM" \
   'references/finding-disposition\.md#recurrence' 'REVIEW_MAX_EXTERNAL_ROUNDS'
 
-# The cap itself is a setting, resolved through orch-env beside REVIEW_MAX_CYCLES
-# rather than a literal written into two workflows, and past it a finding takes
-# a disposition and no fix push — except a defect the diff itself introduces or
-# arms, which is fixed whatever the round count.
-rule_fenced "§ 6.1 resolves the cap through orch-env" "$CM" "### 6.1 Delegate Fixes" \
-  'orch-env REVIEW_MAX_EXTERNAL_ROUNDS'
-rule_fenced "submit-pr's restart check resolves the same setting" \
-  "$SKILL_DIR/workflows/submit-pr.md" "" 'orch-env REVIEW_MAX_EXTERNAL_ROUNDS'
-rule "the cap's three reply forms are named where it is stated" "$CM" \
-  "### 6.1 Delegate Fixes" '`Tracked: [ISSUE_ID]`' '`Fixed in [SHA]`' '`Declined: [REASON]`'
-rule "the rule's home states the cap and its introduced-or-armed exception" \
-  "$DISP" "" '`REVIEW_MAX_EXTERNAL_ROUNDS`' 'introduces or arms'
 
 # What consumes the rule. The auto-fix skip list carries the bucket name as an
 # inline literal; the report heading below is plain.

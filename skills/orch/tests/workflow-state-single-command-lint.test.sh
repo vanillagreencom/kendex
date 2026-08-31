@@ -10,7 +10,8 @@
 # command block carries at most one `scripts/workflow-state` invocation.
 # Operations that genuinely cannot collapse live in separate one-command
 # blocks. Scope is `workflow-state`, the helper the miss was reported against;
-# this does not attempt to lint every helper.
+# this does not attempt to lint every helper. The surface is the same one the
+# sibling command-shape lints read: SKILL.md, workflows/ and references/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
@@ -26,7 +27,7 @@ stacked() {
 echo "=== orch workflow-state single-command lint ==="
 
 offenders=""
-for doc in "$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md; do
+for doc in "$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md "$SKILL_DIR"/references/*.md; do
   hit="$(stacked "$doc")"
   [ -n "$hit" ] && offenders="$offenders$hit"$'\n'
 done

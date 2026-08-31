@@ -11,8 +11,9 @@
 # `git diff unavailable...HEAD`. Every token a token check would look for was
 # present. A token being present is not the path being reachable, so the
 # checks below resolve the field's two branches and the external lane's flag
-# and assert what comes out — the one place in these suites where a `check`
-# predicate earns its lines.
+# and assert what comes out. Other suites use `check` for a count or a
+# containment; this is the only one that RENDERS a template and asserts the
+# resulting string.
 #
 # NOT covered: that review.md § 1's two routing sentences and its unscoped
 # declaration enumerate the same cases. That is prose on both ends with no

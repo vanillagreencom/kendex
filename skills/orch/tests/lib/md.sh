@@ -9,12 +9,13 @@
 # code literal, a setting name — and the placement of one identifier relative
 # to another.
 #
-# So the surface here is deliberately small, and it is the whole surface:
+# The rule forms are deliberately few, and these are all of them:
 #
 #   rule NAME FILE HEADING TOKEN...   one line under HEADING holds every TOKEN
 #   rule_fenced NAME FILE HEADING T…  the same, but the line must be a command
 #                                     inside a ```bash/```sh fence
-#   absent NAME FILE HEADING RE SAMPLE  no line under HEADING matches RE
+#   absent[_i] NAME FILE HEADING RE SAMPLE
+#                                     no line under HEADING matches RE
 #   order NAME FILE RE_A RE_B         RE_A's first match precedes RE_B's
 #   forbid NAME RE SAMPLE FILE...     no line in any FILE matches RE
 #   forbid_fenced NAME RE SAMPLE F... no ```bash/```sh command line matches RE
@@ -29,6 +30,18 @@
 # One rule is one token set on one line. A rule that needs a second token set
 # is a second rule, and a contract too subtle for that is uncovered here rather
 # than covered in appearance.
+#
+# A suite also gets, beyond the rule forms: `pass` and `fail` for a verdict it
+# reaches itself, `md_report` to close, the path variables SKILL_DIR,
+# SKILLS_ROOT, REPO_ROOT and MD_LIB_DIR, and MD_TMP for scratch. Nothing else
+# here is a suite's to call.
+#
+# A suite must NOT install its own EXIT trap. Sourcing this file installs one
+# that removes MD_TMP, and `trap ... EXIT` replaces rather than adds, so a
+# suite setting its own leaks a mktemp directory per run — no symptom but
+# growth under TMPDIR. Three suites in this directory use that idiom, so it is
+# the shape a new lint would copy from its neighbours. Put scratch under
+# MD_TMP and let this trap clean it up.
 #
 # READING RULES. Every read goes through `_md_scan`, one pass that classifies
 # each line as outside a fence, inside one, or a fence delimiter, and blanks
@@ -68,6 +81,24 @@
 #                      registered file in turn, and each must be flagged.
 #   check, permits     no automatic control. A suite using them owns proving
 #                      their teeth.
+#
+# The rule control re-evaluates every rule once per rule, so a suite's control
+# pass costs O(N^2) file reads in its rule count. Re-derive it rather than
+# trusting these numbers, which are one machine's:
+#
+#   for n in 10 20 30 40; do   # N rules, each matching its own fixture line
+#     ... build the fixture and the suite, then: time bash the-suite
+#   done
+#
+# That gave 0.42s, 1.67s, 3.12s and 6.79s — doubling the rules costs four
+# times the time. The real suites sit far below that: all fourteen orch lints
+# together run in about 7.5s and the largest, at 26 rules over real workflow
+# files, in about 2.5s, well inside the shell shard's 25-minute budget. What
+# the law means for an author is that a suite growing past roughly thirty rules
+# is paying a superlinear price and is better split by contract. The loop is
+# deliberately not optimized: per-path memoization, a pre-stripped scratch and
+# a file-grouped loop were each measured at 20 percent or worse, and only a
+# redesign would help.
 
 MD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$(cd "$MD_LIB_DIR/.." && pwd)"
@@ -90,8 +121,9 @@ pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 
 # _md_indices COUNT — 0..COUNT-1, or nothing. `${!arr[@]}` on an empty array is
-# unbound under `set -u` in Bash 3.2, which `SKILL.md` § System dependencies
-# declares, and a suite registering one rule form leaves three arrays empty.
+# unbound under `set -u` in Bash 3.2, which `SKILL.md` § Configuration declares
+# on its System dependencies line, and a suite registering one rule form leaves
+# three arrays empty.
 _md_indices() {
   local n="$1" i=0
   while [ "$i" -lt "$n" ]; do
@@ -366,11 +398,16 @@ order() {
   fi
 }
 
-# absent NAME FILE HEADING RE SAMPLE — no line under HEADING matches RE. A
-# heading that names no section, or two, is a failure rather than an empty
-# read: an absence check over nothing passes for the wrong reason.
-absent() {
-  MD_ABSENTS+=("$1$MD_SEP$(_md_path "$2")$MD_SEP$3$MD_SEP$4$MD_SEP$5")
+# absent NAME FILE HEADING RE SAMPLE — no line under HEADING matches RE.
+# absent_i is the same, case-insensitively, for a shape whose capitalization is
+# the author's rather than the contract's: a reintroduced `apply fixes?` menu
+# is the menu whatever case it is written in. A heading that names no section,
+# or two, is a failure rather than an empty read: an absence check over nothing
+# passes for the wrong reason.
+_md_absent() {
+  local fold="$1"
+  shift
+  MD_ABSENTS+=("$1$MD_SEP$(_md_path "$2")$MD_SEP$3$MD_SEP$4$MD_SEP$5$MD_SEP$fold")
   local fault body hit
   fault="$(_md_head_fault "$2" "$3")"
   if [ -n "$fault" ]; then
@@ -382,7 +419,7 @@ absent() {
     fail "$1 — '$3' in ${2##*/} has an empty body, so there is nothing to check"
     return
   fi
-  hit="$(grep -nE -e "$4" <<<"$body" || true)"
+  hit="$(grep -nE $fold -e "$4" <<<"$body" || true)"
   if [ -z "$hit" ]; then
     pass "$1"
   else
@@ -390,6 +427,8 @@ absent() {
     printf '%s\n' "$hit" | sed 's/^/          /'
   fi
 }
+absent() { _md_absent "" "$@"; }
+absent_i() { _md_absent -i "$@"; }
 
 # _md_offenders RE FILE... — "file:line: text" per matching line. A target that
 # cannot be read or scanned is itself an offender: a scan that fails silently
@@ -481,8 +520,9 @@ permits() { _md_permits "$1" "$2" "$3" "$4" line; }
 permits_fenced() { _md_permits "$1" "$2" "$3" "$4" fenced; }
 
 # check NAME CMD... — a bespoke predicate, for a contract the rule forms above
-# cannot express. It carries no automatic control: a suite using it owns
-# proving its teeth.
+# cannot express: a count across a directory, a containment, a rendered
+# template. It carries no automatic control, so a suite using it owns proving
+# its teeth.
 check() {
   local name="$1"
   shift
@@ -580,7 +620,7 @@ _md_controls() {
   for i in $(_md_indices "${#MD_ABSENTS[@]}"); do
     _md_fields "${MD_ABSENTS[$i]}"
     local aname="${MD_F[0]}" afile="${MD_F[1]}" ahead="${MD_F[2]}" are="${MD_F[3]}"
-    local asample="${MD_F[4]}" hl
+    local asample="${MD_F[4]}" afold="${MD_F[5]:-}" hl
     hl="$(_md_head_line "$afile" "$ahead")"
     scratch="$MD_TMP/absent-$i.md"
     if [ -z "$hl" ]; then
@@ -589,7 +629,7 @@ _md_controls() {
     fi
     awk -v ln="$hl" -v s="$asample" 'NR == ln { print; print ""; print s; next } { print }' \
       "$afile" >"$scratch"
-    if [ -n "$(section "$scratch" "$ahead" | grep -E -e "$are" || true)" ]; then
+    if [ -n "$(section "$scratch" "$ahead" | grep -E $afold -e "$are" || true)" ]; then
       pass "control: '$aname' flags its sample"
     else
       fail "control for '$aname' — the sample under '$ahead' is not flagged"

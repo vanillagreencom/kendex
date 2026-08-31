@@ -68,12 +68,17 @@ rule_fenced "the escalated write supersedes in both buckets from a bound entry" 
 # A bare append records without superseding, and a pasted entry breaks on the
 # text findings actually carry: a double quote invalidates a JSON argument, an
 # apostrophe ends the shell word, and the failed write leaves the stale entry
-# standing with nothing recorded.
+# standing with nothing recorded. Both argument forms get their own rule, so
+# each control plants the shape it forbids rather than the one a shared
+# pattern already matched.
 absent "no outcome write appends into a bucket" "$DEV_FIX" "$DELEGATE" \
   'workflow-state append \[ISSUE_ID\] (fixed|escalated)_items' \
   '.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] fixed_items "$entry"'
-absent "no outcome write pastes the entry into a shell word" "$DEV_FIX" "$DELEGATE" \
-  'workflow-state update \[ISSUE_ID\][^`]*--argjson? ' \
+absent "no outcome write pastes the entry as a string argument" "$DEV_FIX" "$DELEGATE" \
+  'workflow-state update \[ISSUE_ID\][^`]*--arg ' \
+  '.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --arg e "[ENTRY]" ".fixed_items += [$e]"'
+absent "no outcome write pastes the entry as a JSON argument" "$DEV_FIX" "$DELEGATE" \
+  'workflow-state update \[ISSUE_ID\][^`]*--argjson ' \
   '.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --argjson e "[ENTRY]" ".fixed_items += [$e]"'
 
 rule "the schema states the one-bucket invariant" "$SCHEMA" "" 'never in both buckets'
