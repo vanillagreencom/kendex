@@ -28,6 +28,11 @@ docs live in README.md.
   `changelog-entries --collate` on the verdict those two just reached: it
   folds the accepted fragments into the record and deletes them, and decides
   nothing about either
+- `scripts/lib/atomic-install.sh` — how the two writing lanes replace a file
+  they own: a rename inside the destination's own directory, so a policy file
+  is never left truncated. Sourced by `suppression-ban` and
+  `changelog-entries` alone; its staging file is declared and removed in
+  `common.sh`, where the reset reaches every guard and the one exit trap lives
 - `scripts/lib/hook-check.sh` — the read-only verdict `install-git-hooks
   --check` returns over the shims this installer writes
 - `scripts/lib/hooks-path.sh` — where git reads hooks from, and whether

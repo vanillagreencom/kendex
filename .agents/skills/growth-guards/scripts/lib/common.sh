@@ -37,7 +37,10 @@ GG_VIOLATIONS=0
 GG_TMP=""
 GG_SETTINGS_INDEX_OWNED=0
 # In-flight staging file for gg_install_file, so an interrupt between its
-# creation and its rename leaves nothing beside the destination.
+# creation and its rename leaves nothing beside the destination. The helper
+# that sets it lives in lib/atomic-install.sh, which only the two writing
+# lanes source; the declaration and the removal below stay here on purpose,
+# because the reset has to reach every guard and one process arms one trap.
 GG_INSTALL_TMP=""
 # Extra `git grep` flags for the index lanes below, set by a check before it
 # calls one and empty for every check that does not. Case sensitivity is the one
@@ -208,84 +211,6 @@ gg_resolve_path() { # FLAG-VALUE KEY DEFAULT LABEL — normalized path on stdout
   local raw="$1"
   [ -n "$raw" ] || raw="$(gg_setting "$2" "$3")" || return 1
   gg_config_path "$raw" "$4"
-}
-
-# -L on both spellings: stat lstats by default, so a symlink destination would
-# answer with the LINK's own 0777 rather than the file behind it, and the chmod
-# below would publish a world-writable ratchet input any local account could
-# lower. The caller tests with `[ -f ]`, which follows; both must mean one file.
-gg_file_mode() { # FILE — its permission bits as octal digits; GNU stat, then BSD
-  stat -L -c '%a' -- "$1" 2>/dev/null || stat -L -f '%Lp' -- "$1" 2>/dev/null
-}
-
-# What a failing install step printed, folded into the guard's own diagnostic
-# rather than left to reach the terminal as a bare `mv:` line ahead of it.
-# gg_scrubbed: another program's bytes on their way to a terminal.
-gg_install_why() { # ERRFILE — " (TEXT)" or nothing
-  local said
-  said="$(head -n 1 -- "$1" 2>/dev/null || true)"
-  [ -n "$said" ] || return 0
-  printf ' (%s)' "$(gg_scrubbed "$said")"
-}
-
-# Replace DEST with SRC's bytes through a rename inside DEST's own directory.
-# A direct redirect onto DEST, or a rename that crosses a filesystem (where mv
-# degrades to copy-then-unlink), leaves DEST TRUNCATED behind an interrupt —
-# and a truncated policy file is read as a complete one, which for a ratchet
-# baseline loosens the gate instead of failing it.
-gg_install_file() { # SRC DEST LABEL
-  local src="$1" dest="$2" label="$3" mode="" err=""
-  # Every caller in this family arms gg_tmpdir; one that has not is a
-  # programming error, and says so rather than capturing each step's stderr to
-  # whatever `$GG_TMP/install.err` means with GG_TMP empty.
-  [ -n "${GG_TMP:-}" ] && [ -d "$GG_TMP" ] \
-    || gg_collection_error "gg_install_file needs gg_tmpdir called first — $label was not replaced"
-  err="$GG_TMP/install.err"
-  # The destination's mode is READ here and applied after the write, never
-  # carried onto the staging file in between: one without owner-write would
-  # otherwise fail the write on a file this process just created.
-  if [ -f "$dest" ]; then
-    # `|| mode=""`, never a bare assignment: errexit exits the whole run on a
-    # failing command substitution in one, with stat's status and no diagnostic
-    # — the fail-silent the case below replaces. Nothing to relay there:
-    # gg_file_mode silences both probes, the first being the one EXPECTED to
-    # fail wherever the second answers. An unreadable mode is not one to guess.
-    mode="$(gg_file_mode "$dest")" || mode=""
-    case "$mode" in
-      "" | *[!0-7]*) gg_collection_error "could not read the mode of $(gg_shown "$dest") — $label was not replaced" ;;
-    esac
-  fi
-  # mktemp, never a name derived from the pid: the staging file lands in a
-  # directory the repository controls, a predictable name can already be
-  # sitting there, and `cp` writes THROUGH a symlink — so a planted
-  # `.gg-install.<pid>.<name>` link would redirect the write anywhere the
-  # user can reach. mktemp creates the file itself, exclusively.
-  GG_INSTALL_TMP="$(mktemp "$dest.gg-install.XXXXXX" 2>"$err")" \
-    || gg_collection_error "could not stage the replacement for $label beside $(gg_shown "$dest")$(gg_install_why "$err")"
-  # Past mktemp the staging file has ONE owner: gg_cleanup, which the EXIT trap
-  # runs and which removes GG_INSTALL_TMP first. gg_collection_error exits, so
-  # every branch below reaches it and none removes the file itself. `2>` goes
-  # BEFORE the output redirect in each: redirections apply left to right, so a
-  # failure of the one onto the staging file would otherwise be reported on the
-  # terminal rather than captured.
-  if ! cat -- "$src" 2>"$err" >"$GG_INSTALL_TMP"; then
-    gg_collection_error "could not stage the replacement for $label beside $(gg_shown "$dest")$(gg_install_why "$err")"
-  fi
-  # No `--` after the mode: chmod's mode is a non-option argument, so a BSD
-  # chmod stops option parsing there and reads the `--` as a file name.
-  if [ -n "$mode" ] && ! chmod "$mode" "$GG_INSTALL_TMP" 2>"$err"; then
-    gg_collection_error "could not give the replacement for $label $(gg_shown "$dest")'s mode ($mode)$(gg_install_why "$err")"
-  fi
-  # -f, so the rename is non-interactive whatever the destination's mode: mv
-  # PROMPTS before replacing one that denies write when stdin is a terminal —
-  # exactly the destination this helper sets out to support, and a gate that
-  # stops for an answer nobody is there to give is a gate that hangs.
-  if ! mv -f -- "$GG_INSTALL_TMP" "$dest" 2>"$err"; then
-    gg_collection_error "could not replace $label at $(gg_shown "$dest")$(gg_install_why "$err") — inspect the file before trusting it"
-  fi
-  # The one assignment that IS load-bearing: the rename consumed the staging
-  # file, so the trap must not go looking for it.
-  GG_INSTALL_TMP=""
 }
 
 # `git grep --cached` SKIPS an unmerged index entry entirely: it spends no

@@ -30,7 +30,8 @@
 # carrying the staging file to the exit trap so an interrupt leaves nothing
 # behind.
 #
-# Needs lib/common.sh and lib/changelog-grammar.sh sourced first, and runs on
+# Needs lib/common.sh, lib/changelog-grammar.sh and lib/atomic-install.sh
+# sourced first, and runs on
 # the state the walk and the record scope filled in: GG_TMP/frags.z, RECORD,
 # RECORD_SHA, RECORD_NOTE and the GG_RECORD_* bounds.
 #

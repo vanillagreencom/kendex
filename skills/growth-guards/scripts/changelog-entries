@@ -64,6 +64,9 @@ source "$SCRIPT_DIR/lib/changelog-grammar.sh"
 source "$SCRIPT_DIR/lib/changelog-record-scope.sh"
 # shellcheck source=lib/changelog-collate.sh
 source "$SCRIPT_DIR/lib/changelog-collate.sh"
+# The --collate lane rewrites the record in place.
+# shellcheck source=lib/atomic-install.sh
+source "$SCRIPT_DIR/lib/atomic-install.sh"
 
 # The sections a fragment's directory may name, and the test for membership
 # in them, are lib/changelog-grammar.sh's GG_SECTIONS and gg_is_section: the

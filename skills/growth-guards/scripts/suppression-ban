@@ -23,6 +23,9 @@ GG_CHECK="suppression-ban"
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
+# The --update lane rewrites the baseline in place.
+# shellcheck source=lib/atomic-install.sh
+source "$SCRIPT_DIR/lib/atomic-install.sh"
 
 usage() {
   cat <<'EOF'

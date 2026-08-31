@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Pins for lib/common.sh's index reads and policy writes: a probe git could
-# not answer never becomes an answer, a configured path is matched literally,
-# a --cached scan refuses an unmerged index, and a policy file is replaced by
-# a same-directory rename or not at all. Every clean assertion is paired with
+# Pins for lib/common.sh's index reads and lib/atomic-install.sh's policy
+# writes: a probe git could not answer never becomes an answer, a configured
+# path is matched literally, a --cached scan refuses an unmerged index, and a
+# policy file is replaced by a same-directory rename or not at all. Every clean assertion is paired with
 # a control that proves it can fail.
 set -euo pipefail
 
@@ -16,6 +16,10 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 SCRIPTS="$SKILL_DIR/scripts"
 COMMON="$SCRIPTS/lib/common.sh"
+# The writer lives beside common.sh rather than inside it, and reaches back
+# across that boundary for the staging file common.sh declares and its exit
+# trap removes. So every probe below sources the pair, in that order.
+INSTALL="$SCRIPTS/lib/atomic-install.sh"
 SETTINGS="$SCRIPTS/lib/settings.sh"
 ROOT="$TMP"
 
@@ -35,7 +39,7 @@ new_repo() { # NAME — fresh fixture repo in $R, cwd unchanged
   git -C "$R" config user.name test
 }
 
-# Run a snippet with common.sh sourced, inside $R. OUT captures stdout+stderr,
+# Run a snippet with the libs sourced, inside $R. OUT captures stdout+stderr,
 # RC the exit status — a collection error is exit 2 and must be observable.
 call() { # SNIPPET
   OUT=""
@@ -43,9 +47,10 @@ call() { # SNIPPET
   OUT="$(cd "$R" && GG_CHECK=probe bash -c '
     set -euo pipefail
     . "$1"
-    shift
+    . "$2"
+    shift 2
     eval "$1"
-  ' _ "$COMMON" "$1" 2>&1)" || RC=$?
+  ' _ "$COMMON" "$INSTALL" "$1" 2>&1)" || RC=$?
 }
 
 echo "=== gg_policy_content: the index governs, and a probe that failed is not an answer ==="
@@ -421,9 +426,10 @@ RC=0
 OUT="$(cd "$R" && PATH="$ROOT/nostat:$PATH" GG_CHECK=probe bash -c '
   set -euo pipefail
   . "$1"
+  . "$2"
   gg_tmpdir
-  gg_install_file "$2" tools/dest.tsv "the fixture"
-' _ "$COMMON" "$ROOT/src.tsv" 2>&1)" || RC=$?
+  gg_install_file "$3" tools/dest.tsv "the fixture"
+' _ "$COMMON" "$INSTALL" "$ROOT/src.tsv" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"could not read the mode of tools/dest.tsv"*) true ;; *) false ;; esac \
   && ok "an unreadable mode is a loud refusal, not a narrowing rename" \
   || bad "an unreadable mode is a loud refusal, not a narrowing rename" "rc=$RC out=$OUT"
@@ -440,8 +446,9 @@ RC=0
 OUT="$(cd "$R" && GG_CHECK=probe bash -c '
   set -euo pipefail
   . "$1"
-  gg_install_file "$2" tools/dest.tsv "the fixture"
-' _ "$COMMON" "$ROOT/src.tsv" 2>&1)" || RC=$?
+  . "$2"
+  gg_install_file "$3" tools/dest.tsv "the fixture"
+' _ "$COMMON" "$INSTALL" "$ROOT/src.tsv" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"needs gg_tmpdir called first"*) true ;; *) false ;; esac \
   && ok "an install with no scratch directory refuses rather than writing beside the root" \
   || bad "an install with no scratch directory refuses rather than writing beside the root" "rc=$RC out=$OUT"
@@ -464,9 +471,10 @@ RC=0
 OUT="$(cd "$R" && PATH="$ROOT/nochmod:$PATH" GG_CHECK=probe bash -c '
   set -euo pipefail
   . "$1"
+  . "$2"
   gg_tmpdir
-  gg_install_file "$2" tools/dest.tsv "the fixture"
-' _ "$COMMON" "$ROOT/src.tsv" 2>&1)" || RC=$?
+  gg_install_file "$3" tools/dest.tsv "the fixture"
+' _ "$COMMON" "$INSTALL" "$ROOT/src.tsv" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"could not give the replacement for the fixture tools/dest.tsv's mode (644)"*) true ;; *) false ;; esac \
   && ok "a failed chmod names the mode it could not give" \
   || bad "a failed chmod names the mode it could not give" "rc=$RC out=$OUT"
@@ -494,13 +502,14 @@ rm -f "$pidfile" "$gofile"
 (
   cd "$R" && GG_CHECK=probe bash -c '
     set -euo pipefail
-    echo "$$" >"$2"
+    echo "$$" >"$3"
     i=0
-    while [ ! -e "$3" ] && [ "$i" -lt 200 ]; do i=$((i + 1)); sleep 0.05; done
+    while [ ! -e "$4" ] && [ "$i" -lt 200 ]; do i=$((i + 1)); sleep 0.05; done
     . "$1"
+    . "$2"
     gg_tmpdir
-    gg_install_file "$4" tools/dest.tsv "the fixture"
-  ' _ "$COMMON" "$pidfile" "$gofile" "$ROOT/src.tsv"
+    gg_install_file "$5" tools/dest.tsv "the fixture"
+  ' _ "$COMMON" "$INSTALL" "$pidfile" "$gofile" "$ROOT/src.tsv"
 ) >"$ROOT/writer.out" 2>&1 &
 writer=$!
 i=0
@@ -535,9 +544,10 @@ RC=0
 OUT="$(cd "$R" && PATH="$ROOT/stub:$PATH" GG_CHECK=probe bash -c '
   set -euo pipefail
   . "$1"
+  . "$2"
   gg_tmpdir
-  gg_install_file "$2" tools/dest.tsv "the fixture"
-' _ "$COMMON" "$ROOT/src.tsv" 2>&1)" || RC=$?
+  gg_install_file "$3" tools/dest.tsv "the fixture"
+' _ "$COMMON" "$INSTALL" "$ROOT/src.tsv" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"could not replace the fixture"*) true ;; *) false ;; esac \
   && ok "a failed rename is a loud collection error" \
   || bad "a failed rename is a loud collection error" "rc=$RC out=$OUT"
