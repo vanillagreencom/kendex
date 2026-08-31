@@ -130,7 +130,7 @@ Delegate to every reviewer in the active set in parallel. When `EXTERNAL_REVIEW_
 Follow workflow: .agents/skills/reviewer/workflows/review.md
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. Any other path — `cd "[WORKTREE_PATH]"`, re-run `pwd`, and report where it started.
+Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. On any other path, report where the shell started and give every later command an absolute path under [WORKTREE_PATH], because a bare `cd` may not survive into the next tool call.
 Branch: [BRANCH]
 Artifact: [ARTIFACT_PATH]
 
@@ -370,7 +370,7 @@ Issue: [ISSUE_ID]
 Tracker: [TRACKER] [OWNER/REPO]
 Branch: [BRANCH]
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. Any other path — `cd "[WORKTREE_PATH]"`, re-run `pwd`, and report where it started.
+Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. On any other path, report where the shell started and give every later command an absolute path under [WORKTREE_PATH], because a bare `cd` may not survive into the next tool call.
 Trigger: [QA signal]
 
 Dev summary:

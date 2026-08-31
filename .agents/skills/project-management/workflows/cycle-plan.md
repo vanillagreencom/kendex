@@ -14,7 +14,11 @@ This workflow mutates project state, so it reconciles before anything reads the 
 
    <delegation_format>
    Follow workflow: .agents/skills/project-management/workflows/tpm-cycle-plan.md
+   Worktree: [WORKTREE_PATH]
+   Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. On any other path, report where the shell started and give every later command an absolute path under [WORKTREE_PATH], because a bare `cd` may not survive into the next tool call.
    </delegation_format>
+
+   Fill `Worktree:` and its `Worktree Check:` with the caller's absolute repo root, main checkout included.
 
 2. **Materialize the artifact.** The agent returns a `File:` hint and fenced JSON. Write the inline JSON to that path under the current repo root and read it; if inline JSON is missing and the path is not already readable, halt and request a rerun with inline JSON.
 

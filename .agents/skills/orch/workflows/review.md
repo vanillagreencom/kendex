@@ -60,7 +60,7 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 Follow workflow: .agents/skills/reviewer/workflows/review.md
 
 Worktree: [WT_PATH]
-Worktree Check: `pwd` before any repo-relative command. It must print [WT_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. Any other path — `cd "[WT_PATH]"`, re-run `pwd`, and report where it started.
+Worktree Check: `pwd` before any repo-relative command. It must print [WT_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. On any other path, report where the shell started and give every later command an absolute path under [WT_PATH], because a bare `cd` may not survive into the next tool call.
 Branch: [BRANCH]
 Diff-range: [DIFF_RANGE]
 

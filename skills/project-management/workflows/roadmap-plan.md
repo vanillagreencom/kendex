@@ -94,7 +94,11 @@ Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.m
 Follow workflow: .agents/skills/project-management/workflows/tpm-roadmap-plan.md
 
 Arguments: --input [INPUT_FILE_PATH]
+Worktree: [WORKTREE_PATH]
+Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, where a bare `git status` or `tools/guard` answers confidently about the wrong tree. On any other path, report where the shell started and give every later command an absolute path under [WORKTREE_PATH], because a bare `cd` may not survive into the next tool call.
 </delegation_format>
+
+Fill `Worktree:` and its `Worktree Check:` with the caller's absolute repo root, main checkout included.
 
 Materialize the returned artifact the same way as audit-issues § 4.2. Read `hierarchy_recommendation`, `cross_project_findings`, `architecture_gaps[]`, `organized_issues[]`, and `project_placement`.
 
