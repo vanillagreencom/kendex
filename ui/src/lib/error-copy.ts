@@ -8,9 +8,15 @@ import type { ProblemKind } from "@/stores/problems";
 // lock-corrupt either way, and a manifest an older kendex wrote is
 // manifest-outdated. The two are kept apart because the remedies differ —
 // a lock is a cache to throw away, a manifest is what the person wrote.
+//
+// Both kinds arrive from Personal as readily as from a project, and the
+// two scopes keep their locks under different names and their pi files
+// under different roots. So this copy names no path of its own: the card
+// prints the error above these steps and the error carries the path, and
+// the card's own heading says which place it is about.
 export const PROBLEM_HEADLINES: Record<ProblemKind, string> = {
-  "lock-corrupt": "A kendex file in this project can't be read",
-  "manifest-outdated": "This project's manifest comes from an older version",
+  "lock-corrupt": "A kendex file can't be read",
+  "manifest-outdated": "This manifest comes from an older version",
   "schema-too-new": "This project's kendex files come from a newer version",
   "manifest-invalid": "This project's manifest has a problem",
   other: "Something went wrong in this project",
@@ -20,11 +26,11 @@ export const PROBLEM_HEADLINES: Record<ProblemKind, string> = {
 export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
   "lock-corrupt": [
     "Rescan to retry",
-    "If it keeps failing, the file is damaged or from an older version of kendex — move it aside and apply again to write a fresh one",
-    "Keep the file you moved — it is the only record naming any hooks.json or hooks/ an older kendex left beside this project's .pi directory. Move those aside as well; some of them may be your own",
+    "If it keeps failing, the file named above is damaged or from an older version of kendex. Move it aside and apply again to write a fresh one",
+    "Keep the file you moved. It is the only record naming a pi hooks.json or hooks/ beside the same root, so move those aside as well",
   ],
   "manifest-outdated": [
-    "Move the project's kendex.toml aside — nothing converts it, and kendex leaves it exactly as you wrote it",
+    "Move the file named above aside. Nothing converts it, and kendex leaves it exactly as you wrote it",
     "Declare what you want again and apply; the file you moved is there to copy from",
   ],
   "schema-too-new": [

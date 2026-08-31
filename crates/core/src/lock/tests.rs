@@ -108,6 +108,24 @@ fn a_v1_lock_fails_to_load_and_names_the_fresh_install() {
     assert!(matches!(load(&path), Err(CoreError::LockCorrupt { .. })));
 }
 
+/// The same refusal reaches Personal and a project alike, and the two
+/// scopes keep their locks under different names: `lock.json` under the
+/// app's config directory, `.kendex-lock.json` in a project. So the
+/// message names the path it was handed and nothing else, which is a rule
+/// that stays true for both. The app's steps for this kind carry the same
+/// rule beside their own copy, in ui/src/lib/error-copy.test.ts.
+#[test]
+fn the_lock_refusal_names_no_path_of_its_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("lock.json");
+    std::fs::write(&path, "{not json").unwrap();
+    let said = load_file(&path).unwrap_err().to_string();
+    assert!(said.contains("install fresh"), "{said}");
+    for named in [".kendex-lock.json", "kendex.toml", ".pi"] {
+        assert!(!said.contains(named), "names {named}: {said}");
+    }
+}
+
 /// Malformed JSON is reported as a damaged lock, distinct from the v1
 /// and future-version cases.
 #[test]
