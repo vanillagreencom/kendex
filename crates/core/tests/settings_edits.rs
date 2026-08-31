@@ -656,3 +656,74 @@ fn an_env_declared_as_an_array_of_tables_stops_the_write_and_says_why() {
     );
     assert_eq!(fs::read_to_string(settings_path(&f)).unwrap(), file);
 }
+
+/// The arrival is the one pass a marked key would ever have been written
+/// on, and a name the file has already taken stops that write however the
+/// line took it. What is left is the note, and it is what a person has to
+/// be given: the key, and the line that is not answering it.
+///
+/// Read off the file-wide presence check instead, the note goes quiet on
+/// exactly these files — the key is neither written nor reported, which is
+/// the silence `a pass that gives up still names the key` closed at the
+/// other door.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_arrival_over_an_assignment_no_script_reads_still_names_the_key() {
+    for (file, expect) in [
+        (
+            "[other]\nREVIEWERS = \"a\"\n",
+            "it is assigned outside the [env] table, where no script reads it (line 2)",
+        ),
+        (
+            "[env]\n\"REVIEWERS\" = \"a\"\n",
+            "it is assigned as a quoted key, which is not a name a shell can export — spell it REVIEWERS (line 2)",
+        ),
+        (
+            "[env]\nREVIEWERS = \"a\"\nREVIEWERS = \"b\"\n",
+            "it is assigned more than once, and nothing here can say which one wins (lines 2, 3)",
+        ),
+    ] {
+        let f = fixture(TEMPLATE);
+        fs::write(settings_path(&f), file).unwrap();
+
+        let manifest = kendex_core::manifest::load_for_mutation(
+            &kendex_core::manifest::manifest_path(&f.env, &f.scope),
+        )
+        .unwrap()
+        .unwrap();
+        let lock =
+            kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+        let options = PlanOptions {
+            arriving_skills: manifest.skills.keys().cloned().collect(),
+            ..PlanOptions::default()
+        };
+        let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
+
+        // The name is taken, so nothing is written over it.
+        assert!(
+            !report
+                .plan
+                .ops
+                .iter()
+                .any(|op| op.line().contains("kendex.settings.toml")),
+            "{file}: {:?}",
+            report
+                .plan
+                .ops
+                .iter()
+                .map(apply::PlannedOp::line)
+                .collect::<Vec<_>>()
+        );
+        // And the key is still named, with the line to go and fix.
+        assert!(
+            report.notes.iter().any(|note| note
+                == &format!(
+                    "kendex.settings.toml REVIEWERS: review needs this key decided and this file's assignment is not one — {expect} — so set it yourself"
+                )),
+            "{file}: {:?}",
+            report.notes
+        );
+        apply::execute(&f.env, &report.plan, None).unwrap();
+        assert_eq!(fs::read_to_string(settings_path(&f)).unwrap(), file);
+    }
+}

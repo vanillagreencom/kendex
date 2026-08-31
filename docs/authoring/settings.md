@@ -85,10 +85,21 @@ install rewrites a value. The presence check is deliberately wider than what
 the readers look at: an assignment of that key anywhere in the file, inside
 `[env]` or not, counts as present and suppresses the insert.
 
+It suppresses the insert and nothing else. Whether a marked key is ANSWERED is
+the readers' own narrower question, so an assignment under another table, one
+spelled quoted or dotted, one written twice, or one holding a value the loaders
+refuse is still reported as unanswered — nothing writes the key, because the
+name is taken, and nothing reads it either, so the note names the line that
+took the name rather than claiming the file assigns nothing.
+
 Several packages may ship the same key. Where they agree on the default,
 nothing is said. Where they disagree, every plan and audit carries one note
 naming each owner and each default, and where the pass writes the key at all
-it writes the first declaration in package-name order.
+it writes the first declaration, in package-name order, that the pass ADMITS.
+On an arrival that is the first arriving package to mark the key `# required`:
+a package shipping the key unmarked declares nothing this pass may write, so
+it does not take the key by sorting first. A save admits every declaration of
+the key it names, so there the first in package-name order is what lands.
 
 Nothing ever revisits a block already in the consumer's file. Once a key and
 its comment are there, whichever of the two put them there, they are the

@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 use crate::settings_toml::Row;
 
-use super::{SeededEnv, Seeding, assigned_keys, env_blocked, opens_env, seeding_for, table_row};
+use super::{SeededEnv, Seeding, assigned_keys, env_blocked, opens_env, table_row, written_for};
 
 /// The terminator new lines are written with: whatever the file's first
 /// terminated line uses, `\n` where it has nothing to say.
@@ -84,15 +84,16 @@ pub fn merge(
         .into_iter()
         .collect();
     // Each distinct key once, in declaration order, taken from the one
-    // declaration that speaks for it. The winner comes from `seeding_for`
+    // declaration that speaks for it. The winner comes from `written_for`
     // rather than being re-derived here, so the bytes written and the skill
-    // a note names cannot be two different answers.
+    // a note names cannot be two different answers — and the file-wide
+    // presence check goes into that same answer, so a note cannot count a
+    // key as written that this filter was going to drop.
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     let missing: Vec<&SeededEnv> = entries
         .iter()
         .filter(|seeded| seen.insert(seeded.entry.key.as_str()))
-        .filter(|seeded| !existing.contains(&seeded.entry.key))
-        .filter_map(|seeded| seeding_for(entries, &seeded.entry.key, seeding))
+        .filter_map(|seeded| written_for(entries, &seeded.entry.key, seeding, &existing))
         .collect();
     if missing.is_empty() {
         return None;

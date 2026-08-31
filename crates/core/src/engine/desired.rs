@@ -146,11 +146,16 @@ pub struct DesiredState {
     /// the merge changed something and must be written back.
     pub manifest_update: Option<Manifest>,
     /// `[env]` defaults shipped by enabled skills
-    /// (kendex.settings.toml.example), every declaration in order — each
-    /// with the skill that ships it, incomplete values included, because a
-    /// key nothing can supply is reported by name. Seeding writes the
-    /// first declaration whose template completes the value; a refresh
-    /// listens to the key's recorded owner.
+    /// (kendex.settings.toml.example), every declaration in skill-name
+    /// order — each with the skill that ships it, incomplete values
+    /// included, because a key nothing can supply is reported by name.
+    ///
+    /// The one list everything that speaks about these keys reads: an
+    /// arrival writes its marked keys from here, a save writes and
+    /// resolves defaults from here, and the plan's notes are built from
+    /// here. Where several skills declare one key, what lands is the
+    /// first declaration the pass admits, which is not always the first
+    /// declaration.
     pub settings_env: Vec<crate::settings_seed::SeededEnv>,
     /// Where each planned skill's settings template stands: read, absent,
     /// or out of reach. `settings_env` is this same text run through the

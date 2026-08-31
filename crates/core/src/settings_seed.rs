@@ -10,7 +10,12 @@
 //!
 //! The shell-side readers consume the `[env]` table only, but the presence
 //! check here stays file-wide, conservatively: seeding must never add a key
-//! that some assignment outside `[env]` already names.
+//! that some assignment outside `[env]` already names. Whether a key is
+//! ANSWERED is the other question, and the notes take the readers' own
+//! narrow view of it ([`Answered`]): a line the loaders pass over occupies
+//! the name without answering the key. A key in that state is the one a
+//! person most needs telling about — nothing writes it, because the name
+//! is taken, and nothing reads it either.
 //!
 //! An entry is written whole or not at all. A value TOML lets span lines
 //! carries every one of them; a value nothing closes has no complete text
@@ -38,7 +43,7 @@ mod env;
 mod notes;
 mod write;
 pub use env::{EnvBlocked, env_blocked};
-pub use notes::{conflict_notes, seed_notes, unterminated_notes};
+pub use notes::{Answered, conflict_notes, seed_notes, unterminated_notes};
 pub use write::merge;
 
 pub const SETTINGS_FILE: &str = "kendex.settings.toml";
@@ -318,8 +323,8 @@ impl Seeding {
         }
     }
 
-    /// Whether this declaration is one the pass writes. The one statement
-    /// of the rule, asked through [`seeding_for`] by everyone: the bytes
+    /// Whether this declaration is one the pass admits. The one statement
+    /// of the rule, asked through [`written_for`] by everyone: the bytes
     /// `merge` puts in the file and the owner a note names cannot come to
     /// different answers about which declaration spoke.
     fn writes(&self, seeded: &SeededEnv) -> bool {
@@ -331,11 +336,24 @@ impl Seeding {
 /// The declaration this pass writes for a key, or `None` where it writes
 /// none. [`writable_all`] still supplies the candidates and their order,
 /// so the choice stays the one chooser every consumer asks.
-pub(crate) fn seeding_for<'a>(
+///
+/// A name the file already takes ends it before the pass is consulted:
+/// `occupied` is the file-wide presence check [`assigned_keys`] gives, and
+/// seeding never adds a key some assignment anywhere already names. That
+/// belongs in this answer rather than at the writer alone, because "is
+/// this key about to be written" is also what a note asks before staying
+/// quiet about it. Asked without the file, an arrival counts itself as the
+/// pass that answers a key it is in fact about to skip, and a marked key
+/// goes neither into the file nor into a note.
+pub(crate) fn written_for<'a>(
     entries: &'a [SeededEnv],
     key: &str,
     seeding: &Seeding,
+    occupied: &std::collections::BTreeSet<String>,
 ) -> Option<&'a SeededEnv> {
+    if occupied.contains(key) {
+        return None;
+    }
     writable_all(entries, key).find(|seeded| seeding.writes(seeded))
 }
 

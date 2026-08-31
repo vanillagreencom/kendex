@@ -89,7 +89,7 @@ pub(super) fn plan_settings_seed(
     // what the notes below are then told. Nothing is written there either
     // way, so the required keys are reported as unanswered, which is the
     // true thing to say about a file kendex cannot see into.
-    let unread = std::collections::BTreeSet::new();
+    let unread = crate::settings_seed::Answered::read(None, &state.settings_env);
     // And a pass that gives up writes nothing whatever it meant to write,
     // so the notes for one are built from a seeding that admits nothing.
     // Handed the pass's own, the notes speak for a write that is not going
@@ -119,12 +119,11 @@ pub(super) fn plan_settings_seed(
         return Ok((notes, vec![row]));
     }
     let current = crate::fs::read_if_exists(&path)?;
-    let assigned = current
-        .as_deref()
-        .map(crate::settings_seed::assigned_keys)
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    // Where every declared key stands in the file the notes speak about.
+    // Both views at once, because the two questions the notes ask take
+    // different ones: whether a write can land on the name, and whether
+    // any script would read what is there.
+    let answered = crate::settings_seed::Answered::read(current.as_deref(), &state.settings_env);
     // A file that already declares env — as an array of tables, or in a
     // top-level assignment — has nowhere a setting can go, and writing
     // around it would leave a document that does not load. Said the way
@@ -142,10 +141,10 @@ pub(super) fn plan_settings_seed(
             path.display(),
             env.problem()
         );
-        let notes = crate::settings_seed::seed_notes(&state.settings_env, &assigned, &giving_up);
+        let notes = crate::settings_seed::seed_notes(&state.settings_env, &answered, &giving_up);
         return Ok((notes, vec![cannot_write(scope, file, problem)]));
     }
-    let notes = crate::settings_seed::seed_notes(&state.settings_env, &assigned, &seeding);
+    let notes = crate::settings_seed::seed_notes(&state.settings_env, &answered, &seeding);
     let settled = settle(current.as_deref(), state, &seeding, edits, &path)?;
     // Nothing to write when the finished text is what the file already
     // holds — and, where there was no file, when there is nothing to make.

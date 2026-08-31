@@ -262,8 +262,9 @@ fn desired_pass<'a>(
 }
 
 /// The record this pass will write, before any of it is filled in: the
-/// per-source and per-set resolutions it just made, and the seeding
-/// evidence carried forward — only seeding and refresh may move that.
+/// per-source and per-set resolutions it just made. Nothing about seeding
+/// is recorded here — a template applies once, on the arrival, and what
+/// says an arrival happened is the manifest gaining the declaration.
 fn fresh_lock(manifest: &Manifest, lock: &Lock, state: &desired::DesiredState) -> Lock {
     Lock {
         version: crate::lock::LOCK_VERSION,

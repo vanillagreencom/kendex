@@ -13,6 +13,13 @@ fn all(entries: &[SeededEnv]) -> Seeding {
     Seeding::new([], entries.iter().map(|s| s.entry.key.clone()))
 }
 
+/// A file that answers nothing: what a test whose subject is the bytes or
+/// the defaults wants, so a note about the consumer's own file cannot come
+/// out of a fixture that has none.
+fn nothing(entries: &[SeededEnv]) -> Answered {
+    Answered::read(None, entries)
+}
+
 fn seeded(template: &str, owner: &str) -> Vec<SeededEnv> {
     extract_env_entries(template)
         .into_iter()
@@ -454,13 +461,13 @@ fn a_broken_declaration_before_a_valid_one_never_becomes_the_owner() {
         Some("good")
     );
     assert_eq!(
-        seeding_for(&shipped, "MODE", &all(&shipped)).map(|s| s.owner.as_str()),
+        written_for(&shipped, "MODE", &all(&shipped), &BTreeSet::new()).map(|s| s.owner.as_str()),
         Some("good")
     );
 
     // And the notes: a broken declaration is not a competing default that
     // lands, so nothing claims the broken skill's value was written.
-    for note in seed_notes(&shipped, &BTreeSet::new(), &all(&shipped)) {
+    for note in seed_notes(&shipped, &nothing(&shipped), &all(&shipped)) {
         assert!(!note.contains("broken's is the one written"), "{note}");
     }
 }
@@ -579,16 +586,16 @@ fn an_incomplete_declaration_is_not_a_default_to_disagree_with() {
     shipped.extend(seeded("[env]\n# Ours.\nBLOB = \"ok\"\n", "good"));
 
     assert!(
-        conflict_notes(&shipped, &BTreeSet::new(), &all(&shipped)).is_empty(),
+        conflict_notes(&shipped, &nothing(&shipped), &all(&shipped)).is_empty(),
         "one default is not a disagreement: {:?}",
-        conflict_notes(&shipped, &BTreeSet::new(), &all(&shipped))
+        conflict_notes(&shipped, &nothing(&shipped), &all(&shipped))
     );
     // The key is supplied, so nothing is refused either: no note at all.
     assert!(unterminated_notes(&shipped).is_empty());
     assert!(
-        seed_notes(&shipped, &BTreeSet::new(), &all(&shipped)).is_empty(),
+        seed_notes(&shipped, &nothing(&shipped), &all(&shipped)).is_empty(),
         "{:?}",
-        seed_notes(&shipped, &BTreeSet::new(), &all(&shipped))
+        seed_notes(&shipped, &nothing(&shipped), &all(&shipped))
     );
 
     let (text, added) = merge(None, &shipped, &all(&shipped)).expect("BLOB is missing");
@@ -599,10 +606,10 @@ fn an_incomplete_declaration_is_not_a_default_to_disagree_with() {
     let mut real = seeded("[env]\n# Theirs.\nBLOB = \"theirs\"\n", "one");
     real.extend(seeded("[env]\n# Ours.\nBLOB = \"ours\"\n", "two"));
     assert_eq!(
-        conflict_notes(&real, &BTreeSet::new(), &all(&real)).len(),
+        conflict_notes(&real, &nothing(&real), &all(&real)).len(),
         1,
         "{:?}",
-        conflict_notes(&real, &BTreeSet::new(), &all(&real))
+        conflict_notes(&real, &nothing(&real), &all(&real))
     );
 }
 
@@ -651,7 +658,7 @@ fn an_inline_table_spanning_lines_is_seeded_whole() {
 
         let shipped = seeded(&template, "review");
         assert!(
-            seed_notes(&shipped, &BTreeSet::new(), &all(&shipped)).is_empty(),
+            seed_notes(&shipped, &nothing(&shipped), &all(&shipped)).is_empty(),
             "{value}"
         );
         let (text, added) = merge(None, &shipped, &all(&shipped)).expect("MAP is missing");
