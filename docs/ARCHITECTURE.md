@@ -295,8 +295,8 @@ lives in one capability table read by core and UI.
   zero. Every read the app starts with runs beside the others.
 - **Discovery is unsigned; one pinned key covers a document binding each
   download to its release and target.** Off the launch path, one check at a
-  time per process reads the feed six-hourly at most, keeps the last document,
-  follows no final link; nothing gates it; debug builds alone honor
+  time machine-wide reads the feed six-hourly at most, keeps the last
+  document, follows no final link; nothing gates it; debug builds alone honor
   `KENDEX_UPDATE_FEED`. Replacing needs the running path writable, outside a
   system prefix; a package prefix names its command, the card says which,
   anything else neither. Either shell carries its own command, marker last.

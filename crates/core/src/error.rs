@@ -155,6 +155,9 @@ pub enum CoreError {
     #[error("credential refresh is busy: another kendex process holds {lock}")]
     CredentialRefreshBusy { lock: PathBuf },
 
+    #[error("app update check is busy: another kendex process holds {lock}")]
+    AppUpdateBusy { lock: PathBuf },
+
     #[error("source cache is busy: another download holds {lock}")]
     CacheBusy { lock: PathBuf },
 

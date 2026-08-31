@@ -9,13 +9,14 @@ use specta::Type;
 use crate::clock;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::fs::{atomic_write_no_follow, open_read_no_follow};
+use crate::fs::{LockedFile, atomic_write_no_follow, open_read_no_follow};
 use crate::registry::Fetch;
 use crate::update_feed::{ReleaseFeed, VersionRelation, release_notes_url};
 
 pub const DEFAULT_TTL_SECS: u64 = 6 * 60 * 60;
 const MAX_CACHE_BYTES: u64 = crate::update_feed::MAX_FEED_BYTES as u64 * 3;
 const MAX_ETAG_BYTES: usize = 512;
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(
@@ -44,11 +45,8 @@ pub enum AppUpdateStatus {
 /// both read a cache neither has written yet, both fetch, and the second
 /// write puts its own generation over the first. Held across the read, the
 /// fetch and the write, so the second caller reads what the first left and
-/// finds the interval already served.
-///
-/// A second process is not covered, and does not need to be: the write is
-/// atomic and the file is one generation or the other either way, so the
-/// cost of that race is a redundant fetch rather than a torn cache.
+/// finds the interval already served. Another process is held off by
+/// [`update_lock`], which this one saves the cost of taking twice.
 static CHECK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// What the last check left behind: which feed it read, the validator to
@@ -103,6 +101,7 @@ fn check_with_clock(
         .get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _one_process_at_a_time = update_lock(env)?;
     let now = clock();
     let mut cached = read_cache(env)?.unwrap_or_default();
     let feed_url = request.feed_url.trim();
@@ -184,6 +183,41 @@ fn view(
             }
         }
     })
+}
+
+/// The same one-at-a-time, held against every other kendex process.
+///
+/// The read, the fetch and the write are one transaction because the write
+/// puts back the whole document, the body read before the fetch included.
+/// Two processes overlapping without this both read the old cache; the one
+/// whose fetch succeeds writes the new feed, and the one whose fetch fails
+/// writes the old body back over it under a fresh `last_attempt_at` — the
+/// release is gone and no automatic attempt is due for six hours. Re-reading
+/// just before the write would narrow that window and not close it, so the
+/// whole transaction is serialised instead.
+///
+/// The loser waits rather than skipping: it goes on to read what the winner
+/// left, finds the interval already served, and answers from that without a
+/// fetch or a write of its own. Nothing is guarded in memory, so a process
+/// that died holding this released it with its file descriptors; one still
+/// running after `LOCK_WAIT` is named rather than written over.
+fn update_lock(env: &Env) -> Result<LockedFile> {
+    let path = env.app_update_lock_file();
+    let parent = path
+        .parent()
+        .ok_or_else(|| CoreError::io(&path, std::io::Error::other("path has no parent")))?;
+    std::fs::create_dir_all(parent).map_err(|error| CoreError::io(parent, error))?;
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    loop {
+        match LockedFile::try_exclusive_no_follow(&path) {
+            Ok(Some(lock)) => return Ok(lock),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Ok(None) => return Err(CoreError::AppUpdateBusy { lock: path }),
+            Err(error) => return Err(CoreError::io(&path, error)),
+        }
+    }
 }
 
 fn read_cache(env: &Env) -> Result<Option<Cache>> {
