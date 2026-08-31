@@ -33,13 +33,25 @@ pub enum CommandNotice {
     /// Nothing names an owner and no record proves the file is kendex's,
     /// so there is no name to print and no command to offer.
     Unknown,
-    /// Kendex's own command, where this app cannot write. `command` is
-    /// what carries it across with the privilege the app lacks.
+    /// Kendex's own command, where this app cannot write. `command` is the
+    /// installer, which supplies the privilege the app lacks.
     NeedsPrivilege { path: String, command: String },
 }
 
-/// What `kendex update` is spelled as when it has to run as root.
-const ELEVATED_UPDATE: &str = "sudo kendex update";
+/// The installer, run again: the update path for a command an installer
+/// put where the app cannot write. `install.sh` elevates its own write
+/// when its `bindir` needs it, and re-running it is what a person on that
+/// install already has.
+///
+/// It names no path, which is the whole of why it is this and not a
+/// command aimed at the file. `sudo kendex update` resolves a bare name
+/// against sudo's `secure_path` rather than the person's `PATH`, so it
+/// reaches a second `kendex` or none at all; spelling the path into it
+/// instead hands a root shell a name an unprivileged account decides,
+/// because every route to that path — a write probe on a directory its
+/// owner can open up again, a prefix an account owns — is one that account
+/// can arrange.
+const INSTALLER_RERUN: &str = "curl -fsSL https://kendex.ai/install.sh | sh";
 
 impl CommandNotice {
     /// What the card owes a person about this command, or `None` where it
@@ -49,7 +61,7 @@ impl CommandNotice {
             CommandBeside::Ours(_) | CommandBeside::Absent => None,
             CommandBeside::NeedsPrivilege(path) => Some(Self::NeedsPrivilege {
                 path: shown(&path.display().to_string()),
-                command: ELEVATED_UPDATE.to_owned(),
+                command: INSTALLER_RERUN.to_owned(),
             }),
             CommandBeside::NotOurs(InstallChannel::Managed { manager, command }) => {
                 Some(Self::Managed {

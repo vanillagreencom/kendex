@@ -40,8 +40,8 @@ export const commands = {
  */
 { kind: "unknown" } | 
 /**
- *  Kendex's own command, where this app cannot write. `command` is
- *  what carries it across with the privilege the app lacks.
+ *  Kendex's own command, where this app cannot write. `command` is the
+ *  installer, which supplies the privilege the app lacks.
  */
 { kind: "needsPrivilege"; path: string; command: string } | null, string>(__TAURI_INVOKE("app_update_command_channel")),
 	/**
@@ -81,8 +81,8 @@ export const commands = {
  */
 { kind: "unknown" } | 
 /**
- *  Kendex's own command, where this app cannot write. `command` is
- *  what carries it across with the privilege the app lacks.
+ *  Kendex's own command, where this app cannot write. `command` is the
+ *  installer, which supplies the privilege the app lacks.
  */
 { kind: "needsPrivilege"; path: string; command: string } | null) => typedError<string | null, string>(__TAURI_INVOKE("app_update_install", { shown })),
 	scanMachine: () => typedError<ScanResult, string>(__TAURI_INVOKE("scan_machine")),
@@ -888,8 +888,8 @@ export type CommandNotice =
  */
 { kind: "unknown" } | 
 /**
- *  Kendex's own command, where this app cannot write. `command` is
- *  what carries it across with the privilege the app lacks.
+ *  Kendex's own command, where this app cannot write. `command` is the
+ *  installer, which supplies the privilege the app lacks.
  */
 { kind: "needsPrivilege"; path: string; command: string };
 

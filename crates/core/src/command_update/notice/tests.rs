@@ -2,8 +2,8 @@ use super::*;
 
 /// What the card is owed, per state. Every arm that is not the app's own
 /// to carry says something, and no arm invents a name or a command: the
-/// managed one repeats the installer's, the privileged one the single
-/// fixed command that supplies what is missing, and the unknown one
+/// managed one repeats the installer's, the privileged one names the
+/// installer that can write where the app cannot, and the unknown one
 /// neither.
 #[test]
 fn the_card_is_told_what_each_state_owes_a_person() {
@@ -32,7 +32,7 @@ fn the_card_is_told_what_each_state_owes_a_person() {
         )),
         Some(CommandNotice::NeedsPrivilege {
             path: "/usr/local/bin/kendex".to_owned(),
-            command: ELEVATED_UPDATE.to_owned(),
+            command: INSTALLER_RERUN.to_owned(),
         })
     );
 }
@@ -135,5 +135,44 @@ fn one_privileged_command_is_not_another_at_a_different_path() {
         CommandNotice::not_as_shown("5.1.0", moved, other.as_ref(), one.as_ref()),
         None,
         "a command this app carries across names no path on the card"
+    );
+}
+
+/// The command the privileged arm offers is the same command whatever
+/// file the card is about, and none of that file's name is in it.
+///
+/// This is the arm a person is invited to run with privilege, and a path
+/// this process read is a path an unprivileged account can arrange: it
+/// picks the directory the write probe failed in, and it can put anything
+/// at the name once it has. So what is offered has to be text no input
+/// here can move.
+///
+/// Beside the table rather than in it, for the reason the case above is:
+/// `every_state` holds one state per disposition, and the fact here needs
+/// two of one disposition that differ only in path. What that case asks is
+/// the complement of this one — it asks that two such notices differ,
+/// because the arm prints the path; this asks that the command they offer
+/// does not.
+#[test]
+fn the_privileged_arm_offers_a_command_no_path_reaches() {
+    let offered =
+        |path: &str| match CommandNotice::for_card(&CommandBeside::NeedsPrivilege(path.into())) {
+            Some(CommandNotice::NeedsPrivilege { command, .. }) => command,
+            other => panic!("a command kendex cannot write is not {other:?}"),
+        };
+    let system = offered("/usr/local/bin/kendex");
+    let owned = offered("/home/someone/.local/bin/kendex");
+    assert_eq!(system, owned);
+    for path in ["/usr/local/bin", "/home/someone", ".local/bin"] {
+        assert!(
+            !system.contains(path),
+            "the offered command carries {path}: {system}"
+        );
+    }
+    // A root shell handed a bare name resolves it against sudo's own
+    // `secure_path`, which is the other half of the same defect.
+    assert!(
+        !system.contains("sudo"),
+        "the offered command elevates: {system}"
     );
 }

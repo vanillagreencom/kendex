@@ -19,6 +19,10 @@ const RELEASED_VERSION = "0.2.0";
  *  - `?update=managed` — the card with a package manager's command.
  *  - `?update=unknown` — the card with no action at all.
  *  - `?update=none` — no card: this build is the latest.
+ *  - `?update=commandManaged` — Update now, and the `kendex` command
+ *    beside the app named as another installer's to move.
+ *  - `?update=commandPrivilege` — Update now, and the `kendex` command
+ *    beside the app named as one this app cannot write.
  *  - `?updateFails=1` — the replacement refuses, and says so on the card. */
 const wanted = (name: string): string | null =>
   typeof window === "undefined"
@@ -83,7 +87,7 @@ export const coreHandlers: Record<string, Handler> = {
         return {
           kind: "needsPrivilege",
           path: "/usr/local/bin/kendex",
-          command: "sudo kendex update",
+          command: "curl -fsSL https://kendex.ai/install.sh | sh",
         };
       default:
         return null;

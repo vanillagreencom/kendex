@@ -242,27 +242,34 @@ describe("the action each channel allows", () => {
   });
 
   // The command is kendex's own and the app cannot write where it sits,
-  // which is neither of the two answers above: there is an owner, and one
-  // command moves it. Said with the path, because a person may have more
-  // than one kendex and only one of them is the file this is about.
-  it("names the command that moves one only privilege withholds", async () => {
+  // which is neither of the two answers above: there is an owner, and the
+  // installer that put it there can write the directory. Said with the
+  // path, because a person may have more than one kendex and only one of
+  // them is the file this is about — and the offer is the installer, not
+  // that path, which is what keeps a root shell off a name an account can
+  // arrange.
+  it("offers the installer for one only privilege withholds", async () => {
     const container = await show(
       { kind: "direct" },
       {
         kind: "needsPrivilege",
         path: "/usr/local/bin/kendex",
-        command: "sudo kendex update",
+        command: "curl -fsSL https://kendex.ai/install.sh | sh",
       },
     );
     expect(container.textContent).toContain(
       appUpdateCommandPrivilegeNote("/usr/local/bin/kendex"),
     );
-    expect(container.textContent).toContain("sudo kendex update");
+    expect(container.textContent).toContain(
+      "curl -fsSL https://kendex.ai/install.sh | sh",
+    );
     // Not the answer for a command nothing could place: that one names
     // nothing to run, and this one does.
     expect(container.textContent).not.toContain(
       APP_UPDATE_COMMAND_UNKNOWN_NOTE,
     );
+    // Nothing on the card invites a person to run anything as root.
+    expect(container.textContent).not.toContain("sudo");
   });
 
   // Nothing kendex could name owns it, so the card says the command is
