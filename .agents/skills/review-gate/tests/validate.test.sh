@@ -237,6 +237,28 @@ ln -s missing.toml "$dir/dangling.settings.toml"
 override_validate "a DANGLING symlink override is a finding, not an absent source" \
   "$dir" "dangling.settings.toml" "is not a file the loader can read"
 
+# The same classification covers the NESTED default source, which had kept
+# the bare -f the dispatch above replaced, and the readable half: an
+# unreadable regular file reached the scan and surfaced as bash's own
+# line-numbered read error rather than a finding naming the path.
+sandbox
+dir="$DIR"
+mkdir -p "$dir/.kendex/settings.toml"
+expect_fail "a DIRECTORY at .kendex/settings.toml is its own finding" "$dir" \
+  ".kendex/settings.toml exists but is not a file the loader can read"
+
+if [ "$(id -u)" -eq 0 ]; then
+  echo "  skip  unreadable-source pin needs a non-root reader (chmod 000 cannot deny root)"
+else
+  sandbox
+  dir="$DIR"
+  printf '[env]\nREVIEW_GATE_CONTEXT = "Review gate"\n' >"$dir/unreadable.settings.toml"
+  chmod 000 "$dir/unreadable.settings.toml"
+  override_validate "an UNREADABLE regular override is a finding naming the path" \
+    "$dir" "unreadable.settings.toml" "exists but cannot be READ"
+  chmod 644 "$dir/unreadable.settings.toml"
+fi
+
 # Control: a genuinely absent override is a valid install and still passes.
 sandbox
 dir="$DIR"

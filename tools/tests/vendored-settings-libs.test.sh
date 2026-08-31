@@ -82,7 +82,10 @@ skills_carrying() { # ROOT PARENT REL
   printf '%s' "$out"
 }
 
-# One prefixed function, prefix normalized away. Empty when absent.
+# One prefixed function, prefix normalized away. Empty when absent. It reads
+# from the name's line to the first column-zero `}`, which is only the whole
+# body while no body CONTAINS one — these files embed awk programs, so that
+# is an assumption, and check_tree asserts it below rather than trusting it.
 body_of() { # FILE PREFIX NAME
   awk -v n="$2_$3" '$0 ~ "^" n "\\(\\)" { f = 1 } f { print } f && /^}$/ { exit }' "$1" \
     | sed "s/$2_/PFX_/g"
@@ -97,7 +100,7 @@ prefix_of() { # FILE
 # exit for any divergence — the controls below run this against deliberately
 # edited copies of the tree and require that exit.
 check_tree() { # ROOT
-  local root="$1" rc=0 rel skill first parent copies prefix names n i seen
+  local root="$1" rc=0 rel skill first parent copies prefix names n i seen opens closes
   local scratch="$TMP/map.$$.$RANDOM"
 
   # --- 1. every source has its render, byte for byte, in both families ---
@@ -151,6 +154,17 @@ check_tree() { # ROOT
       continue
     fi
     # No match is "this copy declares nothing", answered two lines down.
+    # body_of cuts at the first column-zero `}`, so one inside a helper body
+    # would silently shorten that helper to its head and let drift below the
+    # cut pass. Every top-level definition in these files is prefixed, so the
+    # closing braces and the definitions come out even exactly while no body
+    # holds one.
+    opens="$(grep -cE "^[A-Za-z_][A-Za-z0-9_]*\(\)" "$root/skills/$skill/scripts/lib/settings.sh" || true)"
+    closes="$(grep -cE '^\}$' "$root/skills/$skill/scripts/lib/settings.sh" || true)"
+    if [ "$opens" != "$closes" ]; then
+      echo "skills/$skill/scripts/lib/settings.sh has $opens top-level definitions and $closes column-zero closing braces; a brace inside a body would cut every helper comparison short"
+      rc=1
+    fi
     names="$(grep -oE "^${prefix}_[A-Za-z0-9_]+\(\)" "$root/skills/$skill/scripts/lib/settings.sh" | sed "s/^${prefix}_//; s/()\$//" || true)"
     if [ -z "$names" ]; then
       echo "skills/$skill/scripts/lib/settings.sh declares no ${prefix}_ functions at all"
@@ -336,13 +350,35 @@ reds "a settings.sh whose prefix cannot be derived fails, never passes empty" \
 restore skills size-ratchet settings.sh
 
 # A fourth settings.sh vendoring the same helpers is held to them too.
+# The two planted-copy mutations, as functions so the stage strings stay
+# free of nested quoting. Both stay portable: `\b` and a `\n` in a sed
+# REPLACEMENT are GNU extensions that BSD sed reads as something else, so a
+# control written with them is inert or malformed on the mac box — the
+# defect class this suite exists to remove. awk inserts the lines instead,
+# matching whole lines rather than patterns so neither dialect can differ.
+plant_fourth_settings() { # DEST — a fourth copy whose shared helper drifted
+  sed "s/rg_/px_/g" "$REPO_ROOT/skills/review-gate/scripts/lib/settings.sh" \
+    | awk -v t="px_settings_grep() {" \
+        '{ print } index($0, t) == 1 { print "  : drifted" }' >"$1"
+}
+plant_body_brace() { # DEST — a column-zero } inside *_env_table awk program
+  awk -v t='      in_env = (header == "[env]")' \
+    '{ print } $0 == t { print "}" }' \
+    "$REPO_ROOT/skills/size-ratchet/scripts/lib/settings.sh" >"$1"
+}
+
 reds "an UNLISTED fourth settings.sh copy is compared, not ignored" \
   "differs between" \
   'mkdir -p "$control/skills/planted/scripts/lib" &&
-   sed -e "s/\brg_/px_/g" -e "s/^px_settings_grep() {/px_settings_grep() {\n  : drifted/" \
-     "$REPO_ROOT/skills/review-gate/scripts/lib/settings.sh" \
-     >"$control/skills/planted/scripts/lib/settings.sh"'
+   plant_fourth_settings "$control/skills/planted/scripts/lib/settings.sh"'
 rm -rf -- "${control:?}/skills/planted"
+
+# The extraction assumption, planted: a column-zero `}` inside the awk
+# program in *_env_table cuts every later helper comparison short.
+reds "a column-zero brace inside a helper body fails, never shortens the pin" \
+  "column-zero closing braces" \
+  'plant_body_brace "$control/skills/size-ratchet/scripts/lib/settings.sh"'
+restore skills size-ratchet settings.sh
 
 # The glob itself: a root carrying no copy must red, not pass with nothing
 # compared. This is the arm that keeps a moved path from reading as clean.
