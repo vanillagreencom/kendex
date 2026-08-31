@@ -120,24 +120,30 @@ impl SealedSource {
         Ok(())
     }
 
+    /// What is under this source at `path`, with the filesystem's refusal
+    /// to say kept apart from its saying nothing is there. Containment
+    /// first, so a read inside a source is a sealed read whether or not
+    /// its caller remembered to ask: [`crate::fs::entry`] answers about a
+    /// link itself, and this is where the reader refuses to look through
+    /// one. The raw probe stays for a caller outside any source.
+    pub(crate) fn entry(&self, path: &Path) -> Result<Option<fs::Metadata>> {
+        self.contained(path)?;
+        crate::fs::entry(path)
+    }
+
     /// Whether a file is at `path`, reading a question the filesystem will
     /// not answer as a no. The reading for a caller drawing rows, which
     /// cannot draw what it cannot read either way. Anything deciding what a
-    /// write would land on asks [`crate::fs::entry`] instead, where the
+    /// write would land on asks [`SealedSource::entry`] instead, where the
     /// third answer survives.
     pub fn is_file(&self, path: &Path) -> bool {
-        self.probe(path).is_some_and(|meta| meta.is_file())
+        self.entry(path).ok().flatten().is_some_and(|m| m.is_file())
     }
 
     /// Whether a directory is at `path`, reading a question the filesystem
     /// will not answer as a no. See [`SealedSource::is_file`].
     pub fn is_dir(&self, path: &Path) -> bool {
-        self.probe(path).is_some_and(|meta| meta.is_dir())
-    }
-
-    fn probe(&self, path: &Path) -> Option<fs::Metadata> {
-        self.contained(path).ok()?;
-        crate::fs::entry(path).ok().flatten()
+        self.entry(path).ok().flatten().is_some_and(|m| m.is_dir())
     }
 
     pub fn read(&self, path: &Path) -> Result<Vec<u8>> {
@@ -178,35 +184,17 @@ impl SealedSource {
     /// Symlinked entries are listed too — reading through one is what
     /// fails, loudly.
     ///
-    /// The reading for a caller about to decide what a write would land on
-    /// top of: a name the directory will not hand over means the answer is
-    /// unknown, and an unknown answer read as an empty directory is how a
-    /// guard deletes what it exists to protect.
+    /// A name the directory will not hand over is an error, never a
+    /// shorter listing: a caller about to decide what a write would land
+    /// on top of must not read an unknown answer as an empty directory. A
+    /// caller drawing rows takes the same answer and draws none of that
+    /// directory, which is what it already does when the directory itself
+    /// cannot be opened.
     pub fn entries(&self, dir: &Path) -> Result<Vec<PathBuf>> {
-        self.listed(dir, true)
-    }
-
-    /// The entries of a directory that could be read, bounded and sorted.
-    ///
-    /// The reading for a caller that draws rows: a name the directory will
-    /// not hand over costs its own row and no other, so one unreadable
-    /// entry never takes a directory's readable items out of a listing.
-    /// The directory itself is a different matter and still errors — that
-    /// is not one row, it is the whole answer, and what an unreadable
-    /// directory costs the surface is the surface's to decide.
-    pub fn readable_entries(&self, dir: &Path) -> Result<Vec<PathBuf>> {
-        self.listed(dir, false)
-    }
-
-    fn listed(&self, dir: &Path, every: bool) -> Result<Vec<PathBuf>> {
         self.contained(dir)?;
         let mut entries: Vec<PathBuf> = Vec::new();
         for entry in fs::read_dir(dir).map_err(|e| CoreError::io(dir, e))? {
-            match entry {
-                Ok(entry) => entries.push(entry.path()),
-                Err(e) if every => return Err(CoreError::io(dir, e)),
-                Err(_) => continue,
-            }
+            entries.push(entry.map_err(|e| CoreError::io(dir, e))?.path());
             // The bound holds while collecting — a million-entry directory
             // must not get a million-entry allocation first. A directory of
             // exactly the limit is within it; the entry after that is not.

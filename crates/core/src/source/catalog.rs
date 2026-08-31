@@ -88,7 +88,7 @@ fn leaves(sealed: &SealedSource, entry: &PluginEntry, kind: ItemKind) -> Vec<Str
     let Some((dir, marker)) = kind_dir(kind) else {
         return Vec::new();
     };
-    let Ok(paths) = sealed.readable_entries(&sealed.root().join(&entry.dir).join(dir)) else {
+    let Ok(paths) = sealed.entries(&sealed.root().join(&entry.dir).join(dir)) else {
         return Vec::new();
     };
     let mut leaves = Vec::new();

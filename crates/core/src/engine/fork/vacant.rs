@@ -7,7 +7,9 @@
 use std::path::PathBuf;
 
 use super::local_item;
-use crate::engine::desired::{native_dir, refusal_reason, skill_canonical, target_harnesses};
+use crate::engine::desired::{
+    native_dir, refusal_reason, skill_canonical, skill_dir, target_harnesses,
+};
 use crate::engine::desired_agent::written_at;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
@@ -83,10 +85,10 @@ pub(super) fn vacant_name(
     {
         return Err(unusable(problem));
     }
-    if !crate::source::slot_free(env, scope, kind, new)? {
+    let slot = local_item(env, scope, kind, new);
+    if !crate::source::slot_free(&slot)? {
         return Err(collision("this scope's local source"));
     }
-    let slot = local_item(env, scope, kind, new);
     if let Some(problem) = crate::source::slot_unreachable(env, scope, kind, new, &slot)? {
         return Err(unusable(problem));
     }
@@ -95,7 +97,9 @@ pub(super) fn vacant_name(
     // unmanaged, and the render pass would refuse to touch it after the
     // fork was already recorded.
     for target in render_targets(env, scope, kind, decl, manifest, new) {
-        if std::fs::symlink_metadata(&target).is_ok() {
+        // The same three-valued read the slot above gets: a destination the
+        // filesystem will not describe is not a destination proven empty.
+        if crate::fs::entry(&target)?.is_some() {
             return Err(unusable(format!(
                 "something kendex doesn't manage already sits at {} — move it, or pick another name",
                 target.display()
@@ -121,11 +125,17 @@ fn same_slot(a: &str, b: &str) -> bool {
 
 /// Every path an item of this kind under `name` would render to in this
 /// scope: the shared canonical tree for a skill, plus each target tool's
-/// own file or link. An agent's file answers to the declaration's switch —
-/// a disabled one lands under `.disabled` — so the destination comes from
-/// the renderer's own rule rather than a second spelling of it. A disabled
-/// skill keeps its directory and renames `SKILL.md` inside it, so its
-/// destination is the same either way.
+/// own file or link. Each destination comes from the helper the render
+/// itself asks rather than a second spelling of it — `skill_dir` for a
+/// skill, which is the tool's own directory under a copy delivery and the
+/// shared tree under a symlink, and `written_at` for an agent, which
+/// answers to the declaration's switch so a disabled one lands under
+/// `.disabled`. A disabled skill keeps its directory and renames
+/// `SKILL.md` inside it, so its destination is the same either way.
+///
+/// Only a skill and an agent reach here: `edited_rendering` refuses every
+/// other kind before a name is ever asked about, and a rename needs a fork
+/// entry, which only that path writes.
 fn render_targets(
     env: &Env,
     scope: &Scope,
@@ -138,8 +148,13 @@ fn render_targets(
     if kind == ItemKind::Skill {
         targets.push(skill_canonical(env, scope, name));
     }
+    let method = decl.method.unwrap_or(manifest.install.method);
     for harness in target_harnesses(decl, manifest, kind, scope) {
-        let Some(dir) = native_dir(env, scope, harness, kind) else {
+        let dir = match kind {
+            ItemKind::Skill => skill_dir(env, scope, harness, method),
+            _ => native_dir(env, scope, harness, kind),
+        };
+        let Some(dir) = dir else {
             continue;
         };
         targets.push(match kind {

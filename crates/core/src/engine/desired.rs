@@ -207,6 +207,7 @@ pub(super) fn refusal_reason(findings: &[crate::render::validate::Finding]) -> O
 mod artifact;
 mod places;
 pub use artifact::{artifact_disk_hash, artifact_paths};
+pub(crate) use places::skill_dir;
 pub(crate) use places::{harnesses_for, target_harnesses};
 pub use places::{native_dir, own_dir, read_dirs, skill_canonical};
 pub(super) mod hold;

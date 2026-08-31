@@ -31,8 +31,7 @@ pub(crate) fn local_slot(root: &Path, kind: ItemKind, name: &str) -> PathBuf {
     }
 }
 
-/// Whether this scope's local source has nothing in the slot a new item of
-/// `kind` under `name` would take. A dangling link is in it — it exists to
+/// Whether nothing stands in `slot`, the path a new item would take. A dangling link is in it — it exists to
 /// the OS and to nothing that follows it — and so is a folding neighbour,
 /// which a case- or composition-folding volume hands back as the same
 /// directory, where the planner would refuse both names and sweep the one
@@ -46,9 +45,8 @@ pub(crate) fn local_slot(root: &Path, kind: ItemKind, name: &str) -> PathBuf {
 /// they are about to claim. Adoption may replace the item already in the
 /// slot, so it asks [`slot_unreachable`] alone: what the slot holds is its
 /// business, whether the source can read it back is not.
-pub(crate) fn slot_free(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<bool> {
-    let slot = local_slot(&local_source_root(env, scope), kind, name);
-    Ok(crate::fs::entry(&slot)?.is_none() && crate::names::folding_sibling(&slot).is_none())
+pub(crate) fn slot_free(slot: &Path) -> Result<bool> {
+    Ok(crate::fs::entry(slot)?.is_none() && crate::names::folding_sibling(slot).is_none())
 }
 
 /// Why nothing at `slot` can be read back through this scope's local

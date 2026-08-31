@@ -94,37 +94,10 @@ fn the_directory_bound_admits_exactly_the_limit() {
     assert_eq!(sealed.entries(&dir).expect("list").len(), MAX_DIR_ENTRIES);
 
     std::fs::write(dir.join("one-too-many"), "x").expect("write");
-    for read in [SealedSource::entries, SealedSource::readable_entries] {
-        assert!(matches!(
-            read(&sealed, &dir),
-            Err(CoreError::SourceEscape { .. })
-        ));
-    }
-}
-
-/// The two readings differ over one entry the directory will not hand
-/// over, and over nothing else. A healthy directory reads the same both
-/// ways, and a directory that cannot be opened at all is the whole answer
-/// rather than one row — so the partial reading refuses it too, and the
-/// surface above decides what that costs it.
-#[test]
-fn the_partial_reading_gives_up_a_row_and_never_a_directory() {
-    let (tmp, sealed) = fixture();
-    let dir = sealed.root().join("skills");
-    assert_eq!(
-        sealed.entries(&dir).expect("list"),
-        sealed.readable_entries(&dir).expect("list")
-    );
-
-    let absent = sealed.root().join("nowhere");
-    let outside = tmp.path().to_path_buf();
-    for read in [SealedSource::entries, SealedSource::readable_entries] {
-        assert!(read(&sealed, &absent).is_err());
-        assert!(matches!(
-            read(&sealed, &outside),
-            Err(CoreError::SourceEscape { .. })
-        ));
-    }
+    assert!(matches!(
+        sealed.entries(&dir),
+        Err(CoreError::SourceEscape { .. })
+    ));
 }
 
 /// A skill that is the whole repository excludes VCS internals and

@@ -8,7 +8,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 use crate::render::skill::render_skill;
 
 use super::desired::{
-    Artifact, Desired, DesiredState, ItemCtx, native_dir, own_dir, skill_canonical,
+    Artifact, Desired, DesiredState, ItemCtx, native_dir, skill_canonical, skill_dir,
 };
 
 /// One physical skill surface and the harnesses that read it. Every tool but
@@ -82,11 +82,7 @@ fn surface_groups(ctx: &ItemCtx, method: Method) -> Vec<SurfaceGroup> {
         // own directory where it has one — several tools copying into the
         // shared tree would be one tree with several owners, which is the
         // shape the shared read already covers.
-        let dir = match method {
-            Method::Copy => own_dir(ctx.env, ctx.scope, *harness, ItemKind::Skill),
-            Method::Symlink => native_dir(ctx.env, ctx.scope, *harness, ItemKind::Skill),
-        };
-        let Some(dir) = dir else {
+        let Some(dir) = skill_dir(ctx.env, ctx.scope, *harness, method) else {
             continue;
         };
         let installed = crate::harness::rendered_name(*harness, ctx.name);

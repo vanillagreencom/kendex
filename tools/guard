@@ -57,7 +57,7 @@ hits=$(scan 'class Kendex < Formula' '^packaging/homebrew/')
   say "a Homebrew formula claims the plain kendex name — the cask owns it; name the formula KendexCli"
 }
 
-hits=$(scan 'std::fs::read|crate::fs::read' '^crates/core/src/(source\.rs|check_catalog\.rs|library\.rs|source/(about|browse|bundles|catalog|config|discover|index|meta|plugin_registry)\.rs|source/browse/preview\.rs|render/skill\.rs|engine/(desired|ops))|^crates/app/src/editor\.rs')
+hits=$(scan 'std::fs::read|crate::fs::read' '^crates/core/src/(source\.rs|check_catalog\.rs|library\.rs|source/(about|browse|bundles|catalog|config|discover|index|layout|meta|plugin_registry|slot)\.rs|source/browse/preview\.rs|render/skill\.rs|engine/(desired|ops))|^crates/app/src/editor\.rs')
 [ -n "$hits" ] && {
   show "$hits" | head -5
   say "raw filesystem read over catalog paths — go through source_read::SealedSource"

@@ -339,6 +339,152 @@ fn an_edited_generated_section_is_kept_and_the_canonical_one_written_beside_it()
     assert_eq!(banners(&text), 1, "{text}");
 }
 
+/// The published prose may open and close with sections of its own that
+/// read exactly like the generated ones. Delete the generated copies and
+/// the publisher's are what stands at each boundary — so a walk that knows
+/// only what the renderer writes takes them, and a whole section of
+/// somebody's catalog prose is gone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_published_section_standing_where_a_generated_one_did_is_not_taken() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\n## Launch Instructions\n\nRead the brief first.\n\nUpstream body.\n\n## Additional Instructions\n\nSay what you changed.\n",
+        "",
+        "[agent-launch-instructions]\nrev = \"Read the brief first.\"\n\n[agent-additional-instructions]\nrev = \"Say what you changed.\"\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    // Each section stands twice: the catalog's own copy, and the generated
+    // one that is a duplicate of it.
+    for section in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&text, section), 2, "{text}");
+    }
+
+    // The person deletes the generated copy of each, keeping the
+    // publisher's. Only theirs is left standing at either boundary.
+    let head = "## Launch Instructions\n\nRead the brief first.\n\n";
+    let tail = "\n## Additional Instructions\n\nSay what you changed.\n";
+    let edited = text.replacen(head, "", 1);
+    let cut = edited.rfind(tail).unwrap();
+    let edited = format!("{}{}", &edited[..cut], &edited[cut + tail.len()..])
+        .replace("Upstream body.", "My body.");
+    for section in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&edited, section), 1, "{edited}");
+    }
+    assert_eq!(banners(&edited), 1, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    for line in [
+        "## Launch Instructions",
+        "Read the brief first.",
+        "## Additional Instructions",
+        "Say what you changed.",
+        "My body.",
+    ] {
+        assert_eq!(
+            times(&source, line),
+            1,
+            "{line} is the publisher's own prose and the capture took it for the wrapper's: {source}"
+        );
+    }
+
+    let text = fs::read_to_string(&file).unwrap();
+    for line in [
+        "## Launch Instructions",
+        "Read the brief first.",
+        "## Additional Instructions",
+        "Say what you changed.",
+    ] {
+        assert_eq!(times(&text, line), 2, "{line} count wrong: {text}");
+    }
+    assert_eq!(times(&text, "My body."), 1, "{text}");
+    assert_eq!(banners(&text), 1, "{text}");
+}
+
+/// Every harness but Claude says an agent's tool references in its own
+/// words, so the catalog's bytes and what those bytes stand as in the
+/// rendering are different text. A published section the rewrite turns
+/// into an exact copy of a generated one is invisible to a count taken
+/// from the source: the count has to be taken from the rendering, or the
+/// publisher's own section goes when the person deletes the generated one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_published_section_the_rewrite_makes_identical_is_not_taken() {
+    let w = agent_world(
+        "\"gemini\"",
+        "---\nname: rev\ndescription: agent rev\n---\n## Launch Instructions\n\nUse the Read tool.\n\nUpstream body.\n\n## Additional Instructions\n\nUse the Bash tool.\n",
+        "",
+        "[agent-launch-instructions]\nrev = \"Use the read_file tool.\"\n\n[agent-additional-instructions]\nrev = \"Use the run_shell_command tool.\"\n",
+    );
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    // The catalog wrote Claude's names, and Gemini's rendering says them
+    // in Gemini's — which is what makes each published section read
+    // exactly like the generated one standing beside it.
+    for line in ["Use the Read tool.", "Use the Bash tool."] {
+        assert_eq!(times(&text, line), 0, "{text}");
+    }
+    for line in [
+        "## Launch Instructions",
+        "Use the read_file tool.",
+        "## Additional Instructions",
+        "Use the run_shell_command tool.",
+    ] {
+        assert_eq!(times(&text, line), 2, "{line} count wrong: {text}");
+    }
+
+    // The person deletes the generated copy at each boundary, keeping the
+    // publisher's.
+    let head = "## Launch Instructions\n\nUse the read_file tool.\n\n";
+    let tail = "\n## Additional Instructions\n\nUse the run_shell_command tool.\n";
+    let edited = text.replacen(head, "", 1);
+    let cut = edited.rfind(tail).unwrap();
+    let edited = format!("{}{}", &edited[..cut], &edited[cut + tail.len()..])
+        .replace("Upstream body.", "My body.");
+    for section in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&edited, section), 1, "{edited}");
+    }
+    assert_eq!(banners(&edited), 1, "{edited}");
+    fs::write(&file, &edited).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    for line in [
+        "## Launch Instructions",
+        "Use the read_file tool.",
+        "## Additional Instructions",
+        "Use the run_shell_command tool.",
+        "My body.",
+    ] {
+        assert_eq!(
+            times(&source, line),
+            1,
+            "{line} is the publisher's own prose and the capture took it for the wrapper's: {source}"
+        );
+    }
+
+    let text = fs::read_to_string(&file).unwrap();
+    for line in [
+        "## Launch Instructions",
+        "Use the read_file tool.",
+        "## Additional Instructions",
+        "Use the run_shell_command tool.",
+    ] {
+        assert_eq!(times(&text, line), 2, "{line} count wrong: {text}");
+    }
+    assert_eq!(times(&text, "My body."), 1, "{text}");
+    assert_eq!(banners(&text), 1, "{text}");
+}
+
 /// A body may spell the banner as an example of it — indented into a code
 /// block, where it is the person's own content. The walk had the banner
 /// already, as the section the renderer wrote at the top; a filter run
@@ -383,77 +529,6 @@ fn a_banner_line_the_body_spells_as_an_example_is_kept() {
         1,
         "{text}"
     );
-}
-
-/// The published prose may open and close with sections of its own that
-/// read exactly like the generated ones. Where the person deletes the
-/// generated copy, the publisher's stands at that boundary and the walk
-/// takes it: nothing in the text tells the two apart, and the wrapper is
-/// read from what the renderer writes rather than counted against the
-/// catalog. This pins that outcome. Nothing is lost from the rendering —
-/// the next render writes each section again from the manifest entry the
-/// fork carries — but the catalog's own copy no longer stands beside it.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_published_section_standing_where_a_generated_one_did_is_taken_as_the_wrappers() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\n## Launch Instructions\n\nRead the brief first.\n\nUpstream body.\n\n## Additional Instructions\n\nSay what you changed.\n",
-        "",
-        "[agent-launch-instructions]\nrev = \"Read the brief first.\"\n\n[agent-additional-instructions]\nrev = \"Say what you changed.\"\n",
-    );
-    let file = rendered(&w, HarnessId::Claude, "rev");
-    let text = fs::read_to_string(&file).unwrap();
-    // Each section stands twice: the catalog's own copy, and the generated
-    // one that is a duplicate of it.
-    for section in ["## Launch Instructions", "## Additional Instructions"] {
-        assert_eq!(times(&text, section), 2, "{text}");
-    }
-
-    // The person deletes the generated copy of each, keeping the
-    // publisher's. Only theirs is left standing at either boundary.
-    let head = "## Launch Instructions\n\nRead the brief first.\n\n";
-    let tail = "\n## Additional Instructions\n\nSay what you changed.\n";
-    let edited = text.replacen(head, "", 1);
-    let cut = edited.rfind(tail).unwrap();
-    let edited = format!("{}{}", &edited[..cut], &edited[cut + tail.len()..])
-        .replace("Upstream body.", "My body.");
-    for section in ["## Launch Instructions", "## Additional Instructions"] {
-        assert_eq!(times(&edited, section), 1, "{edited}");
-    }
-    assert_eq!(banners(&edited), 1, "{edited}");
-    fs::write(&file, &edited).unwrap();
-
-    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan).unwrap();
-    resettle(&w);
-
-    // The capture keeps the body alone: the publisher's copy of each
-    // section went with the wrapper.
-    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
-    assert_eq!(times(&source, "My body."), 1, "{source}");
-    for line in [
-        "## Launch Instructions",
-        "Read the brief first.",
-        "## Additional Instructions",
-        "Say what you changed.",
-    ] {
-        assert_eq!(times(&source, line), 0, "{line} was kept: {source}");
-    }
-
-    // And the rendering still carries each section once, written from the
-    // manifest entry the fork carries, with no duplicate stacked on it.
-    let text = fs::read_to_string(&file).unwrap();
-    for line in [
-        "## Launch Instructions",
-        "Read the brief first.",
-        "## Additional Instructions",
-        "Say what you changed.",
-        "My body.",
-    ] {
-        assert_eq!(times(&text, line), 1, "{line} count wrong: {text}");
-    }
-    assert_eq!(banners(&text), 1, "{text}");
 }
 
 /// A generated section may carry a fenced code block, and inside one a

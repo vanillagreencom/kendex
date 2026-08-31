@@ -471,3 +471,98 @@ fn fork_beside_refuses_a_slot_the_filesystem_will_not_describe() {
         false => assert!(asked.is_ok(), "{asked:?}"),
     }
 }
+
+/// A copy delivery writes a skill into each tool's own directory, not the
+/// shared `.agents/skills` tree, so that is where an unmanaged file stands
+/// in the fork's way. Asking the shared tree alone would record the fork
+/// and leave the render pass to meet the occupant — the very sequence the
+/// destination check exists to prevent, reached through a delivery method
+/// rather than through a name. opencode is the fixture because it reads
+/// both trees; a tool with one surface cannot tell the two apart.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_refuses_an_occupant_of_a_copy_deliverys_destination() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"opencode\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    let own = w.home.join("app/.opencode/skills/gh");
+    assert!(
+        own.join("SKILL.md").is_file(),
+        "the fixture proves nothing unless a copy lands in the tool's own directory"
+    );
+    assert!(
+        !w.home.join("app/.agents/skills/gh").exists(),
+        "and nothing unless the shared tree is a different path"
+    );
+    fs::write(own.join("SKILL.md"), "edited").unwrap();
+
+    let stray = w.home.join("app/.opencode/skills/gh-mine");
+    fs::create_dir_all(&stray).unwrap();
+    fs::write(stray.join("notes.md"), "not kendex's").unwrap();
+    let before = manifest_text(&w);
+
+    let refused = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        HarnessId::Opencode,
+        "gh-mine",
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::ForkNameUnusable { problem, .. }
+            if problem.contains(".opencode/skills/gh-mine")),
+        "the refusal must name the copy destination, not some other path: {refused:?}"
+    );
+    assert_eq!(manifest_text(&w), before);
+    assert_eq!(
+        fs::read_to_string(stray.join("notes.md")).unwrap(),
+        "not kendex's"
+    );
+}
+
+/// A render destination the filesystem will not describe is not a
+/// destination proven empty, for the same reason the slot above is not.
+/// An unsearchable parent answers neither yes nor no, and the refusal
+/// reaches the caller rather than passing the check.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_refuses_a_render_destination_it_cannot_describe() {
+    use std::os::unix::fs::PermissionsExt;
+    let (w, _one, _two) = edited_world();
+    let shared = w.home.join("app/.agents/skills");
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o644)).unwrap();
+    // Root probes any path whatever the mode, so there the denial under
+    // test does not exist and the fork simply plans.
+    let denied = fs::metadata(shared.join("gh-mine"))
+        .err()
+        .is_some_and(|e| e.kind() != std::io::ErrorKind::NotFound);
+    let asked = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        HarnessId::Claude,
+        "gh-mine",
+        None,
+    );
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o755)).unwrap();
+
+    match denied {
+        true => assert!(matches!(asked, Err(CoreError::Io { .. })), "{asked:?}"),
+        false => assert!(asked.is_ok(), "{asked:?}"),
+    }
+}
