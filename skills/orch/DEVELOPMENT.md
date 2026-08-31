@@ -75,12 +75,15 @@ parent result, and Boolean `has_summary`. A retry with validated summary evidenc
 calls `issues complete` without summary flags so it does not post the bundle
 comment twice. Exit zero prints one `closed [PARENT_ID]` or deferred line to
 stdout. A closed result may include completion diagnostics on stderr; consumers
-preserve them all. Any incomplete read, summary, or completion exits nonzero.
-`sync-base`
+preserve them all. Any incomplete read, summary, or completion exits nonzero,
+save the one cause no retry can cure: with `gh` absent the child's PR reference
+is recorded as `lookup failed`, held distinct from the `unavailable` only a
+valid lookup matching no PR may write. `sync-base`
 likewise owns base resolution, fetch, checkout ownership, and the fast-forward.
 It preserves unrelated untracked paths and refuses incoming collisions with
-untracked paths, including ignored ones. The fast-forward itself uses Git's
-no-overwrite-ignore rule, so a writer after the diagnostic scan still fails.
+untracked paths, including ignored ones. The fast-forward itself is the sole
+judge, through Git's no-overwrite-ignore rule: a colliding path that appears at
+any moment before the merge still fails it.
 
 ## Codex app worktree routing
 

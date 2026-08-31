@@ -10,9 +10,10 @@
 # against — is pinned in `workflow-state-cycle-cap.sh`, which reads it from a
 # settings-free checkout so the number can only come from the table; the
 # precedence ladder above that row is `orch-env`'s, and `orch_env.sh` drives it
-# variable-agnostically. What is here is the document side — the identifiers
-# each site must carry, and the two counting invariants a token check cannot
-# state.
+# variable-agnostically. That pointer is pinned at the foot of this file, so it
+# cannot rot in silence the way a prose pointer does. What is here is the
+# document side — the identifiers each site must carry, and the two counting
+# invariants a token check cannot state.
 #
 # NOT covered, and left uncovered on purpose:
 #
@@ -166,5 +167,82 @@ cp "$SUBMIT" "$PROBE/restart-arm.md"
 printf '\n   Verdict cleared, then restart step 1.\n' >>"$PROBE/restart-arm.md"
 check "the containment check flags a restart arm outside the check" \
   test -z "$(restarts_all_checked "$PROBE/restart-arm.md" && echo held)"
+
+# --- the header's runtime pointer -------------------------------------------
+# The header sends a reader to `workflow-state-cycle-cap.sh` for the cap's row
+# and says that suite resolves it from a settings-free checkout. Both halves rot
+# without a symptom, and dropping the checkout is the quiet one: this repo's
+# `kendex.settings.toml` names the setting at the table's own number, so a
+# resolution run here passes over a default the table never supplied. What is
+# pinned is the pointer and nothing else — what the row must BE is that suite's
+# assertion, and re-deriving it here would put back the duplication this file
+# just shed.
+CYCLE_CAP="$SKILL_DIR/tests/workflow-state-cycle-cap.sh"
+
+# resolution_root FILE — the directory a `cap REVIEW_MAX_EXTERNAL_ROUNDS`
+# resolution runs in, read off the `cd` on that same line, or empty. The name is
+# read rather than spelled, so renaming that suite's local variable does not
+# redden this check. awk with index() taking the FIRST `cd "`: a greedy regex
+# would answer about the last one on the line.
+resolution_root() {
+  awk '
+    index($0, "cap REVIEW_MAX_EXTERNAL_ROUNDS") {
+      p = index($0, "cd \"")
+      if (p == 0) next
+      rest = substr($0, p + 4)
+      q = index(rest, "\"")
+      if (q == 0) next
+      print substr(rest, 1, q - 1)
+      exit
+    }
+  ' "$1"
+}
+# The pointer holds when that root is one the suite makes itself with `git init`.
+pointer_holds() {
+  local file="$1" root
+  [ -f "$file" ] || return 1
+  root="$(resolution_root "$file")"
+  [ -n "$root" ] || return 1
+  line_has "$(cat "$file")" 'git init' "$root"
+}
+check "the header's pointer names a suite resolving the cap outside this repo's settings" \
+  pointer_holds "$CYCLE_CAP"
+
+# Teeth, one per claim the pointer makes. `check` carries no automatic control.
+PTR="$MD_TMP/pointer"
+mkdir -p "$PTR"
+
+# The named suite renamed out from under the header, or deleted.
+check "the rename control names a path that is not there" test ! -f "$PTR/renamed.sh"
+check "the pointer check flags a suite the header can no longer reach" \
+  test -z "$(pointer_holds "$PTR/renamed.sh" && echo held)"
+
+# The external-cap block deleted, the rest of the suite intact.
+awk '/^# --- the external round cap/ { skip = 1 }
+     skip && /^# One table, one default/ { skip = 0 }
+     !skip' "$CYCLE_CAP" >"$PTR/no-block.sh"
+check "the block control planted a deletion" \
+  test "$(grep -cF 'cap REVIEW_MAX_EXTERNAL_ROUNDS' "$PTR/no-block.sh")" -lt \
+       "$(grep -cF 'cap REVIEW_MAX_EXTERNAL_ROUNDS' "$CYCLE_CAP")"
+check "the pointer check flags the named suite losing its external-cap block" \
+  test -z "$(pointer_holds "$PTR/no-block.sh" && echo held)"
+
+# The settings-free root dropped, the assertion left standing: the regression
+# that keeps both that suite and this header green over a proof of nothing. The
+# `cd` is stripped by the root's own name, so a rename does not stop the plant.
+md_root="$(resolution_root "$CYCLE_CAP")" awk '
+  BEGIN { tok = "cd \"" ENVIRON["md_root"] "\" && " }
+  !done_ && index($0, "cap REVIEW_MAX_EXTERNAL_ROUNDS") && index($0, tok) {
+    p = index($0, tok)
+    print substr($0, 1, p - 1) substr($0, p + length(tok))
+    done_ = 1
+    next
+  }
+  { print }
+' "$CYCLE_CAP" >"$PTR/no-root.sh"
+check "the root control planted a stripped cd" \
+  test -n "$(cmp -s "$PTR/no-root.sh" "$CYCLE_CAP" || echo planted)"
+check "the pointer check flags a resolution run in this checkout" \
+  test -z "$(pointer_holds "$PTR/no-root.sh" && echo held)"
 
 md_report

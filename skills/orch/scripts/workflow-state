@@ -302,34 +302,32 @@ cmd_append_file() {
         --slurpfile entry "$file"
 }
 
-# The round caps, spelled once: setting name -> default, and the workflow-state
-# field the count is read from (empty when the caller keeps its own count).
-# Every reader — `cap`, the rereview_panel guard below, and the workflows —
-# comes through here, so no caller carries its own copy of a default.
-cap_field() {
-    case "$1" in
-        REVIEW_MAX_CYCLES)          printf 'rereview_cycles\n' ;;
-        REVIEW_MAX_EXTERNAL_ROUNDS) printf 'pr_comment_review.iterations\n' ;;
-        CI_FIX_MAX_CYCLES)          printf '\n' ;;
-        *) echo "Error: unknown round cap: $1 (known: REVIEW_MAX_CYCLES, REVIEW_MAX_EXTERNAL_ROUNDS, CI_FIX_MAX_CYCLES)" >&2; return 2 ;;
-    esac
+# The round caps, spelled once: setting name, the workflow-state field its
+# count is read from (empty when the caller keeps its own count), and its
+# default. `cap`, the rereview_panel guard below, every refusal's roster and
+# the help text derive from this table, so a cap added or renamed here needs no
+# second edit kept in step, and `cap_limit` is the one place a cap resolves.
+cap_table() {
+    printf 'REVIEW_MAX_CYCLES\trereview_cycles\t4\n'
+    printf 'REVIEW_MAX_EXTERNAL_ROUNDS\tpr_comment_review.iterations\t4\n'
+    printf 'CI_FIX_MAX_CYCLES\t\t6\n'
+}
+
+# One cap's "<field><tab><default>", or the one refusal naming every known cap.
+cap_row() {
+    cap_table | awk -F'\t' -v want="$1" '$1 == want { print $2 "\t" $3; found = 1 } END { exit found ? 0 : 1 }' && return 0
+    echo "Error: unknown round cap: $1 (known: $(cap_table | awk -F'\t' '{ printf "%s%s", sep, $1; sep = ", " }'))" >&2
+    return 2
 }
 
 cap_limit() {
-    local default
-    case "$1" in
-        REVIEW_MAX_CYCLES)          default=4 ;;
-        REVIEW_MAX_EXTERNAL_ROUNDS) default=4 ;;
-        CI_FIX_MAX_CYCLES)          default=6 ;;
-        *) echo "Error: unknown round cap: $1 (known: REVIEW_MAX_CYCLES, REVIEW_MAX_EXTERNAL_ROUNDS, CI_FIX_MAX_CYCLES)" >&2; return 2 ;;
-    esac
-    "$SCRIPT_DIR/orch-env" "$1" "$default"
+    local row
+    row=$(cap_row "$1") || return 2
+    "$SCRIPT_DIR/orch-env" "$1" "${row##*$'\t'}"
 }
 
-# The round caps. One table holds each cap's setting name, its default, and
-# the state field it is measured against, so a workflow reads a cap through
-# this command instead of pairing its own orch-env call with its own default
-# and its own comparison.
+# The workflows' reader for the table above: a cap is read through this command
+# instead of pairing an orch-env call with a private default and comparison.
 #
 #   cap SETTING                 -> the resolved cap number
 #   cap SETTING --issue ID      -> "<below|at-cap> <count>/<cap>", count from state
@@ -352,8 +350,9 @@ cmd_cap() {
         esac
     done
 
-    local field limit
-    field=$(cap_field "$setting") || return 2
+    local row field limit
+    row=$(cap_row "$setting") || return 2
+    field="${row%%$'\t'*}"
     limit=$(cap_limit "$setting") || return 2
 
     if [[ "$have_count" -eq 0 && -z "$issue_id" ]]; then
@@ -567,10 +566,10 @@ Commands:
                                 is measured against; with --count: use <n>.
                                 Either prints "<below|at-cap> <count>/<cap>",
                                 at-cap being count >= cap. Settings:
-                                REVIEW_MAX_CYCLES (rereview_cycles, 4),
-                                REVIEW_MAX_EXTERNAL_ROUNDS
-                                (pr_comment_review.iterations, 4),
-                                CI_FIX_MAX_CYCLES (--count only, 6)
+EOF
+    cap_table | awk -F'\t' \
+        '{ printf "%34s%s (%s, %s)\n", "", $1, ($2 == "" ? "--count only" : $2), $3 }'
+    cat << 'EOF'
   increment <issue_id> <field>  Increment numeric field
   set <issue_id> <field> <value>  Set field value ({/[ prefix, null/true/false,
                                 or all digits parse as JSON; anything else is

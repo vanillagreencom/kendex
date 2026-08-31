@@ -379,18 +379,18 @@ done
 # The comment loop and submit-pr read REVIEW_MAX_EXTERNAL_ROUNDS through the
 # same table, and `review-external-rounds-cap.test.sh` used to prove its row
 # from its own scratch repos. This is where that proof lives now. This repo's
-# `kendex.settings.toml` names the setting at the table's own number, so a bare
-# read here would hold whatever default the table carried: the resolution runs
-# from a settings-free checkout, where only the table can answer.
-ext_free="$TMP_ROOT/no-settings-ext"
-git init -q "$ext_free"
-got="$(cd "$ext_free" && env -u REVIEW_MAX_EXTERNAL_ROUNDS "$WS" --state-dir "$cd_sd" cap REVIEW_MAX_EXTERNAL_ROUNDS)"
+# `kendex.settings.toml` names every cap at the table's own number, so a bare
+# read here would hold whatever default the table carried: every default below
+# resolves from this settings-free checkout, where only the table can answer.
+no_settings="$TMP_ROOT/no-settings"
+git init -q "$no_settings"
+got="$(cd "$no_settings" && env -u REVIEW_MAX_EXTERNAL_ROUNDS "$WS" --state-dir "$cd_sd" cap REVIEW_MAX_EXTERNAL_ROUNDS)"
 [[ "$got" == "4" ]] && ok "REVIEW_MAX_EXTERNAL_ROUNDS defaults to 4 through the table" \
   || bad "REVIEW_MAX_EXTERNAL_ROUNDS defaults to 4 through the table" "got=$got"
 
 # Two rows, not one: the external cap moving must leave the re-review cap where
 # the table put it, or the two knobs are one.
-got="$(cd "$ext_free" && REVIEW_MAX_EXTERNAL_ROUNDS=9 env -u REVIEW_MAX_CYCLES "$WS" --state-dir "$cd_sd" cap REVIEW_MAX_CYCLES)"
+got="$(cd "$no_settings" && REVIEW_MAX_EXTERNAL_ROUNDS=9 env -u REVIEW_MAX_CYCLES "$WS" --state-dir "$cd_sd" cap REVIEW_MAX_CYCLES)"
 [[ "$got" == "4" ]] && ok "moving the external cap leaves REVIEW_MAX_CYCLES alone" \
   || bad "moving the external cap leaves REVIEW_MAX_CYCLES alone" "got=$got"
 
@@ -415,6 +415,31 @@ rc=0; "$WS" --state-dir "$cd_sd" cap CI_FIX_MAX_CYCLES --issue KEN-CAP >/dev/nul
 got="$("$WS" --state-dir "$cd_sd" cap CI_FIX_MAX_CYCLES --count 5)"
 [[ "$got" == "below 5/6" ]] && ok "CI_FIX_MAX_CYCLES defaults to 6 through the table" \
   || bad "CI_FIX_MAX_CYCLES defaults to 6 through the table" "got=$got"
+
+# The assertion above ran where this repo's own [env] names CI_FIX_MAX_CYCLES at
+# the table's number, so it would have held whatever default the table carried.
+# The settings-free checkout is what proves the number comes from the table.
+got="$(cd "$no_settings" && "$WS" --state-dir "$cd_sd" cap CI_FIX_MAX_CYCLES --count 5)"
+[[ "$got" == "below 5/6" ]] && ok "the table's default is what resolves where no setting overrides it" \
+  || bad "the table's default is what resolves where no setting overrides it" "got=$got"
+
+# The roster is derived, never spelled. The refusal and the help text once held
+# their own copies of it beside the two case arms that resolved a cap, so a cap
+# added in one place was missing from the others. Both must now name exactly the
+# settings the table resolves.
+roster_of() { tr ',' '\n' <<<"$1" | tr -d ' ' | grep -v '^$' | sort; }
+refusal_roster="$(roster_of "$("$WS" --state-dir "$cd_sd" cap NOT_A_CAP 2>&1 >/dev/null | sed 's/.*(known: //; s/)$//')")"
+help_roster="$("$WS" help | sed -n 's/^ *\([A-Z][A-Z_]*\) (.*/\1/p' | sort)"
+[[ -n "$refusal_roster" && "$refusal_roster" == "$help_roster" ]] \
+  && ok "the refusal and the help name the same caps" \
+  || bad "the refusal and the help name the same caps" "refusal=[$refusal_roster] help=[$help_roster]"
+missing=""
+while IFS= read -r setting; do
+  [[ -n "$setting" ]] || continue
+  "$WS" --state-dir "$cd_sd" cap "$setting" >/dev/null 2>&1 || missing="$missing $setting"
+done <<<"$refusal_roster"
+[[ -z "$missing" ]] && ok "every cap the roster names resolves through the table" \
+  || bad "every cap the roster names resolves through the table" "unresolved:$missing"
 
 # The default lives in the table alone: no reader may carry its own copy.
 cap_strays() { grep -rn 'orch-env" *CI_FIX_MAX_CYCLES\|orch-env" *REVIEW_MAX' "$1" 2>/dev/null || true; }

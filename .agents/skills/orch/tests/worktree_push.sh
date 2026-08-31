@@ -236,8 +236,7 @@ STUB_PUSH_STDOUT="rebase-map: $restack_head $restack_base" \
 assert_eq "$RUN_RC" "1" "active authorization missing recovery fails reconciliation closed"
 assert_contains "$(cat "$run_err")" "recovery copy missing or not regular" \
   "active missing-recovery refusal names the required copy"
-rm -f "$restack_wt/.git/kendex/dev-round-authorizations/KEN-RESTACK-3-3.json" \
-  "$restack_wt/.git/worktree-push-pending-map-KEN-RESTACK.json"
+rm -f "$restack_wt/.git/kendex/dev-round-authorizations/KEN-RESTACK-3-3.json"
 
 "$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 4-4 --item 1 divergent >/dev/null
 divergent_recovery="$restack_wt/tmp/dev-round-KEN-RESTACK-4-4.json"
@@ -283,6 +282,69 @@ reset_state "$work"
 STUB_PUSH_STDOUT="rebase-map: not-a-sha $NEW_A" STUB_PUSH_EXIT=7 run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "7" "unparseable map on a failed push keeps the push's exit code"
 assert_contains "$(cat "$run_err")" "NOT reconciled" "the failed-push parse error still names the consequence"
+
+echo
+echo "=== a repaired state and a re-run do not reconcile the stranded map ==="
+
+# The header contract and the failure diagnostic once told the operator to
+# repair state and re-run. The sidecar that made that true is gone: the rebase
+# already happened, so the retry's push prints no map, reconciles nothing, and
+# exits 0 over the same stale record. Both surfaces must say so, or a stale
+# SHA gets published in the belief the retry fixed it.
+work="$TMP_ROOT/work-rerun"
+rm -rf "$work" && mkdir -p "$work"
+STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "1" "the run that cannot record its map fails"
+assert_contains "$(cat "$run_err")" "Re-running this command does NOT repair them" \
+  "the diagnostic denies that a bare re-run repairs the record"
+assert_contains "$(cat "$run_err")" "workflow-state update" "the diagnostic names the manual repair"
+
+# Repair the state exactly as an operator would, then re-run.
+(cd "$work" \
+  && "$STATE" init KEN-1 --agent generalist --worktree "$wt" --branch ken-1 >/dev/null \
+  && "$STATE" append KEN-1 fixed_items "{\"description\":\"fix\",\"commit\":\"${OLD_A:0:7}\",\"source\":\"pr-review\"}")
+STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "0" "the re-run reports success"
+assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${OLD_A:0:7}" \
+  "the re-run leaves the stale SHA stale, so it is not the repair"
+assert_eq "$(state_json "$work" | jq -r '.rebase_map | length')" "0" \
+  "the stranded map never reaches workflow state on the re-run"
+
+# `--help` prints the leading comment block, so the exit-code table is a
+# runtime surface and its recovery instruction is held to the same truth.
+help_out="$("$PUSH" --help)"
+assert_contains "$help_out" "re-running does not repair them" \
+  "the exit-code table denies that a re-run repairs the record"
+assert_contains "$help_out" "workflow-state update" "the exit-code table names the manual repair"
+
+echo
+echo "=== the arguments must match the state they would rewrite ==="
+
+# The resolved state is both what the reconcile rewrites and what names the
+# round authorization whose base_sha dev-artifact-check diffs against HEAD.
+# Linked worktrees share one git common dir, so a state belonging to another
+# issue or another worktree must refuse BEFORE the push rebases anything.
+mismatch_args_log="$TMP_ROOT/mismatch-args.log"
+
+work="$TMP_ROOT/work-mismatch"
+rm -rf "$work" && mkdir -p "$work/tmp"
+printf '%s\n' '{"issue_id":"KEN-9","worktree":"","fixed_items":[],"pr_comment_review":{"fixes":[]}}' >"$work/tmp/workflow-state-KEN-1.json"
+: >"$mismatch_args_log"
+STUB_ARGS_LOG="$mismatch_args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "1" "a state recording another issue id refuses"
+assert_contains "$(cat "$run_err")" "refusing to rewrite another issue" "the issue mismatch is named"
+assert_eq "$(wc -l <"$mismatch_args_log")" "0" "the push never ran against a mismatched issue id"
+
+other_wt="$TMP_ROOT/other-wt"
+mkdir -p "$other_wt"
+work="$TMP_ROOT/work-wt-mismatch"
+rm -rf "$work" && mkdir -p "$work"
+(cd "$work" && "$STATE" init KEN-1 --agent generalist --worktree "$other_wt" --branch ken-1 >/dev/null)
+: >"$mismatch_args_log"
+STUB_ARGS_LOG="$mismatch_args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "1" "a state recording another worktree refuses"
+assert_contains "$(cat "$run_err")" "refusing to rewrite another worktree" "the worktree mismatch is named"
+assert_eq "$(wc -l <"$mismatch_args_log")" "0" "the push never ran against a mismatched worktree"
 
 echo
 echo "=== a dying stdout cannot lose the map ==="
@@ -421,7 +483,6 @@ duplicate_auth="$duplicate_wt/.git/kendex/dev-round-authorizations/KEN-DUPLICATE
 assert_eq "$(jq -r '.base_sha' "$duplicate_auth")" "$duplicate_first" \
   "an ambiguous mapping does not advance the authorization base"
 
-rm -f "$duplicate_wt/.git/worktree-push-pending-map-KEN-DUPLICATE.json"
 "$ROUND_WRITE" --worktree "$duplicate_wt" --issue KEN-DUPLICATE --round-id 2-2 --item 1 positional >/dev/null
 duplicate_equal_old="$(git -C "$duplicate_wt" rev-parse HEAD)"
 git -C "$duplicate_wt" commit -q --allow-empty -m 'same subject'

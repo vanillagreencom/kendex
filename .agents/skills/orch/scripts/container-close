@@ -64,27 +64,33 @@ print_deferred() {
   while IFS= read -r id; do [[ -z "$id" ]] || printf ' %s' "$id"; done <<<"$1"
   printf '\n'
 }
-# The child's merged PR, for the summary line. A reference the summary can
-# print, never a reason to abandon the close: the container is Done either
-# way, and a lookup that cannot answer says `unavailable` in the line it was
-# collected for. The reason reaches stderr, which the caller preserves.
+# The child's merged PR, for the summary line. The summary is written once:
+# a later run short-circuits on a completed parent and never rebuilds it, so
+# whatever this prints is the permanent record. `unavailable` therefore states
+# one thing only — the lookup ran, was valid, and matched no PR.
+# A failed `gh pr list` or a response that will not parse is transient (rate
+# limit, 5xx, network), so it exits non-zero and the close is retried while the
+# references still resolve. Only a missing `gh` fails open, because no retry
+# can produce the reference there, and it prints `lookup failed` so the record
+# never claims the child had no PR. Reasons reach stderr, which the caller
+# preserves.
 child_pr() {
   local child_id="$1" rows number
   if ! command -v gh >/dev/null 2>&1; then
-    echo "container-close: gh is unavailable; $child_id's PR reference is not resolved" >&2
-    printf 'unavailable\n'; return 0
+    echo "container-close: gh is not installed; $child_id's PR reference cannot be resolved" >&2
+    printf 'lookup failed\n'; return 0
   fi
   rows="$(cd -- "$MAIN_REPO_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
     gh pr list --state merged --search "$child_id" --limit 100 \
       --json number,headRefName,mergedAt,isCrossRepository)" \
-    || { echo "container-close: cannot resolve PR for $child_id" >&2; printf 'unavailable\n'; return 0; }
+    || { echo "container-close: cannot resolve PR for $child_id" >&2; return 1; }
   number="$(jq -r --arg id "$child_id" '
     ($id | ascii_downcase) as $needle |
     [.[] | select(.isCrossRepository != true) |
       select((.headRefName | ascii_downcase | split("/") | last) as $branch |
         $branch == $needle or ($branch | startswith($needle + "-")) or ($branch | startswith($needle + "_")))] |
     sort_by(.mergedAt) | last | .number // empty
-  ' <<<"$rows")" || { echo "container-close: invalid PR response for $child_id" >&2; printf 'unavailable\n'; return 0; }
+  ' <<<"$rows")" || { echo "container-close: invalid PR response for $child_id" >&2; return 1; }
   [[ -n "$number" ]] && printf '#%s\n' "$number" || printf 'unavailable\n'
 }
 
@@ -140,7 +146,7 @@ if [[ "$HAS_SUMMARY" == "false" ]]; then
   while IFS=$'\t' read -r id title state_type; do
     [[ "$state_type" == "completed" ]] \
       || { echo "container-close: child $id has unexpected summary state: $state_type" >&2; exit 1; }
-    PR_REFERENCE="$(child_pr "$id")"
+    PR_REFERENCE="$(child_pr "$id")" || exit 1
     printf -- '- %s ✓ %s — PR %s\n' "$id" "$title" "$PR_REFERENCE" >> "$SUMMARY"
   done < "$CHILD_ROWS"
   COMPLETE_ARGS+=(--summary-file "$SUMMARY")

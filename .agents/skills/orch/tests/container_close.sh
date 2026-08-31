@@ -200,21 +200,55 @@ printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"compl
 "$SHAPE_MUTANT" "$SANDBOX" PARENT-1 >/dev/null
 [[ -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "validation-shape mutant accepts string true" || fail "validation-shape mutant accepts string true"
 
-# The PR reference decorates the summary; it never decides the close. A
-# lookup that cannot answer prints `unavailable` on the child's line and says
-# why on stderr, and the container still reaches Done.
+# The summary is written once — a later run short-circuits on the completed
+# parent and never rebuilds it — so a transient lookup failure must not bake a
+# reference into it. A failed or unparseable `gh pr list` exits non-zero and
+# leaves the parent open for the retry.
 for gh_mode in exit invalid; do
   reset_state
   printf '%s\n' "$gh_mode" > "$FAKE_LINEAR_ROOT/gh.mode"
   printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
-  rc=0; out="$(run_close 2>"$TMP_ROOT/gh-$gh_mode.err")" || rc=$?
-  assert_eq "$rc" "0" "$gh_mode PR lookup still closes the container"
-  assert_eq "$out" "closed PARENT-1" "$gh_mode PR lookup prints the close"
-  [[ -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "$gh_mode PR lookup completes the parent" || fail "$gh_mode PR lookup completes the parent"
-  assert_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-1 ✓ one — PR unavailable" "$gh_mode PR lookup marks the reference unavailable"
+  rc=0; run_close >/dev/null 2>"$TMP_ROOT/gh-$gh_mode.err" || rc=$?
+  assert_eq "$rc" "1" "$gh_mode PR lookup fails the close"
+  [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "$gh_mode PR lookup prevents parent mutation" || fail "$gh_mode PR lookup prevents parent mutation"
+  assert_eq "$(cat "$FAKE_LINEAR_ROOT/parent.state")" "In Progress" "$gh_mode PR lookup leaves the parent open for the retry"
   grep -Fq 'PR' "$TMP_ROOT/gh-$gh_mode.err" && ok "$gh_mode PR lookup names the failure on stderr" || fail "$gh_mode PR lookup names the failure on stderr"
 done
 printf '' > "$FAKE_LINEAR_ROOT/gh.mode"
+
+# `unavailable` is reserved for a lookup that ran, was valid, and matched no
+# merged PR. Nothing else may write that token, or the permanent record cannot
+# be read back.
+reset_state
+printf '%s\n' '[{"id":"CHILD-9","title":"nine","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+assert_eq "$(run_close)" "closed PARENT-1" "a valid lookup with no match closes the container"
+assert_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-9 ✓ nine — PR unavailable" "a valid lookup with no match records the reference unavailable"
+
+# A missing `gh` is the one permanent cause: no retry of this close can ever
+# produce the reference, so it fails open — but with its own token, so the
+# record never reads as a lookup that found no PR. PATH is rebuilt without
+# `gh` rather than stubbed, because `command -v` is what is under test.
+mkdir -p "$TMP_ROOT/bin-nogh"
+IFS=: read -ra path_dirs <<<"$PATH"
+for path_dir in "${path_dirs[@]}"; do
+  [[ -d "$path_dir" ]] || continue
+  for exe in "$path_dir"/*; do
+    exe_name="${exe##*/}"
+    [[ "$exe_name" != gh ]] || continue
+    [[ -f "$exe" && -x "$exe" ]] || continue
+    [[ -e "$TMP_ROOT/bin-nogh/$exe_name" ]] || ln -s "$exe" "$TMP_ROOT/bin-nogh/$exe_name"
+  done
+done
+PATH="$TMP_ROOT/bin-nogh" command -v gh >/dev/null 2>&1 \
+  && fail "the gh-less PATH still resolves gh" \
+  || ok "the gh-less PATH resolves no gh"
+reset_state
+printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
+rc=0; out="$(cd "$CALLER_ONE" && PATH="$TMP_ROOT/bin-nogh" "$SCRIPT" "$SANDBOX" PARENT-1 2>"$TMP_ROOT/gh-missing.err")" || rc=$?
+assert_eq "$rc" "0" "a missing gh still closes the container"
+assert_eq "$out" "closed PARENT-1" "a missing gh prints the close"
+assert_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-1 ✓ one — PR lookup failed" "a missing gh records a token distinct from unavailable"
+assert_contains "$TMP_ROOT/gh-missing.err" "gh is not installed" "a missing gh names its permanent cause on stderr"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":{"bad":true},"state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
