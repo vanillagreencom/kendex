@@ -6,21 +6,25 @@
 # load reaper — left live supervisors behind whose fixture tree was deleted
 # under them, and their PATH stubs died with it: the fallthrough reached the
 # real binaries and opened terminal windows on the operator's desktop
-# (KEN-995). Two properties are proven here, each against a suite that is
-# actually aborted mid-run:
+# (KEN-995). Each `===` section below states the property it proves; between
+# them they cover the three things that had to hold for that to stop
+# happening: a suite aborted mid-run takes its fixture processes with it, a
+# supervisor or a wait whose home has been deleted under it refuses rather
+# than carrying on, and a fixture tree whose own stub directory is gone
+# reaches a sealed refusal rather than a real binary. Every section carries
+# its own control, because each of these reads green for the wrong reason if
+# nothing was there to catch.
 #
-#   teardown  an aborted suite leaves zero `__supervise` processes behind.
-#   sealing   with the fixture's own stub directory deleted, `gh`, `ghostty`
-#             and `tmux` still resolve to the sealed refusals, never to the
-#             real binaries.
-#
-# The teardown assertion reads `ps`, where the reaper under test reads
+# The teardown assertions read `ps`, where the reaper under test reads
 # /proc — a broken reaper cannot answer the question that judges it.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH="$(cd "$TEST_DIR/.." && pwd)"
-SEALED="$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/sealed-bin"
+# Relative first, so an exported tree that is no git checkout still runs
+# these suites — the mutation harness extracts one with git archive.
+SEALED="$(cd "$TEST_DIR/../../.." && pwd)/tools/tests/lib/sealed-bin"
+[[ -x "$SEALED/gh" ]] || SEALED="$(git -C "$TEST_DIR" rev-parse --show-toplevel 2>/dev/null)/tools/tests/lib/sealed-bin"
 [[ -x "$SEALED/gh" ]] || { echo "merge_queue_teardown: sealed-bin fixture is missing: $SEALED" >&2; exit 1; }
 TMP="$(mktemp -d)"
 # shellcheck source=lib/merge-queue-reaper.sh
@@ -168,49 +172,146 @@ run_escalation() {
 eq "$(run_escalation 1)" "1 removed" "a teardown that cannot clear the tree fails the suite and still removes the root"
 eq "$(run_escalation 0)" "0 removed" "a teardown that clears the tree leaves the suite status alone"
 
-echo "=== a supervisor whose home is deleted refuses to continue ==="
+echo "=== a supervisor whose launch home breaks refuses to continue ==="
 
-# $1 sandbox, $2 issue key: launch one supervisor and print
-# "pid runtime artifact log". Same posture as victim.sh — the sandbox's own
-# bin and the sealed directory ahead of the ambient PATH, no inherited GitHub
-# token — so nothing these supervisors reach for resolves to a real binary.
+# $1 sandbox, $2 issue key, $3 the repository root to record (default the
+# sandbox's own main): launch one supervisor and print
+# "pid runtime artifact log state main_root".
+#
+# Recording a SUBDIRECTORY of the repository as the root is what lets the
+# repository clause be broken on its own: the shared git directory, and so the
+# state file and the runtime under it, resolve the same either way.
+#
+# Same posture as victim.sh — the sandbox's own bin and the sealed directory
+# ahead of the ambient PATH, no inherited GitHub token — so nothing these
+# supervisors reach for resolves to a real binary.
 launch_supervisor() {
-  local sb="$1" issue="$2" scripts main prep state
-  scripts="$sb/orch/scripts"; main="$sb/main"
+  local sb="$1" issue="$2" root="${3:-}" scripts main prep state state_path
+  scripts="$sb/orch/scripts"; main="$sb/main"; root="${root:-$main}"
   (
     export PATH="$sb/bin:$SEALED:$PATH"
     unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN GH_REPO GITHUB_REPOSITORY
     "$scripts/merge-queue-watch" init --worktree "$main" --issue "$issue" \
       --branch "$(git -C "$main" branch --show-current)" >/dev/null
     prep=$("$scripts/merge-queue-watch" prepare --worktree "$main" --issue "$issue" \
-      --repo owner/repo --pr 42 --head "$HEAD" --root "$main" --gate-mode off \
+      --repo owner/repo --pr 42 --head "$HEAD" --root "$root" --gate-mode off \
       --recovery-count 0 --cleanup-worktree false)
-    "$scripts/merge-queue-watch" launch --root "$main" --issue "$issue" \
+    "$scripts/merge-queue-watch" launch --root "$root" --issue "$issue" \
       --watch-id "$(jq -r .watch_id <<<"$prep")" --poll 1 --max-wait 600 >/dev/null
-    state=$("$scripts/merge-queue-watch" inspect --root "$main" --issue "$issue")
-    jq -r '[.supervisor_pid, .runtime_dir, .artifact_path, .log_path] | @tsv' <<<"$state"
+    state=$("$scripts/merge-queue-watch" inspect --root "$root" --issue "$issue")
+    state_path=$(cd "$main" && "$scripts/workflow-state" --state-dir "$main/tmp" \
+      get "$issue" .merge_queue_watch.state_path)
+    jq -r --arg sp "$state_path" \
+      '[.supervisor_pid, .runtime_dir, .artifact_path, .log_path, $sp, .main_repo_root] | @tsv' <<<"$state"
   )
 }
 alive_for() { local i; for ((i=0;i<"$2";i++)); do ps -p "$1" -o pid= >/dev/null 2>&1 || return 1; sleep 0.1; done; return 0; }
 
-build_sandbox "$TMP/homeless"
-IFS=$'\t' read -r hpid hrt hart hlog < <(launch_supervisor "$TMP/homeless" KEN-995-home)
-rm -rf "$hrt"
-if alive_for "$hpid" 200; then bad "supervisor kept running with its runtime deleted"; else ok "a supervisor whose runtime is deleted stops inside its poll window"; fi
-if [[ ! -e "$hart" ]]; then ok "the refusal publishes no verdict a consumer could turn into another launch"; else bad "deleted-home supervisor published $hart"; fi
-if grep -Fq 'launch home is gone' "$hlog"; then ok "the refusal names the home it lost"; else bad "deleted-home refusal is unnamed: $(tail -3 "$hlog")"; fi
-eq "$(count_supervisors "$TMP/homeless")" 0 "no fixture process outlives the refusal"
+# One breaker per clause of the supervisor's home check, each leaving every
+# other clause satisfied so the clause under test is the sole cause. A clause
+# with no fixture of its own is one the suite cannot notice the loss of.
+# Args to every breaker: runtime, state file, repository root, sandbox.
+break_runtime() { local rt="$1"; rm -rf -- "${rt:?}"; }
+break_symlink() { local rt="$1" sb="$4"; rm -rf -- "${rt:?}"; ln -s "$sb/main" "$rt"; }
+break_state() { local sf="$2"; rm -f -- "${sf:?}"; }
+break_repository() { local rr="$3"; rm -rf -- "${rr:?}"; }
 
-# Control: the same deletion against a supervisor whose home check always
-# answers yes must leave it running, so the case above is the guard's doing.
-build_sandbox "$TMP/homeless-mutant"
-mutant="$TMP/homeless-mutant/orch/scripts/lib/merge-queue-supervisor.sh"
-sed 's/^  home_present() {.*$/  home_present() { true; }/' "$ORCH/scripts/lib/merge-queue-supervisor.sh" > "$mutant"
-grep -Fq 'home_present() { true; }' "$mutant" || { bad "home-check mutation did not apply"; exit 1; }
-IFS=$'\t' read -r mpid mrt _ _ < <(launch_supervisor "$TMP/homeless-mutant" KEN-995-home-mutant)
-rm -rf "$mrt"
-if alive_for "$mpid" 80; then ok "without the home check the supervisor runs on past the deletion"; else bad "mutant supervisor died for a reason other than the home check"; fi
-mq_reap "$TMP/homeless-mutant" || bad "reaper reported survivors under the mutant sandbox"
+# $1 label, $2 breaker, $3 the root to record (empty for the sandbox's main).
+home_clause_case() {
+  local label="$1" breaker="$2" root_arg="${3:-}" sb root=""
+  sb="$TMP/home-$label"
+  local hpid hrt hart hlog hstate hmain
+  build_sandbox "$sb"
+  if [[ -n "$root_arg" ]]; then mkdir -p "$sb/main/$root_arg"; root="$sb/main/$root_arg"; fi
+  IFS=$'\t' read -r hpid hrt hart hlog hstate hmain < <(launch_supervisor "$sb" "KEN-995-$label" "$root")
+  "$breaker" "$hrt" "$hstate" "$hmain" "$sb"
+  if alive_for "$hpid" 200; then bad "$label: the supervisor kept running"
+  else ok "$label: the supervisor stops inside its poll window"; fi
+  if grep -Fq 'launch home is gone' "$hlog"; then ok "$label: the refusal names the home it lost"
+  else bad "$label: the refusal is unnamed: $(tail -3 "$hlog" 2>/dev/null)"; fi
+  eq "$(count_supervisors "$sb")" 0 "$label: no fixture process outlives the refusal"
+}
+
+home_clause_case runtime-deleted break_runtime
+home_clause_case runtime-swapped-for-a-symlink break_symlink
+home_clause_case state-file-deleted break_state
+home_clause_case repository-deleted break_repository altroot
+
+# Controls, one per clause: with THAT clause cut out of the check, its own
+# fixture must stop refusing. This is what makes the four cases above coverage
+# rather than four spellings of the first one.
+# $1 label, $2 the exact clause text to cut, $3 breaker, $4 recorded root.
+home_clause_control() {
+  local label="$1" clause="$2" breaker="$3" root_arg="${4:-}" sb root=""
+  sb="$TMP/mutant-$label"
+  local mutant mpid mrt mart mlog mstate mmain
+  build_sandbox "$sb"
+  mutant="$sb/orch/scripts/lib/merge-queue-supervisor.sh"
+  edit_once "$ORCH/scripts/lib/merge-queue-supervisor.sh" "$mutant" "$clause" \
+    || { bad "$label: clause mutation did not apply"; return; }
+  if [[ -n "$root_arg" ]]; then mkdir -p "$sb/main/$root_arg"; root="$sb/main/$root_arg"; fi
+  IFS=$'\t' read -r mpid mrt mart mlog mstate mmain < <(launch_supervisor "$sb" "KEN-995-$label" "$root")
+  "$breaker" "$mrt" "$mstate" "$mmain" "$sb"
+  if alive_for "$mpid" 80; then ok "$label: cutting the clause stops the refusal"
+  else bad "$label: the supervisor stopped for a reason other than the clause"; fi
+  mq_reap "$sb" || bad "$label: reaper reported survivors under the mutant sandbox"
+}
+
+# Rewrite the one occurrence of $3 as $4 in a copy of $1, refusing unless the
+# source carried it exactly once and the copy came out changed — a mutation
+# that did not apply is a control that proves nothing. An empty $4 cuts.
+edit_once() {
+  local src="$1" dst="$2" needle="$3" repl="${4:-}" hits
+  hits=$(grep -Fc -- "$needle" "$src") || return 1
+  [[ "$hits" -eq 1 ]] || return 1
+  awk -v needle="$needle" -v repl="$repl" \
+    '{ i = index($0, needle); if (i) $0 = substr($0, 1, i-1) repl substr($0, i+length(needle)); print }' \
+    "$src" > "$dst" || return 1
+  if [[ -n "$repl" ]]; then grep -Fq -- "$repl" "$dst"; else ! grep -Fq -- "$needle" "$dst"; fi
+}
+
+home_clause_control without-runtime-clause '-d "$runtime" && ' break_runtime
+home_clause_control without-symlink-clause '! -L "$runtime" && ' break_symlink
+home_clause_control without-state-clause '-f "$state_file" && ' break_state
+home_clause_control without-repository-clause ' && -d "$main_root"' break_repository altroot
+
+# What the refusal is FOR, read where it lands: a consumer finds nothing to
+# route. Asserted through consume rather than through the artifact file,
+# because the file's absence is not something this code could get wrong — a
+# refusal that returns leaves the cleanup trap without any of its locals, so
+# no artifact appears whether or not the trap was cleared. What can go wrong
+# is the refusal publishing on its way out, and consume is where that shows.
+consume_after_refusal() {
+  local sb="$1" issue="$2"
+  (
+    export PATH="$sb/bin:$SEALED:$PATH"
+    unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN GH_REPO GITHUB_REPOSITORY
+    "$sb/orch/scripts/merge-queue-watch" consume --root "$sb/main" --issue "$issue"
+  )
+}
+refusal_consume=$(consume_after_refusal "$TMP/home-repository-deleted" KEN-995-repository-deleted)
+eq "$(jq -r .status <<<"$refusal_consume")" failed "the refusal terminalizes rather than leaving a lifecycle to retry"
+eq "$(jq -r '.verdict // "null"' <<<"$refusal_consume")" null "the refusal leaves no verdict for a consumer to route"
+eq "$(jq -r '.diagnostic.cause' <<<"$refusal_consume")" watch_lost "the consumer names the missing watch, not a producer verdict"
+
+# Control: a refusal that publishes on its way out routes on that verdict
+# instead, so the three assertions above are not free.
+publishing="$TMP/home-publishing-refusal"
+build_sandbox "$publishing"
+mkdir -p "$publishing/main/altroot"
+edit_once "$ORCH/scripts/lib/merge-queue-supervisor.sh" \
+  "$publishing/orch/scripts/lib/merge-queue-supervisor.sh" \
+  'report_home_lost; trap - EXIT TERM HUP INT; return 1' \
+  'publish_unknown home_lost 1; report_home_lost; trap - EXIT TERM HUP INT; return 1' \
+  || { bad "publishing-refusal mutation did not apply"; exit 1; }
+IFS=$'\t' read -r ppid _prt _part _plog _pstate pmain < <(launch_supervisor "$publishing" KEN-995-publishing "$publishing/main/altroot")
+break_repository "" "" "$pmain" "$publishing"
+if alive_for "$ppid" 200; then bad "the publishing mutant kept running"; fi
+publishing_consume=$(consume_after_refusal "$publishing" KEN-995-publishing)
+if [[ "$(jq -r '.diagnostic.cause' <<<"$publishing_consume")" != watch_lost ]]; then
+  ok "a refusal that publishes routes the consumer somewhere else"
+else bad "the publishing mutant still consumed as watch_lost"; fi
+mq_reap "$publishing" || bad "reaper reported survivors under the publishing sandbox"
 
 echo "=== a wait whose repository is deleted refuses to keep polling ==="
 QW="$TMP/qw"
@@ -270,13 +371,28 @@ grep -Fq '  if false; then' "$QW/orch/scripts/queue-wait-unguarded" || { bad "re
 chmod +x "$QW/orch/scripts/queue-wait-unguarded"
 mutant_rc=$(wait_through_deletion "$QW/orch/scripts/queue-wait-unguarded" "$QW/mutant-gate" "$QW/mutant")
 if [[ "$mutant_rc" != 4 ]]; then ok "without the check the deleted repository routes nothing special (exit $mutant_rc)"; else bad "unguarded wait still exited 4"; fi
+# The exit code alone would also pass on a mutant that died at startup. What
+# the guard suppresses is a ROUTABLE reading, so the control has to show one.
+if [[ -s "$QW/mutant.out" ]] && jq -e '.verdict' "$QW/mutant.out" >/dev/null 2>&1; then
+  ok "the unguarded wait polled on and emitted the verdict the guard suppresses"
+else bad "the unguarded control never reached a poll: $(head -c 200 "$QW/mutant.out" 2>/dev/null)"; fi
 
 echo "=== a deleted stub directory reaches no real binary ==="
-rm -rf "$TMP/reaped/bin"
-sealed_path="$TMP/reaped/bin:$SEALED:$PATH"
+rm -rf -- "${TMP:?}/reaped/bin"
+# A decoy for every sealed name, placed AFTER the sealed directory: without
+# one the case passes on any runner where the real binary is simply not
+# installed, which proves nothing about ordering. With it, each name has
+# something reachable to be kept away from.
+decoys="$TMP/decoy-bin"; mkdir -p "$decoys"
 for name in gh ghostty tmux; do
+  printf '#!/usr/bin/env bash\necho "decoy ran"\nexit 0\n' > "$decoys/$name"
+  chmod +x "$decoys/$name"
+done
+sealed_path="$TMP/reaped/bin:$SEALED:$decoys:$PATH"
+for name in gh ghostty tmux; do
+  eq "$(PATH="$decoys:$PATH" command -v "$name")" "$decoys/$name" "the $name decoy is reachable when nothing shadows it"
   resolved=$(PATH="$sealed_path" command -v "$name" || true)
-  eq "$resolved" "$SEALED/$name" "$name resolves to the sealed refusal once the stub directory is gone"
+  eq "$resolved" "$SEALED/$name" "$name resolves to the sealed refusal ahead of a reachable real one"
   set +e
   refusal=$(PATH="$sealed_path" "$name" --version 2>&1 >/dev/null); refusal_rc=$?
   set -e

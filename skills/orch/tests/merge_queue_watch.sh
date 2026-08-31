@@ -3,7 +3,10 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH="$(cd "$TEST_DIR/.." && pwd)"
-SEALED="$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/sealed-bin"
+# Relative first, so an exported tree that is no git checkout still runs
+# these suites — the mutation harness extracts one with git archive.
+SEALED="$(cd "$TEST_DIR/../../.." && pwd)/tools/tests/lib/sealed-bin"
+[[ -x "$SEALED/gh" ]] || SEALED="$(git -C "$TEST_DIR" rev-parse --show-toplevel 2>/dev/null)/tools/tests/lib/sealed-bin"
 [[ -x "$SEALED/gh" ]] || { echo "merge_queue_watch: sealed-bin fixture is missing: $SEALED" >&2; exit 1; }
 TMP_ROOT="$(mktemp -d)"; TMP="$TMP_ROOT/watch path"
 mkdir "$TMP"
