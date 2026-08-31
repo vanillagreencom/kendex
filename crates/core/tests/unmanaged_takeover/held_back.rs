@@ -1,7 +1,8 @@
-//! The scope-wide take-over on a mixed scope: an item with a place nothing
-//! can settle has its take-over held back whole, and every other item
-//! still gets its way out — one odd corner must not put the whole repo
-//! back where it started.
+//! The scope-wide take-over on a mixed scope: it answers for every item it
+//! swept up or for none of them, so one item with a place nothing can
+//! settle refuses the run and names what blocks it. Replacing the rest
+//! would leave that item's blocked place in the way with the item no
+//! longer its tool's.
 
 use crate::test_util::source_path;
 

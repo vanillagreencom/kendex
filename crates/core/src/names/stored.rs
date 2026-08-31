@@ -28,14 +28,7 @@ pub fn folding_sibling(target: &Path) -> Result<Option<PathBuf>> {
     };
     let entries = match std::fs::read_dir(parent) {
         Ok(entries) => entries,
-        Err(e)
-            if matches!(
-                e.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-            ) =>
-        {
-            return Ok(None);
-        }
+        Err(e) if crate::fs::absent(&e) => return Ok(None),
         Err(e) => return Err(CoreError::io(parent, e)),
     };
     let folded = fold(leaf);

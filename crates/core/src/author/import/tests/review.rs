@@ -199,6 +199,37 @@ fn a_catalog_that_will_not_be_listed_refuses_rather_than_copying_bare() {
     }
 }
 
+/// And the same for one evidence file the catalog will not hand over. The
+/// directory lists, so the licence is known to be there and known not to
+/// have travelled — copying the bytes anyway is the harm this refusal
+/// exists to stop, said about one file rather than the whole root.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_licence_file_that_cannot_be_read_refuses_rather_than_copying_bare() {
+    use std::os::unix::fs::PermissionsExt;
+    let (tmp, env, scope) = seeded();
+    let licence = tmp.path().join("catalog/LICENSE");
+    fs::write(&licence, "MIT text here\n").unwrap();
+    let scopes = [scope];
+    let target = target(&env, &tmp, "mine-unreadable-licence");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let gh = find(&candidates, "gh");
+    let chosen = selection(gh, true);
+
+    fs::set_permissions(&licence, fs::Permissions::from_mode(0o000)).unwrap();
+    // Root reads any file whatever its mode, so there the denial under
+    // test does not exist and the evidence simply travels.
+    let denied = !rustix::process::geteuid().is_root();
+    let asked = apply(&env, &scopes, &target, &[chosen]);
+    fs::set_permissions(&licence, fs::Permissions::from_mode(0o644)).unwrap();
+
+    match denied {
+        true => assert!(matches!(asked, Err(CoreError::Io { .. })), "{asked:?}"),
+        false => assert!(asked.is_ok(), "{asked:?}"),
+    }
+}
+
 /// The target must not sit inside a tree the bytes come from.
 #[test]
 #[allow(clippy::unwrap_used)]

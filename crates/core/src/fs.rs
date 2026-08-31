@@ -11,8 +11,8 @@ mod lock;
 mod probe;
 pub(crate) use links::{points_at, resolved, spelling};
 pub(crate) use lock::{LockedFile, open_read_no_follow};
-pub(crate) use probe::entry;
 pub use probe::is_executable;
+pub(crate) use probe::{absent, entry};
 
 /// Give a file the execute bit. On Windows there is none to give, and the
 /// file being there is the whole of what a caller can arrange.

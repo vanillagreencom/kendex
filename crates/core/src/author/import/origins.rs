@@ -277,12 +277,14 @@ pub(super) fn resolve_selection(
 /// Root-level licence and attribution files of one catalog — the evidence
 /// that must travel with copied bytes.
 ///
-/// A read the source refuses is the refusal, not an empty list. Every
-/// other listing in this crate answers an unreadable directory by drawing
-/// no rows, which costs a surface some rows; here it would copy somebody's
-/// bytes with their licence left behind and say nothing. A source that is
-/// not resolvable at all is a different answer: it has no root to carry
-/// evidence from, and the import's own provenance rules judge that.
+/// A read the source refuses is the refusal, not an empty list — the
+/// listing, the open that reaches it, and each file's own bytes alike.
+/// Every other listing in this crate answers an unreadable directory by
+/// drawing no rows, which costs a surface some rows; here it would copy
+/// somebody's bytes with their licence left behind and say nothing. A
+/// source that is not resolvable at all is the one different answer: it
+/// has no root to carry evidence from, and the import's own provenance
+/// rules judge that.
 pub(super) fn notice_files(
     env: &Env,
     scope: &Scope,
@@ -294,9 +296,7 @@ pub(super) fn notice_files(
     else {
         return Ok(Vec::new());
     };
-    let Ok(sealed) = SealedSource::open(&resolved.root) else {
-        return Ok(Vec::new());
-    };
+    let sealed = SealedSource::open(&resolved.root)?;
     let mut notices = Vec::new();
     for entry in sealed.entries(&resolved.root)? {
         let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {

@@ -571,18 +571,30 @@ fn fork_beside_refuses_a_render_destination_it_cannot_describe() {
 /// question `vacant_name` asks is asked in terms of how the kind renders,
 /// so a hook answered in a skill's vocabulary is answered wrongly — and
 /// the capture that would have refused it runs several statements later.
+/// The hook is declared, so the lookup before `vacant_name` is satisfied
+/// and the ordering is what the case observes: ungated, the refusal that
+/// comes back is about the name.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_refuses_an_unsupported_kind_before_it_judges_the_name() {
-    let (w, _one, _two) = edited_world();
+    let w = world();
+    let hook = w.upstream.join("hooks/deploy.sh");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(&hook, "#!/bin/sh\necho ship\n").unwrap();
+    // Hooks install only from a catalog that declares kendex's layout.
+    fs::write(w.upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    commit(&w.upstream, "one");
+    declare(&w, "[hooks.deploy]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+
     let refused = fork::fork_beside(
         &w.env,
         &w.scope,
         ItemKind::Hook,
-        "gh",
+        "deploy",
         HarnessId::Claude,
-        // An illegal name, so a refusal about the name would be the one
-        // that came back if the kind were judged second.
+        // An illegal name, so a refusal about the name is the one that
+        // comes back if the kind is judged second.
         "a/b/c",
         None,
     )
@@ -652,4 +664,35 @@ fn rename_refuses_a_kind_no_fork_path_supports() {
     assert_eq!(manifest_text(&w), before, "nothing was recorded");
     assert_eq!(fs::read_to_string(&stray).unwrap(), "not kendex's");
     assert!(rendered.is_file(), "the original was left where it was");
+}
+
+/// All three fork verbs answer an unforkable kind the same way. `fork`
+/// reached the refusal from inside its capture step, several statements
+/// after two other refusals could have spoken first, so the same
+/// two-way-wrong input got a different answer from each verb.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_fork_verb_refuses_an_unsupported_kind_alike() {
+    let (w, _one, _two) = edited_world();
+    let says_kind = |error: &CoreError| {
+        matches!(error, CoreError::ItemNotInSource { source_name, .. }
+            if source_name.contains("fork does not support"))
+    };
+    // Undeclared under that kind, so a verb judging declaration first
+    // answers NotDeclared instead.
+    let forked = fork::fork(&w.env, &w.scope, ItemKind::Hook, "gh", HarnessId::Claude).unwrap_err();
+    assert!(says_kind(&forked), "{forked:?}");
+    let beside = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Hook,
+        "gh",
+        HarnessId::Claude,
+        "gh-mine",
+        None,
+    )
+    .unwrap_err();
+    assert!(says_kind(&beside), "{beside:?}");
+    let renamed = fork::rename_fork(&w.env, &w.scope, ItemKind::Hook, "gh", "gh-mine").unwrap_err();
+    assert!(says_kind(&renamed), "{renamed:?}");
 }

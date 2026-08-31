@@ -33,8 +33,16 @@ pub fn is_executable(path: &Path) -> bool {
 pub(crate) fn entry(path: &Path) -> Result<Option<fs::Metadata>> {
     match fs::symlink_metadata(path) {
         Ok(meta) => Ok(Some(meta)),
-        // Absent, said two ways: no such name, and a name under a file.
-        Err(e) if matches!(e.kind(), NotFound | NotADirectory) => Ok(None),
+        Err(e) if absent(&e) => Ok(None),
         Err(e) => Err(CoreError::io(path, e)),
     }
+}
+
+/// Whether the filesystem said nothing is there, rather than declining to
+/// say. Absent has two spellings — no such name, and a name built under a
+/// file — and every probe that keeps the third answer apart from the
+/// second reads them from here, so a spelling added for one is not missed
+/// by another in the opposite fail direction.
+pub(crate) fn absent(error: &std::io::Error) -> bool {
+    matches!(error.kind(), NotFound | NotADirectory)
 }

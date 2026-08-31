@@ -17,6 +17,12 @@ use super::skill_content_path;
 /// writes one for every kind it converts, and the manifest's own
 /// `[forks.<kind>.<name>]` table takes any of them, so the gate is asked of
 /// the kind rather than read off the table.
+///
+/// All three fork verbs ask it as their first statement. The dispatch in
+/// `edited_rendering` still refuses an unadmitted kind, as the fallthrough
+/// of a match that has to enumerate kinds anyway — defence in depth behind
+/// this gate, not a second policy: the only way the two can disagree is
+/// this one widening, which lands there on a refusal rather than a write.
 pub(crate) fn forkable_kind(kind: ItemKind, name: &str) -> Result<()> {
     match kind {
         ItemKind::Skill | ItemKind::Agent => Ok(()),

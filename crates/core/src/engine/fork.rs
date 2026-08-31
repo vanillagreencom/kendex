@@ -50,6 +50,9 @@ pub fn fork(
     name: &str,
     harness: HarnessId,
 ) -> Result<Plan> {
+    // The same first question its two sibling verbs ask, so all three
+    // answer a kind they cannot fork with the same words.
+    forkable_kind(kind, name)?;
     let mut manifest = manifest_for_mutation(env, scope)?;
     let Some(decl) = manifest.declared(kind).get(name).cloned() else {
         return Err(CoreError::NotDeclared {

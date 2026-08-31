@@ -500,9 +500,6 @@ change came from an outside contributor.
 - Overlapping reads land in order: a slow early read cannot overwrite a
   fresher answer, changes apply in the order made, and a change that fails
   midway re-reads the standing instead of presenting old rows as current.
-- `kendex apply --replace-unmanaged` no longer gives up on the whole scope
-  because one item cannot be settled: everything replaceable is replaced
-  and each held-back item is named with what holds it.
 - Codex reads the same skill as every other tool: the invented 8 KB
   SKILL.md split is gone (Codex has no such limit), and old `details.md`
   splits are cleaned up on the next apply.

@@ -99,13 +99,13 @@ lives in one capability table read by core and UI.
      `replace_unmanaged_names` behind the app's `replace_unmanaged_item`)
      keeps the declaration and moves the files to the trash first, bound
      to the bytes the plan read. A link is never its target, nor is a
-     position any install recorded writing. Whole or not at all: named per
-     item, a place nothing can settle refuses the run; scope-wide it is
-     held back (the files in its way stay) and named in the notes with the
-     place holding it; the sweep fails, naming those, only when nothing
-     settles. One refused at every link is not held: its rows stand,
-     nothing replaced. The app offers adopt for unmanaged items, and both
-     exits on the Problems page for a declared item's conflict.
+     position any install recorded writing. Whole or not at all, and both
+     forms refuse: named per item, a place nothing can settle refuses the
+     run; scope-wide, one swept item nothing can settle refuses it too,
+     naming each with the place that blocks it, and nothing is planned or
+     written. One refused at every link is named the same way: its rows
+     stand, nothing replaced. The app offers adopt for unmanaged items,
+     and both exits on the Problems page for a declared item's conflict.
    The row names every position in the way, which exits apply, and — where a
    position can be read in full — how it compares with the install it blocks.
    The CLI names the verb and flag under it. A foreign link pointing at a real
