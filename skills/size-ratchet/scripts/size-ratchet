@@ -1136,6 +1136,10 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
         echo "size-ratchet FAIL baseline moved and rewritten: $path -> $BASELINE_FILE — HEAD's rows left $path, and the rows arriving at $BASELINE_FILE are not them; across a move nothing compares them, so a raise would land unjudged"
         echo "  remedy: move the baseline in a commit that changes nothing else, then change its rows in the next one"
         ;;
+      REPOINTED)
+        echo "size-ratchet FAIL baseline repointed and rewritten: $path — this change moves the setting to $path, where HEAD carries no rows, while HEAD's rows stay where they were; across the repoint nothing compares them, so a raise would land unjudged"
+        echo "  remedy: repoint the baseline in a commit that changes nothing else, then change its rows in the next one"
+        ;;
     esac
   done <"$1"
 }
@@ -1562,9 +1566,9 @@ read_head_baseline() {
 # paths at all. A baseline this change introduces leaves HEAD carrying no row
 # set anywhere, so no changed path has one to lose. A placeholder committed
 # empty holds no rows at HEAD to recognize, and is at the configured path,
-# which this scan skips. One bound is worth stating: a change that points the
-# setting elsewhere while leaving the old file tracked with its rows loses no
-# row set, and is not a move this can name.
+# which this scan skips. A change that points the setting elsewhere while
+# leaving the old file tracked with its rows loses no row set, so it is not a
+# move this can name — baseline_repointed refuses that shape instead.
 #
 # The scan runs whether or not HEAD carries rows at the configured path. Rows
 # there do not establish they were the baseline HEAD used — a destination that
@@ -1574,30 +1578,47 @@ read_head_baseline() {
 # A pure move passes. The rows that arrive are byte for byte the rows that
 # left, so no row rose across it; anything else about them is the next
 # commit's business.
-baseline_moved() { # CANDIDATE-BASELINE — violations on stdout
-  local p head_status=0 diff_status=0
+
+# 0 when HEAD is born. Both baseline checks below need it, and neither may
+# read "unborn" out of a git failure: an unborn HEAD is exit 1 and nothing
+# else. WHY names the judgment being refused, so the diagnostic says what went
+# unjudged rather than which git command ran.
+head_is_born() { # WHY
+  local head_status=0
   git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
   case "$head_status" in
-    0) ;;
-    1) return 0 ;; # an unborn HEAD removed nothing
-    *) collection_error "could not resolve HEAD while looking for a moved baseline (git rev-parse exit $head_status) — refusing to treat the move as absent" ;;
+    0) return 0 ;;
+    1) return 1 ;;
+    *) collection_error "could not resolve HEAD while $1 (git rev-parse exit $head_status) — refusing to treat it as absent" ;;
   esac
-  # --no-renames, because a `git mv` of the baseline is exactly the move this
-  # looks for and rename detection would report it as one path, not a removal.
-  # -z, because core.quotePath spells a non-ASCII path C-quoted by default:
-  # `"tools/\303\251.tsv"` never matches a literal probe, and the removed
-  # baseline would read as absent. It also terminates each path with a NUL,
-  # which is the one byte a path cannot contain — a newline can, so the read
-  # below splits on NUL rather than translating NULs into newlines.
-  # Every changed path, not only the deleted ones: emptying the old baseline in
-  # place, or writing something else over it, is the same move and reports as a
-  # modification. The predicate below is what keeps the wider list honest.
+}
+
+# Every path this change touches, NUL-terminated, at $TMP/changed.paths.
+#
+# --no-renames, because a `git mv` of the baseline is exactly the move this
+# looks for and rename detection would report it as one path, not a removal.
+# -z, because core.quotePath spells a non-ASCII path C-quoted by default:
+# `"tools/\303\251.tsv"` never matches a literal probe, and the removed
+# baseline would read as absent. It also terminates each path with a NUL,
+# which is the one byte a path cannot contain — a newline can, so the reads
+# below split on NUL rather than translating NULs into newlines.
+# Every changed path, not only the deleted ones: emptying the old baseline in
+# place, or writing something else over it, is the same move and reports as a
+# modification. The predicates that read this list are what keep it honest.
+list_changed_paths() { # WHY
+  local diff_status=0
   if [ "$STAGED" -eq 1 ]; then
-    git diff --cached --no-renames -z --name-only HEAD >"$TMP/removed.paths" || diff_status=$?
+    git diff --cached --no-renames -z --name-only HEAD >"$TMP/changed.paths" || diff_status=$?
   else
-    git diff --no-renames -z --name-only HEAD >"$TMP/removed.paths" || diff_status=$?
+    git diff --no-renames -z --name-only HEAD >"$TMP/changed.paths" || diff_status=$?
   fi
-  [ "$diff_status" -eq 0 ] || collection_error "could not list what this change touches (git diff exit $diff_status) — refusing to treat a moved baseline as absent"
+  [ "$diff_status" -eq 0 ] || collection_error "could not list what this change touches (git diff exit $diff_status) — refusing to $1"
+}
+
+baseline_moved() { # CANDIDATE-BASELINE — violations on stdout
+  local p
+  head_is_born "looking for a moved baseline" || return 0 # an unborn HEAD removed nothing
+  list_changed_paths "treat a moved baseline as absent"
   while IFS= read -r -d '' p || [ -n "$p" ]; do
     [ -n "$p" ] || continue
     [ "$p" != "$BASELINE_FILE" ] || continue
@@ -1607,7 +1628,7 @@ baseline_moved() { # CANDIDATE-BASELINE — violations on stdout
     # "-" placeholders, never empty fields: report() reads these rows with
     # tab-IFS, and whitespace IFS collapses consecutive tabs.
     printf '%s\t%s\t%s\t%s\n' "MOVED" "$p" "-" "-"
-  done <"$TMP/removed.paths"
+  done <"$TMP/changed.paths"
 }
 
 # Whether FILE holds a row set. The row shape is the only question — sorting
@@ -1648,6 +1669,108 @@ snapshot_rows_at() { # PATH — 0 when the snapshot still holds a row set there
     cp -- "$1" "$TMP/removed.now" || collection_error "could not copy $1 to tell whether it still holds baseline rows"
   fi
   blob_is_row_set "$TMP/removed.now"
+}
+
+# --- a baseline REPOINTED, with the old one left where it was ----------------
+# The scan above names a move by what the OLD file loses. Copy the rows to a
+# new path instead of moving them — old file still tracked, still a row set —
+# and it loses nothing, so nothing is named, while the raise gate reads HEAD at
+# the new path, finds nothing, and judges no row. Exit 0 with a frozen row
+# raised.
+#
+# Following the repoint is the same refused problem as following a move: where
+# HEAD's baseline was is a question only HEAD's settings answer. So this does
+# not ask. It refuses on the shape instead, and the shape is cheap: HEAD is
+# born, HEAD carries no rows at the configured path, the candidate has rows,
+# and the change touches a settings source — the only way a commit moves the
+# setting, since the environment is not something a commit can land.
+#
+# Two escapes keep the shape from swallowing the legitimate cases, and both
+# are what the bootstraps and the pure move actually are.
+#
+# A candidate byte-identical to some blob HEAD already carries is the pure
+# move: those rows are HEAD's rows, so no row rose to reach them, and the
+# rewrite is the next commit's business.
+#
+# HEAD holding no row set ANYWHERE is every bootstrap. An unborn HEAD is
+# excluded above; a baseline this change introduces leaves HEAD with no rows
+# to route around; a placeholder committed empty is not a row set. None of the
+# three can hide a raise, because none has a HEAD row to raise from. That last
+# test is the expensive one and it runs last, behind conditions that are false
+# on every run in a repo whose baseline carries rows at its configured path —
+# which is every run that is not a bootstrap or a repoint.
+baseline_repointed() { # CANDIDATE-BASELINE — violations on stdout
+  [ -z "$HEAD_BASELINE" ] || return 0 # HEAD has rows here; rows_raised judges them
+  head_is_born "looking for a repointed baseline" || return 0
+  [ "$(count_nonempty_lines "$1")" -gt 0 ] || return 0 # no rows arriving to judge
+  diff_touches_settings || return 0
+  candidate_is_head_blob "$1" && return 0
+  head_holds_a_row_set || return 0
+  # "-" placeholders, never empty fields: report() reads these rows with
+  # tab-IFS, and whitespace IFS collapses consecutive tabs.
+  printf '%s\t%s\t%s\t%s\n' "REPOINTED" "$BASELINE_FILE" "-" "-"
+}
+
+# Whether the change touches a file that can name the baseline. The list is
+# the one lib/settings.sh resolves through, derived here rather than exported
+# from it: that library is vendored byte-identical into three skills and
+# pinned by tools/tests/vendored-settings-libs.test.sh, so a helper added
+# there is a helper added to all three. An explicit SIZE_RATCHET_SETTINGS_FILE
+# consults only itself, /dev/null selects no source at all, and the dotenv
+# layer applies wherever a TOML layer does.
+diff_touches_settings() { # — 0 when a settings source is in the change
+  local p src
+  case "${SIZE_RATCHET_SETTINGS_FILE:-}" in
+    /dev/null) return 1 ;;
+    "") set -- ".kendex/settings.toml" "kendex.settings.toml" ".env.local" ;;
+    *) set -- "$SIZE_RATCHET_SETTINGS_FILE" ".env.local" ;;
+  esac
+  list_changed_paths "treat a repointed baseline as absent"
+  while IFS= read -r -d '' p || [ -n "$p" ]; do
+    [ -n "$p" ] || continue
+    for src in "$@"; do
+      [ "$p" != "$src" ] || return 0
+    done
+  done <"$TMP/changed.paths"
+  return 1
+}
+
+# Whether FILE is byte-identical to a blob HEAD already carries, anywhere.
+# The hash is computed for the baseline's own path so any filter configured
+# for it resolves the same way it did when the blob was written.
+candidate_is_head_blob() { # FILE
+  local h
+  h="$(git hash-object --path "$BASELINE_FILE" -- "$1")" || collection_error "could not hash the candidate baseline to tell whether HEAD already carries it"
+  [ -n "$h" ] || collection_error "hashing the candidate baseline produced no object id — refusing to treat it as new"
+  git ls-tree -r HEAD >"$TMP/head.tree" || collection_error "could not list HEAD's blobs to tell whether the candidate baseline is one of them"
+  # `blob` explicitly: a gitlink entry carries a COMMIT id in the same column,
+  # and a baseline is never one.
+  awk -v h="$h" '$2 == "blob" && $3 == h { found = 1; exit } END { exit !found }' "$TMP/head.tree"
+}
+
+# Whether HEAD carries a row set at any path other than the configured one.
+# git grep narrows first — a row set is a file of row-shaped lines, so a file
+# with no such line cannot be one — and only the survivors are read in full.
+# That keeps the walk off HEAD's whole tree, which this would otherwise
+# inflate blob by blob.
+head_holds_a_row_set() { # — 0 when HEAD holds one
+  local p grep_status=0
+  # stderr is NOT suppressed: exit >= 2 is a search that could not run, and
+  # the refusal below quotes the code while git's own line says why.
+  git grep -I -l -z -E -e "$BASELINE_ROW_RE" HEAD >"$TMP/rowish.paths" || grep_status=$?
+  case "$grep_status" in
+    0) ;;
+    1) return 1 ;; # no path at HEAD holds even one row-shaped line
+    *) collection_error "could not search HEAD for a baseline row set (git grep exit $grep_status) — refusing to treat HEAD as carrying none" ;;
+  esac
+  while IFS= read -r -d '' p || [ -n "$p" ]; do
+    p="${p#HEAD:}"
+    [ -n "$p" ] || continue
+    [ "$p" != "$BASELINE_FILE" ] || continue
+    git show "HEAD:$p" >"$TMP/rowish.blob" || collection_error "could not read $p from HEAD to tell whether it holds baseline rows"
+    blob_is_row_set "$TMP/rowish.blob" && return 0
+  done <"$TMP/rowish.paths"
+  return 1
 }
 
 # A change that moves a class from lines to bytes (or back) leaves HEAD's rows
@@ -1730,7 +1853,14 @@ rows_raised() { # CURRENT-BASELINE — violations on stdout
 run_verdict() { # BASELINE-TSV — fills $TMP/violations.tsv, sets VIOLATIONS
   evaluate "$1" >"$TMP/violations.tsv" || collection_error "could not evaluate the baseline against the collected counts"
   rows_raised "$1" >>"$TMP/violations.tsv" || collection_error "could not judge the baseline rows against HEAD's baseline"
-  baseline_moved "$1" >>"$TMP/violations.tsv" || collection_error "could not tell whether this change moves the baseline"
+  # A named move and a bare repoint are one root cause, so the second only
+  # asks once the first has answered no: a move IS a repoint, and reporting it
+  # twice would name one commit's single mistake as two.
+  baseline_moved "$1" >"$TMP/moved.tsv" || collection_error "could not tell whether this change moves the baseline"
+  cat -- "$TMP/moved.tsv" >>"$TMP/violations.tsv" || collection_error "could not record whether this change moves the baseline"
+  if [ "$(count_nonempty_lines "$TMP/moved.tsv")" -eq 0 ]; then
+    baseline_repointed "$1" >>"$TMP/violations.tsv" || collection_error "could not tell whether this change repoints the baseline"
+  fi
   VIOLATIONS="$(count_nonempty_lines "$TMP/violations.tsv")"
 }
 

@@ -45,10 +45,10 @@ even then. Markdown is measured in bytes and code in lines. Flags and exit codes
      instead of comparing it.
   5. **A row added or raised over HEAD's baseline** — see
      [Raising a row](#raising-a-row).
-  6. **The baseline moved and its rows changed** — HEAD's rows left the old
-     path and the rows arriving at the new one are not them, so nothing
-     compares them and a raise would land unjudged. Move the baseline in a
-     commit that changes nothing else, then change its rows in the next one.
+  6. **The baseline moved or was repointed, and its rows changed** — HEAD's
+     rows are not where the run reads, and the rows arriving there are not
+     them, so nothing compares them and a raise would land unjudged. Repoint
+     it in a commit that changes nothing else, then change its rows next.
 - **`--staged`** counts index blobs for every tracked file rather than
   preferring the worktree copy: what the commit records is the blob. Use it
   in a pre-commit hook; CI, which checks out a clean tree, does not need it.
@@ -82,12 +82,12 @@ raises is that threshold routed around.
 - **A first row** for a path HEAD's baseline carries none for is a
   **bootstrap**, not a raise, and the declaration admits it in every class,
   frozen included. A renamed path is such a path, so a rename bootstraps.
-- **A commit that MOVES the baseline** — a changed `SIZE_RATCHET_BASELINE` —
-  leaves HEAD carrying nothing at the path the run reads, so a raise would land
-  with nothing to compare it against. It is refused unless the rows arriving at
-  the new path are byte for byte the rows that left the old one. Move the
-  baseline in a commit that changes nothing else, then change its rows in the
-  next one.
+- **A commit that REPOINTS the baseline** — a changed `SIZE_RATCHET_BASELINE`,
+  whether the old file moves or stays — leaves HEAD carrying nothing at the
+  path the run reads, so a raise would land with nothing to compare it
+  against. It is refused unless the arriving rows are ones HEAD already
+  carries. Repoint the baseline in a commit that changes nothing else, then
+  change its rows in the next one.
 - A repo whose HEAD carries no baseline rows yet is bootstrapping, and the
   gate says so on its verdict line rather than reporting a clean raise check.
 

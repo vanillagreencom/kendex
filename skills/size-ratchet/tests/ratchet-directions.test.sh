@@ -600,6 +600,87 @@ run_frozen
 [ "$RC" -eq 0 ] && ok "a removed file that is not a row set is not a moved baseline" \
   || bad "a removed file that is not a row set is not a moved baseline" "rc=$RC out=$OUT"
 
+echo "=== a commit that REPOINTS the baseline, old file left tracked, is refused ==="
+# COPY the rows to a new path instead of moving them and the old file stays
+# tracked with its rows, so nothing lost a row set and the move scan above
+# names nothing — while the raise gate reads HEAD at the NEW path, finds no
+# rows, and judges none. That is exit 0 with a frozen row raised, so the shape
+# is refused on its own.
+copy_repoint() { # PATH ROWLINES — rows COPIED to tools/b.tsv; tools/a.tsv stays
+  printf '%s\t%s\n' "$1" "$2" >"$R/tools/b.tsv"
+  settings_baseline tools/b.tsv
+  git -C "$R" add -A
+}
+relocating_repo copyfrozen x.test.txt 15 15
+mkfile x.test.txt 20
+copy_repoint x.test.txt 20
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a frozen row raised across a copy-and-repoint is refused, declaration and all" \
+  || bad "a frozen raise across a copy-and-repoint is refused" "rc=$RC out=$OUT"
+# The premise of the whole case: this is NOT the move above. The old baseline
+# is still tracked, still holding its rows, so nothing lost a row set.
+[ "$(git -C "$R" show :tools/a.tsv)" = "$(printf 'x.test.txt\t15')" ] \
+  && ok "and the old baseline really is still tracked with its rows, so no move was named" \
+  || bad "the old baseline is still tracked with its rows" "$(git -C "$R" show :tools/a.tsv)"
+case "$OUT" in *"repoint the baseline in a commit that changes nothing else"*) ok "and the refusal says what to do instead" ;; *) bad "the repoint refusal names its remedy" "$OUT" ;; esac
+# The open class takes the same refusal, declared or not: across a repoint
+# there is nothing to compare, so no declaration can carry it.
+relocating_repo copyopen plain.txt 15 15
+mkfile plain.txt 20
+copy_repoint plain.txt 20
+run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "an unfrozen row raised across a copy-and-repoint is refused undeclared" \
+  || bad "an unfrozen raise across a copy-and-repoint is refused undeclared" "rc=$RC out=$OUT"
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && ok "and the declaration does not carry it, where in place it would" \
+  || bad "the declaration does not carry a raise across a copy-and-repoint" "rc=$RC out=$OUT"
+# The staged lane reads the index, and a commit is what it judges.
+relocating_repo copystaged s.test.txt 15 15
+mkfile s.test.txt 20
+copy_repoint s.test.txt 20
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "the staged lane refuses the same copy-and-repoint" \
+  || bad "the staged lane refuses the same copy-and-repoint" "rc=$RC out=$OUT"
+# A copy that carries the rows unchanged passes: those bytes are HEAD's own
+# rows, so no row rose to reach them.
+relocating_repo copyunchanged x.test.txt 15 15
+copy_repoint x.test.txt 15
+run_frozen
+[ "$RC" -eq 0 ] && ok "control: a copy-and-repoint that carries the rows unchanged passes" \
+  || bad "a copy-and-repoint carrying the rows unchanged passes" "rc=$RC out=$OUT"
+# The control that the refusal is about the REPOINT and not about any new
+# row-shaped file: the same raise, the same second file, the setting left
+# alone. That is an ordinary in-place raise and must report as one.
+relocating_repo copynorepoint x.test.txt 15 15
+mkfile x.test.txt 20
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+printf 'x.test.txt\t20\n' >"$R/tools/a.tsv"
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"frozen baseline row raised: x.test.txt — row 15 -> 20 lines"*) true ;; *) false ;; esac \
+  && ok "control: the same raise without the repoint is judged in place, not refused as one" \
+  || bad "the same raise without the repoint is judged in place" "rc=$RC out=$OUT"
+# The boundary this refusal accepts: it cannot ask which file HEAD's settings
+# named, so a first baseline introduced beside an UNRELATED row-shaped file
+# reads as a repoint and is refused. Fail-closed, and the remedy carries it.
+new_repo copyunrelatedrows
+mkdir -p "$R/tools"
+mkfile x.test.txt 5
+printf 'counts/thing\t3\n' >"$R/data.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: no baseline, one unrelated row-shaped file"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/b.tsv"
+settings_baseline tools/b.tsv
+git -C "$R" add -A
+run_frozen
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a row set HEAD holds elsewhere makes a first baseline read as a repoint, and it fails closed" \
+  || bad "an unrelated HEAD row set makes a first baseline fail closed" "rc=$RC out=$OUT"
+
 echo "=== and the three bootstraps still pass: none of them removes a row set ==="
 # Each legitimately leaves HEAD with no rows at the configured path, and each
 # is what refusing on that emptiness alone would break.
