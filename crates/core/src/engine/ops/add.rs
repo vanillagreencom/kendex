@@ -86,7 +86,7 @@ pub fn add_seeded(
     // carrying no lock re-arrives nothing. Read expanded, because a bundle
     // declaration accounts for its members and their own declarations are
     // taken away as it does.
-    let declared = crate::engine::expansion::skills_installed(env, scope, &manifest);
+    let declared = crate::engine::installed::skills_installed(env, scope, &manifest);
     if let Some((name, decl)) = seed {
         manifest.sources.insert(name, decl);
     }
@@ -154,7 +154,7 @@ pub fn add_seeded(
     }
 
     let options = PlanOptions {
-        arriving_skills: &crate::engine::expansion::skills_installed(env, scope, &manifest)
+        arriving_skills: &crate::engine::installed::skills_installed(env, scope, &manifest)
             - &declared,
         ..PlanOptions::default()
     };

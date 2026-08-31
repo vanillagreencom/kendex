@@ -309,27 +309,6 @@ impl Catalogs<'_> {
 /// manifest is a single-package update's pinned copy: a set's members read
 /// it to tell a hold the person chose from one invented to keep the rest
 /// of the scope still.
-/// The skills a manifest installs once expanded: its own declarations plus
-/// every bundle member and dependency they pull in.
-///
-/// What "has this skill arrived here" is asked of, before and after a
-/// mutation. The raw `skills` map cannot answer it — a bundle covers its
-/// members and `subsume` takes their own declarations away, so every member
-/// of an installed bundle reads as absent from it — and a bundle
-/// declaration IS the manifest gaining a declaration that accounts for
-/// them.
-///
-/// The state this fills is discarded. Notes and refusals belong to the pass
-/// that plans, and this is a reading of a manifest nobody is planning.
-pub(super) fn skills_installed(env: &Env, scope: &Scope, manifest: &Manifest) -> BTreeSet<String> {
-    let mut aside = DesiredState::default();
-    expand(env, scope, manifest, None, &mut aside)
-        .of(ItemKind::Skill)
-        .into_iter()
-        .map(|(name, _)| name.clone())
-        .collect()
-}
-
 pub(super) fn expand(
     env: &Env,
     scope: &Scope,

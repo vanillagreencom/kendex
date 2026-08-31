@@ -723,7 +723,7 @@ fn an_arrival_over_an_assignment_no_script_reads_still_names_the_key() {
             "{file}: {:?}",
             report.notes
         );
-        apply::execute(&f.env, &report.plan, None).unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
         assert_eq!(fs::read_to_string(settings_path(&f)).unwrap(), file);
     }
 }

@@ -68,7 +68,7 @@ pub(crate) fn fixture(enabled: bool) -> Fixture {
 #[allow(clippy::unwrap_used)]
 pub(crate) fn refresh_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 /// The pass a skill arrives on, as `ops::add` builds it: the names the
@@ -89,7 +89,7 @@ pub(crate) fn arrive(f: &Fixture, skills: &[&str]) -> kendex_core::engine::Engin
     };
     let report =
         kendex_core::engine::plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
-    apply::execute(&f.env, &report.plan, None).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
     report
 }
 

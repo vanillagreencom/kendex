@@ -31,6 +31,7 @@ mod file_plan;
 pub mod fork;
 mod gemini;
 mod holds;
+mod installed;
 mod item_plan;
 mod item_record;
 mod item_source;
