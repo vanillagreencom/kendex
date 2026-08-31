@@ -4,9 +4,10 @@
 # target: it inspects only the main checkout, and an argument is a usage
 # error rather than a silently ignored one.
 #
-# That help is INERT — answered before any project env file is sourced, and
-# answered outside a git repository — is tools/tests/help-inert.test.sh,
-# which holds every shipped CLI to that contract in one loop.
+# No form sources the project's .env.local, held here across every command
+# the dispatcher routes. tools/tests/help-inert.test.sh holds the same
+# contract for the top-level forms, alongside the other CLIs that each
+# carried their own copy of it.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,9 +42,12 @@ assert_contains() {
 
 echo "=== worktree help dispatch runs before repository and env initialization ==="
 
+# A repo whose .env.local records that it was sourced. Any help invocation
+# that loads project config trips the marker.
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO"
 git -C "$REPO" init -q
+printf 'touch "%s/env-executed"\n' "$TMP_ROOT" >"$REPO/.env.local"
 
 for form in "--help" "-h" "help"; do
   out=$(cd "$REPO" && "$WORKTREE_SCRIPT" "$form")
@@ -73,6 +77,16 @@ assert_contains "$out" "Usage: worktree cleanup" "late --help prints the cleanup
 out=$(cd "$REPO" && "$WORKTREE_SCRIPT" push some-id -h)
 assert_eq "$?" 0 "worktree push some-id -h exits 0"
 assert_contains "$out" "Usage: worktree push" "late -h prints the push help"
+
+# Every form above ran against a repository carrying that .env.local, so the
+# marker answers for all of them at once.
+if [[ -e "$TMP_ROOT/env-executed" ]]; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  %s\n' "help sourced the project .env.local"
+else
+  PASS=$((PASS + 1))
+  printf '  ok    %s\n' "no help form sourced the project .env.local"
+fi
 
 out=$(cd "$REPO" && "$WORKTREE_SCRIPT" list --help)
 assert_contains "$out" "Usage: worktree list" "list --help prints the list help"

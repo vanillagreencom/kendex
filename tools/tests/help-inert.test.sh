@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Help is inert, proven once for every CLI this repository ships.
+# Help is inert, proven once for the CLIs the table below names.
 #
 # The contract: a help form is answered before the script loads project
 # configuration. A repository's .env.local is sourced as shell code, so a
 # `--help` that reaches the loader runs whatever that file says — and help
-# must also work with no auth, no jq, and no repository around it.
+# must work with no auth and no repository around it.
 #
 # Every CLI here used to prove this for itself — four skills carried a copy of
 # the suite, and worktree kept the pair of assertions inline in its help
@@ -19,8 +19,13 @@ set -eu -o pipefail
 ROOT="$(git rev-parse --show-toplevel)" || exit 2
 cd "$ROOT" || exit 2
 
-TMP="$(mktemp -d)" || exit 2
+# A physical path, and a ceiling on it: § 3 needs a directory that is in no
+# git repository, and TMPDIR can sit inside a checkout — this repository's own
+# guidance puts scratch under tmp/. The ceiling stops git's upward search at
+# the fixture root; § 3 asserts that it worked rather than assuming it.
+TMP="$(cd "$(mktemp -d)" && pwd -P)" || exit 2
 trap 'rm -rf -- "${TMP:?}"' EXIT
+export GIT_CEILING_DIRECTORIES="$TMP"
 
 PASS=0
 FAIL=0
@@ -93,69 +98,171 @@ linear:scripts/commands/issues.sh:Issue Operations:create --title -h
 
 SKILLS="decider github linear second-opinion worktree"
 
+# parse_row ROW — one table row into ROW_SKILL, ROW_SCRIPT, ROW_TOKEN and
+# ROW_ARGS. Both tables and § 3 read their rows through here, so the field
+# split is written once.
+ROW_SKILL=""
+ROW_SCRIPT=""
+ROW_TOKEN=""
+ROW_ARGS=""
+parse_row() {
+  local row="$1"
+  ROW_SKILL="${row%%:*}"
+  row="${row#*:}"
+  ROW_SCRIPT="${row%%:*}"
+  row="${row#*:}"
+  ROW_TOKEN="${row%:*}"
+  ROW_ARGS="${row##*:}"
+}
+
 # --- staging ------------------------------------------------------------
-# stage DEST — a fixture repository with every skill installed under
-# .agents/skills, and a .env.local that records having been sourced.
-stage() {
+# stage_tree DEST — every skill installed under .agents/skills, plus the stub
+# PATH directory. No repository: § 3's fixture is exactly this.
+stage_tree() {
   local dest="$1" s
-  mkdir -p "$dest/.agents/skills" || return 1
-  git -C "$dest" init -q || return 1
-  printf 'touch "%s/env-executed"\n' "$dest" >"$dest/.env.local" || return 1
+  mkdir -p "$dest/.agents/skills" "$dest/bin" || return 1
   for s in $SKILLS; do
     cp -R "$ROOT/skills/$s" "$dest/.agents/skills/$s" || return 1
-    rm -rf "$dest/.agents/skills/$s/tests"
+    rm -rf -- "${dest:?}/.agents/skills/$s/tests"
   done
   # A stub `gh` and a stub `codex` keep every run local: a data row must load
-  # project configuration, and it may not reach the network to do it.
-  mkdir -p "$dest/bin" || return 1
+  # project configuration, and it may not reach the network to do it. The
+  # Linear CLI reaches the network through curl rather than gh, so run_row
+  # strips the credentials that would let it get that far.
   printf '#!/bin/sh\nexit 1\n' >"$dest/bin/gh"
   printf '#!/bin/sh\nexit 1\n' >"$dest/bin/codex"
   chmod +x "$dest/bin/gh" "$dest/bin/codex"
 }
 
+# stage DEST — stage_tree inside a fixture git repository whose .env.local
+# records having been sourced.
+stage() {
+  local dest="$1"
+  stage_tree "$dest" || return 1
+  git -C "$dest" init -q || return 1
+  printf 'touch "%s/env-executed"\n' "$dest" >"$dest/.env.local" || return 1
+}
+
 # run_row REPO SKILL SCRIPT ARGS — the command's combined output, with the
 # marker cleared first. Prints the exit status on the last line.
+#
+# The credential channels are stripped rather than inherited: a data row runs
+# the command for real, and `create --title -h` under an ambient
+# LINEAR_API_KEY would reach Linear and create an issue titled `-h`. The row
+# needs only that the run load project configuration and then fail.
 run_row() {
   local repo="$1" skill="$2" script="$3" out="" status=0
   shift 3
   rm -f "$repo/env-executed"
   out="$(cd "$repo" && PATH="$repo/bin:$PATH" \
-    "$repo/.agents/skills/$skill/$script" "$@" 2>&1)" || status=$?
+    env -u LINEAR_API_KEY -u LINEAR_API_KEY_OVERRIDE -u LINEAR_TEAM \
+      -u GH_TOKEN -u GITHUB_TOKEN \
+      "$repo/.agents/skills/$skill/$script" "$@" 2>&1)" || status=$?
   printf '%s\n%s' "$out" "$status"
 }
 
-# check_help REPO LABEL — every HELP_ROWS row against the tree at REPO.
+# check_help REPO — every HELP_ROWS row against the tree at REPO.
 # Sets HELP_FAILURES to the rows that did not hold.
 HELP_FAILURES=""
 check_help() {
-  local repo="$1" row skill script token args result out status
+  local repo="$1" row result out status
   HELP_FAILURES=""
   while IFS= read -r row; do
     [ -n "$row" ] || continue
-    skill="${row%%:*}"
-    row="${row#*:}"
-    script="${row%%:*}"
-    row="${row#*:}"
-    token="${row%:*}"
-    args="${row##*:}"
+    parse_row "$row"
     # shellcheck disable=SC2086 # the table's args are deliberately split
-    result="$(run_row "$repo" "$skill" "$script" $args)"
+    result="$(run_row "$repo" "$ROW_SKILL" "$ROW_SCRIPT" $ROW_ARGS)"
     status="${result##*$'\n'}"
     out="${result%$'\n'*}"
     if [ "$status" -ne 0 ]; then
-      HELP_FAILURES="$HELP_FAILURES$skill $script $args: exited $status
+      HELP_FAILURES="$HELP_FAILURES$ROW_SKILL $ROW_SCRIPT $ROW_ARGS: exited $status
 "
-    elif [ "${out#*"$token"}" = "$out" ]; then
-      HELP_FAILURES="$HELP_FAILURES$skill $script $args: did not print '$token'
+    elif [ "${out#*"$ROW_TOKEN"}" = "$out" ]; then
+      HELP_FAILURES="$HELP_FAILURES$ROW_SKILL $ROW_SCRIPT $ROW_ARGS: did not print '$ROW_TOKEN'
 "
     elif [ -e "$repo/env-executed" ]; then
-      HELP_FAILURES="$HELP_FAILURES$skill $script $args: sourced the project .env.local
+      HELP_FAILURES="$HELP_FAILURES$ROW_SKILL $ROW_SCRIPT $ROW_ARGS: sourced the project .env.local
 "
     fi
   done <<EOF
 $HELP_ROWS
 EOF
   [ -z "$HELP_FAILURES" ]
+}
+
+# check_data REPO — every DATA_ROWS row against the tree at REPO. The command
+# must run as an ordinary command: fail for want of its required arguments,
+# print no help, and have loaded project configuration on the way.
+DATA_FAILURES=""
+check_data() {
+  local repo="$1" row result out status
+  DATA_FAILURES=""
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    parse_row "$row"
+    # shellcheck disable=SC2086 # the table's args are deliberately split
+    result="$(run_row "$repo" "$ROW_SKILL" "$ROW_SCRIPT" $ROW_ARGS)"
+    status="${result##*$'\n'}"
+    out="${result%$'\n'*}"
+    if [ "$status" -eq 0 ]; then
+      # An expected failure, asserted rather than swallowed: these commands are
+      # missing required arguments, and a run that started succeeding would mean
+      # the flag had been taken as help after all.
+      DATA_FAILURES="$DATA_FAILURES$ROW_SKILL $ROW_SCRIPT $ROW_ARGS: exited 0, so it was not run as an ordinary command
+"
+    elif [ "${out#*"$ROW_TOKEN"}" != "$out" ]; then
+      DATA_FAILURES="$DATA_FAILURES$ROW_SKILL $ROW_SCRIPT $ROW_ARGS: printed help instead of treating the value as data
+"
+    elif [ ! -e "$repo/env-executed" ]; then
+      DATA_FAILURES="$DATA_FAILURES$ROW_SKILL $ROW_SCRIPT $ROW_ARGS: did not load project configuration, so it did not run the command
+"
+    fi
+  done <<EOF
+$DATA_ROWS
+EOF
+  [ -z "$DATA_FAILURES" ]
+}
+
+# norepo_rows — § 3's rows, selected out of the table rather than transcribed
+# beside it: the first bare `--help` form each skill carries.
+norepo_rows() {
+  local row seen=""
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    parse_row "$row"
+    [ "$ROW_ARGS" = "--help" ] || continue
+    case " $seen " in
+    *" $ROW_SKILL "*) continue ;;
+    esac
+    seen="$seen $ROW_SKILL"
+    printf '%s\n' "$row"
+  done <<EOF
+$HELP_ROWS
+EOF
+}
+
+# check_norepo DIR — the same `--help` forms against a tree in no repository.
+NOREPO_FAILURES=""
+check_norepo() {
+  local dir="$1" row result out status
+  NOREPO_FAILURES=""
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    parse_row "$row"
+    result="$(run_row "$dir" "$ROW_SKILL" "$ROW_SCRIPT" --help)"
+    status="${result##*$'\n'}"
+    out="${result%$'\n'*}"
+    if [ "$status" -ne 0 ]; then
+      NOREPO_FAILURES="$NOREPO_FAILURES$ROW_SKILL --help: exited $status
+"
+    elif [ "${out#*"$ROW_TOKEN"}" = "$out" ]; then
+      NOREPO_FAILURES="$NOREPO_FAILURES$ROW_SKILL --help: did not print '$ROW_TOKEN'
+"
+    fi
+  done <<EOF
+$(norepo_rows)
+EOF
+  [ -z "$NOREPO_FAILURES" ]
 }
 
 # --- 1. the shipped tree holds the contract -----------------------------
@@ -173,7 +280,7 @@ done <<EOF
 $HELP_ROWS
 EOF
 if [ "$rows" -lt 20 ]; then
-  bad "the table holds $rows rows, too few to be the shipped CLIs"
+  bad "the table holds $rows rows, too few to be these skills' help forms"
 else
   ok "$rows help forms across $(printf '%s' "$SKILLS" | wc -w | tr -d ' ') skills"
 fi
@@ -195,34 +302,11 @@ else
 fi
 
 # --- 2. an option's VALUE shaped like a flag stays data -----------------
-while IFS= read -r row; do
-  [ -n "$row" ] || continue
-  skill="${row%%:*}"
-  row="${row#*:}"
-  script="${row%%:*}"
-  row="${row#*:}"
-  token="${row%:*}"
-  args="${row##*:}"
-  # shellcheck disable=SC2086 # the table's args are deliberately split
-  result="$(run_row "$REPO" "$skill" "$script" $args)"
-  status="${result##*$'\n'}"
-  out="${result%$'\n'*}"
-  label="$skill $script $args"
-  if [ "$status" -eq 0 ]; then
-    # An expected failure, asserted rather than swallowed: these commands are
-    # missing required arguments, and a run that started succeeding would mean
-    # the flag had been taken as help after all.
-    bad "$label: exited 0, so it was not run as an ordinary command"
-  elif [ "${out#*"$token"}" != "$out" ]; then
-    bad "$label: printed help instead of treating the value as data" "$out"
-  elif [ ! -e "$REPO/env-executed" ]; then
-    bad "$label: did not load project configuration, so it did not run the command"
-  else
-    ok "$label treats the flag-shaped value as data"
-  fi
-done <<EOF
-$DATA_ROWS
-EOF
+if check_data "$REPO"; then
+  ok "a flag-shaped option value is run as data, not as a help request"
+else
+  bad "a flag-shaped option value was not treated as data" "$DATA_FAILURES"
+fi
 
 # github routes `pr-merge --body --help` to help first and only then names the
 # option the routed command does not take. Both halves, in one run.
@@ -236,42 +320,26 @@ fi
 
 # --- 3. help needs no repository at all ---------------------------------
 NOREPO="$TMP/norepo"
-mkdir -p "$NOREPO/.agents/skills"
-for s in $SKILLS; do
-  cp -R "$ROOT/skills/$s" "$NOREPO/.agents/skills/$s"
-  rm -rf "$NOREPO/.agents/skills/$s/tests"
-done
-norepo_fail=""
-while IFS= read -r row; do
-  [ -n "$row" ] || continue
-  skill="${row%%:*}"
-  rest="${row#*:}"
-  script="${rest%%:*}"
-  token="${rest#*:}"
-  status=0
-  out="$(cd "$NOREPO" && "$NOREPO/.agents/skills/$skill/$script" --help 2>&1)" || status=$?
-  if [ "$status" -ne 0 ] || [ "${out#*"$token"}" = "$out" ]; then
-    norepo_fail="$norepo_fail$skill --help: exit $status
-"
-  fi
-done <<EOF
-second-opinion:scripts/second-opinion:Cross-model second opinion
-worktree:scripts/worktree:Usage: worktree <command>
-decider:scripts/decisions:Decision Lookup Tool
-EOF
-if [ -z "$norepo_fail" ]; then
+if ! stage_tree "$NOREPO"; then
+  bad "the no-repository fixture could not be staged"
+elif noroot="$(cd "$NOREPO" && git rev-parse --show-toplevel 2>/dev/null)"; then
+  # The precondition, asserted: without it the loop would run every row INSIDE
+  # a repository and still report that help works without one.
+  bad "the no-repository fixture sits in a git repository ($noroot), so nothing below it is proven"
+elif check_norepo "$NOREPO"; then
   ok "--help works outside a git repository"
 else
-  bad "--help failed outside a git repository" "$norepo_fail"
+  bad "--help failed outside a git repository" "$NOREPO_FAILURES"
 fi
 
 # --- 4. the planted controls --------------------------------------------
-# The loop above proves nothing unless it can red. Each control breaks the
+# The loops above prove nothing unless they can red. Each control breaks the
 # contract in a staged copy of the REAL script, one skill at a time, and the
-# loop must refuse that tree.
-control() { # control LABEL MUTATE_FN
+# named loop must refuse that tree.
+control() { # control LABEL MUTATE_FN N [CHECK_FN] [STAGE_FN]
   local label="$1" mutate="$2" work="$TMP/control-$3"
-  if ! stage "$work"; then
+  local check="${4:-check_help}" stager="${5:-stage}"
+  if ! "$stager" "$work"; then
     bad "the control tree for '$label' could not be staged"
     return
   fi
@@ -279,7 +347,7 @@ control() { # control LABEL MUTATE_FN
     bad "the control mutation for '$label' did not land, so it proves nothing"
     return
   fi
-  if check_help "$work"; then
+  if "$check" "$work"; then
     bad "$label: the loop stayed green with the contract broken"
   else
     ok "$label reds the loop"
@@ -323,9 +391,38 @@ plant_nonzero_help() {
   grep -q 'trap "exit 3" EXIT' "$f"
 }
 
+# --title dropped from the options whose value the help scan skips: the `-h`
+# in `create --title -h` is then read as a help request, and a flag-shaped
+# option value stops being data.
+plant_value_not_skipped() {
+  local f="$1/.agents/skills/linear/scripts/commands/issues.sh"
+  local old='            --title) return 0 ;;'
+  [ -f "$f" ] || return 1
+  grep -qF -- "$old" "$f" || return 1
+  sed -i.bak 's/^            --title) return 0 ;;$/            --title-control) return 0 ;;/' "$f" &&
+    rm -f "$f.bak" || return 1
+  ! grep -qF -- "$old" "$f"
+}
+
+# Help that reaches for a repository before answering — the class § 3 is there
+# to catch, and the one its own fixture cannot prove.
+plant_repo_required() {
+  local f="$1/.agents/skills/second-opinion/scripts/second-opinion" body=""
+  [ -f "$f" ] || return 1
+  body="$(tail -n +2 "$f")" || return 1
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "control: not a git repository" >&2; exit 1; }\n'
+    printf '%s\n' "$body"
+  } >"$f" || return 1
+  grep -qF 'control: not a git repository' "$f"
+}
+
 control "a script that sources .env.local before answering help" plant_env_load 1
 control "a command index that stops naming itself" plant_missing_token 2
 control "a help form that exits nonzero" plant_nonzero_help 3
+control "an option value the help scan stops skipping" plant_value_not_skipped 4 check_data
+control "help that demands a repository" plant_repo_required 5 check_norepo stage_tree
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
