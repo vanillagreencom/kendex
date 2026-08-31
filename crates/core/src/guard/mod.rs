@@ -17,8 +17,7 @@
 //! what the shims ARE, on every surface, `kendex check` included. What
 //! kendex may still say for itself is only what it can reach from local
 //! state without running anything — whether this repository holds a helper
-//! at all, whether the declared package is rendered — and each such
-//! sentence hands the reading back to `kendex guard check`.
+//! at all, whether the declared package is rendered.
 //!
 //! Exit taxonomy, the family contract the package defines and this module
 //! relays unchanged: 0 clean, 1 violations, 2 the check could not run. Both
@@ -49,8 +48,10 @@ pub const SKILL: &str = "growth-guards";
 /// The installer the package ships, relative to its own directory.
 const INSTALLER: &str = "scripts/install-git-hooks";
 
-/// The helper the installer writes into the hooks directory.
-const HELPER: &str = "kendex-guards";
+/// The helper the installer writes into the hooks directory, and the one
+/// file [`locally_armed`] reads for. Public because a report that says a
+/// repository holds no helper has to name the file it looked for.
+pub const HELPER: &str = "kendex-guards";
 
 /// What the session-start `--check` gets, and why it is not the default.
 ///
@@ -242,8 +243,7 @@ pub fn installer_present(repo: &Repo) -> Result<bool> {
 /// ARE comes from here, and `kendex guard check` and the commit-hook line
 /// of `kendex check` are both this call. A caller that cannot reach this —
 /// nothing local armed the repository, the render is gone, the directory
-/// would not open — says what it read and names this verb, never what the
-/// shims are.
+/// would not open — says what it read, never what the shims are.
 ///
 /// It runs a script out of the checkout, so a caller reaching it without
 /// somebody asking for it needs a license first. An install record is not
@@ -258,9 +258,10 @@ pub fn check(dir: &Path) -> Result<GuardReport> {
 /// The same `--check` over a repository the caller already resolved, under
 /// the session-start bound.
 ///
-/// Resolving a repository and finding the package costs five git children
-/// on this path, and taking a `Repo` the caller already probed removes two
-/// of them. The fold pays the rest once per project scope.
+/// Resolving a repository and finding the package costs seven git children
+/// where the path is taken from a directory, and five here, because the
+/// `Repo` the caller already probed is not resolved a second time. The
+/// fold pays those five once per project scope.
 pub fn check_repo(repo: &Repo) -> Result<GuardReport> {
     let installed = installed_or_err(repo, INSTALLER)?;
     run_installer(repo, &installed, &["--check"], Some(CHECK_TIMEOUT))

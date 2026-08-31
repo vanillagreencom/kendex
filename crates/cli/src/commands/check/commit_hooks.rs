@@ -79,20 +79,21 @@ pub(super) fn fold_commit_hooks(
             }
         };
         let (class, text) = match kendex_core::guard::locally_armed(&repo) {
-            // Nothing of this package's is in the hooks directory, so
-            // nothing here is ours to run and the package has nothing to be
-            // asked about. What is said is what local state shows and no
-            // more: naming `kendex guard install` here promised a remedy
-            // that stands down under a configured `core.hooksPath` and
-            // wrote nothing, leaving the same line next session for ever.
-            // Which of the reasons applies is the package's to say, and it
-            // is invited rather than guessed at.
+            // No helper, so nothing here is ours to run and the package
+            // has nothing to be asked about. The sentence says the one
+            // thing that was measured and stops. It used to add that
+            // nothing had armed the repository, which the helper's absence
+            // does not establish — the lane hooks are three files and this
+            // reads one — and before that it named `kendex guard install`,
+            // a remedy that stands down under a configured `core.hooksPath`
+            // and would have been offered every session for ever. What the
+            // state means is the package's to say, and it is invited.
             Ok(false) => (
                 Class::Drift,
                 Text::Own(format!(
-                    "the hooks directory of {} carries nothing {} left there, so nothing on this machine armed it — `kendex guard check` asks the package what this repository's state is",
+                    "the hooks directory of {} holds no {} helper — `kendex guard check` asks the package what this repository's state is",
                     root.display(),
-                    kendex_core::guard::SKILL
+                    kendex_core::guard::HELPER
                 )),
             ),
             Err(error) => {

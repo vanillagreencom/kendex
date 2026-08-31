@@ -177,21 +177,15 @@ fn a_composed_line_is_scrubbed_even_though_it_is_not_cut() {
     );
 }
 
-/// Foreign text keeps its cut. Nothing outside bounds how much an error
-/// may say, so the report does.
+/// A foreign fragment keeps its cut. Nothing outside bounds how much an
+/// error or a source's own name may say, so `shown` does.
+///
+/// Asked of `shown` directly rather than through a folded line: every one
+/// of `scope`'s lines is composed around a call to it, and the variant
+/// that used to hand it a whole line is gone.
 #[test]
-fn foreign_text_folded_in_is_still_bounded() {
-    let mut report = check_report();
-    fold(
-        &mut report,
-        "commit hooks",
-        Class::Unknown,
-        Text::Foreign("e".repeat(4000)),
-    );
-
-    let line = &report.sections[0].lines[0].text;
-    assert_eq!(line.chars().count(), FOREIGN_CHARS, "{}", line.len());
-    assert_eq!(report.status, CheckStatus::Unknown);
+fn a_foreign_fragment_is_still_cut_at_the_bound() {
+    assert_eq!(shown(&"e".repeat(4000)).chars().count(), FOREIGN_CHARS);
 }
 
 /// A relayed line past the bound is REPLACED, never trimmed.

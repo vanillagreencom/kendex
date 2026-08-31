@@ -62,8 +62,8 @@ fn check_reports_whether_the_shims_are_armed() {
         said(&unarmed)
     );
     assert!(
-        said(&unarmed).contains("carries nothing"),
-        "it says what local state shows: {}",
+        said(&unarmed).contains("holds no kendex-guards helper"),
+        "it names the one file it looked for: {}",
         said(&unarmed)
     );
     assert!(
@@ -423,9 +423,10 @@ fn check_relays_the_packages_words_about_a_foreign_hook() {
 ///
 /// The verdict is compared against what `kendex guard check` printed rather
 /// than against a phrase, because a phrase near the front of the sentence
-/// survives a relay that keeps only the front of it. This line is 273
-/// characters of prose before the hooks directory is spelled, which is what
-/// the fragment bounding used to cut in half.
+/// survives a relay that keeps only the front of it. That this line is long
+/// enough for the distinction to matter is asserted below rather than
+/// stated here: the package's wording and this fixture's hooksPath value
+/// both move, and a hand-counted length goes stale when either does.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_packages_exit_two_is_could_not_check_and_its_sentence_survives_whole() {
@@ -660,5 +661,57 @@ fn an_installer_that_exits_zero_with_no_verdict_is_not_all_clear() {
     assert!(
         text.contains("no verdict"),
         "the line does not say what happened: {text}"
+    );
+}
+
+/// The session-start bound is actually applied, and a wedged script costs
+/// one line rather than the whole report.
+///
+/// `guard_timeout_budget` pins the VALUE of `CHECK_TIMEOUT` against the
+/// hook's declared budget. Nothing pinned that `check_repo` still passes
+/// it: drop the argument and the constant keeps its value, keeps its test,
+/// and stops doing anything. The harness would then kill the hook at its
+/// own 20 seconds and the drift report — every other finding in it — would
+/// go with the hook.
+///
+/// One test, because it costs the bound in wall clock. `sleep 60` is far
+/// enough past it that a run finishing inside the assertion below cannot
+/// be a slow machine.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_wedged_installer_gives_up_inside_the_session_start_bound() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    // Armed for real, so the fold gets past the consent gate and reaches
+    // the script.
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    std::fs::write(&installer, "#!/usr/bin/env bash\nsleep 60\n").unwrap();
+    std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let started = std::time::Instant::now();
+    let out = run(home, &root, "kendex", &["check"]);
+    let elapsed = started.elapsed();
+    let text = said(&out);
+
+    assert!(
+        elapsed < std::time::Duration::from_secs(40),
+        "the bound was not applied — the run took {elapsed:?}, which is the \
+         script finishing rather than the check giving up:\n{text}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a check that could not be taken was not reported as one: {text}"
+    );
+    assert!(text.contains("commit hooks"), "{text}");
+    assert!(
+        text.contains("no result after"),
+        "the line does not name the timeout: {text}"
     );
 }

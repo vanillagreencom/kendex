@@ -1,18 +1,24 @@
 //! What a folded line may say, and how much of it.
 //!
-//! A report line is composed here from two kinds of words: kendex's own,
-//! over sets this crate bounds, and words from outside that nothing bounds
-//! until this module does. Telling them apart is the whole job — the same
-//! cut that keeps an error's 4 KB out of an agent's context spelled a
+//! Every line here is bounded, and the whole job is deciding HOW. A line
+//! kendex composed over a set this crate bounds is already the right
+//! length. A line carrying somebody else's whole sentence is not, and
+//! cannot be trimmed to fit — so past its bound it is replaced. Getting
+//! that wrong both ways is what this module remembers: the fragment cut
+//! that keeps an error's 4 KB out of an agent's context spelled a
 //! `commit hooks` line's second file half way and told a reader to fix
-//! files it then declined to name.
+//! files it then declined to name, and the same cut later took the remedy
+//! off the end of a relayed verdict.
+//!
+//! [`shown`] still cuts fragments, and every line `scope` composes is built
+//! around it. What no longer exists is a way to hand a WHOLE line to that
+//! cut.
 
 use super::*;
 
-/// Where a folded line's words came from, which is what decides the
-/// bounding they need. Every caller of [`fold`] says which it is holding,
-/// because the two need different treatment and neither reading is safe to
-/// guess.
+/// How a folded line has to be bounded. Every caller of [`fold`] says
+/// which it is holding, because the two need different treatment and
+/// neither reading is safe to guess.
 pub enum Text {
     /// Kendex's own sentence, over a set this code bounds — a scope root, a
     /// name this crate validated. Scrubbed and redacted, never cut: the
@@ -21,24 +27,23 @@ pub enum Text {
     /// it is [`render_plain`]'s whole-report budget, which drops a line
     /// entire rather than leaving part of a path behind.
     Own(String),
-    /// A FRAGMENT from outside — a name off a source, the tail of an
-    /// error — composed into a sentence of kendex's own. Nothing outside
-    /// bounds how much of it there may be, so [`shown`] does, and a cut
-    /// costs the end of a fragment the line does not turn on.
-    Foreign(String),
-    /// A WHOLE line another program wrote, relayed rather than described.
+    /// A whole sentence carrying bytes from outside — a delegated script's
+    /// verdict, an io error's cause — which is never cut.
     ///
-    /// The case the two above could not hold. It is foreign, so it needs
-    /// the same scrubbing and a bound; and it is a sentence rather than a
-    /// fragment, so cutting it is never right — the growth-guards verdict
-    /// carries its remedy at the end, and the fragment bound took the
-    /// remedy off every line long enough to need one. So this bounds by
-    /// SUBSTITUTION: past [`RELAYED_CHARS`] the reader gets kendex's own
-    /// sentence saying so and naming who to ask, never half of somebody
-    /// else's.
+    /// Not "foreign words", which [`shown`] already bounds a fragment of
+    /// at a time wherever a line is composed AROUND one. This is the case
+    /// that has no such line to be composed around: what would be cut is
+    /// the sentence itself, and what sits at a sentence's end is the part
+    /// worth having — the growth-guards verdict carries its remedy there,
+    /// and an io error carries its cause. So this bounds by SUBSTITUTION:
+    /// past [`RELAYED_CHARS`] the reader gets kendex's own sentence saying
+    /// so, never half of one that reads finished.
     ///
-    /// `producer` is kendex's own noun phrase for whoever wrote the line,
-    /// and says how to read it in full; `line` is their bytes.
+    /// `line` is what is shown, framing and all, so a caller that needs
+    /// the reader oriented composes that framing into it. `producer` names
+    /// who to go and ask, which is not always who wrote the bytes: a line
+    /// reporting that the hooks directory would not answer names the hooks
+    /// directory. It is shown in the one case `line` is not.
     Relayed { producer: String, line: String },
 }
 
@@ -53,7 +58,6 @@ pub fn fold(report: &mut CheckReport, title: &str, class: Class, text: Text) {
         class,
         text: match text {
             Text::Own(text) => printable(&text),
-            Text::Foreign(text) => shown(&text),
             Text::Relayed { producer, line } => relayed(&producer, &line),
         },
         remedy: None,
@@ -76,7 +80,7 @@ pub fn fold(report: &mut CheckReport, title: &str, class: Class, text: Text) {
     report.status = report.status.max(raised);
 }
 
-/// How much of a foreign string the report will spell. Nothing outside
+/// How much of a foreign FRAGMENT the report will spell. Nothing outside
 /// bounds it, so this does — and raising it is not the answer to a line
 /// that came out short, because the next path is longer again.
 pub(super) const FOREIGN_CHARS: usize = 300;

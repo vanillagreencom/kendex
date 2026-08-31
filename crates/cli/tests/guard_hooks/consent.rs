@@ -124,7 +124,11 @@ fn check_runs_nothing_out_of_a_repository_nobody_armed() {
     );
     // And it still says the useful thing, from local state alone.
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("carries nothing"), "{}", said(&out));
+    assert!(
+        said(&out).contains("holds no kendex-guards helper"),
+        "{}",
+        said(&out)
+    );
 }
 
 /// An armed repository that declares nothing executes nothing either.
@@ -270,7 +274,7 @@ fn an_unreadable_hooks_directory_is_could_not_check_not_a_not_armed_claim() {
 
     assert_eq!(code, Some(2), "could-not-check was not reported: {text}");
     assert!(
-        !text.contains("carries nothing"),
+        !text.contains("holds no kendex-guards helper"),
         "an unreadable directory read as an unarmed repository: {text}"
     );
     assert!(
