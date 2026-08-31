@@ -20,8 +20,14 @@ cd "$ROOT" || exit 2
 
 LINT="$ROOT/tools/bash32-lint"
 
-TMP="$(mktemp -d)" || exit 2
+# A physical path, and a ceiling on it: § 4 needs a directory that is in no
+# git repository, and TMPDIR can sit inside a checkout — this repository's own
+# guidance puts scratch under tmp/. The ceiling stops git's upward search at
+# $TMP, so a fixture BELOW $TMP is outside every repository; § 4 asserts that
+# it worked rather than assuming it.
+TMP="$(cd "$(mktemp -d)" && pwd -P)" || exit 2
 trap 'rm -rf -- "${TMP:?}"' EXIT
+export GIT_CEILING_DIRECTORIES="$TMP"
 
 PASS=0
 FAIL=0
@@ -165,15 +171,44 @@ else
   bad "a relative DIR from a subdirectory exited $status, not 0" "$out"
 fi
 
+# An exception is a directory, not a string, so it must hold under every
+# spelling of that directory: relative to the toplevel, and absolute. The two
+# diverging is an exception that excuses a run named one way and scans the
+# same tree named the other.
+noscan_dir=""
+noscan_dir="$(sed -n 's#^NO_SCAN="\(.*\)"$#\1#p' "$LINT" | head -n 1)" || noscan_dir=""
+if [ -z "$noscan_dir" ] || [ ! -d "$ROOT/$noscan_dir" ]; then
+  bad "the lint declares no NO_SCAN directory these spellings could exercise"
+else
+  for spelling in "$noscan_dir" "$ROOT/$noscan_dir"; do
+    status=0
+    out="$(cd "$ROOT" && "$LINT" "$spelling" 2>&1)" || status=$?
+    if [ "$status" -eq 2 ]; then
+      ok "the NO_SCAN exception holds when its directory is named as $spelling"
+    else
+      bad "naming the exception as $spelling exited $status, not 2" "$out"
+    fi
+  done
+fi
+
 # And the price of reading them from the toplevel, stated: with no repository
 # around it the exceptions cannot be judged at all, so the run ends instead of
-# scanning a roster nothing checked.
-status=0
-out="$(cd "$TMP" && "$LINT" populated 2>&1)" || status=$?
-if [ "$status" -eq 2 ]; then
-  ok "a run with no repository around it ends rather than scanning"
+# scanning a roster nothing checked. The fixture sits BELOW the ceiling set at
+# the top of this file, and its being outside a repository is asserted rather
+# than assumed — under a TMPDIR inside a checkout it would otherwise resolve a
+# toplevel, scan clean, and report that the fail-closed path held.
+mkdir -p "$TMP/norepo/populated"
+printf '#!/usr/bin/env bash\n:\n' >"$TMP/norepo/populated/real.sh"
+if noroot="$(cd "$TMP/norepo" && git rev-parse --show-toplevel 2>/dev/null)"; then
+  bad "the no-repository fixture sits in a git repository ($noroot), so nothing here is proven"
 else
-  bad "a run outside a repository exited $status, not 2" "$out"
+  status=0
+  out="$(cd "$TMP/norepo" && "$LINT" populated 2>&1)" || status=$?
+  if [ "$status" -eq 2 ]; then
+    ok "a run with no repository around it ends rather than scanning"
+  else
+    bad "a run outside a repository exited $status, not 2" "$out"
+  fi
 fi
 
 status=0
@@ -409,5 +444,53 @@ degenerate() { # MODE PATTERN LINES LABEL
 }
 degenerate miss mapfile "$PROBES" "a narrowed set misses probes"
 degenerate hit . "$CONTROLS" "a set matching anything flags controls"
+
+# --- 7. the bridge: what --pattern reports is what the scan runs ---------
+# §§ 5 and 6 judge the string `--pattern` prints, and nothing above ties that
+# string to the one the scan greps with. A lint that reported the whole set
+# while scanning with a narrower one would pass every check to here, and its
+# tree would go on reporting clean with a construct in it — a scan weaker than
+# its report is the dangerous direction for a gate to fail in.
+#
+# So the whole probe set is put through the PROGRAM: one file per probe line,
+# one scan over the directory, and each probe must come back in the violations
+# output. Matched on the line grep produced rather than on the filename, so a
+# `bash -n` failure — which also reds the run — cannot stand in for a hit.
+probe_files="$TMP/probe-files"
+mkdir -p "$probe_files" || bad "could not stage the probe-file directory"
+probe_n=0
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  probe_n=$((probe_n + 1))
+  printf '%s\n' "$line" >"$probe_files/probe-$probe_n.sh"
+done <<EOF
+$PROBES
+EOF
+status=0
+out="$("$LINT" "$probe_files" 2>&1)" || status=$?
+if [ "$probe_n" -lt 50 ]; then
+  bad "$probe_n probe files were staged, too few to be the probe set"
+elif [ "$status" -ne 1 ]; then
+  bad "the scan over the staged probe set exited $status, not 1" "$out"
+else
+  unreported=""
+  i=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    i=$((i + 1))
+    printf '%s\n' "$out" |
+      grep -Fqx -- "$probe_files/probe-$i.sh:1:$line" ||
+      unreported="$unreported$line
+"
+  done <<EOF
+$PROBES
+EOF
+  if [ -n "$unreported" ]; then
+    bad "the scan reported no violation for constructs the pattern set names" \
+      "$(printf '%s\n' "$unreported" | head -20)"
+  else
+    ok "all $probe_n probes are flagged by the program, not merely by its report"
+  fi
+fi
 
 verdict
