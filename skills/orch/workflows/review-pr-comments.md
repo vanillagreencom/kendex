@@ -333,7 +333,7 @@ A thread is new when its `threads[].id` is not in `known`. No new threads → §
 
 **Backstop only** — inline threads handled per-pass in § 6.3 are already replied to and resolved. This covers PR-level comments, human-only threads, and anything per-pass handling missed. Skip any `source_id` already in `pr_comment_review.replied`.
 
-Reply bodies are § 6.3's table, which is where the `questions[]` § 4 routes here are answered — the Question row, the finding's own `draft_response`. A question is never a `Declined:`, which the gate reads as a decline naming no mechanism. Two clauses this step adds: a skip that contradicts a recorded decision spells its `[REASON]` as `contradicts [DECISION_ID]`, and an issue named by `Tracked:` exists before the reply is posted.
+Reply bodies are § 6.3's table, which is where the `questions[]` § 5 routes here are answered — the Question row, the finding's own `draft_response`. A question is never a `Declined:`, which the gate reads as a decline naming no mechanism. Two clauses this step adds: a skip that contradicts a recorded decision spells its `[REASON]` as `contradicts [DECISION_ID]`, and an issue named by `Tracked:` exists before the reply is posted.
 
 Use inline `--body` only for plain strings; Markdown with backticks or fences goes to a file and `--body-file` (`post-reply` for threads, `post-comment` for PR-level). Number lists `1.` `2.` `3.`, never `#N`.
 

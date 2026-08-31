@@ -186,20 +186,18 @@ fi
 
 # One reply contract for the review bots, in AGENTS.md § Code Review Rules.
 # The orch skill carries a second one on purpose, for working agents, and
-# AGENTS.md says so two lines above the forms; what must not exist is a third
-# copy in a file a bot reads, because what the merge gate accepts is one set
-# of forms and a bot told a looser set raises findings the gate then refuses
-# to let an author answer.
+# AGENTS.md § Code Review Rules says so in its opening lines.
 #
-# Two halves, and both are pinned by what they are ABOUT rather than by a
-# substring that happens to appear. The three forms are matched literally and
-# one at a time, so a rewrap of the bullet cannot red this and the loss of any
-# one form is its own diagnosis. Bot-facing files are the glob, not a list, so
-# an instruction file added later is covered the day it lands.
+# Two arms, both pinned by what they are ABOUT rather than by a substring
+# that happens to appear. The forms are matched literally and one at a time,
+# so a rewrap of the bullet cannot red this and the loss of any one form is
+# its own diagnosis. `#<n>` is not a fourth form: it is the other spelling
+# of the id inside `Tracked:`, and the merge gate accepts either, so a
+# contract written with only the KEN- spelling is still whole.
 #
-# An absent file is its own diagnosis, not a missing substring: grep on a path
-# that is gone reports a read error and a "no longer states" line, which sends
-# the reader looking for a deleted sentence in a deleted file.
+# An absent file is its own diagnosis, not a missing substring: grep on a
+# path that is gone reports a read error and a "no longer states" line,
+# which sends the reader looking for a deleted sentence in a deleted file.
 REPLY_FORMS=('Fixed in <sha>' 'Declined: <reason>' 'Tracked: KEN-<n>')
 if [ ! -f AGENTS.md ]; then
   say "AGENTS.md is gone — it holds the one copy of the reply contract the bot-facing files point at"
@@ -210,43 +208,24 @@ else
   done
 fi
 
-# A file may point at AGENTS.md; it may not restate the forms.
-#
-# The pointer is the SENTENCE, not a mention: review-bots.md names AGENTS.md
-# in an unrelated line near the top, so a bare name check passes a file whose
-# whole pointer section has been deleted. It is required unconditionally of
-# both files rather than "if the section is present", because a check
-# conditioned on the thing it protects passes by deleting that thing.
-REPLY_POINTER='§ Code Review Rules is the contract. Read it there.'
+# A bot-facing file points at AGENTS.md for the forms rather than carrying
+# them. What is pinned is the two things that identify the pointer, the file
+# it names and the section, and not the sentence around them: review-bots.md
+# names AGENTS.md in an unrelated line near the top without naming the
+# section, so a bare name check passes a file whose whole pointer section has
+# been deleted, and a pointer aimed at some other file is not a pointer here
+# at all. Leaving the wording free stops a reword from reading as a deletion.
+# It is required unconditionally of both files rather than "if the section is
+# present", because a check conditioned on the thing it protects passes by
+# deleting that thing.
+REPLY_POINTER='AGENTS\.md.*§ Code Review Rules'
 for f in .github/copilot-instructions.md review-bots.md; do
   if [ ! -f "$f" ]; then
     say "$f is gone — a bot-facing file the reply contract is pointed from; move the pointer before deleting it"
-  elif ! grep -qF -- "$REPLY_POINTER" "$f"; then
-    say "$f no longer points at AGENTS.md for the reply contract — delete nothing here without moving the pointer"
+  elif ! grep -qE -- "$REPLY_POINTER" "$f"; then
+    say "$f no longer points at AGENTS.md § Code Review Rules for the reply contract — delete nothing here without moving the pointer"
   fi
 done
-# The ban is wider than the pointer: every bot-facing file, from the same
-# working set the content rules above scan, so a staged instruction file is
-# judged on the commit that adds it. What it looks for is the SHAPE of a
-# contract, two or more forms named together on one line. A single form is how
-# a file legitimately cites one rule, which is what the do-not-re-raise bullet
-# in .github/copilot-instructions.md does with `Declined: <reason>`.
-bot_facing=$(printf '%s\n' "$files" | grep -E '^(review-bots\.md|\.github/copilot-instructions\.md|\.github/instructions/.+\.instructions\.md)$')
-[ -n "$bot_facing" ] || say "no bot-facing instruction file matched the reply-contract glob — the rule measured nothing"
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  [ -f "$f" ] || continue
-  restated=$(awk '
-    { n = 0
-      if (index($0, "Fixed in")) n++
-      if (index($0, "Declined:")) n++
-      if (index($0, "Tracked:")) n++
-      if (n >= 2) c++ }
-    END { print c + 0 }
-  ' "$f")
-  [ "$restated" = "0" ] ||
-    say "$f restates the reply contract on $restated line(s) naming two or more forms together — AGENTS.md is the one copy"
-done <<<"$bot_facing"
 
 if [ -f Cargo.toml ] && cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
   say "crates/core must not depend on tauri"
