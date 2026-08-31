@@ -29,7 +29,8 @@ ln -s "$(cd "$ORCH/.." && pwd)/github" "$TMP/github"
 printf 'GH_BOT_TOKEN=ghp_project\n' > "$MAIN/.env.local"
 cp "$ORCH/scripts/merge-queue-watch" "$ORCH/scripts/workflow-state" "$ORCH/scripts/orch-env" "$ORCH/scripts/queue-wait" "$SCRIPTS/"
 cp "$ORCH/scripts/lib/merge-queue-supervisor.sh" "$ORCH/scripts/lib/merge-queue-state.sh" \
-   "$ORCH/scripts/lib/kendex-env.sh" "$ORCH/scripts/lib/gh-auth.sh" "$SCRIPTS/lib/"
+   "$ORCH/scripts/lib/kendex-env.sh" "$ORCH/scripts/lib/gh-auth.sh" \
+   "$ORCH/scripts/lib/review-threads.sh" "$SCRIPTS/lib/"
 
 PHASE="$TMP/phase" QUEUE_LOG="$TMP/queue.log"
 HEAD=cccccccccccccccccccccccccccccccccccccccc

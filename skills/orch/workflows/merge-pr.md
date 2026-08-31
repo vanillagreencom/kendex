@@ -226,7 +226,7 @@ Use the output as `MAIN_REPO_ROOT`.
    **Recovery cycle** — route the failure back into ci-fix, never fix CI by hand:
 
    ```bash
-   .agents/skills/orch/scripts/orch-env CI_FIX_MAX_CYCLES 6
+   .agents/skills/orch/scripts/workflow-state cap CI_FIX_MAX_CYCLES
    ```
 
    Max `[MAX_CYCLES]` recovery cycles per merge-pr run. At the cap, report the failing check names, ci-fix's last error summary, and what each cycle attempted — never a bare "persistent failure" — then skip steps 2-4 and hand back. Use rerun-in-place only for flakes; gate or CI behavior changes need a fresh head.

@@ -337,7 +337,7 @@ launch() {
 claim() {
   local action="$1" verdict="$2" cause="$3" diagnostic_file="$4" attempt_id="$5" artifact="$6" expected_head="$7" recovery="$8"
   local max status
-  max=$("$SCRIPT_DIR/orch-env" CI_FIX_MAX_CYCLES 6)
+  max=$("$WORKFLOW_STATE" cap CI_FIX_MAX_CYCLES)  # one table holds every cap's default
   status=claimed
   case "$action" in
     recovery)

@@ -22,8 +22,9 @@
 # NARROWER SURFACE THAN THE PREDECESSOR, deliberately: it also ran
 # `scripts/workflow-state` to prove the file channel these writes use. The
 # cause carrying an apostrophe and the one carrying a double quote are
-# round-tripped through the real script by `workflow-state-update-args.sh`,
-# which is what shows the channel works rather than that a doc describes it.
+# round-tripped through the real script by the `append-file` section of
+# `workflow-state-cycle-cap.sh`, which is what shows the channel works rather
+# than that a doc describes it.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
@@ -92,9 +93,9 @@ order "issue creation precedes the reply step in document order" "$CM" \
 # resolved thread is invisible to the next pass, so a cause is recurrence only
 # if a pass wrote it down — and reviewer text never crosses argv.
 rule_fenced "§ 6 records a patched cause in workflow state" "$CM" "$S6" \
-  '--slurpfile entry [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json'
+  'append-file [ISSUE_ID] pr_comment_review.patched_causes [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json'
 rule_fenced "§ 6 records a frozen cause in workflow state" "$CM" "$S6" \
-  '--slurpfile entry [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json'
+  'append-file [ISSUE_ID] pr_comment_review.frozen_causes [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json'
 absent "neither cause write puts reviewer text on the command line" "$CM" "$S6" \
   'append \[ISSUE_ID\] pr_comment_review\.(patched|frozen)_causes' \
   '.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.patched_causes "[CAUSE]"'
@@ -107,7 +108,7 @@ rule_fenced "§ 5 reads both records before triaging a pass" "$CM" "## 5. Triage
 # dev-fix.md § 2, the only thing standing between those loops and a recurrence
 # check reading an empty history.
 rule_fenced "dev-fix records a patched cause in workflow state" "$DEV_FIX" "## 2. Delegate" \
-  '--slurpfile cause tmp/patched-cause-[ISSUE_ID].json'
+  'append-file [ISSUE_ID] pr_comment_review.patched_causes tmp/patched-cause-[ISSUE_ID].json'
 
 rule "the schema documents both records on the pr_comment_review row" "$SCHEMA" "" \
   '| `pr_comment_review` |' '`patched_causes[]`' '`frozen_causes[]`'

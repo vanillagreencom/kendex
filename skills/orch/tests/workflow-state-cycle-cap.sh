@@ -338,5 +338,153 @@ else
   ok "the assertion flags § 7 writing the gated panel key"
 fi
 
+# --- `cap`: the one reader of a round cap ----------------------------------
+# The guard above and every workflow that reads a cap come through this table,
+# so its verdict must agree with the write it gates, exactly, at the boundary.
+echo
+echo "--- workflow-state cap ---"
+
+cd_sd="$TMP_ROOT/cap-state"
+"$WS" --state-dir "$cd_sd" init KEN-CAP --worktree "$REPO_ROOT" --branch ken-cap >/dev/null
+
+got="$("$WS" --state-dir "$cd_sd" cap REVIEW_MAX_CYCLES)"
+[[ "$got" == "4" ]] && ok "bare cap prints the resolved limit" || bad "bare cap prints the resolved limit" "got=$got"
+
+got="$("$WS" --state-dir "$cd_sd" cap REVIEW_MAX_CYCLES --issue KEN-CAP)"
+[[ "$got" == "below 0/4" ]] && ok "a fresh issue is below the re-review cap" \
+  || bad "a fresh issue is below the re-review cap" "got=$got"
+
+# Walk the counter to the exact boundary and read both readers at each step:
+# the verdict flips on the same count the rereview_panel write starts refusing.
+flip_verdict=""
+flip_write=""
+for n in 0 1 2 3 4 5; do
+  "$WS" --state-dir "$cd_sd" update KEN-CAP ".rereview_cycles = $n" >/dev/null
+  verdict="$("$WS" --state-dir "$cd_sd" cap REVIEW_MAX_CYCLES --issue KEN-CAP)"
+  if [[ -z "$flip_verdict" && "$verdict" == at-cap* ]]; then flip_verdict="$n"; fi
+  if "$WS" --state-dir "$cd_sd" set KEN-CAP rereview_panel "$PANEL" >/dev/null 2>&1; then
+    "$WS" --state-dir "$cd_sd" update KEN-CAP ".rereview_cycles = $n" >/dev/null
+  elif [[ -z "$flip_write" ]]; then
+    flip_write="$n"
+  fi
+done
+[[ "$flip_verdict" == "4" ]] && ok "the cap verdict flips to at-cap at 4" \
+  || bad "the cap verdict flips to at-cap at 4" "flipped at=$flip_verdict"
+[[ "$flip_verdict" == "$flip_write" ]] \
+  && ok "the cap verdict and the rereview_panel refusal flip on the same count" \
+  || bad "the cap verdict and the rereview_panel refusal flip on the same count" \
+     "verdict=$flip_verdict write=$flip_write"
+
+# --- the external round cap's own row --------------------------------------
+# The comment loop and submit-pr read REVIEW_MAX_EXTERNAL_ROUNDS through the
+# same table, and `review-external-rounds-cap.test.sh` used to prove its row
+# from its own scratch repos. This is where that proof lives now. This repo's
+# `kendex.settings.toml` names the setting at the table's own number, so a bare
+# read here would hold whatever default the table carried: the resolution runs
+# from a settings-free checkout, where only the table can answer.
+ext_free="$TMP_ROOT/no-settings-ext"
+git init -q "$ext_free"
+got="$(cd "$ext_free" && env -u REVIEW_MAX_EXTERNAL_ROUNDS "$WS" --state-dir "$cd_sd" cap REVIEW_MAX_EXTERNAL_ROUNDS)"
+[[ "$got" == "4" ]] && ok "REVIEW_MAX_EXTERNAL_ROUNDS defaults to 4 through the table" \
+  || bad "REVIEW_MAX_EXTERNAL_ROUNDS defaults to 4 through the table" "got=$got"
+
+# Two rows, not one: the external cap moving must leave the re-review cap where
+# the table put it, or the two knobs are one.
+got="$(cd "$ext_free" && REVIEW_MAX_EXTERNAL_ROUNDS=9 env -u REVIEW_MAX_CYCLES "$WS" --state-dir "$cd_sd" cap REVIEW_MAX_CYCLES)"
+[[ "$got" == "4" ]] && ok "moving the external cap leaves REVIEW_MAX_CYCLES alone" \
+  || bad "moving the external cap leaves REVIEW_MAX_CYCLES alone" "got=$got"
+
+# Its row names `pr_comment_review.iterations`, so `--issue` counts the triage
+# passes rather than the re-review entries the row above it counts.
+"$WS" --state-dir "$cd_sd" update KEN-CAP '.pr_comment_review.iterations = 3' >/dev/null
+got="$("$WS" --state-dir "$cd_sd" cap REVIEW_MAX_EXTERNAL_ROUNDS --issue KEN-CAP)"
+[[ "$got" == "below 3/4" ]] && ok "the external cap counts pr_comment_review.iterations" \
+  || bad "the external cap counts pr_comment_review.iterations" "got=$got"
+"$WS" --state-dir "$cd_sd" update KEN-CAP '.pr_comment_review.iterations = 4' >/dev/null
+got="$("$WS" --state-dir "$cd_sd" cap REVIEW_MAX_EXTERNAL_ROUNDS --issue KEN-CAP)"
+[[ "$got" == "at-cap 4/4" ]] && ok "the external cap reads at-cap once the budget is spent" \
+  || bad "the external cap reads at-cap once the budget is spent" "got=$got"
+
+# One table, one default: a setting the table does not hold is refused rather
+# than silently defaulted, and a state-less cap refuses --issue.
+rc=0; "$WS" --state-dir "$cd_sd" cap NOT_A_CAP >/dev/null 2>&1 || rc=$?
+[[ "$rc" -eq 2 ]] && ok "an unknown cap name is refused" || bad "an unknown cap name is refused" "rc=$rc"
+rc=0; "$WS" --state-dir "$cd_sd" cap CI_FIX_MAX_CYCLES --issue KEN-CAP >/dev/null 2>&1 || rc=$?
+[[ "$rc" -eq 2 ]] && ok "a cap with no state field refuses --issue" \
+  || bad "a cap with no state field refuses --issue" "rc=$rc"
+got="$("$WS" --state-dir "$cd_sd" cap CI_FIX_MAX_CYCLES --count 5)"
+[[ "$got" == "below 5/6" ]] && ok "CI_FIX_MAX_CYCLES defaults to 6 through the table" \
+  || bad "CI_FIX_MAX_CYCLES defaults to 6 through the table" "got=$got"
+
+# The default lives in the table alone: no reader may carry its own copy.
+cap_strays() { grep -rn 'orch-env" *CI_FIX_MAX_CYCLES\|orch-env" *REVIEW_MAX' "$1" 2>/dev/null || true; }
+stray="$(cap_strays "$REPO_ROOT/skills/orch/scripts")"
+[[ -z "$stray" ]] && ok "no orch script resolves a round cap outside the table" \
+  || bad "no orch script resolves a round cap outside the table" "$stray"
+# Planted: a reader that went back to pairing orch-env with its own default.
+CTRL_DIR="$TMP_ROOT/cap-stray-scripts"
+mkdir -p "$CTRL_DIR"
+printf 'max=$("$SCRIPT_DIR/orch-env" CI_FIX_MAX_CYCLES 6)\n' > "$CTRL_DIR/watcher"
+[[ -n "$(cap_strays "$CTRL_DIR")" ]] && ok "the stray check flags a reader carrying its own cap default" \
+  || bad "the stray check flags a reader carrying its own cap default"
+
+# --- `append-file`: reviewer text never crosses argv ------------------------
+echo
+echo "--- workflow-state append-file ---"
+
+cause="$TMP_ROOT/cause.json"
+# A cause carrying every character that ends a shell word early. It reaches
+# the state byte for byte, or the command was not the file-bound one.
+python3 - "$cause" <<'PYW'
+import json, sys
+json.dump({"cause": "fs.rs::write_all's guard \"quoted\" $(whoami) `id` | ;", "commit": "abc1234"},
+          open(sys.argv[1], "w"))
+PYW
+"$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.patched_causes "$cause" >/dev/null
+"$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.patched_causes "$cause" >/dev/null
+got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.patched_causes | length')"
+[[ "$got" == "2" ]] && ok "append-file appends rather than replacing" \
+  || bad "append-file appends rather than replacing" "got=$got"
+want="$(jq -r .cause "$cause")"
+got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.patched_causes[0].cause')"
+[[ "$got" == "$want" ]] && ok "the cause reaches the state verbatim, shell metacharacters and all" \
+  || bad "the cause reaches the state verbatim, shell metacharacters and all" "got=$got"
+
+# The array is created where the field is absent — the // [] the workflows
+# used to spell at every call site.
+"$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.frozen_causes "$cause" >/dev/null
+got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.frozen_causes | length')"
+[[ "$got" == "1" ]] && ok "append-file creates the array when the field is absent" \
+  || bad "append-file creates the array when the field is absent" "got=$got"
+
+# Fails closed on anything that is not exactly one JSON value: a truncated or
+# doubled write must not reach the record the recurrence rule reads.
+printf 'not json\n' > "$TMP_ROOT/bad.json"
+rc=0; "$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.patched_causes "$TMP_ROOT/bad.json" >/dev/null 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] && ok "append-file refuses a file that is not JSON" || bad "append-file refuses a file that is not JSON"
+printf '{"a":1}\n{"b":2}\n' > "$TMP_ROOT/two.json"
+rc=0; "$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.patched_causes "$TMP_ROOT/two.json" >/dev/null 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] && ok "append-file refuses a file holding two values" || bad "append-file refuses a file holding two values"
+rc=0; "$WS" --state-dir "$cd_sd" append-file KEN-CAP pr_comment_review.patched_causes "$TMP_ROOT/nope.json" >/dev/null 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] && ok "append-file refuses a missing file" || bad "append-file refuses a missing file"
+got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.patched_causes | length')"
+[[ "$got" == "2" ]] && ok "a refused append leaves the record untouched" \
+  || bad "a refused append leaves the record untouched" "got=$got"
+
+# The workflows that record a cause come through it — no second spelling of
+# the append jq survives.
+append_strays() { grep -rnF 'patched_causes // []) + [' "$1" 2>/dev/null || true; }
+stray="$(append_strays "$REPO_ROOT/skills/orch/workflows")"
+[[ -z "$stray" ]] && ok "no workflow spells the patched_causes append by hand" \
+  || bad "no workflow spells the patched_causes append by hand" "$stray"
+# Planted: the hand-spelled jq the workflows used to carry.
+CTRL_DIR="$TMP_ROOT/append-stray-workflows"
+mkdir -p "$CTRL_DIR"
+cat > "$CTRL_DIR/dev-fix.md" <<'CTRL'
+workflow-state update [ISSUE_ID] --slurpfile e f '$e[0] as $x | .pr_comment_review.patched_causes = ((.pr_comment_review.patched_causes // []) + [$x])'
+CTRL
+[[ -n "$(append_strays "$CTRL_DIR")" ]] && ok "the stray check flags a workflow spelling the append by hand" \
+  || bad "the stray check flags a workflow spelling the append by hand"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

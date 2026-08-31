@@ -10,6 +10,8 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
+# shellcheck source=lib/review-threads.sh
+source "$SCRIPT_DIR/lib/review-threads.sh"
 
 print_usage() {
   cat <<'USAGE'
@@ -696,54 +698,14 @@ fi
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
 
-THREADS_QUERY='query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
-  repository(owner: $owner, name: $repo) {
-    pullRequest(number: $number) {
-      reviewThreads(first: 100, after: $cursor) {
-        pageInfo { hasNextPage endCursor }
-        nodes { isResolved }
-      }
-    }
-  }
-}'
-
-# Count unresolved review threads, following reviewThreads pagination past the
-# first 100. Prints the total; returns nonzero when a page query fails.
+# The reviewThreads walk is lib/review-threads.sh's, shared with queue-wait's
+# late-findings guard so the waiter and the guard cannot disagree about what an
+# open thread is. gh's stderr lands in GH_ERR_FILE for the transient/terminal
+# classification below, so the file is emptied first: the classifier must read
+# THIS call's failure, never one an earlier probe left behind.
 count_unresolved_threads() {
-  local cursor="" total=0 threads_json threads_status page_unresolved has_next
-  while true; do
-    threads_status=0
-    set +e
-    if [ -n "$cursor" ]; then
-      threads_json=$(gh api graphql \
-        -f query="$THREADS_QUERY" \
-        -F owner="$OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" \
-        -F cursor="$cursor" 2>"$GH_ERR_FILE")
-    else
-      threads_json=$(gh api graphql \
-        -f query="$THREADS_QUERY" \
-        -F owner="$OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" 2>"$GH_ERR_FILE")
-    fi
-    threads_status=$?
-    set -e
-    if [ "$threads_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$threads_json"; then
-      return 1
-    fi
-    # `gh api graphql` returns the response envelope; tolerate a pre-stripped
-    # object too so stubs and future gh versions both parse.
-    page_unresolved=$(jq '(.data // .)
-      | [.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)]
-      | length' <<<"$threads_json")
-    total=$((total + page_unresolved))
-    has_next=$(jq -r '(.data // .)
-      | .repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' <<<"$threads_json")
-    [ "$has_next" = "true" ] || break
-    cursor=$(jq -r '(.data // .)
-      | .repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' <<<"$threads_json")
-    [ -n "$cursor" ] || break
-  done
-  printf '%s\n' "$total"
-  return 0
+  : > "$GH_ERR_FILE"
+  orch_count_unresolved_threads "$OWNER" "$REPO_NAME" "$PR_NUM" "$GH_ERR_FILE"
 }
 
 # Classify the failed gh call whose stderr sits in GH_ERR_FILE (kendex#748).

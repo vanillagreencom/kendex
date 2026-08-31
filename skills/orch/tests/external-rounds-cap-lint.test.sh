@@ -5,11 +5,14 @@
 # gets a disposition and no fix push, except a defect the diff itself
 # introduces or arms, which is fixed whatever the round count.
 #
-# The runtime half of this contract is not re-proved here: `orch-env` resolves
-# the setting through the same precedence ladder every other setting takes, and
-# `orch_env.sh` drives that ladder variable-agnostically. What is here is the
-# document side — the identifiers each site must carry, and the two counting
-# invariants a token check cannot state.
+# The runtime half of this contract is not re-proved here. The cap's row —
+# its default of 4 and the `pr_comment_review.iterations` field it is measured
+# against — is pinned in `workflow-state-cycle-cap.sh`, which reads it from a
+# settings-free checkout so the number can only come from the table; the
+# precedence ladder above that row is `orch-env`'s, and `orch_env.sh` drives it
+# variable-agnostically. What is here is the document side — the identifiers
+# each site must carry, and the two counting invariants a token check cannot
+# state.
 #
 # NOT covered, and left uncovered on purpose:
 #
@@ -51,13 +54,15 @@ rule "finding-disposition names the counter and the cap that bounds it" \
   "$DISP" "" '`pr_comment_review.iterations`' '`REVIEW_MAX_EXTERNAL_ROUNDS`'
 
 # The cap is a setting, read once, in the section that decides the fix, and
-# resolved through orch-env beside REVIEW_MAX_CYCLES rather than written into
-# two workflows as a literal. A literal bound put back is the shape the setting
-# replaced, and it is the earlier site that silently wins when two disagree.
-rule_fenced "§ 6.1 resolves the cap through orch-env" "$CM" "$CAP" \
-  'orch-env REVIEW_MAX_EXTERNAL_ROUNDS'
+# resolved through the `workflow-state cap` table beside REVIEW_MAX_CYCLES
+# rather than written into two workflows as a literal. A literal bound put back
+# is the shape the setting replaced, and it is the earlier site that silently
+# wins when two disagree. Reading it through `cap` is also what makes the two
+# sites share one comparison: the verdict is the table's, not each caller's.
+rule_fenced "§ 6.1 resolves the cap through the cap table" "$CM" "$CAP" \
+  'workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS'
 rule_fenced "submit-pr's Restart check resolves the same setting" "$SUBMIT" "" \
-  'orch-env REVIEW_MAX_EXTERNAL_ROUNDS'
+  'workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS'
 rule "the cap's three reply forms are named where it is stated" "$CM" "$CAP" \
   '`Tracked: [ISSUE_ID]`' '`Fixed in [SHA]`' '`Declined: [REASON]`'
 rule "the rule's home states the introduced-or-armed exception" \

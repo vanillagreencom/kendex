@@ -710,6 +710,73 @@ bot_review_status_compute() {
         '{reviewer:$reviewer, status:$status, signals:$signals, updated_at:$updated_at, unresolved_threads:$unresolved}'
 }
 
+# Every reviewThreads page for a PR, merged into one JSON array of thread
+# nodes on stdout.
+#
+#   gh_graphql_threads OWNER REPO PR NODE_SELECTION
+#
+# NODE_SELECTION is the GraphQL selection set for a single thread node, so
+# each caller asks for the fields it reads and nothing more.
+#
+# GitHub caps one reviewThreads page at 100 nodes. Every caller here decides
+# whether a PR is clean, so a partial list must never reach one: a failed
+# page, a malformed response, a hasNextPage without a usable cursor, a cursor
+# that does not advance, or a walk past the page bound all return 1 and print
+# nothing.
+gh_graphql_threads() {
+    local owner="$1" repo="$2" pr="$3" node_selection="$4"
+    local query='
+query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { '"$node_selection"' }
+      }
+    }
+  }
+}'
+    local nodes='[]' cursor="" page page_nodes has_next next_cursor page_count=0
+    while :; do
+        page_count=$((page_count + 1))
+        if [ "$page_count" -gt 1000 ]; then
+            echo '{"error": "Review thread pagination exceeded its safety bound"}' >&2
+            return 1
+        fi
+
+        page=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr" ${cursor:+-F cursor="$cursor"}) || return 1
+
+        if ! jq -e '
+            .repository.pullRequest.reviewThreads as $t
+            | (($t | type) == "object")
+              and (($t.nodes | type) == "array")
+              and (($t.pageInfo.hasNextPage | type) == "boolean")
+              and (($t.pageInfo.hasNextPage | not)
+                   or ((($t.pageInfo.endCursor | type) == "string")
+                       and (($t.pageInfo.endCursor | length) > 0)))
+        ' >/dev/null 2>&1 <<<"$page"; then
+            echo '{"error": "GitHub returned malformed review thread pagination data"}' >&2
+            return 1
+        fi
+
+        page_nodes=$(jq -c '.repository.pullRequest.reviewThreads.nodes' <<<"$page") || return 1
+        # Both values reach jq on stdin: review bodies in argv can exceed
+        # ARG_MAX on macOS while the API response itself is perfectly valid.
+        nodes=$(printf '%s\n%s\n' "$nodes" "$page_nodes" | jq -sc '.[0] + .[1]') || return 1
+
+        has_next=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page") || return 1
+        [ "$has_next" = "true" ] || break
+
+        next_cursor=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$page") || return 1
+        if [ "$next_cursor" = "$cursor" ]; then
+            echo '{"error": "GitHub review thread pagination cursor did not advance"}' >&2
+            return 1
+        fi
+        cursor="$next_cursor"
+    done
+    printf '%s\n' "$nodes"
+}
+
 # Live wrapper: fetches all required inputs from GitHub and calls
 # bot_review_status_compute. Returns the same JSON shape.
 bot_review_status() {
@@ -731,36 +798,15 @@ bot_review_status() {
         own_reactions="[]"
     fi
 
-    # Fetch review threads via GraphQL (REST does not expose isResolved cleanly)
+    # Review threads come from GraphQL: REST does not expose isResolved cleanly.
     local repo_info owner repo
     repo_info=$(get_repo_info) || return 1
     owner=$(get_owner "$repo_info")
     repo=$(get_repo "$repo_info")
-    local query='
-query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
-  repository(owner: $owner, name: $repo) {
-    pullRequest(number: $pr) {
-      reviewThreads(first: 100, after: $cursor) {
-        pageInfo { hasNextPage endCursor }
-        nodes {
-          isResolved
-          isOutdated
-          comments(first: 5) { nodes { author { login } } }
-        }
-      }
-    }
-  }
-}'
-    # One page holds 100 threads; the unresolved ones may sit on the next.
-    threads='[]'
-    local cursor="" page
-    while :; do
-        page=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr" ${cursor:+-F cursor="$cursor"}) || return 1
-        threads=$(printf '%s\n%s\n' "$threads" "$page" \
-            | jq -sc '.[0] + (.[1].repository.pullRequest.reviewThreads.nodes // [])') || return 1
-        cursor=$(jq -r '.repository.pullRequest.reviewThreads | select(.pageInfo.hasNextPage) | .pageInfo.endCursor // ""' <<<"$page")
-        [ -n "$cursor" ] || break
-    done
+    threads=$(gh_graphql_threads "$owner" "$repo" "$pr" '
+                          isResolved
+                          isOutdated
+                          comments(first: 5) { nodes { author { login } } }') || return 1
 
     bot_review_status_compute "$reviewer" "$reviews" "$comments" "$body_reactions" "$own_reactions" "$threads"
 }

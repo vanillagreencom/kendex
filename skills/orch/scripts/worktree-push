@@ -25,14 +25,9 @@
 #   - prints one `sha-reconcile:` summary line naming what changed.
 #
 # The rebase happens BEFORE the network push, so a rejected push can still
-# have rewritten the branch. The parsed map is persisted to a sidecar file in
-# the worktree's own git dir
-# (<git-dir>/worktree-push-pending-map-<canonical-key>.json, the git dir
-# being .git/worktrees/<name>/ for a linked worktree) before the state write
-# and deleted only after the write lands; every run consumes a pending
-# sidecar before pushing, so a retry re-applies a map an earlier run could
-# not record. The git dir is never tracked content, so nothing a branch
-# ships can plant or redirect the sidecar.
+# have rewritten the branch: the map is applied to workflow state whatever the
+# push's exit code. A state write that fails leaves the rebase-map lines in
+# the replayed transcript as the only copy, and says so on stderr.
 #
 # Artifact-sourced SHAs (for example a perf QA `benchmark_commit`) are not in
 # workflow state; publishers resolve those through `.rebase_map`, following
@@ -44,32 +39,25 @@
 # Every argument outside this wrapper's own namespace (--worktree, --issue,
 # --state-dir, --help) is forwarded verbatim to `worktree push`, which rejects
 # a flag it does not know. The push flag vocabulary lives there alone; see
-# `worktree push --help`, which is where a mistyped flag is caught. What
-# stands between a wrong argument and a wrong write is the state resolution
-# above the sidecar: a state file recording another issue or another worktree
-# is refused, an ambiguous one is refused, and a reconcile that fails keeps
-# the sidecar for the retry.
+# `worktree push --help`, which is where a mistyped flag is caught.
 # The state file resolves exactly like any other workflow-state call:
 # --state-dir, then $ORCH_STATE_DIR, then tmp/ under the caller's working
 # directory.
 #
 # Exit codes:
 #   push failed  -> the push's own exit code, always — any printed map is
-#                   applied to workflow state where possible, left in the
-#                   sidecar when that write fails, and a map that cannot
-#                   even be parsed is reported on stderr without changing
-#                   the exit code, with the transcript (its rebase-map
-#                   lines included) replayed first as the surviving copy.
-#                   A sidecar that cannot be written still gets its map
-#                   applied to workflow state directly
+#                   applied to workflow state where possible, and a map that
+#                   cannot even be parsed is reported on stderr without
+#                   changing the exit code, with the transcript (its
+#                   rebase-map lines included) replayed first as the
+#                   surviving copy
 #   push ok      -> 0 when no rebase-map printed, or every mapping was
 #                   recorded and applied
-#   1            -> the push landed (or never ran: usage error, pending
-#                   sidecar, or ambiguous/mismatched state before the push) but
-#                   reconciliation did not (no state file, unparseable map
-#                   line, jq/update failure). The recorded SHAs are NOT
-#                   reconciled — repair state, then re-run to consume the
-#                   sidecar, before publishing any of them.
+#   1            -> the push landed (or never ran: usage error, or state that
+#                   would not resolve) but reconciliation did not (no state
+#                   file, unparseable map line, jq/update failure). The
+#                   recorded SHAs are NOT reconciled — repair state and
+#                   re-run before publishing any of them.
 
 set -euo pipefail
 
@@ -147,7 +135,7 @@ command -v jq >/dev/null 2>&1 || fail "jq is required to reconcile rebased SHAs"
 
 worktree_abs="$(cd -P -- "$worktree" 2>/dev/null && pwd -P)" \
 	|| fail "not a directory: $worktree"
-git_dir="$(git -C "$worktree_abs" rev-parse --absolute-git-dir 2>/dev/null)" \
+git -C "$worktree_abs" rev-parse --absolute-git-dir >/dev/null 2>&1 \
 	|| fail "not a git worktree: $worktree_abs"
 git_common_dir="$(git -C "$worktree_abs" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
 	|| fail "could not resolve the git common directory for $worktree_abs"
@@ -315,16 +303,11 @@ reconcile_map() {
 		"$(jq -r '.pr_fixes' <<<"$report")"
 }
 
-# A workflow state resolved from the wrong arguments would rewrite another
-# record's commits and report success while the intended state stays stale,
-# so the selected state must agree with the arguments before anything runs.
-# The bare-numeric alias (issue N stored under issue-N) is the one accepted
-# spelling difference; an empty recorded worktree cannot be verified and is
-# accepted as-is. `exists --json` answers {path, exists} and errors (exit 2)
-# when BOTH the bare-numeric and issue-N files exist and the target is
-# ambiguous. Only a definite yes or no may reach the push: an ambiguous or
-# unreadable state cannot be the reconciliation target of the rebase the
-# push is about to perform.
+# `reconcile_round_authorizations` names the round-authorization files after
+# the state file's own key, so the state has to resolve before the push. The
+# bare-numeric alias (issue N stored under issue-N) is the one accepted
+# spelling difference; `exists --json` answers {path, exists} and errors
+# (exit 2) when BOTH files exist and the target is ambiguous.
 state_exists_rc=0
 state_info="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} exists --json "$issue")" || state_exists_rc=$?
 if [[ "$state_exists_rc" -ne 0 ]]; then
@@ -334,69 +317,26 @@ state_file="$(jq -r '.path // ""' <<<"$state_info")"
 state_present="$(jq -r '.exists' <<<"$state_info")"
 [[ -n "$state_file" && ( "$state_present" == "true" || "$state_present" == "false" ) ]] \
 	|| fail "unexpected exists --json answer for '$issue': $state_info"
-if [[ "$state_present" == "true" ]]; then
-	state_issue="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.issue_id // ""')" \
-		|| fail "could not read the workflow state for $issue"
-	if [[ "$state_issue" != "$issue" ]] \
-		&& ! [[ "$issue" =~ ^[0-9]+$ && "$state_issue" == "issue-$issue" ]]; then
-		fail "workflow state for '$issue' records issue_id '$state_issue'; refusing to rewrite another issue's record"
-	fi
-	state_wt="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.worktree // ""')" \
-		|| fail "could not read the workflow state for $issue"
-	if [[ -n "$state_wt" ]]; then
-		state_wt_abs="$(cd -P -- "$state_wt" 2>/dev/null && pwd -P)" \
-			|| fail "workflow state for $issue records worktree '$state_wt', which does not resolve; refusing to reconcile against it"
-		[[ "$state_wt_abs" == "$worktree_abs" ]] \
-			|| fail "workflow state for $issue records worktree '$state_wt_abs', not '$worktree_abs'; refusing to rewrite another worktree's record"
-	fi
-fi
-
-# The sidecar is recovery state, so it lives in the worktree's own git dir —
-# never tracked content, so nothing a branch ships can plant or redirect it —
-# under ONE canonical key per issue, used for write and lookup alike so every
-# accepted spelling hits the same file: the key of the resolved state file
-# when one exists, and the normalized issue-N key when none does (a missing
-# state resolves to the raw spelling, but GitHub-issue orchestration inits
-# state under issue-N, so a bare-numeric push that strands a map and an
-# issue-N retry that must consume it have to agree on one name).
 state_key="$(basename -- "$state_file")"
 state_key="${state_key#workflow-state-}"
 state_key="${state_key%.json}"
 if [[ "$state_present" != "true" && "$issue" =~ ^[0-9]+$ ]]; then
 	state_key="issue-$issue"
 fi
-sidecar="$git_dir/worktree-push-pending-map-$state_key.json"
-
-# A sidecar left by an earlier run is a rebase that already happened; its map
-# must land before this run pushes (and possibly rebases again). Only this
-# tool writes in the git dir, so the content is trusted; a damaged file still
-# fails closed — reconcile_map's fromjson errors and the map is kept.
-#
-# It reconciles HERE, above the push, and not below it (KEN-907): once this
-# run has pushed it has already rebased, so a reconcile that fails down there
-# would exit with this run's own map persisted nowhere, and the retry does
-# not rebase again to reprint it.
-if [[ -f "$sidecar" ]]; then
-	pending_map="$(cat -- "$sidecar")" || fail "could not read the pending rebase map at $sidecar"
-	reconcile_map "$pending_map" \
-		|| fail "a pending rebase map from an earlier push could not be applied to $issue's workflow state; recorded SHAs are NOT reconciled (map kept at $sidecar)"
-	rm -f -- "$sidecar"
-fi
 
 push_out="$(mktemp)" || fail "could not create a temporary file for the push output"
 trap 'rm -f "$push_out"' EXIT
 
-# Push stderr streams through live; stdout is captured, then replayed after
-# the rebase map is safely parsed and persisted — see below.
+# Push stderr streams through live; stdout is captured, then replayed once
+# the rebase map has been parsed — see below.
 push_rc=0
 "$WORKTREE_BIN" push "$worktree_abs" ${push_args[@]+"${push_args[@]}"} >"$push_out" || push_rc=$?
 
 # A failure after the push keeps the push's own exit code: exit 1 must mean
 # "the push landed but reconciliation did not", never dress a failed push as
-# a landed one. The transcript replays first: on these paths no sidecar
-# exists, so the rebase-map lines in the transcript are the only surviving
-# copy of a map the completed rebase cannot regenerate (|| true keeps the
-# dying-stdout case from suppressing the diagnostic).
+# a landed one. The transcript replays first: its rebase-map lines are the
+# only surviving copy of a map the completed rebase cannot regenerate
+# (|| true keeps the dying-stdout case from suppressing the diagnostic).
 fail_post_push() {
 	cat "$push_out" || true
 	printf 'worktree-push: %s\n' "$1" >&2
@@ -424,58 +364,21 @@ if [[ -n "$map_lines" ]]; then
 	done <<<"$map_lines"
 fi
 
-# The rebase is local reality even when the network push failed, so the map
-# is persisted BEFORE the transcript replay and applied regardless of the
-# push's exit code; the sidecar survives a failed state write (or a dying
-# stdout) for the retry to consume. The state write is independent of the
-# sidecar, so a sidecar that cannot be written still gets its map applied —
-# a sidecar failure alone costs only the retry convenience; only both failing
-# together loses the reconciliation, with the transcript's map lines as the
-# surviving copy.
-reconciled_without_sidecar=false
-if [[ "$map_json" != '{}' ]]; then
-	# Staged via mktemp and renamed into place, so a torn write never leaves
-	# a plausible half-map at the sidecar name.
-	sidecar_err=''
-	stage=''
-	if ! stage=$(mktemp -- "$sidecar.XXXXXX"); then
-		sidecar_err="could not create a staging file for the rebase-map sidecar in $git_dir"
-	elif ! printf '%s\n' "$map_json" >"$stage"; then
-		rm -f -- "$stage"
-		sidecar_err="could not write the rebase-map sidecar staging file at $stage"
-	elif ! mv -- "$stage" "$sidecar"; then
-		rm -f -- "$stage"
-		sidecar_err="could not move the rebase-map sidecar into place at $sidecar"
-	fi
-	if [[ -n "$sidecar_err" ]]; then
-		if reconcile_map "$map_json"; then
-			reconciled_without_sidecar=true
-			printf 'worktree-push: %s; the map was still applied to workflow state\n' "$sidecar_err" >&2
-		else
-			fail_post_push "$sidecar_err AND the map could not be applied to workflow state; recorded SHAs are NOT reconciled — the rebase-map lines in the transcript above are the only copy"
-		fi
-	fi
-fi
-
-# The replay is informational; a broken stdout must not abort the run before
-# the map reaches workflow state (the sidecar already has it either way).
+# The replay is informational, and it runs BEFORE the state write: a broken
+# stdout must not abort the run before the map reaches workflow state, and on
+# a failed write those rebase-map lines are the map's only surviving copy.
 cat "$push_out" || true
 
 if [[ "$map_json" == '{}' ]]; then
 	exit "$push_rc"
 fi
 
-if [[ "$reconciled_without_sidecar" == true ]]; then
-	exit "$push_rc"
-fi
-
 if reconcile_map "$map_json"; then
-	rm -f -- "$sidecar"
 	exit "$push_rc"
 fi
 
-printf 'worktree-push: the rebase map was NOT recorded for %s; recorded SHAs are NOT reconciled (map kept at %s — repair workflow state and re-run)\n' \
-	"$issue" "$sidecar" >&2
+printf 'worktree-push: the rebase map was NOT recorded for %s; recorded SHAs are NOT reconciled (repair workflow state and re-run — the rebase-map lines replayed above are the only copy)\n' \
+	"$issue" >&2
 if [[ "$push_rc" -ne 0 ]]; then
 	exit "$push_rc"
 fi

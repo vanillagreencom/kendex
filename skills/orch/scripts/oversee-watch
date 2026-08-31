@@ -94,9 +94,6 @@ USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reach
 # A turn in flight: the interrupt hint (both harnesses), the hint shown while
 # a foreground shell runs, or the streaming token counter of the status line.
 WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
-# A ready input prompt: either harness's marker at column 0, or Codex's submit
-# hint. Present while working, so it decides idleness only with WORKING_RE out.
-IDLE_PROMPT_RE='^❯|^›|to submit message'
 # The marker each harness draws at column 0 for a submitted user message
 # echoed into the transcript AND for the composer the lane sits at: Claude
 # Code `❯`, Codex `›`. Spelled as an alternation of literals and NEVER as a
@@ -619,7 +616,7 @@ check_lanes() {
     if [[ "$(lane_state "$states" "$i")" == exited ]]; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
     if grep -Eq -- "$WORKING_RE" <<<"$(pane_below_last_turn "$pane")"; then continue; fi
-    if ! grep -Eq -- "$IDLE_PROMPT_RE" <<<"$(pane_below_last_turn "$pane")"; then continue; fi
+    if ! grep -Eq -- "$PANE_MARKER_RE" <<<"$(pane_below_last_turn "$pane")"; then continue; fi
     idle_now+="$i"$'\n'
     if grep -qxF -- "$i" <<<"$LANE_IDLE_SEEN"; then
       echo "EVENT idle-after-return $lane"

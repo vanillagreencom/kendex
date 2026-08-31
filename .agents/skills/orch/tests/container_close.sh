@@ -200,13 +200,21 @@ printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"compl
 "$SHAPE_MUTANT" "$SANDBOX" PARENT-1 >/dev/null
 [[ -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "validation-shape mutant accepts string true" || fail "validation-shape mutant accepts string true"
 
+# The PR reference decorates the summary; it never decides the close. A
+# lookup that cannot answer prints `unavailable` on the child's line and says
+# why on stderr, and the container still reaches Done.
 for gh_mode in exit invalid; do
   reset_state
   printf '%s\n' "$gh_mode" > "$FAKE_LINEAR_ROOT/gh.mode"
   printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
-  rc=0; run_close >/dev/null 2>"$TMP_ROOT/gh-$gh_mode.err" || rc=$?
-  [[ $rc -ne 0 && ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "$gh_mode PR lookup prevents parent mutation" || fail "$gh_mode PR lookup prevents parent mutation"
+  rc=0; out="$(run_close 2>"$TMP_ROOT/gh-$gh_mode.err")" || rc=$?
+  assert_eq "$rc" "0" "$gh_mode PR lookup still closes the container"
+  assert_eq "$out" "closed PARENT-1" "$gh_mode PR lookup prints the close"
+  [[ -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "$gh_mode PR lookup completes the parent" || fail "$gh_mode PR lookup completes the parent"
+  assert_contains "$FAKE_LINEAR_ROOT/summary.body" "CHILD-1 ✓ one — PR unavailable" "$gh_mode PR lookup marks the reference unavailable"
+  grep -Fq 'PR' "$TMP_ROOT/gh-$gh_mode.err" && ok "$gh_mode PR lookup names the failure on stderr" || fail "$gh_mode PR lookup names the failure on stderr"
 done
+printf '' > "$FAKE_LINEAR_ROOT/gh.mode"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":{"bad":true},"state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"

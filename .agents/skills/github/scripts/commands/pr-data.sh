@@ -135,23 +135,6 @@ query($owner: String!, $repo: String!, $pr: Int!) {
       reactions(first: 100) {
         nodes { content user { login } }
       }
-      reviewThreads(first: 100) {
-        pageInfo { hasNextPage endCursor }
-        nodes {
-          id
-          isResolved
-          isOutdated
-          path
-          line
-          comments(first: 10) {
-            nodes {
-              author { login }
-              body
-              url
-            }
-          }
-        }
-      }
       comments(first: 50) {
         nodes {
           id
@@ -171,50 +154,23 @@ query($owner: String!, $repo: String!, $pr: Int!) {
     local result
     result=$(gh_graphql "$query" -F owner="$owner" -F repo="$repo" -F pr="$pr_num") || exit 1
 
-    # GitHub caps one reviewThreads page at 100; a PR with more threads must
-    # not read as clean because its unresolved ones sit on a later page.
-    local threads_query='
-query($owner: String!, $repo: String!, $pr: Int!, $cursor: String!) {
-  repository(owner: $owner, name: $repo) {
-    pullRequest(number: $pr) {
-      reviewThreads(first: 100, after: $cursor) {
-        pageInfo { hasNextPage endCursor }
-        nodes {
-          id
-          isResolved
-          isOutdated
-          path
-          line
-          comments(first: 10) {
-            nodes {
-              author { login }
-              body
-              url
-            }
-          }
+    # Threads are paged separately, by the one pager: a PR with more than 100
+    # of them must not read as clean because its unresolved ones sit on a
+    # later page. The merged nodes are grafted onto the shape callers walk.
+    local threads
+    threads=$(gh_graphql_threads "$owner" "$repo" "$pr_num" '
+                          id
+                          isResolved
+                          isOutdated
+                          path
+                          line
+                          comments(first: 10) { nodes { author { login } body url } }') || exit 1
+    result=$(printf '%s\n%s\n' "$result" "$threads" | jq -sc '
+        .[0].repository.pullRequest.reviewThreads = {
+            nodes: .[1],
+            pageInfo: {hasNextPage: false, endCursor: null}
         }
-      }
-    }
-  }
-}'
-    local has_next cursor page_count=0
-    has_next=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' <<<"$result") || exit 1
-    cursor=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' <<<"$result") || exit 1
-    while [ "$has_next" = "true" ]; do
-        page_count=$((page_count + 1))
-        if [ "$page_count" -gt 1000 ] || [ -z "$cursor" ]; then
-            echo '{"error": "Review thread pagination did not advance"}' >&2
-            exit 1
-        fi
-        local page
-        page=$(gh_graphql "$threads_query" -F owner="$owner" -F repo="$repo" -F pr="$pr_num" -F cursor="$cursor") || exit 1
-        result=$(printf '%s\n%s\n' "$result" "$page" | jq -sc '
-            .[0].repository.pullRequest.reviewThreads.nodes += .[1].repository.pullRequest.reviewThreads.nodes
-            | .[0].repository.pullRequest.reviewThreads.pageInfo = .[1].repository.pullRequest.reviewThreads.pageInfo
-            | .[0]') || exit 1
-        has_next=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' <<<"$result") || exit 1
-        cursor=$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' <<<"$result") || exit 1
-    done
+        | .[0]') || exit 1
 
     # Apply format
     local output

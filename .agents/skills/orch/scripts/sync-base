@@ -52,34 +52,9 @@ if [[ -n "$BASE_WORKTREE" ]]; then
     printf '%s\n' "$DIRTY" >&2
     exit 1
   fi
-  COLLISION_DIR="$(mktemp -d)" || { echo "sync-base: cannot create collision scratch" >&2; exit 1; }
-  trap 'rm -rf "$COLLISION_DIR"' EXIT
-  INCOMING_PATHS="$COLLISION_DIR/incoming"
-  LOCAL_PATHS="$COLLISION_DIR/local"
-  git -C "$BASE_WORKTREE" diff --no-renames --name-only -z --diff-filter=A \
-    HEAD "origin/$BASE_BRANCH" -- > "$INCOMING_PATHS" \
-    || { echo "sync-base: cannot enumerate incoming paths" >&2; exit 1; }
-  : > "$LOCAL_PATHS"
-  git -C "$BASE_WORKTREE" ls-files --others --exclude-standard -z >> "$LOCAL_PATHS" \
-    || { echo "sync-base: cannot enumerate untracked paths" >&2; exit 1; }
-  git -C "$BASE_WORKTREE" ls-files --others --ignored --exclude-standard --directory -z >> "$LOCAL_PATHS" \
-    || { echo "sync-base: cannot enumerate ignored untracked paths" >&2; exit 1; }
-  COLLISION=""
-  INCOMING_COLLISION=""
-  while IFS= read -r -d '' incoming; do
-    while IFS= read -r -d '' local_path; do
-      local_root="${local_path%/}"
-      if [[ "$incoming" == "$local_root" || "$incoming" == "$local_root/"* || "$local_root" == "$incoming/"* ]]; then
-        COLLISION="$local_path"
-        INCOMING_COLLISION="$incoming"
-        break 2
-      fi
-    done < "$LOCAL_PATHS"
-  done < "$INCOMING_PATHS"
-  [[ -z "$COLLISION" ]] || {
-    printf 'sync-base: incoming path %s collides with untracked path %s\n' "$INCOMING_COLLISION" "$COLLISION" >&2
-    exit 1
-  }
+  # `--ff-only --no-overwrite-ignore` is the collision judge: it refuses the
+  # merge when an incoming path would clobber an untracked or ignored file,
+  # and it refuses without touching the tree. Nothing scans ahead of it.
   git -C "$BASE_WORKTREE" merge --ff-only --no-overwrite-ignore "origin/$BASE_BRANCH" >&2
   LOCAL_SHA="$(git -C "$BASE_WORKTREE" rev-parse "refs/heads/$BASE_BRANCH")" \
     || { echo "sync-base: cannot resolve local $BASE_BRANCH after fast-forward" >&2; exit 1; }

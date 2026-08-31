@@ -64,21 +64,27 @@ print_deferred() {
   while IFS= read -r id; do [[ -z "$id" ]] || printf ' %s' "$id"; done <<<"$1"
   printf '\n'
 }
+# The child's merged PR, for the summary line. A reference the summary can
+# print, never a reason to abandon the close: the container is Done either
+# way, and a lookup that cannot answer says `unavailable` in the line it was
+# collected for. The reason reaches stderr, which the caller preserves.
 child_pr() {
   local child_id="$1" rows number
-  command -v gh >/dev/null 2>&1 \
-    || { echo "container-close: gh is required to preserve child PR references" >&2; return 1; }
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "container-close: gh is unavailable; $child_id's PR reference is not resolved" >&2
+    printf 'unavailable\n'; return 0
+  fi
   rows="$(cd -- "$MAIN_REPO_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
     gh pr list --state merged --search "$child_id" --limit 100 \
       --json number,headRefName,mergedAt,isCrossRepository)" \
-    || { echo "container-close: cannot resolve PR for $child_id" >&2; return 1; }
+    || { echo "container-close: cannot resolve PR for $child_id" >&2; printf 'unavailable\n'; return 0; }
   number="$(jq -r --arg id "$child_id" '
     ($id | ascii_downcase) as $needle |
     [.[] | select(.isCrossRepository != true) |
       select((.headRefName | ascii_downcase | split("/") | last) as $branch |
         $branch == $needle or ($branch | startswith($needle + "-")) or ($branch | startswith($needle + "_")))] |
     sort_by(.mergedAt) | last | .number // empty
-  ' <<<"$rows")" || { echo "container-close: invalid PR response for $child_id" >&2; return 1; }
+  ' <<<"$rows")" || { echo "container-close: invalid PR response for $child_id" >&2; printf 'unavailable\n'; return 0; }
   [[ -n "$number" ]] && printf '#%s\n' "$number" || printf 'unavailable\n'
 }
 
@@ -134,7 +140,7 @@ if [[ "$HAS_SUMMARY" == "false" ]]; then
   while IFS=$'\t' read -r id title state_type; do
     [[ "$state_type" == "completed" ]] \
       || { echo "container-close: child $id has unexpected summary state: $state_type" >&2; exit 1; }
-    PR_REFERENCE="$(child_pr "$id")" || exit 1
+    PR_REFERENCE="$(child_pr "$id")"
     printf -- '- %s ✓ %s — PR %s\n' "$id" "$title" "$PR_REFERENCE" >> "$SUMMARY"
   done < "$CHILD_ROWS"
   COMPLETE_ARGS+=(--summary-file "$SUMMARY")

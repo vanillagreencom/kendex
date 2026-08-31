@@ -13,30 +13,6 @@ ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || { printf '        expected: %s\n        got:      %s\n' "$2" "$1"; fail "$3"; }; }
 
-REAL_GIT="$(command -v git)"
-GIT_SHIM_DIR="$TMP_ROOT/git-shim"
-mkdir "$GIT_SHIM_DIR"
-cat > "$GIT_SHIM_DIR/git" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-ignored=false
-for arg in "$@"; do [[ "$arg" == --ignored ]] && ignored=true; done
-if $ignored && [[ -n "${IGNORED_ENUM_CAPTURE:-}${POST_SCAN_PATH:-}" ]]; then
-  scratch="${GIT_SHIM_SCRATCH:?}/git-output.$$"
-  rc=0
-  "$REAL_GIT" "$@" > "$scratch" || rc=$?
-  [[ -z "${IGNORED_ENUM_CAPTURE:-}" ]] || cp "$scratch" "$IGNORED_ENUM_CAPTURE"
-  cat "$scratch"
-  if [[ $rc -eq 0 && -n "${POST_SCAN_PATH:-}" ]]; then
-    printf '%s\n' "${POST_SCAN_CONTENT:-local post-scan}" > "$POST_SCAN_PATH"
-  fi
-  rm -f "$scratch"
-  exit "$rc"
-fi
-exec "$REAL_GIT" "$@"
-SH
-chmod +x "$GIT_SHIM_DIR/git"
-
 UPSTREAM="$TMP_ROOT/upstream.git"
 SEED="$TMP_ROOT/seed"
 CLONE="$TMP_ROOT/clone"
@@ -169,7 +145,8 @@ out="$($SYNC "$CLONE" 2>"$TMP_ROOT/untracked-clobber.err")" || rc=$?
 [[ $rc -ne 0 ]] && ok "untracked clobber fails closed" || fail "untracked clobber fails closed"
 assert_eq "$out" "" "untracked clobber prints no branch"
 assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "untracked clobber does not advance the base"
-grep -Fq 'incoming path clobber collides with untracked path clobber' "$TMP_ROOT/untracked-clobber.err" && ok "untracked clobber refusal names both paths" || fail "untracked clobber refusal names both paths"
+grep -Fq 'untracked working tree files would be overwritten' "$TMP_ROOT/untracked-clobber.err" && ok "untracked clobber refusal names the overwrite" || fail "untracked clobber refusal names the overwrite"
+grep -Fq 'clobber' "$TMP_ROOT/untracked-clobber.err" && ok "untracked clobber refusal names the path" || fail "untracked clobber refusal names the path"
 assert_eq "$(cat "$BASE_TREE/clobber")" "local clobber" "untracked clobber is preserved"
 rm -f -- "$BASE_TREE/clobber"
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/sync.err")"
@@ -186,66 +163,12 @@ out="$($SYNC "$CLONE" 2>"$TMP_ROOT/ignored-clobber.err")" || rc=$?
 [[ $rc -ne 0 ]] && ok "ignored untracked clobber fails closed" || fail "ignored untracked clobber fails closed"
 assert_eq "$out" "" "ignored untracked clobber prints no branch"
 assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "ignored untracked clobber does not advance the base"
-grep -Fq 'incoming path ignored-clobber collides with untracked path ignored-clobber' "$TMP_ROOT/ignored-clobber.err" && ok "ignored collision refusal names both paths" || fail "ignored collision refusal names both paths"
+grep -Fq 'ignored-clobber' "$TMP_ROOT/ignored-clobber.err" && ok "ignored collision refusal names the path" || fail "ignored collision refusal names the path"
 assert_eq "$(cat "$BASE_TREE/ignored-clobber")" "local ignored clobber" "ignored collision preserves local data"
 
-IGNORED_MUTANT="$TMP_ROOT/sync-base-ignored-mutant"
-assert_eq "$(grep -Fc -- 'ls-files --others --ignored --exclude-standard --directory -z' "$SYNC")" "1" "ignored collision control finds ignored path enumeration"
-awk '
-  index($0, "SCRIPT_DIR=\"$(cd --") { print "SCRIPT_DIR=\"${SYNC_TEST_SCRIPT_DIR:?}\""; next }
-  { sub(/--others --ignored --exclude-standard --directory/, "--others --exclude-standard --directory"); print }
-' "$SYNC" > "$IGNORED_MUTANT"
-chmod +x "$IGNORED_MUTANT"
-rc=0
-out="$(SYNC_TEST_SCRIPT_DIR="$REPO_ROOT/skills/orch/scripts" "$IGNORED_MUTANT" "$CLONE" 2>"$TMP_ROOT/ignored-mutant.err")" || rc=$?
-[[ $rc -ne 0 ]] && ok "effectful merge refuses ignored collision after diagnostic omission" || fail "effectful merge refuses ignored collision after diagnostic omission"
-assert_eq "$out" "" "ignored diagnostic mutant prints no branch"
-assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "ignored diagnostic mutant does not advance the base"
-assert_eq "$(cat "$BASE_TREE/ignored-clobber")" "local ignored clobber" "effectful refusal preserves ignored local data"
 rm -f -- "$BASE_TREE/ignored-clobber"
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/sync.err")"
 assert_eq "$out" "main" "cleaned ignored clobber base can catch up"
-
-mkdir "$BASE_TREE/ignored-tree"
-for number in {1..200}; do printf 'ignored\n' > "$BASE_TREE/ignored-tree/file-$number"; done
-printf 'enumeration\n' >> "$SEED/file"
-git -C "$SEED" add file
-git -C "$SEED" commit -q -m enumeration
-git -C "$SEED" push -q "$UPSTREAM" main
-ENUM_CAPTURE="$TMP_ROOT/ignored-enumeration"
-out="$(PATH="$GIT_SHIM_DIR:$PATH" REAL_GIT="$REAL_GIT" GIT_SHIM_SCRATCH="$TMP_ROOT" \
-  IGNORED_ENUM_CAPTURE="$ENUM_CAPTURE" "$SYNC" "$CLONE" 2>"$TMP_ROOT/enumeration.err")"
-assert_eq "$out" "main" "collapsed ignored tree allows base sync"
-assert_eq "$(tr '\0' '\n' < "$ENUM_CAPTURE" | sed '/^$/d' | wc -l | tr -d ' ')" "1" "ignored tree enumeration is bounded to one entry"
-assert_eq "$(tr '\0' '\n' < "$ENUM_CAPTURE")" "ignored-tree/" "ignored tree enumeration retains its collision prefix"
-
-ENUM_MUTANT="$TMP_ROOT/sync-base-enumeration-mutant"
-assert_eq "$(grep -Fc -- '--ignored --exclude-standard --directory -z' "$SYNC")" "1" "enumeration control finds directory collapsing"
-awk '
-  index($0, "SCRIPT_DIR=\"$(cd --") { print "SCRIPT_DIR=\"${SYNC_TEST_SCRIPT_DIR:?}\""; next }
-  { sub(/--ignored --exclude-standard --directory -z/, "--ignored --exclude-standard -z"); print }
-' "$SYNC" > "$ENUM_MUTANT"
-chmod +x "$ENUM_MUTANT"
-MUTANT_ENUM_CAPTURE="$TMP_ROOT/ignored-enumeration-mutant"
-SYNC_TEST_SCRIPT_DIR="$REPO_ROOT/skills/orch/scripts" PATH="$GIT_SHIM_DIR:$PATH" REAL_GIT="$REAL_GIT" \
-  GIT_SHIM_SCRATCH="$TMP_ROOT" IGNORED_ENUM_CAPTURE="$MUTANT_ENUM_CAPTURE" \
-  "$ENUM_MUTANT" "$CLONE" >/dev/null 2>"$TMP_ROOT/enumeration-mutant.err"
-mutant_entries="$(tr '\0' '\n' < "$MUTANT_ENUM_CAPTURE" | sed '/^$/d' | wc -l | tr -d ' ')"
-[[ "$mutant_entries" -ge 200 ]] && ok "enumeration control fails without directory collapsing" || fail "enumeration control fails without directory collapsing"
-
-printf 'upstream post-scan\n' > "$SEED/ignored-post-scan"
-git -C "$SEED" add -f ignored-post-scan
-git -C "$SEED" commit -q -m post-scan
-git -C "$SEED" push -q "$UPSTREAM" main
-before="$(git -C "$BASE_TREE" rev-parse HEAD)"
-rc=0
-out="$(PATH="$GIT_SHIM_DIR:$PATH" REAL_GIT="$REAL_GIT" GIT_SHIM_SCRATCH="$TMP_ROOT" \
-  POST_SCAN_PATH="$BASE_TREE/ignored-post-scan" POST_SCAN_CONTENT="local post-scan" \
-  "$SYNC" "$CLONE" 2>"$TMP_ROOT/post-scan.err")" || rc=$?
-[[ $rc -ne 0 ]] && ok "effectful merge refuses an ignored writer after enumeration" || fail "effectful merge refuses an ignored writer after enumeration"
-assert_eq "$out" "" "post-scan collision prints no branch"
-assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "post-scan collision does not advance the base"
-assert_eq "$(cat "$BASE_TREE/ignored-post-scan")" "local post-scan" "post-scan collision preserves local data"
 
 EFFECT_MUTANT="$TMP_ROOT/sync-base-effect-mutant"
 assert_eq "$(grep -Fc -- 'merge --ff-only --no-overwrite-ignore' "$SYNC")" "1" "effect control finds no-overwrite-ignore"
@@ -254,12 +177,14 @@ awk '
   { sub(/--ff-only --no-overwrite-ignore/, "--ff-only"); print }
 ' "$SYNC" > "$EFFECT_MUTANT"
 chmod +x "$EFFECT_MUTANT"
-rm -f -- "$BASE_TREE/ignored-post-scan"
-out="$(SYNC_TEST_SCRIPT_DIR="$REPO_ROOT/skills/orch/scripts" PATH="$GIT_SHIM_DIR:$PATH" REAL_GIT="$REAL_GIT" \
-  GIT_SHIM_SCRATCH="$TMP_ROOT" POST_SCAN_PATH="$BASE_TREE/ignored-post-scan" POST_SCAN_CONTENT="local post-scan" \
-  "$EFFECT_MUTANT" "$CLONE" 2>"$TMP_ROOT/effect-mutant.err")"
+printf 'upstream effect\n' > "$SEED/ignored-effect"
+git -C "$SEED" add -f ignored-effect
+git -C "$SEED" commit -q -m ignored-effect
+git -C "$SEED" push -q "$UPSTREAM" main
+printf 'local effect\n' > "$BASE_TREE/ignored-effect"
+out="$(SYNC_TEST_SCRIPT_DIR="$REPO_ROOT/skills/orch/scripts" "$EFFECT_MUTANT" "$CLONE" 2>"$TMP_ROOT/effect-mutant.err")"
 assert_eq "$out" "main" "effect control fails when merge may overwrite ignored data"
-assert_eq "$(cat "$BASE_TREE/ignored-post-scan")" "upstream post-scan" "effect mutant exposes post-scan data loss"
+assert_eq "$(cat "$BASE_TREE/ignored-effect")" "upstream effect" "effect mutant exposes the ignored-file data loss the flag prevents"
 
 CASE_PROBE="$BASE_TREE/case-probe"
 mkdir "$CASE_PROBE"

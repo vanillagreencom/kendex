@@ -11,6 +11,8 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
+# shellcheck source=lib/review-threads.sh
+source "$SCRIPT_DIR/lib/review-threads.sh"
 
 print_usage() {
   cat <<'USAGE'
@@ -630,85 +632,12 @@ probe_failed_check() {
 }
 
 # --- Late-findings guard (kendex#1289) --------------------------------------
-# Same reviewThreads surface approval-wait reads.
-THREADS_QUERY='query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
-  repository(owner: $owner, name: $repo) {
-    pullRequest(number: $number) {
-      reviewThreads(first: 100, after: $cursor) {
-        pageInfo { hasNextPage endCursor }
-        nodes { isResolved }
-      }
-    }
-  }
-}'
-
-# Count unresolved review threads with a strict, fail-closed read (the
-# review-predicate posture: anything unverifiable is "no evidence", never
-# "no threads"). Prints the count; returns nonzero on a query failure, a
-# null/malformed reviewThreads, a non-boolean isResolved, a hasNextPage with
-# a missing or non-advancing cursor, or a pagination walk needing more than
-# GUARD_MAX_THREAD_PAGES pages.
-GUARD_MAX_THREAD_PAGES=20
-
+# The reviewThreads walk is lib/review-threads.sh's, shared with approval-wait
+# so the waiter and this guard cannot disagree about what an open thread is.
+# It is fail-closed throughout (the review-predicate posture: anything
+# unverifiable is "no evidence", never "no threads").
 count_unresolved_threads() {
-  local cursor="" total=0 pages=0 threads_json threads_status
-  local page_result page_count page_next page_cursor
-  while true; do
-    pages=$((pages + 1))
-    [ "$pages" -le "$GUARD_MAX_THREAD_PAGES" ] || return 1
-    set +e
-    if [ -n "$cursor" ]; then
-      threads_json=$(gh api graphql \
-        -f query="$THREADS_QUERY" \
-        -F owner="$REPO_OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" \
-        -F cursor="$cursor" 2>>"$GH_ERR_FILE")
-    else
-      threads_json=$(gh api graphql \
-        -f query="$THREADS_QUERY" \
-        -F owner="$REPO_OWNER" -F repo="$REPO_NAME" -F number="$PR_NUM" 2>>"$GH_ERR_FILE")
-    fi
-    threads_status=$?
-    set -e
-    [ "$threads_status" -eq 0 ] || return 1
-    # One strict pass per page: count only when every shape assumption holds.
-    # A top-level `errors` array means the response is PARTIAL, however
-    # well-shaped the data beside it looks — counting it would undercount the
-    # blockers this guard exists to see, so it is a failed read like any other.
-    # An `errors` field that is present but NOT an array is a malformed body,
-    # never an empty error set: `{}` and `""` both measure zero length, which
-    # would have read as "no errors" and counted the partial data beside them.
-    page_result=$(jq -r '
-      if (type != "object") then .
-        elif (has("errors") and ((.errors | type) != "array"))
-          then error("malformed graphql errors")
-        elif ((.errors? // []) | length) > 0
-          then error("graphql errors")
-        else . end
-      | (.data // .) as $d
-      | ($d.repository.pullRequest.reviewThreads?) as $rt
-      | if ($rt | type) != "object" then error("bad reviewThreads")
-        elif ($rt.nodes | type) != "array" then error("bad nodes")
-        elif ([$rt.nodes[] | (.isResolved | type)] | all(. == "boolean") | not)
-          then error("bad isResolved")
-        elif ($rt.pageInfo.hasNextPage | type) != "boolean" then error("bad pageInfo")
-        else
-          ([$rt.nodes[] | select(.isResolved == false)] | length | tostring)
-          + " " + ($rt.pageInfo.hasNextPage | tostring)
-          + " " + ($rt.pageInfo.endCursor // "")
-        end' <<<"$threads_json" 2>/dev/null) || return 1
-    read -r page_count page_next page_cursor <<<"$page_result"
-    total=$((total + page_count))
-    if [ "$page_next" = "true" ]; then
-      # More pages promised: a missing or non-advancing cursor means the
-      # walk cannot verify the remainder — fail closed now.
-      [ -n "$page_cursor" ] || return 1
-      [ "$page_cursor" != "$cursor" ] || return 1
-      cursor="$page_cursor"
-    else
-      printf '%s\n' "$total"
-      return 0
-    fi
-  done
+  orch_count_unresolved_threads "$REPO_OWNER" "$REPO_NAME" "$PR_NUM" "$GH_ERR_FILE"
 }
 
 # Run one guard mutation and verify its response: HTTP success is not

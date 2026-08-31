@@ -356,7 +356,7 @@ case "${1:-}" in
         [[ -n "$nodes" ]] && nodes+=","
         nodes+='{"isResolved":false}'
       done
-      printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[%s]}}}}}\n' "$nodes"
+      printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[%s],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n' "$nodes"
       exit 0
     fi
     ;;

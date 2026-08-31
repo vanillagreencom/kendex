@@ -190,7 +190,7 @@ Cancel ends the workflow; a selection goes to § 2.
    ```
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile cause tmp/patched-cause-[ISSUE_ID].json '$cause[0] as $e | .pr_comment_review.patched_causes = ((.pr_comment_review.patched_causes // []) + [$e])'
+   .agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.patched_causes tmp/patched-cause-[ISSUE_ID].json
    ```
 
    ```bash
