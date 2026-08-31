@@ -202,6 +202,55 @@ fn collection_steps_survive_an_aged_manifest() {
     assert_eq!(steps[0].skills, ["deploy"], "{steps:?}");
 }
 
+/// The Updates page, and with it the sidebar badge and the Library's
+/// edited flags. `updates_overview` loops this per scope and propagates,
+/// so one scope refusing here takes every scope's rows down — which is
+/// what an aged record would have done to every user who had one.
+///
+/// A path-source fixture offers no update standing, so what is pinned is
+/// the call answering and the shape of the degrade: an aged lock reads as
+/// no record, giving the same report the scope gives with no lock at all.
+/// The rows themselves are `package_pins`' ground, over a git source.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_updates_page_survives_an_aged_lock_in_one_of_its_scopes() {
+    let readable = world();
+    let aged = world();
+
+    let baseline = kendex_core::package::updates::updates(&aged.env, &aged.scope).unwrap();
+
+    aged.age_the_lock();
+    let after = kendex_core::package::updates::updates(&aged.env, &aged.scope)
+        .expect("an aged record must not take the page down");
+
+    fs::remove_file(aged.lock()).unwrap();
+    let recordless = kendex_core::package::updates::updates(&aged.env, &aged.scope).unwrap();
+    assert_eq!(
+        after, recordless,
+        "an aged record reads as no record, not as a refusal"
+    );
+    assert_eq!(
+        baseline, recordless,
+        "and the fixture's own rows are unmoved"
+    );
+
+    // The scope beside it in the same loop is untouched.
+    kendex_core::package::updates::updates(&readable.env, &readable.scope).unwrap();
+}
+
+/// The same page's other half: an aged manifest declares nothing this
+/// build can name, so the scope reports no rows rather than refusing. That
+/// is the answer a scope with no manifest already gets.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_updates_page_survives_an_aged_manifest() {
+    let w = world();
+    w.age_the_manifest();
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope)
+        .expect("the page must answer, not refuse");
+    assert!(report.rows.is_empty(), "{:?}", report.rows);
+}
+
 /// The rule itself, at both readers. Only the one class is absorbed: a
 /// record another project wrote is a refusal this scope must not swallow,
 /// because reading it as "nothing recorded" is how a lock carried in with

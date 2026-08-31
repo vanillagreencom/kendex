@@ -40,10 +40,10 @@ pub fn versions(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<
     let manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
     let package = package_ref(env, scope, &manifest, kind, name)?;
     let log = history::subtree_log(&package.mirror, &package.tip, &package.subtree)?;
-    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
-    // The mirror just proved readable; a lock commit that still cannot be
-    // mapped (v1-imported, hand-edited) costs the installed marker, never
-    // the timeline the mirror can perfectly well render.
+    let lock = crate::lock::observed(&crate::lock::lock_path(env, scope))?;
+    // The mirror just proved readable; a lock this build cannot read, or a
+    // commit in one that cannot be mapped, costs the installed marker and
+    // never the timeline the mirror can perfectly well render.
     let installed_commit = installed_commit(&lock, kind, name).and_then(|commit| {
         history::last_content_commit(&package.mirror, &commit, &package.subtree)
             .ok()

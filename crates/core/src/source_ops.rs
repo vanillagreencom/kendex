@@ -25,11 +25,12 @@ pub struct SourceRow {
     pub declared_items: Vec<String>,
 }
 
+/// What the scope declares, for the pages that list it. A manifest this
+/// build cannot read declares nothing it can name, so those pages show
+/// the scopes they can read instead of failing whole.
 pub(crate) fn load_current(env: &Env, scope: &Scope) -> Result<Option<Manifest>> {
-    match manifest::load(&manifest::manifest_path(env, scope))? {
-        manifest::ManifestFile::Current(m) => Ok(Some(*m)),
-        _ => Ok(None),
-    }
+    let manifest = manifest::observed(&manifest::manifest_path(env, scope))?;
+    Ok((manifest != Manifest::default()).then_some(manifest))
 }
 
 fn referents(manifest: &Manifest, source: &str) -> Vec<String> {
