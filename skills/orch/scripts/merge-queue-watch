@@ -31,12 +31,9 @@ claiming a verdict, so a stale artifact cannot route actions for a head
 that has since moved.
 
 Phase justifications — the named failure each phase prevents:
-  supervisor (launch/__supervise): queue-wait can die without output (crash,
-    signal, logout) or wedge on a hung GitHub read past its own budget,
-    leaving a watch nothing is running and a consume that could only time
-    out. The detached supervisor publishes an `unknown` artifact when its
-    worker exits unreadably and reaps a worker that outlives the deadline,
-    so every launch attempt ends in a consumable artifact.
+  supervisor (launch/__supervise): queue-wait dying without output or
+    wedging past its budget would leave a watch nothing is running; full
+    rationale in lib/merge-queue-supervisor.sh.
   cleanup: worktree removal after a detached merge acts on state recorded
     before the merge. Unowned removal can run twice (concurrent lanes), act
     on a tree no longer holding the PR branch (KEN-888), or die midway and

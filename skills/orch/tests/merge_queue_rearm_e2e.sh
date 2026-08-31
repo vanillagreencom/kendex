@@ -16,7 +16,6 @@ ok() { PASS=$((PASS+1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL  %s\n' "$1"; }
 eq() { if [[ "$1" == "$2" ]]; then ok "$3"; else bad "$3 (expected $2, got $1)"; fi; }
 wait_file() { local i; for ((i=0;i<300;i++)); do [[ -s "$1" ]] && return 0; sleep 0.05; done; return 1; }
-wait_line() { local i; for ((i=0;i<300;i++)); do [[ -s "$1" ]] && return 0; sleep 0.05; done; return 1; }
 
 MAIN="$TMP/main" BIN="$TMP/bin" SCRIPTS="$TMP/orch/scripts"
 mkdir -p "$MAIN" "$BIN" "$SCRIPTS/lib"
@@ -85,7 +84,7 @@ set +e
 early_event=$("$SCRIPTS/merge-queue-watch" event --root "$MAIN" --issue KEN-916-e2e); early_rc=$?
 set -e
 if [[ "$early_rc" -ne 0 && -z "$early_event" ]]; then ok "queued watch emits no oversee event"; else bad "queued watch woke oversee early"; fi
-wait_line "$QUEUE_LOG" || bad "queue-wait never polled queue state"
+wait_file "$QUEUE_LOG" || bad "queue-wait never polled queue state"
 printf 'ejected\n' > "$PHASE"
 wait_file "$artifact1" || bad "ejection verdict was not published"
 eq "$(jq -r .verdict "$artifact1")" ejected "queue-wait reports the confirmed ejection"
@@ -117,6 +116,16 @@ eq "$(jq -r .action <<<"$result")" postmerge "re-armed merge consumes as postmer
 "$SCRIPTS/merge-queue-watch" acknowledge --root "$MAIN" --issue KEN-916-e2e --watch-id "$watch2" --result pass >/dev/null
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-916-e2e)
 eq "$(jq -r .action <<<"$result")" complete "acknowledged lifecycle finishes complete"
+
+echo "=== prepare refuses workflow state with no PR branch ==="
+(cd "$MAIN" && "$SCRIPTS/workflow-state" init KEN-916-nobranch --worktree "$MAIN" >/dev/null)
+set +e
+nobranch_err=$("$SCRIPTS/merge-queue-watch" prepare --worktree "$MAIN" --issue KEN-916-nobranch \
+  --repo owner/repo --pr 43 --head "$HEAD" --root "$MAIN" --gate-mode off --recovery-count 0 --cleanup-worktree false 2>&1)
+nobranch_rc=$?
+set -e
+[[ "$nobranch_rc" -ne 0 ]] && ok "prepare refuses a branchless workflow state" || bad "prepare accepted workflow state with no PR branch"
+[[ "$nobranch_err" == *"records no PR branch"* ]] && ok "branchless refusal names the missing PR branch" || bad "branchless refusal message wrong: $nobranch_err"
 
 printf 'merge-queue-rearm-e2e: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
