@@ -104,6 +104,12 @@ pub const SUDO_STUB: &str = "#!/bin/sh\necho 'installer test tried to escalate' 
 /// Reads the flags `install.sh` passes — `-D`, and `-m MODE` — and treats
 /// the last two arguments as source and destination, which is the only
 /// form the script uses.
+///
+/// The destination is unlinked rather than written through, because that
+/// is what `install` does and `cp` does not: over a read-only file in a
+/// writable directory the real tool replaces and `cp` fails. Writing
+/// through would let a case show the script tolerating a failure it never
+/// meets, and pass.
 #[allow(
     dead_code,
     clippy::expect_used,
@@ -124,7 +130,7 @@ pub fn install_stub(root: &Path) -> String {
          \x20 {root}/*) ;;\n\
          \x20 *) echo \"installer test tried to write outside its fixture: $2\" >&2; exit 1 ;;\n\
          esac\n\
-         mkdir -p \"$(dirname \"$2\")\" && cp \"$1\" \"$2\" && chmod \"$mode\" \"$2\"\n",
+         mkdir -p \"$(dirname \"$2\")\" && rm -f \"$2\" && cp \"$1\" \"$2\" && chmod \"$mode\" \"$2\"\n",
         root = root.display()
     )
 }
