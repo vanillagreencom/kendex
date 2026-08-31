@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Pins for the code paths that only exist AT A TERMINAL. Every other suite
-# here runs with stdin off a pipe, where `mv` never prompts and plain `mv`
-# measures exactly as `mv -f` does — which is how a prompting install shipped
-# green. Each case runs under a pseudo-terminal; the rules a probe of such a
-# path must follow are in lib/harness.bash and DEVELOPMENT.md.
+# Pins for the code paths that only exist AT A TERMINAL. The runners invoke
+# every other suite headless, where `mv` never prompts and plain `mv` measures
+# exactly as `mv -f` does — which is how a prompting install shipped green.
+# Each case here runs under a pseudo-terminal; the rules a probe of such a
+# path must follow, and why, are in lib/pty.bash.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
+# shellcheck source=lib/pty.bash
+. "$TEST_DIR/lib/pty.bash"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 LIB="$SKILL_DIR/scripts/lib"
 COMMON="$LIB/common.sh"
@@ -22,9 +24,6 @@ filemode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 
 R="$ROOT/install-file"
 mkdir -p "$R/tools"
-git -C "$R" -c init.defaultBranch=main init -q
-git -C "$R" config user.email test@example.com
-git -C "$R" config user.name test
 
 # index-reads.test.sh's `call`, with the session's fds on a pty. COMMON is a
 # parameter so a mutant copy of the helper can be run through the same probe.
@@ -107,9 +106,10 @@ case "$OUT" in *REACHED*) reached=yes ;; *) reached=no ;; esac
   && ok "control: without the -f the same probe leaves the destination unreplaced" \
   || bad "control: without the -f the same probe leaves the destination unreplaced" "state=$STATE reached=$reached rc=$RC content=$(cat "$R/tools/dest.tsv")"
 
-# Where mv reports the decline, the decline's own words are the evidence.
-# BSD mv answers no with exit 0 and nothing on stderr, so this half of the
-# claim is only available on the util-linux path.
+# Where mv reports the decline, the decline's own words are the evidence:
+# GNU mv exits 1 and gg_install_why folds its prompt into the helper's own
+# diagnostic. BSD mv answers no with exit 0, so the helper reports nothing at
+# all and this half of the claim is only available on the util-linux path.
 if [ "$GG_PTY_FORM" = util-linux ]; then
   [ "$RC" -eq 2 ] && case "$OUT" in *"could not replace the fixture"*) true ;; *) false ;; esac \
     && ok "control: and the refusal carries mv's own prompt as its cause" \
@@ -212,9 +212,10 @@ chmod +x "$ROOT/stub/script"
 set -m
 env PATH="$ROOT/stub:$PATH" bash -c '
   . "$1"
+  . "$2"
   gg_pty_form || true
   printf "%s\n" "$GG_PTY_FORM"
-' _ "$TEST_DIR/lib/harness.bash" >"$ROOT/form-probe.out" 2>&1 &
+' _ "$TEST_DIR/lib/harness.bash" "$TEST_DIR/lib/pty.bash" >"$ROOT/form-probe.out" 2>&1 &
 probe_pid=$!
 set +m
 waited=0

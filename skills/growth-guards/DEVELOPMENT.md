@@ -49,66 +49,37 @@ docs live in README.md.
   the pins for the pty probe itself
 - `tests/lib/install-hooks.bash` — the consumer-shaped fixture repository
   and installer invocations the four `install-git-hooks` suites share
+- `tests/lib/pty.bash` — running a case at a terminal, and the rules such a
+  probe follows; sourced by `terminal-paths.test.sh` alone
 - `tests/lib/harness.bash` — the scratch root a suite owns, a `TMPDIR`
-  inside it, git-config isolation, and `gg_pty_run` for the code paths a
-  headless suite cannot reach; sourced, so the name stays outside the
-  `tests/*.sh` glob runners execute
+  inside it, and git-config isolation; sourced, so the name stays outside
+  the `tests/*.sh` glob runners execute
 
 `bash tests/*.sh` is the lane `tools/validate-changed` derives for a change
 under this skill.
 
 ## Probing a terminal-only code path
 
-Every suite runs with stdin off a pipe, so a branch that behaves differently
-at a terminal is unreachable there and a probe written headless measures
-nothing. `mv` prompts before replacing a destination that denies write ONLY
-at a tty, which makes plain `mv` and `mv -f` indistinguishable to a headless
-suite — how a prompting `gg_install_file` shipped green.
+The runners invoke every suite headless — `bash "$t"` under CI and the commit
+chain — so a branch that behaves differently at a terminal is unreachable
+there and a probe written headless measures nothing. `mv` prompts before
+replacing a destination that denies write ONLY at a tty, which makes plain
+`mv` and `mv -f` indistinguishable to a headless suite — how a prompting
+`gg_install_file` shipped green. Run a suite DIRECTLY from a terminal and the
+same branch is live: `index-reads.test.sh` installs onto a 0444 destination,
+so with the `-f` reverted that run reaches the prompt and waits for a person.
 
-`gg_pty_run CAP SCRIPT_FILE` runs a bash script file with fds 0, 1 and 2 on a
-pseudo-terminal. `GG_PTY_STATE` says what became of the session: `ok` (it ran
-to its own end), `capped` (the cap fired), or `gone` (it died before its own
-last line). `GG_PTY_RC` is the session's own exit status and is EMPTY in the
-other two states, because the helper claims no status values of its own and a
-probe may exit anything, 124 included. `GG_PTY_OUT` is the session's output.
-A non-zero return means the call never started, and `GG_PTY_ERR` names why.
+`gg_pty_run CAP SCRIPT_FILE`, in `tests/lib/pty.bash`, runs a bash script file
+with fds 0, 1 and 2 on a pseudo-terminal. `GG_PTY_STATE` says what became of
+the session (`ok`, `capped`, `gone`), `GG_PTY_RC` carries the session's own
+exit status and only in `ok`, `GG_PTY_OUT` its output, and a non-zero return
+means the call never started with `GG_PTY_ERR` naming why.
+
 `terminal-paths.test.sh` is where such a case goes and where the probe's own
-rules are pinned; its `pty_call` is the wrapper shape a new one copies. Two
-rules hold, and a probe that drops either is worse than no probe:
-
-- **Stdin redirected.** The spawner reads `/dev/null`, so a prompt is
-  answered by EOF the moment it is written and pre-fix code declines and
-  reports — a measurement. Without it the session waits for a person who is
-  not there.
-- **A time cap.** After `CAP` seconds the session's process group is killed,
-  the spawner's after it, and the state comes back `capped`. Both `script`
-  grammars put the session in a group of its own, so killing the spawner
-  alone leaves the stuck child behind: a body ignoring `SIGHUP` survives the
-  pty closing and outlives the scratch directory. A probe that HANGS yields
-  no measurement at all, so a mutation run scores it as not killed and prints
-  a silent miss rather than a wedge. `gg_pty_form`'s own spawner probe runs
-  under the same cap, since a `script` that blocks would otherwise wedge the
-  suite before a case ran.
-
-Assert on the effect the branch has, not on the spawner's status: a `mv`
-answered no exits 1 on GNU and 0 on BSD — silently, with nothing on stderr —
-so the destination's content is the portable claim, and `GG_PTY_STATE = ok`
-is the separate claim that the probe ran rather than wedged. Pair every such
-negative with positive evidence that the code under test was entered at all,
-the way the mutant control echoes a marker before the call it measures: an
-unreplaced destination is also what a session that never got there leaves
-behind. Assert the premise inside the session too — a destination that denies
-write is what makes `mv` prompt, and at euid 0 mode `0444` is not enforced, so
-without that check a root run covers nothing and says nothing.
-
-The two platforms diverge under the helper as well, which is why it
-normalizes both: the status travels in a file because BSD `script` has no
-util-linux `-e`, and the output starts at a marker because BSD echoes the
-end-of-file this helper delivers into the typescript ahead of the session's
-first line. The grammar itself is chosen by running each and asking the
-session whether its own fds are a terminal, never by a version banner. A host
-with no working spawner is a red, not a skip: a case that cannot reach the
-terminal branch is not covering it.
+rules are pinned; its `pty_call` is the wrapper shape a new one copies. The
+rules themselves — stdin redirected, a time cap, what to assert and what a
+platform will not give you — are stated once, in the `pty.bash` header, next
+to the code they constrain. Read that before writing a case.
 
 ## Design
 
