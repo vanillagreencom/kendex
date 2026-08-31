@@ -190,6 +190,70 @@ fn a_path_whose_last_component_is_not_a_name_refuses_and_writes_nothing() {
     );
 }
 
+/// A folder is made inside one that is already there, and a containing
+/// folder that is not gets a refusal naming it rather than being brought
+/// into being. `CreateRequest.dir` has said "its parent must exist" all
+/// along; before this the create made the whole chain instead.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_containing_folder_that_does_not_exist_refuses_and_makes_nothing() {
+    let (tmp, env) = fake();
+    let work = tmp.path().join("work");
+    fs::create_dir_all(&work).unwrap();
+
+    let refused = author::create(&env, &request(&work.join("absent/made"), License::Mit))
+        .unwrap_err()
+        .to_string();
+
+    assert!(refused.contains("is not a folder that exists"), "{refused}");
+    assert!(
+        refused.contains(&work.join("absent").display().to_string()),
+        "the refusal names the folder that is missing: {refused}"
+    );
+    assert!(
+        !work.join("absent").exists(),
+        "no part of the chain was brought into being"
+    );
+    assert!(
+        author::list(&env).unwrap().is_empty(),
+        "nothing was registered"
+    );
+}
+
+/// A parent that exists and cannot be traversed is not an absent one.
+/// Told it must make the folder first, a person would find it already
+/// there; the failure the path actually met is what they can act on.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_parent_that_cannot_be_reached_is_not_reported_as_missing() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (tmp, env) = fake();
+    let locked = tmp.path().join("locked");
+    fs::create_dir_all(locked.join("inner")).unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o600)).unwrap();
+    let unlock = || fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+    if locked.join("inner").metadata().is_ok() {
+        // Permissions do not bind this user (root): the traversal cannot
+        // be made to fail here.
+        unlock();
+        return;
+    }
+
+    let outcome = author::create(&env, &request(&locked.join("inner/made"), License::Mit));
+    unlock();
+    let refused = outcome.unwrap_err().to_string();
+
+    assert!(
+        !refused.contains("is not a folder that exists"),
+        "an unreachable parent is not an absent one: {refused}"
+    );
+    assert!(
+        refused.contains(&locked.join("inner").display().to_string()),
+        "the refusal names the parent it could not reach: {refused}"
+    );
+}
+
 /// A link whose target is gone answers `exists` with false, and the
 /// failure path's `remove_dir_all` deletes the link itself.
 ///
@@ -257,8 +321,9 @@ fn a_registry_refusal_after_the_build_removes_only_the_folder_it_made() {
     }
 
     let made = work.join("made");
-    let refused = author::create(&env, &request(&made, License::Mit)).unwrap_err();
+    let outcome = author::create(&env, &request(&made, License::Mit));
     unlock();
+    let refused = outcome.unwrap_err();
 
     // The refusal has to be the registry's own write, because only that
     // one lands after `build_in` and reaches the removal this fixture

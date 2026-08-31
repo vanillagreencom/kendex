@@ -85,7 +85,12 @@ fn clear_takes_meta_down_before_the_sweep() {
         return;
     }
 
-    let error = clear(&journal_dir).unwrap_err();
+    // Captured before the mode goes back, so a `clear` that unexpectedly
+    // succeeds cannot panic with the directory still sealed and leave the
+    // temp dir unable to clean up after itself.
+    let outcome = clear(&journal_dir);
+    unlock();
+    let error = outcome.unwrap_err();
     assert!(matches!(error, CoreError::Io { .. }), "{error:?}");
     assert!(!journal_dir.join("meta.json").exists());
     assert!(!pending(&journal_dir), "a spent journal is not pending");
@@ -98,7 +103,6 @@ fn clear_takes_meta_down_before_the_sweep() {
         "applied",
         "the completed apply was not rolled back"
     );
-    unlock();
 }
 
 /// A directory holding a link back into itself journals and restores:

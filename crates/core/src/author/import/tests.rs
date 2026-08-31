@@ -241,6 +241,36 @@ fn a_write_that_stops_part_way_names_what_reached_the_folder() {
     );
 }
 
+/// A nested pair a catalog really offers. `source::layout::nested_names`
+/// lists a directory carrying `SKILL.md` as an item and descends into it
+/// for its children, so `p` and `p/sub` arrive as two items and importing
+/// both is ordinary. The names are nested; the bytes are not, because `p`
+/// puts nothing under `sub/`.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_nested_pair_whose_trees_do_not_meet_is_copied_whole() {
+    let (tmp, env, scope) = seeded();
+    let scopes = [scope];
+    let target = target(&env, &tmp, "mine-nested");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let mut under = selection(find(&candidates, "stray"), false);
+    under.destination = "mine/nested".to_owned();
+    let selections = [selection(find(&candidates, "mine"), false), under];
+
+    let outcome = apply(&env, &scopes, &target, &selections).unwrap();
+    assert_eq!(outcome.written, ["skills/mine", "skills/mine/nested"]);
+    assert!(
+        fs::read_to_string(target.join("skills/mine/SKILL.md"))
+            .unwrap()
+            .contains("my own bytes")
+    );
+    assert!(
+        fs::read_to_string(target.join("skills/mine/nested/SKILL.md"))
+            .unwrap()
+            .contains("unmanaged bytes")
+    );
+}
+
 /// Two legal destination names whose trees meet in a directory without
 /// sharing a single filename. `mine` carries `nested/notes.md` and the
 /// second selection is destined for `mine/nested`, so neither writes a

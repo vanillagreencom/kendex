@@ -7,7 +7,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::{ItemKind, Scope};
 
-use super::{CandidateGroup, ImportOutcome, ImportSelection, ResolvedSelection};
+use super::{Bytes, CandidateGroup, ImportOutcome, ImportSelection, ResolvedSelection};
 
 mod write;
 use write::write_all;
@@ -50,10 +50,10 @@ pub fn apply(
                 ),
             });
         }
-        let dest = destination(&target, selection.kind, &selection.destination);
-        occupies(&resolved, selections, &dest, selection)?;
         let answer = super::resolve_selection(env, scopes, selection)?;
         license_gate(selection, &answer.group)?;
+        let dest = destination(&target, selection.kind, &selection.destination);
+        occupies(&resolved, selections, &dest, &answer, selection)?;
         origin_overlap(&target, &answer)?;
         resolved.push((at, answer, dest));
     }
@@ -69,26 +69,39 @@ pub fn apply(
 /// Whether a selection already taken occupies the place this one wants.
 ///
 /// One question, asked once per selection, because the collision is per
-/// selection: `Foo` and `foo` are one file on macOS and Windows, and a
-/// skill destined for `p` carrying a `sub/` of its own meets a skill
-/// destined for `p/sub` without the two sharing a single filename. Asking
-/// per written file catches only the second of those, and asking per
-/// `<kind, name>` only the first.
+/// selection rather than per file. Neither of the keys this replaced could
+/// answer it: `<kind, name>` sees `Foo` against `foo` and nothing else,
+/// and comparing written paths sees an overlap only where two trees
+/// happen to write one path, which two trees sharing a directory need not
+/// do.
 ///
-/// Compared component by component under [`crate::names::fold`], which is
-/// the spelling a folding filesystem hands both names to, and equal or
-/// either one a prefix of the other is the same answer: neither selection
-/// may decide what the other's bytes are by landing second.
+/// The destinations are compared component by component under
+/// [`crate::names::fold`], the spelling a folding filesystem hands both
+/// names to. Equal is a collision outright. A strict prefix is only the
+/// shape of one: a catalog offers a directory carrying `SKILL.md` as an
+/// item and its children as items too (`source::layout::nested_names`),
+/// so importing `p` beside `p/sub` is an ordinary pair, and it collides
+/// only where `p` really puts something at or under `p/sub`.
 fn occupies(
     resolved: &[(usize, ResolvedSelection, PathBuf)],
     selections: &[ImportSelection],
     dest: &Path,
+    answer: &ResolvedSelection,
     selection: &ImportSelection,
 ) -> Result<()> {
     let wanted = folded(dest);
-    for (at, _, taken) in resolved {
+    for (at, held_answer, taken) in resolved {
         let held = folded(taken);
-        if !(held.starts_with(&wanted) || wanted.starts_with(&held)) {
+        let clashes = if held == wanted {
+            true
+        } else if held.starts_with(&wanted) {
+            writes_into(answer, dest, &held)
+        } else if wanted.starts_with(&held) {
+            writes_into(held_answer, taken, &wanted)
+        } else {
+            continue;
+        };
+        if !clashes {
             continue;
         }
         return Err(CoreError::Authoring {
@@ -101,6 +114,23 @@ fn occupies(
         });
     }
     Ok(())
+}
+
+/// Whether the outer of a nested pair really puts something at or under
+/// the inner's place.
+///
+/// A lone file always does: it occupies the outer position itself, and
+/// nothing can sit inside a file. A tree does only where one of the paths
+/// it writes lands there — the rest of it is somewhere else entirely, and
+/// refusing on the strength of the name alone would refuse a pair one
+/// catalog offers as two items.
+fn writes_into(outer: &ResolvedSelection, outer_dest: &Path, inner: &[String]) -> bool {
+    match &outer.bytes {
+        Bytes::File(_) => true,
+        Bytes::Tree(files) => files
+            .iter()
+            .any(|(rel, _)| folded(&outer_dest.join(rel)).starts_with(inner)),
+    }
 }
 
 /// A path's components in the spelling a folding filesystem stores them
