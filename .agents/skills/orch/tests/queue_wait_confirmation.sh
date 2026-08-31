@@ -173,6 +173,23 @@ q_in_queue='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueu
 q_out='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null}}}}'
 q_armed_only='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
 
+# queue-wait keeps its budget with `date +%s`, so the elapsed it charges a run
+# is floor(frac(launch) + real duration). Launched .8 into a second, a run is
+# billed a whole second it never spent. Real budgets are minutes and never
+# notice. These cases run on three, where that phantom second is a third of the
+# budget and takes with it the squeezed confirmation poll they exist to prove,
+# so the suite goes red on launch phase alone (KEN-879). Stage the boundary
+# rather than race it. Started on the tick, elapsed is the run's real duration,
+# which is what the budgets below are written against, and the second the
+# alignment recovers is the margin. Startup and poll cost measures in tens of
+# milliseconds even on a loaded machine, so that margin is not close.
+align_to_tick() {
+  local ns
+  ns="$(date +%N)"
+  [[ "$ns" =~ ^[0-9]{9}$ ]] || return 0
+  sleep "0.$(printf '%09d' $(( (1000000000 - 10#$ns) % 1000000000 )))"
+}
+
 run_queue_wait() {
   local env_args=()
   while [[ $# -gt 0 && "$1" != "--" ]]; do
@@ -180,6 +197,7 @@ run_queue_wait() {
     shift
   done
   shift || true
+  align_to_tick
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env STUB_SEQ_DIR="$SEQ_DIR" \
