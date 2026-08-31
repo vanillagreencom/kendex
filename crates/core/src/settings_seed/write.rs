@@ -27,9 +27,9 @@ pub(super) fn file_eol(rows: &[Row]) -> &'static str {
 
 /// The `[env]` section's line span: the header's index and the index of
 /// the first line after the section (the next table header, or the end
-/// of the file). `None` = no `[env]` header. Seeding and refresh both
-/// splice inside this span, so they cannot disagree about where it ends.
-pub(super) fn env_section(rows: &[Row]) -> Option<(usize, usize)> {
+/// of the file). `None` = no `[env]` header. The one splice there is
+/// takes its insertion point from the end this returns.
+fn env_section(rows: &[Row]) -> Option<(usize, usize)> {
     let start = rows.iter().position(opens_env)?;
     let end = rows
         .iter()

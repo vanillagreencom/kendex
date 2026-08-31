@@ -7,16 +7,11 @@
 # consumer sets: the app's Settings pane renders a row per key here, with
 # this comment beside it, and a save of a key no template declares is
 # refused. Put in what somebody might reasonably change; a key only a
-# maintainer touches is read just the same and set by hand. And it SEEDS,
-# but only the keys you mark `# required`, and only when the skill arrives,
-# which is the consumer's kendex.toml gaining the declaration. Those are the
-# keys the consumer has to decide, the ones with no answer a default could
-# stand in for; a marked key nobody answers is reported on every pass
-# instead. Everything else ships the value your own code reads when nothing
-# assigns it, so writing it into a tracked file would put a line there that
-# changes nothing and comes back every time they delete it. Nothing here is
-# written on a refresh, comment blocks included: once a block is in their
-# file it is theirs, and a revision does not follow it in.
+# maintainer touches is read just the same and set by hand. And it SEEDS —
+# what reaches a consumer's kendex.settings.toml, and when, is
+# docs/authoring/settings.md under "What an install writes, and what it
+# leaves". Read it before you mark a key `# required`; the grammar below
+# says where the marker goes, and that section says what marking does.
 #
 # Commit-safe values only. A value that must stay out of git (a token, a
 # credential, a personal identifier) never appears here as an assignment:

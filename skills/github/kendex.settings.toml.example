@@ -1,12 +1,11 @@
 [env]
 
 # GITHUB — the review bot this repo trusts, its issue-id shape, and the
-# timeouts around `gh` (github skill). `kendex add` writes the keys marked
-# `# required` below into <project>/kendex.settings.toml, once, when this
-# skill arrives; every other key here ships the value its own scripts
-# already read, and assigning it there is how a project changes one. Tokens
-# are not settings: keep GH_TOKEN and friends in `.env.local`. Full
-# reference: github README.md.
+# timeouts around `gh` (github skill). Nothing below is marked
+# `# required`, so installing this skill writes nothing into
+# <project>/kendex.settings.toml. What an install writes, and when, is
+# kendex's docs/authoring/settings.md. Tokens are not settings: keep
+# GH_TOKEN and friends in `.env.local`. Full reference: github README.md.
 
 # Bot login the sticky-verdict commands target. Empty means unconfigured:
 # the sticky-comment search still prefers review-bot[bot], but accepts a

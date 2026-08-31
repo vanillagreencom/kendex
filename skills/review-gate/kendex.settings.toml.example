@@ -1,10 +1,9 @@
 [env]
 
-# REVIEW GATE — shared merge-gate engine (review-gate skill). `kendex add`
-# writes the keys marked `# required` below into
-# <project>/kendex.settings.toml, once, when this skill arrives; every other
-# key here ships the value its own scripts already read, and assigning it
-# there is how a project changes one. Keys resolve env > .env.local >
+# REVIEW GATE — shared merge-gate engine (review-gate skill). Nothing below
+# is marked `# required`, so installing this skill writes nothing into
+# <project>/kendex.settings.toml. What an install writes, and when, is
+# kendex's docs/authoring/settings.md. Keys resolve env > .env.local >
 # .kendex/settings.toml > this file > built-in default (REVIEW_GATE_MODE
 # reads only env and this committed file); list values pack into one string
 # with ';' separators. Full reference: review-gate SKILL.md,

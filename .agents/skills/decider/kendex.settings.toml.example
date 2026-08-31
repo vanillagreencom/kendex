@@ -1,10 +1,10 @@
 [env]
 
 # DECIDER — where this project keeps its decision records (decider skill).
-# `kendex add` writes the keys marked `# required` below into
-# <project>/kendex.settings.toml, once, when this skill arrives; every other
-# key here ships the value its own scripts already read, and assigning it
-# there is how a project changes one. Full reference: decider README.md.
+# Nothing below is marked `# required`, so installing this skill writes
+# nothing into <project>/kendex.settings.toml. What an install writes, and
+# when, is kendex's docs/authoring/settings.md. Full reference: decider
+# README.md.
 
 # Directory holding the decision documents and their INDEX.md. Empty =
 # auto-discovery, walking up for a `docs/decisions`, `decisions`,

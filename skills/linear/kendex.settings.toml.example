@@ -1,10 +1,10 @@
 [env]
 
-# LINEAR — which Linear team this project writes to. `kendex add` writes the
-# keys marked `# required` below into <project>/kendex.settings.toml, once,
-# when this skill arrives; every other key here ships the value its own
-# scripts already read, and assigning it there is how a project changes one.
-# Full key reference: linear README.md.
+# LINEAR — which Linear team this project writes to. LINEAR_TEAM below is
+# the one key marked `# required`, so installing this skill writes that key
+# into <project>/kendex.settings.toml and nothing else. What an install
+# writes, and when, is kendex's docs/authoring/settings.md. Full key
+# reference: linear README.md.
 
 # The team every Linear write targets. No default: an empty value refuses
 # writes instead of guessing inside whatever workspace the API key reaches

@@ -455,13 +455,12 @@ lives in one capability table read by core and UI.
   A skill's `# required` keys are written into `kendex.settings.toml` when it
   arrives, write-if-absent, and arrival is the consumer's `kendex.toml` gaining
   the declaration — committed state, so a clone carrying no lock re-arrives
-  nothing. Every other pass writes nothing there, comment blocks included: a
-  block already in the file is the consumer's and no revision follows it in.
-  Where several skills ship one key, the first whose template completes the
-  value is the one written, and a note names every owner and differing default.
-  A value no template completes is written from none, under a note naming the
-  key, and a marked key nobody has answered is named on every pass. Seeding
-  never touches a value; an edit rides that write, its span alone.
+  nothing. Nothing else writes there but a save from the app, which inserts
+  the key it names with its comment block so the value has somewhere to land;
+  a block already in the file is the consumer's, and no revision follows it
+  in. Seeding never touches a value; an edit rides that write, its span alone.
+  The rules an author works to — the marker, the presence check, conflicting
+  defaults — are [docs/authoring/settings.md](authoring/settings.md).
 - **Schemas are versioned and nothing converts them.** Manifest and lock
   carry a format version, and this build reads exactly the one it writes.
   A file from an older kendex is refused as unreadable, left byte-for-byte

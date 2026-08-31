@@ -48,13 +48,13 @@ By default the skill runs exactly ONE reviewer: the highest-priority entry in `S
 | `SECOND_OPINION_REVIEW_INSTRUCTIONS` | `"AGENTS.md review-bots.md .github/instructions/*.instructions.md"` | Repo instruction files appended to the review prompt; empty disables |
 | `SECOND_OPINION_TIMEOUT` | `"1080"` | Seconds to wait per external CLI invocation; a review's one retry on a malformed response can double the total. The script computes the detached run's deadline |
 
-None of these keys is written into your `kendex.settings.toml`. Each ships the value the scripts read when nothing assigns it, so set the ones you want changed. The app's Settings pane offers the same rows from this skill's `kendex.settings.toml.example`. Run `scripts/second-opinion detect` to see which target a review would use from your current session.
+This skill marks no key `# required`, so installing it writes nothing into your `kendex.settings.toml`. Every key above ships the value the scripts read when nothing assigns it, except `SECOND_OPINION_CURRENT_MODEL`, which has none and belongs in the session's environment as above — a value reaching it from a project file is refused — and `SECOND_OPINION_<NAME>_CMD`, which has a built-in command only for `claude` and `codex`. Run `scripts/second-opinion detect` to see which target a review would use from your current session.
 
 ## Configuration
 
 Defaults work out of the box in a **detected Claude Code or Codex session** — there every key below is optional. Any other client must declare its session model: Pi, OpenCode, Cursor and undetected shells front a model the script cannot probe, so a run there refuses until `SECOND_OPINION_CURRENT_MODEL` names the model the session runs (or `none` when there is no session model, as in CI or a plain terminal). Set shared, non-sensitive defaults in `kendex.settings.toml` under `[env]`. Existing `.env.local` values still work and should be reserved for personal overrides.
 
-An install writes none of these into `kendex.settings.toml`. Every one ships a working default, so assign a key there only to change it.
+As under Setup above, an install writes nothing into `kendex.settings.toml`. Assign a key there only to change what its row below says it already does; `SECOND_OPINION_CURRENT_MODEL` and `SECOND_OPINION_TARGET` ship no default, and the first is session-only.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|

@@ -31,7 +31,7 @@ Invoke through your AI coding harness (`/orch <command>`, `/skill:orch <command>
 
 1. Install the required skills: `github`, `worktree`, `dev`, `reviewer`, `decider`, `project-management`. Add `linear` for Linear workflows. `second-opinion` (pre-PR local review) and `review-gate` (multi-PR watching) are optional — orch checks for them and works without them.
 2. Install `jq`, `bash` 3.2, and `flock`.
-3. Put non-secret settings in `kendex.settings.toml` under `[env]` and secrets in `.env.local`. This skill's `kendex.settings.toml.example` is the reference for every key orch reads, with a comment on each; an install writes none of them, since each ships a working default.
+3. Put non-secret settings in `kendex.settings.toml` under `[env]` and secrets in `.env.local`. The keys a project sets are the Configuration table below, with the lane keys' detail in `lanes --help` and `open-terminal --help`; this skill's `kendex.settings.toml.example` comments the ones worth changing first. Orch marks none of them `# required`, so installing it writes nothing into your settings file.
 
 ## Configuration
 

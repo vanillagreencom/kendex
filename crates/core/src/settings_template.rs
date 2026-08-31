@@ -8,15 +8,17 @@
 //! check` reads its findings; the app's settings view
 //! ([`crate::settings_view`]) reads both.
 //!
-//! The grammar is the shell loaders', not this reader's opinion. What a
-//! template's `[env]` table says is copied into a consumer's
-//! `kendex.settings.toml`, where `skills/*/scripts/lib/kendex-env.sh` and
-//! `skills/*/scripts/lib/settings.sh` read it: a lone `[name]` header, a
-//! key spelled as a shell identifier, a value that is one double-quoted
-//! string free of `"` and `\` with an optional trailing `#` comment. A
-//! line those loaders refuse or silently skip is a finding here, as are
-//! the two rules only a template has — a comment block over every key, and
-//! nothing assigned outside `[env]`. The corpus in
+//! The grammar is the shell loaders', not this reader's opinion. A
+//! template's `[env]` table is judged against what
+//! `skills/*/scripts/lib/kendex-env.sh` and
+//! `skills/*/scripts/lib/settings.sh` read, wherever its keys land: a lone
+//! `[name]` header, a key spelled as a shell identifier, a value that is
+//! one double-quoted string free of `"` and `\`, and after that value
+//! nothing but the required marker. A line those loaders refuse or
+//! silently skip is a finding here, as are the rules only a template has —
+//! a comment block over every key, nothing assigned outside `[env]`, and
+//! that marker, whose spelling `crate::settings_seed::marks_required`
+//! decides for seeder and check alike. The corpus in
 //! `crates/core/tests/fixtures/settings-grammar.tsv` runs reader and
 //! loaders against the same samples, so the two cannot drift apart unseen.
 //!

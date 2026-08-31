@@ -15,8 +15,8 @@ use crate::model::{HarnessId, ItemKind, Scope};
 ///
 /// The floor is not ceremony. Every field a version added is a fact this
 /// build reads and an older record does not carry — which bytes are whose,
-/// which comment blocks seeding wrote, where an installed set sits, why an
-/// installation exists, which project wrote the record — and read as
+/// where an installed set sits, why an installation exists, which project
+/// wrote the record — and read as
 /// absent each of those is a wrong answer rather than a missing one: a set
 /// placeable at nothing comes current on the next update of anything else,
 /// an installation with no reason recorded is swept as one nobody asked

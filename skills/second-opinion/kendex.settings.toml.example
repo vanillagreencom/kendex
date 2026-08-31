@@ -1,10 +1,9 @@
 [env]
 
-# SECOND OPINION — cross-model review (second-opinion skill). `kendex add`
-# writes the keys marked `# required` below into
-# <project>/kendex.settings.toml, once, when this skill arrives; every other
-# key here ships the value its own scripts already read, and assigning it
-# there is how a project changes one. One reviewer by default: the
+# SECOND OPINION — cross-model review (second-opinion skill). Nothing below
+# is marked `# required`, so installing this skill writes nothing into
+# <project>/kendex.settings.toml. What an install writes, and when, is
+# kendex's docs/authoring/settings.md. One reviewer by default: the
 # highest-priority roster entry that is AVAILABLE and is NOT the model this
 # session runs. Full semantics: second-opinion SKILL.md.
 

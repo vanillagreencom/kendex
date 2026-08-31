@@ -1,10 +1,9 @@
 [env]
 
-# GROWTH GUARDS — repo growth checks (growth-guards skill). `kendex add`
-# writes the keys marked `# required` below into
-# <project>/kendex.settings.toml, once, when this skill arrives; every other
-# key here ships the value its own scripts already read, and assigning it
-# there is how a project changes one. Every GROWTH_GUARDS_* key, and the
+# GROWTH GUARDS — repo growth checks (growth-guards skill). Nothing below
+# is marked `# required`, so installing this skill writes nothing into
+# <project>/kendex.settings.toml. What an install writes, and when, is
+# kendex's docs/authoring/settings.md. Every GROWTH_GUARDS_* key, and the
 # default it ships, is in the skill's SKILL.md.
 
 # Which checks the batch runs, space separated. The full list and what each

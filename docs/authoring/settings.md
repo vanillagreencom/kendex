@@ -3,19 +3,14 @@
 A skill ships a `kendex.settings.toml.example` at its root for the keys a
 consumer sets. The file does two jobs. It DECLARES those keys, which is what
 the app's Settings pane renders and what a save is checked against. And it is
-what a write into the consumer's `kendex.settings.toml` is made from, for the
-keys it marks `# required`.
+what a write into the consumer's `kendex.settings.toml` is made from.
 
-**What reaches a consumer's file, and when, is stated once**, under [What an
-install writes](#what-an-install-writes-and-what-it-leaves). Nothing else here
-restates it, so that paragraph is the one to change if the rule ever does.
-
-Seeding is a skill's alone. An agent, hook, command or MCP server that ships
-one of these files installs normally and seeds nothing — the file is inert,
-and no error says so. It runs on project scope, for an enabled skill at least
-one harness here targets; a global install writes nothing. A rendering the
-same pass refuses does not take the settings write with it: what a template
-says is read whether or not that skill's tree lands.
+**What reaches a consumer's file, and when, is settled in [What an install
+writes](#what-an-install-writes-and-what-it-leaves)** — that section and
+nothing else, here or in the catalogue. A template's header, a skill's
+`README.md` and a skill's `SKILL.md` say what is true of that skill's own
+keys and point back here, so this is the one section to change if the rule
+ever does.
 
 Declaring a key is what puts it in front of a person. The app shows one row
 per declared key and refuses to save a key no template declares, and declaring
@@ -35,6 +30,13 @@ Start from
 [`templates/kendex.settings.toml.example`](templates/kendex.settings.toml.example).
 
 ## What an install writes, and what it leaves
+
+Seeding is a skill's alone. An agent, hook, command or MCP server that ships
+one of these files installs normally and seeds nothing — the file is inert,
+and no error says so. It runs on project scope, for an enabled skill at least
+one harness here targets; a global install writes nothing. A rendering the
+same pass refuses does not take the settings write with it: what a template
+says is read whether or not that skill's tree lands.
 
 Two things put a key in a consumer's `kendex.settings.toml`, and nothing else
 ever does.
@@ -69,10 +71,10 @@ The marker is the template's own word. It is cut off before the assignment is
 written, so a consumer's file never carries it. Write it after the value and
 nowhere else. On a comment line of its own it marks nothing, and both ways of
 getting it wrong are findings: after a value, whatever you wrote there; on a
-line of its own, the word however you capitalise or punctuate it. A marker
-nothing reads is silent twice over. No arrival writes the key, and nothing
-reports it as unanswered either, because nothing downstream knows it was ever
-marked.
+line of its own, the word however you capitalise it and whatever sentence
+punctuation trails it. A marker nothing reads is silent twice over. No
+arrival writes the key, and nothing reports it as unanswered either, because
+nothing downstream knows it was ever marked.
 
 A marked key nobody has answered is reported instead. So a template that gains
 a marked key after release does not reach an existing consumer as a write into

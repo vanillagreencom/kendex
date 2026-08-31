@@ -1,1 +1,1 @@
-- `kendex marketplace check` refuses a `# required` marker on a comment line of its own, where it marks nothing, however you capitalise or punctuate it. It counts after a value and nowhere else.
+- `kendex marketplace check` refuses a `# required` marker on a comment line of its own, where it marks nothing, in any case and with any sentence punctuation after it. It counts after a value only.

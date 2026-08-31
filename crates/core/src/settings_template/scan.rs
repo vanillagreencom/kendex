@@ -186,13 +186,6 @@ fn header(
     in_env
 }
 
-/// Everything wrong with one `[env]` assignment, and the decoded default
-/// where nothing is. Every check runs rather than the first one winning: an
-/// author told about the comment block, and only on the next run about the
-/// value, has made a round trip for a defect that was always there.
-///
-/// Everything here needs the line and its comment block and nothing else
-/// about the file.
 /// The marker is only a marker after a value. On a comment line of its own
 /// it is an ordinary comment: both readers see no marker, the loaders have
 /// no opinion on a comment at all, and the key an author declared the
@@ -237,7 +230,7 @@ fn marker_alone(line: u32, said: &str) -> Option<TemplateFinding> {
     })
 }
 
-/// And after a value it is the only thing a template may write. A
+/// After a value the marker is the only thing a template may write. A
 /// misspelling loads exactly as a correct marker does, so the loaders have
 /// no opinion on it either and the key quietly stops being one an install
 /// writes.
@@ -260,6 +253,13 @@ fn marker_after_value(line: u32, key: &str, said: &str) -> Option<TemplateFindin
     })
 }
 
+/// Everything wrong with one `[env]` assignment, and the decoded default
+/// where nothing is. Every check runs rather than the first one winning: an
+/// author told about the comment block, and only on the next run about the
+/// value, has made a round trip for a defect that was always there.
+///
+/// Everything here needs the line and its comment block and nothing else
+/// about the file.
 fn decode_entry(
     shown: &str,
     quoted: bool,
