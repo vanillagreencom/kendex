@@ -35,14 +35,16 @@ mkdir -p "$R/tools"
 # ran. No call site interpolates a path into its snippet — it names $SRC and
 # lets this function quote it, so a later case cannot bring the shape back.
 #
-# Three things the session refuses to measure, each with a status of its own,
-# so a case that never reached the code under test cannot satisfy a negative
+# What the session refuses to measure, each with a status of its own, so a
+# case that never reached the code under test cannot satisfy a negative
 # assertion about it:
 #   3  the session's stdin is not a terminal
 #   4  the destination is writable, so `mv` has nothing to prompt about
-#      (which is every run at euid 0, where mode 0444 is not enforced)
-# and the REACHED marker, which is the positive evidence that the call under
-# test was entered at all.
+#      (which is every run at euid 0, where mode 0444 is not enforced, and
+#      which premise_denies_write also refuses from the suite side before a
+#      session is started at all)
+# The REACHED marker is the separate positive half: it carries no status, and
+# it is the evidence that the call under test was entered.
 pty_call() { # COMMON SRC SNIPPET
   local common="$1" src="$2" snippet="$3" case_file="$ROOT/pty-case.sh"
   {
@@ -127,7 +129,7 @@ if premise_denies_write "$R/tools/dest.tsv" "control: without the -f the same pr
     && [ "$(cat "$R/tools/dest.tsv")" = "NOT REPLACED" ] \
     && [ "$(filemode "$R/tools/dest.tsv")" = 444 ] \
     && ok "control: without the -f the same probe leaves the destination unreplaced" \
-    || bad "control: without the -f the same probe leaves the destination unreplaced" "state=$STATE reached=$reached rc=$RC content=$(cat "$R/tools/dest.tsv")"
+    || bad "control: without the -f the same probe leaves the destination unreplaced" "state=$STATE reached=$reached rc=$RC content=$(cat "$R/tools/dest.tsv") out=$OUT"
 
   # Where mv reports the decline, the decline's own words are the evidence.
   # `could not replace the fixture` alone is gg_collection_error's frame,
@@ -177,10 +179,10 @@ gg_pty_run 2 "$ROOT/hang-case.sh" && [ "$GG_PTY_STATE" = capped ] && [ -z "$GG_P
 orphan="$(cat "$ROOT/orphan.pid" 2>/dev/null || true)"
 [ -n "$orphan" ] \
   && ok "control: the capped session really did start the child the reap must take" \
-  || bad "control: the capped session really did start the child the reap must take" "no pid recorded"
+  || bad "control: the capped session really did start the child the reap must take" "no pid recorded; state=$GG_PTY_STATE err=$GG_PTY_ERR out=$GG_PTY_OUT"
 [ -n "$orphan" ] && ! kill -0 "$orphan" 2>/dev/null \
   && ok "control: and the cap left no process of it behind" \
-  || bad "control: and the cap left no process of it behind" "pid $orphan is still running"
+  || bad "control: and the cap left no process of it behind" "pid $orphan is still running; state=$GG_PTY_STATE reaped=$GG_PTY_REAPED err=$GG_PTY_ERR"
 
 # The status is the SESSION's own, not the spawner's: BSD `script` relays none.
 printf 'exit 7\n' >"$ROOT/status-case.sh"
@@ -194,7 +196,7 @@ gg_pty_run 20 "$ROOT/status-case.sh" && [ "$GG_PTY_STATE" = ok ] && [ "$GG_PTY_R
 printf 'echo ABOUT-TO-DIE\nkill -9 "$PPID"\nsleep 5\n' >"$ROOT/die-case.sh"
 gg_pty_run 20 "$ROOT/die-case.sh" && [ "$GG_PTY_STATE" = gone ] && [ -z "$GG_PTY_RC" ] \
   && ok "control: a session that dies before its last line reports no status" \
-  || bad "control: a session that dies before its last line reports no status" "state=$GG_PTY_STATE rc=$GG_PTY_RC"
+  || bad "control: a session that dies before its last line reports no status" "state=$GG_PTY_STATE rc=$GG_PTY_RC out=$GG_PTY_OUT"
 
 # A reap that could not learn the session's group says so. gg_pty_bounded is
 # called directly with a session that writes no group file and a sid path that
@@ -232,7 +234,7 @@ esac \
 leaked_dir="${GG_PTY_ERR##*left in place at }"
 [ -n "$leaked_dir" ] && [ -d "$leaked_dir" ] \
   && ok "control: and its scratch directory is held back rather than removed" \
-  || bad "control: and its scratch directory is held back rather than removed" "dir=$leaked_dir"
+  || bad "control: and its scratch directory is held back rather than removed" "dir=$leaked_dir err=$GG_PTY_ERR"
 leak_pid="$(cat "$ROOT/leak.pid" 2>/dev/null || true)"
 [ -n "$leak_pid" ] && kill -9 -- "-$leak_pid" 2>/dev/null || kill -9 "$leak_pid" 2>/dev/null || true
 
@@ -265,7 +267,7 @@ if premise_denies_write "$R/tools/dest.tsv" "control: a path that is a space and
 fi
 [ ! -e "$ROOT/PWNED" ] \
   && ok "control: and nothing inside that name was executed" \
-  || bad "control: and nothing inside that name was executed" "the substitution ran"
+  || bad "control: and nothing inside that name was executed" "the substitution ran; $ROOT/PWNED exists"
 
 # A setup failure names its own cause. Everything above has resolved the
 # spawner already, so this reaches the scratch-directory branch rather than
@@ -276,7 +278,7 @@ chmod 500 "$ROOT/sealed"
 printf 'echo NEVER\n' >"$ROOT/never.sh"
 if premise_denies_write "$ROOT/sealed" "control: an unwritable scratch root names the scratch root, not the spawner"; then
   if TMPDIR="$ROOT/sealed" gg_pty_run 20 "$ROOT/never.sh"; then
-    bad "control: an unwritable scratch root names the scratch root, not the spawner" "gg_pty_run returned 0"
+    bad "control: an unwritable scratch root names the scratch root, not the spawner" "gg_pty_run returned 0; state=$GG_PTY_STATE err=$GG_PTY_ERR"
   else
     case "$GG_PTY_ERR" in
       *"scratch directory"*) ok "control: an unwritable scratch root names the scratch root, not the spawner" ;;
@@ -294,7 +296,7 @@ if premise_denies_write "$ROOT/sealed" "control: a sealed scratch root on the fi
   gg_form_memo="$GG_PTY_FORM"
   GG_PTY_FORM=""
   if TMPDIR="$ROOT/sealed" gg_pty_run 20 "$ROOT/never.sh"; then
-    bad "control: a sealed scratch root on the first call names the scratch root too" "gg_pty_run returned 0"
+    bad "control: a sealed scratch root on the first call names the scratch root too" "gg_pty_run returned 0; state=$GG_PTY_STATE err=$GG_PTY_ERR"
   else
     case "$GG_PTY_ERR" in
       *"scratch directory"*) ok "control: a sealed scratch root on the first call names the scratch root too" ;;
@@ -305,7 +307,7 @@ if premise_denies_write "$ROOT/sealed" "control: a sealed scratch root on the fi
   # answer, so a later call with TMPDIR working probes again.
   [ -z "$GG_PTY_FORM" ] \
     && ok "control: and records no spawner verdict for a fault that is not the spawner's" \
-    || bad "control: and records no spawner verdict for a fault that is not the spawner's" "GG_PTY_FORM=$GG_PTY_FORM"
+    || bad "control: and records no spawner verdict for a fault that is not the spawner's" "GG_PTY_FORM=$GG_PTY_FORM err=$GG_PTY_ERR"
   GG_PTY_FORM="$gg_form_memo"
 fi
 chmod 700 "$ROOT/sealed"
@@ -343,7 +345,7 @@ done
 if kill -0 "$probe_pid" 2>/dev/null; then
   kill -9 -- "-$probe_pid" 2>/dev/null || kill -9 "$probe_pid" 2>/dev/null || true
   wait "$probe_pid" 2>/dev/null || true
-  bad "control: a spawner that blocks resolves to none inside the cap" "the probe was still running after 30s"
+  bad "control: a spawner that blocks resolves to none inside the cap" "the probe was still running after 30s; out=$(cat "$ROOT/form-probe.out")"
 else
   wait "$probe_pid" 2>/dev/null || true
   [ "$(tail -n 1 "$ROOT/form-probe.out")" = none ] \

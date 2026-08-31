@@ -8,15 +8,15 @@
 # kills exist because of it — and a library that needs a mode says so.
 set -euo pipefail
 
-# The runners invoke every suite headless — `bash "$t"` under CI and the
-# commit chain — so a branch that behaves differently at a terminal is
-# unreachable there: `mv` prompts before replacing a destination that denies
-# write ONLY at a tty, which is the whole reason gg_install_file passes -f.
-# Probed headless, plain `mv` and `mv -f` measure the same, and reverting the
-# -f survives every runner's run of the family. A suite run DIRECTLY from a
-# terminal is the other half of that: index-reads.test.sh installs onto a 0444
-# destination, and with the -f reverted that run reaches the prompt and waits
-# for a person.
+# A suite run with stdin off a terminal cannot reach a branch that only
+# exists at a tty, so a probe written headless measures nothing there: `mv`
+# prompts before replacing a destination that denies write ONLY at a tty,
+# which is the whole reason gg_install_file passes -f. Probed headless, plain
+# `mv` and `mv -f` measure the same, and reverting the -f survives every
+# OTHER suite in this family. Where a suite's own stdin IS a terminal the
+# branch is live and unguarded: index-reads.test.sh installs onto a 0444
+# destination, and with the -f reverted such a run reaches the prompt and
+# waits for a person.
 #
 # gg_pty_run runs a bash script file with fds 0, 1 and 2 on a pseudo-terminal.
 # Two rules make such a probe safe to run, and both are why there is one
@@ -121,6 +121,9 @@ gg_pty_reap() { # SPAWNER_PID_OR_EMPTY SID_FILE — sets GG_PTY_REAPED
     # leak this function exists to report rather than the cap it looks like.
     GG_PTY_REAPED=no-group
   fi
+  # The spawner by group where job control gave it one, by bare pid where it
+  # did not — the fallback is what makes the caller's `set -m` an optimisation
+  # rather than a requirement.
   if [ -n "$1" ]; then
     kill -9 -- "-$1" 2>/dev/null || kill -9 "$1" 2>/dev/null || true
     wait "$1" 2>/dev/null || true
@@ -148,8 +151,9 @@ gg_pty_bounded() { # CAP_SECONDS FORM SH_COMMAND SID_FILE OUT_FILE
   GG_PTY_CAPPED=0
   GG_PTY_REAPED=""
   limit=$((cap * 10))
-  # Job control, so the spawner is a group of its own and the reap can take it
-  # whole. The session's group is a separate matter; see gg_pty_reap.
+  # Job control, which gives the spawner a process group of its own where the
+  # platform provides one; gg_pty_reap falls back to the bare pid where it
+  # does not. The session's group is a separate matter; see there.
   set -m
   gg_pty_spawn "$form" "$cmd" >"$outfile" 2>&1 </dev/null &
   pid=$!

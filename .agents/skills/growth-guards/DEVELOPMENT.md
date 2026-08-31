@@ -60,14 +60,14 @@ under this skill.
 
 ## Probing a terminal-only code path
 
-The runners invoke every suite headless — `bash "$t"` under CI and the commit
-chain — so a branch that behaves differently at a terminal is unreachable
-there and a probe written headless measures nothing. `mv` prompts before
-replacing a destination that denies write ONLY at a tty, which makes plain
-`mv` and `mv -f` indistinguishable to a headless suite — how a prompting
-`gg_install_file` shipped green. Run a suite DIRECTLY from a terminal and the
-same branch is live: `index-reads.test.sh` installs onto a 0444 destination,
-so with the `-f` reverted that run reaches the prompt and waits for a person.
+A suite run with stdin off a terminal cannot reach a branch that only exists
+at a tty, so a probe written headless measures nothing there. `mv` prompts
+before replacing a destination that denies write ONLY at a tty, which makes
+plain `mv` and `mv -f` indistinguishable to such a run — how a prompting
+`gg_install_file` shipped green. Where a suite's own stdin IS a terminal the
+same branch is live and unguarded: `index-reads.test.sh` installs onto a 0444
+destination, so with the `-f` reverted such a run reaches the prompt and
+waits for a person.
 
 `gg_pty_run CAP SCRIPT_FILE`, in `tests/lib/pty.bash`, runs a bash script file
 with fds 0, 1 and 2 on a pseudo-terminal. `GG_PTY_STATE` says what became of
