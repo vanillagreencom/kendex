@@ -78,6 +78,28 @@ listed() { case " $2 " in *[$' \t\n']"$1"[$' \t\n']*) return 0 ;; esac; return 1
 # being unreadable as a vendored copy. Testing -f alone called all of them
 # absent — the same "present is not absent" defect this PR is about, in the
 # suite standing behind it. -L comes first because -f and -d both follow.
+# The first symlinked DIRECTORY between ROOT and PATH, printed; 1 when
+# there is none. classify_path answers for the leaf and `-f` follows, so a
+# lib/ replaced by a link to another skill's lib/ leaves every leaf a real
+# regular file and every byte equal. The engine does not read it that way:
+# SealedSource::contained pushes each component in turn, takes
+# symlink_metadata on it, and answers any link with SourceEscape — so the
+# containing directories are as much a part of the shape as the file is.
+symlinked_ancestor() { # ROOT PATH
+  local probe="$1" rest="${2%/*}" component
+  rest="${rest#"$1/"}"
+  while [ -n "$rest" ]; do
+    component="${rest%%/*}"
+    probe="$probe/$component"
+    [ ! -L "$probe" ] || { printf '%s' "$probe"; return 0; }
+    case "$rest" in
+      */*) rest="${rest#*/}" ;;
+      *) rest="" ;;
+    esac
+  done
+  return 1
+}
+
 classify_path() { # PATH — one word or phrase naming what is there
   if [ -L "$1" ]; then printf 'a symlink'
   elif [ -d "$1" ]; then printf 'a directory'
@@ -118,7 +140,7 @@ prefix_of() { # FILE
 # exit for any divergence — the controls below run this against deliberately
 # edited copies of the tree and require that exit.
 check_tree() { # ROOT
-  local root="$1" rc=0 rel skill first parent copies prefix names n i seen opens closes unprefixed repeated path
+  local root="$1" rc=0 rel skill first parent copies prefix names n i seen opens closes unprefixed repeated path link
   local scratch="$TMP/map.$$.$RANDOM"
 
   # --- 0. every rostered path is a regular file, or absent ---
@@ -131,6 +153,13 @@ check_tree() { # ROOT
   for parent in skills .agents/skills; do
     for rel in kendex-env.sh settings.sh; do
       for path in "$root/$parent"/*/scripts/lib/"$rel"; do
+        # Ancestors first: with one symlinked directory every leaf below it
+        # is a regular file, so the leaf classification has nothing to say.
+        if link="$(symlinked_ancestor "$root" "$path")"; then
+          echo "${link#"$root/"} is a symlinked directory on the way to ${path#"$root/"}; the engine refuses to read through it"
+          rc=1
+          continue
+        fi
         case "$(classify_path "$path")" in
           file | absent) ;;
           *)
@@ -362,6 +391,16 @@ reds "a copy replaced by a SYMLINK fails, though its bytes match" \
   'rm -f "$control/skills/worktree/scripts/lib/kendex-env.sh" &&
    ln -s ../../../orch/scripts/lib/kendex-env.sh "$control/skills/worktree/scripts/lib/kendex-env.sh"'
 restore skills worktree kendex-env.sh
+
+# A symlinked ANCESTOR, where every leaf is a real regular file with the
+# right bytes and only a containing directory is a link.
+reds "a SYMLINKED ANCESTOR fails, though every leaf is a regular file" \
+  "is a symlinked directory on the way to" \
+  'rm -rf -- "${control:?}/skills/decider/scripts/lib" &&
+   ln -s ../../orch/scripts/lib "$control/skills/decider/scripts/lib"'
+rm -f -- "${control:?}/skills/decider/scripts/lib"
+mkdir -p "$control/skills/decider/scripts/lib"
+restore skills decider kendex-env.sh
 
 # A DIRECTORY at one copy: the source goes, the render stays, and the pair
 # is inconsistent as well as unusable.
