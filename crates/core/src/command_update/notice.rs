@@ -35,9 +35,12 @@ pub enum CommandNotice {
     Unknown,
     /// Kendex's own command, where this app cannot write. `path` names
     /// the file the notice is about; `command` is the installer, which
-    /// installs to the directory it picks from `PATH` rather than to that
-    /// file.
+    /// installs to the directory it selects rather than to that file.
     NeedsPrivilege { path: String, command: String },
+    /// The same, on a platform with no installer to run. `path` names the
+    /// file; `page` is where its release is downloaded, because there is
+    /// nothing here to hand a person to run.
+    NeedsDownload { path: String, page: String },
 }
 
 /// The invocation `install.sh` publishes for itself. The script is the
@@ -66,21 +69,49 @@ pub enum CommandNotice {
 /// privilege escalation, and the escalation is the worse of the two. The
 /// card is text a person reads; nothing here runs either one.
 ///
-/// It installs to the `bindir` the script picks from `PATH` membership,
-/// which need not be the file the card names — the copy beside it says so
-/// rather than promising that file moves.
+/// It installs to the directory the script selects, which need not be the
+/// file the card names — the copy beside it says so rather than promising
+/// that file moves.
 const INSTALLER_RERUN: &str = "curl -fsSL https://kendex.ai/install.sh | sh";
+
+/// Where a release is downloaded, for a platform `install.sh` refuses.
+/// `README.md` publishes it and this is its only spelling in Rust; the
+/// suite beside this one reads it back out of the README, so the two
+/// cannot drift — the same pin the invocation above carries.
+const DOWNLOAD_PAGE: &str = "https://kendex.ai/download";
+
+/// Whether this platform has an installer to re-run. `install.sh` takes
+/// Linux and macOS and rejects everything else by name, and Windows has no
+/// installer of its own — a `kendex.exe` is downloaded from the release —
+/// so a pipeline offered there is an instruction that cannot be followed.
+const HAS_INSTALLER: bool = !cfg!(windows);
 
 impl CommandNotice {
     /// What the card owes a person about this command, or `None` where it
     /// owes them nothing.
     pub fn for_card(beside: &CommandBeside) -> Option<Self> {
+        Self::for_card_where(beside, HAS_INSTALLER)
+    }
+
+    /// The same, told whether this platform has an installer, so a suite
+    /// drives either arm whatever it is running on. Every caller outside a
+    /// test comes through [`Self::for_card`], which asks the platform.
+    pub(crate) fn for_card_where(beside: &CommandBeside, installer: bool) -> Option<Self> {
         match beside {
             CommandBeside::Ours(_) | CommandBeside::Absent => None,
-            CommandBeside::NeedsPrivilege(path) => Some(Self::NeedsPrivilege {
-                path: shown(&path.display().to_string()),
-                command: INSTALLER_RERUN.to_owned(),
-            }),
+            CommandBeside::NeedsPrivilege(path) => {
+                let path = shown(&path.display().to_string());
+                Some(match installer {
+                    true => Self::NeedsPrivilege {
+                        path,
+                        command: INSTALLER_RERUN.to_owned(),
+                    },
+                    false => Self::NeedsDownload {
+                        path,
+                        page: DOWNLOAD_PAGE.to_owned(),
+                    },
+                })
+            }
             CommandBeside::NotOurs(InstallChannel::Managed { manager, command }) => {
                 Some(Self::Managed {
                     manager: manager.clone(),

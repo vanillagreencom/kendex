@@ -9,6 +9,7 @@ import {
   APP_UPDATE_NOTES_LABEL,
   APP_UPDATE_TITLE,
   APP_UPDATE_UNKNOWN_NOTE,
+  appUpdateCommandDownloadNote,
   appUpdateCommandManagedNote,
   appUpdateCommandPrivilegeNote,
   appUpdateVersionsLabel,
@@ -105,10 +106,17 @@ export function SidebarNotice() {
               <p className="mt-2 text-xs text-muted-foreground">
                 {commandChannel.kind === "managed"
                   ? appUpdateCommandManagedNote(commandChannel.manager)
-                  : appUpdateCommandPrivilegeNote(commandChannel.path)}
+                  : commandChannel.kind === "needsDownload"
+                    ? appUpdateCommandDownloadNote(commandChannel.path)
+                    : appUpdateCommandPrivilegeNote(commandChannel.path)}
               </p>
+              {/* A page to open where there is no installer to run, and a
+                  command to copy where there is. Both are text on the card
+                  either way: the app runs neither. */}
               <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-foreground/[0.05] px-2 py-1.5 font-mono text-[11px] leading-5">
-                {commandChannel.command}
+                {commandChannel.kind === "needsDownload"
+                  ? commandChannel.page
+                  : commandChannel.command}
               </pre>
             </>
           )}

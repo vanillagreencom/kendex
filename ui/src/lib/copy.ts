@@ -237,13 +237,13 @@ export const appUpdateCommandManagedNote = (manager: string): string =>
 // for the app, about the command instead.
 export const APP_UPDATE_COMMAND_UNKNOWN_NOTE =
   "Update now updates the app only. Update the kendex command the way you installed it.";
-// The command is kendex's own — an installer recorded it — but it sits in
-// a directory this app cannot write. The offer is the installer, never a
-// command aimed at the path: an account can arrange what sits there. Which
-// directory the installer picks is the script's rule, not restated here,
-// so the path is what the notice is about and nothing more.
+// Kendex's own command, sitting where this app cannot write. The offer is
+// the installer, never a command aimed at a path an account can arrange.
 export const appUpdateCommandPrivilegeNote = (path: string): string =>
   `Update now updates the app only. The kendex command at ${path} needs permissions this app does not have. The installer reinstalls kendex to the directory it picks, which need not be this one:`;
+// The same where no installer exists: the page the release comes from.
+export const appUpdateCommandDownloadNote = (path: string): string =>
+  `Update now updates the app only. The kendex command at ${path} needs permissions this app does not have. Download the current release and replace it:`;
 // A whole-settings write the engine refused because the file moved under
 // it. Said wherever a change is one field and the retry is to press again.
 export const SETTINGS_MOVED_MESSAGE =

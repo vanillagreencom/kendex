@@ -16,6 +16,7 @@ import {
   APP_UPDATE_NOTES_LABEL,
   APP_UPDATE_TITLE,
   APP_UPDATE_UNKNOWN_NOTE,
+  appUpdateCommandDownloadNote,
   appUpdateCommandManagedNote,
   appUpdateCommandPrivilegeNote,
 } from "@/lib/copy";
@@ -276,6 +277,27 @@ describe("the action each channel allows", () => {
     expect(container.textContent).toContain(
       "reinstalls kendex to the directory it picks, which need not be this one",
     );
+  });
+
+  // The same file where no installer exists to re-run. The card names it
+  // and points at the page the release comes from, rather than a pipeline
+  // the platform cannot run.
+  it("offers a page where no installer can be run", async () => {
+    const container = await show(
+      { kind: "direct" },
+      {
+        kind: "needsDownload",
+        path: "C:\\Program Files\\kendex\\kendex.exe",
+        page: "https://kendex.ai/download",
+      },
+    );
+    expect(container.textContent).toContain(
+      appUpdateCommandDownloadNote("C:\\Program Files\\kendex\\kendex.exe"),
+    );
+    expect(container.textContent).toContain("https://kendex.ai/download");
+    // No shell on a platform that has none, and nothing to run as root.
+    expect(container.textContent).not.toContain("curl");
+    expect(container.textContent).not.toContain("sudo");
   });
 
   // Nothing kendex could name owns it, so the card says the command is

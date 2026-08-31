@@ -26,10 +26,14 @@ fn the_card_is_told_what_each_state_owes_a_person() {
             command: "brew upgrade kendex-cli".to_owned(),
         })
     );
+    // Told there is an installer, because which arm this state takes is
+    // the platform's answer and this row is about the installer one. The
+    // other is its own case below.
     assert_eq!(
-        CommandNotice::for_card(&CommandBeside::NeedsPrivilege(
-            "/usr/local/bin/kendex".into()
-        )),
+        CommandNotice::for_card_where(
+            &CommandBeside::NeedsPrivilege("/usr/local/bin/kendex".into()),
+            true
+        ),
         Some(CommandNotice::NeedsPrivilege {
             path: "/usr/local/bin/kendex".to_owned(),
             command: INSTALLER_RERUN.to_owned(),
@@ -181,4 +185,66 @@ fn the_privileged_arm_offers_a_command_no_path_reaches() {
             "the offered command elevates: {command}"
         );
     }
+}
+
+/// The privileged arm on a platform with no installer. `install.sh` names
+/// the systems it takes and refuses the rest, so a pipeline offered where
+/// it is refused is an instruction nobody can follow — and this arm is
+/// reachable there: a `kendex.exe` ships in every release, and one dropped
+/// somewhere the app cannot write is recorded by its own first run.
+///
+/// It still names the file, because that is what the notice is about. What
+/// it offers instead is the page, which is the whole of what a person can
+/// do here.
+#[test]
+fn a_platform_with_no_installer_is_offered_a_download_not_a_pipeline() {
+    let beside = CommandBeside::NeedsPrivilege("C:/Program Files/kendex/kendex.exe".into());
+    let Some(CommandNotice::NeedsDownload { path, page }) =
+        CommandNotice::for_card_where(&beside, false)
+    else {
+        panic!(
+            "a command no installer can reach was told {:?}",
+            CommandNotice::for_card_where(&beside, false)
+        );
+    };
+    assert!(path.contains("kendex.exe"), "the file is not named: {path}");
+    for shell in ["curl", "|", "sh", "sudo"] {
+        assert!(
+            !page.contains(shell),
+            "the page carries {shell}, which is a command and not a page: {page}"
+        );
+    }
+    assert!(page.starts_with("https://"), "not a page: {page}");
+    // The wiring, not only the arms: `for_card` has to ask the platform.
+    // Driving the seam alone would not notice if it stopped, and this
+    // holds from either side — a build that always says installer is
+    // wrong on Windows, one that never does is wrong everywhere else.
+    assert_eq!(
+        CommandNotice::for_card(&beside),
+        CommandNotice::for_card_where(&beside, !cfg!(windows)),
+        "for_card did not answer with the arm this platform warrants"
+    );
+}
+
+/// The page the card names is the one `README.md` publishes. It is a fact
+/// with two spellings and no compiler between them, so the README is read
+/// rather than trusted — the pin the invocation beside it already carries.
+///
+/// Read through the card rather than the constant, so an arm that stopped
+/// offering the page fails here too.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_download_page_is_the_one_the_readme_publishes() {
+    let readme = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md");
+    let published = std::fs::read_to_string(&readme).unwrap();
+    let Some(CommandNotice::NeedsDownload { page, .. }) = CommandNotice::for_card_where(
+        &CommandBeside::NeedsPrivilege("C:/Program Files/kendex/kendex.exe".into()),
+        false,
+    ) else {
+        panic!("the arm with no installer offers no page");
+    };
+    assert!(
+        published.contains(&format!("({page})")),
+        "README.md publishes no link to {page}"
+    );
 }

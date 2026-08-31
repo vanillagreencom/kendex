@@ -42,10 +42,15 @@ export const commands = {
 /**
  *  Kendex's own command, where this app cannot write. `path` names
  *  the file the notice is about; `command` is the installer, which
- *  installs to the directory it picks from `PATH` rather than to that
- *  file.
+ *  installs to the directory it selects rather than to that file.
  */
-{ kind: "needsPrivilege"; path: string; command: string } | null, string>(__TAURI_INVOKE("app_update_command_channel")),
+{ kind: "needsPrivilege"; path: string; command: string } | 
+/**
+ *  The same, on a platform with no installer to run. `path` names the
+ *  file; `page` is where its release is downloaded, because there is
+ *  nothing here to hand a person to run.
+ */
+{ kind: "needsDownload"; path: string; page: string } | null, string>(__TAURI_INVOKE("app_update_command_channel")),
 	/**
 	 *  Replace this install with the latest release and relaunch into it,
 	 *  carrying across a `kendex` command that is kendex's to replace. One
@@ -85,10 +90,15 @@ export const commands = {
 /**
  *  Kendex's own command, where this app cannot write. `path` names
  *  the file the notice is about; `command` is the installer, which
- *  installs to the directory it picks from `PATH` rather than to that
- *  file.
+ *  installs to the directory it selects rather than to that file.
  */
-{ kind: "needsPrivilege"; path: string; command: string } | null) => typedError<string | null, string>(__TAURI_INVOKE("app_update_install", { shown })),
+{ kind: "needsPrivilege"; path: string; command: string } | 
+/**
+ *  The same, on a platform with no installer to run. `path` names the
+ *  file; `page` is where its release is downloaded, because there is
+ *  nothing here to hand a person to run.
+ */
+{ kind: "needsDownload"; path: string; page: string } | null) => typedError<string | null, string>(__TAURI_INVOKE("app_update_install", { shown })),
 	scanMachine: () => typedError<ScanResult, string>(__TAURI_INVOKE("scan_machine")),
 	getSettings: () => typedError<SettingsRead, string>(__TAURI_INVOKE("get_settings")),
 	/**
@@ -894,10 +904,15 @@ export type CommandNotice =
 /**
  *  Kendex's own command, where this app cannot write. `path` names
  *  the file the notice is about; `command` is the installer, which
- *  installs to the directory it picks from `PATH` rather than to that
- *  file.
+ *  installs to the directory it selects rather than to that file.
  */
-{ kind: "needsPrivilege"; path: string; command: string };
+{ kind: "needsPrivilege"; path: string; command: string } | 
+/**
+ *  The same, on a platform with no installer to run. `path` names the
+ *  file; `page` is where its release is downloaded, because there is
+ *  nothing here to hand a person to run.
+ */
+{ kind: "needsDownload"; path: string; page: string };
 
 /**
  *  A package whose presence changes what this one does, and whether it is

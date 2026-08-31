@@ -23,6 +23,8 @@ const RELEASED_VERSION = "0.2.0";
  *    beside the app named as another installer's to move.
  *  - `?update=commandPrivilege` — Update now, and the `kendex` command
  *    beside the app named as one this app cannot write.
+ *  - `?update=commandDownload` — the same, on a platform with no
+ *    installer to re-run.
  *  - `?updateFails=1` — the replacement refuses, and says so on the card. */
 const wanted = (name: string): string | null =>
   typeof window === "undefined"
@@ -88,6 +90,12 @@ export const coreHandlers: Record<string, Handler> = {
           kind: "needsPrivilege",
           path: "/usr/local/bin/kendex",
           command: "curl -fsSL https://kendex.ai/install.sh | sh",
+        };
+      case "commandDownload":
+        return {
+          kind: "needsDownload",
+          path: "C:\\Program Files\\kendex\\kendex.exe",
+          page: "https://kendex.ai/download",
         };
       default:
         return null;
