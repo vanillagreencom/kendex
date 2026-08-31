@@ -1,6 +1,6 @@
 .github/workflows/review-gate-writer.yml	662
 .github/workflows/skill-tests.yml	539
-crates/core/src/engine/detach.rs	424
+crates/core/src/engine/detach.rs	417
 crates/core/src/error.rs	503
 crates/core/src/mapping.rs	411
 crates/core/src/settings_file.rs	408

@@ -136,7 +136,7 @@ impl Walk<'_> {
         if self.full {
             return Ok(());
         }
-        for path in self.sealed.readable_entries(dir)? {
+        for path in self.sealed.entries(dir)? {
             if self.full {
                 break;
             }

@@ -52,7 +52,7 @@ pub fn apply(
         }
         let answer = super::resolve_selection(env, scopes, selection)?;
         license_gate(selection, &answer.group)?;
-        let dest = destination(&target, selection.kind, &selection.destination);
+        let dest = crate::source::local_slot(&target, selection.kind, &selection.destination);
         occupies(&resolved, selections, &dest, &answer, selection)?;
         origin_overlap(&target, &answer)?;
         resolved.push((at, answer, dest));
@@ -248,17 +248,5 @@ fn license_gate(selection: &ImportSelection, group: &CandidateGroup) -> Result<(
                 selection.name
             ),
         }),
-    }
-}
-
-/// Where each kind lands inside a catalog.
-fn destination(target: &Path, kind: ItemKind, name: &str) -> PathBuf {
-    match kind {
-        ItemKind::Skill => target.join("skills").join(name),
-        ItemKind::Agent => target.join("agents").join(format!("{name}.md")),
-        ItemKind::Hook => target.join("hooks").join(format!("{name}.sh")),
-        ItemKind::Command => target.join("commands").join(format!("{name}.md")),
-        ItemKind::McpServer => target.join("mcp").join(format!("{name}.toml")),
-        ItemKind::Plugin | ItemKind::PiExtension => target.join(name),
     }
 }

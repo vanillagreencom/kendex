@@ -397,7 +397,7 @@ fn the_about_report_counts_skills_per_root() {
 /// answers the same way: `agents/locked` costs nothing but its own rows.
 ///
 /// This is the listing's answer, not the disk's. What a write would land on
-/// top of is read through `SealedSource::all_entries`, where a refused read is
+/// top of is read through `SealedSource::entries`, where a refused read is
 /// an error rather than an empty directory.
 #[cfg(unix)]
 #[test]

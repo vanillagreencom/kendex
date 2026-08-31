@@ -121,92 +121,6 @@ pub fn split(text: &str) -> Result<(&str, &str), String> {
     Err("unterminated frontmatter".to_owned())
 }
 
-/// Why the top-level `name` entry cannot be rewritten as one scalar.
-#[derive(Debug, PartialEq, Eq)]
-pub enum NameProblem {
-    /// No frontmatter block to carry a name.
-    NoFrontmatter,
-    /// Frontmatter with no `name` entry; `insert_at` is where a first line
-    /// would go.
-    Missing { insert_at: usize },
-    /// Two top-level `name` entries: no single scalar to stand in for.
-    Twice,
-    /// The value is a block scalar, a flow collection, an anchor, a tag,
-    /// or continues on the next line — not one inline scalar.
-    NotAScalar,
-}
-
-impl std::fmt::Display for NameProblem {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            NameProblem::NoFrontmatter => "the file has no frontmatter",
-            NameProblem::Missing { .. } => "the frontmatter has no `name`",
-            NameProblem::Twice => "the frontmatter names it twice",
-            NameProblem::NotAScalar => "the frontmatter's `name` is not one plain value",
-        })
-    }
-}
-
-/// The byte span of the top-level `name` entry's inline value — what a
-/// rename replaces, leaving every other byte, the opener and terminator
-/// lines, and each line's own ending as they were. Exactly one entry, its
-/// whole value on its own line, or the problem says why not.
-pub fn name_value_span(text: &str) -> Result<std::ops::Range<usize>, NameProblem> {
-    let (yaml, _) = split(text).map_err(|_| NameProblem::NoFrontmatter)?;
-    let yaml_start = yaml.as_ptr() as usize - text.as_ptr() as usize;
-    let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
-    let mut found: Option<std::ops::Range<usize>> = None;
-    let mut offset = yaml_start;
-    for (index, line) in lines.iter().enumerate() {
-        let start = offset;
-        offset += line.len();
-        let starts_entry = line
-            .chars()
-            .next()
-            .is_some_and(|c| c != ' ' && c != '\t' && c != '#');
-        if !starts_entry {
-            continue;
-        }
-        let Some((key, rest)) = line.split_once(':') else {
-            continue;
-        };
-        if key.trim() != "name" {
-            continue;
-        }
-        if found.is_some() {
-            return Err(NameProblem::Twice);
-        }
-        let lead = rest.len() - rest.trim_start_matches([' ', '\t']).len();
-        let value = rest.trim_end();
-        let value = value.get(lead..).unwrap_or_default();
-        let value_len = match value.chars().next() {
-            None => return Err(NameProblem::NotAScalar),
-            Some(quote @ ('"' | '\'')) => match quoted_len(value, quote) {
-                Some(len) => len,
-                None => return Err(NameProblem::NotAScalar),
-            },
-            Some(_) if is_plain_inline(value) => value.len(),
-            Some(_) => return Err(NameProblem::NotAScalar),
-        };
-        // Blank and comment-only lines attach to the entry without
-        // extending its value (YAML ignores them); only real indented
-        // content continues the scalar onto another line.
-        let continued = lines[index + 1..]
-            .iter()
-            .map(|line| (line.starts_with([' ', '\t']), line.trim()))
-            .find(|(_, text)| !text.is_empty() && !text.starts_with('#'))
-            .is_some_and(|(indented, _)| indented);
-        if continued {
-            return Err(NameProblem::NotAScalar);
-        }
-        let value_start = start + key.len() + 1 + lead;
-        found = Some(value_start..value_start + value_len);
-    }
-    found.ok_or(NameProblem::Missing {
-        insert_at: yaml_start,
-    })
-}
-
 #[derive(Debug, Default, PartialEq)]
 pub struct Parsed {
     pub map: Map,
@@ -273,34 +187,6 @@ pub fn parse_tolerant(yaml: &str) -> Result<Parsed, String> {
         parsed.map.insert(key, value)?;
     }
     Ok(parsed)
-}
-
-/// Byte length of the quoted scalar opening `text`, when nothing follows
-/// its closing quote but whitespace and a comment — the shapes YAML itself
-/// accepts there. Single quotes escape themselves (`''`); double quotes
-/// escape with `\`. `None` when the quote never closes or real content
-/// follows it: not one inline scalar to replace.
-fn quoted_len(text: &str, quote: char) -> Option<usize> {
-    let mut end = None;
-    let mut chars = text.char_indices().skip(1);
-    while let Some((at, c)) = chars.next() {
-        if quote == '"' && c == '\\' {
-            chars.next();
-            continue;
-        }
-        if c == quote {
-            if quote == '\'' && text[at + 1..].starts_with('\'') {
-                chars.next();
-                continue;
-            }
-            end = Some(at + c.len_utf8());
-            break;
-        }
-    }
-    let end = end?;
-    let after = &text[end..];
-    let trimmed = after.trim_start_matches([' ', '\t']);
-    (trimmed.is_empty() || (trimmed.starts_with('#') && trimmed.len() < after.len())).then_some(end)
 }
 
 /// A plain inline value is one where verbatim capture and YAML agree apart

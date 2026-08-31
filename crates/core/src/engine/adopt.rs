@@ -227,15 +227,17 @@ fn unusable(name: &str, problem: String) -> CoreError {
 /// and the answer are never two different rules.
 fn local_item_path(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<PathBuf> {
     usable(name)?;
-    let local_root = local_source_root(env, scope);
-    match kind {
-        ItemKind::Skill => Ok(local_root.join("skills").join(name)),
-        ItemKind::Agent => Ok(local_root.join("agents").join(format!("{name}.md"))),
-        other => Err(CoreError::ItemNotInSource {
+    if !matches!(kind, ItemKind::Skill | ItemKind::Agent) {
+        return Err(CoreError::ItemNotInSource {
             name: name.to_owned(),
-            source_name: format!("adopt does not support {} yet", other.name()),
-        }),
+            source_name: format!("adopt does not support {} yet", kind.name()),
+        });
     }
+    Ok(crate::source::local_slot(
+        &local_source_root(env, scope),
+        kind,
+        name,
+    ))
 }
 
 /// The positions the tools named hold nothing the capture could take.

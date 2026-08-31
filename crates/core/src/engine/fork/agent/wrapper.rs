@@ -27,13 +27,6 @@ enum Wrote {
 pub(super) struct Wrapper {
     pub before: Vec<String>,
     pub after: Vec<String>,
-    /// The publisher's own prose as this harness renders it, which is the
-    /// text a section's copies are counted against. Every harness but
-    /// Claude rewrites a body's tool references, so the catalog's bytes
-    /// and what those bytes stand as in the rendering are different text —
-    /// and a count taken from the source would read a rewritten line as a
-    /// section the publisher never brought.
-    pub published: String,
 }
 
 /// Every input that can produce a section, in the order the renderer is
@@ -66,26 +59,15 @@ pub(super) fn wrapper(
     harness: HarnessId,
     around: &Around,
 ) -> Result<Option<Wrapper>, String> {
-    let (Some((bare_before, bare_after)), Some((before, after)), Some(bare_body)) = (
+    let (Some((bare_before, bare_after)), Some((before, after))) = (
         ends(scope, publisher, harness, &bare(around)),
         ends(scope, publisher, harness, around),
-        document(scope, publisher, harness, &bare(around)),
     ) else {
         return Ok(None);
-    };
-    // The bare rendering is the banner and the separators with this prose
-    // between them, so what stands between the ends of that same rendering
-    // is the prose alone, in the words this harness renders it in.
-    let Some(published) = bare_body
-        .strip_prefix(bare_before.as_str())
-        .and_then(|rest| rest.strip_suffix(bare_after.as_str()))
-    else {
-        return Err("the prose it publishes does not stand whole inside it".to_owned());
     };
     let mut read = Wrapper {
         before: vec![bare_before.clone()],
         after: Vec::new(),
-        published: published.to_owned(),
     };
     for wrote in from(around) {
         let Some((one_before, one_after)) = ends(scope, publisher, harness, &only(around, wrote))

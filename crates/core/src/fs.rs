@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::ErrorKind::{AlreadyExists, NotADirectory, NotFound, PermissionDenied};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -103,7 +104,7 @@ fn write_then_rename(
             .open(&candidate)
         {
             Ok(file) => break (candidate, file),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) if error.kind() == AlreadyExists => continue,
             Err(error) => return Err(CoreError::io(&candidate, error)),
         }
     };
@@ -142,10 +143,24 @@ fn follow_link(path: &Path) -> PathBuf {
     }
 }
 
+/// What is at `path`: `Some` metadata, `None` when nothing is, an error
+/// when the filesystem will not say. The one place the three answers are
+/// kept apart, for a caller deciding what a write would land on: absent
+/// and unanswerable are the same word in a boolean, and that word is how
+/// a guard deletes what it exists to protect. Absent is said two ways —
+/// no such name, and a name under a file (`<item>/SKILL.md` beside one).
+pub(crate) fn entry(path: &Path) -> Result<Option<fs::Metadata>> {
+    match fs::metadata(path) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(e) if matches!(e.kind(), NotFound | NotADirectory) => Ok(None),
+        Err(e) => Err(CoreError::io(path, e)),
+    }
+}
+
 pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
     match fs::read_to_string(path) {
         Ok(s) => Ok(Some(s)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) if e.kind() == NotFound => Ok(None),
         Err(e) => Err(CoreError::io(path, e)),
     }
 }
@@ -192,7 +207,7 @@ fn sync_written_file(path: &Path) -> Result<()> {
     let write_handle = || fs::OpenOptions::new().write(true).open(path);
     let refused = match write_handle() {
         Ok(file) => return file.sync_all().map_err(|e| CoreError::io(path, e)),
-        Err(refused) if refused.kind() == std::io::ErrorKind::PermissionDenied => refused,
+        Err(refused) if refused.kind() == PermissionDenied => refused,
         Err(other) => return Err(CoreError::io(path, other)),
     };
     let Ok(mode) = fs::metadata(path).map(|meta| meta.permissions()) else {

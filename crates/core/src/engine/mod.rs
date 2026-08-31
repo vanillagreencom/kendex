@@ -105,19 +105,6 @@ pub fn plan_scope(
     lock: &Lock,
     options: &PlanOptions,
 ) -> Result<EngineReport> {
-    let report = plan_scope_once(env, scope, manifest, lock, options)?;
-    takeover::hold_back_sweep(options, report, |sweep| {
-        plan_scope_once(env, scope, manifest, lock, sweep)
-    })
-}
-
-fn plan_scope_once(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    lock: &Lock,
-    options: &PlanOptions,
-) -> Result<EngineReport> {
     // Identity first: derived paths and the scope lock key off canonical.
     let scope = &scope.canonical();
     let disk_lock = lock;
@@ -220,6 +207,7 @@ fn plan_scope_once(
     report.notes.extend(scope_notes);
     unmanaged_rows(env, scope, &manifest, lock, &state.items, &mut report.drift)?;
     takeover::refuse_unsettled_takeover(options, &report.drift)?;
+    takeover::refuse_unsettleable_sweep(options, &report)?;
     Ok(report)
 }
 

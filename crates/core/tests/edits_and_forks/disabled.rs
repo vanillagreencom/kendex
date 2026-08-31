@@ -249,34 +249,30 @@ fn beside_rev_edited(w: &World) -> Result<apply::Plan, CoreError> {
 }
 
 /// A disabled declaration renders its agent under the `.disabled` name, so
-/// that is the destination the install-beside preflight has to prove
-/// vacant: an unmanaged file there would make the render pass refuse after
-/// the fork was already recorded.
+/// that is where an unmanaged file stands in the copy's way — and the
+/// render pass, not the fork, is what refuses to write over it. The fork
+/// records itself; the file that was there stays as it was.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn fork_beside_refuses_an_occupant_of_a_disabled_agents_destination() {
+fn an_occupant_of_a_disabled_agents_destination_survives_the_render() {
     let w = disabled_edited_agent_world();
     let occupied = w.home.join("app/.claude/agents/rev-edited.md.disabled");
     fs::write(&occupied, "not kendex's").unwrap();
-    let before = manifest_text(&w);
 
-    let refused = beside_rev_edited(&w).unwrap_err();
-    assert!(
-        matches!(refused, CoreError::ForkNameUnusable { .. }),
-        "{refused:?}"
-    );
-    assert_eq!(manifest_text(&w), before);
+    let plan = beside_rev_edited(&w).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
     assert_eq!(fs::read_to_string(&occupied).unwrap(), "not kendex's");
+
+    // And that path is the one the render wants: with the stranger gone,
+    // the fork lands there. Without this the assertion above would hold
+    // over a path nothing ever renders to.
+    fs::remove_file(&occupied).unwrap();
+    resettle(&w);
     assert!(
-        !w.home
-            .join("app/.kendex-local/agents/rev-edited.md")
-            .exists()
-    );
-    assert!(
-        fs::read_to_string(w.home.join("app/.claude/agents/rev.md.disabled"))
-            .unwrap()
-            .contains("My agent."),
-        "the edited copy is untouched"
+        fs::read_to_string(&occupied).unwrap().contains("My agent."),
+        "the fork renders to the disabled name"
     );
 }
 

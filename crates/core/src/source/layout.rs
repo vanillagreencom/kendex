@@ -50,7 +50,23 @@ fn item_dir(sealed: &SealedSource, kind: ItemKind, dir: &std::path::Path) -> boo
 /// item it holds is on disk and about to be trashed. The guard below asks
 /// this one, and every question it asks answers yes, no, or an error.
 fn stored_item(sealed: &SealedSource, kind: ItemKind, dir: &std::path::Path) -> Result<bool> {
-    Ok(kind == ItemKind::Skill && sealed.file_at(&dir.join("SKILL.md"))?)
+    if kind != ItemKind::Skill {
+        return Ok(false);
+    }
+    Ok(probe(sealed, &dir.join("SKILL.md"))?.is_some_and(|meta| meta.is_file()))
+}
+
+/// What is under the source at `path`, with the filesystem's refusal to say
+/// kept apart from its saying nothing is there. Containment first, so the
+/// guard reads what the sealed reader would read and nothing past a link.
+fn probe(sealed: &SealedSource, path: &std::path::Path) -> Result<Option<std::fs::Metadata>> {
+    sealed.contained(path)?;
+    crate::fs::entry(path)
+}
+
+/// Whether a directory is at `path`, or the filesystem's refusal to say.
+fn stored_dir(sealed: &SealedSource, path: &std::path::Path) -> Result<bool> {
+    Ok(probe(sealed, path)?.is_some_and(|meta| meta.is_dir()))
 }
 
 /// `target` spelled the way its parent stores it — the exact name when the
@@ -71,12 +87,12 @@ fn stored_spelling(sealed: &SealedSource, target: &std::path::Path) -> Result<Op
     };
     // A parent that is not there holds nothing, which is an answer. One
     // that is there and will not say is not.
-    if !sealed.dir_at(parent)? {
+    if !stored_dir(sealed, parent)? {
         return Ok(None);
     }
     let folded = crate::names::fold(leaf);
     let mut folding = None;
-    for entry in sealed.all_entries(parent)? {
+    for entry in sealed.entries(parent)? {
         let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
@@ -118,7 +134,7 @@ pub(super) fn stored_in_slot(
     let Some(held) = stored_spelling(sealed, slot)? else {
         return Ok(None);
     };
-    if !sealed.dir_at(&held)? {
+    if !stored_dir(sealed, &held)? {
         return Ok(None);
     }
     // A read that could not be made is not an empty directory, and a probe
@@ -133,7 +149,7 @@ pub(super) fn stored_in_slot(
         true => descendant_item(sealed, kind, &held)?,
         // A slot that is not the item holds nothing the capture may take,
         // so any entry at all is an occupant.
-        false => sealed.all_entries(&held)?.into_iter().next(),
+        false => sealed.entries(&held)?.into_iter().next(),
     };
     let Some(occupant) = occupant else {
         return Ok(None);
@@ -176,7 +192,7 @@ fn descendant_item(
     // at, and the shallowest one is the nearest to the name they typed.
     let mut pending = std::collections::VecDeque::from([slot.to_path_buf()]);
     while let Some(dir) = pending.pop_front() {
-        for entry in sealed.all_entries(&dir)? {
+        for entry in sealed.entries(&dir)? {
             let Some(remaining) = left.checked_sub(1) else {
                 return Err(crate::error::CoreError::SourceEscape {
                     path: slot.to_path_buf(),
@@ -192,7 +208,7 @@ fn descendant_item(
             // looking. The probe is fallible all the same: an entry the
             // filesystem will not describe is not an entry that is no
             // directory.
-            if !sealed.dir_at(&entry)? {
+            if !stored_dir(sealed, &entry)? {
                 continue;
             }
             if stored_item(sealed, kind, &entry)? {
@@ -227,17 +243,17 @@ pub(super) fn file_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<Str
 ///
 /// A directory this cannot read draws no rows for that directory, and the
 /// rest of the listing still draws: a listing says what a source offers,
-/// and one unreadable sibling must not take the readable items of the same
-/// kind out of `add --all` and out of place resolution. Nothing deciding
-/// what a write would destroy asks this — that reads the disk, through
-/// `SealedSource::all_entries`, where a refused read is an error.
+/// and one unreadable directory must not take the readable items of the
+/// same kind out of `add --all` and out of place resolution. Nothing
+/// deciding what a write would destroy answers that way — those callers
+/// let the refusal out.
 fn nested_names(
     sealed: &SealedSource,
     dir: &str,
     is_item: &dyn Fn(&std::path::Path) -> bool,
     leaf: impl Fn(&std::path::Path) -> Option<String>,
 ) -> Vec<String> {
-    let Ok(entries) = sealed.readable_entries(&sealed.root().join(dir)) else {
+    let Ok(entries) = sealed.entries(&sealed.root().join(dir)) else {
         return Vec::new();
     };
     let mut names = Vec::new();
@@ -253,7 +269,7 @@ fn nested_names(
             // suites and fixtures, the same vocabulary a skill tree marks
             // as supporting — files there are about the items, not items.
             && !matches!(parent, "tests" | "test" | "fixtures" | "testdata")
-            && let Ok(children) = sealed.readable_entries(&entry)
+            && let Ok(children) = sealed.entries(&entry)
         {
             for child in children {
                 if is_item(&child)
@@ -345,6 +361,38 @@ mod tests {
                 "{asked:?}"
             ),
             false => assert_eq!(asked.unwrap(), Some(parent.join("data-science"))),
+        }
+    }
+
+    /// A directory the filesystem will not describe is not an empty slot.
+    /// A parent readable but not searchable — POSIX mode 0644, or an ACL —
+    /// lists the name while refusing every probe into it, and reading that
+    /// refusal as "nothing is stored there" is how the capture writes over
+    /// content it exists to protect. The error is the answer, said once.
+    #[cfg(unix)]
+    #[test]
+    fn a_slot_it_cannot_probe_errors_rather_than_reading_empty() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("catalog");
+        let sealed = sealed(&root);
+        let parent = root.join("skills");
+        let held = parent.join("data-science");
+        std::fs::create_dir_all(held.join("nested")).unwrap();
+        std::fs::write(held.join("SKILL.md"), "---\nname: x\n---\n").unwrap();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o644)).unwrap();
+        // Root probes any path whatever the mode, so there the denial under
+        // test does not exist and the slot reads as the occupied one it is.
+        let denied = std::fs::metadata(&held).is_err();
+        let asked = stored_in_slot(&sealed, ItemKind::Skill, &held);
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        match denied {
+            true => assert!(
+                matches!(asked, Err(crate::error::CoreError::Io { .. })),
+                "{asked:?}"
+            ),
+            false => assert!(asked.unwrap().is_some(), "the nested item is the occupant"),
         }
     }
 }

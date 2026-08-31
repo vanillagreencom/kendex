@@ -278,7 +278,21 @@ fn reselect(agents: &mut HookAgents, from: &str, to: &str, gone: bool) {
 /// nothing, since that row is what [`carry_skills`] moves. Only a row some
 /// other agent's name resolves to is in the way — the same distinction
 /// [`unwritable_under`] draws between owning a spelling and reaching it.
-pub(crate) fn configured_as(manifest: &Manifest, from: &str, to: &str) -> Option<&'static str> {
+/// Why an agent's configuration cannot travel from `from` to `to`: this
+/// scope already configures an agent under the new name, or the new name
+/// is a spelling some reader takes for a population and cannot hold one
+/// agent's. One question, because a caller asking half of it writes a key
+/// that means something wider than it meant to.
+pub(crate) fn cannot_carry(manifest: &Manifest, from: &str, to: &str) -> Option<String> {
+    if let Some(entry) = configured_as(manifest, from, to) {
+        return Some(format!(
+            "this scope already configures that agent in {entry} — pick another name, or clear that entry first"
+        ));
+    }
+    unwritable_under(manifest, from, to)
+}
+
+fn configured_as(manifest: &Manifest, from: &str, to: &str) -> Option<&'static str> {
     if manifest
         .agent_frontmatter
         .values()
@@ -344,7 +358,7 @@ fn gated_by_name<'a>(manifest: &'a Manifest, name: &str) -> Option<&'a CustomHoo
 /// ordinary name for an agent nothing gates and nothing instructs, and
 /// refusing it there would invent a naming rule the operation never
 /// needed.
-pub(crate) fn unwritable_under(manifest: &Manifest, from: &str, to: &str) -> Option<String> {
+fn unwritable_under(manifest: &Manifest, from: &str, to: &str) -> Option<String> {
     // What the new spelling would gate, said as the refusal says it, or
     // `None` where it names one agent and the selector can simply move.
     let population = match crate::render::agent::selects(to) {

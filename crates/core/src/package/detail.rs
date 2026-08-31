@@ -213,7 +213,7 @@ pub fn package_readme(
         return Ok(None);
     }
     let mut candidates: Vec<PathBuf> = sealed
-        .readable_entries(&item_path)?
+        .entries(&item_path)?
         .into_iter()
         .filter(|path| {
             path.file_name()

@@ -252,11 +252,10 @@ fn compute(
     // manifest keeps holding only what was chosen.
     let expansion = super::expansion::expand(env, scope, manifest, held, &mut state);
     let collisions = super::catalog::Collisions::find(&expansion, &mut state);
-    // What this scope can supply, read once from the closure above: an
-    // agent's skill assignment resolves against the whole scope, and
-    // reading it per agent would open every catalog again for each one.
-    let scope_skills =
-        super::ScopeSkills::planned(env, scope, manifest, &expansion, &state.rev_conflicts, &[])?;
+    // What this scope can supply, read once: an agent's skill assignment
+    // resolves against the whole scope, and reading it per agent would open
+    // every catalog again for each one.
+    let scope_skills = super::ScopeSkills::of(env, scope, manifest)?;
 
     for kind in super::expansion::PLANNED_KINDS {
         for (name, planned) in expansion.of(kind) {

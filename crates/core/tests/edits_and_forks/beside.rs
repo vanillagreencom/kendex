@@ -346,18 +346,18 @@ fn fork_beside_records_the_captured_harness_own_commit() {
     );
 }
 
-/// The copy's frontmatter is rewritten by span: a quoted name, spaces before
-/// the colon, CRLF endings, and a `...` terminator all keep every other byte,
-/// and a comment survives only after a quoted value — a plain scalar's span
-/// reaches to end of line, so its trailing comment goes with the old name.
-/// A name no single scalar can replace refuses the fork.
+/// The copy's frontmatter is rewritten one line at a time: spaces before
+/// the colon, a quoted name, CRLF endings and a `...` terminator all keep
+/// every other byte, and the name's own line is replaced whole — a comment
+/// on it goes with the name it annotated. A name no one line carries
+/// refuses the fork.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn fork_beside_renames_the_copy_by_its_name_span() {
+fn fork_beside_rewrites_the_copys_name_line() {
     let cases = [
         (
             "---\nname : gh\ndescription: d\n---\nBody.\n",
-            "---\nname : gh-edited\ndescription: d\n---\nBody.\n",
+            "---\nname: gh-edited\ndescription: d\n---\nBody.\n",
         ),
         (
             "---\r\nname: gh\r\ndescription: d\r\n---\r\nBody.\r\n",
@@ -373,7 +373,7 @@ fn fork_beside_renames_the_copy_by_its_name_span() {
         ),
         (
             "---\nname: \"gh\" # package\n---\nBody.\n",
-            "---\nname: gh-edited # package\n---\nBody.\n",
+            "---\nname: gh-edited\n---\nBody.\n",
         ),
         (
             "---\nname: gh\n  # note\n---\nBody.\n",

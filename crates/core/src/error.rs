@@ -129,8 +129,8 @@ pub enum CoreError {
     #[error("{name} changed while you were deciding — nothing was changed")]
     TakeOverLeavesSome { name: String },
 
-    /// Each held item as `kind name (why)`: no plan survives to carry the notes.
-    #[error("nothing was replaced: every item in the way also has a conflict to settle first — {}", held.join("; "))]
+    /// Each blocked item as `kind name — why`: no plan survives to carry them.
+    #[error("nothing was replaced: an item in the way has a conflict to settle first — {}", held.join("; "))]
     TakeOverAllHeld { held: Vec<String> },
 
     #[error(

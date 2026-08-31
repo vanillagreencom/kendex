@@ -287,20 +287,13 @@ fn effective_commit(lock: &crate::lock::Lock, item: &ClosureItem) -> Result<Opti
 /// the components below the local source's root puts the write outside the
 /// scope, where no later read of this source finds the kept package.
 fn local_target(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<PathBuf> {
-    let local_root = local_source_root(env, scope);
-    let target = match kind {
-        ItemKind::Skill => local_root.join("skills").join(name),
-        ItemKind::Agent => local_root.join("agents").join(format!("{name}.md")),
-        ItemKind::Hook => local_root.join("hooks").join(format!("{name}.sh")),
-        ItemKind::Command => local_root.join("commands").join(format!("{name}.md")),
-        ItemKind::McpServer => local_root.join("mcp").join(format!("{name}.toml")),
-        other => {
-            return Err(CoreError::ItemNotInSource {
-                name: name.to_owned(),
-                source_name: format!("detach does not support {} yet", other.name()),
-            });
-        }
-    };
+    if matches!(kind, ItemKind::Plugin | ItemKind::PiExtension) {
+        return Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: format!("detach does not support {} yet", kind.name()),
+        });
+    }
+    let target = crate::source::local_slot(&local_source_root(env, scope), kind, name);
     if let Some(escape) = crate::source::slot_escapes(env, scope, &target)? {
         return Err(escape);
     }

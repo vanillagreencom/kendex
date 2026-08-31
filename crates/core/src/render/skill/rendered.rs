@@ -43,7 +43,7 @@ impl Rendered {
                 continue;
             }
             let text = String::from_utf8_lossy(bytes).into_owned();
-            if let Ok(renamed) = with_name(&text, installed) {
+            if let Some(renamed) = with_name(&text, installed) {
                 *bytes = renamed.into_bytes();
             }
         }
