@@ -119,3 +119,70 @@ fn a_cache_stamped_in_the_future_is_attempted_immediately() {
 
     assert_eq!(fetch.calls.get(), 2);
 }
+
+/// A launch starts two checks: the startup schedule, and the webview
+/// asking for the notice as it mounts. Without one at a time both read a
+/// cache neither has written, both go to the network, and the second write
+/// puts its own generation over the first — a good body discarded for one
+/// nobody asked for twice.
+///
+/// The first fetch is held open long enough that a second check running
+/// beside it would have to overlap it. Serialized, the second one reads
+/// what the first wrote and finds the interval already served.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_two_checks_a_launch_starts_go_to_the_network_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Slow {
+        calls: AtomicUsize,
+    }
+
+    impl Fetch for Slow {
+        fn get_auth(
+            &self,
+            _url: &str,
+            _if_none_match: Option<&str>,
+            _bearer: Option<&str>,
+        ) -> Result<FetchResponse> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            Ok(feed(200))
+        }
+
+        fn post_json_auth(
+            &self,
+            _url: &str,
+            _body: &str,
+            _bearer: Option<&str>,
+        ) -> Result<FetchResponse> {
+            Err(CoreError::RegistryUnavailable {
+                why: "unexpected POST".to_owned(),
+            })
+        }
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::paths::canonical(tmp.path()).unwrap();
+    let env = Env::fake(home, FakeOs::Linux);
+    let fetch = Slow {
+        calls: AtomicUsize::new(0),
+    };
+
+    std::thread::scope(|scope| {
+        let started = scope.spawn(|| check_at(&env, &fetch, request(false), 10_000));
+        // Far enough into the first fetch that a second check with nothing
+        // holding it back would be inside `read_cache` before the first
+        // one writes.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let beside = check_at(&env, &fetch, request(false), 10_000).unwrap();
+        assert!(matches!(beside, AppUpdateStatus::UpdateAvailable { .. }));
+        started.join().unwrap().unwrap();
+    });
+
+    assert_eq!(
+        fetch.calls.load(Ordering::SeqCst),
+        1,
+        "both checks a launch starts went to the network"
+    );
+}

@@ -294,9 +294,9 @@ lives in one capability table read by core and UI.
   as the last kendex could check, never a definite count — least of all
   zero. Every read the app starts with runs beside the others.
 - **Discovery is unsigned; one pinned key covers a document binding each
-  download to its release and target.** Off the launch path, one transaction
-  reads the feed six-hourly at most, keeps the last result and error,
-  following no final link; a preference gates it; debug builds alone honor
+  download to its release and target.** Off the launch path, one check at a
+  time reads the feed six-hourly at most and keeps the last document,
+  following no final link; nothing gates it; debug builds alone honor
   `KENDEX_UPDATE_FEED`. Replacing needs the running path writable, outside a
   system prefix; a package prefix names its command and the card says which,
   anything else neither. Either shell carries a command it owns, marker last.
@@ -320,22 +320,22 @@ lives in one capability table read by core and UI.
   constant. Floor and ceiling bind controls and settings file alike (values
   outside are clamped both ways); the step is the controls' alone, so a
   hand-edited 137 is honoured. A webview that refuses the size opens at full
-  size. The current webview size is kept beside it and read back on load;
-  the stored percent stays a preference.
+  size. The size on screen is read back from the webview on load; the
+  stored percent stays a preference.
 - **Zoom moves in steps and writes once the stepping stops.** Two inputs,
   one step per press: held `Ctrl` `+` and a clicked button (no slider). The
   window follows every step; the settings file is written once the steps
-  stop, both inputs sharing one timer. The window is asked for one size at
-  a time, each press queued behind the last; the shown size moves on press.
-  Three values, each with one writer: what the app shows (on press), what
-  the window has taken (on the window's reply), what the settings object
-  holds (when the file does); the first two stay out of the settings
-  object. The size reaches the file through its own command carrying only
-  a percent; a copy read before a resize is refused as stale. At most one
-  save in flight; asks during it collapse into one follow-up writing
-  whatever is on screen. A write waits for the resize before reading what
-  to write; a size the file refuses stays on screen. The close is not held
-  for an in-flight write.
+  stop, both inputs sharing one timer. The shown size moves on press, ahead
+  of the window's reply. Two values, each with one writer: what the app
+  shows (on press, and back from the window on a refusal) and what the
+  settings object holds (when the file does); the first stays out of the
+  settings object. The size reaches the file through its own command
+  carrying only a percent; a copy read before a resize is refused as stale.
+  At most one save in flight; asks during it collapse into one follow-up.
+  A commit waits for every resize still out and then asks the window what
+  size it is at, so a size the window refused never reaches the file; a
+  size the file refuses stays on screen. The close is not held for an
+  in-flight write.
 - **A whole-file write carries the base of the file its copy came from.**
   The Customize tab's `kendex.toml` and the Settings page's app
   `settings.toml` are read as content plus a `Base` (`kendex_core::base`,
@@ -752,7 +752,7 @@ lives in one capability table read by core and UI.
   fetched from a catalog, and still a declared, user-approved per-scope
   install rendered and removed like any other hook.
 - **One presentation layer, two renderings** (`crates/cli/src/ui.rs`). Every
-  human line leaves through it, escaped there, and stdout stays clean;
+  human line is escaped there, a payload is not, and stdout stays clean;
   `ui::intro` arms the framed rendering, so a verb that opened none prints
   the plain lines scripts parse. Framing needs a terminal on *both* streams;
   `KENDEX_UI=plain|pretty` overrides. Non-interactive stays a mode, not a

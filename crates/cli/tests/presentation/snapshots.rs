@@ -238,6 +238,119 @@ fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
     }
 }
 
+/// A refusal that names one finding per line reaches the reader as lines.
+///
+/// The control for the two doors, driven end to end: the breaks belong to
+/// the message — `CoreError::ManifestInvalid` names one finding per line —
+/// and a value inside a finding is still a value, so a manifest key
+/// carrying a break is one key on one line rather than a finding of its
+/// own. Escaping the composed message instead would print every break as
+/// a literal `\n` and wrap the whole refusal onto one line.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refusal_naming_one_finding_per_line_keeps_its_lines() {
+    // Two ordinary stray keys and one that would forge a finding of its
+    // own: a TOML key is a quoted string and may hold anything.
+    let manifest = format!(
+        "schema = {}\nstray-one = 1\nstray-two = 2\n\"we\\nir\\u001Bd\" = 3\n",
+        kendex_core::manifest::MANIFEST_SCHEMA
+    );
+    for ui in ["plain", "pretty"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = &rooted(&tmp);
+        let project = home.join("dev/app");
+        blocked_project_at(home, &project);
+        fs::write(project.join("kendex.toml"), &manifest).unwrap();
+
+        let printed = said(&kendex(
+            home,
+            &project,
+            ui,
+            &["apply", "--plan", "--scope", "project"],
+        ));
+        assert!(
+            !printed.contains('\u{1b}'),
+            "a control character reached the terminal ({ui}): {printed:?}"
+        );
+        assert!(
+            squashed(&printed).contains("we\\nir\\u{1b}d:unknowntableorkey"),
+            "the key was not printed as what it is ({ui}): {printed}"
+        );
+    }
+
+    // The count is asked of the plain rendering, which is the one that
+    // does not wrap: the framed one breaks a long fix line to fit a box,
+    // and a line count there would be a count of the box's width.
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let project = home.join("dev/app");
+    blocked_project_at(home, &project);
+    fs::write(project.join("kendex.toml"), &manifest).unwrap();
+    let printed = said(&kendex(
+        home,
+        &project,
+        "plain",
+        &["apply", "--plan", "--scope", "project"],
+    ));
+    let findings: Vec<&str> = printed
+        .lines()
+        .filter(|line| line.contains("unknown table or key"))
+        .collect();
+    assert_eq!(
+        findings.len(),
+        3,
+        "the three findings did not reach the reader as three lines: {printed}"
+    );
+    assert!(
+        !printed.contains("\\nstray-one"),
+        "a break the message wrote printed as its own escape: {printed}"
+    );
+}
+
+/// The stdout half of the same seam. A verb's own lines go out through
+/// `ui::out`, and the names on them come off a tree kendex did not write:
+/// `project add` lists what is there and not managed, and that listing is
+/// composed of directory names.
+///
+/// Its own test because nothing else covers `out`: the check report is
+/// scrubbed by `drift::report::text` before it gets there, so a run of it
+/// would stay green with the escape taken out of `out` altogether.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_name_reaching_stdout_is_printed_as_what_it_is() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let project = home.join("dev/app");
+    blocked_project_at(home, &project);
+    let stray = project.join(".claude/skills/ev\u{1b}[31mil");
+    fs::create_dir_all(&stray).unwrap();
+    fs::write(
+        stray.join("SKILL.md"),
+        "---\nname: evil\ndescription: paints the terminal\n---\nMine.\n",
+    )
+    .unwrap();
+
+    let output = kendex(
+        home,
+        &project,
+        "plain",
+        &["project", "add", &project.display().to_string()],
+    );
+    let printed = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        printed.contains("not managed yet:"),
+        "the offer was not printed: {printed}"
+    );
+    assert!(
+        !printed.contains('\u{1b}'),
+        "an escape sequence reached stdout: {printed:?}"
+    );
+    assert!(
+        printed.contains("ev\\u{1b}[31mil"),
+        "the name was not printed as what it is: {printed}"
+    );
+}
+
 /// The verdict counts what the reader was shown. The report drops lines to
 /// fit its own budgets, so a count taken from the report behind it would
 /// name items that never reached the page.

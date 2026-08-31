@@ -70,8 +70,12 @@ pub fn run(env: &Env, args: DiffArgs) -> CliResult {
             FileStatus::Binary => " (binary)",
             FileStatus::TooLarge => " (too large to show)",
         };
+        // The blank line before each heading is said rather than written
+        // into the line: a break in a value is a value's break, and only
+        // a call is a break of this verb's own.
+        say("");
         say(&format!(
-            "\n{}{status}  +{} -{}",
+            "{}{status}  +{} -{}",
             file.path, file.additions, file.deletions
         ));
         for hunk in &file.hunks {

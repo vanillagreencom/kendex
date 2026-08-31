@@ -18,12 +18,17 @@
 //! installs and never arms anything, and a repository is armed by the
 //! invocation that says so — this one, or `kendex guard install`.
 //!
-//! Every value a package chose goes out through the `ui` seam, which
+//! Every value a package declared goes out through the `ui` seam, which
 //! escapes it. This block is read immediately before a consent prompt, and
 //! it is catalog-controlled text: a summary carrying an escape sequence
 //! repaints the lines above it, and one carrying a newline forges the shape
 //! of the block itself. What is being consented to has to be what is on the
 //! screen.
+//!
+//! What a package's installer prints when it runs is not part of that
+//! block, and does not go through the same door: [`apply`] relays those
+//! bytes as the package wrote them, after the consent, because a caller
+//! piping its summary is reading for the package's own output.
 
 use std::io::IsTerminal;
 
@@ -121,8 +126,11 @@ pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, Box<dyn st
 /// Run one package's installer, here and now, and relay what it said.
 ///
 /// Each of the package's streams goes out on its own channel, the way the
-/// package wrote them: its summary is what a caller pipes for. A package
-/// with nothing to run is a state to name, not a failure.
+/// package wrote them: its summary is what a caller pipes for, so it is
+/// relayed byte for byte rather than escaped like a line of kendex's own.
+/// The consent that let this run was given against the disclosure above,
+/// which is escaped; this is the program the person said yes to talking.
+/// A package with nothing to run is a state to name, not a failure.
 pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
     match kendex_core::repo_effects::arm(scope, declared) {
         Ok(report) => {
@@ -142,6 +150,11 @@ pub fn apply(scope: &Scope, declared: &DeclaredEffects) -> CliResult {
     }
 }
 
+/// The package's two streams, each on the channel it was written to. Its
+/// stdout goes through the door that escapes nothing: those bytes are the
+/// program's answer, and a caller piping them is reading for what the
+/// program said rather than for a line kendex composed. Its stderr is read
+/// by a person, so it goes out as a line like any other.
 fn relay(report: &kendex_core::guard::GuardReport) {
     for line in &report.stderr {
         say(line);

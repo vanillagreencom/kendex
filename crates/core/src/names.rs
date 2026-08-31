@@ -314,6 +314,33 @@ mod tests {
         assert!(!shown("a\u{200b}b").contains('\u{200b}'));
     }
 
+    /// The two spellings meet: a pasteable command is `quoted`, and every
+    /// line the CLI prints is `shown`. For a word a shell can read back,
+    /// the escape changes nothing — the characters quoting is for are not
+    /// the characters escaping is for — so the command survives the seam.
+    ///
+    /// Where they do meet, the escape wins, and it has to: a word holding
+    /// a control character has no spelling a terminal can be handed, and
+    /// an unrunnable command is a smaller loss than a repainted screen.
+    #[test]
+    fn escaping_a_quoted_word_leaves_a_command_a_shell_still_reads() {
+        for word in [
+            "/home/me/dev",
+            "/home/me/it's",
+            "/home/me/a b",
+            "/home/me/a$x;b",
+            "/home/me/a`id`b",
+            "/home/me/a&b|c",
+            "C:\\Users\\me",
+        ] {
+            let quoted = quoted(word);
+            assert_eq!(shown(&quoted), quoted, "{word:?} did not survive the seam");
+        }
+        let hostile = quoted("/home/me/a\u{1b}[31mb");
+        assert_ne!(shown(&hostile), hostile, "the escape sequence was carried");
+        assert!(!shown(&hostile).contains('\u{1b}'));
+    }
+
     #[test]
     fn folding_catches_the_collisions_a_filesystem_would_make() {
         assert_eq!(fold("Data-Science/EDA"), "data-science/eda");

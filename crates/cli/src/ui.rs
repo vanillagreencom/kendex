@@ -18,14 +18,27 @@
 //! is somebody reading the bytes, whatever stderr is attached to.
 //! `KENDEX_UI` takes `plain` or `pretty` and overrides the detection.
 //!
-//! **A sentence is escaped here, and only here.** Names, paths and
-//! messages off a catalog, a lock or a tree kendex did not write reach a
-//! terminal through these functions, where a control character would move
-//! the cursor or colour the line and a newline would forge a line of
-//! kendex's own. Escaping the composed sentence rather than each fragment
-//! of it is what makes that one rule instead of a rule every call site
-//! has to remember: a break inside a foreign name is printed as `\n`, so
-//! one name is one line whatever it holds.
+//! **A line is escaped here.** Names, paths and messages off a catalog, a
+//! lock or a tree kendex did not write reach a terminal through these
+//! functions, where a control character would move the cursor or colour
+//! the line. [`say`] and its siblings each print one line and escape the
+//! whole of it, breaks included: a break inside a value is content, so a
+//! name carrying one is a name and not two lines. Structure is said by
+//! calling more than once.
+//!
+//! **A message that owns its own breaks goes through [`fail_lines`] or
+//! [`outro_fail`]**, which split first and escape each line, so the breaks
+//! reach the reader as breaks. That door carries an obligation, and it is
+//! the second half of the rule: a message printed through it has already
+//! escaped the values it interpolated, because a break inside one of those
+//! would become a line of its own here. Three places in the tree compose
+//! such a message — `manifest::validate::Finding`, which is what
+//! `CoreError::ManifestInvalid` names one per line; `commands::verify`;
+//! and `commands::marketplace_author` — and each escapes what it writes in
+//! with [`escaped`]. Core escapes elsewhere for its own surfaces (the app
+//! reads `names::shown` output directly, and `drift::report::text` bounds
+//! and scrubs the report the check verb composes); those are already-safe
+//! bytes by the time they arrive, and the escape is idempotent.
 //!
 //! A sentence is not the only thing a verb prints. What a reader asked to
 //! see — a package's file, its readme — goes out through [`payload`], and
@@ -143,14 +156,20 @@ fn write_line(line: &str) {
     let _ = writeln!(std::io::stderr(), "{line}");
 }
 
-/// The one place foreign text is made safe to print. Control characters
-/// and the invisible or direction-flipping ones are shown as their own
-/// escapes rather than acted on, which is why a call site composes its
-/// sentence out of raw names and leaves this to the seam.
+/// Text made safe to print: control characters and the invisible or
+/// direction-flipping ones are shown as their own escapes rather than
+/// acted on. Every line [`say`] and its siblings print goes through it,
+/// which is why an ordinary call site composes its line out of raw names
+/// and leaves the escape here.
+///
+/// It is `pub` for the other half of the rule: a message that owns its
+/// line breaks and is printed through [`fail_lines`] or [`outro_fail`]
+/// escapes the values it interpolates itself, because a break inside one
+/// of those would become a line of its own there.
 ///
 /// Idempotent on its own output: an escape is backslashes and letters,
 /// and neither is escaped again.
-pub(crate) fn escaped(text: &str) -> String {
+pub fn escaped(text: &str) -> String {
     kendex_core::names::shown(text)
 }
 
@@ -180,7 +199,9 @@ pub fn answer(text: &str) {
 /// value in a sentence is, `show --file` hands back one line of literal
 /// `\n` instead of the file.
 pub fn payload(text: &str) {
-    said_lines(Tone::Step, text);
+    for line in text.split('\n') {
+        drawn(Tone::Step, line);
+    }
 }
 
 /// One line of human output. Two leading spaces make it detail of the
@@ -204,22 +225,33 @@ pub fn fail(line: &str) {
     tell(Tone::Error, line);
 }
 
-/// One composed sentence, escaped at the seam and then said. Nothing
-/// survives the escape that could break it in two, so a sentence is a
-/// line however hostile the names inside it are.
+/// One composed line, escaped at the seam and then said. Nothing survives
+/// the escape that could break it in two, so a line is a line however
+/// hostile the values inside it are.
 fn tell(tone: Tone, text: &str) {
-    said_lines(tone, &escaped(text));
+    drawn(tone, &escaped(text));
 }
 
-/// Text already fit to print, said a line at a time. A break is a break in
-/// both renderings: plain writes the same bytes it always did, and a blank
-/// line in the framed one closes the block above it.
-fn said_lines(tone: Tone, text: &str) {
+/// A message whose line breaks are its own — an error naming one finding
+/// per line — said in the tone of something that did not happen. Split
+/// before the escape, so the breaks reach the reader as breaks.
+///
+/// The obligation this door carries is in the module doc: a message said
+/// through it has already escaped the values it interpolated, because a
+/// break inside one of those would become a line here.
+pub fn fail_lines(text: &str) {
     for line in text.split('\n') {
-        match mode() {
-            Mode::Plain => write_line(line),
-            Mode::Pretty => blocks::said(tone, line),
-        }
+        drawn(Tone::Error, &escaped(line));
+    }
+}
+
+/// One line, already fit to print. Plain writes the same bytes it always
+/// did; the framed rendering groups it, and an empty line closes the block
+/// above it.
+fn drawn(tone: Tone, line: &str) {
+    match mode() {
+        Mode::Plain => write_line(line),
+        Mode::Pretty => blocks::said(tone, line),
     }
 }
 
@@ -241,12 +273,17 @@ pub fn ledger(head: &str, steps: &[String]) {
 
 /// The last line of a run that failed. Plain mode prints what it always
 /// printed; a frame closes on it in the failure style.
-pub fn outro_fail(line: &str) {
-    let line = escaped(line);
+///
+/// A door for a message that owns its breaks, like [`fail_lines`]: the one
+/// thing that reaches it is the error a run ended on, and a core error can
+/// name one finding per line. Same obligation — the values in such a
+/// message are escaped where it was composed.
+pub fn outro_fail(text: &str) {
+    let text = text.split('\n').map(escaped).collect::<Vec<_>>().join("\n");
     if mode() == Mode::Plain {
-        return write_line(&line);
+        return write_line(&text);
     }
-    blocks::fail_frame(&line);
+    blocks::fail_frame(&text);
 }
 
 #[cfg(test)]
@@ -288,8 +325,21 @@ mod tests {
         for raw in ["gh\u{1b}[31m", "a\nb", "pay\u{202e}gnp", "plain-name", ""] {
             let once = escaped(raw);
             assert_eq!(escaped(&once), once, "{raw:?}");
-            assert!(!once.contains('\u{1b}') && !once.contains('\n'), "{once:?}");
+            assert!(!once.contains('\u{1b}'), "{once:?}");
         }
+    }
+
+    /// The two doors, and the difference between them. A break in a value
+    /// is content and is escaped with the rest, so a name cannot become
+    /// two lines; a break a message wrote is structure and is a break, so
+    /// an error naming one finding per line reaches the reader that way.
+    #[test]
+    fn a_value_keeps_its_break_and_a_message_keeps_its_own() {
+        // What `say` does to its argument: one line, whatever it holds.
+        assert_eq!(escaped("a\nb"), "a\\nb");
+        // What `lines` does to the same text: two lines, each escaped.
+        let split: Vec<String> = "a\u{1b}[31m\nb".split('\n').map(escaped).collect();
+        assert_eq!(split, vec!["a\\u{1b}[31m".to_owned(), "b".to_owned()]);
     }
 
     /// One redirected stream is enough to make a run plain: a pipe on

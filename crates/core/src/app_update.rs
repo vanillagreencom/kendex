@@ -1,6 +1,7 @@
 //! Cached app release checks shared by the desktop command and its tests.
 
 use std::io::Read;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -37,6 +38,18 @@ pub enum AppUpdateStatus {
         version: String,
     },
 }
+
+/// One check at a time in this process. Two run on every launch — the
+/// startup schedule and the webview asking as it mounts — and without this
+/// both read a cache neither has written yet, both fetch, and the second
+/// write puts its own generation over the first. Held across the read, the
+/// fetch and the write, so the second caller reads what the first left and
+/// finds the interval already served.
+///
+/// A second process is not covered, and does not need to be: the write is
+/// atomic and the file is one generation or the other either way, so the
+/// cost of that race is a redundant fetch rather than a torn cache.
+static CHECK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// What the last check left behind: which feed it read, the validator to
 /// send back, when it was attempted, and the document itself. Nothing
@@ -84,6 +97,12 @@ fn check_with_clock(
     request: CheckRequest<'_>,
     clock: impl FnOnce() -> u64,
 ) -> Result<AppUpdateStatus> {
+    // No protected state lives in memory. A prior panic releases the mutex,
+    // and the atomic cache file is either the old or the new generation.
+    let _one_at_a_time = CHECK_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let now = clock();
     let mut cached = read_cache(env)?.unwrap_or_default();
     let feed_url = request.feed_url.trim();

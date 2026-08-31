@@ -12,8 +12,19 @@ pub struct Finding {
 }
 
 impl fmt::Display for Finding {
+    /// One finding, one line. `CoreError::ManifestInvalid` joins these
+    /// with newlines, and a surface printing that message keeps the breaks
+    /// — so the parts are escaped here, where the message is composed. A
+    /// location is a key somebody wrote in their own manifest, and a TOML
+    /// key can hold a newline; unescaped, one key would forge a finding.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {} — fix: {}", self.location, self.problem, self.fix)
+        write!(
+            f,
+            "{}: {} — fix: {}",
+            crate::names::shown(&self.location),
+            crate::names::shown(&self.problem),
+            crate::names::shown(&self.fix)
+        )
     }
 }
 

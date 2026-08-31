@@ -9,7 +9,7 @@ use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
 use kendex_core::process::Hardened;
 
-use super::{CliResult, answer, out, resolve_scopes, say};
+use super::{CliResult, answer, escaped, out, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
 pub fn new(
@@ -168,9 +168,18 @@ fn selection(
         }
         (None, 1) => readable[0],
         (None, _) => {
+            // One origin per line, which makes this a message that owns
+            // its breaks: the places are escaped here, because a break in
+            // one of them would become a line of its own where it prints.
             let listed: Vec<String> = readable
                 .iter()
-                .map(|origin| format!("{}: {}", &origin.hash[..12], origin.locations.join(" = ")))
+                .map(|origin| {
+                    format!(
+                        "{}: {}",
+                        &origin.hash[..12],
+                        escaped(&origin.locations.join(" = "))
+                    )
+                })
                 .collect();
             return Err(format!(
                 "'{name}' exists with different bytes in more than one place — pick one with --origin <hash>:\n{}",
