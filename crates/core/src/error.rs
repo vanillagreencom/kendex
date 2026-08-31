@@ -38,12 +38,12 @@ pub enum CoreError {
     },
 
     #[error(
-        "{path}: this manifest could not be read — {message}; move it aside or delete it, then install fresh"
+        "{path}: this manifest could not be read — {message}; move it aside and install fresh, declaring again from the file you moved"
     )]
     LegacyManifest { path: PathBuf, message: String },
 
     #[error(
-        "{path}: this lock file could not be read — {message}; move it aside or delete it, then install fresh. Delete any pi hooks.json or hooks/ left beside a root with it: this record was the only thing naming them"
+        "{path}: this lock file could not be read — {message}; move it aside and install fresh. Keep it: it is the only record naming a pi hooks.json or hooks/ beside a scope root, so move those aside as well"
     )]
     LockCorrupt { path: PathBuf, message: String },
 

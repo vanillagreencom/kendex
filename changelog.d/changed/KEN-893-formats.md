@@ -1,1 +1,1 @@
-- **Breaking:** kendex reads only the format it writes. Delete a refused `.kendex-lock.json` and apply again, and delete any pi `hooks/` or `hooks.json` beside a root with it: the lock named those.
+- **Breaking:** kendex reads only the format it writes. Move a refused `.kendex-lock.json` aside, keep it, and apply again: it is the only record naming a pi `hooks/` or `hooks.json` beside a root.
