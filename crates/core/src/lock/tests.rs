@@ -89,7 +89,16 @@ fn a_v1_lock_fails_to_load_and_names_the_fresh_install() {
     .unwrap();
     let error = load_file(&path).unwrap_err();
     assert!(matches!(error, CoreError::LockCorrupt { .. }), "{error}");
-    assert!(error.to_string().contains("install fresh"), "{error}");
+    let said = error.to_string();
+    assert!(said.contains("install fresh"), "{said}");
+    // Deleting the lock is not the whole remedy, and the message must not
+    // read as though it were: this record is the only thing naming a
+    // script and registry an older kendex left beside a pi root, nothing
+    // in this build looks there, and a person who deletes the lock alone
+    // ends up with the hook registered twice. The manifest's refusal
+    // carries no such clause on purpose — moving kendex.toml aside
+    // destroys no record, so it strands nothing.
+    assert!(said.contains("hooks.json"), "{said}");
     assert!(matches!(load(&path), Err(CoreError::LockCorrupt { .. })));
 }
 

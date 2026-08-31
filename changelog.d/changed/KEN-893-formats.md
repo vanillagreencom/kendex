@@ -1,1 +1,1 @@
-- **Breaking:** kendex reads only the format it writes. Delete `.kendex-lock.json` and apply again; move a `kendex.toml` it refuses aside and declare again, copying from the file you moved.
+- **Breaking:** kendex reads only the format it writes. Delete a refused `.kendex-lock.json` and apply again, and delete any pi `hooks/` or `hooks.json` beside a root with it: the lock named those.

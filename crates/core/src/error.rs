@@ -43,7 +43,7 @@ pub enum CoreError {
     LegacyManifest { path: PathBuf, message: String },
 
     #[error(
-        "{path}: this lock file could not be read — {message}; move it aside or delete it, then install fresh"
+        "{path}: this lock file could not be read — {message}; move it aside or delete it, then install fresh. Delete any pi hooks.json or hooks/ left beside a root with it: this record was the only thing naming them"
     )]
     LockCorrupt { path: PathBuf, message: String },
 

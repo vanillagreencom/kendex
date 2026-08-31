@@ -21,6 +21,7 @@ export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
   "lock-corrupt": [
     "Rescan to retry",
     "If it keeps failing, the file is damaged or from an older version of kendex — move it aside and apply again to write a fresh one",
+    "If this project has pi hooks, delete any hooks.json and hooks/ an older kendex left beside its .pi directory too — the record naming them goes with the lock, and both copies would keep firing",
   ],
   "manifest-outdated": [
     "Move the project's kendex.toml aside — nothing converts it, and kendex leaves it exactly as you wrote it",

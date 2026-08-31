@@ -6,7 +6,12 @@
 //! everything else. It matters because this build reads only the format it
 //! writes: after an upgrade, every record a released kendex left is in
 //! that class, so a read that failed on one would blank the Library table,
-//! the Browse page and the marketplace page on first launch.
+//! the Browse page, the marketplace page and the Updates page on first
+//! launch.
+//!
+//! The other half of the split is here too. A verb that acts on the
+//! record refuses one it cannot read, and the collection-steps case below
+//! is what keeps that line from drifting back.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -177,12 +182,15 @@ fn the_browse_page_survives_an_aged_lock() {
     );
 }
 
-/// The marketplace page's reuse-or-subscribe read. An aged manifest
-/// subscribes to nothing this build can name, so every member is planned
-/// fresh rather than the page failing.
+/// The line between the two policies, from the mutation side. Collection
+/// steps plan what `kendex add <collection>` writes, so an aged manifest
+/// refuses here — read as declaring nothing it would plan every member as
+/// a fresh subscription, print that listing, take the person's yes and
+/// fetch every repository, and only then meet the same refusal from the
+/// install. The record's own message, at the door, costs none of that.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn collection_steps_survive_an_aged_manifest() {
+fn collection_steps_refuse_an_aged_manifest() {
     let w = world();
     let collection = Collection {
         id: "kit".to_owned(),
@@ -196,10 +204,10 @@ fn collection_steps_survive_an_aged_manifest() {
     };
     w.age_the_manifest();
 
-    let steps = kendex_core::source_ops::collection_steps(&w.env, &w.scope, &collection)
-        .expect("the steps must be planned, not refused");
-    assert_eq!(steps.len(), 1, "{steps:?}");
-    assert_eq!(steps[0].skills, ["deploy"], "{steps:?}");
+    let error = kendex_core::source_ops::collection_steps(&w.env, &w.scope, &collection)
+        .expect_err("a plan against a record this build cannot read must refuse");
+    assert!(error.is_unreadable_record(), "{error}");
+    assert!(error.to_string().contains("schema 5"), "{error}");
 }
 
 /// The Updates page, and with it the sidebar badge and the Library's

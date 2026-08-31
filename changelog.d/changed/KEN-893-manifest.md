@@ -1,0 +1,1 @@
+- **Breaking:** a `kendex.toml` from another version is refused and left exactly as written. Move it aside and declare again, copying from the file you moved.
