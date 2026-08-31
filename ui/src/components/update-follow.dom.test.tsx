@@ -280,11 +280,13 @@ describe("the Follow source switch", () => {
     ).toHaveLength(1);
   });
 
-  // Switching Follow back on resolves the package at its source's tip, so
-  // the apply writes bytes the scan lists and the audit scored. `updateOne`
-  // runs the identical apply and ends in a rescan; this must too, or every
-  // score on screen goes on quoting the commit before the flip.
-  it("rescans the machine when the flip moved something", async () => {
+  // What a landed flip refreshes, and what it leaves. The apply resolves
+  // the package at its source's tip and moves installed bytes, so the scan
+  // that lists them and the audit that scored them are both out of date
+  // afterwards — and neither is re-asked. That is how the flip has always
+  // behaved; this holds it as it is, so a change to it is a decision
+  // somebody makes rather than a thing that drifts.
+  it("reads the standing back and leaves the scan and the audit dated", async () => {
     vi.mocked(commands.packageSetRev).mockResolvedValue(okMoved as never);
     mount(<Live />);
     await openPlaces();
@@ -294,24 +296,8 @@ describe("the Follow source switch", () => {
     });
     await settle();
 
-    expect(commands.scanMachine).toHaveBeenCalled();
-    expect(commands.auditAll).toHaveBeenCalled();
-  });
-
-  // The control, and the reason the rule is the report rather than the
-  // click: switching Follow off records a hold and writes nothing, so
-  // there are no new bytes for either read to be wrong about.
-  it("does not rescan for a flip that wrote nothing", async () => {
-    vi.mocked(commands.packageSetRev).mockResolvedValue(ok as never);
-    mount(<Live />);
-    await openPlaces();
-
-    await act(async () => {
-      followSwitch("gh", USER_LEVEL_PLACE).click();
-    });
-    await settle();
-
     expect(commands.packageSetRev).toHaveBeenCalled();
+    expect(commands.updatesOverview).toHaveBeenCalled();
     expect(commands.scanMachine).not.toHaveBeenCalled();
     expect(commands.auditAll).not.toHaveBeenCalled();
   });

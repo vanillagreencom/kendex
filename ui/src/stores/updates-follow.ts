@@ -14,7 +14,6 @@ import {
 } from "@/bindings";
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import type { ReadState } from "@/lib/read-state";
-import { rescanEverything } from "@/lib/rescan";
 import { sameScope } from "@/lib/scope";
 import { settled } from "@/lib/settled";
 import { rowUnsettled } from "@/lib/updates-read-state";
@@ -135,13 +134,13 @@ export function followSwitch({
         report(response.error);
         return;
       }
-      // Every scope's standing is read again behind the apply.
+      // Every scope's standing is read again behind the apply. The scan
+      // and the audit are not: switching Follow back on resolves the
+      // package at its source's tip and moves installed bytes they both
+      // answer for, so both are left dated until something else asks.
+      // `update-follow.dom.test.tsx` holds that as it is. It is how the
+      // flip has always behaved, not something this store changed.
       await get().reload();
-      // Switching Follow back on resolves the package at its source's tip,
-      // which writes bytes the scan lists and the audit scored — the same
-      // apply `updateOne` runs, so it ends the same way. Switching off
-      // records a hold and writes nothing, and its report says so.
-      if (response.data.moved.length > 0) await rescanEverything();
     } finally {
       set({
         pendingFollows: get().pendingFollows.filter(

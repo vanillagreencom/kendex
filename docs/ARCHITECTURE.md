@@ -617,7 +617,7 @@ lives in one capability table read by core and UI.
   `useCatalog` moves the page onto it. Installing needs a subscription;
   `RepoAction` offers the one step: Subscribe when none declares the
   repository, Turn on when a declared one is off, Refresh when declared
-  but unreadable, neutral until a read has produced rows. Pre-install
+  but unreadable, neutral until a read has landed or left rows. Pre-install
   safety (`browse/safety.rs`) scores catalog bytes with the rules an
   install runs and caches **findings and scores only**
   (`<key>/<commit>.safety/…`, never inside the receipt-signed checkout),

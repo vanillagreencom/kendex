@@ -5,15 +5,16 @@
 // score on screen answering for content the same call had just re-read — so
 // both go together, and neither waits on the other.
 //
-// A write that changes the bytes either read answers for makes both wrong,
-// and this is how they are put right: an install, a package coming current,
-// a Follow flip that resolved to a new commit, a registry change. The
-// buttons offering to look again run it too, because nothing else knows
-// what changed.
+// Call it after a write whose effect neither read has seen: an install, a
+// package coming current, a registry change. The buttons offering to look
+// again call it because nothing else knows what changed.
 //
-// A write whose own answer carries both reads back for the surface it
-// touched does not need it. The audit's item actions are the case: each
-// answers with the scope's fresh view and refreshes the scan itself.
+// Two writes do not. The audit's item actions have no need: each answers
+// with the scope's fresh view and refreshes the scan itself. The
+// Follow-source flip does need it and has never had it — it moves
+// installed bytes and reads back its own standing alone, so both of these
+// stay dated until something else asks. `update-follow.dom.test.tsx` holds
+// that as it is, not as it ought to be.
 //
 // Adding a project, dropping one, or moving a harness's folder changes
 // which scopes the audit reads, and a scope with no view of its own counts
