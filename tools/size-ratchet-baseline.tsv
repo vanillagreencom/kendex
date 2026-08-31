@@ -1,7 +1,7 @@
 .github/workflows/review-gate-writer.yml	662
 .github/workflows/skill-tests.yml	533
 crates/core/src/engine/detach.rs	424
-crates/core/src/error.rs	503
+crates/core/src/error.rs	500
 crates/core/src/settings_file.rs	408
 hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
@@ -130,4 +130,4 @@ skills/worktree/scripts/worktree	4961
 skills/worktree/scripts/worktree-session-guard	1197
 skills/worktree/tests/worktree_session_guard.sh	1282
 ui/src/stores/marketplaces.ts	282
-ui/src/stores/settings.ts	521
+ui/src/stores/settings.ts	311

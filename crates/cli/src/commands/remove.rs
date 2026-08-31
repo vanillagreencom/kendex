@@ -48,11 +48,7 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
             // so the run still fails: the person asked for a removal that
             // did not happen everywhere they asked for it.
             Err(error) if error.is_unreadable_record() => {
-                warn(&format!(
-                    "skipped {}: {}",
-                    scope_label(&scope),
-                    shown(&error.to_string())
-                ));
+                warn(&format!("skipped {}: {}", scope_label(&scope), error));
                 skipped.push(scope_label(&scope));
                 continue;
             }

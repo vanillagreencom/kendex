@@ -63,11 +63,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                 continue;
             }
             Err(error) if error.is_unreadable_record() => {
-                warn(&format!(
-                    "skipped {}: {}",
-                    scope_label(&scope),
-                    shown(&error.to_string())
-                ));
+                warn(&format!("skipped {}: {}", scope_label(&scope), error));
                 skipped.push(scope_label(&scope));
                 continue;
             }
@@ -85,11 +81,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
             match plan_apply(env, &scope, &options) {
                 Ok(report) => report,
                 Err(error) if error.is_unreadable_record() => {
-                    warn(&format!(
-                        "skipped {}: {}",
-                        scope_label(&scope),
-                        shown(&error.to_string())
-                    ));
+                    warn(&format!("skipped {}: {}", scope_label(&scope), error));
                     skipped.push(scope_label(&scope));
                     continue;
                 }

@@ -1,3 +1,4 @@
+use kendex_core::env::Env;
 use kendex_core::harness::{KindCaps, capabilities};
 use kendex_core::model::{HarnessId, ItemKind};
 use kendex_core::scan;

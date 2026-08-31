@@ -345,21 +345,24 @@ fn a_value_in_the_closing_refusal_cannot_forge_a_line() {
             "the place was not printed as what it is ({ui}): {printed}"
         );
 
-        // The refusal is what it says, on the line it says it: escaped
-        // after the split, the break in the directory name put "rd/... is a
-        // v1 manifest" on a line of its own.
+        // The refusal is what it says, on the line it says it. The place
+        // is the last thing the closing sentence names, so escaped after
+        // the split its break would leave "rd" on a line of its own and
+        // the line opening "Error: " holding half a path — which is why
+        // the whole place has to be on that one line, not merely somewhere
+        // in what was printed.
         //
         // Counted in plain, which is the rendering that does not wrap: the
         // framed one breaks a long path to fit a box.
         if ui == "plain" {
             let refusals: Vec<&str> = printed
                 .lines()
-                .filter(|line| line.contains("is a v1 manifest"))
+                .filter(|line| line.starts_with("Error: "))
                 .collect();
             assert_eq!(refusals.len(), 1, "the refusal was not one line: {printed}");
             assert!(
-                refusals[0].starts_with("Error: "),
-                "the refusal did not open the line it is on: {printed}"
+                refusals[0].contains("we\\u{1b}[31mi\\nrd"),
+                "the refusal did not carry the whole place: {printed}"
             );
         }
     }
