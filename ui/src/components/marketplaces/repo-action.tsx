@@ -37,13 +37,15 @@ export function RepoAction({
   const { kind, holder } = repoAction(rows, read, key);
 
   switch (kind) {
-    // Nothing to match the repository against yet. Whether that is worth
-    // waiting for or worth acting on is what the read says: a read still
-    // out will answer on its own, and one that failed will not — so the
-    // second gets the reason and the way to ask again, rather than a dead
-    // control claiming a check that is over.
+    // Nothing to match the repository against yet, for either of two
+    // reasons: no canonical key, or no rows any read produced. Only the
+    // second is the overview's to fix, and `load` is the only thing that
+    // writes `read` — so Try again is offered where pressing it can lift
+    // the state, and a key still on its way keeps the wait it is really
+    // in. A retry that changed nothing visible would be the same dead
+    // control under a friendlier word.
     case "checking":
-      return read.status === "failed" ? (
+      return read.status === "failed" && key !== null ? (
         <Button
           size="sm"
           variant="outline"

@@ -9,7 +9,12 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { commands } from "@/bindings";
+import {
+  type AuditView_Serialize,
+  commands,
+  type DriftRow_Serialize,
+  type PackageUpdate_Serialize,
+} from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { UPDATE_ALL_LABEL } from "@/lib/copy";
 import {
@@ -51,8 +56,8 @@ const APP = "/home/me/app";
 // landing's row matching do any work: name alone would identify every row.
 const rows = [row("gh", null), row("gh", APP), row("orch", APP)];
 
-const view = {
-  scope: { scope: "global" as const },
+const view: AuditView_Serialize = {
+  scope: { scope: "global" },
   drift: [],
   plan: [],
   notes: [],
@@ -62,27 +67,30 @@ const view = {
   exits: [],
 };
 
-/** One rendering an apply wrote, for a report that says it moved something. */
-const wrote = {
-  kind: "skill" as const,
+/** One rendering an apply wrote, for a report that says it moved
+ *  something. `stale` is what a rendering the plan rewrites is: it is on
+ *  disk and no longer matches the declaration, which is one of the two
+ *  states `package::outcome::moving` counts. */
+const wrote: DriftRow_Serialize = {
+  kind: "skill",
   name: "gh",
-  harness: "claude" as const,
-  state: "drifted" as const,
+  harness: "claude",
+  state: "stale",
   detail: "",
-  scope: { scope: "global" as const },
+  scope: { scope: "global" },
 };
 
 /** What the flip's own apply answers with: the scope's view afterwards,
  *  and what became of the package. Switching Follow off records a hold and
  *  writes nothing, which is `moved` empty. */
-const ok = {
-  status: "ok" as const,
+const ok: { status: "ok"; data: PackageUpdate_Serialize } = {
+  status: "ok",
   data: { view, heldBack: [], removed: [], moved: [] },
 };
 
 /** The same, for a flip that resolved the package at its source's tip. */
-const okMoved = {
-  status: "ok" as const,
+const okMoved: { status: "ok"; data: PackageUpdate_Serialize } = {
+  status: "ok",
   data: { view, heldBack: [], removed: [], moved: [wrote] },
 };
 
