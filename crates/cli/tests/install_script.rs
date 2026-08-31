@@ -330,19 +330,36 @@ fn the_card_offers_the_invocation_the_script_publishes() {
     );
 }
 
-/// Where a re-run of `install.sh` lands, which is what the card's
-/// privileged arm now says rather than promising the file it names moves.
+/// Where a re-run of `install.sh` lands, so the card can go on saying the
+/// installer picks its own directory rather than naming one.
 ///
-/// The script picks its `bindir` by candidate order, not by `PATH` order:
-/// the home directory is tried first and taken whenever it is on `PATH` at
-/// all. So a machine whose record names `/usr/local/bin/kendex` and whose
-/// `PATH` has since gained `~/.local/bin` gets the command installed in the
-/// home directory, and the named file is left where it was. Driven with
-/// `/usr/local/bin` ahead of the home directory, which is the arrangement
-/// that would settle it the other way if `PATH` order decided.
+/// Two halves, and the name claims only what both together can see. Read:
+/// the script's candidate list puts the home directory first. Run: with
+/// `/usr/local/bin` ahead of the home directory on `PATH`, the command
+/// still lands in the home directory, so `PATH` order does not decide.
+///
+/// What neither half can see is whether the home directory was taken
+/// because it matched or because nothing did: `install.sh` falls back to
+/// that same directory when no candidate is on `PATH` at all, so a run and
+/// a fallback are one destination here. Separating them means a run that
+/// lands in `/usr/local/bin`, which is a privileged write this suite will
+/// not make. Hence the list is read rather than inferred.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_re_run_installs_where_path_membership_puts_it_not_at_a_named_file() {
+fn path_order_does_not_decide_where_a_re_run_lands() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+    let dirs = installer_bin_dirs(&fs::read_to_string(&script).unwrap());
+    assert!(
+        dirs.first().is_some_and(|first| first.starts_with("$HOME")),
+        "install.sh tries {dirs:?} in that order; the home directory is no longer first"
+    );
+    // Without a second kind of candidate the order above is trivially
+    // held and the run below settles nothing.
+    assert!(
+        dirs.iter().any(|dir| !dir.starts_with("$HOME")),
+        "install.sh names only home candidates, so nothing here is about order: {dirs:?}"
+    );
+
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let (output, _) = run_install_in(HOST_UNAME, "x86_64", None, &home, &["/usr/local/bin"]);
