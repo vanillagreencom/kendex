@@ -1,122 +1,57 @@
 #!/usr/bin/env bash
-# Regression lint for kendex#970. The `escalated_items` workflow-state bucket
-# used to conflate two dev outcomes — items dev was BLOCKED on and items dev
-# deliberately SKIPPED — distinguishable only via free-text `reason`. Downstream,
-# review-pr § 9 fed the bucket wholesale into audit input as `origin:
-# "escalated"` ("blockers dev couldn't fix"), so under
+# The `escalated_items` bucket used to conflate two dev outcomes — items dev
+# was BLOCKED on and items dev deliberately SKIPPED — distinguishable only via
+# free-text `reason`. review-pr fed the bucket wholesale into audit input as
+# `origin: "escalated"` ("blockers dev couldn't fix"), so under
 # ORCH_DECISION_MODE=auto-recommended skipped low-priority residue was filed as
 # if it were unfixable blockers.
 #
 # The fix threads the dev round's typed per-item decision through the
-# state-write boundary as an `outcome` field ("blocked"|"skipped") and maps it
-# to distinct audit origins (blocked/absent → "escalated", skipped →
-# "skipped"). This lint pins the tokens that chain carries in the instruction
-# docs — the `outcome` field, the route from each builder to the schema, and
-# in the schema one table row per outcome binding it to its origin. A relation
-# needs one pin that spans both halves: two independent token greps would stay
-# green with the mapping inverted.
+# state-write boundary as an `outcome` field and maps it to distinct audit
+# origins. Pinned here: the field, the write that carries it, the route from
+# each builder to the schema, and in the schema one row per outcome binding it
+# to its origin — a relation needs a pin spanning both halves, since two
+# independent token greps stay green with the mapping inverted.
 #
-# NOT covered: that those rows form a well-formed table at all — a header, a
-# delimiter on the line below it, and a consistent cell count across every row.
-# Not because the property is prose; it is a DOCUMENT-LEVEL fact with no home
-# that stays fail-closed here. This suite ships inside orch, so a checker it
-# calls must ship inside orch too, and dep-radar's policy lint needs the
-# identical checker but cannot reach it: dep-radar declares `required:
-# [github]`, and no test in this repo sources another skill's file. A
-# repo-level `tools/` lane is the right home for it. Until such a lane exists,
+# NOT pinned in review-pr.md or review.md: the mapping itself. Contiguity was
+# not enough — a sentence NEGATING `"skipped"` → `origin: "skipped"` carries
+# that literal too, so the check passed on a doc saying the opposite. A pin a
+# negation satisfies covers nothing, and the schema's rows are the only
+# coverage that rule has.
+#
+# Also NOT covered: that those rows form a well-formed table — a header, a
+# delimiter below it, a consistent cell count. Not because the property is
+# prose; it is a document-level fact with no fail-closed home here. A checker
+# this suite calls must ship inside orch, and dep-radar's policy lint needs the
+# identical checker but cannot reach it: no test in this repo sources another
+# skill's file. A repo-level `tools/` lane is the right home. Until one exists,
 # table well-formedness has no lint anywhere.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-PM_SCHEMA="$SKILL_DIR/../project-management/schemas/audit-issues-input.md"
-
-PASS=0
-FAIL=0
-
-pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
-
-echo "=== orch escalated_items outcome lint (kendex#970) ==="
-
-# --- a: the state write carries the typed outcome ---------------------------
-# The dev-fix escalated entry must include the outcome field so the
-# Blocked/Skipped distinction survives the state-write boundary. The entry is
-# written to a file and bound into the write, so the field sits in the entry
-# shape and the write is the command that appends it.
 DEV_FIX="$SKILL_DIR/workflows/dev-fix.md"
-if grep -qE '^\s*\{"description":.*"outcome":' "$DEV_FIX" \
-   && grep -qE 'workflow-state update \[ISSUE_ID\].*\.escalated_items \+=' "$DEV_FIX"; then
-  pass "dev-fix escalated entry carries the \"outcome\" field into its write"
-else
-  fail "dev-fix escalated entry lost the \"outcome\" field or its write"
-fi
+PM_SCHEMA="$SKILLS_ROOT/project-management/schemas/audit-issues-input.md"
+MAPPING="## Building from Review Findings"
 
-# --- b: audit-input builders route to the schema that owns the mapping ------
-# Neither branch of the mapping is pinned in the workflows. Contiguity was not
-# enough: `"skipped"` → `origin: "skipped"` is one literal, but a sentence
-# NEGATING it carries that literal too, so the condition passed on a doc that
-# said the opposite while failing on a faithful rewrite. A pin a negation
-# satisfies covers nothing. What is pinned is the route to the schema, where
-# § d reads the mapping off the rows.
-#
-# So these rules have no lint in review-pr.md or review.md: that `"skipped"`
-# maps to origin "skipped", and that `"blocked"` or an absent `outcome` field
-# maps to origin "escalated". The schema's rows are the only coverage either
-# has.
-for wf in review-pr review; do
-  doc="$SKILL_DIR/workflows/$wf.md"
-  if grep -q 'schemas/audit-issues-input.md' "$doc"; then
-    pass "$wf.md routes to the schema that owns the mapping"
-  else
-    fail "$wf.md lost the schema route"
-  fi
-done
+echo "=== orch escalated_items outcome lint ==="
 
-# The legacy rule — an entry WITHOUT an `outcome` field maps to origin
-# "escalated" — now has its own row in the schema table § d reads. It stays
-# uncovered in review-pr.md and review.md, where both builders state it in
-# prose that no token tracks.
+rule "the dev-fix escalated entry carries a typed outcome" \
+  "$DEV_FIX" "## 2. Delegate" '"outcome":' '"description":'
+rule "the escalated write appends that entry" \
+  "$DEV_FIX" "## 2. Delegate" '.escalated_items += [$e]' '--slurpfile item'
 
-# --- d: the audit-input schema carries the mapping as a table ---------------
-# One row per outcome, so each row binds its outcome to its origin. Scoped to
-# the mapping section and gated on the header and delimiter: row-shaped text
-# elsewhere in the file must not satisfy it, and rows with no table above them
-# are not a table.
-if grep -q 'suggestion|escalated|skipped|planned|discovered' "$PM_SCHEMA"; then
-  pass "audit-issues-input origin enum includes skipped"
-else
-  fail "audit-issues-input origin enum lost skipped"
-fi
+rule "review-pr routes to the schema that owns the mapping" \
+  "$SKILL_DIR/workflows/review-pr.md" "" 'schemas/audit-issues-input.md'
+rule "review routes to the schema that owns the mapping" \
+  "$SKILL_DIR/workflows/review.md" "" 'schemas/audit-issues-input.md'
 
-# Sliced on the section HEADING, not on the bold lead-in above the table: a
-# lead-in is a sentence fragment, and a prose boundary makes the check
-# prose-dependent however structural the needle inside it is.
-map_section() {
-  awk '/^## Building from Review Findings/ { on = 1; next }
-       on && /^## / { on = 0 }
-       on' "$1"
-}
+rule "the origin enum admits skipped" \
+  "$PM_SCHEMA" "" '"origin":' 'escalated|skipped'
+rule "a blocked outcome maps to origin escalated" \
+  "$PM_SCHEMA" "$MAPPING" '| `"blocked"` |' '| `"escalated"` |'
+rule "an absent outcome maps to origin escalated" \
+  "$PM_SCHEMA" "$MAPPING" '| absent |' '| `"escalated"` |'
+rule "a skipped outcome maps to origin skipped" \
+  "$PM_SCHEMA" "$MAPPING" '| `"skipped"` |' '| `"skipped"` |'
 
-MAP="$(map_section "$PM_SCHEMA")"
-# One row per outcome, each binding its outcome to its origin in ONE literal.
-# A relation needs a pin that spans both halves: two independent token greps
-# would stay green with the mapping inverted.
-MAP_ROWS=(
-  '| `"blocked"` | `"escalated"` |'
-  '| absent | `"escalated"` |'
-  '| `"skipped"` | `"skipped"` |'
-)
-missing_row=""
-for row in "${MAP_ROWS[@]}"; do
-  grep -qF -- "$row" <<<"$MAP" || missing_row="$missing_row $row"
-done
-if [[ -n "$missing_row" ]]; then
-  fail "the mapping section does not carry a row for:$missing_row"
-else
-  pass "audit-issues-input maps each outcome to its origin, one row each"
-fi
-
-echo
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-[[ "$FAIL" -eq 0 ]]
+md_report

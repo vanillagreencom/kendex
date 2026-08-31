@@ -1,278 +1,63 @@
 #!/usr/bin/env bash
-# Regression lint: `orch review` disposes findings by rule, never by prompt.
-#
-# The standalone review workflow used to present an `Apply fixes?` multi-select
-# over its own blockers and fix suggestions, and a second multi-select over the
-# issue candidates. Both are mechanics questions the disposition rules already
+# `orch review` disposes findings by rule, never by prompt. The standalone
+# review workflow used to present an `Apply fixes?` multi-select over its own
+# blockers and fix suggestions, and a second multi-select over the issue
+# candidates. Both are mechanics questions the disposition rules already
 # answer, so the menu only added a stall: an unattended run had nothing to
 # select with, and an attended one re-litigated a classification the reviewers
-# had already made. The rest of the stack disposes by rule and asks only about
-# product or experience.
+# had already made.
 #
-# This suite covers two things only, per review-bots.md.
+# Two things are covered. The absence of the menu shape, which is what a
+# pattern can honestly decide — a menu has to be written to be present, and no
+# rephrasing hides one. And the presence of structural elements: the Declined
+# heading, the metric row, the audit-issues route, the recurrence route ahead
+# of the round cap. That a section or a route is THERE, never that the prose
+# around it reads any particular way.
 #
-# The absence of the menu shape, which is what a pattern can honestly decide: a
-# menu has to be written to be present, and no rephrasing hides one.
-#
-# And the presence of structural elements — the Declined heading, the metric
-# row, the audit-issues route. That a section or a route is THERE, never that
-# the prose around it says anything in particular.
-#
-# It does not cover the disposition rule or the decline-derivation rule
-# themselves. Those are claims written in prose, and prose negates or qualifies
-# around any literal: `mode-independent` was tried as a pin and a § 4 reading
+# NOT covered: the disposition rule and the decline-derivation rule themselves.
+# Those are claims written in prose, and prose negates or qualifies around any
+# literal — `mode-independent` was tried as a pin, and a § 4 reading
 # "`mode-independent` only in `auto-recommended`" satisfied it while inverting
-# the rule. A substring pin cannot establish a claim, so those rules are
-# uncovered here rather than covered in appearance.
+# the rule.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-REVIEW_WF="$SKILL_DIR/workflows/review.md"
-REVIEW_PR_WF="$SKILL_DIR/workflows/review-pr.md"
-TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
-
-PASS=0
-FAIL=0
-
-pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
+WF="$SKILL_DIR/workflows/review.md"
+PR="$SKILL_DIR/workflows/review-pr.md"
+MENU='(multi-select|Apply fixes\?|Create issues for these\?|items selected|Fix blockers\?|Apply fix suggestions\?|Ignore and proceed|resolve the decision mode|ORCH_DECISION_MODE ask)'
+SAMPLE='Apply fixes? — multi-select the blockers to hand a fix round.'
 
 echo "=== orch review disposition-by-rule lint ==="
 
-# Selection-menu shapes, matched only in the fix-disposition section (§ 4).
-# Scoping to § 4 keeps an unrelated ask elsewhere in the workflow from
-# tripping this, and keeps the lint honest about WHERE the regression lands.
-#
-# Every call feeds grep through a herestring, never a pipe: `grep -q` exits at
-# the first match, a pipe would deliver SIGPIPE to awk, and `pipefail` would
-# promote awk's 141 into a failed check for a contract that is present. Whether
-# the race is lost depends on how much awk still has buffered, so it grows with
-# the section's length.
-section_4() { awk '/^## 4\./{on=1;next} /^## 5\./{on=0} on' "$1"; }
-section_7() { awk '/^## 7\./{on=1;next} /^## 8\./{on=0} on' "$1"; }
+# Scoped to the fix-disposition sections, so an unrelated ask elsewhere does
+# not trip this and the lint stays honest about WHERE the regression lands.
+# review-pr.md is the PR-gating twin — same findings, same reviewers, same rule
+# — and its § 7 handles QA items by explicit reference to the § 4 pattern.
+absent "review § 4 presents no selection menu over findings" \
+  "$WF" "## 4. Present And Fix" "$MENU" "$SAMPLE"
+absent "review-pr § 4 presents no selection menu over findings" \
+  "$PR" "## 4. Handle Review Items" "$MENU" "$SAMPLE"
+absent "review-pr § 7 presents no selection menu over QA findings" \
+  "$PR" "## 7. Handle QA Items" "$MENU" "$SAMPLE"
 
-MENU_RE='(multi-select|Apply fixes\?|Create issues for these\?|items selected|Fix blockers\?|Apply fix suggestions\?|Ignore and proceed|resolve the decision mode|ORCH_DECISION_MODE ask)'
+# The positive statements, so an edit cannot drop the rule and leave only the
+# absence of a menu — which a truncated file would satisfy too. Their presence
+# is what this establishes; whether a run fills them in is not a fact about
+# text, and what audit-issues does with its approval gate is asserted where
+# that gate lives.
+rule "review-pr § 8 carries the declined report section" \
+  "$PR" "## 8. Summary And Issue Audit" '### 🚫 DECLINED'
+rule "review § 5 carries the Declined metric row" "$WF" "## 5. Summary" '| Declined |'
+rule "review § 5 carries the Declined report section" "$WF" "## 5. Summary" '### Declined'
+rule "review § 4 names the audit-issues route" \
+  "$WF" "## 4. Present And Fix" 'workflows/audit-issues.md'
+rule "review-pr § 4 names the recurrence route" \
+  "$PR" "## 4. Handle Review Items" '../references/finding-disposition.md#recurrence'
 
-has_menu() { grep -qEi "$MENU_RE" <<<"$(section_4 "$1")"; }
-s4_has()   { grep -qF -e "$2" <<<"$(section_4 "$1")"; }
+# The twin's half of the one contract: the recurrence route precedes the round
+# cap in document order, so a recurring cause ends the patch sequence before a
+# round count ever decides anything.
+order "review-pr routes to Recurrence ahead of REVIEW_MAX_CYCLES" "$PR" \
+  'references/finding-disposition\.md#recurrence' 'REVIEW_MAX_CYCLES'
 
-check_no_menu() {
-  local doc="$1" label="$2"
-  if has_menu "$doc"; then
-    fail "$label"
-    return 1
-  fi
-  pass "$label"
-}
-
-check_no_menu "$REVIEW_WF" "review.md § 4 presents no selection menu over findings"
-
-# review-pr.md is the PR-gating twin: same findings, same reviewers, so the
-# same rule. § 4 handles review items, § 7 the QA items by explicit reference
-# to the § 4 pattern — both must stay menu-free.
-check_no_menu "$REVIEW_PR_WF" "review-pr.md § 4 presents no selection menu over findings"
-
-if grep -qEi "$MENU_RE" <<<"$(section_7 "$REVIEW_PR_WF")"; then
-  fail "review-pr.md § 7 presents a selection menu or gates QA fixes on a decision mode"
-else
-  pass "review-pr.md § 7 presents no selection menu over QA findings"
-fi
-
-# The positive statement, so a future edit cannot quietly drop the rule and
-# leave only the absence of a menu (which a truncated file would also satisfy).
-# The section where declines are reported must exist to report them into.
-if grep -q '^### 🚫 DECLINED$' "$REVIEW_PR_WF"; then
-  pass "review-pr.md § 8 carries the declined report section"
-else
-  fail "review-pr.md § 8 lost the declined report section"
-fi
-
-# The metric row and the section a decline is reported into. Their presence is
-# what this establishes — whether a run fills them in is not a fact about text.
-if grep -q '^| Declined |' "$REVIEW_WF" && grep -q '^### Declined$' "$REVIEW_WF"; then
-  pass "review.md § 5 carries the Declined metric row and report section"
-else
-  fail "review.md § 5 lost the Declined metric row or report section"
-fi
-
-# § 4 names the audit-issues route. A structural fact about the workflow, not a
-# claim that the routing behaves: what audit-issues does with its approval gate
-# is asserted where that gate lives, never from this file's text.
-if s4_has "$REVIEW_WF" 'workflows/audit-issues.md'; then
-  pass "review.md § 4 names the audit-issues route"
-else
-  fail "review.md § 4 lost the audit-issues route"
-fi
-
-# The twin's half of the one contract: review-pr.md § 4 names the same
-# recurrence route review-pr-comments.md § 5 names, and names it ahead of its
-# own round cap. Both are structural — a link route is present, and it precedes
-# the cap in document order — never a claim that the prose around either reads
-# any particular way.
-RECURRENCE_ROUTE='../references/finding-disposition.md#recurrence'
-
-if s4_has "$REVIEW_PR_WF" "$RECURRENCE_ROUTE"; then
-  pass "review-pr.md § 4 names the recurrence route"
-else
-  fail "review-pr.md § 4 lost the recurrence route"
-fi
-
-# No `head` on a grep: `head` exits at line one, the SIGPIPE reaches grep, and
-# `pipefail` would promote it into a failed check for a route that is present.
-first_line() {
-  local out
-  out=$(grep -nF -- "$2" "$1" || true)
-  [[ -n "$out" ]] || return 0
-  printf '%s' "${out%%$'\n'*}" | cut -d: -f1
-}
-
-route_vs_cap() {
-  local route cap
-  route="$(first_line "$1" "$RECURRENCE_ROUTE")"
-  cap="$(first_line "$1" 'REVIEW_MAX_CYCLES')"
-  [[ -n "$route" && -n "$cap" ]] || { printf 'missing\n'; return; }
-  if [[ "$route" -lt "$cap" ]]; then printf 'before\n'; else printf 'after\n'; fi
-}
-
-case "$(route_vs_cap "$REVIEW_PR_WF")" in
-  before) pass "review-pr.md routes to Recurrence ahead of REVIEW_MAX_CYCLES" ;;
-  after)  fail "review-pr.md's recurrence route now sits behind REVIEW_MAX_CYCLES" ;;
-  *)      fail "review-pr.md lost its recurrence route or its REVIEW_MAX_CYCLES cap" ;;
-esac
-
-# --- planted controls: prove each check can fail ----------------------------
-echo
-echo "--- planted controls ---"
-
-# Each planter writes $CTRL in the PARENT shell and returns whether it changed
-# anything: a program that matches nothing leaves the fixture identical to the
-# source, and the control would then report a lint miss for a guard that
-# works. Say so instead — the fixture, not the lint, is what broke.
-
-MENU_LINE='Ask `Apply fixes?` as a multi-select over the blockers.'
-
-# $1 = source, $2 = control name, $3 = heading the menu is planted under.
-plant_menu() {
-  CTRL="$TMP_ROOT/$2.md"
-  awk -v anchor="$3" -v line="$MENU_LINE" '
-    { print }
-    index($0, anchor) == 1 && !done { print ""; print line; done = 1 }
-    END { exit(done ? 0 : 1) }
-  ' "$1" > "$CTRL"
-}
-
-# $1 = source, $2 = control name, $3 = fixed token whose lines are deleted.
-plant_drop() {
-  CTRL="$TMP_ROOT/$2.md"
-  awk -v tok="$3" '
-    index($0, tok) { hit = 1; next }
-    { print }
-    END { exit(hit ? 0 : 1) }
-  ' "$1" > "$CTRL"
-}
-
-# Same, deleting only the FIRST line that carries the token. § 4's route and
-# § 7's both spell it, so dropping § 4's alone leaves § 7's standing behind the
-# cap — which is what puts the route on the wrong side of it.
-plant_drop_first() {
-  CTRL="$TMP_ROOT/$2.md"
-  awk -v tok="$3" '
-    !hit && index($0, tok) { hit = 1; next }
-    { print }
-    END { exit(hit ? 0 : 1) }
-  ' "$1" > "$CTRL"
-}
-
-
-if ! plant_menu "$REVIEW_WF" menu '## 4. Present And Fix'; then
-  fail "menu control planted nothing — its § 4 heading was not found"
-elif has_menu "$CTRL"; then
-  pass "lint flags a reintroduced Apply fixes? multi-select"
-else
-  fail "lint MISSED a reintroduced Apply fixes? multi-select"
-fi
-
-
-if ! plant_drop "$REVIEW_WF" declined '| Declined |'; then
-  fail "declined control planted nothing — the metric row was not found"
-elif grep -q '^| Declined |' "$CTRL"; then
-  fail "lint MISSED a dropped Declined metric row"
-else
-  pass "lint flags a dropped Declined metric row"
-fi
-
-if ! plant_drop "$REVIEW_WF" audit 'workflows/audit-issues.md'; then
-  fail "audit control planted nothing — the workflow path was not found"
-elif s4_has "$CTRL" 'workflows/audit-issues.md'; then
-  fail "lint MISSED a dropped audit-issues route"
-else
-  pass "lint flags a dropped audit-issues route"
-fi
-
-# Scoping control: an ask OUTSIDE § 4 must not trip the lint, or ordinary
-# edits elsewhere in the workflow would fail it for the wrong reason.
-if ! plant_menu "$REVIEW_WF" scope '## 5. Summary'; then
-  fail "scoping control planted nothing — its § 5 heading was not found"
-elif has_menu "$CTRL"; then
-  fail "lint false-flagged a multi-select outside § 4"
-else
-  pass "lint scopes the menu check to § 4"
-fi
-
-if ! plant_menu "$REVIEW_PR_WF" pr-mode '## 4. Handle Review Items'; then
-  fail "review-pr menu control planted nothing — its § 4 heading was not found"
-elif has_menu "$CTRL"; then
-  pass "lint flags a menu reintroduced in review-pr § 4"
-else
-  fail "lint MISSED a menu reintroduced in review-pr § 4"
-fi
-
-if ! plant_menu "$REVIEW_PR_WF" pr-qa '## 7. Handle QA Items'; then
-  fail "review-pr QA control planted nothing — its § 7 heading was not found"
-elif grep -qEi "$MENU_RE" <<<"$(section_7 "$CTRL")"; then
-  pass "lint flags a menu reintroduced in review-pr § 7"
-else
-  fail "lint MISSED a menu reintroduced in review-pr § 7"
-fi
-
-
-if ! plant_drop "$REVIEW_PR_WF" pr-declined '### 🚫 DECLINED'; then
-  fail "review-pr declined control planted nothing — the heading was not found"
-elif grep -q '^### 🚫 DECLINED$' "$CTRL"; then
-  fail "lint MISSED a dropped review-pr DECLINED section"
-else
-  pass "lint flags a dropped review-pr DECLINED section"
-fi
-
-
-# Scoping control for review-pr: dev-fix's own standalone ask lives in a
-# different workflow and must not be dragged in by these checks.
-if ! plant_menu "$REVIEW_PR_WF" pr-scope '## 5. Verdict Pass'; then
-  fail "review-pr scoping control planted nothing — its § 5 heading was not found"
-elif has_menu "$CTRL"; then
-  fail "lint false-flagged a menu outside review-pr § 4"
-else
-  pass "lint scopes the review-pr menu check to § 4"
-fi
-
-if ! plant_drop "$REVIEW_PR_WF" pr-recurrence "$RECURRENCE_ROUTE"; then
-  fail "recurrence control planted nothing — the route was not found"
-elif s4_has "$CTRL" "$RECURRENCE_ROUTE"; then
-  fail "lint MISSED a dropped recurrence route in review-pr § 4"
-else
-  pass "lint flags a dropped recurrence route in review-pr § 4"
-fi
-
-if ! plant_drop_first "$REVIEW_PR_WF" pr-recurrence-order "$RECURRENCE_ROUTE"; then
-  fail "recurrence order control planted nothing — the route was not found"
-elif [[ "$(route_vs_cap "$CTRL")" == after ]]; then
-  pass "lint flags a recurrence route that falls behind the cap"
-else
-  fail "lint MISSED a recurrence route behind the cap"
-fi
-
-echo
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-[[ "$FAIL" -eq 0 ]]
+md_report
