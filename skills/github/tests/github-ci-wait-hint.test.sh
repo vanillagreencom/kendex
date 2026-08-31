@@ -30,43 +30,24 @@ SANDBOX="$TMP_ROOT/project"
 mkdir -p "$SANDBOX"
 git -C "$SANDBOX" init -q
 
-# Stub gh: answers the auth probes the router may make at startup and the one
-# pr view call the routed real-command check needs. Everything else no-ops.
-STUB_DIR="$TMP_ROOT/bin"
-mkdir -p "$STUB_DIR"
-cat >"$STUB_DIR/gh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-case "${1:-}" in
-  auth)
-    echo "Logged in"
-    exit 0
-    ;;
-  api)
-    if [[ "${2:-}" == "user" ]]; then
-      echo "test-user"
-      exit 0
-    fi
-    printf '[]\n'
-    exit 0
-    ;;
-  pr)
-    if [[ "${2:-}" == "view" ]]; then
-      echo "abc-150-fix"
-      exit 0
-    fi
-    ;;
-esac
-exit 0
-EOF
-chmod +x "$STUB_DIR/gh"
+# The shared `gh` fake, staged with the auth probes the router may make at
+# startup and the one `pr view` the routed real-command check needs. Anything
+# else is refused: a hint test that let an unexpected call succeed would pass
+# on a router that reached the network. The source tree is found through git
+# rather than a relative hop, so this works from skills/ and from the
+# .agents/ render beside it.
+BIN_DIR="$TMP_ROOT/bin"
+# shellcheck source=../../../tools/tests/lib/gh-stub.sh
+. "$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/gh-stub.sh"
+GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$BIN_DIR"
+gh_stub_answer pr-view 'abc-150-fix'
 
 # Run github.sh from the sandbox with stubbed gh and no inherited tokens.
 # Captures stdout in $out, stderr in $err, exit code in $rc.
 run_github() {
   set +e
   out=$( (cd "$SANDBOX" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
-    PATH="$STUB_DIR:$PATH" bash "$GITHUB_SH" ${ARGS[@]+"${ARGS[@]}"}) 2>"$ERR_FILE")
+    PATH="$BIN_DIR:$PATH" bash "$GITHUB_SH" ${ARGS[@]+"${ARGS[@]}"}) 2>"$ERR_FILE")
   rc=$?
   set -e
   err="$(cat "$ERR_FILE")"

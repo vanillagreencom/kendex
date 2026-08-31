@@ -100,3 +100,6 @@ x && declare -A cache
 run;local -A cache
 (declare -A cache)
 # ${name^^}
+run "${@}"
+set -- "${@}"
+printf %s "${@}"

@@ -269,7 +269,7 @@ strip_final_newline() { # FILE — drop one trailing newline byte if present
 }
 
 # git ignores a hook without the bit, so one that cannot be restored is a
-# guard that never runs. `--` before the mode: bash32-portability has the why.
+# guard that never runs. `--` before the mode: bsd-argv-install has the why.
 ensure_hook_executable() { # HOOK PATH
   local hook="$1" path="$2"
   [ -x "$path" ] && return 0

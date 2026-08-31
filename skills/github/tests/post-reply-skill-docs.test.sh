@@ -41,11 +41,7 @@ assert_eq() {
 }
 
 # The markdown checks pin the routing row's own tokens — the --pr flag and the
-# PRRT_ id prefix — and the auto-detect block naming --pr. review-bots.md: a
-# token pin establishes that a structural element is present, never that a
-# behavioral claim written in prose is true, so the row's statement that --pr
-# is REQUIRED for a numeric comment id, and the note framing post-reply as an
-# exception to branch auto-detection, have no lint here. The --help assertion
+# PRRT_ id prefix — and the auto-detect block naming --pr. The --help assertion
 # below holds the script to the same requirement, which is what proves it.
 
 echo "=== post-reply SKILL.md synopsis matches --pr contract (kendex#545) ==="

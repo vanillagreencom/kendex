@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+# The one scan for Bash 4+ syntax in the shell this repository ships.
+#
+# Nine skills carried a copy of this scan and a tenth was inlined in a github
+# suite. The copies were justified by skills installing independently, so a
+# judge inside one skill is absent from an install that skips it. No consumer
+# runs those suites: .github/workflows/skill-tests.yml proves quality at the
+# source precisely so consuming repos can drop tracked vendoring. The judge
+# belongs where the proving happens, and there is one of it.
+#
+# Usage: tools/bash32-lint [DIR...]
+#   no argument   scan the roster below
+#   DIR...        scan those directories instead
+# Exit: 0 clean, 1 a construct was found, 2 the scan could not run — and a
+# scan that did not run is never read as a clean tree.
+#
+# tools/tests/bash32-lint.test.sh proves the set's teeth against
+# tools/tests/data/*.txt and plants a construct in every roster directory.
+set -uo pipefail
+
+# --- the roster ---------------------------------------------------------
+# Discovered, not enumerated: every skill's scripts/ is scanned, so a new
+# skill is covered the day it lands rather than the day someone remembers to
+# add it. Two directories outside that shape join them: review-gate's tests/,
+# because that skill's suites are themselves run on macOS system bash, and
+# orch's tests/lib, whose shared reader every orch doc lint sources — a Bash 4
+# construct entering it breaks every suite that sources it on a 3.2 host.
+#
+# The two exceptions are declared, with the reason, because a roster that
+# discovers its members cannot tell a directory that is exempt from one that
+# quietly emptied out. Each is checked below: a stale entry, or one whose
+# reason has expired, ends the run.
+#
+# NO_SCAN — the skill demands the runtime this set forbids.
+NO_SCAN="skills/linear/scripts"
+# NO_SHELL — a scripts/ that legitimately holds no shell file at all.
+NO_SHELL="skills/deep-research/scripts"
+
+# --- pattern set: begin ------------------------------------------------
+# What it names, and only that. Parameter transformations (${x@Q}),
+# globstar, `wait -n` and `test -v` are outside it on purpose: each is its
+# own construct rather than another spelling of one below, and adding one
+# means adding its probe and its control to tools/tests/data with it.
+#
+# The Bash 4 builtins and the coproc keyword, bounded by the shell's word
+# delimiters on both sides: blank, tab, `|`, `&`, `;`, `(`, `)`, `<`, `>`,
+# backquote, and the line ends. The bound is the WORD, not the identifier:
+# `coproc=1`, `coproc-wrapper`, `x=coproc` and `run --local` are each one
+# word the shell reads as something else, and bounding on the identifier
+# reddened all four. A portability lint that reddens correct Bash 3.2 source
+# is one the first person it blocks turns off.
+PATTERN='(^|[[:blank:]|&;()<>`])(mapfile|readarray|coproc)([[:blank:]|&;()<>]|$)'
+# declare/typeset/local/readonly carrying a Bash 4 attribute anywhere in the
+# options: A (associative), g (global), n (nameref), l and u (the
+# declare-family case conversions). Bash takes the attributes in one cluster
+# or in separate words and in any order, so -A, -rA, -Ar and -r -A are one
+# declaration written four ways and all four are caught.
+PATTERN="$PATTERN"'|(^|[[:blank:]|&;()<>`])(declare|typeset|local|readonly)[[:blank:]]+([-+][[:alnum:]]+[[:blank:]]+)*[-+][[:alnum:]]*[Aglnu]'
+# Automatic FD allocation: exec {fd}< , {fd}> , {fd}>>
+PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
+# Case conversion, one character or every one, either direction. The
+# parameter forms come from the manual's list rather than from recall: a
+# name, a subscripted name, a positional, an indirect one, and the special
+# ones $ ! # ? - 0 @ and *. A subscript may nest one level, which is what
+# indexing an array with another array's element needs; deeper is a stated
+# limit below, not an oversight.
+PATTERN="$PATTERN"'|\$\{!?([A-Za-z_][A-Za-z0-9_]*(\[([^][]|\[[^]]*\])*\])?|[0-9]+|[-#?$!@*])(,,?|\^\^?)'
+# The pipe-with-stderr, the append-both redirection, and the two case
+# terminators, matched plainly and unanchored. The shell grammar permits
+# almost anything on either side of one — `printf x |&]`, `|&/bin/cat`,
+# `|&'cat'`, `|&>out` all parse — so a right-hand set taken from the grammar
+# must admit `]`, and admitting `]` matches the bracket expression `[|&]`
+# again. Four rounds of anchoring found the boundary too permissive twice and
+# too restrictive twice. The cost moves instead to a visible line: a script
+# spelling one of these inside its own regex or string data IS flagged, and
+# the fix is to respell it. A bracket expression's members carry no order, so
+# `[;|&(`{]` becomes `[;(`{&|]` and matches the same characters;
+# skills/preflight/scripts/preflight carries the six sites that needed it.
+PATTERN="$PATTERN"'|\|&|&>>|;;?&'
+# `"${@}"` is not `"$@"`: with no positional parameters under `set -u`, Bash
+# 3.2.57 aborts on the braced spelling with `@: unbound variable` while the
+# bare one expands to nothing. Write `"$@"`, or guard it as `${@+"$@"}`.
+PATTERN="$PATTERN"'|\$\{@\}'
+# --- pattern set: end --------------------------------------------------
+#
+# WHAT THIS CANNOT DECIDE, named so the next reader does not file it again.
+# One sentence covers all of it: a text scan reads text, and the shell reads
+# words. The misses are pinned as misses in tools/tests/data/
+# bash32-uncatchable.txt and the over-flags as over-flags in
+# bash32-overflagged.txt, so neither list can go stale.
+#
+#   - a name the shell reaches through quote removal: `'mapfile' -t v`,
+#     `"declare" -A c`, `map\file -t v`.
+#   - a construct in a comment or a string, which is flagged. There is no
+#     comment skip: a `#` line inside a multiline double-quoted word is live
+#     code bash expands, and skipping `#` lines let `${name^^}` through this
+#     gate in silence. The fix is to respell the line.
+#   - a subscript nested more than one level, or one whose inner expansion
+#     carries a literal `]`. Balancing brackets is beyond a regular
+#     expression, so the depth is bounded and declared.
+#   - a construct assembled at runtime — eval, a command in a variable, a
+#     heredoc piped to bash — and a declaration split over a backslash
+#     continuation, which a line-oriented scan does not see.
+#   - whether a script RUNS under Bash 3.2. Nothing here does; CI is Linux on
+#     Bash 5 and `bash -n` is that same shell. A clean scan says the source
+#     carries no construct named above, and says nothing further.
+
+die() {
+  printf 'bash32-lint: %s\n' "$1" >&2
+  exit 2
+}
+
+listed() { # listed NEEDLE LIST
+  local n="$1" e
+  shift
+  for e in $1; do [ "$e" = "$n" ] && return 0; done
+  return 1
+}
+
+# is_shell FILE — by extension, or by a shebang naming sh or bash.
+is_shell() {
+  case "$1" in
+  *.sh | *.bash) return 0 ;;
+  esac
+  head -n 1 -- "$1" 2>/dev/null | grep -qE '^#!.*[/ ](ba)?sh([[:space:]]|$)'
+}
+
+LIST_ONLY=no
+if [ "${1-}" = "--list" ]; then
+  LIST_ONLY=yes
+  shift
+fi
+
+ROOT=""
+if [ "$#" -eq 0 ]; then
+  ROOT="$(git rev-parse --show-toplevel)" || die "not in a git repository"
+  cd "$ROOT" || die "cannot enter $ROOT"
+  set -- skills/*/scripts skills/review-gate/tests skills/orch/tests/lib
+fi
+
+# The exceptions are judged before anything is scanned: a stale one excuses a
+# directory nobody is checking.
+for d in $NO_SCAN $NO_SHELL; do
+  [ -d "$d" ] || die "$d is a declared exception but is not a directory — the entry is stale"
+done
+
+dirs=""
+for d in "$@"; do
+  [ -d "$d" ] || die "$d is not a directory"
+  listed "$d" "$NO_SCAN" && continue
+  dirs="$dirs $d"
+done
+[ -n "$dirs" ] || die "no directory left to scan"
+
+# --list prints what the roster resolved to, one directory per line, so a
+# proof can plant a construct in each rather than repeating the roster.
+if [ "$LIST_ONLY" = yes ]; then
+  for d in $dirs; do
+    listed "$d" "$NO_SHELL" && continue
+    printf '%s\n' "$d"
+  done
+  exit 0
+fi
+
+files=""
+scanned=0
+for d in $dirs; do
+  found=""
+  while IFS= read -r f; do
+    is_shell "$f" || continue
+    found="$found$f
+"
+  done <<EOF
+$(find "$d" -type f | LC_ALL=C sort)
+EOF
+  if [ -z "$found" ]; then
+    listed "$d" "$NO_SHELL" ||
+      die "$d holds no shell file, so this lint would read nothing there"
+    continue
+  fi
+  listed "$d" "$NO_SHELL" &&
+    die "$d is declared to hold no shell file, but it does now — drop the exception"
+  files="$files$found"
+  scanned=$((scanned + 1))
+done
+[ "$scanned" -gt 0 ] || die "every directory given was exempt, so nothing was read"
+
+violations=""
+syntax_fail=0
+count=0
+for f in $files; do
+  count=$((count + 1))
+  # `--` before the operand: a path beginning with `-` parses as options
+  # otherwise. grep's status is part of the answer: 0 found, 1 none, anything
+  # else a scan that did not run.
+  hits=""
+  status=0
+  hits="$(grep -nE -- "$PATTERN" "$f")" || status=$?
+  [ "$status" -le 1 ] || die "the scan over $f could not run (grep exited $status)"
+  [ -z "$hits" ] || violations="$violations$(printf '%s\n' "$hits" | sed "s|^|$f:|")
+"
+  # A construct this set does not name still has to be syntax.
+  bash -n -- "$f" || syntax_fail=1
+done
+
+if [ -n "$violations" ]; then
+  printf 'Bash 4+ constructs in shell that must run under Bash 3.2:\n' >&2
+  printf '%s' "$violations" >&2
+  exit 1
+fi
+[ "$syntax_fail" -eq 0 ] || exit 1
+
+printf 'bash32-lint: %d shell file(s) across %d director(ies), clean\n' "$count" "$scanned"

@@ -3,21 +3,6 @@
 # This test pins the STRUCTURE that chain is built from — schema fields, the
 # mode and status values, the § 7.0 heading, the two bolded rule labels, the
 # rerun route — never the sentences that state what they oblige.
-# review-bots.md: a token pin establishes that a structural element is
-# present, never that a behavioral claim written in prose is true.
-#
-# So these rules have no lint. The schema's own framing of the block as a
-# binding directive rather than a hint, and its prohibition on downgrading a
-# covered item to skip, update, expand or combine. research-complete's
-# obligation to create every listed item as a same-project child and to fold
-# no domain back into the parent. tpm-audit's framing of the contract as a
-# directive, its statement that inference is bypassed for covered items, its
-# ban on emitting an update in place of the child create, the override
-# outranking duplicate and overlap findings, covered items never being skip,
-# and the pre-output invariant that every child_indexes item is a create.
-# audit-issues' rule that non-compliant output is neither presented nor
-# executed, and that a covered item never downgrades to standalone. Each
-# lives in a sentence with no token present exactly while it holds.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

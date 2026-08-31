@@ -26,18 +26,14 @@ assert_eq() {
   fi
 }
 
-# Stub gh: `api user` returns a login; `pr list` returns the fixture. All PRs
-# are MERGEABLE with an APPROVED review so readiness turns on CI alone.
-mkdir -p "$TMP_ROOT/bin"
-cat > "$TMP_ROOT/bin/gh" <<EOF
-#!/usr/bin/env bash
-case "\$1 \$2" in
-  "api user") echo '{"login":"tester"}' | jq -r "\${4:-.login}" 2>/dev/null || echo tester ;;
-  "pr list") cat "$TMP_ROOT/fixture.json" ;;
-  *) echo "unexpected gh call: \$*" >&2; exit 1 ;;
-esac
-EOF
-chmod +x "$TMP_ROOT/bin/gh"
+# The shared `gh` fake. Only `api user` and `pr list` are staged, so a
+# command that reached for anything else is refused rather than answered.
+# The source tree is found through git rather than a relative hop, so this
+# works from skills/ and from the .agents/ render beside it.
+# shellcheck source=../../../tools/tests/lib/gh-stub.sh
+. "$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/gh-stub.sh"
+GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
+gh_stub_answer api-user tester
 
 approved='[{"state":"APPROVED"}]'
 mk_pr() { # number rollup-json
@@ -55,6 +51,9 @@ jq -s '.' \
   <(mk_pr 5 '[{"__typename":"CheckRun","status":"IN_PROGRESS","conclusion":null}]') \
   <(mk_pr 6 '[]') \
   > "$TMP_ROOT/fixture.json"
+
+# All PRs are MERGEABLE with an APPROVED review, so readiness turns on CI alone.
+gh_stub_answer pr-list "$(cat "$TMP_ROOT/fixture.json")"
 
 out="$(PATH="$TMP_ROOT/bin:$PATH" bash "$CMD" --all)"
 

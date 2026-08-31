@@ -3,19 +3,11 @@
 # review_artifact_check.sh, which asks what the script does; these assertions
 # ask whether the three call sites and the reviewer-facing schema say what the
 # script actually enforces. A contract nobody relays is a contract nobody obeys.
-
 #
 # The markdown checks pin COMMANDS, the `measurement_failed` and `detail`
 # fields, the priority range, the schema route, the Output Contract heading,
-# and two absence checks. review-bots.md: a token pin establishes that a
-# structural element is present, never that a behavioral claim written in
-# prose is true. So these rules have no lint: that a return message alone is
-# never sufficient to complete a reviewer and buys exactly one re-delegation
-# written with the harness file-write tool; that submit-pr reports the
-# rejection reason and treats none of those outcomes as a pass; and that the
-# schema states there is no P5 and no line numbers in a location. The
-# script's own rejection text is asserted above, which is what proves the
-# schema it teaches.
+# and two absence checks. The script's own rejection text is asserted above,
+# which is what proves the schema it teaches.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

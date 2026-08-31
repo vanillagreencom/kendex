@@ -7,22 +7,12 @@
 # unconditional `linear.sh` — a GitHub-tracked QA review must never emit Linear
 # cache failures. Those three are structural and are checked by extracting the
 # routes and reading the commands in them. Also verifies the orch caller
-# carries the Tracker line in the QA delegation (when orch is present). That
-# tracker context resolves once before any tracker command is prose, and is
-# listed below as uncovered.
+# carries the Tracker line in the QA delegation (when orch is present).
 #
 # What this pins is STRUCTURE — the § 1.1 heading, the two bolded routes, the
 # `Tracker:` delegation field, the `TRACKER` variable, every gh and linear.sh
-# command, and the delegation's Tracker line. review-bots.md: a token pin
-# establishes that a structural element is present, never that a behavioral
-# claim written in prose is true, so these rules have no lint: that the
-# tracker resolves once before any tracker command; that an unprefixed issue
-# id infers linear and an `issue-` key github; that a GitHub review runs no
-# Linear command and a missing Linear cache is not an error for one; that
-# neither route silently falls back to the other; and that the repository is
-# omitted from the delegation line under a linear tracker. The Tracker line
-# itself is pinned, sliced between the qa-review.md route and the closing
-# </delegation_format> tag.
+# command, and the delegation's Tracker line, sliced between the qa-review.md
+# route and the closing </delegation_format> tag.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

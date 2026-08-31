@@ -3,30 +3,11 @@
 # separation itself: the two preflight branches and the two execution routes
 # are extracted by their headings and route labels, every GitHub command in
 # them is pinned, and a mechanical check proves the GitHub-only regions hold no
-# Linear command. The recorded degradation values are pinned too. That tracker
-# context resolves once, and that each degradation is reported rather than
-# silent, are prose and are listed below as uncovered.
+# Linear command. The recorded degradation values are pinned too.
 #
 # What this pins is STRUCTURE — the schema example and its table row, the
 # section headings, the two route labels, every gh and linear.sh command, the
-# recorded degradation values, the delegation's Tracker line. review-bots.md:
-# a token pin establishes that a structural element is present, never that a
-# behavioral claim written in prose is true, so the rules below have no lint.
-# That GitHub mode requires no Linear sync, status, inventory or mutation and
-# that Linear install and auth are not a prerequisite. That the input file's
-# tracker block wins, that an unprefixed key infers linear and an `issue-`
-# key github, and that the tracker resolves once before any tracker command.
-# That project audits halt under github for want of a project inventory, and
-# that tpm-audit's project mode is Linear-only. That creates run in dependency
-# order and Todo promotion waits for relations and parents. That one audit
-# never mixes routes, never silently drops an approved hierarchy or relation
-# action, and never invents a placement. And the two cleanup degradations,
-# GitHub having no recursive child query and no relation objects. Nor the
-# create-side rules the three issue-creating workflows state: that the label
-# set is validated against the live inventory before a create, that a create
-# dedupes against existing issues in every state, and that each item's
-# blocking relations attach immediately after its own create. Their create
-# COMMANDS are pinned; the rules around them are not.
+# recorded degradation values, the delegation's Tracker line.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

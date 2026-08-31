@@ -23,51 +23,19 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # the working directory must be a git repo. gh remains stubbed — no network.
 git -C "$TMP_ROOT" init -q
 
-GH_CALLS="$TMP_ROOT/gh.calls"
+# The shared `gh` fake, which logs every invocation — the log is how the
+# assertions below tell "the API was never touched" from "it was". Only the
+# calls the REST path legitimately makes are staged; anything else is
+# refused. The source tree is found through git rather than a relative hop,
+# so this works from skills/ and from the .agents/ render beside it.
+# shellcheck source=../../../tools/tests/lib/gh-stub.sh
+. "$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/gh-stub.sh"
+GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT"
+GH_CALLS="$STUB_DIR/gh.calls"
 
-# Stub gh: log every invocation (so we can assert the API is/ isn't touched),
-# and answer the handful of calls the REST path legitimately makes.
-cat >"$TMP_ROOT/gh" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "\$*" >>"$GH_CALLS"
-case "\${1:-}" in
-  auth)
-    if [[ "\${2:-}" == "status" ]]; then
-      echo "Logged in"
-      exit 0
-    fi
-    ;;
-  api)
-    endpoint="\${2:-}"
-    if [[ "\$endpoint" == user ]]; then
-      echo "test-user"
-      exit 0
-    fi
-    if [[ "\$endpoint" == *"/replies" ]]; then
-      echo '{"html_url":"https://github.com/owner/repo/pull/23#discussion_r999"}'
-      exit 0
-    fi
-    printf '[]\n'
-    exit 0
-    ;;
-  repo)
-    if [[ "\${2:-}" == "view" ]]; then
-      echo '{"owner":{"login":"owner"},"name":"repo"}'
-      exit 0
-    fi
-    ;;
-  pr)
-    if [[ "\${2:-}" == "view" ]]; then
-      echo '{"number":77,"headRefName":"feature-branch"}'
-      exit 0
-    fi
-    ;;
-esac
-printf 'unexpected gh call: %s\n' "\$*" >&2
-exit 1
-EOF
-chmod +x "$TMP_ROOT/gh"
+gh_stub_answer pr-view '{"number":77,"headRefName":"feature-branch"}'
+gh_stub_answer 'api:/replies' \
+  '{"html_url":"https://github.com/owner/repo/pull/23#discussion_r999"}'
 
 # Run post-reply.sh in a clean, network-free environment with the stubbed gh on
 # PATH. Env tokens are unset so check_gh_auth takes the (stubbed) keyring path.

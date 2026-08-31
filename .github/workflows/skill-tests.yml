@@ -135,6 +135,12 @@ jobs:
           done < <(git ls-files -- 'skills/*/SKILL.md')
           exit "$fail"
 
+      # One scan for Bash 4+ syntax over every skill's shipped shell, with a
+      # discovered roster. tools/tests/bash32-lint.test.sh proves its teeth.
+      - name: bash32-lint (Bash 3.2 portability across the skill tree)
+        if: matrix.shard == 'shell'
+        run: tools/bash32-lint
+
       - name: orch suite (run-all)
         if: matrix.shard == 'shell'
         run: bash skills/orch/tests/run-all.sh

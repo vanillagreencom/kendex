@@ -846,7 +846,7 @@ declaring_project_files() {
 }
 
 # Env var naming for a target's settings: name uppercased, hyphens as
-# underscores (Bash 3.2: no ${var^^}).
+# underscores (Bash 3.2 has no case-conversion expansion).
 target_var() {
   printf 'SECOND_OPINION_%s_%s' "$(printf '%s' "$1" | tr '[:lower:]-' '[:upper:]_')" "$2"
 }
@@ -1654,7 +1654,7 @@ Review the diff through ALL of these lenses — every lens is in scope and none 
 - Correctness: bugs, logic errors, race conditions and concurrency issues, resource leaks, error-handling gaps (silent failures, swallowed errors), API contract violations, performance problems in hot paths.
 - Security and fail-open behavior: injection, auth bypass, data exposure; error paths that silently skip, weaken, or default-pass a check instead of failing loudly.
 - Adversarial inputs: hostile or edge-case inputs — empty or oversized values, filenames containing newlines or glob characters, encoding tricks — that bypass validation, filters, or glob patterns.
-- Portability: Bash 3.2 compatibility (macOS system bash — no associative arrays, no \${var^^}), GNU vs BSD tool differences, platform-specific assumptions.
+- Portability: Bash 3.2 compatibility (macOS system bash — no associative arrays, no case-conversion expansions), GNU vs BSD tool differences, platform-specific assumptions.
 - Repo-rule adherence: violations of the repository instruction files included below, when present.
 - Docs-vs-code drift: documentation, comments, help text, or examples that this diff makes stale or contradicts.
 - Test adequacy: changed behavior with no covering test, tests that can no longer fail, missing edge-case coverage for the classes above.

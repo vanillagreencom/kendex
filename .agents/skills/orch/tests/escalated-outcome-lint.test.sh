@@ -18,14 +18,6 @@
 # that literal too, so the check passed on a doc saying the opposite. A pin a
 # negation satisfies covers nothing, and the schema's rows are the only
 # coverage that rule has.
-#
-# Also NOT covered: that those rows form a well-formed table — a header, a
-# delimiter below it, a consistent cell count. Not because the property is
-# prose; it is a document-level fact with no fail-closed home here. A checker
-# this suite calls must ship inside orch, and dep-radar's policy lint needs the
-# identical checker but cannot reach it: no test in this repo sources another
-# skill's file. A repo-level `tools/` lane is the right home. Until one exists,
-# table well-formedness has no lint anywhere.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 

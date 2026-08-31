@@ -7,14 +7,11 @@
 #
 # The markdown checks at the tail pin STRUCTURE — the resolver route, the
 # .agents prefix, the docs-only mode, the verification_paths field, the
-# VERIFICATION_CONTEXTS placeholder — plus one absence check. review-bots.md:
-# a token pin establishes that a structural element is present, never that a
-# behavioral claim written in prose is true. So the workflow's rules that a
-# source root is never assumed and that no issue reuses another's linked PR
-# have no lint. Requiring the `[WORKTREE]/src` literal did not cover the
-# first one either: a sentence inverting the rule carries the literal and
-# passes, while a meaning-preserving reword drops it and fails. The absence
-# check is what holds — the hardcoded root must not appear at all.
+# VERIFICATION_CONTEXTS placeholder — plus one absence check. Requiring the
+# `[WORKTREE]/src` literal covered nothing: a sentence inverting the rule
+# carries the literal and passes, while a meaning-preserving reword drops it
+# and fails. The absence check is what holds — the hardcoded root must not
+# appear at all.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

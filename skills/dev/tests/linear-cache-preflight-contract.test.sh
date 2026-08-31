@@ -3,14 +3,8 @@
 # before mandatory reads, while GitHub-tracked work must not invoke Linear.
 #
 # The markdown checks pin the workflow's COMMANDS and its GitHub block's
-# shape. review-bots.md: a token pin establishes that a structural element is
-# present, never that a behavioral claim written in prose is true, so the
-# preflight's rules have no lint here: that a missing cache before the sync is
-# expected in a fresh worktree, that a sync failure is a sync/auth/API/config
-# failure rather than a missing cache, that a missing cache after a successful
-# sync is a cache-initialization defect, and that the Linear preflight never
-# runs for GitHub-tracked or ad-hoc work. The stub run below exercises the
-# first two against real exit codes, which is what proves them.
+# shape. The stub run below exercises the sync and cache failure modes against
+# real exit codes, which is what proves them.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

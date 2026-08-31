@@ -29,41 +29,13 @@ assert_eq() {
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/repo"
 git -C "$TMP_ROOT/repo" init -q
 
-# Stub gh: auth passes, repo resolves, GraphQL serves one or two thread pages.
-cat >"$TMP_ROOT/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-case "${1:-} ${2:-}" in
-    "auth status")
-        echo "Logged in"
-        exit 0
-        ;;
-    "repo view")
-        echo '{"owner":{"login":"owner"},"name":"repo"}'
-        exit 0
-        ;;
-    "api graphql")
-        if [[ "$*" == *"cursor=cursor-page-2"* ]]; then
-            jq -cn --argjson nodes "${STUB_THREADS_PAGE2_JSON:-[]}" \
-                '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
-            exit 0
-        fi
-        if [[ -n "${STUB_THREADS_PAGE2_JSON:-}" ]]; then
-            jq -cn --argjson nodes "${STUB_THREADS_JSON:-[]}" \
-                '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:true,endCursor:"cursor-page-2"}}}}}}'
-            exit 0
-        fi
-        jq -cn --argjson nodes "${STUB_THREADS_JSON:-[]}" \
-            '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
-        exit 0
-        ;;
-esac
-
-printf 'unexpected gh call: %s\n' "$*" >&2
-exit 1
-EOF
-chmod +x "$TMP_ROOT/bin/gh"
+# The shared `gh` fake. Auth and repo answers are seeded; the GraphQL pages
+# are staged per run below. The source tree is found through git rather than
+# a relative hop, so this works from skills/ and from the .agents/ render
+# beside it.
+# shellcheck source=../../../tools/tests/lib/gh-stub.sh
+. "$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/gh-stub.sh"
+GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
 
 # Shim jq to record every program it is handed, then run the real one. Raw
 # output must reach the caller as the API returned it, so the unfiltered path
@@ -90,11 +62,28 @@ threads=$(jq -sc '.' \
     <(mk_thread PRRT_done_b true) \
     <(mk_thread PRRT_open false))
 
+# page BODY HAS_NEXT CURSOR — one GraphQL thread page, built with the real
+# jq so the "byte for byte" assertion below compares like with like.
+page() {
+    "$REAL_JQ" -cn --argjson nodes "$1" --argjson next "$2" --arg cursor "$3" \
+        '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,
+          pageInfo:{hasNextPage:$next,endCursor:(if $cursor == "" then null else $cursor end)}}}}}}'
+}
+
+# Page two is keyed on the cursor appearing in the call's argv, not on the
+# call being the second one: a code path that stopped sending the cursor
+# would otherwise still be handed page two and the merge would look right.
 run_threads() {
     : >"$jq_log"
+    gh_stub_reset
+    if [ -n "$page2" ]; then
+        gh_stub_answer api-graphql "$(page "$threads" true cursor-page-2)"
+        gh_stub_answer 'api-graphql:cursor=cursor-page-2' "$(page "$page2" false '')"
+    else
+        gh_stub_answer api-graphql "$(page "$threads" false '')"
+    fi
     (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN \
-        STUB_THREADS_JSON="$threads" STUB_JQ_LOG="$jq_log" \
-        "${STUB_PAGE2_ENV[@]+"${STUB_PAGE2_ENV[@]}"}" \
+        STUB_JQ_LOG="$jq_log" \
         "$PR_THREADS" 123 "$@")
 }
 
@@ -102,7 +91,7 @@ filter_passes() { # count jq runs that rewrite the thread node array
     grep -c -- 'reviewThreads.nodes |=' "$jq_log" || true
 }
 
-STUB_PAGE2_ENV=()
+page2=""
 
 echo "=== pr-threads --format=raw honors the resolution filters ==="
 
@@ -146,7 +135,6 @@ echo
 echo "=== the filter applies across every fetched page ==="
 
 page2=$(jq -sc '.' <(mk_thread PRRT_page2_open false) <(mk_thread PRRT_page2_done true))
-STUB_PAGE2_ENV=(STUB_THREADS_PAGE2_JSON="$page2")
 out=$(run_threads --unresolved --format=raw)
 assert_eq "$(jq '.repository.pullRequest.reviewThreads.nodes | length' <<<"$out")" "2" \
     "raw --unresolved filters the merged multi-page node list"
@@ -155,7 +143,7 @@ assert_eq "$(jq -r '[.repository.pullRequest.reviewThreads.nodes[].id] | sort | 
     "raw --unresolved keeps unresolved threads from both pages"
 assert_eq "$(jq -r '.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$out")" "false" \
     "raw pagination stays complete after filtering"
-STUB_PAGE2_ENV=()
+page2=""
 
 echo
 echo "=== safe format counts are unchanged ==="

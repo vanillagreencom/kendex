@@ -3,10 +3,9 @@
 # Under Bash 3 this delegates to the full hierarchy regression, which proves
 # the clear preflight diagnostic and that no API request is attempted.
 #
-# The name it shares with the other bash32-portability suites is the whole of
-# what it shares. Those forbid Bash 4 syntax; this one asserts linear.sh
-# demands it. So it must never take the shared bash32 pattern set those suites
-# carry, and tools/tests/bash32-pattern-parity.test.sh reds if it ever does.
+# This is the opposite of what `tools/bash32-lint` asserts everywhere else, so
+# skills/linear/scripts is that lint's one NO_SCAN entry: the set it enforces
+# would forbid the runtime this skill demands.
 
 set -euo pipefail
 
