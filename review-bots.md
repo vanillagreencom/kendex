@@ -94,8 +94,5 @@ design. Do not recommend parsing them.
 
 ## Reply contract
 
-Author replies to findings are exactly `Fixed in <sha>`, `Declined: <reason>`,
-or `Tracked: <ISSUE-ID>` / `#<n>`. The merge gate turns red on a tracking
-claim naming no issue, so a decline without "tracked" wording is deliberate.
-Do not re-raise a finding class answered `Declined:` unless the relevant
-code changed since.
+`AGENTS.md` § Code Review Rules is the contract, and its last bullet is the
+whole of it. Read it there.

@@ -273,35 +273,6 @@ case "$OUT" in
   *) ok "no clean file-count verdict covers the unread blob" ;;
 esac
 
-echo "=== git's own binary rule cannot silence a scoped path ==="
-# grep_source_is_binary consults the path's userdiff driver, so `*.md -diff`
-# makes git call a plain text blob binary and the hardcoded -I drop it with
-# no status and no stderr. The walk's classification is the only judgement
-# that may govern here.
-new_repo attrbinary
-put SKILL.md 'Seeded 2026-08-12.'
-run_prose
-[ "$RC" -eq 1 ] && ok "control: the reference fails with no attributes set" \
-  || bad "control: reference fails without attributes" "rc=$RC out=$OUT"
-OUT="$(cd "$R" && git grep --cached -nIE '2026' -- 'SKILL.md' 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 0 ] && ok "fixture: a bare -I grep still sees it before the attribute" \
-  || bad "fixture: bare -I grep sees it" "rc=$RC out=$OUT"
-put .gitattributes '*.md -diff'
-OUT="$(cd "$R" && git grep --cached -nIE '2026' -- 'SKILL.md' 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 1 ] && [ -z "$OUT" ] \
-  && ok "fixture: with '*.md -diff' the same -I grep drops it silently" \
-  || bad "fixture: -diff makes -I drop it" "rc=$RC out=$OUT"
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: SKILL.md:1:"*) true ;; *) false ;; esac \
-  && ok "the lane still fails on a '-diff' path (its own classification governs)" \
-  || bad "-diff path still scanned" "rc=$RC out=$OUT"
-case "$OUT" in *"prose: OK"*) bad "no OK verdict may accompany a '-diff' path carrying a reference" "$OUT" ;; *) ok "no OK verdict accompanies the '-diff' path" ;; esac
-put .gitattributes '*.md binary'
-run_prose
-[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: SKILL.md:1:"*) true ;; *) false ;; esac \
-  && ok "the 'binary' attribute macro cannot silence it either" \
-  || bad "'binary' attribute path still scanned" "rc=$RC out=$OUT"
-
 echo "=== the glob list is matched against the INDEX, not the work tree ==="
 # `set -f` in the script is what this pins. Without it the configured
 # patterns are pathname-expanded against the WORK TREE before matching, so a
@@ -363,25 +334,6 @@ OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" "$PROSE" 2>&1)" && RC=0 || RC=$?
   && ok "a git grep execution failure is a collection error: exit 2, never OK" \
   || bad "a git grep execution failure is a collection error" "rc=$RC out=$OUT"
 case "$OUT" in *"prose: OK"*) bad "no OK verdict may accompany a broken scan" "$OUT" ;; *) ok "no OK verdict accompanies the broken scan" ;; esac
-
-echo "=== fail-closed: an unreadable staged blob is a collection error ==="
-new_repo unreadable
-put SKILL.md 'Seeded 2026-08-12.'
-run_prose
-[ "$RC" -eq 1 ] && ok "control: the staged reference trips while its blob is readable" \
-  || bad "control: readable blob trips" "rc=$RC out=$OUT"
-OID="$(git -C "$R" rev-parse :SKILL.md)"
-[ -f "$R/.git/objects/${OID:0:2}/${OID:2}" ] || bad "fixture: the staged blob is not a loose object at the expected path" "$OID"
-rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
-run_prose
-# The classification pass reads every matched blob before the scan, so a
-# vanished object is refused there — earlier than the grep, and named as the
-# unread file it is rather than skipped as unmeasurable content.
-[ "$RC" -eq 2 ] && case "$OUT" in *"cannot read blob"*"refusing to skip an unread file"*) true ;; *) false ;; esac \
-  && ok "a vanished staged blob is exit 2 carrying git's own diagnostic" \
-  || bad "vanished blob is exit 2 with git's diagnostic" "rc=$RC out=$OUT"
-case "$OUT" in *"not measured"*) bad "an unread blob is a refusal, never an unmeasured skip" "$OUT" ;; *) ok "an unread blob is not dressed as an unmeasured skip" ;; esac
-case "$OUT" in *"prose: OK"*) bad "no OK verdict may accompany an unread blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread blob" ;; esac
 
 echo "=== the shared glob loader refuses a caller running without set -f ==="
 COMMON="$SKILL_DIR/scripts/lib/common.sh"

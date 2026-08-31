@@ -4,10 +4,8 @@ For consumers that vendor an upstream tree byte-for-byte and merge re-vendor
 PRs. Suppressing duplicate upstream findings is a reviewer-instruction
 problem; configuration answers break the gate.
 
-A committed `kendex refresh` tree is the other case: no pin covers it, an edit
-under it wedges the next refresh rather than landing, and the rule there is
-flat with no carve-out — [rendered-paths.md](rendered-paths.md), which reuses
-three sections of this one.
+A committed `kendex refresh` tree is the other case, and every section here
+covers it with the two changes in § The harness-render variant at the foot.
 
 ## What suppression must not break
 
@@ -194,3 +192,47 @@ than trusting the green.
 
 **On confirmed failure**, revert the instruction file and merge the PR through
 the documented review path.
+
+## The harness-render variant
+
+For consumers that commit `kendex refresh` output and merge refresh PRs. No
+pin covers that tree: an edit under it does not land, because the next refresh
+finds bytes no apply wrote and holds the item as a conflict, planning no write
+until someone forks it or discards the edit. Two things change; everything
+above holds.
+
+**The rule is flat, with no carve-out.** The vendored rule routes
+upstream-remedy findings to the review summary body and keeps one carve-out
+for a correctness, security, or data-loss regression the bump introduces. One
+refresh lands in several repos at once, so that thread blocks the merge in
+each of them for a fix that can land in none. Over a render both go: no
+finding over the render on any surface, and a defect that would ship goes to
+the catalog repo and to the PR author out of band. Under a flat rule there is
+no on-PR surface left, which also removes the consolidated-comment fallback
+the vendored template gives a location-bound reviewer.
+
+**The report files against the catalog repo**, by the same `kendex report`
+route and the same lock ownership rule as § The consumer session's half. An
+item rendered from a third-party catalog carries that catalog in its lock
+entries and reports here instead, so open that issue by hand.
+
+Wire it with the vendored template, `applyTo` set to the render trees and the
+carve-out paragraph deleted. The trees kendex writes are `.agents/skills`,
+`.claude`, `.codex`, `.cursor`, `.gemini`, `.opencode`, `.pi`, and for Copilot
+the `agents`, `hooks`, and `skills` subtrees of `.github`. Each can also hold
+files kendex never writes, so the file list of a real refresh PR is the
+authority on the glob. Four shapes it must not take: the rest of `.github`;
+the harness memory files `CLAUDE.md`, `AGENTS.md` and `GEMINI.md`, which
+kendex writes none of; every `.agents/skills/<name>` an item declares
+`source = "in-place"`, whose content of record is edited here; and every path
+kendex merges its own entries into while the repo owns the rest, such as
+`.claude/settings.json`, `.codex/config.toml`, `.cursor/hooks.json`,
+`.mcp.json`, and the root `opencode.json`. That last shape is the one most
+worth keeping out: the template asserts that nothing under the glob is edited
+here, and over a merged path that is false.
+
+Verify per § Verifying on a real re-vendor PR, reading the render trees rather
+than the vendored one. **Pass** is stricter in one term: no unresolved thread
+over the render from a summary-capable reviewer, including none raising a
+correctness, security, or data-loss defect, which the flat rule routes to the
+catalog repo and the vendored carve-out would have admitted.

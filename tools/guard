@@ -184,6 +184,22 @@ fi
 [ "$(readlink .claude/CLAUDE.md 2>/dev/null)" = "../AGENTS.md" ] ||
   say ".claude/CLAUDE.md must be a symlink to ../AGENTS.md"
 
+# The reply contract lives in AGENTS.md and nowhere else. These two files are
+# what the review bots read, and a second copy in either is a paraphrase that
+# drifts: what the merge gate actually accepts is one set of forms, and a bot
+# told a looser version of them raises findings the gate then refuses to let
+# an author answer. Each file must name AGENTS.md and must not restate the
+# reply forms.
+grep -qE 'Author replies are .Fixed in <sha>., .Declined: <reason>., or' AGENTS.md ||
+  say "AGENTS.md no longer carries the reply contract the bot-facing files send readers to"
+for f in .github/copilot-instructions.md review-bots.md; do
+  grep -qF 'AGENTS.md' "$f" ||
+    say "$f must point at AGENTS.md for the reply contract, not restate it"
+  contract_copy=$(grep -cE '`?Fixed in' "$f")
+  [ "$contract_copy" = "0" ] ||
+    say "$f restates the reply contract ($contract_copy line(s) naming a reply form) — AGENTS.md is the one copy"
+done
+
 if [ -f Cargo.toml ] && cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
   say "crates/core must not depend on tauri"
 fi

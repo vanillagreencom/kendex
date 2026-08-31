@@ -196,11 +196,9 @@ if [ -n "$REQUIRED" ]; then
   # --raw, the spelling todo-ban and byte-ceiling already use: a raw record
   # carries the old and new MODE and the old and new BLOB for every path, so
   # what a commit did to a file is read off the record rather than inferred
-  # from a letter. --name-status collapses each record into one letter, and
-  # every distinction the letter hid became a defect in turn: a rename read
-  # as a touch of its destination alone, a type change read as a touch, a
-  # copy read as a rename, and a chmod read as an entry somebody wrote.
-  # Modes and blobs leave nothing to interpret.
+  # from a letter. --name-status collapses each record into one letter, which
+  # hides a rename from its source, a copy from a rename, and a chmod from a
+  # rewrite. Blobs leave nothing to interpret.
   # -c diff.renames=true and --find-renames=100%, the sibling spelling again:
   # detection is PINNED rather than inherited, so `diff.renames=copies`
   # cannot put a record shape on this stream that the loop does not read, and
@@ -214,50 +212,27 @@ if [ -n "$REQUIRED" ]; then
     >"$GG_TMP/raw.z" \
     || gg_collection_error "could not read the staged file list — the changelog rule could not run"
 
-  # What "written" MEANS, over the record's full identity. A sha is not that
-  # identity — a mode and a sha together are — and each time only half of it
-  # was read, a transition slipped through: a chmod is where the sha is equal
-  # and the type did not change, and a symlink replaced by a regular file
-  # holding the link target's own bytes is where the sha is equal and the
-  # type did. One predicate over both modes and both shas, so the next
-  # transition shape is answered here rather than by another arm beside it.
-  #
-  #   no blob after the commit    no — the path is gone, and deleting a
-  #                               fragment is not writing one
-  #   the blob changed            yes — the ordinary case, an addition
-  #                               included, since an addition has no old blob
-  #   the blob is the same, and
-  #     it became a regular file  yes — that path holds a document now where
-  #                               it held a link or a gitlink before, which
-  #                               is content it did not carry here
-  #     it did not               no — only permission bits moved
-  record_gained() { # SRCMODE SRCSHA DSTMODE DSTSHA — 0 when the path gained content
-    case "$4" in
+  # What "written" MEANS: the path comes out of this commit holding a blob it
+  # did not hold there before. An all-zero new blob is the path going away,
+  # and deleting a fragment is not writing one. Equal blobs are a chmod: the
+  # mode moved and the content did not, which is not an entry anybody wrote.
+  # Everything else is a write, an addition included, since an addition has
+  # no old blob to equal.
+  record_gained() { # SRCSHA DSTSHA — 0 when the path gained content
+    case "$2" in
       *[!0]*) ;;
       *) return 1 ;;
     esac
-    [ "$2" = "$4" ] || return 0
-    gg_mode_is_regular "$3" || return 1
-    ! gg_mode_is_regular "$1"
+    [ "$1" != "$2" ]
   }
 
   # TOUCHED is every path the record names, both sides of a rename included:
   # the source loses its content and the destination gains it, and a file
   # moved OUT of a required path is a change to that path.
   #
-  # WRITTEN is narrower, and it is a question about BLOBS rather than about
-  # letters: does this path come out of the commit holding content it did not
-  # hold at this path before? A null new blob means the path is gone, and
-  # deleting a fragment is not writing one. A rename's destination held
-  # nothing at that path before, so it is written whatever its blob says —
-  # which is also why a pure rename, whose two blobs are equal, still counts.
-  # Everything else is written exactly when the blob CHANGED, so a chmod on
-  # an existing fragment is a touch and nothing more: the mode moved and the
-  # content did not, which is not an entry anybody wrote.
-  #
-  # That rule keeps what the letters used to say and drops nothing. A type
-  # change rewrites the blob, so replacing a symlink with a real entry still
-  # counts — and what the content turned INTO is the changelog-entries lane's
+  # WRITTEN is narrower: record_gained above, plus a rename's destination,
+  # which held nothing at that path before and so is written whatever its
+  # blob says. What the content turned INTO is the changelog-entries lane's
   # judgement, running beside this one.
   #
   # A COPY leaves its source unchanged, so staging it would demand an entry
@@ -269,15 +244,14 @@ if [ -n "$REQUIRED" ]; then
   while IFS= read -r -d '' meta; do
     IFS= read -r -d '' src \
       || gg_collection_error "the staged file list ended mid-record after $(gg_shown "$meta") — the changelog rule could not run"
-    # Record shape: ":srcmode dstmode srcsha dstsha status". Splitting is safe
-    # under the `set -f` at the top of this file — the fields are modes, hex
-    # and a letter, and none of them is a path.
+    # Record shape: ":srcmode dstmode srcsha dstsha status". The modes are
+    # read past: what a path ends up holding is the changelog-entries lane's
+    # judgement. Splitting is safe under the `set -f` at the top of this file
+    # — the fields are modes, hex and a letter, and none of them is a path.
     # shellcheck disable=SC2086
     set -- $meta
     [ "$#" -eq 5 ] \
       || gg_collection_error "the staged file list carried a record of $# field(s), not five: $(gg_shown "$meta") — the changelog rule could not run"
-    srcmode="${1#:}"
-    dstmode="$2"
     srcsha="$3"
     dstsha="$4"
     status="$5"
@@ -294,7 +268,7 @@ if [ -n "$REQUIRED" ]; then
         ;;
     esac
     printf '%s\0' "$src" >>"$GG_TMP/staged.z"
-    ! record_gained "$srcmode" "$srcsha" "$dstmode" "$dstsha" \
+    ! record_gained "$srcsha" "$dstsha" \
       || printf '%s\0' "$src" >>"$GG_TMP/written.z"
   done <"$GG_TMP/raw.z"
 

@@ -332,15 +332,7 @@ A thread is new when its `threads[].id` is not in `known`. No new threads → §
 
 **Backstop only** — inline threads handled per-pass in § 6.3 are already replied to and resolved. This covers PR-level comments, human-only threads, and anything per-pass handling missed. Skip any `source_id` already in `pr_comment_review.replied`.
 
-| Outcome | Response |
-|---------|----------|
-| Applied | `Fixed in [SHA]` |
-| Skipped (decision) | `Declined: contradicts [DECISION_ID]` |
-| Skipped (not actionable) | `Declined: [REASON]` |
-| Blocked or issue created | `Tracked: [ISSUE_ID]` (issue exists first) |
-| Question | The finding's `draft_response` |
-
-`[REASON]` is what § 6.3 defines, the passing state or the false premise the finding rests on. A reply of only "not actionable" is a label, and it turns the gate red.
+Reply bodies are § 6.3's table, unchanged: a skip that contradicts a recorded decision spells its `[REASON]` as `contradicts [DECISION_ID]`, and an issue named by `Tracked:` exists before the reply is posted.
 
 Use inline `--body` only for plain strings; Markdown with backticks or fences goes to a file and `--body-file` (`post-reply` for threads, `post-comment` for PR-level). Number lists `1.` `2.` `3.`, never `#N`.
 

@@ -11,10 +11,9 @@ Paths are as installed in a consuming repo, under
 
 | File | What it is |
 |------|------------|
-| `scripts/review-predicate.sh` | Answers "is this head reviewed?" — verdict on stdout, exit 2 means no verdict, take no action. `--check-config` runs its settings-validation phase alone. Resolves which sources could open the gate at this head, and calls the composer below for the awaiting verdict's description. |
+| `scripts/review-predicate.sh` | Answers "is this head reviewed?" — verdict on stdout, exit 2 means no verdict, take no action. `--check-config` runs its settings-validation phase alone. |
 | `tests/lib/gh-shim.sh` | The fake `gh` every offline proof puts on PATH: fixtures by endpoint, real jq for `--jq`, fail switches. |
 | `tests/lib/selftest-fixtures.sh` | The fixture writers, one per endpoint shape, sourced by the selftest. |
-| `scripts/awaiting-detail.sh` | Fits that resolved source list into the 140 characters GitHub keeps of a status description. Decides no eligibility of its own. Required at runtime: the predicate exits 2 with no verdict if it fails. |
 | `scripts/review-writer.sh` | Posts that answer as the commit status. The whole writer. |
 | `scripts/validate.sh` | The consumer-facing tool: is this repo's install sound? Runtime, settings, carry-forward exclusions, then the workflow half below, whose verdicts it relays and counts. |
 | `scripts/validate-workflow.sh` | Is the adopted copy still the shipped template? Equality, not re-derivation: see § Equality, not re-derivation. Usable on its own when only the workflow copy changed. |

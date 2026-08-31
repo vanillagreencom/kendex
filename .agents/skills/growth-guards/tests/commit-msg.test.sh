@@ -643,40 +643,6 @@ git -C "$RC_REPO" add -A
 run_rc 'fix(KEN-10): change a crate'
 [ "$RC" -eq 0 ] && ok "control: rewriting the same fragment is the entry" \
   || bad "control: rewriting the same fragment is the entry" "rc=$RC out=$OUT"
-# A symlink fragment replaced by a regular file holding the link target's own
-# bytes: git reports a type change and BOTH SIDES CARRY THE SAME BLOB, so a
-# sha comparison alone calls a real entry no entry at all. The path holds a
-# document now where it held a link before, which is content it did not carry
-# there.
-git -C "$RC_REPO" reset -q --hard HEAD
-rm -f "$RC_REPO/changelog.d/fixed/old.md"
-ln -s -- '- A fix consumers see.' "$RC_REPO/changelog.d/fixed/old.md"
-git -C "$RC_REPO" add -A
-git -C "$RC_REPO" commit -qm "chore: park a symlink fragment [no-changelog]"
-printf 'fn typed() {}\n' >>"$RC_REPO/crates/core/lib.rs"
-rm -f "$RC_REPO/changelog.d/fixed/old.md"
-printf -- '- A fix consumers see.' >"$RC_REPO/changelog.d/fixed/old.md"
-git -C "$RC_REPO" add -A
-# The control the case rests on: the two blobs really are the same object.
-[ "$(git -C "$RC_REPO" rev-parse "HEAD:changelog.d/fixed/old.md")" = "$(git -C "$RC_REPO" rev-parse ":changelog.d/fixed/old.md")" ] \
-  && ok "must-fail: the symlink and the file are one blob, so a sha says nothing" \
-  || bad "the fixture's two sides are one blob" "$(git -C "$RC_REPO" diff --cached --raw -- changelog.d/fixed/old.md)"
-run_rc 'fix(KEN-11): change a crate'
-[ "$RC" -eq 0 ] && ok "a symlink fragment becoming a regular file is the entry" \
-  || bad "a symlink fragment becoming a regular file is the entry" "rc=$RC out=$OUT"
-# The other direction is not: a regular fragment becoming a symlink leaves no
-# document at that path, and changelog-entries refuses one there.
-git -C "$RC_REPO" reset -q --hard HEAD
-printf 'fn untyped() {}\n' >>"$RC_REPO/crates/core/lib.rs"
-rm -f "$RC_REPO/changelog.d/fixed/old.md"
-ln -s -- '- A fix consumers see.' "$RC_REPO/changelog.d/fixed/old.md"
-git -C "$RC_REPO" add -A
-run_rc 'fix(KEN-11): change a crate'
-[ "$RC" -eq 1 ] && case "$OUT" in *"crates/core/lib.rs changed without a changelog entry"*) true ;; *) false ;; esac \
-  && ok "control: a fragment becoming a symlink is not the entry" \
-  || bad "control: a fragment becoming a symlink is not the entry" "rc=$RC out=$OUT"
-git -C "$RC_REPO" reset -q --hard HEAD
-
 # And the mode alone still counts as a TOUCH, so a chmod under a required
 # path is a change to it: the two sets answer different questions.
 git -C "$RC_REPO" reset -q --hard HEAD

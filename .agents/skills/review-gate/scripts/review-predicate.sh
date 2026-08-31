@@ -648,28 +648,23 @@ cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(
 # establish trust, so the trust model is unchanged. The markers come from
 # REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS — case-insensitive substrings,
 # ';'-separated, the same shape as the check-run skip patterns, but matched
-# at the START of the body only (the first line, after trimming leading
-# whitespace and markdown quote markers): an attestation is the whole body,
-# while a genuine review that quotes a pattern in later text — any PR that
-# edits the setting itself — must stay evidence (KEN-456); a configured
-# value replaces the default list, and empty disables the filter
-# (an explicit choice to count errored rows as evidence). Deliberately NOT
-# applied to the changes-requested reduction above: body text that could
-# erase a standing objection would be a fail-open lever, and an errored row
-# can never block anyway (it is not CHANGES_REQUESTED).
+# at the START of the body only: its first line, after trimming leading
+# whitespace and markdown quote markers. An attestation IS the body, while a
+# review that merely quotes a pattern in later text — any PR that edits the
+# setting itself — is genuine evidence and must not be dropped. A configured
+# value replaces the default list, and empty disables the filter (an explicit
+# choice to count errored rows as evidence). Deliberately NOT applied to the
+# changes-requested reduction above: body text that could erase a standing
+# objection would be a fail-open lever, and an errored row can never block
+# anyway (it is not CHANGES_REQUESTED).
 #
-# The filter is defined ONCE and concatenated in front of BOTH jq programs
-# that accept review rows — head evidence here, carry candidates below —
-# because attestation semantics must never drift between them: KEN-456 had
-# to be applied at both sites, and two hand-kept copies of the fragment
-# would part ways silently. Matching is scoped to the START of the body —
-# the first line, after trimming leading whitespace and markdown quote
-# markers: an attestation IS the body, while a review that merely quotes a
-# pattern in later text (any PR editing the setting itself) is genuine
-# evidence and must not be dropped (KEN-456). The body is bound BEFORE
-# testing containment — inside contains(.) the dot would rebind, the same
-# trap as the skip-pattern filter. $mk is the lowercased pattern list each
-# program builds from $errmarks.
+# Defined ONCE and concatenated in front of BOTH jq programs that accept
+# review rows — head evidence here, carry candidates below — because
+# attestation semantics must never drift between them, and two hand-kept
+# copies of the fragment would part ways silently. The body is bound BEFORE
+# testing containment: inside contains(.) the dot would rebind, the same trap
+# as the skip-pattern filter. $mk is the lowercased pattern list each program
+# builds from $errmarks.
 ATTESTATION_DEF='def not_errored_attestation($mk):
   (((.body // "") | ascii_downcase
     | sub("^[\\s>]+"; "") | split("\n") | (.[0] // "")) as $b
@@ -1491,61 +1486,6 @@ while :; do
 done
 fi
 
-# One packed list -> trimmed, non-empty entries, one per line. FILTER_AUTHOR
-# drops the PR author, whose own review and comment are never evidence.
-# The PR author is never evidence, so a source keyed on their login is not a
-# way to open this gate and must not be named as one. LOGIN_HALF takes what
-# precedes the first colon, which is how the comment-form evidence loop reads
-# a pair — the label names the string that loop matches on.
-aw_eligible() { # LIST [LOGIN_HALF]
-  printf '%s\n' "$1" |
-    while IFS= read -r aw_item; do
-      [ "${2:-0}" = 1 ] && aw_item="${aw_item%%:*}"
-      [ -z "$aw_item" ] && continue
-      [ "$aw_item" = "$PR_AUTHOR" ] && continue
-      printf '%s\n' "$aw_item"
-    done
-}
-
-# The sources that could still open the gate at THIS head, under the same
-# rules the evaluation above applied: an empty review-object trust list
-# accepts any non-author review, a named list accepts those logins, and the
-# author is never evidence under either. Trusted status contexts are check
-# names rather than logins, so no author filter applies there. The awaiting
-# status is composed from this list — eligibility is decided here, and
-# awaiting-detail.sh only fits the answer into GitHub's description limit.
-awaiting_sources() { # -> one eligible source per line, duplicates collapsed
-  {
-    # The same normalized list the evidence read is given, so an empty trust
-    # list is empty for both. Emptiness is tested BEFORE the author filter: a
-    # list holding only the author is a named list nothing can satisfy, not
-    # an open one.
-    if [ -z "$TRUSTED_LOGINS_N" ]; then
-      # The minimum state is part of the policy, not decoration: under
-      # 'approved' a COMMENTED review does not satisfy this source, so the
-      # text must not send a reader to leave one.
-      if [ "$MIN_STATE" = "approved" ]; then
-        printf '%s\n' "any non-author approval"
-      else
-        printf '%s\n' "any non-author review"
-      fi
-    else
-      aw_eligible "$TRUSTED_LOGINS_N"
-    fi
-    printf '%s\n' "$TRUSTED_CONTEXTS_N" | sed '/^$/d'
-    aw_eligible "$COMMENT_REVIEWERS_N" 1
-    # The operator override is evidence this predicate accepts, so it is a
-    # way to open the gate and belongs in the list. Leaving it out told an
-    # operator nothing was eligible while the recovery path they own was
-    # configured and working. Empty means the source is disabled.
-    # printf, not echo: a status context is free-form, and bash's echo eats a
-    # value like -n or -e as an option and prints no name at all.
-    if [ -n "$OUTAGE_CONTEXT" ]; then
-      printf '%s\n' "$OUTAGE_CONTEXT"
-    fi
-  } | awk '!seen[$0]++'
-}
-
 echo "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked unreasoned-declines=$unreasoned (threads=$THREADS_MODE)" >&2
 
 if [ "$cr" != "0" ]; then
@@ -1555,24 +1495,10 @@ elif [ "$untracked" != "0" ]; then
 elif [ "$unreasoned" != "0" ]; then
   echo "verdict=unreasoned-decline detail=$unreasoned decline(s) name no mechanism — state the passing state or the false premise the finding is wrong about"
 elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
-  # Captured, never interpolated straight into the echo: a composer that
-  # failed would otherwise leave an empty description on a verdict that still
-  # printed, and a status is the only thing a reader gets.
-  # Captured on its OWN line: as an environment assignment on the composer
-  # command, this substitution's status is discarded and the composer would
-  # format whatever partial list it was handed and exit 0.
-  awaiting_rc=0
-  awaiting_srcs="$(awaiting_sources)" || awaiting_rc=$?
-  if [ "$awaiting_rc" != 0 ]; then
-    echo "::error::review-predicate: could not resolve the awaiting sources (exit $awaiting_rc) — no verdict" >&2
-    exit 2
-  fi
-  awaiting_detail="$(HEAD_SHA="$HEAD_SHA" SOURCES="$awaiting_srcs" "$script_dir/awaiting-detail.sh")" || awaiting_rc=$?
-  if [ "$awaiting_rc" != 0 ] || [ -z "$awaiting_detail" ]; then
-    echo "::error::review-predicate: scripts/awaiting-detail.sh failed (exit $awaiting_rc) — no verdict" >&2
-    exit 2
-  fi
-  echo "verdict=awaiting detail=$awaiting_detail"
+  # One line, no source list. Which sources could open the gate is the repo's
+  # own settings (references/settings.md), not a status description GitHub
+  # keeps 140 characters of.
+  echo "verdict=awaiting detail=no review evidence at $HEAD_SHA yet"
 elif [ "$unresolved" != "0" ]; then
   echo "verdict=threads-open detail=$unresolved unresolved review thread(s)"
 elif [ "$carried" = "1" ]; then

@@ -46,11 +46,8 @@ gg_record_head_probe() { # fills RECORD_HEAD_ENTRY, _MODE and _SHA, or leaves th
 # shape. HEAD is history — the committer cannot change what it holds — so
 # each of these is a comparison skipped with its reason, never a refusal.
 #
-# One classifier because it was two passes: the parse statuses were settled
-# and the entry mode was not, so a gitlink or a tree in HEAD still exited on
-# a blob read that cannot answer, and a symlink's blob was parsed as though
-# the link target were a record. A dimension added later belongs in here, in
-# front of the comparison, rather than in a third pass beside it.
+# One classifier over every dimension, so a dimension added later belongs in
+# here, in front of the comparison, rather than in a third pass beside it.
 #
 # The staged side is stricter and stays so: a non-regular mode there is
 # refused outright, because that is what the commit is MAKING.
@@ -83,13 +80,10 @@ gg_record_head_comparable() { # 0 when HEAD's copy is one this scope can compare
 # release legitimately breaks — it exists to fold entries in — and everything
 # else this scope judges is as true during a release as outside one.
 #
-# Read once because it was read per rule, and each rule got to decide for
-# itself which side of the declaration it sat on. Three findings came out of
-# that: the acceptance set was disarmed wholesale, then the record's type and
-# text checks, then the deletion refusal. The single call site below is what
-# makes a rule added later OUTSIDE the declaration without anyone choosing —
-# to be inside it, a rule would have to be written into the one branch whose
-# whole body is a note saying nothing was compared.
+# Read at ONE call site, which is what makes a rule added later fall outside
+# the declaration without anyone choosing: to be inside it, a rule would have
+# to be written into the one branch whose whole body is a note saying nothing
+# was compared.
 gg_collation_declared() { # 0 when this run is the release commit's own write
   [ "${GROWTH_GUARDS_CHANGELOG_COLLATE:-}" = "1" ]
 }

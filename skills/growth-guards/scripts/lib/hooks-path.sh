@@ -103,20 +103,17 @@ hooks_path_off() { # -> 0 when hooks are switched off
 
 # The stand-down text: one statement, git's own report, one sentence.
 #
-# docs/ARCHITECTURE.md rules it — recovery instructions present their
-# parameters as data, never a pasteable command line — and this is the
-# fourth shape the remedy has taken, each earlier one a command this file
-# composed and was wrong about. Unsetting the local file missed a value
-# living elsewhere. Reading the scope still had to be right about
-# `--unset-all`, about a second file the winning value shadows, and about
-# `include.path`, which git reports under the INCLUDING scope with the
-# included file's own path. Each was this package predicting what somebody's
-# configuration would do to a command it wrote for them.
+# docs/ARCHITECTURE.md rules it: recovery instructions present their
+# parameters as data, never a pasteable command line. A composed command has
+# to be right about `--unset-all`, about a second file the winning value
+# shadows, and about `include.path`, which git reports under the INCLUDING
+# scope with the included file's own path, so a scoped `--unset` edits
+# `.git/config` and leaves the included file setting it.
 #
 # So nothing is written for anyone to run. git reports where the value comes
 # from, unedited — a file, the command line, whatever a later git learns to
 # say — and the sentence after it names no path and no command. Nothing here
-# asserts what an origin IS, which is the assertion that kept being wrong.
+# asserts what an origin IS.
 #
 # Arming is not the whole of it: the installer stands down under any value
 # at all, empty included, so clearing the setting comes first.

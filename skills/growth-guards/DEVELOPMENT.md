@@ -171,14 +171,12 @@ one sentence naming no path and no command: clear the setting at its source,
 then run `kendex guard install`. Both modes print the same block, on
 stderr, so `--check` keeps its single stdout line.
 
-Composing a command instead was wrong three times. Unsetting the local file
-misses a value that lives elsewhere. Reading the scope and unsetting there
-still has to be right about `--unset-all`, about a second file the winning
-value shadows, and about `include.path`, which pulls the key in from a file
-git reports under the INCLUDING scope with its own path — so a scoped
-`--unset` edits `.git/config` and leaves the included file setting it. Each
-was this package predicting what a person's configuration would do to a
-command it wrote for them.
+No command is composed for anyone to run. A composed one has to be right
+about `--unset-all`, about a second file the winning value shadows, and about
+`include.path`, which pulls the key in from a file git reports under the
+INCLUDING scope with its own path, so a scoped `--unset` edits `.git/config`
+and leaves the included file setting it. That is this package predicting what
+a person's configuration would do to a command it wrote for them.
 
 Nothing here asserts what an origin is, either. git answers `command line:`
 for a value carried in the environment or on the command line, where there

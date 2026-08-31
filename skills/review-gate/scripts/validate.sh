@@ -115,7 +115,7 @@ group "runtime"
 SKILL_REL="${SKILL_DIR#"$REPO_ROOT"/}"
 for rel in scripts/review-predicate.sh scripts/review-writer.sh \
   scripts/pr-watch.sh scripts/validate.sh scripts/validate-workflow.sh \
-  scripts/awaiting-detail.sh scripts/lib/settings.sh; do
+  scripts/lib/settings.sh; do
   path="$SKILL_DIR/$rel"
   if [ ! -f "$path" ]; then
     bad "$rel is missing from the installed skill ($SKILL_DIR) — re-run \`kendex refresh\` and commit the result"
