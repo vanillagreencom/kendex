@@ -6,9 +6,10 @@
 # `--help` that reaches the loader runs whatever that file says — and help
 # must also work with no auth, no jq, and no repository around it.
 #
-# Five skills carried a copy of this suite. The forms differ per CLI and the
-# tokens differ, so the table below is what varies; everything around it was
-# the same file five times.
+# Every CLI here used to prove this for itself — four skills carried a copy of
+# the suite, and worktree kept the pair of assertions inline in its help
+# dispatch suite. The forms differ per CLI and the tokens differ, so the table
+# below is what varies; everything around it was the same file over again.
 #
 # Every row runs against a staged copy of the skill inside a fixture git
 # repository whose .env.local touches a marker. The scripts resolve their

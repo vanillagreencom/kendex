@@ -1,26 +1,24 @@
 #!/usr/bin/env bash
 # The proof for `tools/bash32-lint`.
 #
-# Nine skills used to carry the scan and a tenth had it inlined; a parity
-# suite held those copies byte-identical and proved the set once. There is one
-# copy now, so the parity half is gone and this file is the proof half: teeth
-# against the fixtures in tools/tests/data, a planted construct in every
-# directory the roster resolves to, and a red for each way the lint can fail
-# closed.
+# A copy of the scan used to sit in each skill that wanted one, with a further
+# one inlined in a github suite; a parity suite held those copies
+# byte-identical and proved the set once. There is one copy now, so the parity
+# half is gone and this file is the proof half: teeth against the fixtures in
+# tools/tests/data, a planted construct in every directory the roster resolves
+# to, and a red for each way the lint can fail closed.
 #
 # EVERY CHECK HERE FAILS CLOSED. No result is read out of an empty string:
-# git, grep and awk are asked for their status, and a command that could not
-# run ends the run instead of scoring a pass. And THE PATTERN BLOCK IS NEVER
-# EXECUTED — the quoted literals are lifted out and joined, and the result
-# reaches nothing but `grep -E --`.
+# git, grep and the lint itself are asked for their status, and a command that
+# could not run ends the run instead of scoring a pass. The roster and the
+# pattern set are both ASKED OF THE LINT — `--list` and `--pattern` — rather
+# than restated here or parsed back out of its source, so what is judged below
+# is what the program runs.
 set -eu -o pipefail
 ROOT="$(git rev-parse --show-toplevel)" || exit 2
 cd "$ROOT" || exit 2
 
 LINT="$ROOT/tools/bash32-lint"
-BEGIN='# --- pattern set: begin ------------------------------------------------'
-END='# --- pattern set: end --------------------------------------------------'
-Q="'"
 
 TMP="$(mktemp -d)" || exit 2
 trap 'rm -rf -- "${TMP:?}"' EXIT
@@ -109,12 +107,22 @@ for d in $ROSTER; do
     continue
   }
   printf '#!/usr/bin/env bash\nlocal -A planted_cache\n' >"$work/dir/planted-probe.sh"
+  # A second probe one level down. Half the roster's shell lives in a
+  # scripts/lib or scripts/commands, so a discovery that stopped at the top
+  # level would still red on the probe above while reading none of it.
+  mkdir -p "$work/dir/nested" || bad "could not stage a nested directory under $d"
+  printf '#!/usr/bin/env bash\nlocal -A planted_cache\n' >"$work/dir/nested/planted-nested.sh"
   status=0
   out="$("$LINT" "$work/dir" 2>&1)" || status=$?
   if [ "$status" -eq 1 ] && [ "${out#*planted-probe.sh}" != "$out" ]; then
     ok "a planted Bash 4 construct reds $d"
   else
     bad "a planted Bash 4 construct did NOT red $d (exit $status)" "$out"
+  fi
+  if [ "${out#*nested/planted-nested.sh}" != "$out" ]; then
+    ok "the scan of $d reaches a nested directory"
+  else
+    bad "the scan of $d never read nested/planted-nested.sh (exit $status)" "$out"
   fi
   planted=$((planted + 1))
 done
@@ -144,6 +152,30 @@ expect_die "a directory holding only non-shell files reads nothing either" "$TMP
 # guard alone, and dropping the per-directory one costs nothing.
 mkdir -p "$TMP/populated"
 printf '#!/usr/bin/env bash\n:\n' >"$TMP/populated/real.sh"
+
+# The roster's exception entries are repository-relative, so they have to be
+# read from the toplevel and not from wherever the caller stands. Invoked with
+# a relative DIR from a subdirectory, the run must scan that DIR and say clean
+# rather than die on an exception it failed to find beneath the caller's cwd.
+status=0
+out="$(cd "$ROOT/skills/orch" && "$LINT" scripts 2>&1)" || status=$?
+if [ "$status" -eq 0 ]; then
+  ok "a relative DIR argument from a subdirectory scans clean"
+else
+  bad "a relative DIR from a subdirectory exited $status, not 0" "$out"
+fi
+
+# And the price of reading them from the toplevel, stated: with no repository
+# around it the exceptions cannot be judged at all, so the run ends instead of
+# scanning a roster nothing checked.
+status=0
+out="$(cd "$TMP" && "$LINT" populated 2>&1)" || status=$?
+if [ "$status" -eq 2 ]; then
+  ok "a run with no repository around it ends rather than scanning"
+else
+  bad "a run outside a repository exited $status, not 2" "$out"
+fi
+
 status=0
 out="$("$LINT" "$TMP/populated" "$TMP/empty" 2>&1)" || status=$?
 if [ "$status" -eq 2 ]; then
@@ -186,6 +218,40 @@ if [ "$status" -eq 2 ]; then
   ok "a scan that could not run is not read as a clean tree"
 else
   bad "a failed grep exited $status, not 2" "$out"
+fi
+
+# Discovery is the other half of the same contract: a file list that could not
+# be built, and a file that could not be classified, are each a scan that did
+# not run. Root reads both regardless, so the pair is skipped there rather
+# than scored as a pass.
+if [ "$(id -u)" -ne 0 ]; then
+  mkdir -p "$TMP/unreadable-dir/sub"
+  printf '#!/usr/bin/env bash\n:\n' >"$TMP/unreadable-dir/a.sh"
+  printf '#!/usr/bin/env bash\nlocal -A cache\n' >"$TMP/unreadable-dir/sub/bad.sh"
+  chmod 000 "$TMP/unreadable-dir/sub"
+  status=0
+  out="$("$LINT" "$TMP/unreadable-dir" 2>&1)" || status=$?
+  chmod 755 "$TMP/unreadable-dir/sub"
+  if [ "$status" -eq 2 ]; then
+    ok "a file list that could not be built is not read as a clean tree"
+  else
+    bad "an unreadable subdirectory exited $status, not 2" "$out"
+  fi
+
+  # Extensionless entry points are classified by their shebang, so an
+  # unreadable one would answer "not shell" and leave the scan silently short.
+  mkdir -p "$TMP/unreadable-file"
+  printf '#!/usr/bin/env bash\n:\n' >"$TMP/unreadable-file/real.sh"
+  printf '#!/usr/bin/env bash\nlocal -A cache\n' >"$TMP/unreadable-file/entrypoint"
+  chmod 000 "$TMP/unreadable-file/entrypoint"
+  status=0
+  out="$("$LINT" "$TMP/unreadable-file" 2>&1)" || status=$?
+  chmod 644 "$TMP/unreadable-file/entrypoint"
+  if [ "$status" -eq 2 ]; then
+    ok "a file that could not be classified ends the run rather than being dropped"
+  else
+    bad "an unreadable extensionless file exited $status, not 2" "$out"
+  fi
 fi
 
 status=0
@@ -237,116 +303,19 @@ else
   bad "the lint declares no NO_SHELL directory this check could exercise"
 fi
 
-# --- 5. the pattern set, against the text the lint ships ----------------
-# Built out of the block, not run from it. A single quote ends at the next
-# one, so the literal between them is exactly the bytes in it and a line
-# carrying a second quote is not an assignment — which is what an `eval` of a
-# shape-checked line would have run.
-extract() {
-  awk -v begin="$BEGIN" -v end="$END" '
-    $0 == begin { if (opened) malformed = 1; opened++; inside = 1; next }
-    $0 == end   { if (!inside) malformed = 1; inside = 0; closed++; next }
-    inside      { print }
-    END { if (malformed || opened != 1 || closed != 1 || inside) exit 1 }
-  ' "$1"
-}
-block=""
-status=0
-block="$(extract "$LINT")" || status=$?
-if [ "$status" -ne 0 ]; then
-  bad "the pattern block could not be read out of the lint (awk exited $status)"
-  verdict
-  exit
-fi
-ok "the lint holds one well-formed pattern block"
-
+# --- 5. the pattern set, as the lint itself reports it -------------------
+# Asked of the program, not lifted out of its text: `--pattern` prints the
+# string the scan greps with, so everything below judges what actually runs
+# and the source's section markers carry no contract.
 PATTERN=""
-built=none
-while IFS= read -r line; do
-  case "$line" in
-  '#'* | '') continue ;;
-  esac
-  if [ "$built" = none ]; then
-    prefix="PATTERN=$Q"
-  else
-    prefix="PATTERN=\"\$PATTERN\"$Q"
-  fi
-  case "$line" in
-  "$prefix"*"$Q")
-    body="${line#"$prefix"}"
-    body="${body%"$Q"}"
-    case "$body" in
-    *"$Q"*)
-      bad "a block line closes its quote and keeps going, so it is not an assignment" "$line"
-      built=refused
-      break
-      ;;
-    esac
-    PATTERN="$PATTERN$body"
-    built=yes
-    ;;
-  *)
-    bad "the block holds a line that is not an assignment expected here" "$line"
-    built=refused
-    break
-    ;;
-  esac
-done <<EOF
-$block
-EOF
-if [ "$built" != yes ] || [ -z "$PATTERN" ]; then
-  bad "no pattern could be built from the block, so nothing below was proven"
+status=0
+PATTERN="$("$LINT" --pattern)" || status=$?
+if [ "$status" -ne 0 ] || [ -z "$PATTERN" ]; then
+  bad "the lint could not print its pattern set (exit $status), so nothing below was proven"
   verdict
   exit
 fi
-ok "the block parses as a PATTERN chain and was never executed"
-
-# After the end marker the guard is a WHITELIST: a line may extend the set in
-# the documented append form or READ the variable, and a line that names
-# PATTERN any other way is refused, whatever the spelling. It was a blocklist
-# once and came up short five times — `export PATTERN=`, `PATTERN[0]=`,
-# `declare PATTERN=`, `readonly PATTERN=`, `printf -v PATTERN` all walked
-# past it. What every assignment shares is that it NAMES the variable.
-names_pattern() {
-  awk -v marker="$END" '
-    $0 == marker { after = 1; next }
-    !after { next }
-    {
-      line = $0
-      gsub(/\$\{PATTERN\}/, "", line)
-      gsub(/\$PATTERN/, "", line)
-      if (line ~ /(^|[^A-Za-z0-9_])PATTERN([^A-Za-z0-9_]|$)/) printf "%d: %s\n", NR, $0
-    }
-  ' "$1"
-}
-named=""
-status=0
-named="$(names_pattern "$LINT")" || status=$?
-if [ "$status" -ne 0 ]; then
-  bad "the lines after the marker could not be read (awk exited $status)"
-elif [ -n "$named" ]; then
-  bad "the lint names PATTERN after the end marker outside a read" \
-    "$(printf '%s\n' "$named" | head -5)"
-else
-  ok "nothing after the end marker names PATTERN outside a read"
-fi
-
-# The gap this guard has, checked so the sentence above cannot go stale. An
-# assignment that never spells the name is invisible to a text rule, and bash
-# really does perform it. Reaching that means running the shell, not reading
-# it; if it ever starts being caught, this reds and the claim gets rewritten.
-gapfile="$TMP/gap"
-printf '%s\nv=PATT; v="${v}ERN"; declare "$v=mapfile"\n' "$END" >"$gapfile"
-status=0
-caught="$(names_pattern "$gapfile")" || status=$?
-if [ "$status" -ne 0 ]; then
-  bad "the indirection check could not run (awk exited $status)"
-elif [ -n "$caught" ]; then
-  bad "the guard now catches an assignment that never spells PATTERN" \
-    "rewrite the stated gap beside it; it is no longer a gap"
-else
-  ok "an assignment that never spells PATTERN is still outside this guard"
-fi
+ok "the lint prints the pattern set it runs"
 
 # --- 6. the fixtures, one file per direction ----------------------------
 PROBES=""
@@ -440,20 +409,5 @@ degenerate() { # MODE PATTERN LINES LABEL
 }
 degenerate miss mapfile "$PROBES" "a narrowed set misses probes"
 degenerate hit . "$CONTROLS" "a set matching anything flags controls"
-
-# --- 7. the extracted pattern is the one the lint runs ------------------
-# Sections 5 and 6 judge text lifted out of the file. This closes the gap
-# between that text and the program: one probe line the extracted set flags,
-# planted as a file, must red the lint itself.
-probe_line="$(printf '%s\n' "$PROBES" | head -n 1)"
-mkdir -p "$TMP/derived"
-printf '#!/usr/bin/env bash\n%s\n' "$probe_line" >"$TMP/derived/probe.sh"
-status=0
-out="$("$LINT" "$TMP/derived" 2>&1)" || status=$?
-if [ "$status" -eq 1 ]; then
-  ok "the first fixture probe reds the lint as run, not only as read"
-else
-  bad "the lint did not red on a fixture probe (exit $status)" "$out"
-fi
 
 verdict
