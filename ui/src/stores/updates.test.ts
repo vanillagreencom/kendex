@@ -309,6 +309,76 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().reading).toBe(false);
   });
 
+  // A check ranks by when it lands, because it reads the standing after
+  // fetching every mirror and so saw more than any read still out. That
+  // holds only while nothing else commits meanwhile: `updates_refresh`
+  // builds its report once, and a commit landing after that read is not in
+  // it. Claiming to be newest would put the rows back as they were before
+  // the commit — and `read` would say `landed` over them, which is what
+  // re-opens every action on rows nobody confirmed.
+  it("does not let a check overwrite a commit that landed while it ran", async () => {
+    let landCheck!: (
+      value: Awaited<ReturnType<typeof commands.updatesRefresh>>,
+    ) => void;
+    vi.mocked(commands.updatesRefresh).mockReturnValue(
+      new Promise((resolve) => {
+        landCheck = resolve;
+      }),
+    );
+    useUpdatesStore.setState({ rows: [row({})], read: READ_LANDED });
+    const checking = useUpdatesStore.getState().check();
+
+    // A mute commits and reads the standing back for itself while the
+    // fetch is still out.
+    const muted = [row({ ignored: true })];
+    vi.mocked(commands.updateSetIgnored).mockResolvedValue({
+      status: "ok",
+      data: { rows: muted, warnings: [], lastFetched: null },
+    });
+    await useUpdatesStore.getState().setIgnored(row({}), true);
+    expect(useUpdatesStore.getState().rows).toEqual(muted);
+
+    // The check answers with the standing as it was before that commit.
+    landCheck({
+      status: "ok",
+      data: { rows: [row({})], warnings: [], lastFetched: null },
+    });
+    await checking;
+
+    expect(useUpdatesStore.getState().rows).toEqual(muted);
+  });
+
+  // The control: with nothing committing meanwhile, a check still outranks
+  // every read out — which is what the landing-time rank is for, and what
+  // the case above must not take away.
+  it("still outranks a read that was out when the check answers", async () => {
+    let landRead!: (
+      value: Awaited<ReturnType<typeof commands.updatesOverview>>,
+    ) => void;
+    vi.mocked(commands.updatesOverview).mockReturnValue(
+      new Promise((resolve) => {
+        landRead = resolve;
+      }),
+    );
+    const reloading = useUpdatesStore.getState().reload();
+
+    const fresh = [row({ name: "fresh" })];
+    vi.mocked(commands.updatesRefresh).mockResolvedValue({
+      status: "ok",
+      data: { rows: fresh, warnings: [], lastFetched: null },
+    });
+    await useUpdatesStore.getState().check();
+    expect(useUpdatesStore.getState().rows).toEqual(fresh);
+
+    landRead({
+      status: "ok",
+      data: { rows: [row({ name: "stale" })], warnings: [], lastFetched: null },
+    });
+    await reloading;
+
+    expect(useUpdatesStore.getState().rows).toEqual(fresh);
+  });
+
   // A failed mute may still have committed before erroring, so the store
   // re-reads rather than trusting either story: here the truth confirms
   // the kept rows, and nothing is marked stale.

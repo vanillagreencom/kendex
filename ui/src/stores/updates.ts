@@ -71,7 +71,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
 
   const reportUpdate = (error: string) => showError(UPDATE_ERROR_TITLE, error);
 
-  const { landOwn, reload } = standingReads(set, get);
+  const { beginOwn, committed, reload } = standingReads(set, get);
 
   /** What a commit-applying action says instead of running. Each captures
    *  values off the rows it was handed, so it may run only against rows a
@@ -96,10 +96,13 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       // cost the network twice for one answer.
       if (get().checking) return;
       set({ checking: true });
+      const landOwn = beginOwn();
       try {
         const response = await settled(commands.updatesRefresh());
-        // A fetch reports the state its own work produced, so it ranks by
-        // when it lands: no read still out saw anything newer than this.
+        // The fetch reads the standing after fetching every mirror, so it
+        // ranks by when it lands — unless something committed while it was
+        // out, in which case that operation's own read is the newer answer
+        // and this one says nothing about the rows.
         landOwn(response);
         if (response.status === "error")
           showError(UPDATE_ERROR_TITLE, response.error);
@@ -180,6 +183,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     }),
 
     setIgnored: async (row, ignored) => {
+      const landOwn = beginOwn();
       const response = await settled(
         commands.updateSetIgnored(
           row.scope,
@@ -189,13 +193,17 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           ignored,
         ),
       );
-      if (response.status === "ok") {
-        // The command answers with the overview it just rebuilt, so it
-        // outranks every read begun before this moment.
-        landOwn(response);
-        return;
-      }
-      showError(UPDATE_ERROR_TITLE, response.error);
+      // The command answers with the overview it just rebuilt, which
+      // carries this write — good enough unless something ELSE committed
+      // while it was out, which its report would not have. Asked before
+      // the bump below, or this operation would rule out its own answer.
+      const landed = response.status === "ok" && landOwn(response);
+      // The preference is written before the overview is built, so even a
+      // refusal may have committed it.
+      committed();
+      if (landed) return;
+      if (response.status === "error")
+        showError(UPDATE_ERROR_TITLE, response.error);
       // It can persist the preference and then fail building the overview,
       // so the rows on screen may no longer be the truth: one read answers
       // either way.

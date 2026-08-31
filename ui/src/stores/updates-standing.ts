@@ -7,7 +7,12 @@ import {
   type UpdateRow,
   type UpdatesReport_Serialize,
 } from "@/bindings";
-import { type ReadState, readOf, readOrder } from "@/lib/read-state";
+import {
+  invalidations,
+  type ReadState,
+  readOf,
+  readOrder,
+} from "@/lib/read-state";
 import { settled } from "@/lib/settled";
 import { type PendingFollow, withPending } from "./updates-follow";
 
@@ -34,6 +39,9 @@ export function standingReads(
   get: () => { pendingFollows: PendingFollow[] },
 ) {
   const order = readOrder();
+  // Writes that have committed. An answer built before one may not carry
+  // it, which is what decides whether that answer may claim to be newest.
+  const commits = invalidations();
 
   // The one place a read of the standing lands, however it went. A failure
   // — a returned refusal and a rejected call alike, via `settled` — keeps
@@ -61,10 +69,31 @@ export function standingReads(
 
   return {
     land,
-    /** A ticket taken at the landing itself, for an answer a side effect
-     *  produced: it reports the state its own work made, so it outranks
-     *  every read still in flight. */
-    landOwn: (response: Answer) => land(order.begin(), response),
+    /** Say a write has committed. Every answer already out was built
+     *  before this moment and may not have it. */
+    committed: commits.moved,
+    /** Begin an operation that answers with the standing itself, and take
+     *  the landing for that answer.
+     *
+     *  The answer ranks by when it LANDS rather than when the operation
+     *  began: it reports the state its own work made, so it outranks every
+     *  read still in flight. That claim holds only while nothing else
+     *  commits meanwhile. A command builds its report once, somewhere
+     *  inside itself — `updates_refresh` fetches every mirror and reads the
+     *  standing after — so a commit that landed while it was out may be
+     *  missing from it, and claiming to be newest would put the rows back
+     *  as they were before that commit. Whoever committed read the
+     *  standing back for themselves; theirs is the newer answer.
+     *
+     *  Answers whether it landed, so a caller that lost can read again. */
+    beginOwn: () => {
+      const since = commits.since();
+      return (response: Answer): boolean => {
+        if (commits.stale(since)) return false;
+        land(order.begin(), response);
+        return true;
+      };
+    },
     /** Read the standing again. `reading` is up for as long as one is out,
      *  read off the same ticket that orders the landings, so the page-wide
      *  rule and the ordering rule cannot disagree. */
