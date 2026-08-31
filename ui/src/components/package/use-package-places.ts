@@ -46,9 +46,8 @@ export function usePackagePlaces(
   // Read field by field rather than through one selector: `rowUnsettled`
   // takes the state, and a selector returning a fresh object or closure
   // each render is a new value on every store touch.
-  const loaded = useUpdatesStore((s) => s.loaded);
+  const updatesRead = useUpdatesStore((s) => s.read);
   const checking = useUpdatesStore((s) => s.checking);
-  const overviewInFlight = useUpdatesStore((s) => s.overviewInFlight);
   const pendingFollows = useUpdatesStore((s) => s.pendingFollows);
   // Who owns each copy. Read beside the records rather than trusted from
   // an earlier visit: installing refreshes the scan and the audit and
@@ -116,7 +115,7 @@ export function usePackagePlaces(
       name,
       rows,
       read?.metas ?? {},
-      { loaded, checking, overviewInFlight, pendingFollows },
+      { read: updatesRead, checking, pendingFollows },
       // A read that failed leaves the store's older rows in place, and
       // those say nothing about who owns these copies now. Passing none
       // holds the removal controls closed rather than deriving a

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { READ_LANDED } from "@/lib/read-state";
 import { useUpdatesStore } from "./updates";
 
 vi.mock("@/bindings", async (importOriginal) => ({
@@ -95,7 +96,7 @@ const ready = (remaining: UpdateRow[]) => {
 
 describe("updates store: what the success toast claims", () => {
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    useUpdatesStore.setState({ rows: [], busy: false, read: READ_LANDED });
     vi.clearAllMocks();
   });
 
@@ -155,7 +156,7 @@ describe("updates store: a package the plan held back", () => {
   };
 
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    useUpdatesStore.setState({ rows: [], busy: false, read: READ_LANDED });
     vi.clearAllMocks();
   });
 
@@ -216,7 +217,7 @@ describe("updates store: a copy the run took away", () => {
   });
 
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    useUpdatesStore.setState({ rows: [], busy: false, read: READ_LANDED });
     vi.clearAllMocks();
   });
 

@@ -7,10 +7,10 @@ import {
   UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
+import { rescanEverything } from "@/lib/rescan";
+import { caught } from "@/lib/settled";
 import { rowUnsettled } from "@/lib/updates-read-state";
-import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
-import { useScanStore } from "./scan";
 import { useUpdatesStore } from "./updates";
 
 /** The ways out of an edited place, run under the updates store's busy
@@ -24,19 +24,16 @@ type Outcome<T> = { error: string } | { ok: T };
 const run = async <T>(work: () => Promise<Outcome<T>>): Promise<Outcome<T>> => {
   useUpdatesStore.setState({ busy: true });
   try {
-    // The commit and the overview that follows ride the updates store's
-    // side-effect chain, in commit order with every other operation.
-    let answer: Outcome<T> | null = null;
-    const error = await useUpdatesStore.getState().mutate(async () => {
-      const outcome = await work();
-      answer = outcome;
-      return "error" in outcome ? outcome.error : null;
-    });
-    if (error !== null) return { error };
-    if (answer === null) return { error: "the operation never answered" };
-    await useScanStore.getState().refresh();
-    await useAuditStore.getState().refresh({ force: true });
-    return answer;
+    // A transport failure rejects rather than refusing; caught here it is
+    // presented as the refusal shape, which claims nothing happened.
+    const answer = await caught(work());
+    // Whatever the work answered, the standing is read again: it may have
+    // committed and then failed, and the rows on screen must be what
+    // actually landed.
+    await useUpdatesStore.getState().reload();
+    if (answer.status === "error") return { error: answer.error };
+    if (!("error" in answer.data)) await rescanEverything();
+    return answer.data;
   } finally {
     useUpdatesStore.setState({ busy: false });
   }

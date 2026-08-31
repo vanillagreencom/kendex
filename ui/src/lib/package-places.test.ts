@@ -16,6 +16,7 @@ import {
   updatableRows,
   vendorAt,
 } from "@/lib/package-places";
+import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
@@ -64,9 +65,8 @@ const meta = (installedAt: string | null): PackageMeta_Serialize => ({
 /** A read that landed with nothing running behind it: the only state in
  *  which a row on screen is a confirmed current answer. */
 const SETTLED: UpdatesStanding = {
-  loaded: true,
+  read: READ_LANDED,
   checking: false,
-  overviewInFlight: false,
   pendingFollows: [],
 };
 
@@ -209,17 +209,12 @@ describe("which places can take an update", () => {
   // over them. A card reading those rows alone would offer an Update that
   // can only raise an error.
   it("offers none while the update read has not landed", () => {
-    const held = { ...SETTLED, loaded: false };
+    const held = { ...SETTLED, read: READ_PENDING };
     expect(places([VG], [row(VG)], {}, "skill", held)[0].updatable).toBe(false);
   });
 
   it("offers none while a check is running", () => {
     const held = { ...SETTLED, checking: true };
-    expect(places([VG], [row(VG)], {}, "skill", held)[0].updatable).toBe(false);
-  });
-
-  it("offers none while a read that replaces every row is in flight", () => {
-    const held = { ...SETTLED, overviewInFlight: true };
     expect(places([VG], [row(VG)], {}, "skill", held)[0].updatable).toBe(false);
   });
 

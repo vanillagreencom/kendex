@@ -11,14 +11,9 @@ import { useMineStore } from "@/stores/mine";
 import { mount, settle } from "@/test/dom";
 import { MineTab } from "./mine-tab";
 
-/** The name core mints for a sign-in; two answers about one
- *  credential carry the same one. */
-const SIGN_IN = "sign-in-ada";
-
 vi.mock("@/bindings", () => ({
   commands: {
     mineSubmissions: vi.fn(),
-    mineSubmissionStates: vi.fn(),
     mineSubmitPreflight: vi.fn(),
     mineAuthoringDoc: vi.fn(),
     pickFolder: vi.fn(),
@@ -87,10 +82,9 @@ const NO_REMOTE: MineListRow = {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
-  vi.mocked(commands.mineSubmissionStates).mockResolvedValue({});
   useMineStore.setState({ rows: [], load: async () => {} });
   useAccountStore.setState({
-    account: { kind: "signed-in", identity: ADA, signIn: SIGN_IN },
+    account: { kind: "signed-in", identity: ADA },
     error: null,
     readError: null,
     submissions: null,
@@ -124,7 +118,6 @@ it("moves the account to expired on a poll tick that meets a dead sign-in", asyn
   expect(commands.mineSubmissions).toHaveBeenCalledTimes(2);
   expect(useAccountStore.getState().account).toEqual({
     kind: "expired",
-    signIn: SIGN_IN,
   });
   expect(useAccountStore.getState().submissions).toBeNull();
 });
@@ -140,7 +133,6 @@ it("stops polling once a tick has found the sign-in expired", async () => {
   await settle();
   expect(useAccountStore.getState().account).toEqual({
     kind: "expired",
-    signIn: SIGN_IN,
   });
 
   // The interval itself, not the store guard behind it: without the
@@ -174,68 +166,20 @@ it("leaves the account alone when a tick fails for any other reason", async () =
   expect(useAccountStore.getState().account).toEqual({
     kind: "signed-in",
     identity: ADA,
-    signIn: SIGN_IN,
   });
   expect(useAccountStore.getState().submissions).toEqual([ROW]);
 });
 
 // The defect this tab had: a read that never landed is not the same fact
-// as a server that answered with nothing. Which of the three a
-// marketplace is in is core's ruling, tested in its own crate; the halves
-// asserted here are the tab's own: what it hands core, what it draws.
-describe("a submissions read the app could not make", () => {
-  const showing = async (states: Record<string, unknown> = {}) => {
-    vi.mocked(commands.mineSubmissionStates).mockResolvedValue(states as never);
+// as a server that answered with nothing. Which of the three a marketplace
+// is in is `submissionFor`'s ruling; what is asserted here is what the tab
+// draws for each.
+describe("what a marketplace's submission reads as", () => {
+  const showing = async () => {
     const host = mount(<MineTab />);
     await settle();
     return host.textContent ?? "";
   };
-
-  const asked = () => vi.mocked(commands.mineSubmissionStates).mock.lastCall;
-
-  it("hands core the failed outcome, the rows in hand, and every marketplace", async () => {
-    useMineStore.setState({ rows: [MINE, NO_REMOTE] });
-    useAccountStore.setState({ submissions: [ROW] });
-    vi.mocked(commands.mineSubmissions).mockResolvedValue(
-      refused("failed", FAILED),
-    );
-
-    await showing();
-
-    // The remote-less marketplace goes out with a null repo rather than
-    // being left out: core answers about every marketplace this tab draws.
-    expect(asked()).toEqual([
-      "failed",
-      [ROW],
-      [
-        { path: READY.path, repo: "ada/team-skills" },
-        { path: "/home/ada/dev/scratch-skills", repo: null },
-      ],
-    ]);
-  });
-
-  // No rows and no failure is not a read that landed: it is the moment
-  // before the first, and where a credential's end leaves the tab.
-  it("tells core no read has been made until one does", async () => {
-    useMineStore.setState({ rows: [MINE] });
-    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([ROW]));
-
-    await showing();
-
-    const first = vi.mocked(commands.mineSubmissionStates).mock.calls[0];
-    expect(first?.slice(0, 2)).toEqual(["unread", []]);
-  });
-
-  it("offers no first submit for a row core has not answered for", async () => {
-    useMineStore.setState({ rows: [MINE] });
-    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([ROW]));
-
-    const text = await showing({});
-
-    expect(text).toContain("Submit…");
-    expect(text).not.toContain("Submit to community…");
-    expect(text).not.toContain("Submission status unknown");
-  });
 
   it("draws an unknown state as unknown, claiming neither offer", async () => {
     useMineStore.setState({ rows: [MINE] });
@@ -243,7 +187,7 @@ describe("a submissions read the app could not make", () => {
       refused("failed", FAILED),
     );
 
-    const text = await showing({ [READY.path]: { kind: "unknown" } });
+    const text = await showing();
 
     expect(text).toContain("Could not check your submissions");
     expect(text).toContain(FAILED);
@@ -257,31 +201,36 @@ describe("a submissions read the app could not make", () => {
     useMineStore.setState({ rows: [MINE] });
     vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([]));
 
-    const text = await showing({ [READY.path]: { kind: "not-submitted" } });
+    const text = await showing();
 
     expect(text).not.toContain("Could not check your submissions");
     expect(text).not.toContain("Submission status unknown");
     expect(text).toContain("Submit to community…");
   });
 
+  // A submission is keyed by the GitHub repository, so a marketplace with
+  // no remote is not submitted however the read went.
+  it("draws a marketplace with no remote as not submitted, whatever the read did", async () => {
+    useMineStore.setState({ rows: [NO_REMOTE] });
+    vi.mocked(commands.mineSubmissions).mockResolvedValue(
+      refused("failed", FAILED),
+    );
+
+    const text = await showing();
+
+    expect(text).not.toContain("Submission status unknown");
+    expect(text).toContain("Submit to community…");
+  });
+
   // Stale and labelled beats empty: the rows are what the server last
-  // said. The answer ruled from them is another matter, its outcome now
-  // passed — a banner beside a first-submit offer is the same wrong claim.
-  it("keeps the rows a tick read, and drops the answer ruled under it", async () => {
+  // said, so a row it named stays submitted under a tick that failed.
+  it("keeps a row the server named through a tick that failed", async () => {
     useMineStore.setState({ rows: [MINE] });
     vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([ROW]));
-    vi.mocked(commands.mineSubmissionStates).mockResolvedValue({
-      [READY.path]: { kind: "not-submitted" },
-    } as never);
     const host = mount(<MineTab />);
     await settle();
-    expect(asked()?.[0]).toBe("landed");
-    expect(host.textContent).toContain("Submit to community…");
-
-    // The replacement ask is still out when the render below happens.
-    vi.mocked(commands.mineSubmissionStates).mockReturnValue(
-      new Promise(() => {}) as never,
-    );
+    expect(host.textContent).toContain("Submitted · in review");
+    expect(host.textContent).toContain("Re-submit…");
 
     vi.mocked(commands.mineSubmissions).mockResolvedValue(
       refused("failed", FAILED),
@@ -292,73 +241,8 @@ describe("a submissions read the app could not make", () => {
     await settle();
 
     expect(useAccountStore.getState().submissions).toEqual([ROW]);
-    // The rows that tick already read reach core under the failed
-    // outcome, which is all stale-but-labelled needs from this tab.
-    expect(asked()).toEqual([
-      "failed",
-      [ROW],
-      [{ path: READY.path, repo: "ada/team-skills" }],
-    ]);
     expect(host.textContent).toContain("Could not check your submissions");
-    expect(host.textContent).not.toContain("Submit to community…");
-  });
-
-  // Two asks overlap whenever a tick lands while one is in flight.
-  it("draws the newer answer when an older ask lands after it", async () => {
-    useMineStore.setState({ rows: [MINE] });
-    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([]));
-    const land: ((states: unknown) => void)[] = [];
-    vi.mocked(commands.mineSubmissionStates).mockImplementation(
-      () => new Promise((resolve) => land.push(resolve)) as never,
-    );
-    const host = mount(<MineTab />);
-    await settle();
-
-    // A tick that fails changes the outcome, so a second ask goes out.
-    vi.mocked(commands.mineSubmissions).mockResolvedValue(
-      refused("failed", FAILED),
-    );
-    await act(async () => {
-      vi.advanceTimersByTime(POLL_MS);
-    });
-    await settle();
-    expect(land.length).toBeGreaterThan(1);
-
-    // The newest ask answers first, then every older one after it.
-    const newest = land.length - 1;
-    await act(async () => {
-      land[newest]({ [READY.path]: { kind: "unknown" } });
-      for (let older = 0; older < newest; older += 1) {
-        land[older]({ [READY.path]: { kind: "not-submitted" } });
-      }
-    });
-    await settle();
-
-    expect(host.textContent).toContain("Submission status unknown");
-  });
-
-  // Nothing retries the ask, so a refusal leaves the rows unanswered.
-  it("drops the answer in hand when the ask is refused", async () => {
-    useMineStore.setState({ rows: [MINE] });
-    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([ROW]));
-    vi.mocked(commands.mineSubmissionStates).mockResolvedValue({
-      [READY.path]: { kind: "submitted", row: ROW },
-    } as never);
-    const host = mount(<MineTab />);
-    await settle();
     expect(host.textContent).toContain("Submitted · in review");
-    expect(host.textContent).toContain("Re-submit…");
-
-    // A second marketplace sends the ask out again under the same
-    // outcome, so only the catch can drop the answer already in hand.
-    vi.mocked(commands.mineSubmissionStates).mockRejectedValue(new Error("no"));
-    await act(async () => {
-      useMineStore.setState({ rows: [MINE, NO_REMOTE] });
-    });
-    await settle();
-
-    expect(host.textContent).not.toContain("Submitted · in review");
-    expect(host.textContent).not.toContain("Re-submit…");
-    expect(host.textContent).toContain("Submit…");
+    expect(host.textContent).not.toContain("Submit to community…");
   });
 });

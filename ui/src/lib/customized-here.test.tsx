@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Scope, ScopeSettings, SettingsEdit } from "@/bindings";
 import { emptyDraft } from "@/lib/editor-draft";
+import { READ_PENDING } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
@@ -59,7 +60,7 @@ const listed = (read: ScopeSettings, edits: SettingsEdit[]): string => {
 };
 
 beforeEach(() => {
-  useUpdatesStore.setState({ rows: [], loaded: false });
+  useUpdatesStore.setState({ rows: [], read: READ_PENDING });
 });
 
 // The page skips its reload while anything is unsaved, so the index goes

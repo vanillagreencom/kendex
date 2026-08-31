@@ -29,17 +29,17 @@ import { Exits } from "@/lib/exits";
  *  which is an empty answer rather than an unknown one. */
 export function unmanagedIn(
   view: AuditView | undefined,
-  checkError: string | null,
+  failure: string | null,
 ): MergedDriftRow[] | null {
-  if (checkError !== null || view?.error) return null;
+  if (failure !== null || view?.error) return null;
   if (!view) return [];
   return mergeDriftRows(view.drift.filter((row) => row.state === "unmanaged"));
 }
 
 export const unmanagedCount = (
   view: AuditView | undefined,
-  checkError: string | null,
-): number | null => unmanagedIn(view, checkError)?.length ?? null;
+  failure: string | null,
+): number | null => unmanagedIn(view, failure)?.length ?? null;
 
 /** A declared item at this place whose position already holds files kendex
  *  did not write, one entry per item however many tools it targets.
@@ -54,9 +54,9 @@ export const unmanagedCount = (
  *  the filesystem from exactly these rows. */
 export function blockedIn(
   view: AuditView | undefined,
-  checkError: string | null,
+  failure: string | null,
 ): MergedDriftRow[] | null {
-  if (checkError !== null || view?.error) return null;
+  if (failure !== null || view?.error) return null;
   if (!view) return [];
   const exits = new Exits(view.exits);
   const withFiles = new Set(
@@ -88,12 +88,12 @@ export interface BlockedPlace {
  *  destructive buttons over rows nothing has looked at since. */
 export function blockedPlaces(
   views: AuditView[],
-  checkError: string | null,
+  failure: string | null,
 ): BlockedPlace[] | null {
-  if (checkError !== null) return null;
+  if (failure !== null) return null;
   const places: BlockedPlace[] = [];
   for (const view of views) {
-    const rows = blockedIn(view, checkError);
+    const rows = blockedIn(view, failure);
     if (!rows || rows.length === 0) continue;
     places.push({
       key: view.scope.scope === "global" ? "global" : view.scope.root,

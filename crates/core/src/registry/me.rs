@@ -27,32 +27,19 @@ pub struct Identity {
 
 /// What the account surfaces render, every one of them settled: the UI
 /// holds its own "not read yet" until the first answer comes back.
-///
-/// The states about a credential carry `sign_in`, the name of the
-/// sign-in they were read under. It is [`Credential::sign_in`]: minted
-/// once when a sign-in is committed, carried through every rotation, and
-/// replaced only by another sign-in. A caller holding an earlier answer
-/// compares it to tell the credential it has from one that replaced it,
-/// which no part of the identity can answer — a rename leaves the same
-/// credential, and signing in again as the same person leaves a
-/// different one under the same name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum AccountState {
     SignedOut,
     SignedIn {
         identity: Identity,
-        sign_in: String,
     },
     /// The server could not be asked; the identity is the last good fetch.
     Offline {
         identity: Identity,
-        sign_in: String,
     },
     /// The credential is dead server-side — signing in again is the fix.
-    Expired {
-        sign_in: String,
-    },
+    Expired,
 }
 
 /// The wire shape of GET /api/v1/me, exactly as the contract fixture says.
@@ -108,9 +95,7 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
         // would find it keyed to this one and discard it unread.
         Err(CoreError::SignInExpired { .. }) => {
             cache.forget()?;
-            return Ok(AccountState::Expired {
-                sign_in: issued_under,
-            });
+            return Ok(AccountState::Expired);
         }
         fetched => fetched,
     };
@@ -135,24 +120,18 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
             why: server_message(response),
         }
     })?;
-    // Checked equal to what is installed just above, so the answer names
-    // the sign-in it was actually read under.
     Ok(match loaded.stale {
         false => AccountState::SignedIn {
             identity: loaded.value,
-            sign_in: issued_under,
         },
         true => AccountState::Offline {
             identity: loaded.value,
-            sign_in: issued_under,
         },
     })
 }
 
 /// Commit a fresh sign-in and drop the previous account's cached
 /// identity, so the new credential never pairs with the old name.
-/// Answers the name minted for it, which is what a later read of this
-/// account will carry back and what a caller compares against.
 ///
 /// The cache is forgotten twice. The first runs before anything is
 /// installed and fails the call, because failing there leaves nothing
@@ -166,12 +145,12 @@ pub fn commit_sign_in(
     env: &Env,
     store: &dyn CredentialStore,
     credential: &Credential,
-) -> Result<String> {
+) -> Result<()> {
     let cache = cache(env);
     cache.forget()?;
-    let sign_in = client::commit_login(store, credential)?;
+    client::commit_login(store, credential)?;
     let _ = cache.forget();
-    Ok(sign_in)
+    Ok(())
 }
 
 /// Revoke, clear, and forget the cached identity — the one sign-out

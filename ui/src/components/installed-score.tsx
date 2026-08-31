@@ -8,7 +8,7 @@ import {
   severityTone,
 } from "@/lib/copy-safety";
 import { installedSafety } from "@/lib/installed-safety";
-import { sameScope, scopeKey } from "@/lib/scope";
+import { sameScope } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
 
 /** What the audit says about one installed package right now, and how much
@@ -41,9 +41,8 @@ export function useInstalledReading(
   scopes: Scope[],
 ): InstalledReading {
   const views = useAuditStore((s) => s.views);
-  const checkError = useAuditStore((s) => s.checkError);
+  const auditFailure = useAuditStore((s) => s.read.error);
   const auditedAt = useAuditStore((s) => s.auditedAt);
-  const scopeCheckedAt = useAuditStore((s) => s.scopeCheckedAt);
   const refresh = useAuditStore((s) => s.refresh);
   // Merged out of the store's rows on every render rather than inside a
   // selector: the merge builds a fresh object each call, and a selector
@@ -57,17 +56,12 @@ export function useInstalledReading(
       (view) =>
         view.error && scopes.some((scope) => sameScope(view.scope, scope)),
     )?.error ?? null;
-  const failure = checkError ?? unreadable?.message ?? null;
-  // A row is only as current as its stalest place.
-  const stamps = scopes
-    .map((scope) => scopeCheckedAt[scopeKey(scope)])
-    .filter((at) => at !== undefined);
-  const checkedAt = stamps.length > 0 ? Math.min(...stamps) : auditedAt;
+  const failure = auditFailure ?? unreadable?.message ?? null;
   return {
     result,
     failure,
-    waiting: checkedAt === null && failure === null,
-    checkedAt,
+    waiting: auditedAt === null && failure === null,
+    checkedAt: auditedAt,
     retry: () => void refresh({ force: true }),
   };
 }

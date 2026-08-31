@@ -21,6 +21,12 @@ import {
   UPDATE_NEEDS_CHECK_HERE,
   UPDATES_CHECKING,
 } from "@/lib/copy-updates";
+import {
+  READ_LANDED,
+  READ_PENDING,
+  type ReadState,
+  readFailed,
+} from "@/lib/read-state";
 import { pageUpdateWithheld } from "@/lib/update-groups";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
@@ -188,17 +194,14 @@ beforeEach(() => {
   });
   useUpdatesStore.setState({
     rows: [],
-    loaded: true,
-    error: null,
+    read: READ_LANDED,
     checking: false,
-    overviewInFlight: false,
     pendingFollows: [],
   });
   useAuditStore.setState({
     views: [],
     auditedAt: null,
-    checkError: null,
-    scopeCheckedAt: {},
+    read: READ_LANDED,
   });
 });
 
@@ -219,17 +222,14 @@ describe("the package page's Update", () => {
   const openWithUpdates = async (
     rows: UpdateRow[],
     {
-      loaded = true,
       kind = "skill" as ItemKind,
       versions = newerThanInstalled,
       ...standing
     }: {
-      loaded?: boolean;
       kind?: ItemKind;
       versions?: VersionRow[];
-      error?: string | null;
+      read?: ReadState;
       checking?: boolean;
-      overviewInFlight?: boolean;
     } = {},
   ) => {
     vi.mocked(commands.packageVersions).mockResolvedValue({
@@ -244,10 +244,8 @@ describe("the package page's Update", () => {
     // left, so a leaked `error` would make a pending read read as failed.
     useUpdatesStore.setState({
       rows,
-      loaded,
-      error: null,
+      read: READ_LANDED,
       checking: false,
-      overviewInFlight: false,
       pendingFollows: [],
       ...standing,
     });
@@ -306,7 +304,7 @@ describe("the package page's Update", () => {
   });
 
   it("says the check is still running before the read lands", async () => {
-    const host = await openWithUpdates([], { loaded: false });
+    const host = await openWithUpdates([], { read: READ_PENDING });
     expect(updateButton(host)).toBeUndefined();
     expect(host.textContent).toContain(UPDATES_CHECKING);
   });
@@ -316,21 +314,20 @@ describe("the package page's Update", () => {
   // cause that is not running.
   it("does not call a failed first read a check in progress", async () => {
     const host = await openWithUpdates([], {
-      loaded: false,
-      error: "no network",
+      read: readFailed("no network"),
     });
     expect(updateButton(host)).toBeUndefined();
     expect(note(host)).toBe(UPDATE_NEEDS_CHECK_HERE);
     expect(host.textContent).not.toContain(UPDATES_CHECKING);
   });
 
-  // A failed re-read keeps its rows and drops `loaded`. The row is here
-  // and withholds nothing of its own, so without the read state the page
-  // would offer an Update over rows nobody could confirm.
+  // A failed re-read keeps its rows. The row is here and withholds nothing
+  // of its own, so without the read state the page would offer an Update
+  // over rows nobody could confirm.
   it("withholds Update over a row a failed re-read left standing", async () => {
     const host = await openWithUpdates(
       [{ ...updateRow(VG), updateAvailable: true }],
-      { loaded: false, error: "no network" },
+      { read: readFailed("no network") },
     );
     expect(updateButton(host)).toBeUndefined();
     expect(note(host)).toBe(UPDATE_NEEDS_CHECK_HERE);
@@ -344,16 +341,14 @@ describe("the package page's Update", () => {
   it("never withholds Update in silence, whatever the read is doing", async () => {
     const stale = { ...updateRow(VG), updateAvailable: true };
     for (const standing of [
-      { loaded: false },
-      { loaded: false, error: "no network" },
+      { read: READ_PENDING },
+      { read: readFailed("no network") },
     ]) {
       const host = await openWithUpdates([stale], standing);
       expect(updateButton(host)).toBeUndefined();
       const said = host.textContent ?? "";
       const reason = pageUpdateWithheld(stale, {
-        error: null,
         checking: false,
-        overviewInFlight: false,
         pendingFollows: [],
         ...standing,
       });
@@ -362,34 +357,28 @@ describe("the package page's Update", () => {
     }
   });
 
-  // Every window focus starts an overview read, and it is the app's
-  // heaviest. Refusing on it would unmount Update on every alt-tab back,
+  // A running check would unmount Update on every press of the button,
   // guarding a hazard this surface has not got: its Update sends scope,
   // kind and name, and its versions come from its own read.
-  it.each([{ checking: true }, { overviewInFlight: true }])(
-    "still offers Update while a background read is in flight (%o)",
-    async (inFlight) => {
-      const host = await openWithUpdates(
-        [{ ...updateRow(VG), updateAvailable: true }],
-        inFlight,
-      );
-      expect(updateButton(host)).toBeDefined();
-      expect(host.textContent).not.toContain(UPDATE_NEEDS_CHECK_HERE);
-    },
-  );
+  it("still offers Update while a check is running", async () => {
+    const host = await openWithUpdates(
+      [{ ...updateRow(VG), updateAvailable: true }],
+      { checking: true },
+    );
+    expect(updateButton(host)).toBeDefined();
+    expect(host.textContent).not.toContain(UPDATE_NEEDS_CHECK_HERE);
+  });
 
-  // Where those flags do bear on this page: with no row for the place, a
-  // read still running has not ruled it out, it has not reached it. Saying
-  // the check has not spoken for the package claims a finished verdict.
-  it.each([{ checking: true }, { overviewInFlight: true }])(
-    "does not rule this place out while a read is running (%o)",
-    async (inFlight) => {
-      const host = await openWithUpdates([updateRow(HYPR)], inFlight);
-      expect(updateButton(host)).toBeUndefined();
-      expect(host.textContent).toContain(UPDATES_CHECKING);
-      expect(host.textContent).not.toContain(NO_UPDATE_STANDING_NOTE);
-    },
-  );
+  // Where the flag does bear on this page: with no row for the place, a
+  // check still running has not ruled it out, it has not reached it.
+  // Saying the check has not spoken for the package claims a finished
+  // verdict.
+  it("does not rule this place out while a check is running", async () => {
+    const host = await openWithUpdates([updateRow(HYPR)], { checking: true });
+    expect(updateButton(host)).toBeUndefined();
+    expect(host.textContent).toContain(UPDATES_CHECKING);
+    expect(host.textContent).not.toContain(NO_UPDATE_STANDING_NOTE);
+  });
 
   // A read-only diff of two commits the page already holds. No state of
   // the update read bears on it, so none of them may take it away.
@@ -408,8 +397,8 @@ describe("the package page's Update", () => {
   it("keeps Preview changes through every withheld state", async () => {
     for (const standing of [
       {},
-      { loaded: false },
-      { loaded: false, error: "no network" },
+      { read: READ_PENDING },
+      { read: readFailed("no network") },
     ]) {
       const host = await openWithUpdates(
         [{ ...updateRow(VG), updateAvailable: true }],

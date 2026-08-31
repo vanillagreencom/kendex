@@ -8,11 +8,6 @@ import { type AccountStatus, commands } from "@/bindings";
 import { type SettledAccount, useAccountStore } from "@/stores/account";
 import { setAccountReader } from "@/stores/account-read";
 
-/** The name core mints for a sign-in; two answers about one credential
- *  carry the same one, and a new sign-in carries a different one. */
-export const SIGN_IN = "sign-in-ada";
-export const OTHER_SIGN_IN = "sign-in-next";
-
 export const ADA = { name: "Ada Lovelace", githubLogin: "ada" };
 export const BOB = { name: "Bob", githubLogin: "bob" };
 

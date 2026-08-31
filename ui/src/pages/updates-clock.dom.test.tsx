@@ -2,6 +2,7 @@
 import { act } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { updateRow } from "@/components/updates-test-rows";
+import { READ_LANDED } from "@/lib/read-state";
 import { AGE_TICK_MS } from "@/lib/use-now-tick";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
@@ -21,12 +22,10 @@ beforeEach(() => {
     warnings: [],
     lastFetched: Math.floor(Date.now() / 1000),
     busy: false,
-    loaded: true,
+    read: READ_LANDED,
     checking: false,
-    overviewInFlight: false,
     pendingFollows: [],
-    error: null,
-    load: async () => {},
+    reload: async () => {},
   });
 });
 

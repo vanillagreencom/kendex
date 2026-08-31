@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorInventory, Scope, ScopeSettings } from "@/bindings";
 import { commands } from "@/bindings";
 import { ItemCustomize } from "@/components/customize/item-customize";
+import { READ_PENDING } from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
@@ -49,7 +50,7 @@ const declares: ScopeSettings = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useUpdatesStore.setState({ rows: [], loaded: false });
+  useUpdatesStore.setState({ rows: [], read: READ_PENDING });
   vi.mocked(commands.getManifest).mockResolvedValue({
     status: "ok",
     data: { manifest: null, base: "b1" },

@@ -12,7 +12,6 @@ import { MineSubmitDialog } from "./mine-submit-dialog";
 
 /** The name core mints for a sign-in; two answers about one
  *  credential carry the same one. */
-const SIGN_IN = "sign-in-ada";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -73,7 +72,7 @@ const readyToSubmit = () => {
     data: preflight,
   } as never);
   useAccountStore.setState({
-    account: { kind: "signed-in", identity: JANE, signIn: SIGN_IN },
+    account: { kind: "signed-in", identity: JANE },
     error: null,
     readError: null,
     submissions: [],
@@ -175,7 +174,6 @@ describe("a submit that meets an expired sign-in", () => {
     await submit();
     expect(useAccountStore.getState().account).toEqual({
       kind: "expired",
-      signIn: SIGN_IN,
     });
     expect(useAccountStore.getState().submissions).toBeNull();
   });
@@ -262,7 +260,6 @@ describe("a submit refused for any other reason", () => {
     expect(useAccountStore.getState().account).toEqual({
       kind: "signed-in",
       identity: JANE,
-      signIn: SIGN_IN,
     });
     expect(useAccountStore.getState().submissions).toEqual([]);
   });

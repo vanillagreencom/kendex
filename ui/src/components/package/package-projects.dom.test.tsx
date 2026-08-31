@@ -28,6 +28,7 @@ import {
   REMOVE_LABEL,
   UPDATE_ALL_LABEL,
 } from "@/lib/copy-projects";
+import { READ_LANDED, readFailed } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
 import { useProvenanceStore } from "@/stores/provenance";
@@ -171,9 +172,8 @@ beforeEach(() => {
   useAuditStore.setState({ removeItem, busy: false });
   useUpdatesStore.setState({
     rows: [],
-    loaded: true,
+    read: READ_LANDED,
     checking: false,
-    overviewInFlight: false,
     pendingFollows: [],
     updateOne,
     updateRows,
@@ -283,8 +283,7 @@ describe("the update a place is waiting for", () => {
   it("offers nothing while the update read has failed", async () => {
     useUpdatesStore.setState({
       rows: [row(VG, true), row(HYPR, true)],
-      loaded: false,
-      error: "the read failed",
+      read: readFailed("the read failed"),
     });
     const host = await openTab([VG, HYPR]);
 
@@ -294,10 +293,10 @@ describe("the update a place is waiting for", () => {
     expect(host.textContent).not.toContain(UPDATE_ALL_LABEL);
   });
 
-  it("offers nothing while a read that replaces every row is in flight", async () => {
+  it("offers nothing while a check is running", async () => {
     useUpdatesStore.setState({
       rows: [row(VG, true), row(HYPR, true)],
-      overviewInFlight: true,
+      checking: true,
     });
     const host = await openTab([VG, HYPR]);
 

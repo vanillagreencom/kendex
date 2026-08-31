@@ -4,7 +4,6 @@ import {
   commands,
   type MineRow as MineRowData,
   type StatusFinding,
-  type SubmissionState,
 } from "@/bindings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,7 +17,11 @@ import {
 import { worstSeverityLabel } from "@/lib/copy-safety";
 import { SEVERITY_LABELS } from "@/lib/labels";
 import { useMineStore } from "@/stores/mine";
-import { submissionLine, submitLabel } from "./mine-submission";
+import {
+  type Submission,
+  submissionLine,
+  submitLabel,
+} from "./mine-submission";
 
 /** A finding's severity in words beside its message, never by
  * implication: the app's own word for a safety severity, the check's own
@@ -73,7 +76,7 @@ export function MineRowCard({
   onSubmit,
 }: {
   row: MineRowData;
-  submission: SubmissionState | null;
+  submission: Submission | null;
   onImport: (path: string) => void;
   onSubmit: (path: string) => void;
 }) {

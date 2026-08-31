@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   type Catalog,
   commands,
@@ -8,7 +8,6 @@ import {
 import { FileContent } from "@/components/package/file-preview";
 import { StatusNote } from "@/components/status-note";
 import { Skeleton } from "@/components/ui/skeleton";
-import { latestOnly } from "@/lib/latest";
 
 type State =
   | { status: "loading" }
@@ -29,20 +28,25 @@ export function CatalogFilePreview({
   path: string;
 }) {
   const [state, setState] = useState<State>({ status: "loading" });
-  const latest = useRef(latestOnly());
 
   useEffect(() => {
+    // The address can change under an in-flight read, and the answer to the
+    // one before it must not land on the file now on screen.
+    let current = true;
     setState({ status: "loading" });
-    void latest
-      .current(commands.marketplacePackageFile(catalog, kind, name, path))
+    void commands
+      .marketplacePackageFile(catalog, kind, name, path)
       .then((response) => {
-        if (!response) return;
+        if (!current) return;
         setState(
           response.status === "ok"
             ? { status: "ok", ...response.data }
             : { status: "error", error: response.error },
         );
       });
+    return () => {
+      current = false;
+    };
   }, [catalog, kind, name, path]);
 
   if (state.status === "loading") {

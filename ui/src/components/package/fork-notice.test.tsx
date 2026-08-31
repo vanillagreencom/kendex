@@ -19,7 +19,8 @@ vi.mock("@/stores/updates", async (importOriginal) => {
       ...mod.useUpdatesStore.getState(),
       rows: stub.rows,
       pendingFollows: stub.settling,
-      loaded: true,
+      read: { status: "landed", error: null },
+      checking: false,
     };
     return selector ? selector(state) : state;
   };

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
+import { READ_LANDED } from "@/lib/read-state";
 import { rescanEverything } from "@/lib/rescan";
 import { useAuditStore } from "@/stores/audit";
 import { useScanStore } from "@/stores/scan";
@@ -29,9 +30,8 @@ beforeEach(() => {
     views: [],
     auditing: false,
     auditedAt: null,
-    scopeCheckedAt: {},
     error: null,
-    checkError: null,
+    read: READ_LANDED,
   });
 });
 

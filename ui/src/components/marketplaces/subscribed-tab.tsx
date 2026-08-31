@@ -20,18 +20,17 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
  * project under its own name — the same row shape throughout. */
 export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
   const rows = useMarketplacesStore((s) => s.rows);
-  const loaded = useMarketplacesStore((s) => s.loaded);
-  const rowsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
-  // `checkError`, not the store's shared `error`: actions write the shared
-  // field too, and a failed subscribe is not a failed overview read.
-  const checkError = useMarketplacesStore((s) => s.checkError);
+  // The read's own outcome, not the store's shared `error`: actions write
+  // the shared field too, and a failed subscribe is not a failed overview
+  // read.
+  const read = useMarketplacesStore((s) => s.read);
   const load = useMarketplacesStore((s) => s.load);
 
-  if (loaded && rows.length === 0) {
+  if (read.status !== "pending" && rows.length === 0) {
     // Empty with nothing retained from a read that failed is a failure to
     // show, not an invitation to subscribe: "No marketplaces yet" here
     // would assert an emptiness nobody could check.
-    if (!rowsCurrent) {
+    if (read.status === "failed") {
       return (
         <EmptyState
           icon={TriangleAlert}
@@ -42,7 +41,7 @@ export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
             </Button>
           }
         >
-          {checkError}
+          {read.error}
         </EmptyState>
       );
     }
@@ -65,7 +64,7 @@ export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
         {/* Rows kept from before a failed read stay on screen — right —
             but headed as what they are: the last read that answered, not
             confirmed subscriptions. Their actions gate on the same flag. */}
-        {loaded && !rowsCurrent ? (
+        {read.status === "failed" ? (
           <StatusNote
             tone="warning"
             title={MARKETPLACES_UNCONFIRMED_TITLE}
@@ -75,7 +74,7 @@ export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
               </Button>
             }
           >
-            {checkError}
+            {read.error}
           </StatusNote>
         ) : null}
         {groups.map(({ scope, list }) => (

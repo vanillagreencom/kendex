@@ -37,7 +37,9 @@ export function CommunityTab() {
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
   const goToMarketplace = useNavStore((s) => s.goToMarketplace);
   const subscriptions = useMarketplacesStore((s) => s.rows);
-  const subscriptionsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
+  const subscriptionsCurrent = useMarketplacesStore(
+    (s) => s.read.status === "landed",
+  );
 
   const [section, setSection] = useState<"directory" | "skillssh">("directory");
   const [query, setQuery] = useState("");

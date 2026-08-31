@@ -5,6 +5,7 @@ import type { AuditView, DriftRow, ScanResult, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { unmanagedHereLabel } from "@/lib/copy";
+import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
@@ -66,9 +67,8 @@ beforeEach(() => {
     views: [view({ scope: "global" }, [])],
     auditing: false,
     auditedAt: Date.now(),
-    scopeCheckedAt: {},
     error: null,
-    checkError: null,
+    read: READ_LANDED,
     backgroundFailureAnnounced: false,
   });
   useSettingsStore.setState({ settings: { projects: [] } as never });

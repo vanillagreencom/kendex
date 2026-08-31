@@ -10,6 +10,12 @@ import {
   UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
 import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
+import {
+  READ_LANDED,
+  READ_PENDING,
+  type ReadState,
+  readFailed,
+} from "@/lib/read-state";
 import { OverviewPage } from "./overview";
 
 // Static markup escapes apostrophes, so a pinned copy token must be
@@ -27,11 +33,11 @@ const { stub, wrap } = vi.hoisted(() => {
       error: null as string | null,
       scanning: false,
     },
-    updates: { error: null as string | null },
-    market: { rowsCurrent: true, loaded: true },
+    updates: { read: { status: "landed", error: null } as ReadState },
+    market: { read: { status: "landed", error: null } as ReadState },
     audit: {
       auditedAt: null as number | null,
-      checkError: null as string | null,
+      read: { status: "landed", error: null } as ReadState,
       error: null as string | null,
     },
   };
@@ -101,9 +107,9 @@ const installed = (overrides: Partial<ObservedItem>): ObservedItem => ({
 
 beforeEach(() => {
   stub.scan = { result: null, error: null, scanning: false };
-  stub.updates = { error: null };
-  stub.market = { rowsCurrent: true, loaded: true };
-  stub.audit = { auditedAt: null, checkError: null, error: null };
+  stub.updates = { read: READ_LANDED };
+  stub.market = { read: READ_LANDED };
+  stub.audit = { auditedAt: null, read: READ_LANDED, error: null };
 });
 
 // `result` starting null and staying null used to leave every section on
@@ -168,8 +174,8 @@ describe("Home when a later scan fails", () => {
 describe("Home when the update check fails", () => {
   it("says updates couldn't be checked in the attention list", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), checkError: null, error: null };
-    stub.updates = { error: "no network" };
+    stub.audit = { auditedAt: Date.now(), read: READ_LANDED, error: null };
+    stub.updates = { read: readFailed("no network") };
     expect(renderToStaticMarkup(<OverviewPage />)).toContain(
       esc(UPDATES_ATTENTION_TITLE),
     );
@@ -177,7 +183,7 @@ describe("Home when the update check fails", () => {
 
   it("claims nothing when the check answered", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), checkError: null, error: null };
+    stub.audit = { auditedAt: Date.now(), read: READ_LANDED, error: null };
     expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
       esc(UPDATES_ATTENTION_TITLE),
     );
@@ -193,7 +199,7 @@ describe("Home when the audit fails", () => {
   // the update check, so waiting on it hid rows that were ready.
   it("shows the section as soon as the scan answers, audit or no audit", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.updates = { error: "no network" };
+    stub.updates = { read: readFailed("no network") };
     const html = renderToStaticMarkup(<OverviewPage />);
     expect(html).not.toContain('data-slot="skeleton"');
     expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
@@ -211,7 +217,7 @@ describe("Home when the audit fails", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
     stub.audit = {
       auditedAt: null,
-      checkError: "audit crashed",
+      read: readFailed("audit crashed"),
       error: "audit crashed",
     };
     const html = renderToStaticMarkup(<OverviewPage />);
@@ -224,10 +230,10 @@ describe("Home when the audit fails", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
     stub.audit = {
       auditedAt: null,
-      checkError: "audit crashed",
+      read: readFailed("audit crashed"),
       error: "audit crashed",
     };
-    stub.updates = { error: "no network" };
+    stub.updates = { read: readFailed("no network") };
     expect(renderToStaticMarkup(<OverviewPage />)).toContain(
       esc(UPDATES_ATTENTION_TITLE),
     );
@@ -237,19 +243,20 @@ describe("Home when the audit fails", () => {
   // row's gate could be anything at all and the suite would not notice.
   it("claims nothing when the audit answered clean", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), checkError: null, error: null };
+    stub.audit = { auditedAt: Date.now(), read: READ_LANDED, error: null };
     expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
       esc(AUDIT_ATTENTION_TITLE),
     );
   });
 
-  // Item actions write the store's shared `error`; only `checkError` —
-  // written by refresh alone — may put the couldn't-check row on Home.
+  // Item actions write the store's shared `error`; only the read's own
+  // error — written by refresh alone — may put the couldn't-check row on
+  // Home.
   it("does not blame the audit for a failed item action", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
     stub.audit = {
       auditedAt: Date.now(),
-      checkError: null,
+      read: READ_LANDED,
       error: "couldn't remove gh",
     };
     expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
@@ -285,7 +292,7 @@ describe("the Installed tile", () => {
 describe("the Marketplaces tile when its read is not current", () => {
   it("shows a dash and the failure note instead of a definite zero", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.market = { rowsCurrent: false, loaded: true };
+    stub.market = { read: readFailed("the overview could not be read") };
     const html = renderToStaticMarkup(<OverviewPage />);
     expect(html).toContain(">—<");
     expect(html).toContain(esc(MARKETPLACES_UNCHECKED_DETAIL));
@@ -294,7 +301,7 @@ describe("the Marketplaces tile when its read is not current", () => {
 
   it("shows the dash alone while the first read is still on its way", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.market = { rowsCurrent: false, loaded: false };
+    stub.market = { read: READ_PENDING };
     const html = renderToStaticMarkup(<OverviewPage />);
     expect(html).toContain(">—<");
     expect(html).not.toContain(esc(MARKETPLACES_UNCHECKED_DETAIL));

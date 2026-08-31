@@ -1,8 +1,7 @@
 // A bare repository page's action and what toggling its holder does to
 // the summaries that decide which subscription the page carries on as.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { commands, type MarketplaceRow } from "@/bindings";
-import { MARKETPLACES_NEEDS_CHECK_NOTE } from "@/lib/copy-marketplaces";
 import { useMarketplacesStore } from "./marketplaces";
 import { catalogKey, declaredHolder, repoAction } from "./marketplaces-shared";
 
@@ -38,47 +37,7 @@ const row = (repo: string, repoKey: string | null): MarketplaceRow => ({
   mode: null,
 });
 
-// Rows being acted on imply a read that answered; tests staging a failed
-// read set rowsCurrent themselves.
-beforeEach(() => {
-  useMarketplacesStore.setState({ rowsCurrent: true });
-});
-
-// The action boundary owns the guarantee: whatever component triggers a
-// toggle on rows a failed read left behind, the store refuses it.
-describe("toggling from rows a failed read left behind", () => {
-  it("refuses with the needs-check note instead of committing", async () => {
-    const { toast } = await import("sonner");
-    useMarketplacesStore.setState({
-      rows: [row("acme/kit", "acme/kit")],
-      rowsCurrent: false,
-    });
-
-    await useMarketplacesStore
-      .getState()
-      .toggle({ scope: "global" }, "kit", false);
-
-    expect(commands.sourceToggle).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenCalledWith(MARKETPLACES_NEEDS_CHECK_NOTE);
-  });
-});
-
 describe("a bare repository page's action", () => {
-  it("stays neutral, not Subscribe, while the live list cannot be trusted", async () => {
-    useMarketplacesStore.setState({ rows: [], rowsCurrent: true });
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "error",
-      error: "settings file is malformed",
-    });
-    await useMarketplacesStore.getState().load();
-
-    const state = useMarketplacesStore.getState();
-    expect(repoAction(state.rows, state.rowsCurrent, "acme/kit").kind).toBe(
-      "checking",
-    );
-    expect(repoAction([], true, "acme/kit").kind).toBe("subscribe");
-  });
-
   it("offers Turn on, not Subscribe, once its subscription is turned off", async () => {
     // Turning the held subscription off: the summary re-reads as bare, and
     // the live list is what says a (disabled) subscription still holds it.
@@ -106,8 +65,8 @@ describe("a bare repository page's action", () => {
     const disabled = { ...row("acme/kit", "acme/kit"), enabled: false };
     // The page was opened as "Acme/Kit": before the summary or the directory
     // row supplies the canonical key, no spelling is compared.
-    expect(repoAction([disabled], true, null).kind).toBe("checking");
-    expect(repoAction([disabled], true, "acme/kit").kind).toBe("turn-on");
+    expect(repoAction([disabled], null).kind).toBe("checking");
+    expect(repoAction([disabled], "acme/kit").kind).toBe("turn-on");
   });
 
   it("offers Subscribe only when nothing declares the repository", () => {
@@ -121,7 +80,7 @@ describe("a bare repository page's action", () => {
 });
 
 describe("a repository page carried on as a subscription", () => {
-  it("re-asks which subscription to carry on as when that one is toggled", async () => {
+  it("re-asks every summary when a subscription is toggled", async () => {
     const repoKey = catalogKey({ by: "repo", repo: "Acme/Kit" });
     const otherKey = catalogKey({ by: "repo", repo: "other/repo" });
     const summary = {
@@ -163,7 +122,7 @@ describe("a repository page carried on as a subscription", () => {
 
     const summaries = useMarketplacesStore.getState().summaries;
     expect(summaries[repoKey]).toBeUndefined();
-    expect(summaries[otherKey]).toBeDefined();
+    expect(summaries[otherKey]).toBeUndefined();
   });
 
   it("re-asks a summary whose holder spells the repository another way", async () => {

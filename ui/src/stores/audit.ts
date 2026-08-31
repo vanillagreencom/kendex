@@ -2,33 +2,26 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 import { create } from "zustand";
 import { type AuditView, commands } from "@/bindings";
+import { READ_PENDING, type ReadState, readOf } from "@/lib/read-state";
 import { settled } from "@/lib/settled";
-import { keepUnreadable, stampClean } from "./audit-fold";
 import { auditRunner, type ItemActions, itemActions } from "./audit-items";
 
 interface AuditState extends ItemActions {
   views: AuditView[];
   auditing: boolean;
+  /** Why the last item action failed, or null. */
   error: string | null;
-  /** Why the last audit itself failed, or null — written only by
-   *  `refresh`. The shared `error` above is also set by item actions, so a
-   *  failed remove or adopt would otherwise read as a machine that could
-   *  not be checked. */
-  checkError: string | null;
+  /** How the last audit itself went. Kept apart from `error` above, which
+   *  item actions also write, so a failed remove or adopt never reads as a
+   *  machine that could not be checked. */
+  read: ReadState;
   busy: boolean;
   /** The startup audit has already toasted its failure — suppresses repeat
    * toasts on every silent retry until one succeeds. */
   backgroundFailureAnnounced: boolean;
-  /** Unix ms of the last audit that came back clean and still answers for
-   *  the whole machine; null until one has, and again once a reading was
-   *  dropped for having been overtaken — the next visit then pays for a
-   *  read rather than reusing one that cannot speak. Each scope's own
-   *  stamp survives that, and is what a row on screen is dated by. */
+  /** Unix ms of the last audit that answered, null until one has. What a
+   *  reading on screen is dated by. */
   auditedAt: number | null;
-  /** When each scope's reading on screen was taken, keyed by scope. A scope
-   *  the audit could not read keeps its old entry: what is on screen for it
-   *  is that old, whatever the machine-wide audit did a moment ago. */
-  scopeCheckedAt: Record<string, number>;
   refresh: (opts?: { force?: boolean }) => Promise<void>;
 }
 
@@ -36,24 +29,7 @@ interface AuditState extends ItemActions {
 const AUDIT_FRESH_FOR_MS = 60_000;
 
 export const useAuditStore = create<AuditState>((set, get) => {
-  // The rule, in the one place that can hold it: a reading is kept only
-  // when no command attempt started or ended while it ran. Reading every
-  // scope takes seconds, a command writes throughout its own run, and it
-  // may have written whatever it went on to answer — so the attempt is
-  // marked at both ends and the counter decides. Left unguarded, a row the
-  // person had just settled came back, dated fresh and so kept for the
-  // whole freshness window, with a retry failing against work core had
-  // already done.
-  //
-  // One ordering this does not reach: an attempt that began before the
-  // reading and had not returned when it landed moves the counter at
-  // neither end. Answering that needs a second thing to read — whether an
-  // attempt was in flight as the reading began — which is a different
-  // shape, not a third mark on this counter.
-  let generation = 0;
-  const run = auditRunner(set, get, () => {
-    generation += 1;
-  });
+  const run = auditRunner(set, get);
 
   // The audit in flight, and the one forced request waiting behind it.
   // These are the truth about what is running, not the `auditing` flag: the
@@ -63,36 +39,22 @@ export const useAuditStore = create<AuditState>((set, get) => {
   let queued: Promise<void> | null = null;
 
   const audit = async (): Promise<void> => {
-    const asked = generation;
     set({ auditing: true });
     try {
       // `settled` lands a rejected call as the same failed audit as a
       // returned refusal, which keeps Home's attention section off its
       // skeleton, the same as the scan.
       const response = await settled(commands.auditAll());
-      // Answered for a moment before something the reader did, so it
-      // answers for nothing now — this read's own failure arm included,
-      // since a read that did not finish is not news about the state it
-      // left behind. The stamp goes with it: a command installs its own
-      // scope and nothing re-reads the rest, so a stamp left standing would
-      // hold the freshness window open over a machine this cannot speak
-      // for.
-      if (generation !== asked) {
-        set({ auditedAt: null });
-        return;
-      }
       if (response.status === "ok") {
-        const now = Date.now();
         set({
-          views: keepUnreadable(get().views, response.data),
-          scopeCheckedAt: stampClean(get().scopeCheckedAt, response.data, now),
-          auditedAt: now,
+          views: response.data,
+          auditedAt: Date.now(),
+          read: readOf(response),
           error: null,
-          checkError: null,
           backgroundFailureAnnounced: false,
         });
       } else {
-        set({ error: response.error, checkError: response.error });
+        set({ error: response.error, read: readOf(response) });
         if (!get().backgroundFailureAnnounced) {
           toast.error(response.error);
           set({ backgroundFailureAnnounced: true });
@@ -114,10 +76,9 @@ export const useAuditStore = create<AuditState>((set, get) => {
   return {
     views: [],
     auditedAt: null,
-    scopeCheckedAt: {},
     auditing: false,
     error: null,
-    checkError: null,
+    read: READ_PENDING,
     busy: false,
     backgroundFailureAnnounced: false,
 

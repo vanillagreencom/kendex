@@ -15,10 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
-import {
-  MARKETPLACES_NEEDS_CHECK_NOTE,
-  MARKETPLACES_UNCONFIRMED_TITLE,
-} from "@/lib/copy-marketplaces";
+import { MARKETPLACES_UNCONFIRMED_TITLE } from "@/lib/copy-marketplaces";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
@@ -44,14 +41,11 @@ export function DetailHeader({
   const checkForUpdates = useMarketplacesStore((s) => s.checkForUpdates);
   const busy = useMarketplacesStore((s) => s.busy);
   // A subscription row selected from rows a failed read left behind may
-  // not be the subscription as it stands now: its switch and Unsubscribe
-  // wait for a read that succeeds, and the page says so below the header.
-  // Check for updates stays live — it is the way back.
-  const loaded = useMarketplacesStore((s) => s.loaded);
-  const rowsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
-  const checkError = useMarketplacesStore((s) => s.checkError);
+  // not be the subscription as it stands now, and the page says so below
+  // the header.
+  const read = useMarketplacesStore((s) => s.read);
   const load = useMarketplacesStore((s) => s.load);
-  const stale = catalog.by === "subscription" && loaded && !rowsCurrent;
+  const stale = catalog.by === "subscription" && read.status === "failed";
   const listing = useCommunityStore((s) =>
     requested.by === "repo"
       ? s.directory?.rows.find((r) => r.repo === requested.repo)
@@ -82,8 +76,6 @@ export function DetailHeader({
         {row ? (
           <Switch
             checked={row.enabled}
-            disabled={stale}
-            title={stale ? MARKETPLACES_NEEDS_CHECK_NOTE : undefined}
             onCheckedChange={(enabled) => void toggle(scope, source, enabled)}
             aria-label={row.enabled ? "Turn off" : "Turn on"}
           />
@@ -108,7 +100,6 @@ export function DetailHeader({
           <DropdownMenuContent align="end">
             <DropdownMenuItem
               className="text-critical"
-              disabled={stale}
               onClick={() => setUnsubscribeOpen(true)}
             >
               Unsubscribe…
@@ -178,7 +169,7 @@ export function DetailHeader({
                 </Button>
               }
             >
-              {checkError}
+              {read.error}
             </StatusNote>
           </div>
         </div>

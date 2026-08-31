@@ -10,7 +10,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
-import { MARKETPLACES_NEEDS_CHECK_NOTE } from "@/lib/copy-marketplaces";
 import { subscription, useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
@@ -26,10 +25,6 @@ export function SubscribedRow({ row }: { row: MarketplaceRow }) {
   const toggle = useMarketplacesStore((s) => s.toggle);
   const checkForUpdates = useMarketplacesStore((s) => s.checkForUpdates);
   const busy = useMarketplacesStore((s) => s.busy);
-  // A row kept from before a failed read may not be the subscription as it
-  // stands now — changing or removing it acts on a guess. Check for
-  // updates stays live: it is the way back to a confirmed answer.
-  const rowsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
   const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
 
   const where = row.repo ?? row.path ?? "";
@@ -60,8 +55,6 @@ export function SubscribedRow({ row }: { row: MarketplaceRow }) {
       </div>
       <Switch
         checked={row.enabled}
-        disabled={!rowsCurrent}
-        title={rowsCurrent ? undefined : MARKETPLACES_NEEDS_CHECK_NOTE}
         onCheckedChange={(enabled) => void toggle(row.scope, row.name, enabled)}
         aria-label={row.enabled ? "Turn off" : "Turn on"}
       />
@@ -88,14 +81,12 @@ export function SubscribedRow({ row }: { row: MarketplaceRow }) {
             <RefreshCw className="size-4" /> Check for updates
           </DropdownMenuItem>
           <DropdownMenuItem
-            disabled={!rowsCurrent}
             onClick={() => void toggle(row.scope, row.name, !row.enabled)}
           >
             {row.enabled ? "Turn off" : "Turn on"}
           </DropdownMenuItem>
           <DropdownMenuItem
             className="text-critical"
-            disabled={!rowsCurrent}
             onClick={() => setUnsubscribeOpen(true)}
           >
             Unsubscribe…

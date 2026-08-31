@@ -37,9 +37,10 @@ export function OverviewPage() {
   // answer as much as the scan's.
   useAuditOnMount();
   const { result, error, scanning } = useScanStore();
-  // `checkError`, not the store's shared `error`: item actions write the
-  // shared field too, and a failed remove or adopt is not a failed audit.
-  const auditError = useAuditStore((s) => s.checkError);
+  // The read's own error, not the store's shared `error`: item actions
+  // write the shared field too, and a failed remove or adopt is not a
+  // failed audit.
+  const auditError = useAuditStore((s) => s.read.error);
   const auditRefresh = useAuditStore((s) => s.refresh);
   const projectCount = useSettingsStore(
     (s) => s.settings?.projects?.length ?? 0,
@@ -51,19 +52,22 @@ export function OverviewPage() {
   // line; the failure itself gets its own row below, so their absence
   // never has to stand in for "couldn't check".
   const editedPackages = updateRows.filter((row) => row.blockedByLocalEdit);
-  const updatesError = useUpdatesStore((s) => s.error);
+  const updatesError = useUpdatesStore((s) => s.read.error);
   const goTo = useNavStore((s) => s.goTo);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
   const marketplaceCount = useMarketplacesStore((s) => s.rows.length);
-  // `rows` survives a failed re-read; `rowsCurrent` is whether they are
-  // the answer of the last one. Only a current read may put a number —
-  // above all a zero — on the tile. `loaded` is whether any read has
-  // answered at all: answered-but-not-current is the failure to note,
-  // while not-yet-answered is just the dash. The store's shared `error`
-  // field is not consulted — writes clear it without making rows current.
-  const marketplacesCurrent = useMarketplacesStore((s) => s.rowsCurrent);
-  const marketplacesLoaded = useMarketplacesStore((s) => s.loaded);
+  // `rows` survives a failed re-read; only a landed read may put a number
+  // — above all a zero — on the tile. A failed read is the failure to
+  // note, while one still on its way is just the dash. The store's shared
+  // `error` field is not consulted: writes clear it without making rows
+  // current.
+  const marketplacesCurrent = useMarketplacesStore(
+    (s) => s.read.status === "landed",
+  );
+  const marketplacesLoaded = useMarketplacesStore(
+    (s) => s.read.status !== "pending",
+  );
   const loadMarketplaces = useMarketplacesStore((s) => s.load);
   useEffect(() => {
     void loadMarketplaces();

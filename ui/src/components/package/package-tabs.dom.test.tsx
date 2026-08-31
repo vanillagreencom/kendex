@@ -14,6 +14,7 @@ import {
   SAFETY_TAB_STALE,
   SAFETY_VENDOR,
 } from "@/lib/copy-safety";
+import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { mount, settle } from "@/test/dom";
 import { PackageTabs } from "./package-tabs";
@@ -89,9 +90,8 @@ beforeEach(() => {
     views: [],
     auditing: false,
     auditedAt: null,
-    scopeCheckedAt: {},
     error: null,
-    checkError: null,
+    read: READ_LANDED,
     backgroundFailureAnnounced: false,
   });
 });

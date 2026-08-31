@@ -7,6 +7,7 @@ import {
   UPDATE_NEEDS_CHECK_HERE,
   UPDATES_CHECKING,
 } from "@/lib/copy-updates";
+import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
 import {
   groupUpdates,
   packageCount,
@@ -249,35 +250,30 @@ describe("updateWithheld", () => {
 // one — a state that cannot say why would hide the button in silence.
 describe("pageUpdateWithheld", () => {
   /** A store standing: a landed read with nothing running, unless said
-   *  otherwise. `checking` and `overviewInFlight` bar no row that exists —
-   *  they decide only whether a place with no row has been ruled out or
-   *  merely not reached yet. */
+   *  otherwise. `checking` bars no row that exists — it decides only
+   *  whether a place with no row has been ruled out or merely not reached
+   *  yet. */
   const standing = (
     over: Partial<Parameters<typeof pageUpdateWithheld>[1]> = {},
   ) => ({
-    loaded: true,
-    error: null,
+    read: READ_LANDED,
     checking: false,
-    overviewInFlight: false,
     pendingFollows: [],
     ...over,
   });
 
   it("says the check is running before the first read lands", () => {
-    expect(pageUpdateWithheld(null, standing({ loaded: false }))).toBe(
+    expect(pageUpdateWithheld(null, standing({ read: READ_PENDING }))).toBe(
       UPDATES_CHECKING,
     );
   });
 
-  // A first read that failed leaves no rows and `loaded` false, exactly
-  // like one in flight. Only the error tells them apart, and saying
-  // "checking" over a read that already failed names a wrong cause.
+  // A first read that failed leaves no rows either, exactly like one in
+  // flight. Only the status tells them apart, and saying "checking" over a
+  // read that already failed names a wrong cause.
   it("does not call a failed first read a check in progress", () => {
     expect(
-      pageUpdateWithheld(
-        null,
-        standing({ loaded: false, error: "no network" }),
-      ),
+      pageUpdateWithheld(null, standing({ read: readFailed("no network") })),
     ).toBe(UPDATE_NEEDS_CHECK_HERE);
   });
 
@@ -285,18 +281,18 @@ describe("pageUpdateWithheld", () => {
   // answers off the row and never looks at the read under it.
   it("holds a row the first read has not answered for yet", () => {
     expect(
-      pageUpdateWithheld(row("gh", "/a"), standing({ loaded: false })),
+      pageUpdateWithheld(row("gh", "/a"), standing({ read: READ_PENDING })),
     ).toBe(UPDATES_CHECKING);
   });
 
-  // A failed re-read keeps the rows it had and drops `loaded`. The row is
-  // there and withholds nothing of its own, so only the read state stands
-  // between the reader and an Update over rows nobody could confirm.
+  // A failed re-read keeps the rows it had. The row is there and withholds
+  // nothing of its own, so only the read state stands between the reader
+  // and an Update over rows nobody could confirm.
   it("holds a retained row under a failed re-read", () => {
     expect(
       pageUpdateWithheld(
         row("gh", "/a"),
-        standing({ loaded: false, error: "no network" }),
+        standing({ read: readFailed("no network") }),
       ),
     ).toBe(UPDATE_NEEDS_CHECK_HERE);
   });
@@ -329,10 +325,9 @@ describe("pageUpdateWithheld", () => {
     });
     for (const over of [
       {},
-      { loaded: false },
-      { loaded: false, error: "no network" },
+      { read: READ_PENDING },
+      { read: readFailed("no network") },
       { checking: true },
-      { overviewInFlight: true },
       { pendingFollows: [{ scope: refused.scope }] },
     ]) {
       expect(pageUpdateWithheld(refused, standing(over))).toBe(
@@ -360,18 +355,12 @@ describe("pageUpdateWithheld", () => {
     expect(pageUpdateWithheld(null, standing({ checking: true }))).toBe(
       UPDATES_CHECKING,
     );
-    expect(pageUpdateWithheld(null, standing({ overviewInFlight: true }))).toBe(
-      UPDATES_CHECKING,
-    );
   });
 
   // And the counterpart: a row that exists is not barred by either flag.
   it("still offers a row that exists while a read is running", () => {
     expect(
       pageUpdateWithheld(row("gh", "/a"), standing({ checking: true })),
-    ).toBeNull();
-    expect(
-      pageUpdateWithheld(row("gh", "/a"), standing({ overviewInFlight: true })),
     ).toBeNull();
   });
 

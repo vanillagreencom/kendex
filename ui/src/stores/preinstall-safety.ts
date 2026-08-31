@@ -34,14 +34,10 @@ interface QueueItem {
 const queue: QueueItem[] = [];
 const queued = new Set<string>();
 let draining = false;
-// Bumped by a reset: an in-flight answer from before the bump is stale (the
-// catalog may have moved) and is dropped instead of stored.
-let generation = 0;
 
 /** Empty the cache and the queue — called when any mutation can have moved
  * a catalog, so no score describes the commit before the change. */
 export function resetPreinstallSafety() {
-  generation += 1;
   queue.length = 0;
   queued.clear();
   usePreinstallSafety.setState({ scores: {} });
@@ -62,15 +58,12 @@ export const usePreinstallSafety = create<PreinstallSafetyState>(
           while (queue.length > 0) {
             const item = queue.shift();
             if (!item) break;
-            const before = generation;
             try {
               const response = await commands.marketplacePackagePreview(
                 item.catalog,
                 item.kind,
                 item.name,
               );
-              // A reset while this was in flight makes the answer stale.
-              if (before !== generation) continue;
               if (response.status === "ok") {
                 set((state) => ({
                   scores: {

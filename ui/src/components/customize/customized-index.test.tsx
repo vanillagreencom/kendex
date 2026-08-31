@@ -9,7 +9,7 @@ import {
   REMOVE_CUSTOMIZATION,
 } from "@/lib/copy-customize";
 import type { CustomizedHere } from "@/lib/customized-places";
-import type { UpdatesReadState } from "@/lib/updates-read-state";
+import type { ReadStatus } from "@/lib/read-state";
 import { useScanStore } from "@/stores/scan";
 import { mount } from "@/test/dom";
 import { CustomizedIndex } from "./customized-index";
@@ -50,7 +50,7 @@ const row = (over: Partial<CustomizedHere> = {}): CustomizedHere => ({
 // whether a row's package is installed here.
 const render = (
   items: CustomizedHere[],
-  updates: UpdatesReadState = "landed",
+  updates: ReadStatus = "landed",
 ): string =>
   mount(
     <CustomizedIndex

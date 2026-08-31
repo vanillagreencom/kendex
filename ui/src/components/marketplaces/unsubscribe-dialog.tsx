@@ -10,7 +10,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { MARKETPLACES_NEEDS_CHECK_NOTE } from "@/lib/copy-marketplaces";
 import { kindLabel, scopeName } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -33,7 +32,6 @@ export function UnsubscribeDialog({
   const busy = useMarketplacesStore((s) => s.busy);
   // The read can fail underneath an open dialog; the store action refuses
   // stale rows regardless, and this keeps the button honest about it.
-  const rowsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
   const [preview, setPreview] = useState<UnsubscribePreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [keep, setKeep] = useState(true);
@@ -130,12 +128,6 @@ export function UnsubscribeDialog({
           </div>
         ) : null}
 
-        {!rowsCurrent ? (
-          <p className="text-sm text-warning" role="alert">
-            {MARKETPLACES_NEEDS_CHECK_NOTE}
-          </p>
-        ) : null}
-
         {error ? (
           <p className="text-sm text-critical" role="alert">
             {error}
@@ -148,8 +140,7 @@ export function UnsubscribeDialog({
           </Button>
           <Button
             variant="destructive"
-            disabled={busy || !preview || hasEdited || !rowsCurrent}
-            title={!rowsCurrent ? MARKETPLACES_NEEDS_CHECK_NOTE : undefined}
+            disabled={busy || !preview || hasEdited}
             onClick={confirm}
           >
             {busy ? "Unsubscribing…" : "Unsubscribe"}

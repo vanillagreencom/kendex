@@ -16,6 +16,7 @@ import {
   SHOW_VERSION_LABEL,
   TABLE_OPTIONS_LABEL,
 } from "@/lib/copy-updates";
+import { READ_LANDED } from "@/lib/read-state";
 import { UpdatesPage } from "@/pages/updates";
 import { useAuditStore } from "@/stores/audit";
 import { useUpdatesStore } from "@/stores/updates";
@@ -60,10 +61,8 @@ beforeEach(() => {
   useUpdatesStore.setState({
     rows: [],
     busy: false,
-    loaded: true,
+    read: READ_LANDED,
     checking: false,
-    overviewInFlight: false,
-    error: null,
   });
   useUpdatesView.setState({ showVersion: false });
   vi.clearAllMocks();
@@ -307,8 +306,7 @@ describe("the findings behind a row's score", () => {
       useAuditStore.setState({
         views: [scoredGh()],
         auditedAt: Date.now(),
-        scopeCheckedAt: {},
-        checkError: null,
+        read: READ_LANDED,
       });
     });
     const host = mount(<UpdatesTable rows={[row("gh", null)]} />);
@@ -331,8 +329,7 @@ describe("the findings behind a row's score", () => {
       useAuditStore.setState({
         views: [{ ...scoredGh(), safety: [] }],
         auditedAt: Date.now(),
-        scopeCheckedAt: {},
-        checkError: null,
+        read: READ_LANDED,
       });
     });
     mount(<UpdatesTable rows={[row("gh", null)]} />);

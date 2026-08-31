@@ -349,14 +349,6 @@ export const commands = {
 	mineSubmitPreflight: (path: string) => typedError<SubmitPreflight, string>(__TAURI_INVOKE("mine_submit_preflight", { path })),
 	mineSubmit: (repo: string) => typedError<SubmittedView, AccountCallRefused>(__TAURI_INVOKE("mine_submit", { repo })),
 	mineSubmissions: () => typedError<SubmissionRow[], AccountCallRefused>(__TAURI_INVOKE("mine_submissions")),
-	/**
-	 *  What each authored marketplace's submission reads as, given the rows a
-	 *  read left in hand and how that read went. A ruling over what the
-	 *  caller already holds: it asks the server nothing, so the tab re-asks
-	 *  whenever its rows, its marketplaces, or the read's outcome change
-	 *  rather than once per row it draws.
-	 */
-	mineSubmissionStates: (read: SubmissionsRead, rows: SubmissionRow[], asks: SubmissionAsk[]) => __TAURI_INVOKE<{ [key in string]: SubmissionState }>("mine_submission_states", { read, rows, asks }),
 	packageVersions: (scope: Scope, kind: ItemKind, name: string) => typedError<VersionRow[], string>(__TAURI_INVOKE("package_versions", { scope, kind, name })),
 	/**
 	 *  Bring one package current and apply — the Updates page's per-package
@@ -495,21 +487,12 @@ export type AccountCallRefused = { kind: "expired"; message: string } | { kind: 
 /**
  *  What the account surfaces render, every one of them settled: the UI
  *  holds its own "not read yet" until the first answer comes back.
- * 
- *  The states about a credential carry `sign_in`, the name of the
- *  sign-in they were read under. It is [`Credential::sign_in`]: minted
- *  once when a sign-in is committed, carried through every rotation, and
- *  replaced only by another sign-in. A caller holding an earlier answer
- *  compares it to tell the credential it has from one that replaced it,
- *  which no part of the identity can answer — a rename leaves the same
- *  credential, and signing in again as the same person leaves a
- *  different one under the same name.
  */
-export type AccountState = { state: "signed-out" } | { state: "signed-in"; identity: Identity; sign_in: string } | 
+export type AccountState = { state: "signed-out" } | { state: "signed-in"; identity: Identity } | 
 /**  The server could not be asked; the identity is the last good fetch. */
-{ state: "offline"; identity: Identity; sign_in: string } | 
+{ state: "offline"; identity: Identity } | 
 /**  The credential is dead server-side — signing in again is the fix. */
-{ state: "expired"; sign_in: string };
+{ state: "expired" };
 
 export type AccountStatus = {
 	state: AccountState,
@@ -1757,15 +1740,8 @@ export type Line = {
 
 export type LineKind = "context" | "add" | "remove";
 
-/**
- *  Where one poll of the device flow left the sign-in.
- * 
- *  `Signed` carries the name minted for the credential just stored, the
- *  same one a later read of this account answers with. It is here so the
- *  caller holds a named credential from the moment one exists, rather
- *  than an unnamed one until the read that follows names it.
- */
-export type LoginPoll = { kind: "pending" } | { kind: "slow-down" } | { kind: "signed"; sign_in: string };
+/**  Where one poll of the device flow left the sign-in. */
+export type LoginPoll = { kind: "pending" } | { kind: "slow-down" } | { kind: "signed" };
 
 export type LoginStart = {
 	deviceCode: string,
@@ -2684,16 +2660,6 @@ export type StatusFinding = {
 	fix: string,
 };
 
-/**
- *  One marketplace to answer about: where it is, and the GitHub
- *  repository a submission of it would be keyed by. `repo` is absent for
- *  a marketplace with no GitHub remote.
- */
-export type SubmissionAsk = {
-	path: string,
-	repo: string | null,
-};
-
 /**  One row of GET /api/v1/submissions — what a Mine row polls. */
 export type SubmissionRow = {
 	repo: string,
@@ -2702,26 +2668,6 @@ export type SubmissionRow = {
 	head_commit: string | null,
 	indexed_at: string | null,
 };
-
-/**
- *  What is known about one marketplace's submission.
- * 
- *  `not-submitted` is a positive answer: nothing of this marketplace is
- *  listed, and the read saying so landed. `unknown` is the absence of an
- *  answer: the last read failed, and what is in hand does not name this
- *  repository. `submitted` carries the row the server listed it under.
- */
-export type SubmissionState = { kind: "not-submitted" } | { kind: "unknown" } | { kind: "submitted"; row: SubmissionRow };
-
-/**
- *  How the last read of the caller's submissions went.
- * 
- *  `landed` means the rows in hand are the whole of what the server
- *  lists, so a repository missing from them is not submitted. `failed`
- *  means they are only what it last said, and `unread` that no read has
- *  been made. Under neither is absence an answer.
- */
-export type SubmissionsRead = "landed" | "failed" | "unread";
 
 export type SubmitPreflight = {
 	row: MineRow,

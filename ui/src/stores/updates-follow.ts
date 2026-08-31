@@ -12,14 +12,17 @@ import {
   type Scope,
   type UpdateRow,
 } from "@/bindings";
+import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
+import type { ReadState } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
 import { settled } from "@/lib/settled";
+import { rowUnsettled } from "@/lib/updates-read-state";
 
 /** A follow switch moved but not yet answered for: the place it was moved
  *  in, and the position it was moved to. */
 export interface PendingFollow {
-  /** This flip, apart from any other — what retires the right entry once a
-   *  reverting one has been replaced. */
+  /** This flip, apart from any other — what retires the right entry when
+   *  two are outstanding in different scopes. */
   id: number;
   scope: Scope;
   kind: ItemKind;
@@ -27,28 +30,21 @@ export interface PendingFollow {
   /** True when the switch went off — the package is held at what is
    *  installed now. */
   pinned: boolean;
-  /** The write came back refused. The flip stops painting onto landings,
-   *  but the rows already wear it, so the entry stays until the read that
-   *  replaces them lands: a row must never wear a position the engine did
-   *  not take while reporting itself settled. */
-  reverting: boolean;
 }
 
 let flips = 0;
 
 /** `rows` wearing every pending flip the engine may still take. A read that
- *  began before a flip carries the switch's old position; landing it raw
- *  would bounce the switch back under the hand that moved it. A reverting
- *  flip paints nothing — the landing it is waiting for is the one that puts
- *  the switch back. */
+ *  answers while a flip is outstanding carries the switch's old position;
+ *  landing it raw would bounce the switch back under the hand that moved
+ *  it. */
 export const withPending = (
   rows: UpdateRow[],
   pending: PendingFollow[],
 ): UpdateRow[] => {
-  const painting = pending.filter((one) => !one.reverting);
-  if (painting.length === 0) return rows;
+  if (pending.length === 0) return rows;
   return rows.map((row) => {
-    const flip = painting.find(
+    const flip = pending.find(
       (one) =>
         one.kind === row.kind &&
         one.name === row.name &&
@@ -71,13 +67,9 @@ export const withPending = (
 interface FollowStore {
   rows: UpdateRow[];
   pendingFollows: PendingFollow[];
-  /** False when no read has landed since the flip — the rows still wear it
-   *  and nothing is coming to replace them. */
-  loaded: boolean;
-  mutate: (
-    work: () => Promise<string | null>,
-    kind?: "mutation" | "settle",
-  ) => Promise<string | null>;
+  read: ReadState;
+  checking: boolean;
+  reload: () => Promise<void>;
 }
 
 /** The store's `setAutoUpdate`: record the flip, then let the write and the
@@ -86,13 +78,10 @@ interface FollowStore {
 export function followSwitch({
   set,
   get,
-  refuse,
   report,
 }: {
   set: (partial: Partial<Pick<FollowStore, "rows" | "pendingFollows">>) => void;
   get: () => FollowStore;
-  /** Whether this row's facts are too unsettled to act on, said so. */
-  refuse: (row: UpdateRow) => boolean;
   report: (error: string) => void;
 }) {
   return async (row: UpdateRow, auto: boolean): Promise<void> => {
@@ -102,8 +91,12 @@ export function followSwitch({
     const hold = row.current?.commit ?? null;
     if (!auto && hold === null) return;
     // Same refusal as updateOne: the hold would pin a commit captured from
-    // rows an in-flight read is about to replace.
-    if (refuse(row)) return;
+    // rows nothing has confirmed, or from a scope another flip is already
+    // applying.
+    if (rowUnsettled(get(), row)) {
+      report(UPDATE_NEEDS_CHECK_NOTE);
+      return;
+    }
     flips += 1;
     const flip: PendingFollow = {
       id: flips,
@@ -111,57 +104,39 @@ export function followSwitch({
       kind: row.kind,
       name: row.name,
       pinned: !auto,
-      reverting: false,
     };
-    const update = (
-      change: (pending: PendingFollow[]) => PendingFollow[],
-    ): void => set({ pendingFollows: change(get().pendingFollows) });
-    const revert = () =>
-      update((pending) =>
-        pending.map((one) =>
-          one.id === flip.id ? { ...one, reverting: true } : one,
-        ),
-      );
-    const retire = () =>
-      update((pending) => pending.filter((one) => one.id !== flip.id));
     set({
       rows: withPending(get().rows, [flip]),
       pendingFollows: [...get().pendingFollows, flip],
     });
-    let refused = false;
     try {
-      const error = await get().mutate(async () => {
-        const response = await settled(
-          commands.packageSetRev(
-            row.scope,
-            row.kind,
-            row.name,
-            auto ? null : hold,
-          ),
-        );
-        if (response.status === "ok") return null;
-        // Nothing committed. The rows still wear a position the engine did
-        // not take, so the scope goes on holding until the read behind this
-        // puts them right — and the refusal is news now, not in the seconds
-        // that read takes.
-        refused = true;
-        revert();
-        report(response.error);
-        return response.error;
-      }, "settle");
-      if (error !== null && !refused) report(error);
-    } finally {
-      // A refusal whose reads all failed leaves the rows as the flip
-      // painted them with nothing coming to replace them: put the switch
-      // back where the engine still has it before letting the scope go.
-      if (refused && !get().loaded) {
+      const response = await settled(
+        commands.packageSetRev(
+          row.scope,
+          row.kind,
+          row.name,
+          auto ? null : hold,
+        ),
+      );
+      if (response.status === "error") {
+        // Nothing committed, so nothing is coming to replace the rows the
+        // flip painted: put the switch back where the engine still has it,
+        // and say why now rather than in the seconds a read would take.
         set({
-          rows: withPending(get().rows, [
-            { ...flip, pinned: row.pinned, reverting: false },
-          ]),
+          rows: withPending(get().rows, [{ ...flip, pinned: row.pinned }]),
         });
+        report(response.error);
+        return;
       }
-      retire();
+      // The apply moved what is installed in this scope; every scope's
+      // standing is read again behind it.
+      await get().reload();
+    } finally {
+      set({
+        pendingFollows: get().pendingFollows.filter(
+          (one) => one.id !== flip.id,
+        ),
+      });
     }
   };
 }

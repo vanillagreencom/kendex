@@ -14,6 +14,7 @@ import {
   REPLACE_FILES_LABEL,
 } from "@/lib/copy-in-the-way";
 import { PROBLEMS_EMPTY } from "@/lib/error-copy";
+import { READ_LANDED, readFailed } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { mount, settle } from "@/test/dom";
 import { ProblemsPage } from "./problems";
@@ -77,13 +78,12 @@ const oneBlocked = (scope: Scope, name: string): AuditView =>
     exits: [exit(`skill:${name}:claude`)],
   });
 
-const stage = (views: AuditView[], checkError: string | null = null) =>
+const stage = (views: AuditView[], failure: string | null = null) =>
   act(() => {
     useAuditStore.setState({
       views,
       auditedAt: Date.now(),
-      scopeCheckedAt: {},
-      checkError,
+      read: failure === null ? READ_LANDED : readFailed(failure),
       busy: false,
     });
   });
@@ -129,8 +129,7 @@ beforeEach(() => {
   useAuditStore.setState({
     views: [],
     auditedAt: null,
-    scopeCheckedAt: {},
-    checkError: null,
+    read: READ_LANDED,
     busy: false,
   });
 });

@@ -8,11 +8,7 @@ import {
   USER_LEVEL_PLACE,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
-import {
-  settlingIn,
-  unsettled,
-  updatesReadState,
-} from "@/lib/updates-read-state";
+import { settlingIn, unsettled } from "@/lib/updates-read-state";
 
 /** One package with every place it is out of date in. The same skill
  *  installed in three projects is one decision with three places, not
@@ -91,13 +87,12 @@ export const canUpdatePlace = (row: UpdateRow): boolean =>
 /** Everything `updates-read-state.ts` needs to say how the read went and
  *  whether a write is running in a given place. */
 type UpdatesReadStanding = Parameters<typeof settlingIn>[0] &
-  Parameters<typeof unsettled>[0] &
-  Parameters<typeof updatesReadState>[0];
+  Parameters<typeof unsettled>[0];
 
 /** Unreachable by construction — `read` is `never` here, so nothing calls
  *  this and no test can reach it. Its point is the compile error a new
- *  `UpdatesReadState` variant raises: without it that state would fall
- *  through to the row and answer "nothing withheld" over an unread read. */
+ *  `ReadStatus` variant raises: without it that state would fall through
+ *  to the row and answer "nothing withheld" over an unread read. */
 const unhandledReadState = (state: never): never => {
   throw new Error(`unhandled update read state: ${String(state)}`);
 };
@@ -120,15 +115,13 @@ const unhandledReadState = (state: never): never => {
  *  read supplied and a read that has not landed cannot vouch for it. Then
  *  the row's own remaining reasons.
  *
- *  A read merely *in flight* does not bar a row that exists. That guard
+ *  A check merely *running* does not bar a row that exists. That guard
  *  belongs to the Updates table, whose actions send `row.latest.commit`
  *  and so must not commit values a landing read is about to replace; this
  *  page's Update sends only scope, kind and name, and takes its versions
- *  from its own read. Refusing here would unmount the button on every
- *  window focus, which raises `overviewInFlight` for the whole overview
- *  read. It does bear on a place with no row, which is a different
- *  question — not whether a value is stale, but whether the read has
- *  finished saying which places it covers.
+ *  from its own read. It does bear on a place with no row, which is a
+ *  different question — not whether a value is stale, but whether the read
+ *  has finished saying which places it covers.
  *
  *  Of the reasons [`updateWithheld`] gives, the owner's hold is the one
  *  this page never renders: it wants a derived place, and core's version
@@ -140,7 +133,7 @@ export const pageUpdateWithheld = (
   standing: UpdatesReadStanding,
 ): string | null => {
   if (row?.noPerPackageUpdate != null) return row.noPerPackageUpdate;
-  const read = updatesReadState(standing);
+  const read = standing.read.status;
   switch (read) {
     case "pending":
       return UPDATES_CHECKING;

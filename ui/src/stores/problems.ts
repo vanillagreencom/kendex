@@ -68,8 +68,8 @@ export function useBlockedPlaces(): BlockedPlace[] | null {
   const views = useAuditStore((s) => s.views);
   // The shared `error` is written by item actions too, so a failed keep or
   // take-over must not read as a machine that could not be checked.
-  const checkError = useAuditStore((s) => s.checkError);
-  return useMemo(() => blockedPlaces(views, checkError), [views, checkError]);
+  const failure = useAuditStore((s) => s.read.error);
+  return useMemo(() => blockedPlaces(views, failure), [views, failure]);
 }
 
 export interface ErrorAction {

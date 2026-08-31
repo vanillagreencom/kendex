@@ -14,8 +14,8 @@ import { isCustomized } from "@/lib/customization";
 import type { CustomizedHere } from "@/lib/customized-places";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel } from "@/lib/labels";
+import type { ReadStatus } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
-import type { UpdatesReadState } from "@/lib/updates-read-state";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 
@@ -36,7 +36,7 @@ export function CustomizedIndex({
    *  manifest's alone, so "nothing customized" is said only after it has;
    *  before, the section says it is checking, and after a failure that
    *  packages may be missing. */
-  updates: UpdatesReadState;
+  updates: ReadStatus;
   onRemove: (kind: ItemKind, name: string) => void;
 }) {
   const goToPackage = useNavStore((s) => s.goToPackage);

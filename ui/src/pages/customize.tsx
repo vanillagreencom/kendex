@@ -30,7 +30,6 @@ import {
 } from "@/lib/customization";
 import { useCustomizedHere } from "@/lib/customized-here";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
-import { updatesReadState } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
 import { openInventory, useEditorStore } from "@/stores/editor";
 import { useSettingsStore } from "@/stores/settings";
@@ -56,7 +55,7 @@ export function CustomizePage() {
   const inventory = useEditorStore(openInventory);
   const projects = useSettingsStore((s) => s.settings?.projects ?? []);
   const customized = useCustomizedHere(draft, scope);
-  const updates = useUpdatesStore(updatesReadState);
+  const updates = useUpdatesStore((s) => s.read.status);
 
   // Unsaved edits made on a package's own page live in this same draft;
   // reloading over them here would throw away work with nothing said.

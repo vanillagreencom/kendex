@@ -2,55 +2,31 @@
 // what every subscription now offers — kept beside the store so the store
 // body stays the subscription lifecycle.
 import { toast } from "sonner";
-import type {
-  Catalog,
-  CatalogSummary,
-  MarketplaceRow,
-  Scope,
-} from "@/bindings";
+import type { Scope } from "@/bindings";
 import { commands } from "@/bindings";
-import { MARKETPLACES_NEEDS_CHECK_NOTE } from "@/lib/copy-marketplaces";
-import {
-  cachedRepoCatalogs,
-  dropCatalogCaches,
-  dropSummariesHeldBy,
-  refreshDownstream,
-} from "./marketplaces-shared";
+import { rescanEverything } from "@/lib/rescan";
+import { dropCatalogCaches } from "./marketplaces-shared";
 
 /** What these actions need back from the store. */
 interface Sources {
-  rows: MarketplaceRow[];
-  rowsCurrent: boolean;
-  summaries: Record<string, CatalogSummary>;
   load: () => Promise<void>;
-  loadSummary: (catalog: Catalog) => Promise<void>;
 }
 
-type Set = (
-  partial:
-    | object
-    | ((state: { summaries: Record<string, CatalogSummary> }) => object),
-) => void;
+type Set = (partial: object) => void;
 
 export function sourceActions(set: Set, get: () => Sources) {
   return {
     toggle: async (scope: Scope, source: string, enabled: boolean) => {
-      // The action boundary owns the guarantee: any trigger acting on a
-      // row a failed read left behind is refused here, not just gated in
-      // the component that happens to render it.
-      if (!get().rowsCurrent) {
-        toast.error(MARKETPLACES_NEEDS_CHECK_NOTE);
-        return;
-      }
       const response = await commands.sourceToggle(scope, source, enabled);
       if (response.status === "error") {
         toast.error(response.error);
         return;
       }
+      // Turning a holder on or off changes which subscription a repository
+      // page carries on as, so every derived read goes.
       dropCatalogCaches(set);
-      dropSummariesHeldBy(set, get().rows, scope, source);
       await get().load();
-      await refreshDownstream();
+      await rescanEverything();
     },
 
     checkForUpdates: async () => {
@@ -63,9 +39,6 @@ export function sourceActions(set: Set, get: () => Sources) {
           // derived from catalog bytes re-reads.
           dropCatalogCaches(set);
           await get().load();
-          for (const repo of cachedRepoCatalogs(get().summaries)) {
-            void get().loadSummary(repo);
-          }
         } else {
           toast.error(response.error);
         }

@@ -4,6 +4,7 @@ import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
+import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { useProblemsStore } from "./problems";
 import { useUpdatesStore } from "./updates";
 import { installAsNew, keepAsOwn, takeNewVersion } from "./updates-edits";
@@ -65,7 +66,7 @@ describe("updates store: edited places", () => {
     useUpdatesStore.setState({
       rows: [],
       busy: false,
-      loaded: true,
+      read: READ_LANDED,
       pendingFollows: [],
     });
     vi.clearAllMocks();
@@ -123,7 +124,7 @@ describe("updates store: edited places", () => {
   // a check failed still holds a retained row whose latest nobody
   // confirmed — the store refuses it however the dialog got there.
   it("refuses to discard edits from rows a failed check left behind", async () => {
-    useUpdatesStore.setState({ loaded: false });
+    useUpdatesStore.setState({ read: READ_PENDING });
     useProblemsStore.setState({
       dialog: { open: false, title: "", steps: [], actions: [] },
     });
@@ -241,7 +242,7 @@ describe("updates store: installing beside an edited place", () => {
     useUpdatesStore.setState({
       rows: [],
       busy: false,
-      loaded: true,
+      read: READ_LANDED,
       pendingFollows: [],
     });
     useProblemsStore.setState({
@@ -379,7 +380,7 @@ describe("updates store: installing beside an edited place", () => {
   });
 
   it("refuses rows a failed check left behind, before any call", async () => {
-    useUpdatesStore.setState({ loaded: false });
+    useUpdatesStore.setState({ read: READ_PENDING });
     expect(await installAsNew(row(edited), "claude", "gh-mine")).toBe(
       UPDATE_NEEDS_CHECK_NOTE,
     );
@@ -401,7 +402,6 @@ describe("updates store: installing beside an edited place", () => {
           kind: "skill",
           name: "other",
           pinned: true,
-          reverting: false,
         },
       ],
     });
@@ -431,7 +431,6 @@ describe("updates store: installing beside an edited place", () => {
           kind: "skill",
           name: "gh",
           pinned: true,
-          reverting: false,
         },
       ],
     });

@@ -18,11 +18,8 @@ import {
   repoEffectsSaidTitle,
   repoEffectsWithheldToast,
 } from "@/lib/copy-repo-effects";
-import {
-  catalogKey,
-  refreshDownstream,
-  subscription,
-} from "./marketplaces-shared";
+import { rescanEverything } from "@/lib/rescan";
+import { catalogKey, subscription } from "./marketplaces-shared";
 import { useProblemsStore } from "./problems";
 
 /** One install: what to put where, and — when the picker was used — which
@@ -142,7 +139,7 @@ export function installActions(set: Set, get: Get): InstallActions {
       for (const held of withheld) {
         toast.info(repoEffectsWithheldToast(held.name, held.reason));
       }
-      await refreshDownstream();
+      await rescanEverything();
       return true;
     },
 

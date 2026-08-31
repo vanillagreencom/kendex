@@ -5,7 +5,6 @@ import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   MARKETPLACES_CHECK_FAILED_TITLE,
   MARKETPLACES_EMPTY_TITLE,
-  MARKETPLACES_NEEDS_CHECK_NOTE,
   MARKETPLACES_UNCONFIRMED_TITLE,
 } from "@/lib/copy-marketplaces";
 import { SubscribedTab } from "./subscribed-tab";
@@ -19,9 +18,10 @@ const esc = (copy: string) => copy.replace(/'/g, "&#x27;");
 // left behind.
 const stub = vi.hoisted(() => ({
   rows: [] as unknown[],
-  loaded: true,
-  rowsCurrent: true,
-  checkError: null as string | null,
+  read: { status: "landed", error: null } as {
+    status: "pending" | "landed" | "failed";
+    error: string | null;
+  },
 }));
 
 vi.mock("@/stores/marketplaces", async (importOriginal) => {
@@ -56,9 +56,7 @@ const kept: MarketplaceRow = {
 
 beforeEach(() => {
   stub.rows = [];
-  stub.loaded = true;
-  stub.rowsCurrent = true;
-  stub.checkError = null;
+  stub.read = { status: "landed", error: null };
 });
 
 // Empty rows after a read that failed are not a confirmed emptiness:
@@ -72,8 +70,7 @@ describe("SubscribedTab with nothing to list", () => {
   });
 
   it("shows the failure with the retry when the read failed, not the pitch", () => {
-    stub.rowsCurrent = false;
-    stub.checkError = "offline";
+    stub.read = { status: "failed", error: "offline" };
     const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
     expect(html).toContain(esc(MARKETPLACES_CHECK_FAILED_TITLE));
     expect(html).toContain("offline");
@@ -83,13 +80,11 @@ describe("SubscribedTab with nothing to list", () => {
 });
 
 // Rows kept from before a failed read stay on screen, but headed as the
-// last read that answered — and acting on them would act on a guess, so
-// the toggle waits for a read that succeeds.
+// last read that answered rather than as confirmed subscriptions.
 describe("SubscribedTab with rows a failed read left behind", () => {
   it("draws them under the stale note with the retry", () => {
     stub.rows = [kept];
-    stub.rowsCurrent = false;
-    stub.checkError = "offline";
+    stub.read = { status: "failed", error: "offline" };
     const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
     expect(html).toContain(MARKETPLACES_UNCONFIRMED_TITLE);
     expect(html).toContain("offline");
@@ -98,19 +93,9 @@ describe("SubscribedTab with rows a failed read left behind", () => {
     expect(html).toContain("kit");
   });
 
-  it("holds the toggle until a read succeeds again", () => {
-    stub.rows = [kept];
-    stub.rowsCurrent = false;
-    stub.checkError = "offline";
-    const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
-    expect(html).toMatch(/<span[^>]*data-disabled=""[^>]*role="switch"/);
-    expect(html).toContain(`title="${MARKETPLACES_NEEDS_CHECK_NOTE}"`);
-  });
-
   it("carries no stale note over rows from a current read", () => {
     stub.rows = [kept];
     const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
     expect(html).not.toContain(MARKETPLACES_UNCONFIRMED_TITLE);
-    expect(html).not.toMatch(/<span[^>]*data-disabled=""[^>]*role="switch"/);
   });
 });

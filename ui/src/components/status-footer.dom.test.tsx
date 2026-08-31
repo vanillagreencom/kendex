@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView, RowExits, Scope } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { problemsFooterLabel } from "@/lib/error-copy";
+import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { mount, settle } from "@/test/dom";
 import { StatusFooter } from "./status-footer";
@@ -53,8 +54,7 @@ const stage = (views: AuditView[]) =>
     useAuditStore.setState({
       views,
       auditedAt: Date.now(),
-      scopeCheckedAt: {},
-      checkError: null,
+      read: READ_LANDED,
     });
   });
 
@@ -62,8 +62,7 @@ beforeEach(() => {
   useAuditStore.setState({
     views: [],
     auditedAt: null,
-    scopeCheckedAt: {},
-    checkError: null,
+    read: READ_LANDED,
   });
 });
 

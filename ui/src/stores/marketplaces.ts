@@ -10,19 +10,16 @@ import {
   type MarketplaceRow,
   type Scope,
 } from "@/bindings";
-import { MARKETPLACES_NEEDS_CHECK_NOTE } from "@/lib/copy-marketplaces";
+import { READ_PENDING, type ReadState, readOf } from "@/lib/read-state";
+import { rescanEverything } from "@/lib/rescan";
 import { settled } from "@/lib/settled";
-import { landings } from "./landings";
 import { type InstallActions, installActions } from "./marketplaces-install";
 import {
   bundleKey,
   catalogKey,
   dropCatalogCaches,
-  isRepoKey,
   openLead,
   readErrorKey,
-  readGeneration,
-  refreshDownstream,
   without,
 } from "./marketplaces-shared";
 import { sourceActions } from "./marketplaces-sources";
@@ -84,11 +81,8 @@ function catalogReads(set: SetReads) {
   };
 }
 
-/** A read lands only if no cache drop happened while it ran: an answer
- * from before the drop describes a checkout that may no longer be the one
- * installed from. A stale answer is not stored; the read is asked once
- * more under the new generation, since the empty slot it would have
- * filled never changed and nothing else will ask. */
+/** One cached read: the answer lands under its key, a failure under its
+ * error key. */
 async function settle<F extends Exclude<keyof ReadCaches, "readErrors">>(
   set: SetReads,
   field: F,
@@ -99,11 +93,7 @@ async function settle<F extends Exclude<keyof ReadCaches, "readErrors">>(
     | { status: "error"; error: string }
   >,
 ): Promise<void> {
-  const began = readGeneration();
   const response = await read();
-  if (began !== readGeneration()) {
-    return settle(set, field, key, errorKey, read);
-  }
   if (response.status === "ok") {
     set((state) => ({
       [field]: { ...state[field], [key]: response.data },
@@ -130,18 +120,14 @@ interface MarketplacesState extends InstallActions {
   /** Why a read produced nothing, by the same keys — the page the person is
    * looking at says it instead of loading forever. */
   readErrors: Record<string, string>;
-  loaded: boolean;
-  /** Whether `rows` is the answer of the last overview read. A failed read
-   * leaves the rows it had, and nothing may treat them as the truth about
-   * what is subscribed until a read succeeds again. */
-  rowsCurrent: boolean;
+  /** How the last overview read went. A failed read leaves the rows it had,
+   * and nothing may treat them as the truth about what is subscribed until
+   * one lands again. Kept apart from `error` below, which
+   * subscribe/unsubscribe/install also write, so a failed action never
+   * rewrites the reason the stale-read notices show. */
+  read: ReadState;
   busy: boolean;
   error: string | null;
-  /** Why the last overview read failed, or null — written only by `load`.
-   * The shared `error` above is also set by subscribe/unsubscribe/install,
-   * so a failed action would otherwise rewrite the reason the stale-read
-   * notices show. */
-  checkError: string | null;
   load: () => Promise<void>;
   loadPackages: (catalog: Catalog) => Promise<void>;
   loadSummary: (catalog: Catalog) => Promise<void>;
@@ -162,12 +148,6 @@ interface MarketplacesState extends InstallActions {
   checkForUpdates: () => Promise<void>;
 }
 
-// Overview reads overlap — Home's mount-time load against the page's own,
-// or a mutation's re-read — and a slow early one landing last would stamp
-// pre-mutation rows current. Every write goes through subscribe/unsubscribe
-// re-reading via load(), so read ordering alone covers it.
-const overviewLandings = landings();
-
 export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   rows: [],
   packages: {},
@@ -175,33 +155,18 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   summaries: {},
   bundles: {},
   readErrors: {},
-  loaded: false,
-  rowsCurrent: false,
+  read: READ_PENDING,
   busy: false,
   error: null,
-  checkError: null,
 
   load: async () => {
     // A failed read — refusal or rejection, via `settled` — still answers:
-    // `loaded` comes up, `rowsCurrent` does not, and the kept rows stay.
-    const ticket = overviewLandings.begin();
+    // the kept rows stay, and `read` says they are last-known.
     const response = await settled(commands.marketplacesOverview());
-    if (!overviewLandings.land(ticket)) return;
     if (response.status === "ok") {
-      set({
-        rows: response.data,
-        loaded: true,
-        rowsCurrent: true,
-        error: null,
-        checkError: null,
-      });
+      set({ rows: response.data, read: readOf(response), error: null });
     } else {
-      set({
-        loaded: true,
-        rowsCurrent: false,
-        error: response.error,
-        checkError: response.error,
-      });
+      set({ read: readOf(response), error: response.error });
     }
   },
 
@@ -223,15 +188,10 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     set({ error: null });
     toast.success(`Subscribed to '${response.data.name}'`);
     for (const note of response.data.notes) toast.message(note);
-    dropCatalogCaches(set);
     // A repository page may now have a subscription to carry on as, under
-    // whatever spelling the dialog was submitted with — every repository
-    // summary re-reads, and only one such page can be open.
-    set((state) => ({
-      summaries: Object.fromEntries(
-        Object.entries(state.summaries).filter(([key]) => !isRepoKey(key)),
-      ),
-    }));
+    // whatever spelling the dialog was submitted with; the dropped summaries
+    // re-read and the page picks it up.
+    dropCatalogCaches(set);
     await get().load();
     if (response.data.lead) {
       await openLead(scope, response.data.name, response.data.lead);
@@ -240,13 +200,6 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   },
 
   unsubscribe: async (scope, source, keep, discardEdits) => {
-    // The action boundary owns the guarantee: a dialog opened while rows
-    // were current can still confirm after a failed re-read left them
-    // stale — refusing here covers every trigger at once.
-    if (!get().rowsCurrent) {
-      set({ error: MARKETPLACES_NEEDS_CHECK_NOTE });
-      return false;
-    }
     set({ busy: true });
     let response: Awaited<ReturnType<typeof commands.marketplaceUnsubscribe>>;
     try {
@@ -269,11 +222,11 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
         ? `Unsubscribed from '${source}' — its packages are yours now`
         : `Unsubscribed from '${source}'`,
     );
+    // A page carried on as this subscription must stop pointing at it, and
+    // every other derived read goes with it.
     dropCatalogCaches(set);
-    // A page carried on as this subscription must stop pointing at it.
-    set({ summaries: {} });
     await get().load();
-    await refreshDownstream();
+    await rescanEverything();
     return true;
   },
 

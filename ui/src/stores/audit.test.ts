@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 
@@ -24,7 +25,6 @@ vi.mock("./scan", () => ({
 }));
 
 const globalScope = { scope: "global" as const };
-const acme = { scope: "project" as const, root: "/work/acme" };
 
 const emptyView: AuditView = {
   scope: globalScope,
@@ -43,10 +43,9 @@ describe("audit store refresh", () => {
       views: [],
       auditing: false,
       error: null,
-      checkError: null,
+      read: READ_LANDED,
       busy: false,
       auditedAt: null,
-      scopeCheckedAt: {},
       backgroundFailureAnnounced: false,
     });
     vi.clearAllMocks();
@@ -72,24 +71,24 @@ describe("audit store refresh", () => {
     await useAuditStore.getState().refresh();
 
     expect(useAuditStore.getState().error).toBe("ipc down");
-    expect(useAuditStore.getState().checkError).toBe("ipc down");
+    expect(useAuditStore.getState().read.error).toBe("ipc down");
     expect(useAuditStore.getState().auditing).toBe(false);
   });
 
-  it("clears checkError once an audit answers again", async () => {
+  it("clears the read failure once an audit answers again", async () => {
     vi.mocked(commands.auditAll).mockResolvedValueOnce({
       status: "error",
       error: "boom",
     });
     await useAuditStore.getState().refresh();
-    expect(useAuditStore.getState().checkError).toBe("boom");
+    expect(useAuditStore.getState().read.error).toBe("boom");
 
     vi.mocked(commands.auditAll).mockResolvedValueOnce({
       status: "ok",
       data: [],
     });
     await useAuditStore.getState().refresh({ force: true });
-    expect(useAuditStore.getState().checkError).toBeNull();
+    expect(useAuditStore.getState().read.error).toBeNull();
   });
 
   it("re-arms the toast after a successful audit", async () => {
@@ -223,160 +222,15 @@ describe("audit store refresh", () => {
   });
 });
 
-// auditAll answers ok for the machine while carrying a per-scope failure:
-// one scope's lock is corrupt, or its manifest came from a newer kendex.
-// That view arrives empty, and taking it whole replaces a real reading with
-// zeros and reports them as this moment's answer.
-describe("an audit that could not read one scope", () => {
-  const scored = (scope: typeof globalScope | typeof acme): AuditView => ({
-    ...emptyView,
-    scope,
-    safety: [
-      {
-        kind: "skill",
-        name: "gh",
-        harness: "claude",
-        scope,
-        location: "",
-        findings: [],
-        skipped: [],
-        safety: { score: 91, deductions: [] },
-        quality: null,
-        ruleset: 3,
-      },
-    ],
-  });
-  const unreadable = (scope: typeof acme): AuditView => ({
-    ...emptyView,
-    scope,
-    error: { kind: "lock-corrupt", message: "lock is not JSON" },
-  });
-
-  beforeEach(() => {
-    useAuditStore.setState({
-      views: [scored(globalScope), scored(acme)],
-      auditing: false,
-      error: null,
-      checkError: null,
-      busy: false,
-      auditedAt: 1000,
-      scopeCheckedAt: { global: 1000, "/work/acme": 1000 },
-      backgroundFailureAnnounced: false,
-    });
-    vi.clearAllMocks();
-  });
-
-  it("keeps that scope's last reading rather than blanking it", async () => {
-    vi.mocked(commands.auditAll).mockResolvedValue({
-      status: "ok",
-      data: [scored(globalScope), unreadable(acme)],
-    });
-
-    await useAuditStore.getState().refresh({ force: true });
-
-    const kept = useAuditStore
-      .getState()
-      .views.find((view) => view.scope.scope === "project");
-    expect(kept?.safety).toHaveLength(1);
-    // The failure rides on the kept view, so the Problems page still lists
-    // it and the score surfaces can date the reading and offer the retry.
-    expect(kept?.error?.message).toBe("lock is not JSON");
-  });
-
-  it("does not date the kept reading as if it had just been read", async () => {
-    vi.mocked(commands.auditAll).mockResolvedValue({
-      status: "ok",
-      data: [scored(globalScope), unreadable(acme)],
-    });
-
-    await useAuditStore.getState().refresh({ force: true });
-
-    const stamps = useAuditStore.getState().scopeCheckedAt;
-    expect(stamps["/work/acme"]).toBe(1000);
-    expect(stamps.global).toBeGreaterThan(1000);
-  });
-
-  // A scope failing twice running must not lose on the second pass what it
-  // kept on the first.
-  it("keeps the reading through a second failure", async () => {
-    vi.mocked(commands.auditAll).mockResolvedValue({
-      status: "ok",
-      data: [scored(globalScope), unreadable(acme)],
-    });
-
-    await useAuditStore.getState().refresh({ force: true });
-    await useAuditStore.getState().refresh({ force: true });
-
-    expect(
-      useAuditStore
-        .getState()
-        .views.find((view) => view.scope.scope === "project")?.safety,
-    ).toHaveLength(1);
-  });
-
-  // The scores are all that carries over. Drift is a comparison against a
-  // manifest this audit could not read, and the app adopts from those rows —
-  // a write to the filesystem off a picture nothing has confirmed.
-  it("keeps the scores and nothing else it could act on", async () => {
-    const withDrift: AuditView = {
-      ...scored(acme),
-      drift: [
-        {
-          kind: "skill",
-          name: "byhand",
-          harness: "claude",
-          state: "unmanaged",
-          detail: "/work/acme/.claude/skills/byhand",
-          scope: acme,
-        },
-      ],
-      plan: ["install byhand"],
-      notes: ["a note from before"],
-    };
-    useAuditStore.setState({ views: [withDrift] });
-    vi.mocked(commands.auditAll).mockResolvedValue({
-      status: "ok",
-      data: [unreadable(acme)],
-    });
-
-    await useAuditStore.getState().refresh({ force: true });
-
-    const kept = useAuditStore.getState().views[0];
-    expect(kept?.safety).toHaveLength(1);
-    expect(kept?.drift).toEqual([]);
-    expect(kept?.plan).toEqual([]);
-    expect(kept?.notes).toEqual([]);
-  });
-
-  it("lets a scope that answered keep its fresh reading", async () => {
-    const fresh = scored(globalScope);
-    fresh.safety[0].safety = { score: 40, deductions: [] };
-    vi.mocked(commands.auditAll).mockResolvedValue({
-      status: "ok",
-      data: [fresh, unreadable(acme)],
-    });
-
-    await useAuditStore.getState().refresh({ force: true });
-
-    expect(
-      useAuditStore
-        .getState()
-        .views.find((view) => view.scope.scope === "global")?.safety[0]?.safety
-        .score,
-    ).toBe(40);
-  });
-});
-
 describe("audit store run() actions", () => {
   beforeEach(() => {
     useAuditStore.setState({
       views: [emptyView],
       auditing: false,
       error: null,
-      checkError: null,
+      read: READ_LANDED,
       busy: false,
       auditedAt: null,
-      scopeCheckedAt: {},
       backgroundFailureAnnounced: false,
     });
     useProblemsStore.setState({
@@ -400,7 +254,7 @@ describe("audit store run() actions", () => {
     expect(useAuditStore.getState().error).toBe("disk is full");
     // A failed item action is not a failed audit: only refresh may write
     // the signal Home's couldn't-check row reads.
-    expect(useAuditStore.getState().checkError).toBeNull();
+    expect(useAuditStore.getState().read.error).toBeNull();
     expect(toast.error).not.toHaveBeenCalled();
   });
 
@@ -459,179 +313,5 @@ describe("audit store run() actions", () => {
       "changed since",
     );
     expect(toast.success).not.toHaveBeenCalled();
-  });
-});
-
-// An audit reads every scope over seconds while the page it started from
-// leaves its buttons live. A command that lands in between read its scope
-// later, so the audit's answer is already out of date when it arrives.
-describe("an audit that lands after a command it cannot answer for", () => {
-  const settled: AuditView = { ...emptyView, drift: [], plan: ["settled"] };
-  const stale: AuditView = { ...emptyView, drift: [], plan: ["stale"] };
-
-  beforeEach(() => {
-    useAuditStore.setState({
-      // A view to replace: a command's response lands into the scope it
-      // already holds.
-      views: [emptyView],
-      auditing: false,
-      error: null,
-      checkError: null,
-      busy: false,
-      auditedAt: null,
-      scopeCheckedAt: {},
-      backgroundFailureAnnounced: false,
-    });
-    vi.clearAllMocks();
-  });
-
-  const park = <T>() => {
-    let land: (value: T) => void = () => {};
-    const parked = new Promise<T>((resolve) => {
-      land = resolve;
-    });
-    return { parked, land: (value: T) => land(value) };
-  };
-
-  it("keeps the command's view rather than putting the row back", async () => {
-    const audit = park<{ status: "ok"; data: AuditView[] }>();
-    vi.mocked(commands.auditAll).mockReturnValue(
-      audit.parked as ReturnType<typeof commands.auditAll>,
-    );
-    vi.mocked(commands.removeItem).mockResolvedValue({
-      status: "ok",
-      data: settled,
-    });
-
-    const running = useAuditStore.getState().refresh();
-    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
-    audit.land({ status: "ok", data: [stale] });
-    await running;
-
-    expect(useAuditStore.getState().views).toEqual([settled]);
-    // Undated, so the next visit pays for a reading that can speak for
-    // what just happened instead of reusing one that cannot.
-    expect(useAuditStore.getState().auditedAt).toBeNull();
-  });
-
-  // A read that did not finish is not news about the state it left behind
-  // either: reported, it would mark a reading unconfirmed that a command
-  // has since confirmed.
-  it("drops a stale failure rather than calling the reading unchecked", async () => {
-    const audit = park<{ status: "error"; error: string }>();
-    vi.mocked(commands.auditAll).mockReturnValue(
-      audit.parked as ReturnType<typeof commands.auditAll>,
-    );
-    vi.mocked(commands.removeItem).mockResolvedValue({
-      status: "ok",
-      data: settled,
-    });
-
-    const running = useAuditStore.getState().refresh();
-    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
-    audit.land({ status: "error", error: "boom" });
-    await running;
-
-    expect(useAuditStore.getState().checkError).toBeNull();
-    expect(useAuditStore.getState().views).toEqual([settled]);
-  });
-
-  // Dropping the read is only half of it. The command installed its own
-  // scope and nothing re-read the rest, so a stamp left standing would hold
-  // the freshness window open over the very bytes the force was about — an
-  // editor save, say, with every score still quoting the state before it.
-  it("pays for the read it dropped instead of reusing the stamp", async () => {
-    vi.mocked(commands.auditAll).mockResolvedValue({
-      status: "ok",
-      data: [stale],
-    });
-    await useAuditStore.getState().refresh();
-    expect(useAuditStore.getState().auditedAt).not.toBeNull();
-
-    const audit = park<{ status: "ok"; data: AuditView[] }>();
-    vi.mocked(commands.auditAll).mockReturnValue(
-      audit.parked as ReturnType<typeof commands.auditAll>,
-    );
-    vi.mocked(commands.removeItem).mockResolvedValue({
-      status: "ok",
-      data: settled,
-    });
-    const forced = useAuditStore.getState().refresh({ force: true });
-    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
-    audit.land({ status: "ok", data: [stale] });
-    await forced;
-
-    const dropped = vi.mocked(commands.auditAll).mock.calls.length;
-    vi.mocked(commands.auditAll).mockResolvedValue({
-      status: "ok",
-      data: [settled],
-    });
-    // An ordinary visit, not another force: the window must not answer it.
-    await useAuditStore.getState().refresh();
-
-    expect(vi.mocked(commands.auditAll).mock.calls.length).toBe(dropped + 1);
-  });
-
-  // A command that failed is not a command that wrote nothing: adopt and
-  // the take-over both run a plan before a step that can still fail, so an
-  // audit older than the attempt is out of date whatever the attempt
-  // answered.
-  it("drops an audit that an attempt ran across, however it ended", async () => {
-    const audit = park<{ status: "ok"; data: AuditView[] }>();
-    vi.mocked(commands.auditAll).mockReturnValue(
-      audit.parked as ReturnType<typeof commands.auditAll>,
-    );
-    vi.mocked(commands.removeItem).mockResolvedValue({
-      status: "error",
-      error: "disk is full",
-    });
-
-    const running = useAuditStore.getState().refresh();
-    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
-    audit.land({ status: "ok", data: [stale] });
-    await running;
-
-    expect(useAuditStore.getState().views).toEqual([emptyView]);
-    expect(useAuditStore.getState().auditedAt).toBeNull();
-  });
-
-  // The third ordering: a reading that lands while a command is still
-  // running. The command has been writing throughout, and the mark at the
-  // end of its attempt would come too late to undo an install.
-  it("drops a reading that landed while an attempt was still running", async () => {
-    const audit = park<{ status: "ok"; data: AuditView[] }>();
-    const command = park<{ status: "error"; error: string }>();
-    vi.mocked(commands.auditAll).mockReturnValue(
-      audit.parked as ReturnType<typeof commands.auditAll>,
-    );
-    vi.mocked(commands.removeItem).mockReturnValue(
-      command.parked as ReturnType<typeof commands.removeItem>,
-    );
-
-    const running = useAuditStore.getState().refresh();
-    const acting = useAuditStore
-      .getState()
-      .removeItem(globalScope, "hook", "lint");
-    audit.land({ status: "ok", data: [stale] });
-    await running;
-
-    expect(useAuditStore.getState().views).toEqual([emptyView]);
-    expect(useAuditStore.getState().auditedAt).toBeNull();
-
-    command.land({ status: "error", error: "disk is full" });
-    await acting;
-  });
-
-  // The control: an audit nothing overtook is the answer, as it was.
-  it("installs an audit that no command overtook", async () => {
-    vi.mocked(commands.auditAll).mockResolvedValue({
-      status: "ok",
-      data: [stale],
-    });
-
-    await useAuditStore.getState().refresh();
-
-    expect(useAuditStore.getState().views).toEqual([stale]);
-    expect(useAuditStore.getState().auditedAt).not.toBeNull();
   });
 });

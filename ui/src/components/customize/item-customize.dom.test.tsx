@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { EditorInventory, Scope, ScopeSettings } from "@/bindings";
 import { ItemCustomize } from "@/components/customize/item-customize";
 import { CUSTOMIZED_MARK, skillsInherited } from "@/lib/copy-customize";
+import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
@@ -65,7 +66,7 @@ const savedSettings = {
 };
 
 const seed = (saved: Record<string, unknown>) => {
-  useUpdatesStore.setState({ rows: rows as never, loaded: true });
+  useUpdatesStore.setState({ rows: rows as never, read: READ_LANDED });
   useEditorStore.setState({
     scope: VG,
     draft: saved["/work/vg"] as never,
@@ -102,7 +103,7 @@ describe("the place chips", () => {
       savedSettings,
       settingsEdits: [],
     });
-    useUpdatesStore.setState({ rows: [], loaded: false });
+    useUpdatesStore.setState({ rows: [], read: READ_PENDING });
   });
 
   it("marks the place that holds something and leaves the other plain", () => {
@@ -177,7 +178,7 @@ describe("the skills a place declares", () => {
     scope: Scope,
     inventories: Record<string, EditorInventory>,
   ) => {
-    useUpdatesStore.setState({ rows: [], loaded: true });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
     useEditorStore.setState({
       scope,
       draft: empty as never,
@@ -229,7 +230,7 @@ describe("an agent whose only row is set on another agent", () => {
   }));
 
   it("names the row without marking the place", () => {
-    useUpdatesStore.setState({ rows: agentRows as never, loaded: true });
+    useUpdatesStore.setState({ rows: agentRows as never, read: READ_LANDED });
     useEditorStore.setState({
       scope: VG,
       draft: baseRow as never,

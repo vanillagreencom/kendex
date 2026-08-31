@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { READ_LANDED } from "@/lib/read-state";
 import { useProblemsStore } from "./problems";
 import { useUpdatesStore } from "./updates";
 
@@ -96,7 +97,7 @@ describe("updates store: bulk update", () => {
   };
 
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    useUpdatesStore.setState({ rows: [], busy: false, read: READ_LANDED });
     vi.clearAllMocks();
   });
 
@@ -281,7 +282,7 @@ describe("updates store: bulk update", () => {
         row({ name: "gh", scope: acme }),
         row({ name: "review", scope: shop }),
       ],
-      loaded: true,
+      read: READ_LANDED,
     });
 
     await useUpdatesStore
@@ -393,7 +394,7 @@ describe("updates store: what a bulk update claims about held-back places", () =
   };
 
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    useUpdatesStore.setState({ rows: [], busy: false, read: READ_LANDED });
     vi.clearAllMocks();
   });
 
@@ -497,7 +498,7 @@ describe("updates store: a bulk run that took a copy away", () => {
   };
 
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    useUpdatesStore.setState({ rows: [], busy: false, read: READ_LANDED });
     vi.clearAllMocks();
   });
 
@@ -619,7 +620,7 @@ describe("updates store: a run where one place failed", () => {
   };
 
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    useUpdatesStore.setState({ rows: [], busy: false, read: READ_LANDED });
     vi.clearAllMocks();
   });
 
@@ -747,7 +748,7 @@ describe("updates store: what a bulk run cannot lose", () => {
   };
 
   beforeEach(() => {
-    useUpdatesStore.setState({ rows: [], busy: false, loaded: true });
+    useUpdatesStore.setState({ rows: [], busy: false, read: READ_LANDED });
     vi.clearAllMocks();
   });
 

@@ -105,7 +105,7 @@ function useMouseNavigation() {
 export function useStartupLoads() {
   const refresh = useScanStore((s) => s.refresh);
   const auditRefresh = useAuditStore((s) => s.refresh);
-  const updatesLoad = useUpdatesStore((s) => s.load);
+  const updatesLoad = useUpdatesStore((s) => s.reload);
   const load = useSettingsStore((s) => s.load);
   const noticeLoad = useNoticeStore((s) => s.load);
   const accountLoad = useAccountStore((s) => s.load);

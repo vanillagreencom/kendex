@@ -21,7 +21,6 @@ export function RepoAction({
   subscribeLabel: string;
 }) {
   const rows = useMarketplacesStore((s) => s.rows);
-  const rowsCurrent = useMarketplacesStore((s) => s.rowsCurrent);
   const toggle = useMarketplacesStore((s) => s.toggle);
   const checkForUpdates = useMarketplacesStore((s) => s.checkForUpdates);
   const busy = useMarketplacesStore((s) => s.busy);
@@ -31,7 +30,7 @@ export function RepoAction({
     (s) => s.directory?.rows.find((r) => r.repo === repo)?.repoKey ?? null,
   );
   const key = summary?.repoKey ?? listedKey;
-  const { kind, holder } = repoAction(rows, rowsCurrent, key);
+  const { kind, holder } = repoAction(rows, key);
 
   switch (kind) {
     case "checking":

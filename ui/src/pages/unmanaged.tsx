@@ -29,9 +29,9 @@ export function UnmanagedPage() {
   useAuditOnMount();
   const scope = useNavStore((s) => s.unmanagedScope);
   const views = useAuditStore((s) => s.views);
-  // `checkError`, not the store's shared `error`: item actions write the
+  // The read's own error, not the store's shared `error`: item actions write the
   // shared field too, and a failed adopt is not a failed audit.
-  const checkError = useAuditStore((s) => s.checkError);
+  const auditFailure = useAuditStore((s) => s.read.error);
   const busy = useAuditStore((s) => s.busy);
   const adopt = useAuditStore((s) => s.adopt);
 
@@ -43,7 +43,7 @@ export function UnmanagedPage() {
   // not read this place, so what is at it is unknown. Every button on this
   // page adopts, which writes to the filesystem from the rows it was handed,
   // and those rows are a picture nothing has confirmed.
-  const rows = unmanagedIn(view, checkError);
+  const rows = unmanagedIn(view, auditFailure);
 
   return (
     <div>
@@ -57,7 +57,7 @@ export function UnmanagedPage() {
         <div className={cn("flex flex-col gap-4", CONTENT_WIDTH)}>
           {rows === null ? (
             <EmptyState icon={FileWarning} title={PLACE_UNCHECKED_TITLE}>
-              {view?.error?.message ?? checkError}
+              {view?.error?.message ?? auditFailure}
             </EmptyState>
           ) : rows.length === 0 ? (
             <EmptyState icon={PackageCheck} title={ALL_MANAGED_TITLE}>

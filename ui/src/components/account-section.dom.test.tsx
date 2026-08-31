@@ -31,7 +31,6 @@ import { AccountSection } from "./account-section";
 
 /** The name core mints for a sign-in; two answers about one
  *  credential carry the same one. */
-const SIGN_IN = "sign-in-ada";
 
 vi.mock("@/bindings", () => ({ commands: {} }));
 
@@ -98,16 +97,16 @@ const press = async (host: HTMLElement, label: string) => {
 };
 
 const SETTLED: [string, AccountState][] = [
-  ["signed-in", { kind: "signed-in", identity: ADA, signIn: SIGN_IN }],
+  ["signed-in", { kind: "signed-in", identity: ADA }],
   ["signed-out", { kind: "signed-out" }],
-  ["expired", { kind: "expired", signIn: SIGN_IN }],
-  ["offline", { kind: "offline", identity: ADA, signIn: SIGN_IN }],
+  ["expired", { kind: "expired" }],
+  ["offline", { kind: "offline", identity: ADA }],
 ];
 
 describe("the state the section draws", () => {
   it("names the account and offers a sign-out when signed in", () => {
     const host = show({
-      account: { kind: "signed-in", identity: ADA, signIn: SIGN_IN },
+      account: { kind: "signed-in", identity: ADA },
     });
     expect(host.textContent).toContain(ADA.name);
     expect(initial(host)).toBe("A");
@@ -124,7 +123,7 @@ describe("the state the section draws", () => {
   it("cuts a long name off rather than widening the row", () => {
     const long = { name: "A".repeat(200), githubLogin: "1234567" };
     const host = show({
-      account: { kind: "signed-in", identity: long, signIn: SIGN_IN },
+      account: { kind: "signed-in", identity: long },
     });
     // jsdom lays nothing out, so the class carrying the rule is what can be
     // checked: the element holding the name is the one that gives.
@@ -139,7 +138,7 @@ describe("the state the section draws", () => {
   // signed in, but it must not put a name to an account nobody has named.
   it("names nobody when the credential has no identity yet", () => {
     const host = show({
-      account: { kind: "signed-in", identity: null, signIn: SIGN_IN },
+      account: { kind: "signed-in", identity: null },
     });
     expect(host.textContent).toContain(ACCOUNT_SIGNED_IN_LABEL);
     expect(host.textContent).not.toContain(ADA.name);
@@ -152,7 +151,7 @@ describe("the state the section draws", () => {
   it("names nobody when the server sent a blank name", () => {
     const blank = { name: "  ", githubLogin: "1234567" };
     const host = show({
-      account: { kind: "signed-in", identity: blank, signIn: SIGN_IN },
+      account: { kind: "signed-in", identity: blank },
     });
     expect(host.textContent).toContain(ACCOUNT_SIGNED_IN_LABEL);
     expect(host.textContent).not.toContain(blank.githubLogin);
@@ -163,7 +162,7 @@ describe("the state the section draws", () => {
   // unconfirmed credential drew as a confirmed sign-in.
   it("marks an unconfirmed credential offline, not signed in", () => {
     const host = show({
-      account: { kind: "offline", identity: ADA, signIn: SIGN_IN },
+      account: { kind: "offline", identity: ADA },
     });
     expect(host.textContent).toContain(ADA.name);
     expect(host.textContent).toContain(ACCOUNT_OFFLINE_LABEL);
@@ -175,7 +174,7 @@ describe("the state the section draws", () => {
   // stops the app asking the server about it.
   it("still offers a sign-out while offline", () => {
     const host = show({
-      account: { kind: "offline", identity: ADA, signIn: SIGN_IN },
+      account: { kind: "offline", identity: ADA },
     });
     expect(offered(host)).toEqual([ACCOUNT_SIGN_OUT_LABEL]);
   });
@@ -183,7 +182,7 @@ describe("the state the section draws", () => {
   // The other half of that bug: `hasCredential` is false for expired, so a
   // rejected credential drew as a plain signed-out account.
   it("says a rejected credential was rejected, not signed out", () => {
-    const host = show({ account: { kind: "expired", signIn: SIGN_IN } });
+    const host = show({ account: { kind: "expired" } });
     expect(host.textContent).toContain(ACCOUNT_EXPIRED_TITLE);
     expect(host.textContent).not.toContain(ACCOUNT_SIGNED_OUT_NOTE);
     expect(offered(host)).toEqual([ACCOUNT_SIGN_IN_AGAIN_LABEL]);
@@ -253,7 +252,7 @@ describe("the retry a failed read gets", () => {
   // state keeps its own row and the failure gets a second one.
   it("sits beside a state that did land", () => {
     const host = show({
-      account: { kind: "offline", identity: ADA, signIn: SIGN_IN },
+      account: { kind: "offline", identity: ADA },
       readError: "keychain locked",
     });
     expect(host.textContent).toContain("keychain locked");
@@ -284,7 +283,7 @@ describe("the retry a failed read gets", () => {
 describe("signing in and out", () => {
   it("signs out from the row that names the account", async () => {
     const host = show({
-      account: { kind: "signed-in", identity: ADA, signIn: SIGN_IN },
+      account: { kind: "signed-in", identity: ADA },
     });
     await press(host, ACCOUNT_SIGN_OUT_LABEL);
     expect(act.signOut).toHaveBeenCalledTimes(1);
@@ -297,7 +296,7 @@ describe("signing in and out", () => {
   });
 
   it("starts it again from a credential the server rejected", async () => {
-    const host = show({ account: { kind: "expired", signIn: SIGN_IN } });
+    const host = show({ account: { kind: "expired" } });
     await press(host, ACCOUNT_SIGN_IN_AGAIN_LABEL);
     expect(act.signIn).toHaveBeenCalledTimes(1);
   });

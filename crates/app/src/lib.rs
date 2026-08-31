@@ -115,7 +115,6 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         account::mine_submit_preflight,
         account::mine_submit,
         account::mine_submissions,
-        account::mine_submission_states,
         packages::package_versions,
         packages::update::package_update,
         packages::update::package_update_many,

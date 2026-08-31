@@ -45,7 +45,7 @@ export function usePackageMark(group: ItemGroup | null): PlaceMark | null {
   const settings = useEditorStore((s) => s.savedSettings);
   const loadPlaces = useEditorStore((s) => s.loadPlaces);
   const rows = useUpdatesStore((s) => s.rows);
-  const updatesLoaded = useUpdatesStore((s) => s.loaded);
+  const updatesLoaded = useUpdatesStore((s) => s.read.status === "landed");
   // The scan rebuilds the group on every read, so what is held onto is
   // which places those are, not the array they arrived in.
   const scopes = group ? groupScopes(group) : [];

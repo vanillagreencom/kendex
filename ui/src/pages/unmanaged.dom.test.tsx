@@ -8,6 +8,7 @@ import {
   PLACE_UNCHECKED_TITLE,
   START_MANAGING_LABEL,
 } from "@/lib/copy";
+import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 import { mount, settle } from "@/test/dom";
@@ -43,8 +44,7 @@ const stage = (rows: AuditView[]) =>
     useAuditStore.setState({
       views: rows,
       auditedAt: Date.now(),
-      scopeCheckedAt: {},
-      checkError: null,
+      read: READ_LANDED,
     });
     useNavStore.setState({ unmanagedScope: ACME });
   });
@@ -53,8 +53,7 @@ beforeEach(() => {
   useAuditStore.setState({
     views: [],
     auditedAt: null,
-    scopeCheckedAt: {},
-    checkError: null,
+    read: READ_LANDED,
   });
   useNavStore.setState({ unmanagedScope: null });
 });

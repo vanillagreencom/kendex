@@ -11,6 +11,7 @@ import type {
 import { ADOPTABLE } from "@/lib/adoptable";
 import { SAFETY_CAVEAT, SAFETY_CHECK_FAILED } from "@/lib/copy-safety";
 import { SEVERITY_LABELS } from "@/lib/labels";
+import { READ_LANDED, readFailed } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { mount } from "@/test/dom";
 import { InstalledScore, useInstalledReading } from "./installed-score";
@@ -60,14 +61,13 @@ const view = (safety: ItemSafety[], scope: Scope = GLOBAL): AuditView => ({
 
 const stage = (
   views: AuditView[],
-  over: { auditedAt?: number | null; checkError?: string | null } = {},
+  over: { auditedAt?: number | null; failure?: string | null } = {},
 ) =>
   act(() => {
     useAuditStore.setState({
       views,
-      auditedAt: 1,
-      checkError: null,
-      ...over,
+      auditedAt: over.auditedAt === undefined ? 1 : over.auditedAt,
+      read: over.failure == null ? READ_LANDED : readFailed(over.failure),
     });
   });
 
@@ -85,8 +85,7 @@ beforeEach(() => {
   useAuditStore.setState({
     views: [],
     auditedAt: null,
-    checkError: null,
-    scopeCheckedAt: {},
+    read: READ_LANDED,
   });
 });
 
@@ -178,7 +177,7 @@ describe("when the check itself fails", () => {
     const checkedAt = Date.now() - 3 * 60 * 60 * 1000;
     stage([view([scored(62, [finding("high")])])], {
       auditedAt: checkedAt,
-      checkError: "audit crashed",
+      failure: "audit crashed",
     });
     mount(<Row />);
 
@@ -191,7 +190,7 @@ describe("when the check itself fails", () => {
   });
 
   it("says the check failed rather than falling back to not checked yet", () => {
-    stage([], { auditedAt: null, checkError: "audit crashed" });
+    stage([], { auditedAt: null, failure: "audit crashed" });
     mount(<Row />);
 
     expect(words()).toContain(SAFETY_CHECK_FAILED);

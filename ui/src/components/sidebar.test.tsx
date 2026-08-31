@@ -12,7 +12,13 @@ const esc = (copy: string) => copy.replace(/'/g, "&#x27;");
 // Static rendering reads a zustand store's initial snapshot, never one set
 // later, so the updates store is wrapped to stage what the last check left.
 const stub = vi.hoisted(() => ({
-  updates: { rows: [] as unknown[], error: null as string | null },
+  updates: {
+    rows: [] as unknown[],
+    read: { status: "landed", error: null } as {
+      status: "pending" | "landed" | "failed";
+      error: string | null;
+    },
+  },
 }));
 
 vi.mock("@/stores/updates", async (importOriginal) => {
@@ -25,7 +31,10 @@ vi.mock("@/stores/updates", async (importOriginal) => {
 });
 
 beforeEach(() => {
-  stub.updates = { rows: [], error: null };
+  stub.updates = {
+    rows: [],
+    read: { status: "landed", error: null },
+  };
 });
 
 // Before the first read the badge is absent because nothing is known yet;
@@ -39,7 +48,10 @@ describe("the Updates badge after a failed check", () => {
   });
 
   it("marks the row rather than staying silent", () => {
-    stub.updates = { rows: [], error: "no network" };
+    stub.updates = {
+      rows: [],
+      read: { status: "failed", error: "no network" },
+    };
     const html = renderToStaticMarkup(<Sidebar />);
     expect(html).toContain(">?<");
     expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
@@ -49,7 +61,10 @@ describe("the Updates badge after a failed check", () => {
   // is worth showing — but the badge wears the warning tone for it rather
   // than presenting the number as confirmed.
   it("keeps a last-known count, in the warning tone", () => {
-    stub.updates = { rows: [updateRow("gh", null)], error: "no network" };
+    stub.updates = {
+      rows: [updateRow("gh", null)],
+      read: { status: "failed", error: "no network" },
+    };
     const html = renderToStaticMarkup(<Sidebar />);
     expect(html).toContain(">1<");
     expect(html).not.toContain(">?<");

@@ -509,12 +509,11 @@ lives in one capability table read by core and UI.
   Follow source is one row's state change, its write settling behind it
   (`ui/src/stores/updates-follow.ts`): the switch takes its position from
   the click, pending until every scope's standing is read again — every
-  landing wears it, so a read begun earlier cannot bounce it — over its own
-  scope's rows only (`lib/updates-read-state.ts::rowUnsettled`), the apply
-  reaching only what is installed there. A refused write says so at once,
-  but the rows already wear it: the scope holds until a read puts them
-  back, or the flip restores them when every read failed. No row wears a
-  position the engine did not take. An edited place is never updated over:
+  landing wears it, so a read cannot bounce it — over its own scope's rows
+  only (`lib/updates-read-state.ts::rowUnsettled`), the apply reaching only
+  what is installed there. A refused write says so at once and puts the
+  switch back where the engine has it, so no row ever wears a position the
+  engine did not take. An edited place is never updated over:
   its row says so and offers the install beside it where a newer version
   the source still carries can land, and a
   link to the package page otherwise; the fork-or-discard choice lives on

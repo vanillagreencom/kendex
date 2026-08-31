@@ -65,7 +65,7 @@ export function ItemCustomize({
   } = useEditorStore();
   const inventory = useEditorStore(openInventory);
   const rows = useUpdatesStore((s) => s.rows);
-  const updatesLoaded = useUpdatesStore((s) => s.loaded);
+  const updatesLoaded = useUpdatesStore((s) => s.read.status === "landed");
 
   const mine = itemCustomization(draft, kind, name);
   // The row this agent renders with when it has none of its own, resolved

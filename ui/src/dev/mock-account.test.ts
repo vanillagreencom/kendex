@@ -82,25 +82,9 @@ describe("the account states the dev bridge can answer as", () => {
     const settled = (await read()).account;
     expect(settled).toEqual({
       ...MOCK_ACCOUNTS["signed-in"],
-      signIn: approved.sign_in,
     });
     await mockInvoke("account_logout");
     expect((await read()).account).toEqual(MOCK_ACCOUNTS["signed-out"]);
-  });
-
-  // Signing in again is a different credential, which is what makes the
-  // re-sign-in case reachable in the harness at all.
-  it("mints a new name for every sign-in", async () => {
-    const approve = async () => {
-      await mockInvoke("account_login_start");
-      await mockInvoke("account_login_poll");
-      const signed = (await mockInvoke("account_login_poll")) as {
-        sign_in: string;
-      };
-      return signed.sign_in;
-    };
-    const first = await approve();
-    expect(await approve()).not.toBe(first);
   });
 });
 

@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObservedItem, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
+import { READ_LANDED } from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useLibraryViewStore } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
@@ -49,7 +50,7 @@ describe("the Library's mark under a Where filter", () => {
     useEditorStore.setState({
       saved: { "/work/vg": mine as never, "/work/hyprtrade": mine as never },
     });
-    useUpdatesStore.setState({ rows: [], loaded: true });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
     useScanStore.setState({
       result: {
         harnesses: [],

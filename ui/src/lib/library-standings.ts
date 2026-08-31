@@ -20,7 +20,7 @@ export function useLibraryStandings(
   const saved = useEditorStore((s) => s.saved);
   const savedSettings = useEditorStore((s) => s.savedSettings);
   const updateRows = useUpdatesStore((s) => s.rows);
-  const updatesLoaded = useUpdatesStore((s) => s.loaded);
+  const updatesLoaded = useUpdatesStore((s) => s.read.status === "landed");
   const places = useMemo(
     () => placesSource(saved, updateRows, updatesLoaded, savedSettings),
     [saved, updateRows, updatesLoaded, savedSettings],

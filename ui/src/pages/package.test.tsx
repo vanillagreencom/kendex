@@ -20,6 +20,7 @@ import {
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import { editorOpenPath } from "@/lib/editor-path";
 import { SEVERITY_LABELS } from "@/lib/labels";
+import { READ_LANDED } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
@@ -200,17 +201,14 @@ beforeEach(() => {
   });
   useUpdatesStore.setState({
     rows: [],
-    loaded: true,
-    error: null,
+    read: READ_LANDED,
     checking: false,
-    overviewInFlight: false,
     pendingFollows: [],
   });
   useAuditStore.setState({
     views: [],
     auditedAt: null,
-    checkError: null,
-    scopeCheckedAt: {},
+    read: READ_LANDED,
   });
 });
 
@@ -411,7 +409,7 @@ describe("the package page's mark", () => {
   beforeEach(() => {
     useUpdatesStore.setState({
       rows: [updateRow(VG), updateRow(HYPR)],
-      loaded: true,
+      read: READ_LANDED,
     });
   });
 

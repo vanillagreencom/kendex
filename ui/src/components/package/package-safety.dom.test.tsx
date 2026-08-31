@@ -12,8 +12,9 @@ import {
   staleSafetyNote,
 } from "@/lib/copy-safety";
 import { SEVERITY_LABELS } from "@/lib/labels";
+import { READ_LANDED, readFailed } from "@/lib/read-state";
+import { rescanEverything } from "@/lib/rescan";
 import { useAuditStore } from "@/stores/audit";
-import { refreshDownstream } from "@/stores/marketplaces-shared";
 import type { PackageRef } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { mount, settle } from "@/test/dom";
@@ -101,9 +102,8 @@ beforeEach(() => {
     views: [],
     auditing: false,
     auditedAt: null,
-    scopeCheckedAt: {},
     error: null,
-    checkError: null,
+    read: READ_LANDED,
     backgroundFailureAnnounced: false,
   });
 });
@@ -132,7 +132,7 @@ describe("a package installed just now", () => {
 
     // What marketplaces.install ends with.
     await act(async () => {
-      await refreshDownstream();
+      await rescanEverything();
     });
 
     expect(host.textContent).toContain("58/100");
@@ -149,7 +149,7 @@ describe("when the check could not run", () => {
     act(() => {
       useAuditStore.setState({
         auditedAt: null,
-        checkError: "audit crashed",
+        read: readFailed("audit crashed"),
         backgroundFailureAnnounced: true,
       });
     });
@@ -224,9 +224,8 @@ describe("when only this package's place could not be read", () => {
             error: { kind: "lock-corrupt", message: "lock is not JSON" },
           },
         ],
-        auditedAt: Date.now(),
-        scopeCheckedAt: { global: takenAt },
-        checkError: null,
+        auditedAt: takenAt,
+        read: READ_LANDED,
       });
     });
 
@@ -246,8 +245,7 @@ describe("when only this package's place could not be read", () => {
       useAuditStore.setState({
         views: [view([gh])],
         auditedAt: Date.now(),
-        scopeCheckedAt: { global: Date.now() },
-        checkError: null,
+        read: READ_LANDED,
       });
     });
 

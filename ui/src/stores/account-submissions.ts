@@ -21,41 +21,17 @@ export const noSubmissions: Submissions = {
   submissionsError: null,
 };
 
-/** Submissions reads in the order they were asked for. Only the newest
- *  may land: the tab polls on a timer and a submit that just landed asks
- *  again, so two are routinely out at once and the slower is not the
- *  truer one. */
-let reads = 0;
-
-/** Makes the read and answers what to write, or null where its answer may
- *  not be written at all.
+/** Make the read and answer what it writes.
  *
- *  A read a newer one overtook says nothing, refusal included: both are
- *  about the same credential and the newer one is the later word on it.
- *  Neither does one whose credential changed hands while it was coming,
- *  which is about nobody on screen. `handovers` is read before the call
- *  and again after it, and `refused` decides what a refusal says about
- *  the account itself.
- *
- *  `write` is taken rather than returned so that it runs in the same
- *  continuation as the guards. Handing an answer back across an await
- *  puts a microtask between the check and the write, and a sign-out
- *  landing in it ends the account after the guards have already let the
- *  rows through. */
+ *  `refused` decides what a refusal says about the account itself: the poll
+ *  shows nothing of its own, so a session that died between ticks would
+ *  otherwise go on being polled invisibly. */
 export const readSubmissions = async (
-  handovers: () => number,
-  refused: (refusal: AccountCallRefused, since: number) => void,
-  write: (fields: Partial<Submissions>) => void,
-): Promise<void> => {
-  reads += 1;
-  const mine = reads;
-  const before = handovers();
+  refused: (refusal: AccountCallRefused) => void,
+): Promise<Partial<Submissions>> => {
   const answer = await commands.mineSubmissions();
-  if (mine !== reads || before !== handovers()) return;
-  // The poll shows nothing of its own, so a session that died between
-  // ticks would otherwise go on being polled invisibly.
-  if (answer.status === "error") refused(answer.error, before);
-  write(fromSubmissionsRead(answer));
+  if (answer.status === "error") refused(answer.error);
+  return fromSubmissionsRead(answer);
 };
 
 /** What a read's answer writes.

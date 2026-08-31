@@ -49,8 +49,7 @@ import { useUpdatesView } from "@/stores/updates-view";
 export function UpdatesPage() {
   const { rows, warnings, busy, checking, check, updateRows } =
     useUpdatesStore();
-  const loaded = useUpdatesStore((s) => s.loaded);
-  const error = useUpdatesStore((s) => s.error);
+  const read = useUpdatesStore((s) => s.read);
   // Update all holds on exactly what it would act on, so the button and
   // updateRows answer to one predicate: any visible row about to be
   // replaced, by an overview-producing read or by a flip settling in its
@@ -58,7 +57,7 @@ export function UpdatesPage() {
   const unconfirmed = useUpdatesStore((s) =>
     visibleUpdates(s.rows).some((row) => rowUnsettled(s, row)),
   );
-  const load = useUpdatesStore((s) => s.load);
+  const load = useUpdatesStore((s) => s.reload);
   const lastFetched = useUpdatesStore((s) => s.lastFetched);
   // One choice for every table on the page; the `…` menu lives on the
   // main table, or on the muted one when it is the only table drawn.
@@ -86,8 +85,7 @@ export function UpdatesPage() {
   const lastChecked = lastCheckedLabel(lastFetched, now);
 
   const beforeList = updatesBeforeList({
-    loaded,
-    error,
+    read,
     empty,
     checking,
     lastChecked,
@@ -113,7 +111,7 @@ export function UpdatesPage() {
             {/* A failed check always leaves its retry reachable: with no
                 visible rows but hidden ones or warnings keeping the page
                 on, this button is the only way to try again. */}
-            {visible.length > 0 || error !== null ? (
+            {visible.length > 0 || read.error !== null ? (
               <Button
                 size="sm"
                 variant="outline"
@@ -146,17 +144,17 @@ export function UpdatesPage() {
           {/* Rows kept from before a failed check stay on screen — right —
               but headed as what they are: the last read that answered, not
               the current standing. */}
-          {error !== null ? (
+          {read.error !== null ? (
             <StatusNote
               tone="warning"
               title={UPDATES_UNCONFIRMED_TITLE}
               className="mb-6"
             >
-              {error}
+              {read.error}
             </StatusNote>
           ) : null}
           {visible.length === 0 ? (
-            error === null ? (
+            read.error === null ? (
               <EmptyState icon={CheckCircle2} title={UPDATES_EMPTY}>
                 {UPDATES_EMPTY_BODY}
               </EmptyState>

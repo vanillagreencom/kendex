@@ -45,7 +45,7 @@ export function Sidebar() {
   // A failed check keeps the last rows, so any count shown is last-known;
   // the badge wears the warning tone for it. With no rows at all, "?" is
   // the honest number: absence would read as "nothing to update".
-  const updatesUnchecked = useUpdatesStore((s) => s.error !== null);
+  const updatesUnchecked = useUpdatesStore((s) => s.read.error !== null);
 
   // The shortcut lives in the always-mounted chrome so "/" works on every
   // page, not only the one holding the search box.

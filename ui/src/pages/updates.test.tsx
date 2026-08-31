@@ -25,8 +25,10 @@ const esc = (copy: string) => copy.replace(/'/g, "&#x27;");
 // left behind.
 const stub = vi.hoisted(() => ({
   rows: [] as unknown[],
-  loaded: true,
-  error: null as string | null,
+  read: { status: "landed", error: null } as {
+    status: "pending" | "landed" | "failed";
+    error: string | null;
+  },
   lastFetched: null as number | null,
 }));
 
@@ -39,10 +41,10 @@ vi.mock("@/stores/updates", async (importOriginal) => {
       warnings: [],
       busy: false,
       checking: false,
-      loaded: stub.loaded,
-      error: stub.error,
+      read: stub.read,
+      pendingFollows: [],
       lastFetched: stub.lastFetched,
-      load: async () => {},
+      reload: async () => {},
     };
     return selector ? selector(state) : state;
   };
@@ -51,8 +53,7 @@ vi.mock("@/stores/updates", async (importOriginal) => {
 
 beforeEach(() => {
   stub.rows = [];
-  stub.loaded = true;
-  stub.error = null;
+  stub.read = { status: "landed", error: null };
   stub.lastFetched = null;
 });
 
@@ -65,15 +66,14 @@ const secondsAgo = (ago: number) => Math.floor(Date.now() / 1000) - ago;
 // assert the very thing kendex just said it could not verify.
 describe("the Updates page across its read states", () => {
   it("says it is checking before the first read answers", () => {
-    stub.loaded = false;
+    stub.read = { status: "pending", error: null };
     const html = renderToStaticMarkup(<UpdatesPage />);
     expect(html).toContain(UPDATES_CHECKING);
     expect(html).not.toContain(UPDATES_EMPTY);
   });
 
   it("says the check failed and offers the retry, not up-to-dateness", () => {
-    stub.loaded = false;
-    stub.error = "no network";
+    stub.read = { status: "failed", error: "no network" };
     const html = renderToStaticMarkup(<UpdatesPage />);
     expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
     expect(html).toContain("no network");
@@ -87,8 +87,7 @@ describe("the Updates page across its read states", () => {
 
   it("heads rows kept from a better read with the stale note", () => {
     stub.rows = [updateRow("gh", null)];
-    stub.loaded = false;
-    stub.error = "no network";
+    stub.read = { status: "failed", error: "no network" };
     const html = renderToStaticMarkup(<UpdatesPage />);
     expect(html).toContain(UPDATES_UNCONFIRMED_TITLE);
     expect(html).toContain("no network");
@@ -107,8 +106,7 @@ describe("the Updates page across its read states", () => {
   // page: the stale note and error with no way to try again anywhere.
   it("keeps the retry reachable when only hidden rows remain", () => {
     stub.rows = [updateRow("gh", null, { ignored: true })];
-    stub.loaded = false;
-    stub.error = "no network";
+    stub.read = { status: "failed", error: "no network" };
     const html = renderToStaticMarkup(<UpdatesPage />);
     expect(html).toContain(UPDATES_UNCONFIRMED_TITLE);
     expect(html).toContain(CHECK_FOR_UPDATES_LABEL);
@@ -124,8 +122,7 @@ describe("the Updates page across its read states", () => {
   // waits for a check that succeeds, like the per-row actions.
   it("holds Update all over rows a failed check left behind", () => {
     stub.rows = [updateRow("one", null), updateRow("two", null)];
-    stub.loaded = false;
-    stub.error = "no network";
+    stub.read = { status: "failed", error: "no network" };
     const html = renderToStaticMarkup(<UpdatesPage />);
     expect(html).toMatch(
       new RegExp(`<button[^>]*disabled=""[^>]*>${UPDATE_ALL_LABEL}<`),

@@ -27,7 +27,7 @@ export function useCustomizedHere(
   const settings = useEditorStore((s) => s.savedSettings);
   const edits = useEditorStore((s) => s.settingsEdits);
   const rows = useUpdatesStore((s) => s.rows);
-  const updatesLoaded = useUpdatesStore((s) => s.loaded);
+  const updatesLoaded = useUpdatesStore((s) => s.read.status === "landed");
   return useMemo(
     () =>
       customizedHere(

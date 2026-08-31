@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { commands, type PackageView, type Scope } from "@/bindings";
 import { MarkdownView } from "@/components/markdown-view";
 import { AvailableAside } from "@/components/marketplaces/available-aside";
@@ -17,7 +17,6 @@ import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
-import { latestOnly } from "@/lib/latest";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { catalogKey, useMarketplacesStore } from "@/stores/marketplaces";
@@ -54,23 +53,24 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   });
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  // The address can change under an in-flight read — a repository page
-  // carrying on as the subscription it just gained — and the older answer
-  // must not land on top of the newer one.
-  const latest = useRef(latestOnly());
 
   useEffect(() => {
     if (!ready) return;
+    // The address can change under an in-flight read — a repository page
+    // carrying on as the subscription it just gained — and the older
+    // answer must not land on top of the newer one.
+    let current = true;
     setView(null);
     setError(null);
     setSelectedFile(null);
-    void latest
-      .current(commands.marketplacePackagePreview(catalog, kind, name))
-      .then((r) => {
-        if (!r) return;
-        if (r.status === "ok") setView(r.data);
-        else setError(r.error);
-      });
+    void commands.marketplacePackagePreview(catalog, kind, name).then((r) => {
+      if (!current) return;
+      if (r.status === "ok") setView(r.data);
+      else setError(r.error);
+    });
+    return () => {
+      current = false;
+    };
   }, [catalog, ready, kind, name]);
 
   const Icon = kindIcon(kind);
