@@ -94,6 +94,60 @@ eq "$(gh api repos/owner/repo/labels/other)" '[]' \
 eq "$(gh api repos/owner/repo/labels/bug)" '{"name":"bug"}' \
   "the named path still wins over the one-word fallback"
 
+echo "=== one call, one key: an unstaged invocation is never answered ==="
+
+# The key a call resolves to has to name that call and no other. Two shapes
+# collided while the words went into the key unencoded: the two-word join made
+# `api user` and the one-word `api-user` the same key, and a `/` written as
+# `%` made `api a/b` and `api 'a%b'` the same key. Either collision serves a
+# staged answer to a call nobody staged, which is the fail-open the converted
+# suites came here to escape.
+gh_stub_reset
+if out="$(gh api-user 2>&1)"; then
+  bad "the one-word api-user was answered" "with the seeded api user answer: $out"
+else
+  ok "must-fail: staging api user does not answer a bare api-user"
+fi
+# The control: the seeded answer still reaches the call it was staged for, so
+# the refusal above is about the one-word spelling and not about the seeding
+# having gone missing.
+eq "$(gh api user)" "test-user" "must-fail control: api user still answers"
+
+gh_stub_answer 'api-a/b' 'slashed'
+if out="$(gh api 'a%b' 2>&1)"; then
+  bad "a percent path was answered" "with the staged api a/b answer: $out"
+else
+  ok "must-fail: staging api a/b does not answer api 'a%b'"
+fi
+eq "$(gh api 'a/b')" "slashed" "must-fail control: api a/b still answers"
+# And the percent path answers once staged under its own key, so the refusal
+# is about the key and not about `%` being unstageable.
+gh_stub_answer 'api-a%b' 'percent'
+eq "$(gh api 'a%b')" "percent" "the percent path answers under its own key"
+eq "$(gh api 'a/b')" "slashed" "the slashed path keeps its own answer"
+
+echo "=== the stub and the staging helpers derive one key ==="
+
+# The stub resolves what the helpers stage only while both spell a call the
+# same way, and the two spellings live in two files. The refusal names the key
+# the stub derived, so they can be compared rather than assumed.
+gh_stub_reset
+stub_key() { # stub_key ARGV... — the key the stub derives for this call
+  local out
+  out="$(gh "$@" 2>&1)" && return 1
+  out="${out#*nothing staged for }"
+  printf '%s' "${out%% (argv:*}"
+}
+same_key() { # same_key VERB ARGV... — the helpers' key is the stub's key
+  local verb="$1"
+  shift
+  eq "$(stub_key "$@")" "$(_gh_stub_key "$verb")" "one key for $verb"
+}
+same_key pr-merge pr merge 42 --squash
+same_key api-repos/o/r/pulls/1 api repos/o/r/pulls/1
+same_key repo-set-default repo set-default
+same_key 'api-a%b' api 'a%b'
+
 echo "=== a sequence answers each call once ==="
 
 gh_stub_answer_seq api-graphql 'page-one'
