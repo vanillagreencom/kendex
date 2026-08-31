@@ -142,7 +142,7 @@ fn a_manifest_write_ends_in_one_terminator_and_settles() {
         },
     )
     .unwrap();
-    apply::execute(&w.env, &report.plan, None).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 
     let written = fs::read_to_string(&manifest_path).unwrap();
     assert!(written.contains("[skills.gh]"), "{written}");

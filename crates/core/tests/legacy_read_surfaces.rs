@@ -65,7 +65,7 @@ fn world() -> World {
         root: project.clone(),
     };
     let report = kendex_core::engine::audit(&env, &scope).unwrap();
-    kendex_core::apply::execute(&env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&env, &report.plan).unwrap();
 
     World {
         env,

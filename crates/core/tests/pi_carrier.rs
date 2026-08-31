@@ -246,7 +246,7 @@ fn a_registration_moved_to_another_event_is_never_doubled() {
     register_carrier(&w.project.join(".pi"));
     declare_hook(&w, "PreToolUse");
     let report = audit(&w.env, &scope(&w)).unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     let registry = w.project.join(".pi/kendex/hooks.json");
     let installed = fs::read_to_string(&registry).unwrap();
@@ -269,7 +269,7 @@ fn a_registration_moved_to_another_event_is_never_doubled() {
         row.detail
     );
 
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     let after = fs::read_to_string(&registry).unwrap();
     assert_eq!(
         after.matches("guard.sh").count(),
@@ -288,7 +288,7 @@ fn a_command_registered_twice_holds_rather_than_adding_a_third() {
     register_carrier(&w.project.join(".pi"));
     declare_hook(&w, "PreToolUse");
     let report = audit(&w.env, &scope(&w)).unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     let registry = w.project.join(".pi/kendex/hooks.json");
     let installed = fs::read_to_string(&registry).unwrap();
@@ -308,7 +308,7 @@ fn a_command_registered_twice_holds_rather_than_adding_a_third() {
         .unwrap_or_else(|| panic!("no row for the doubled command: {:?}", report.drift));
     assert!(row.detail.contains("hooks.json"), "{}", row.detail);
 
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(&registry)
             .unwrap()
@@ -336,7 +336,7 @@ fn the_older_layout_beside_the_root_is_left_exactly_where_it_is() {
     register_carrier(&w.project.join(".pi"));
     declare_hook(&w, "PreToolUse");
     let report = audit(&w.env, &scope(&w)).unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     // Put the installation back where an older kendex kept it: script and
     // registry beside the root, with kendex's own segment gone.
@@ -352,7 +352,7 @@ fn the_older_layout_beside_the_root_is_left_exactly_where_it_is() {
 
     // The refresh renders the hook under `kendex/` and stops there.
     let report = audit(&w.env, &scope(&w)).unwrap();
-    kendex_core::apply::execute(&w.env, &report.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert!(home.join("hooks/guard.sh").is_file());
     assert!(
         fs::read_to_string(home.join("hooks.json"))
@@ -374,7 +374,7 @@ fn the_older_layout_beside_the_root_is_left_exactly_where_it_is() {
         false,
     )
     .unwrap();
-    kendex_core::apply::execute(&w.env, &removal.plan, None).unwrap();
+    kendex_core::apply::execute(&w.env, &removal.plan).unwrap();
     assert!(
         !home.join("hooks/guard.sh").exists(),
         "removal takes what this build wrote"
