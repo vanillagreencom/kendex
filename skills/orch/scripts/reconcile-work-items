@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Usage: reconcile-work-items
+#
 # reconcile-work-items — report tracker state the workflows wrote once and
 # never re-read. READ-ONLY: prints findings, mutates nothing; the caller
 # decides what to fix.
@@ -23,14 +25,33 @@
 #                         to silence
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SCRIPT_DIR
+
+print_usage() {
+  sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'
+}
+
+# `.env.local` is sourced as shell, so a help request must be answered before
+# the loader runs. This command takes no option and no operand, so every
+# argument position is a help request or nothing at all.
+for _arg in "$@"; do
+  case "$_arg" in
+  --help | -h | help)
+    print_usage
+    exit 0
+    ;;
+  esac
+done
+unset _arg
+
 config_error() {
   echo "::error::reconcile-work-items: $*" >&2
   exit 2
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || config_error "not inside a git repository"
+export REPO_ROOT
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$REPO_ROOT"

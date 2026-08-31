@@ -6,7 +6,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SCRIPT_DIR
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+export PROJECT_ROOT
 
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
@@ -203,7 +205,10 @@ ON_TIMEOUT_FLAG=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -h|--help) print_usage; exit 0 ;;
+    # The bare word too, so the form a caller learned on a sibling orch CLI
+    # answers here rather than reaching the auth ladder. `help` is not a PR
+    # number, so nothing legitimate is shadowed.
+    -h|--help|help) print_usage; exit 0 ;;
     --json) JSON_OUTPUT=true; shift ;;
     --resolve-mode) RESOLVE_MODE=true; shift ;;
     --mode)

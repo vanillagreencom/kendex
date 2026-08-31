@@ -5,13 +5,9 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+export PROJECT_ROOT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/kendex-env.sh
-source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
-
-STATE_DIR="${ORCH_STATE_DIR:-tmp}"
-STATE_PREFIX="workflow-state"
+export SCRIPT_DIR
 
 get_state_file() {
     local issue_id="$1"
@@ -617,34 +613,76 @@ Dependencies:
 EOF
 }
 
-# Global options may precede the subcommand. --state-dir <path> (or
-# --state-dir=<path>) overrides the state directory for EVERY subcommand and
-# takes precedence over ORCH_STATE_DIR (which stays supported as a fallback).
-# Prefer this flag from worktree sessions: a plain flag is classifier-safe under
-# Codex approval=never, whereas an `ORCH_STATE_DIR=… workflow-state …`
+# The one parser for the global options that may precede the subcommand, and
+# for the help forms. --state-dir <path> (or --state-dir=<path>) overrides the
+# state directory for EVERY subcommand and takes precedence over
+# ORCH_STATE_DIR (which stays supported as a fallback). Prefer this flag from
+# worktree sessions: a plain flag is classifier-safe under Codex
+# approval=never, whereas an `ORCH_STATE_DIR=… workflow-state …`
 # env-assignment prefix is rejected as a flagged command shape.
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --state-dir)
-            if [[ $# -lt 2 ]]; then
-                echo "Error: --state-dir requires a path argument" >&2
-                exit 2
-            fi
-            STATE_DIR="$2"
-            shift 2
-            ;;
-        --state-dir=*)
-            STATE_DIR="${1#--state-dir=}"
-            shift
-            ;;
-        *)
-            break
-            ;;
-    esac
-done
+#
+# An EMPTY value is rejected, not read as absent: `--state-dir "$VAR"` with VAR
+# unset must name the mistake, not write orch state where nobody asked.
+parse_global_opts() {
+    STATE_DIR_FLAG=""
+    GLOBAL_OPTS=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --state-dir)
+                if [[ $# -lt 2 || -z "$2" ]]; then
+                    echo "Error: --state-dir requires a path argument" >&2
+                    exit 2
+                fi
+                STATE_DIR_FLAG="$2"
+                GLOBAL_OPTS=$((GLOBAL_OPTS + 2))
+                shift 2
+                ;;
+            --state-dir=*)
+                STATE_DIR_FLAG="${1#--state-dir=}"
+                if [[ -z "$STATE_DIR_FLAG" ]]; then
+                    echo "Error: --state-dir requires a path argument" >&2
+                    exit 2
+                fi
+                GLOBAL_OPTS=$((GLOBAL_OPTS + 1))
+                shift
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
 
-# Main dispatch
-case "${1:-help}" in
+    case "${1:-help}" in
+        help|--help|-h) cmd_help; exit 0 ;;
+    esac
+}
+
+# `.env.local` is sourced as shell, so help is answered before the loader runs:
+# the dry run is the real parser in a subshell, so no value parsed from the
+# command line exists for the loader's generic [env] handling to clobber, and
+# 9 is the only status meaning it reached the end.
+parse_rc=0
+( parse_global_opts "$@"; exit 9 ) || parse_rc=$?
+[[ "$parse_rc" -eq 9 ]] || exit "$parse_rc"
+unset parse_rc
+
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+
+# Parsed only now, so the flag the caller passed outranks every project file.
+parse_global_opts "$@"
+shift "$GLOBAL_OPTS"
+STATE_DIR="${STATE_DIR_FLAG:-${ORCH_STATE_DIR:-tmp}}"
+# Not configurable at all, and so resolved here rather than above the loader,
+# which would let a settings [env] key rename the state file: worktree-push
+# derives its state key by stripping this exact literal, so a renamed file is
+# gate state the rest of the flow cannot find.
+STATE_PREFIX="workflow-state"
+
+# Main dispatch. The help case above answered an absent or empty subcommand,
+# so $1 is set and non-empty here.
+case "$1" in
     init)      shift; cmd_init "$@" ;;
     get)       shift; cmd_get "$@" ;;
     update)    shift; cmd_update "$@" ;;
@@ -659,6 +697,5 @@ case "${1:-help}" in
     new-round-id) shift; cmd_new_round_id "$@" ;;
     path)      shift; cmd_path "$@" ;;
     exists)    shift; cmd_exists "$@" ;;
-    help|--help|-h) cmd_help ;;
     *) echo "Unknown command: $1" >&2; cmd_help >&2; exit 1 ;;
 esac

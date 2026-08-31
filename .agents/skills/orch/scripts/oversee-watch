@@ -67,63 +67,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
-# shellcheck source=lib/kendex-env.sh
-source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
-# shellcheck source=lib/gh-auth.sh
-source "$SCRIPT_DIR/lib/gh-auth.sh"
-# shellcheck source=lib/lane-claims.sh
-source "$SCRIPT_DIR/lib/lane-claims.sh"
-# shellcheck source=lib/merge-queue-events.sh
-source "$SCRIPT_DIR/lib/merge-queue-events.sh"
-PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
-PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
-
-# Every pane predicate lives here, one line each, matched with `grep -E`
-# against pane_below_last_turn's slice — never the whole capture.
-# A dialog waiting on an answer: the selected numbered row, drawn with each
-# harness's marker, and Claude Code's question and key hints.
-QUESTION_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
-# The account is spent. Claude Code opens the banner with "You've hit your
-# <bucket> limit" / "You've reached your…" and points at /usage-credits; Codex
-# prints "Usage limit reached" and its out-of-credits wording. `.` stands in
-# for the apostrophe: ASCII in the binaries, typographic once rendered.
-USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
-# A turn in flight: the interrupt hint (both harnesses), the hint shown while
-# a foreground shell runs, or the streaming token counter of the status line.
-WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
-# The marker each harness draws at column 0 for a submitted user message
-# echoed into the transcript AND for the composer the lane sits at: Claude
-# Code `❯`, Codex `›`. Spelled as an alternation of literals and NEVER as a
-# bracket expression: a bracket expression holding a multibyte character is a
-# set of its BYTES on every awk without multibyte support — mawk, one-true-awk
-# under LC_ALL=C, gawk under LC_ALL=C — where `[❯›]` matches any line opening
-# with an E2-lead character, which is most of a transcript.
-PANE_MARKER_RE='^❯|^›'
-# The live input a lane is sitting at, as opposed to a turn it already took:
-# one signature per harness, both measured off a running session.
-#   Claude Code draws its composer as the marker then U+00A0, draft or not,
-#   and indents its dialog rows, so only the composer reaches column 0.
-#   Codex draws its composer, its placeholder, its draft AND its selected
-#   dialog row all as the marker, a blank and text — the same shape as a turn —
-#   and always draws one of them below the transcript. So every Codex screen
-#   ends in a live-input marker line, and its marker alone is the signature.
-# The last marker line is the live input when it carries either signature;
-# pane_below_last_turn holds the rest of the rule.
-# Byte escapes, never `\u`: bash leaves a `\u` escape unexpanded in the C
-# locale, and an awk that does not expand one either then matches nothing.
-# gawk does expand it, so no test on a gawk runner can catch that spelling.
-CLAUDE_COMPOSER_RE=$'^\xe2\x9d\xaf\xc2\xa0'
-CODEX_MARKER_RE='^›'
-
-INTERVAL=240
-MAX_LOOPS=25
-SINCE=""
-REPO=""
-ITEMS=()
-LANES=()
+export SCRIPT_DIR
 
 usage() {
   cat <<'USAGE'
@@ -229,23 +173,106 @@ USAGE
 die() { echo "oversee-watch: $*" >&2; exit 2; }
 need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die "$1 requires a value"; }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
-    --interval=*) INTERVAL="${1#--interval=}"; shift ;;
-    --max-loops) need_val "$@"; MAX_LOOPS="$2"; shift 2 ;;
-    --max-loops=*) MAX_LOOPS="${1#--max-loops=}"; shift ;;
-    --since) need_val "$@"; SINCE="$2"; shift 2 ;;
-    --since=*) SINCE="${1#--since=}"; shift ;;
-    --item) need_val "$@"; ITEMS+=("$2"); shift 2 ;;
-    --item=*) ITEMS+=("${1#--item=}"); shift ;;
-    --repo) need_val "$@"; REPO="$2"; shift 2 ;;
-    --repo=*) REPO="${1#--repo=}"; shift ;;
-    --help|-h) usage; exit 0 ;;
-    -*) usage >&2; die "unknown option '$1'" ;;
-    *) LANES+=("$1"); shift ;;
-  esac
-done
+# The one parser. It answers a help request and a bad option itself, so the dry
+# run below decides those before any configuration is read, off these arms and
+# no second copy of the option arities.
+parse_argv() {
+  # Every default this parser owns is set HERE, never above the loader: the
+  # settings [env] table assigns any name and .env.local is sourced as shell, so
+  # a default above the load is whatever the checkout left there for every
+  # option the caller did not pass. Settings reach the script through their own
+  # OVERSEE_WATCH_* names, resolved after the load.
+  # ITEMS and LANES are the sharpest case: the loop APPENDS to them.
+  INTERVAL=240
+  MAX_LOOPS=25
+  SINCE=""
+  REPO=""
+  ITEMS=()
+  LANES=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
+      --interval=*) INTERVAL="${1#--interval=}"; need_val --interval "$INTERVAL"; shift ;;
+      --max-loops) need_val "$@"; MAX_LOOPS="$2"; shift 2 ;;
+      --max-loops=*) MAX_LOOPS="${1#--max-loops=}"; need_val --max-loops "$MAX_LOOPS"; shift ;;
+      --since) need_val "$@"; SINCE="$2"; shift 2 ;;
+      --since=*) SINCE="${1#--since=}"; need_val --since "$SINCE"; shift ;;
+      --item) need_val "$@"; ITEMS+=("$2"); shift 2 ;;
+      --item=*) need_val --item "${1#--item=}"; ITEMS+=("${1#--item=}"); shift ;;
+      --repo) need_val "$@"; REPO="$2"; shift 2 ;;
+      --repo=*) REPO="${1#--repo=}"; need_val --repo "$REPO"; shift ;;
+      # The bare word too: `help` is an answered form on the sibling orch CLIs,
+      # and here it would otherwise be read as a lane window name.
+      --help | -h | help) usage; exit 0 ;;
+      -*) usage >&2; die "unknown option '$1'" ;;
+      *) LANES+=("$1"); shift ;;
+    esac
+  done
+}
+
+# `.env.local` is sourced as shell, so help is answered before the loader runs:
+# the dry run is the real parser in a subshell, so nothing it assigns survives
+# to be clobbered, and 9 is the only status meaning it reached the end.
+parse_rc=0
+( parse_argv "$@"; exit 9 ) || parse_rc=$?
+[[ "$parse_rc" -eq 9 ]] || exit "$parse_rc"
+unset parse_rc
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+export PROJECT_ROOT
+SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
+export SKILLS_DIR
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+# shellcheck source=lib/lane-claims.sh
+source "$SCRIPT_DIR/lib/lane-claims.sh"
+# shellcheck source=lib/merge-queue-events.sh
+source "$SCRIPT_DIR/lib/merge-queue-events.sh"
+PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
+PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
+
+# Every pane predicate lives here, one line each, matched with `grep -E`
+# against pane_below_last_turn's slice — never the whole capture.
+# A dialog waiting on an answer: the selected numbered row, drawn with each
+# harness's marker, and Claude Code's question and key hints.
+QUESTION_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
+# The account is spent. Claude Code opens the banner with "You've hit your
+# <bucket> limit" / "You've reached your…" and points at /usage-credits; Codex
+# prints "Usage limit reached" and its out-of-credits wording. `.` stands in
+# for the apostrophe: ASCII in the binaries, typographic once rendered.
+USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
+# A turn in flight: the interrupt hint (both harnesses), the hint shown while
+# a foreground shell runs, or the streaming token counter of the status line.
+WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
+# The marker each harness draws at column 0 for a submitted user message
+# echoed into the transcript AND for the composer the lane sits at: Claude
+# Code `❯`, Codex `›`. Spelled as an alternation of literals and NEVER as a
+# bracket expression: a bracket expression holding a multibyte character is a
+# set of its BYTES on every awk without multibyte support — mawk, one-true-awk
+# under LC_ALL=C, gawk under LC_ALL=C — where `[❯›]` matches any line opening
+# with an E2-lead character, which is most of a transcript.
+PANE_MARKER_RE='^❯|^›'
+# The live input a lane is sitting at, as opposed to a turn it already took:
+# one signature per harness, both measured off a running session.
+#   Claude Code draws its composer as the marker then U+00A0, draft or not,
+#   and indents its dialog rows, so only the composer reaches column 0.
+#   Codex draws its composer, its placeholder, its draft AND its selected
+#   dialog row all as the marker, a blank and text — the same shape as a turn —
+#   and always draws one of them below the transcript. So every Codex screen
+#   ends in a live-input marker line, and its marker alone is the signature.
+# The last marker line is the live input when it carries either signature;
+# pane_below_last_turn holds the rest of the rule.
+# Byte escapes, never `\u`: bash leaves a `\u` escape unexpanded in the C
+# locale, and an awk that does not expand one either then matches nothing.
+# gawk does expand it, so no test on a gawk runner can catch that spelling.
+CLAUDE_COMPOSER_RE=$'^\xe2\x9d\xaf\xc2\xa0'
+CODEX_MARKER_RE='^›'
+
+parse_argv "$@"
 
 [[ "$INTERVAL" =~ ^[0-9]+$ ]] || die "--interval must be a non-negative integer (got '$INTERVAL')"
 [[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die "--max-loops must be a positive integer (got '$MAX_LOOPS')"

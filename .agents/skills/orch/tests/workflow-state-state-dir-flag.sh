@@ -95,5 +95,52 @@ ORCH_STATE_DIR="$sd_env_only" "$WS" init issue-env \
 assert_file_exists "$sd_env_only/workflow-state-issue-env.json" \
   "ORCH_STATE_DIR still works without --state-dir (back-compat)"
 
+# A project file must never outrank the flag. The loader assigns any name a
+# settings [env] table or a sourced .env.local gives it, so parsing the command
+# line BEFORE the load left whatever the parser stored open to being replaced by
+# configuration — an argument the caller passed directly, losing to a file.
+#
+# One source per fixture. With both present the .env.local value wins the
+# loader's own precedence and lands in ITS directory, so a settings-file
+# assertion sharing that fixture would pass while proving nothing.
+check_config_cannot_redirect() { # LABEL REPO TAG
+  local label="$1" repo="$2" tag="$3"
+  local flagged="$TMP_ROOT/wins-$tag" hijack="$TMP_ROOT/hijacked-$tag"
+  (cd "$repo" && env -u ORCH_STATE_DIR "$WS" --state-dir "$flagged" init "issue-$tag" \
+    --worktree "$REPO_ROOT" --branch "issue-$tag") >/dev/null
+  assert_file_exists "$flagged/workflow-state-issue-$tag.json" \
+    "--state-dir wins over a STATE_DIR_FLAG $label defines"
+  assert_file_absent "$hijack/workflow-state-issue-$tag.json" \
+    "a STATE_DIR_FLAG in $label never redirects the write"
+}
+
+settings_repo="$TMP_ROOT/cfg-settings"
+mkdir -p "$settings_repo"
+git -C "$settings_repo" init -q
+printf '[env]\nSTATE_DIR_FLAG = "%s/hijacked-settings"\n' "$TMP_ROOT" >"$settings_repo/kendex.settings.toml"
+check_config_cannot_redirect "a settings [env] table" "$settings_repo" settings
+
+dotenv_repo="$TMP_ROOT/cfg-dotenv"
+mkdir -p "$dotenv_repo"
+git -C "$dotenv_repo" init -q
+printf 'STATE_DIR_FLAG=%s/hijacked-dotenv\n' "$TMP_ROOT" >"$dotenv_repo/.env.local"
+check_config_cannot_redirect ".env.local" "$dotenv_repo" dotenv
+
+# An EMPTY value is the caller naming no directory — `--state-dir "$VAR"` with
+# VAR unset. Treating it as absent silently writes orch state somewhere the
+# caller did not name, so both spellings refuse it the way the sibling orch
+# CLIs refuse an empty option value.
+for spelling in spaced equals; do
+  rc=0
+  if [[ "$spelling" == spaced ]]; then
+    out="$(env -u ORCH_STATE_DIR "$WS" --state-dir "" path issue-empty 2>&1)" || rc=$?
+  else
+    out="$(env -u ORCH_STATE_DIR "$WS" --state-dir= path issue-empty 2>&1)" || rc=$?
+  fi
+  assert_eq "$rc" "2" "--state-dir with an empty value ($spelling form) exits 2"
+  assert_eq "$out" "Error: --state-dir requires a path argument" \
+    "--state-dir with an empty value ($spelling form) names the missing path"
+done
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

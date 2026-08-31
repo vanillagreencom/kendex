@@ -15,24 +15,39 @@
 # here would be the second copy that table exists to prevent.
 set -euo pipefail
 
+# Help is answered before any project configuration is read: .env.local is
+# sourced as shell, so a help form that reaches the loader runs whatever the
+# checkout put there. Position 1 only — the second operand is the DEFAULT
+# VALUE, and a flag-shaped value stays data.
+case "${1:-}" in
+help | --help | -h)
+  sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'
+  exit 0
+  ;;
+esac
+
 if [[ $# -ne 2 ]]; then
   echo "Usage: orch-env VAR_NAME DEFAULT" >&2
   exit 2
 fi
 
-VAR_NAME="$1"
-DEFAULT="$2"
-
-if ! [[ "$VAR_NAME" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-  echo "orch-env: invalid variable name: $VAR_NAME" >&2
+if ! [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+  echo "orch-env: invalid variable name: $1" >&2
   exit 2
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SCRIPT_DIR
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+export PROJECT_ROOT
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
+
+# Read only now: assigned above the loader, the NAME to look up would itself be
+# settable from the configuration being looked up.
+VAR_NAME="$1"
+DEFAULT="$2"
 
 value="${!VAR_NAME-}"
 [[ -n "$value" ]] || value="$DEFAULT"

@@ -11,6 +11,11 @@
 # dispatch suite. The forms differ per CLI and the tokens differ, so the table
 # below is what varies; everything around it was the same file over again.
 #
+# The table is also the coverage boundary, and nothing derives it: a CLI no row
+# names is unchecked, whatever skill ships it, and the gap is invisible because
+# every row that IS here still passes. Adding a CLI to this table is part of
+# shipping it.
+#
 # Every row runs against a staged copy of the skill inside a fixture git
 # repository whose .env.local touches a marker. The scripts resolve their
 # project root two ways — from the working directory, and from the script's
@@ -74,7 +79,36 @@ linear:scripts/commands/issues.sh:Issue Operations:get --help
 linear:scripts/commands/issues.sh:Issue Operations:validate-completion --help
 linear:scripts/commands/issues.sh:Issue Operations:get KEN-1 --help
 linear:scripts/commands/issues.sh:Issue Operations:list --limit 5 -h
+linear:scripts/linear.sh:Linear GraphQL API CLI:--help
 linear:scripts/linear.sh:Issue Operations:issues --help
+orch:scripts/approval-wait:Usage: approval-wait:--help
+orch:scripts/approval-wait:Usage: approval-wait:-h
+orch:scripts/approval-wait:Usage: approval-wait:help
+orch:scripts/approval-wait:Usage: approval-wait:123 --mode review -h
+orch:scripts/lanes:lanes list [--harness claude|codex|all]:
+orch:scripts/lanes:lanes list [--harness claude|codex|all]:--help
+orch:scripts/lanes:lanes list [--harness claude|codex|all]:-h
+orch:scripts/lanes:lanes list [--harness claude|codex|all]:help
+orch:scripts/lanes:lanes list [--harness claude|codex|all]:list --help
+orch:scripts/lanes:lanes list [--harness claude|codex|all]:pick --harness claude -h
+orch:scripts/open-terminal:Usage: open-terminal:--help
+orch:scripts/open-terminal:Usage: open-terminal:-h
+orch:scripts/open-terminal:Usage: open-terminal:help
+orch:scripts/open-terminal:Usage: open-terminal:KEN-1 --harness claude --help
+orch:scripts/orch-env:Usage: orch-env VAR_NAME DEFAULT:--help
+orch:scripts/orch-env:Usage: orch-env VAR_NAME DEFAULT:-h
+orch:scripts/orch-env:Usage: orch-env VAR_NAME DEFAULT:help
+orch:scripts/oversee-watch:Usage: oversee-watch:--help
+orch:scripts/oversee-watch:Usage: oversee-watch:-h
+orch:scripts/oversee-watch:Usage: oversee-watch:help
+orch:scripts/oversee-watch:Usage: oversee-watch:--repo o/r --item KEN-1 -h
+orch:scripts/reconcile-work-items:Usage: reconcile-work-items:--help
+orch:scripts/reconcile-work-items:Usage: reconcile-work-items:-h
+orch:scripts/reconcile-work-items:Usage: reconcile-work-items:help
+orch:scripts/workflow-state:Usage: workflow-state:--help
+orch:scripts/workflow-state:Usage: workflow-state:-h
+orch:scripts/workflow-state:Usage: workflow-state:help
+orch:scripts/workflow-state:Usage: workflow-state:--state-dir tmp --help
 second-opinion:scripts/second-opinion:Cross-model second opinion:--help
 second-opinion:scripts/second-opinion:Cross-model second opinion:-h
 second-opinion:scripts/second-opinion:Cross-model second opinion:review --help
@@ -94,9 +128,13 @@ DATA_ROWS='
 github:scripts/github.sh:Find PR Comment:find-comment 42 --pattern -h
 github:scripts/github.sh:Post PR-Level Comment:post-comment 42 --body -h
 linear:scripts/commands/issues.sh:Issue Operations:create --title -h
+orch:scripts/lanes:lanes list [--harness claude|codex|all]:list --harness -h
+orch:scripts/open-terminal:Usage: open-terminal:--harness -h
+orch:scripts/oversee-watch:Usage: oversee-watch:--repo -h
+orch:scripts/workflow-state:Usage: workflow-state:get -h
 '
 
-SKILLS="decider github linear second-opinion worktree"
+SKILLS="decider github linear orch second-opinion worktree"
 
 # parse_row ROW — one table row into ROW_SKILL, ROW_SCRIPT, ROW_TOKEN and
 # ROW_ARGS. Both tables and § 3 read their rows through here, so the field
@@ -241,8 +279,84 @@ EOF
   [ -z "$DATA_FAILURES" ]
 }
 
+# check_orch_env_value REPO — orch-env's second operand is the DEFAULT VALUE,
+# so a flag-shaped one stays data. It exits 0 on that form, which DATA_ROWS
+# cannot express (a data row must fail for want of its arguments), so the one
+# CLI whose data half looks like this is asserted here instead.
+ORCH_ENV_FAILURES=""
+check_orch_env_value() {
+  local repo="$1" result out status
+  ORCH_ENV_FAILURES=""
+  result="$(run_row "$repo" orch scripts/orch-env KENDEX_HELP_INERT_UNSET -h)"
+  status="${result##*$'\n'}"
+  out="${result%$'\n'*}"
+  if [ "$status" -ne 0 ]; then
+    ORCH_ENV_FAILURES="orch-env VAR -h: exited $status"
+  elif [ "$out" != "-h" ]; then
+    ORCH_ENV_FAILURES="orch-env VAR -h: printed '$out', not the default value '-h'"
+  elif [ ! -e "$repo/env-executed" ]; then
+    ORCH_ENV_FAILURES="orch-env VAR -h: did not load project configuration, so it did not run the command"
+  fi
+  [ -z "$ORCH_ENV_FAILURES" ]
+}
+
+# check_empty_operand REPO — an empty argv element is an operand like any
+# other, never a marker that swallows the help request behind it. The table
+# cannot carry this: ARGS is split unquoted, so an empty element vanishes
+# before the command sees it.
+#
+# The defect is a SUBSTRING membership test, not a scan as such: the deleted
+# orch lib joined its valued-option names into one space-padded string and
+# asked whether " $arg " appeared in it, which an empty element matches (both
+# sides collapse to spaces) and a multi-token element can match too. A scan
+# that matches with an exact case list does not have that failure —
+# linear/scripts/commands/issues.sh keeps one and gets this case right.
+EMPTY_OPERAND_CLIS='
+orch:scripts/lanes:lanes list [--harness claude|codex|all]
+orch:scripts/open-terminal:Usage: open-terminal
+orch:scripts/oversee-watch:Usage: oversee-watch
+orch:scripts/reconcile-work-items:Usage: reconcile-work-items
+orch:scripts/workflow-state:Usage: workflow-state
+'
+EMPTY_OPERAND_FAILURES=""
+check_empty_operand() {
+  local repo="$1" row skill script token result out status
+  EMPTY_OPERAND_FAILURES=""
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    skill="${row%%:*}"
+    row="${row#*:}"
+    script="${row%%:*}"
+    token="${row#*:}"
+    result="$(run_row "$repo" "$skill" "$script" "" --help)"
+    status="${result##*$'\n'}"
+    out="${result%$'\n'*}"
+    if [ -e "$repo/curl-called" ]; then
+      EMPTY_OPERAND_FAILURES="$EMPTY_OPERAND_FAILURES$skill $script '' --help: reached the network through curl
+"
+    elif [ "$status" -ne 0 ]; then
+      EMPTY_OPERAND_FAILURES="$EMPTY_OPERAND_FAILURES$skill $script '' --help: exited $status
+"
+    elif [ "${out#*"$token"}" = "$out" ]; then
+      EMPTY_OPERAND_FAILURES="$EMPTY_OPERAND_FAILURES$skill $script '' --help: did not print '$token'
+"
+    elif [ -e "$repo/env-executed" ]; then
+      EMPTY_OPERAND_FAILURES="$EMPTY_OPERAND_FAILURES$skill $script '' --help: sourced the project .env.local
+"
+    fi
+  done <<EOF
+$EMPTY_OPERAND_CLIS
+EOF
+  [ -z "$EMPTY_OPERAND_FAILURES" ]
+}
+
 # norepo_rows — § 3's rows, selected out of the table rather than transcribed
-# beside it: the first bare `--help` form each skill carries.
+# beside it: the bare `--help` form of every CLI the table names.
+#
+# Per CLI, not per skill. A skill's help lives in each of its scripts, and one
+# script answering without a repository says nothing about its siblings —
+# reconcile-work-items resolved a repository before answering help while
+# approval-wait, first in orch's rows, did not.
 norepo_rows() {
   local row seen=""
   while IFS= read -r row; do
@@ -250,30 +364,46 @@ norepo_rows() {
     parse_row "$row"
     [ "$ROW_ARGS" = "--help" ] || continue
     case " $seen " in
-    *" $ROW_SKILL "*) continue ;;
+    *" $ROW_SKILL:$ROW_SCRIPT "*) continue ;;
     esac
-    seen="$seen $ROW_SKILL"
+    seen="$seen $ROW_SKILL:$ROW_SCRIPT"
     printf '%s\n' "$row"
   done <<EOF
 $HELP_ROWS
 EOF
 }
 
-# norepo_missing — the skills norepo_rows yields no row for. § 3 scores its
-# whole set with one aggregate ok, so a skill that stops contributing a row
-# leaves § 3 reporting that help works outside a repository over less than
-# SKILLS, with every remaining row still passing. Held to SKILLS the way the
-# table itself is in § 1.
+# table_clis — every distinct SKILL:SCRIPT the table names, in table order.
+table_clis() {
+  local row seen=""
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    parse_row "$row"
+    case " $seen " in
+    *" $ROW_SKILL:$ROW_SCRIPT "*) continue ;;
+    esac
+    seen="$seen $ROW_SKILL:$ROW_SCRIPT"
+    printf '%s\n' "$ROW_SKILL:$ROW_SCRIPT"
+  done <<EOF
+$HELP_ROWS
+EOF
+}
+
+# norepo_missing — the CLIs norepo_rows yields no row for. § 3 scores its whole
+# set with one aggregate ok, so a CLI that stops contributing a row leaves § 3
+# reporting that help works outside a repository over less than the table, with
+# every remaining row still passing. Held to the table the way § 1 holds it to
+# SKILLS.
 norepo_missing() {
-  local s rows="" missing=""
+  local cli rows="" missing=""
   rows="
 $(norepo_rows)" || return 1
-  for s in $SKILLS; do
+  for cli in $(table_clis); do
     case "$rows" in
     *"
-$s:"*) continue ;;
+${cli%%:*}:${cli#*:}:"*) continue ;;
     esac
-    missing="$missing $s"
+    missing="$missing $cli"
   done
   printf '%s' "$missing"
 }
@@ -373,13 +503,25 @@ else
   bad "pr-merge --body --help did not name the invalid option" "$out"
 fi
 
+if check_empty_operand "$REPO"; then
+  ok "an empty argv element is an operand, and the help form behind it still answers"
+else
+  bad "an empty argv element swallowed the help form behind it" "$EMPTY_OPERAND_FAILURES"
+fi
+
+if check_orch_env_value "$REPO"; then
+  ok "orch-env reads a flag-shaped DEFAULT as the value, not as a help request"
+else
+  bad "orch-env read its DEFAULT operand as a help request" "$ORCH_ENV_FAILURES"
+fi
+
 # --- 3. help needs no repository at all ---------------------------------
 NOREPO="$TMP/norepo"
 norepo_gap="$(norepo_missing)"
 if ! stage_tree "$NOREPO"; then
   bad "the no-repository fixture could not be staged"
 elif [ -n "$norepo_gap" ]; then
-  bad "no --help row is selected for:$norepo_gap — § 3 would report success over less than SKILLS"
+  bad "no --help row is selected for:$norepo_gap — § 3 would report success over less than the table"
 elif noroot="$(cd "$NOREPO" && git rev-parse --show-toplevel 2>/dev/null)"; then
   # The precondition, asserted: without it the loop would run every row INSIDE
   # a repository and still report that help works without one.
@@ -463,9 +605,12 @@ plant_value_not_skipped() {
 }
 
 # Help that reaches for a repository before answering — the class § 3 is there
-# to catch, and the one its own fixture cannot prove.
+# to catch, and the one its own fixture cannot prove. Planted on
+# reconcile-work-items, which resolves a repository for its own work one line
+# below its help answer: § 3 selects per CLI precisely so a sibling's clean
+# answer cannot cover for this one.
 plant_repo_required() {
-  local f="$1/.agents/skills/second-opinion/scripts/second-opinion" body=""
+  local f="$1/.agents/skills/orch/scripts/reconcile-work-items" body=""
   [ -f "$f" ] || return 1
   body="$(tail -n +2 "$f")" || return 1
   {
@@ -496,7 +641,36 @@ control "a command index that stops naming itself" plant_missing_token 2
 control "a help form that exits nonzero" plant_nonzero_help 3
 control "an option value the help scan stops skipping" plant_value_not_skipped 4 check_data
 control "help that demands a repository" plant_repo_required 5 check_norepo stage_tree
+# orch-env answers help in position 1 alone, because position 2 is the DEFAULT
+# VALUE. Reading the case one operand along is that rule dropped.
+plant_orch_env_second_operand() {
+  local f="$1/.agents/skills/orch/scripts/orch-env"
+  [ -f "$f" ] || return 1
+  grep -qF 'case "${1:-}" in' "$f" || return 1
+  sed -i.bak 's/case "${1:-}" in/case "${2:-}" in/' "$f" && rm -f "$f.bak" || return 1
+  grep -qF 'case "${2:-}" in' "$f"
+}
+
 control "a script that reaches the network before answering help" plant_curl_call 6
+# An empty argv element read as a consumed option VALUE: the flag behind it is
+# dropped and the command falls through to the loader.
+plant_empty_operand_skip() {
+  local f="$1/.agents/skills/orch/scripts/reconcile-work-items" body=""
+  [ -f "$f" ] || return 1
+  body="$(tail -n +2 "$f")" || return 1
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf '_skip=""\n_kept=()\nfor _a in "$@"; do\n'
+    printf '  if [ -n "$_skip" ]; then _skip=""; continue; fi\n'
+    printf '  if [ -z "$_a" ]; then _skip=1; continue; fi\n'
+    printf '  _kept+=("$_a")\ndone\nset -- ${_kept[@]+"${_kept[@]}"}\n'
+    printf '%s\n' "$body"
+  } >"$f" || return 1
+  grep -q 'if \[ -z "\$_a" \]; then _skip=1' "$f"
+}
+
+control "orch-env answering help off its DEFAULT operand" plant_orch_env_second_operand 7 check_orch_env_value
+control "an empty argv element read as a consumed option value" plant_empty_operand_skip 8 check_empty_operand
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -5,45 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# `|| true` is load-bearing under `set -e`: outside a git repo this command
-# substitution exits non-zero and killed the whole script before argument
-# parsing, so even `--help` died with git's exit 128 and no output. Help and
-# argument validation must not require a repository; the commands that genuinely
-# need one already check $WORKTREE_CLI and report it by name.
-PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
-SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
-# The claim store is shared with `lanes` and `oversee-watch`, which resolve it
-# from the CALLER's checkout — and this script's own root is the checkout it
-# is installed in, which a worktree's `.agents` symlink makes a different one.
-# Writing where the readers do not look would silently defeat the claims.
-CLAIM_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-# shellcheck source=lib/kendex-env.sh
-source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$PROJECT_ROOT"
-# shellcheck source=lib/lane-claims.sh
-source "$SCRIPT_DIR/lib/lane-claims.sh"
-WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
-LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
-GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
-# Bounded seconds per brief-delivery verification pass on tmux lanes.
-TMUX_VERIFY_SECS="${ORCH_TMUX_VERIFY_SECS:-15}"
-# Model, effort, and permission posture are decided per task by the caller at
-# launch time and arrive here as --launch-flags. Nothing in this script, the
-# settings file, or a handoff template pins them: a docs fix and a systems
-# rewrite do not want the same model, and a stored default silently applies
-# yesterday's answer to today's work item.
-LAUNCH_FLAGS=""
-
-TRACKER="linear"
-REPO=""
-TERMINAL_MODE=""
-HARNESS=""
-CMD_TEMPLATE=""
-LANE=""
-LANE_MAX_PCT="${ORCH_LANE_MAX_PCT:-90}"
-LANE_ENV=""
-RELAUNCH=false
-ITEMS=()
+export SCRIPT_DIR
 
 usage() {
   cat <<'USAGE'
@@ -105,29 +67,97 @@ USAGE
 # unbound $2 under nounset.
 need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || { echo "Error: $1 requires a value" >&2; exit 2; }; }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --tracker) need_val "$@"; TRACKER="$2"; shift 2 ;;
-    --tracker=*) TRACKER="${1#--tracker=}"; shift ;;
-    --repo) need_val "$@"; REPO="$2"; shift 2 ;;
-    --repo=*) REPO="${1#--repo=}"; shift ;;
-    --tmux) TERMINAL_MODE="tmux"; shift ;;
-    --ghostty) TERMINAL_MODE="ghostty"; shift ;;
-    --harness) need_val "$@"; HARNESS="$2"; shift 2 ;;
-    --harness=*) HARNESS="${1#--harness=}"; shift ;;
-    --cmd) need_val "$@"; CMD_TEMPLATE="$2"; shift 2 ;;
-    --cmd=*) CMD_TEMPLATE="${1#--cmd=}"; shift ;;
-    --lane) need_val "$@"; LANE="$2"; shift 2 ;;
-    --lane=*) LANE="${1#--lane=}"; shift ;;
-    --lane-max-pct) need_val "$@"; LANE_MAX_PCT="$2"; shift 2 ;;
-    --lane-max-pct=*) LANE_MAX_PCT="${1#--lane-max-pct=}"; shift ;;
-    --launch-flags) need_val "$@"; LAUNCH_FLAGS="$2"; shift 2 ;;
-    --launch-flags=*) LAUNCH_FLAGS="${1#--launch-flags=}"; shift ;;
-    --relaunch) RELAUNCH=true; shift ;;
-    --help|-h) usage; exit 0 ;;
-    *) ITEMS+=("$1"); shift ;;
-  esac
-done
+# The one parser. It answers a help request itself, so the dry run below
+# decides that before any configuration is read, off these arms and no second
+# copy of the option arities.
+parse_argv() {
+  # Every default this parser owns is set HERE, never above the loader: the
+  # settings [env] table assigns any name and .env.local is sourced as shell, so
+  # a default above the load is whatever the checkout left there for every
+  # option the caller did not pass. Settings reach the script through their own
+  # ORCH_* names, resolved after the load.
+  #
+  # Model, effort, and permission posture are decided per task by the caller and
+  # arrive as --launch-flags. Nothing in this script, the settings file, or a
+  # handoff template pins them: a stored default silently applies yesterday's
+  # answer to today's work item.
+  LAUNCH_FLAGS=""
+  TRACKER="linear"
+  REPO=""
+  TERMINAL_MODE=""
+  HARNESS=""
+  CMD_TEMPLATE=""
+  LANE=""
+  LANE_MAX_PCT=""
+  LANE_ENV=""
+  RELAUNCH=false
+  ITEMS=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --tracker) need_val "$@"; TRACKER="$2"; shift 2 ;;
+      --tracker=*) TRACKER="${1#--tracker=}"; need_val --tracker "$TRACKER"; shift ;;
+      --repo) need_val "$@"; REPO="$2"; shift 2 ;;
+      --repo=*) REPO="${1#--repo=}"; need_val --repo "$REPO"; shift ;;
+      --tmux) TERMINAL_MODE="tmux"; shift ;;
+      --ghostty) TERMINAL_MODE="ghostty"; shift ;;
+      --harness) need_val "$@"; HARNESS="$2"; shift 2 ;;
+      --harness=*) HARNESS="${1#--harness=}"; need_val --harness "$HARNESS"; shift ;;
+      --cmd) need_val "$@"; CMD_TEMPLATE="$2"; shift 2 ;;
+      --cmd=*) CMD_TEMPLATE="${1#--cmd=}"; need_val --cmd "$CMD_TEMPLATE"; shift ;;
+      --lane) need_val "$@"; LANE="$2"; shift 2 ;;
+      --lane=*) LANE="${1#--lane=}"; need_val --lane "$LANE"; shift ;;
+      --lane-max-pct) need_val "$@"; LANE_MAX_PCT="$2"; shift 2 ;;
+      --lane-max-pct=*) LANE_MAX_PCT="${1#--lane-max-pct=}"; need_val --lane-max-pct "$LANE_MAX_PCT"; shift ;;
+      --launch-flags) need_val "$@"; LAUNCH_FLAGS="$2"; shift 2 ;;
+      --launch-flags=*) LAUNCH_FLAGS="${1#--launch-flags=}"; need_val --launch-flags "$LAUNCH_FLAGS"; shift ;;
+      --relaunch) RELAUNCH=true; shift ;;
+      # The bare word too, so the form a caller learned on a sibling orch CLI
+      # answers here rather than reaching the loader. `help` is not a work item.
+      --help | -h | help) usage; exit 0 ;;
+      *) ITEMS+=("$1"); shift ;;
+    esac
+  done
+}
+
+# `.env.local` is sourced as shell, so help is answered before the loader runs:
+# the dry run is the real parser in a subshell, so nothing it assigns survives
+# to be clobbered, and 9 is the only status meaning it reached the end.
+parse_rc=0
+( parse_argv "$@"; exit 9 ) || parse_rc=$?
+[[ "$parse_rc" -eq 9 ]] || exit "$parse_rc"
+unset parse_rc
+
+# `|| true` is load-bearing under `set -e`: outside a git repo this command
+# substitution exits non-zero and killed the whole script before argument
+# parsing, so every invocation died with git's exit 128 and no output.
+# Argument validation must not require a repository; the commands that genuinely
+# need one already check $WORKTREE_CLI and report it by name.
+PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+export PROJECT_ROOT
+SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
+export SKILLS_DIR
+# The claim store is shared with `lanes` and `oversee-watch`, which resolve it
+# from the CALLER's checkout — and this script's own root is the checkout it
+# is installed in, which a worktree's `.agents` symlink makes a different one.
+# Writing where the readers do not look would silently defeat the claims.
+CLAIM_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+export CLAIM_ROOT
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+# shellcheck source=lib/lane-claims.sh
+source "$SCRIPT_DIR/lib/lane-claims.sh"
+WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
+LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
+GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
+# Bounded seconds per brief-delivery verification pass on tmux lanes.
+TMUX_VERIFY_SECS="${ORCH_TMUX_VERIFY_SECS:-15}"
+
+parse_argv "$@"
+# The flag wins outright: both its spellings refuse an empty value, so an unset
+# LANE_MAX_PCT here means no flag was passed and the setting decides.
+LANE_MAX_PCT="${LANE_MAX_PCT:-${ORCH_LANE_MAX_PCT:-90}}"
 
 [[ -x "$WORKTREE_CLI" ]] || { echo "Error: worktree CLI not found at $WORKTREE_CLI" >&2; exit 1; }
 [[ ${#ITEMS[@]} -gt 0 ]] || { echo "Error: no work items specified" >&2; exit 1; }

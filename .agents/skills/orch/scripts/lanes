@@ -83,34 +83,22 @@
 set -uo pipefail
 
 PROG="lanes"
+# Exported so the loader cannot reassign it: it snapshots exported names before
+# reading any project file and re-asserts them after, which is how a script says
+# a name is its own and not a setting. A parsed settings [env] key redirecting
+# SCRIPT_DIR would otherwise choose which lib this sources.
+export PROG
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-# shellcheck source=lib/kendex-env.sh
-source "$SCRIPT_DIR/lib/kendex-env.sh"
-# This script runs without errexit, so the loader's refusal must be checked
-# here: continuing past it would select a lane from whatever exported before
-# the bad line — a successful-looking answer from partial configuration.
-kendex_load_project_env "$PROJECT_ROOT" || {
-  echo "$PROG: refusing to run on a rejected settings load (see error above)" >&2
-  exit 1
+export SCRIPT_DIR
+
+print_lanes_usage() {
+	sed -n '/^# Usage:/,/^# Headroom/p' "$0" | sed 's/^# \{0,1\}//'
 }
-# shellcheck source=lib/lane-claims.sh
-source "$SCRIPT_DIR/lib/lane-claims.sh"
-# shellcheck source=lib/lane-context.sh
-source "$SCRIPT_DIR/lib/lane-context.sh"
-# The lib carries the strict mode its other callers run under. This one is
-# deliberately errexit-free — one unreadable lane must not fail the whole
-# inventory — so restore that posture at the seam.
-set +e
 
-CLAUDE_USAGE_URL="${ORCH_LANES_CLAUDE_USAGE_URL:-https://api.anthropic.com/api/oauth/usage}"
-CLAUDE_TOKEN_URL="${ORCH_LANES_CLAUDE_TOKEN_URL:-https://platform.claude.com/v1/oauth/token}"
-CLAUDE_OAUTH_BETA="oauth-2025-04-20"
-CODEX_USAGE_URL="${ORCH_LANES_CODEX_USAGE_URL:-https://chatgpt.com/backend-api/wham/usage}"
-
-# ~5h, with tolerance — Codex reports window durations that vary by account.
-SESSION_WINDOW_S=18000
+print_lanes_index() {
+	sed -n '/^# Usage:/,/^# Options:/p' "$0" | sed 's/^# \{0,1\}//'
+}
 
 die() { printf '%s: %s\n' "$PROG" "$1" >&2; exit 1; }
 
@@ -436,13 +424,6 @@ emit_lane() {
 		  }'
 }
 
-# Live claims are read ONCE per run, before any lane is measured: the pruning
-# read is what keeps the store bounded, and one snapshot keeps every lane's
-# count taken against the same instant.
-LANE_CLAIMS_LIVE=""
-# Non-zero when the claim store could not be read: `list` still reports what
-# it measured, `pick` refuses rather than deciding on an unknown.
-LANE_CLAIMS_RC=0
 
 # Called before `collect_lanes`, never inside it: collect_lanes runs in a
 # command substitution, and a read failure recorded there would die with the
@@ -523,31 +504,97 @@ cmd_pick() {
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
+need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die "$1 requires a value"; }
+
+# The one parser. It answers every form that produces no lane work — the
+# command index, a help request, a bad option — so the dry run below decides
+# those before any configuration is read, off these arms and no second copy.
+parse_argv() {
+	# Every default this parser owns is set HERE, never above the loader: the
+	# settings [env] table assigns any name and .env.local is sourced as shell, so
+	# a default above the load is whatever the checkout left there for every
+	# option the caller did not pass. Settings reach the script through their own
+	# ORCH_* names, resolved after the load.
+	HARNESS=""
+	MAX_PCT=90
+	AS_JSON=false
+	ALLOW_REFRESH=false
+
+	SUB="${1:-}"
+	# A bare invocation names the commands and does nothing else, so it is one
+	# of those forms rather than a lane failure.
+	[[ -n "$SUB" ]] || { print_lanes_index; exit 0; }
+	case "$SUB" in
+		help|--help|-h) print_lanes_usage; exit 0 ;;
+	esac
+	shift
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--harness) need_val "$@"; HARNESS="$2"; shift 2 ;;
+			--harness=*) HARNESS="${1#--harness=}"; need_val --harness "$HARNESS"; shift ;;
+			--max-pct) need_val "$@"; MAX_PCT="$2"; shift 2 ;;
+			--max-pct=*) MAX_PCT="${1#--max-pct=}"; need_val --max-pct "$MAX_PCT"; shift ;;
+			--json) AS_JSON=true; shift ;;
+			--refresh) ALLOW_REFRESH=true; shift ;;
+			--help|-h) print_lanes_usage; exit 0 ;;
+			*) die "unknown option: $1" ;;
+		esac
+	done
+
+	[[ "$MAX_PCT" =~ ^[0-9]{1,3}$ ]] || die "--max-pct must be an integer 0-100"
+}
+
+# `.env.local` is sourced as shell, so anything answering without doing lane
+# work answers before the loader runs: the dry run is the real parser in a
+# subshell, so nothing it assigns survives to be clobbered, and 9 is the only
+# status meaning it reached the end.
+parse_rc=0
+( parse_argv "$@"; exit 9 ) || parse_rc=$?
+[[ "$parse_rc" -eq 9 ]] || exit "$parse_rc"
+unset parse_rc
+
+# Probed only once argv is settled: help, the command index and a bad option are
+# answers this script owes with nothing else installed.
 need_jq
 
-SUB="${1:-}"
-[[ -n "$SUB" ]] || { sed -n '/^# Usage:/,/^# Options:/p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
-shift || true
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+export PROJECT_ROOT
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+# This script runs without errexit, so the loader's refusal must be checked
+# here: continuing past it would select a lane from whatever exported before
+# the bad line — a successful-looking answer from partial configuration.
+kendex_load_project_env "$PROJECT_ROOT" || {
+  echo "$PROG: refusing to run on a rejected settings load (see error above)" >&2
+  exit 1
+}
+# Live claims are read ONCE per run, before any lane is measured: the pruning
+# read is what keeps the store bounded, and one snapshot keeps every lane's
+# count taken against the same instant.
+LANE_CLAIMS_LIVE=""
+# Non-zero when the claim store could not be read: `list` still reports what
+# it measured, `pick` refuses rather than deciding on an unknown.
+LANE_CLAIMS_RC=0
 
-HARNESS=""
-MAX_PCT=90
-AS_JSON=false
-ALLOW_REFRESH=false
+# shellcheck source=lib/lane-claims.sh
+source "$SCRIPT_DIR/lib/lane-claims.sh"
+# shellcheck source=lib/lane-context.sh
+source "$SCRIPT_DIR/lib/lane-context.sh"
+# The lib carries the strict mode its other callers run under. This one is
+# deliberately errexit-free — one unreadable lane must not fail the whole
+# inventory — so restore that posture at the seam.
+set +e
 
-while [[ $# -gt 0 ]]; do
-	case "$1" in
-		--harness) HARNESS="${2:-}"; shift 2 ;;
-		--harness=*) HARNESS="${1#--harness=}"; shift ;;
-		--max-pct) MAX_PCT="${2:-}"; shift 2 ;;
-		--max-pct=*) MAX_PCT="${1#--max-pct=}"; shift ;;
-		--json) AS_JSON=true; shift ;;
-		--refresh) ALLOW_REFRESH=true; shift ;;
-		--help|-h) sed -n '/^# Usage:/,/^# Headroom/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-		*) die "unknown option: $1" ;;
-	esac
-done
+CLAUDE_USAGE_URL="${ORCH_LANES_CLAUDE_USAGE_URL:-https://api.anthropic.com/api/oauth/usage}"
+CLAUDE_TOKEN_URL="${ORCH_LANES_CLAUDE_TOKEN_URL:-https://platform.claude.com/v1/oauth/token}"
+CLAUDE_OAUTH_BETA="oauth-2025-04-20"
+CODEX_USAGE_URL="${ORCH_LANES_CODEX_USAGE_URL:-https://chatgpt.com/backend-api/wham/usage}"
 
-[[ "$MAX_PCT" =~ ^[0-9]{1,3}$ ]] || die "--max-pct must be an integer 0-100"
+# ~5h, with tolerance — Codex reports window durations that vary by account.
+SESSION_WINDOW_S=18000
+
+parse_argv "$@"
 
 case "$SUB" in
 	list)
