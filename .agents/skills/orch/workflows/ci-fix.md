@@ -37,7 +37,7 @@ Formatting, obvious lint, and a missing import are fixed directly; a test failur
 
 ### 3.1 Direct Fixes
 
-Resolve the worktree (`github.sh pr-issue [PR_NUMBER] --format=text`, then `worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing) as `[DIR]`; `WORKTREE_PATH` is `git-context repo-root [DIR]`. Apply the fix, then:
+Resolve the worktree (`github.sh pr-issue [PR_NUMBER] --format=text`, then `worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing) as `[DIR]`; `WORKTREE_PATH` is `git-context repo-root "[DIR]"`. Apply the fix, then:
 
 ```bash
 git -C "[WORKTREE_PATH]" commit -am "fix([ISSUE_ID]): Resolve CI failure ([ERROR_TYPE])"
@@ -64,7 +64,7 @@ Stamp the round as separate tool calls immediately before delegating, and arm th
 
 `worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
 
-Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root [DIR]`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
 
 This agent pushes its fix directly and writes **no** dev-return artifact; the round-mode check for this token reports `ok == false`, which is expected. Accept this round on the agent's return message plus the pushed fix commit; on an absent return follow the escalation ladder.
 

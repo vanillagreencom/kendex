@@ -53,7 +53,7 @@ With several references, convert to a bulleted list under one `**Research**:` he
 
 Run exactly one flow, unless it escalates. Both flows fill the delegation the same way.
 
-Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root [DIR]`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and its `Worktree Check:` from `git-context repo-root "[DIR]"`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 ### 5.1 Targeted

@@ -10,7 +10,7 @@ Run a local pre-PR review, push, create or update the PR, triage review comments
 
 **Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 7) or `"self"` (default); `issue_id` — the workflow-state key, the normalized issue ID, never the bare GitHub issue number.
 
-**With a PR number**: `github.sh pr-issue [PR_NUMBER] --format=text` gives `ISSUE_ID`; `worktree exists`/`worktree path` give `[DIR]`, or ask before creating one when already inside the PR checkout; with no argument `[DIR]` is `.`. `WT_PATH` is `git-context repo-root [DIR]`.
+**With a PR number**: `github.sh pr-issue [PR_NUMBER] --format=text` gives `ISSUE_ID`; `worktree exists`/`worktree path` give `[DIR]`, or ask before creating one when already inside the PR checkout; with no argument `[DIR]` is `.`. `WT_PATH` is `git-context repo-root "[DIR]"`.
 
 **Standalone init** (`lifecycle: "self"`): resolve `ISSUE_ID` with `git-context issue-from-branch .`, then `workflow-state exists --json [ISSUE_ID]`; when absent, initialize with `git-context branch [WT_PATH]` and `workflow-state init`.
 
