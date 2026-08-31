@@ -181,6 +181,25 @@ mod tests {
                 "---\nname: mine\n...\nBody.\n",
             ),
             ("---\nname: \"gh\"\n---\n", "mine", "---\nname: mine\n---\n"),
+            // A bracket, a hash or a quote inside a quoted scalar is a
+            // byte of the name rather than a construct: the closing quote
+            // is what bounds the value, and nothing else is read.
+            (
+                "---\nname: \"release[old\"\ndescription: d\n---\n",
+                "mine",
+                "---\nname: mine\ndescription: d\n---\n",
+            ),
+            ("---\nname: \"[\"\n---\n", "mine", "---\nname: mine\n---\n"),
+            (
+                "---\nname: \"a # b\"\n---\n",
+                "mine",
+                "---\nname: mine\n---\n",
+            ),
+            (
+                "---\nname: 'it''s'\n---\n",
+                "mine",
+                "---\nname: mine\n---\n",
+            ),
             (
                 "---\nname: gh\n  # note\ndescription: d\n---\n",
                 "mine",
@@ -266,6 +285,20 @@ mod tests {
             // that does not: the allowlist admits a scalar or nothing.
             (
                 "---\nname: [a, b]\ndescription: d\n---\n",
+                "its frontmatter's `name` runs on past its own line",
+            ),
+            // A comment cannot close a collection the value opened, and a
+            // quote that never closes bounds nothing.
+            (
+                "---\nname: [ # ]\nfoo]\n---\n",
+                "its frontmatter's `name` runs on past its own line",
+            ),
+            (
+                "---\nname: \"unclosed\ndescription: d\n---\n",
+                "its frontmatter's `name` runs on past its own line",
+            ),
+            (
+                "---\nname: \"gh\" trailing\n---\n",
                 "its frontmatter's `name` runs on past its own line",
             ),
             // A line carrying no key opens no entry, so nothing here
