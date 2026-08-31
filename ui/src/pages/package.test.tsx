@@ -18,13 +18,14 @@ import {
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
+  PREVIEW_CHANGES_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import {
   EDITED_CANT_UPDATE_NOTE,
   NO_UPDATE_STANDING_NOTE,
-  UPDATE_NEEDS_CHECK_NOTE,
+  UPDATE_NEEDS_CHECK_HERE,
   UPDATES_CHECKING,
 } from "@/lib/copy-updates";
 import { editorOpenPath } from "@/lib/editor-path";
@@ -719,7 +720,7 @@ describe("the package page's Update", () => {
       error: "no network",
     });
     expect(updateButton(host)).toBeUndefined();
-    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_NOTE);
+    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_HERE);
     expect(host.textContent).not.toContain(UPDATES_CHECKING);
   });
 
@@ -732,7 +733,7 @@ describe("the package page's Update", () => {
       { loaded: false, error: "no network" },
     );
     expect(updateButton(host)).toBeUndefined();
-    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_NOTE);
+    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_HERE);
   });
 
   // The invariant the page's own comments claim, asserted as the absence
@@ -745,17 +746,12 @@ describe("the package page's Update", () => {
     for (const standing of [
       { loaded: false },
       { loaded: false, error: "no network" },
-      { checking: true },
-      { overviewInFlight: true },
     ]) {
       const host = await openWithUpdates([stale], standing);
       expect(updateButton(host)).toBeUndefined();
       const said = host.textContent ?? "";
       const reason = pageUpdateWithheld(stale, {
-        loaded: true,
         error: null,
-        checking: false,
-        overviewInFlight: false,
         pendingFollows: [],
         ...standing,
       });
@@ -764,16 +760,38 @@ describe("the package page's Update", () => {
     }
   });
 
-  // A check or a refresh is about to answer for every row on screen. The
-  // Updates table disables its own button for this; the page said nothing.
-  it("withholds Update while a check or a refresh is in flight", async () => {
+  // Every window focus starts an overview read, and it is the app's
+  // heaviest. Refusing on it would unmount Update on every alt-tab back,
+  // guarding a hazard this surface has not got: its Update sends scope,
+  // kind and name, and its versions come from its own read.
+  it("still offers Update while a background read is in flight", async () => {
     for (const inFlight of [{ checking: true }, { overviewInFlight: true }]) {
       const host = await openWithUpdates(
         [{ ...updateRow(VG), updateAvailable: true }],
         inFlight,
       );
-      expect(updateButton(host)).toBeUndefined();
-      expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_NOTE);
+      expect(updateButton(host)).toBeDefined();
+      expect(host.textContent).not.toContain(UPDATE_NEEDS_CHECK_HERE);
+    }
+  });
+
+  // A read-only diff of two commits the page already holds. No state of
+  // the update read bears on it, so none of them may take it away.
+  it("keeps Preview changes through every withheld state", async () => {
+    const preview = (host: HTMLElement) =>
+      [...host.querySelectorAll("button")].find(
+        (button) => button.textContent === PREVIEW_CHANGES_LABEL,
+      );
+    for (const standing of [
+      {},
+      { loaded: false },
+      { loaded: false, error: "no network" },
+    ]) {
+      const host = await openWithUpdates(
+        [{ ...updateRow(VG), updateAvailable: true }],
+        standing,
+      );
+      expect(preview(host)).toBeDefined();
     }
   });
 });

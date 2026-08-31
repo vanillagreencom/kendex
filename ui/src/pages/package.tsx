@@ -208,6 +208,7 @@ export function PackagePage() {
             name={group.name}
             primaryPath={primary.path}
             updateAvailable={canUpdate}
+            previewAvailable={latest != null && installed != null}
             withheldNote={updateWithheld}
             busy={mutating}
             onUpdate={() => latest && updateToLatest(latest)}

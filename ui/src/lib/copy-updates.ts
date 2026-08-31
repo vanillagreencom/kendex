@@ -134,5 +134,11 @@ export const nothingToUpdateToastLabel = (skipped: number): string =>
 export const UPDATES_CHECKING = "Checking for updates…";
 export const UPDATES_UNCONFIRMED_TITLE =
   "These are the last versions kendex could check";
-export const UPDATE_NEEDS_CHECK_NOTE =
-  "Updating needs a check that succeeds first — these versions may be stale";
+// The Updates table's rows are the update read's own answer, so a read
+// that did not land leaves the versions beside the button stale. The
+// package page draws its timeline from its own read, which landed, so it
+// says the first half and stops: only the standing behind Update is
+// unconfirmed there, not the versions on screen.
+const NEEDS_A_CHECK = "Updating needs a check that succeeds first";
+export const UPDATE_NEEDS_CHECK_NOTE = `${NEEDS_A_CHECK} — these versions may be stale`;
+export const UPDATE_NEEDS_CHECK_HERE = NEEDS_A_CHECK;

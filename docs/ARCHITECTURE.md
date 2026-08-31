@@ -348,8 +348,8 @@ lives in one capability table read by core and UI.
   its temp file per write, not per process.
 - GUI + CLI are equal thin shells over `crates/core`; most core ops are
   reachable from the CLI, some are app-only — install-beside
-  (`fork_beside`), per-package update (`package::update_one`), which the
-  CLI reaches per place (`refresh`, `updates --apply`). The guard chain gates commits; the review gate and the merge queue's suites gate PRs.
+  (`fork_beside`), and per-package update (`package::update_one`), which
+  the CLI reaches per place (`refresh`, `updates --apply`). The guard chain gates commits; the review gate and the merge queue's suites gate PRs.
 - Every capability ships cross-harness through the capability table; a
   harness without native support for a kind is marked unsupported — never
   shimmed. Where a vendor stores one surface as another (Codex: prompts as

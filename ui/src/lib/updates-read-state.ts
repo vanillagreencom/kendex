@@ -32,13 +32,27 @@ export function updatesReadState(state: {
 export const unsettled = (state: PageState): boolean =>
   !state.loaded || state.checking || state.overviewInFlight;
 
+/** Whether a write is already running in this row's own place. The apply
+ *  behind a Follow source flip moves what is installed in that scope and
+ *  nowhere else, so a second write there would contend for the same
+ *  writer lock while every other row stays live.
+ *
+ *  Asked on its own by a surface that wants this and not the rest of
+ *  [`unsettled`]: the page's Update carries no argument read off the row,
+ *  so a read in flight cannot stale it — only a write in the same place
+ *  bars it. */
+export const settlingIn = (
+  state: { pendingFollows: { scope: Scope }[] },
+  row: { scope: Scope },
+): boolean =>
+  state.pendingFollows.some((one) => sameScope(one.scope, row.scope));
+
 /** Whether one row's facts are not to be acted on: everything `unsettled`
  *  answers for the page, and a follow switch still settling in that row's
- *  scope. The apply behind a flip moves what is installed in that scope and
- *  nowhere else, so every other row stays live while it runs. */
+ *  scope. For the surface whose actions capture values off the row — the
+ *  Updates table sends `row.latest.commit` — so rows about to be replaced
+ *  are rows whose values must not be committed. */
 export const rowUnsettled = (
   state: PageState & { pendingFollows: { scope: Scope }[] },
   row: { scope: Scope },
-): boolean =>
-  unsettled(state) ||
-  state.pendingFollows.some((one) => sameScope(one.scope, row.scope));
+): boolean => unsettled(state) || settlingIn(state, row);

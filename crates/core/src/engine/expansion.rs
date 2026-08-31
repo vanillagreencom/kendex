@@ -358,9 +358,12 @@ mod tests {
     /// it cannot be satisfied by the list [`plans_per_package`] reads: a
     /// kind moved into `PLANNED_KINDS` turns this red, and a variant added
     /// to the enum stops this test compiling until it is classified here.
-    /// The other half is not this test's to hold: a kind dropped from
-    /// `ItemKind::ALL` would leave the loop skipping it in silence, so
-    /// `model.rs` keeps that list complete at build time.
+    /// What this does not hold: the loop walks `ItemKind::ALL`, so a kind
+    /// missing from that list is one it never visits, its arm here
+    /// satisfied and unexercised. `model.rs` fails the build for a kind
+    /// dropped from `ALL` or reordered within it, and for a variant never
+    /// added to it neither side catches anything — measured, and the note
+    /// on `ALL` says why closing it is not cheap.
     #[test]
     fn only_the_kinds_a_plan_derives_have_a_per_package_update() {
         for kind in ItemKind::ALL {

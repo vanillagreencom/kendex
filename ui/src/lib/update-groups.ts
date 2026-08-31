@@ -3,12 +3,12 @@ import {
   EDITED_CANT_UPDATE_NOTE,
   HELD_BY_OWNER_NOTE,
   NO_UPDATE_STANDING_NOTE,
-  UPDATE_NEEDS_CHECK_NOTE,
+  UPDATE_NEEDS_CHECK_HERE,
   UPDATES_CHECKING,
   USER_LEVEL_PLACE,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
-import { rowUnsettled, updatesReadState } from "@/lib/updates-read-state";
+import { settlingIn, updatesReadState } from "@/lib/updates-read-state";
 
 /** One package with every place it is out of date in. The same skill
  *  installed in three projects is one decision with three places, not
@@ -68,8 +68,9 @@ export const packageCount = (rows: UpdateRow[]): number =>
  *  not refused, and each surface knows its own newness. [`canUpdatePlace`]
  *  is this reading plus the row's. */
 export const updateWithheld = (row: UpdateRow): string | null => {
-  // The kind comes first: the others are reasons this row cannot be
-  // updated right now, and that one is why it never can be here.
+  // The kind first, for the reason [`pageUpdateWithheld`] states in full:
+  // it is why this row never can be updated here, where the rest are why
+  // not right now.
   if (row.noPerPackageUpdate !== null) return row.noPerPackageUpdate;
   // An edited place is never updated over; its row offers the install
   // beside it instead.
@@ -83,48 +84,71 @@ export const updateWithheld = (row: UpdateRow): string | null => {
 export const canUpdatePlace = (row: UpdateRow): boolean =>
   row.updateAvailable && updateWithheld(row) === null;
 
-/** Everything `updates-read-state.ts` needs to say whether a row may be
- *  acted on: how the read went, and whether one that would replace it is
- *  running. Wider than package-places' `UpdatesStanding`, which asks only
- *  the settling half. */
-type UpdatesReadStanding = Parameters<typeof rowUnsettled>[0] &
+/** Everything `updates-read-state.ts` needs to say how the read went and
+ *  whether a write is running in a given place. */
+type UpdatesReadStanding = Parameters<typeof settlingIn>[0] &
   Parameters<typeof updatesReadState>[0];
+
+/** A read state nobody handled. The union is closed and every arm above
+ *  answers, so reaching this means a new one was added without deciding
+ *  what the page does under it — which would otherwise fall through to the
+ *  row and could answer "nothing withheld" over a read nobody read. */
+const unhandledReadState = (state: never): never => {
+  throw new Error(`unhandled update read state: ${String(state)}`);
+};
 
 /** Why the package page has no Update for the place it is showing.
  *
- *  The read answers before the row, because a row is only as true as the
- *  read under it: one nobody could refresh is last-known rather than fact,
- *  and one on screen while a check runs is about to be replaced. Both are
- *  the state `updates-read-state.ts` owns, so this asks that module rather
- *  than working readiness out again — blurring its three answers is how a
- *  page says "checking" over a read that failed, or offers an Update over
- *  rows nobody confirmed.
+ *  **The invariant**: every state in which this place may not be acted on
+ *  — a read still pending, a read that failed, a place the read never
+ *  covered, a write already running there, and the row's own reasons —
+ *  answers with a note. That is what lets [`canUpdatePackage`] gate on
+ *  `withheld === null` and keep no reading of its own: a state that cannot
+ *  say why is a state that cannot hide the button. Nothing withheld
+ *  answers null, and the cases in update-groups.test.ts are the proof.
  *
- *  Every answer below is a note, so this is the page's only update-read
- *  gate: [`canUpdatePackage`] reads `withheld === null` and keeps none of
- *  its own, and a state that cannot say why is a state that cannot hide
- *  the button. Of the reasons [`updateWithheld`] gives, the owner's hold
- *  is the one this page never renders: it wants a derived place, and
- *  core's version timeline refuses a package the manifest does not
- *  declare, so the page has no newer version to offer there in the first
- *  place. Proven in crates/core/tests/package_versions.rs, not assumed
- *  here. */
+ *  **The order**, stated here once for both surfaces. The kind's refusal
+ *  comes first: it is why this place can never be updated here rather than
+ *  why not right now, and it is derived from the kind rather than from
+ *  anything a read could refresh, so no check clears it and none should
+ *  appear to. Then the read, because every remaining reason is a fact the
+ *  read supplied and a read that has not landed cannot vouch for it. Then
+ *  the row's own remaining reasons.
+ *
+ *  A read merely *in flight* is not among them. That guard belongs to the
+ *  Updates table, whose actions send `row.latest.commit` and so must not
+ *  commit values a landing read is about to replace; this page's Update
+ *  sends only scope, kind and name, and takes its versions from its own
+ *  read. Refusing here would unmount the button on every window focus,
+ *  which raises `overviewInFlight` for the whole overview read.
+ *
+ *  Of the reasons [`updateWithheld`] gives, the owner's hold is the one
+ *  this page never renders: it wants a derived place, and core's version
+ *  timeline refuses a package the manifest does not declare, so the page
+ *  has no newer version to offer there in the first place. Proven in
+ *  crates/core/tests/package_versions.rs, not assumed here. */
 export const pageUpdateWithheld = (
   row: UpdateRow | null,
   standing: UpdatesReadStanding,
 ): string | null => {
+  if (row?.noPerPackageUpdate != null) return row.noPerPackageUpdate;
   const read = updatesReadState(standing);
-  // A first read still on its way is the only state that is checking.
-  if (read === "pending") return UPDATES_CHECKING;
-  // A failed read leaves whatever rows it had standing; they are not to be
-  // acted on, and this is the note the Updates table already shows for it.
-  if (read === "failed") return UPDATE_NEEDS_CHECK_NOTE;
+  switch (read) {
+    case "pending":
+      return UPDATES_CHECKING;
+    case "failed":
+      return UPDATE_NEEDS_CHECK_HERE;
+    case "landed":
+      break;
+    default:
+      return unhandledReadState(read);
+  }
   // The read landed and covers declared packages with a repository source,
   // so a place with no row is one it does not cover.
   if (row === null) return NO_UPDATE_STANDING_NOTE;
-  // A check or an operation replacing every row, or a follow flip settling
-  // in this place: the row on screen is about to be answered for again.
-  if (rowUnsettled(standing, row)) return UPDATE_NEEDS_CHECK_NOTE;
+  // A Follow source flip is applying in this very place; a second write
+  // would contend for the same writer lock.
+  if (settlingIn(standing, row)) return UPDATE_NEEDS_CHECK_HERE;
   return updateWithheld(row);
 };
 

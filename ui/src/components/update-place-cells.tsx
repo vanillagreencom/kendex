@@ -66,7 +66,7 @@ export function PlaceCells({
   const place = placeName(row.scope, among);
   const locked = switchLockedBy(row);
   // What stands in the way of this row's Update, if anything — one
-  // reading, the same "Update all" acts on.
+  // reading, the same "Update all" acts on, ordered where it is defined.
   const withheld = updateWithheld(row);
   const ref = { kind: row.kind, name: row.name, scope: row.scope };
 
@@ -166,8 +166,9 @@ export function PlaceCells({
                     size="sm"
                     variant="outline"
                     disabled={busy || held || !canUpdatePlace(row)}
-                    // What stands in the way is the row's own reading;
-                    // the pending check is this surface's alone.
+                    // The row's own reasons rank as `pageUpdateWithheld`
+                    // states; `held` is this surface's alone, because
+                    // only its actions send a value read off the row.
                     title={
                       withheld ?? (held ? UPDATE_NEEDS_CHECK_NOTE : undefined)
                     }

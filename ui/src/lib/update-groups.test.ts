@@ -4,7 +4,7 @@ import {
   EDITED_CANT_UPDATE_NOTE,
   HELD_BY_OWNER_NOTE,
   NO_UPDATE_STANDING_NOTE,
-  UPDATE_NEEDS_CHECK_NOTE,
+  UPDATE_NEEDS_CHECK_HERE,
   UPDATES_CHECKING,
 } from "@/lib/copy-updates";
 import {
@@ -248,18 +248,14 @@ describe("updateWithheld", () => {
 // has a note, because the page's only update gate is whether this returns
 // one — a state that cannot say why would hide the button in silence.
 describe("pageUpdateWithheld", () => {
-  /** A store standing: a landed read with nothing in flight, unless said
-   *  otherwise. */
+  /** A store standing: a landed read with no write running, unless said
+   *  otherwise. `checking` and `overviewInFlight` are deliberately not
+   *  here — the page does not read them, and a fixture offering them
+   *  would invite a test that thinks it proves a gate the page has not
+   *  got. */
   const standing = (
     over: Partial<Parameters<typeof pageUpdateWithheld>[1]> = {},
-  ) => ({
-    loaded: true,
-    error: null,
-    checking: false,
-    overviewInFlight: false,
-    pendingFollows: [],
-    ...over,
-  });
+  ) => ({ loaded: true, error: null, pendingFollows: [], ...over });
 
   it("says the check is running before the first read lands", () => {
     expect(pageUpdateWithheld(null, standing({ loaded: false }))).toBe(
@@ -276,11 +272,11 @@ describe("pageUpdateWithheld", () => {
         null,
         standing({ loaded: false, error: "no network" }),
       ),
-    ).toBe(UPDATE_NEEDS_CHECK_NOTE);
+    ).toBe(UPDATE_NEEDS_CHECK_HERE);
   });
 
-  // The shape the old reading got wrong: a row is present, so it answered
-  // off the row and never looked at the read under it.
+  // The shape a row-first reading gets wrong: a row is present, so it
+  // answers off the row and never looks at the read under it.
   it("holds a row the first read has not answered for yet", () => {
     expect(
       pageUpdateWithheld(row("gh", "/a"), standing({ loaded: false })),
@@ -296,21 +292,11 @@ describe("pageUpdateWithheld", () => {
         row("gh", "/a"),
         standing({ loaded: false, error: "no network" }),
       ),
-    ).toBe(UPDATE_NEEDS_CHECK_NOTE);
+    ).toBe(UPDATE_NEEDS_CHECK_HERE);
   });
 
-  // A check or a refresh is about to answer for every row on screen; the
-  // Updates table disables its own button for exactly this.
-  it("holds a row while a check or a replacing read is in flight", () => {
-    expect(
-      pageUpdateWithheld(row("gh", "/a"), standing({ checking: true })),
-    ).toBe(UPDATE_NEEDS_CHECK_NOTE);
-    expect(
-      pageUpdateWithheld(row("gh", "/a"), standing({ overviewInFlight: true })),
-    ).toBe(UPDATE_NEEDS_CHECK_NOTE);
-  });
-
-  // A follow flip holds its own scope and nothing else.
+  // A write is already running in this very place, so a second one would
+  // contend for the same writer lock. Another place's flip does not.
   it("holds a row whose own place has a follow flip settling", () => {
     const here = row("gh", "/a");
     expect(
@@ -318,7 +304,7 @@ describe("pageUpdateWithheld", () => {
         here,
         standing({ pendingFollows: [{ scope: here.scope }] }),
       ),
-    ).toBe(UPDATE_NEEDS_CHECK_NOTE);
+    ).toBe(UPDATE_NEEDS_CHECK_HERE);
     expect(
       pageUpdateWithheld(
         here,
@@ -327,12 +313,38 @@ describe("pageUpdateWithheld", () => {
     ).toBeNull();
   });
 
+  // The kind is derived from the kind, not from anything a read refreshes,
+  // so no check can ever clear it and none may appear to. The Updates
+  // table shows the refusal here too; the two surfaces must agree.
+  it("gives the kind's refusal ahead of any state of the read", () => {
+    const refused = row("pi-hooks", "/a", {
+      kind: "pi-extension",
+      noPerPackageUpdate: "core will not update this one",
+    });
+    for (const over of [
+      {},
+      { loaded: false },
+      { loaded: false, error: "no network" },
+      { pendingFollows: [{ scope: refused.scope }] },
+    ]) {
+      expect(pageUpdateWithheld(refused, standing(over))).toBe(
+        "core will not update this one",
+      );
+    }
+  });
+
+  // The control on the whole ordering: a structural fix that over-refuses
+  // is as wrong as one that under-explains. A landed read with nothing
+  // running withholds nothing from a plain following place.
+  it("withholds nothing from a plain row under a landed read", () => {
+    expect(pageUpdateWithheld(row("gh", "/a"), standing())).toBeNull();
+  });
+
   it("says so for a place the landed read never spoke for", () => {
     expect(pageUpdateWithheld(null, standing())).toBe(NO_UPDATE_STANDING_NOTE);
   });
 
   it("hands a settled place to the shared reading", () => {
-    expect(pageUpdateWithheld(row("gh", "/a"), standing())).toBeNull();
     expect(
       pageUpdateWithheld(
         row("gh", "/a", { blockedByLocalEdit: true }),
