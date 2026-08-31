@@ -371,7 +371,7 @@ describe("the explanations on the header and the tag", () => {
 // A kind the planner never brings current one package at a time is core's
 // call, and the words are core's too: the row arrives carrying the
 // refusal, and the UI shows that and nothing of its own. Every Update
-// surface reads it through updateAvailability.
+// surface reads it through updateWithheld.
 describe("a row of a kind core refuses", () => {
   it("offers no Update, and shows the refusal core sent", async () => {
     const refusal =

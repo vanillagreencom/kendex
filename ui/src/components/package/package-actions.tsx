@@ -41,8 +41,11 @@ export function PackageActions({
   name: string;
   primaryPath: string;
   updateAvailable: boolean;
-  /** Why there is no Update here, when the page has news but this kind is
-   *  not brought current one package at a time. */
+  /** Why there is no Update here, when the page has news it cannot act
+   *  on: a kind core never brings current one package at a time, an edit
+   *  of the reader's own, or an update read that has not spoken for this
+   *  place. Rendered whenever `updateAvailable` is false and this is set,
+   *  so a withheld Update is never a page that stays silent. */
   withheldNote?: string | null;
   busy: boolean;
   onUpdate: () => void;

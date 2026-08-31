@@ -55,15 +55,19 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
     let scope = resolve_scopes(env, filter)?.remove(0);
     // Whatever this run turns out to be, it starts the way the parent
     // command starts: a `--refresh` the person typed is a fetch they asked
-    // for before anything reads a catalog, and the listing reads one.
-    if refresh && reads_sources(&command) {
+    // for before anything reads a catalog. The listing reads one; muting
+    // and unmuting write a settings entry and read no source, so fetching
+    // every one of them would spend the network on nothing.
+    if refresh && command.is_none() {
         fetch_sources(env, &scope);
     }
     // `--apply` is the whole scope and a subcommand is one package's
     // notification setting: doing either silently over the other answers a
     // question nobody asked.
     if apply && command.is_some() {
-        return Err("--apply brings the whole place current; drop it to act on one package".into());
+        return Err(
+            "--apply brings the whole place current; drop it to mute or unmute one package".into(),
+        );
     }
     match command {
         Some(UpdatesCommand::Ignore { kind, name }) => {
@@ -142,17 +146,6 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
         ));
     }
     Ok(())
-}
-
-/// Whether what this run is about to do reads catalog content, and so
-/// whether the fetch `--refresh` asks for has anything to be ahead of.
-/// Muting and unmuting write one settings entry and read no source, so
-/// fetching every one of them would spend the network on nothing.
-fn reads_sources(command: &Option<UpdatesCommand>) -> bool {
-    !matches!(
-        command,
-        Some(UpdatesCommand::Ignore { .. } | UpdatesCommand::Unignore { .. })
-    )
 }
 
 /// Bring every source's mirror up to date, pinned ones included. A source

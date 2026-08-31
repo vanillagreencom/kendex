@@ -7,8 +7,10 @@ import type {
   ItemKind,
   Manifest_Serialize,
   ObservedItem,
+  PackageMeta_Serialize,
   Scope,
   UpdateRow,
+  VersionRow,
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
@@ -16,8 +18,14 @@ import {
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
+  UPDATE_LABEL,
 } from "@/lib/copy";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
+import {
+  EDITED_CANT_UPDATE_NOTE,
+  NO_UPDATE_STANDING_NOTE,
+  UPDATES_CHECKING,
+} from "@/lib/copy-updates";
 import { editorOpenPath } from "@/lib/editor-path";
 import { SEVERITY_LABELS } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
@@ -156,6 +164,31 @@ const updateRow = (scope: Project): UpdateRow => ({
   removedUpstream: false,
   noPerPackageUpdate: null,
 });
+
+/** One commit on a package's timeline. */
+const version = (id: string, installed: boolean): VersionRow => ({
+  id,
+  label: null,
+  date: "2026-01-01",
+  summary: "a commit",
+  installed,
+  newerThanInstalled: !installed,
+});
+
+/** What the meta read answers: a following package from a repo source.
+ *  Update waits for this read, so a page without it offers nothing. */
+const meta: PackageMeta_Serialize = {
+  source: "cat",
+  repo: "o/r",
+  repoUrl: null,
+  rev: null,
+  current: null,
+  installedAt: null,
+  harnesses: ["claude"],
+  enabled: true,
+  fork: null,
+  catalog: null,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -558,5 +591,93 @@ describe("the package page's delete action", () => {
     expect(said).toContain("Delete gh?");
     expect(said).toContain("/work/vg");
     expect(said).toContain("/work/hyprtrade");
+  });
+});
+
+// The page's Update is one reading: the button and the reason beside it
+// come from the same string, so a page that withholds Update always says
+// why. Nothing else in the app renders that pair, and the old path read
+// the kind directly — a rule that now lives only in core.
+describe("the package page's Update", () => {
+  /** A timeline with a newer version to move to and an installed one to
+   *  move from — what the page reads newness off, never the update row. */
+  const newerThanInstalled = [
+    version("b".repeat(40), false),
+    version("a".repeat(40), true),
+  ];
+
+  /** Open the page with a timeline, a meta read that lands, and whatever
+   *  the updates store says about this place. */
+  const openWithUpdates = async (
+    rows: UpdateRow[],
+    { loaded = true, kind = "skill" as ItemKind } = {},
+  ) => {
+    vi.mocked(commands.packageVersions).mockResolvedValue({
+      status: "ok",
+      data: newerThanInstalled,
+    });
+    vi.mocked(commands.packageMeta).mockResolvedValue({
+      status: "ok",
+      data: meta,
+    });
+    useUpdatesStore.setState({ rows, loaded });
+    return openPage(VG, [VG], { [scopeKey(VG)]: PLAIN }, null, kind);
+  };
+
+  const updateButton = (host: HTMLElement) =>
+    [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === UPDATE_LABEL,
+    );
+
+  it("offers Update when the row withholds nothing", async () => {
+    const host = await openWithUpdates([
+      { ...updateRow(VG), updateAvailable: true },
+    ]);
+    expect(updateButton(host)).toBeDefined();
+  });
+
+  // The refusal is core's own sentence, carried on the row. A synthetic
+  // string here, so the assertion cannot pass on a constant this side of
+  // the boundary happens to hold.
+  it("withholds Update for a kind core refuses, and says what core said", async () => {
+    const refusal = "REFUSED-BY-CORE: this kind moves another way";
+    const host = await openWithUpdates(
+      [
+        {
+          ...updateRow(VG),
+          kind: "pi-extension",
+          updateAvailable: true,
+          noPerPackageUpdate: refusal,
+        },
+      ],
+      { kind: "pi-extension" },
+    );
+    expect(updateButton(host)).toBeUndefined();
+    expect(host.textContent).toContain(refusal);
+  });
+
+  // A hand-edited copy is never updated over, and the page has to say so
+  // where the button would be rather than showing nothing at all.
+  it("withholds Update for an edited copy, and says so", async () => {
+    const host = await openWithUpdates([
+      { ...updateRow(VG), updateAvailable: true, blockedByLocalEdit: true },
+    ]);
+    expect(updateButton(host)).toBeUndefined();
+    expect(host.textContent).toContain(EDITED_CANT_UPDATE_NOTE);
+  });
+
+  // The read covers declared packages with a repository source. A place it
+  // never spoke for gets no button — and, so the page is never silent
+  // under news it cannot act on, a note saying which of the two it is.
+  it("withholds Update where the update read never spoke for this place", async () => {
+    const host = await openWithUpdates([updateRow(HYPR)]);
+    expect(updateButton(host)).toBeUndefined();
+    expect(host.textContent).toContain(NO_UPDATE_STANDING_NOTE);
+  });
+
+  it("says the check is still running before the read lands", async () => {
+    const host = await openWithUpdates([], { loaded: false });
+    expect(updateButton(host)).toBeUndefined();
+    expect(host.textContent).toContain(UPDATES_CHECKING);
   });
 });

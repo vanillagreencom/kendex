@@ -28,11 +28,7 @@ import {
   UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
-import {
-  placeName,
-  switchLockedBy,
-  updateAvailability,
-} from "@/lib/update-groups";
+import { placeName, switchLockedBy, updateWithheld } from "@/lib/update-groups";
 import { rowUnsettled } from "@/lib/updates-read-state";
 import { versionLabel } from "@/lib/versions";
 import { useNavStore } from "@/stores/nav";
@@ -64,9 +60,9 @@ export function PlaceCells({
   const name = packageDisplayName(row);
   const place = placeName(row.scope, among);
   const locked = switchLockedBy(row);
-  // Whether Update belongs on this row at all, and what to say where it
-  // does not — one reading, the same "Update all" acts on.
-  const availability = updateAvailability(row);
+  // What stands in the way of this row's Update, if anything — one
+  // reading, the same "Update all" acts on.
+  const withheld = updateWithheld(row);
   const ref = { kind: row.kind, name: row.name, scope: row.scope };
 
   const preview = () => {
@@ -164,12 +160,13 @@ export function PlaceCells({
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={busy || held || !availability.can}
+                    disabled={
+                      busy || held || !row.updateAvailable || withheld !== null
+                    }
                     // What stands in the way is the row's own reading;
                     // the pending check is this surface's alone.
                     title={
-                      availability.withheld ??
-                      (held ? UPDATE_NEEDS_CHECK_NOTE : undefined)
+                      withheld ?? (held ? UPDATE_NEEDS_CHECK_NOTE : undefined)
                     }
                     onClick={() => void updateOne(row)}
                   >

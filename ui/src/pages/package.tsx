@@ -19,6 +19,7 @@ import { packageDisplayName } from "@/lib/labels";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
 import { sameScope } from "@/lib/scope";
+import { pageUpdateWithheld } from "@/lib/update-groups";
 import {
   canUpdatePackage,
   installedRow,
@@ -124,22 +125,23 @@ export function PackagePage() {
   const displayName = packageDisplayName(ref);
   const installed = installedRow(versions);
   const latest = latestRow(versions);
-  // Update waits for meta (held vs following) and for the updates read to
-  // have spoken for this place; what stands in the way is that row's word.
+  // One reading answers both halves. The button and the note beside it
+  // come from the same string, so a page that withholds Update always says
+  // why — the kind's refusal in core's own words, this page keeping no
+  // account of the rule.
+  const withheld = pageUpdateWithheld(updateRow, updatesLoaded);
+  // Update also waits for meta (held vs following), and takes its newness
+  // from this page's own version rows.
   const canUpdate = canUpdatePackage({
     latest,
     installed,
     metaLoaded: meta != null,
     updatesLoaded,
-    row: updateRow,
+    withheld,
   });
-  // Said where the button would be, so a page with news but no way to act
-  // on it here names the way that does — in core's own words, never this
-  // page's account of the same rule.
-  const updateWithheld =
-    latest != null && !latest.installed
-      ? (updateRow?.noPerPackageUpdate ?? null)
-      : null;
+  // Said where the button would be. A page with nothing newer to move to
+  // has nothing withheld to explain.
+  const updateWithheld = latest != null && !latest.installed ? withheld : null;
 
   // Every scope this package sits in, one at a time — each apply takes
   // that scope's writer lock — and stopping at the first that fails.

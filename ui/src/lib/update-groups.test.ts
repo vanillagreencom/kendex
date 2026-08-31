@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import {
+  EDITED_CANT_UPDATE_NOTE,
+  HELD_BY_OWNER_NOTE,
+  NO_UPDATE_STANDING_NOTE,
+  UPDATES_CHECKING,
+} from "@/lib/copy-updates";
+import {
   groupUpdates,
   packageCount,
+  pageUpdateWithheld,
   placeName,
   skippedPlaces,
   updatablePlaces,
+  updateWithheld,
 } from "./update-groups";
 
 const row = (
@@ -178,5 +186,79 @@ describe("update groups", () => {
       row("gh", "/b", { updateAvailable: false, removedUpstream: true }),
     ]);
     expect(places.map((p) => placeName(p.scope))).toEqual(["User level"]);
+  });
+});
+
+// Every surface that offers Update reads this one function. It answers
+// with the reason and nothing else: a gate derived from it can never hide
+// a button it has no words for, which a verdict beside the note would
+// let it do the first time a reason arrives without one.
+describe("updateWithheld", () => {
+  it("says nothing stands in the way of a plain following place", () => {
+    expect(updateWithheld(row("gh", "/a"))).toBeNull();
+  });
+
+  // Having nothing newer is not a refusal — that place is current, and
+  // each surface reads newness its own way.
+  it("withholds nothing from a place that is already current", () => {
+    expect(
+      updateWithheld(row("gh", "/a", { updateAvailable: false })),
+    ).toBeNull();
+  });
+
+  it("hands back core's own words for a kind core refuses", () => {
+    const refusal = "REFUSED-BY-CORE: this kind moves another way";
+    expect(
+      updateWithheld(
+        row("pi-hooks", "/a", {
+          kind: "pi-extension",
+          noPerPackageUpdate: refusal,
+        }),
+      ),
+    ).toBe(refusal);
+  });
+
+  it("names the edit, and the owner's hold", () => {
+    expect(updateWithheld(row("gh", "/a", { blockedByLocalEdit: true }))).toBe(
+      EDITED_CANT_UPDATE_NOTE,
+    );
+    expect(
+      updateWithheld(row("gh", "/a", { pinned: true, derived: true })),
+    ).toBe(HELD_BY_OWNER_NOTE);
+  });
+
+  // The kind comes first: the others are reasons a row cannot be updated
+  // right now, and that one is why it never can be here.
+  it("leads with the kind when more than one applies", () => {
+    const refusal = "REFUSED-BY-CORE";
+    expect(
+      updateWithheld(
+        row("pi-hooks", "/a", {
+          kind: "pi-extension",
+          noPerPackageUpdate: refusal,
+          blockedByLocalEdit: true,
+        }),
+      ),
+    ).toBe(refusal);
+  });
+});
+
+// The package page can be open before the update read has landed, and on
+// a place the read does not cover at all. Neither may leave it showing no
+// button and no reason.
+describe("pageUpdateWithheld", () => {
+  it("says the check is running before the read lands", () => {
+    expect(pageUpdateWithheld(null, false)).toBe(UPDATES_CHECKING);
+  });
+
+  it("says so for a place the landed read never spoke for", () => {
+    expect(pageUpdateWithheld(null, true)).toBe(NO_UPDATE_STANDING_NOTE);
+  });
+
+  it("hands a place with a row to the shared reading", () => {
+    expect(pageUpdateWithheld(row("gh", "/a"), true)).toBeNull();
+    expect(
+      pageUpdateWithheld(row("gh", "/a", { blockedByLocalEdit: true }), true),
+    ).toBe(EDITED_CANT_UPDATE_NOTE);
   });
 });

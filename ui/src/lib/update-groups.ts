@@ -2,6 +2,8 @@ import type { Scope, UpdateRow } from "@/bindings";
 import {
   EDITED_CANT_UPDATE_NOTE,
   HELD_BY_OWNER_NOTE,
+  NO_UPDATE_STANDING_NOTE,
+  UPDATES_CHECKING,
   USER_LEVEL_PLACE,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
@@ -49,33 +51,59 @@ export function groupUpdates(rows: UpdateRow[]): UpdateGroup[] {
 export const packageCount = (rows: UpdateRow[]): number =>
   new Set(rows.map(groupKey)).size;
 
-/** Whether this place can take its update now, and what to say when it
- *  cannot. Every surface that offers Update asks this one function —
- *  "Update all", the row's own button, the package page — so an offer and
- *  the refusal beside it can never come from two readings of the same row.
+/** Why this place's Update is withheld, or null when nothing withholds it.
+ *  Every surface that offers Update reads this one function — "Update
+ *  all", the row's own button, the package page — so an offer and the
+ *  refusal beside it can never come from two readings of the same row.
  *
- *  `withheld` is the note to show. The kind's refusal is core's own words,
- *  carried on the row: the UI never works out for itself which kinds are
- *  brought current one at a time. */
-export const updateAvailability = (
-  row: UpdateRow,
-): { can: boolean; withheld: string | null } => {
+ *  One nullable note, and not a verdict beside it: a reason that cannot be
+ *  said is a reason that cannot be added here, so a gate reading this can
+ *  never hide a button it has no words for. The kind's refusal is core's
+ *  own, carried on the row; the UI never works out for itself which kinds
+ *  are brought current one at a time.
+ *
+ *  Having nothing newer to move to is not a reason — that place is current,
+ *  not refused, and each surface knows its own newness. [`canUpdatePlace`]
+ *  is this reading plus the row's. */
+export const updateWithheld = (row: UpdateRow): string | null => {
   // The kind comes first: the others are reasons this row cannot be
   // updated right now, and that one is why it never can be here.
-  if (row.noPerPackageUpdate !== null)
-    return { can: false, withheld: row.noPerPackageUpdate };
+  if (row.noPerPackageUpdate !== null) return row.noPerPackageUpdate;
   // An edited place is never updated over; its row offers the install
   // beside it instead.
-  if (row.blockedByLocalEdit)
-    return { can: false, withheld: EDITED_CANT_UPDATE_NOTE };
-  if (heldByOwner(row)) return { can: false, withheld: HELD_BY_OWNER_NOTE };
-  return { can: row.updateAvailable, withheld: null };
+  if (row.blockedByLocalEdit) return EDITED_CANT_UPDATE_NOTE;
+  if (heldByOwner(row)) return HELD_BY_OWNER_NOTE;
+  return null;
+};
+
+/** Whether this place can take its update right now: a newer version to
+ *  move to, and nothing withholding it. */
+export const canUpdatePlace = (row: UpdateRow): boolean =>
+  row.updateAvailable && updateWithheld(row) === null;
+
+/** Why the package page has no Update for the place it is showing. The
+ *  page can be open before the update read has landed, and on a place that
+ *  read does not cover at all — it covers declared packages with a
+ *  repository source — so a page with news it cannot act on says which of
+ *  the two it is. Silence there is a page that refuses and never says why.
+ *
+ *  Of the reasons [`updateWithheld`] gives, the owner's hold is the one
+ *  this page never renders: it wants a derived place, and core's version
+ *  timeline refuses a package the manifest does not declare, so the page
+ *  has no newer version to offer there in the first place. Proven in
+ *  crates/core/tests/package_versions.rs, not assumed here. */
+export const pageUpdateWithheld = (
+  row: UpdateRow | null,
+  updatesLoaded: boolean,
+): string | null => {
+  if (row !== null) return updateWithheld(row);
+  return updatesLoaded ? NO_UPDATE_STANDING_NOTE : UPDATES_CHECKING;
 };
 
 /** The places "Update all" can act on: a newer version exists and nothing
  *  stands in the way. */
 export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
-  rows.filter((row) => updateAvailability(row).can);
+  rows.filter(canUpdatePlace);
 
 /** A bundle member or dependency held at its owner's revision: the hold
  *  is the owner's to move, so nothing here can update or release it. */
@@ -101,7 +129,7 @@ export const switchLockedBy = (
  *  [`updatablePlaces`] over the same news, so every place with something
  *  to say is counted once. */
 export const skippedPlaces = (rows: UpdateRow[]): UpdateRow[] =>
-  rows.filter((row) => row.updateAvailable && !updateAvailability(row).can);
+  rows.filter((row) => row.updateAvailable && !canUpdatePlace(row));
 
 /** Where a package lives, as a person names it: the project folder, or
  *  "User level" for the install that applies everywhere. Two projects

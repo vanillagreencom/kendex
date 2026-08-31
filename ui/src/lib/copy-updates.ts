@@ -41,6 +41,12 @@ export const heldBySourceNote = (source: string): string =>
   `Held by the source "${source}" as a whole — release it where that source is declared`;
 export const HELD_BY_OWNER_NOTE =
   "Held by the bundle or package it came with — update or release it from there";
+// The update read covers declared packages with a repository source. A
+// package page opened on anything else has news from its own timeline and
+// no standing to act on it, and saying so beats a page with no button and
+// no reason on it.
+export const NO_UPDATE_STANDING_NOTE =
+  "The update check has not spoken for this package here";
 
 // An edited copy is the user's work: no update touches it. The newest
 // version can only land beside it, under the name it always had, with the

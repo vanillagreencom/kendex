@@ -1,5 +1,4 @@
-import type { UpdateRow, VersionRef, VersionRow } from "@/bindings";
-import { updateAvailability } from "@/lib/update-groups";
+import type { VersionRef, VersionRow } from "@/bindings";
 
 /** A version as a person reads it: the release name when it has one, a
  *  short commit id otherwise. */
@@ -22,24 +21,27 @@ export function installedRow(rows: VersionRow[]): VersionRow | undefined {
   return rows.find((row) => row.installed);
 }
 
-/** Whether the package page may offer Update. There has to be a newer
- *  version to move to and an installed one to move from, and the update
- *  read has to have spoken for this place: what stands in the way — an
- *  edit, somebody else's hold, a kind core never brings current one
- *  package at a time — is the row's to say, through the same reading the
- *  Updates page uses. Offering it otherwise is a button that can only
- *  fail, and a place with no row at all is one the engine would refuse. */
+/** Whether the package page may offer Update. Newness is the page's own:
+ *  it reads a newer version to move to and an installed one to move from
+ *  off its version rows, not off the update row, so the timeline it draws
+ *  and the button above it agree. Both reads have to be in, and nothing
+ *  may be withholding the update.
+ *
+ *  `withheld` is the reason, not a verdict — `update-groups.ts`
+ *  [`pageUpdateWithheld`] — and it is passed in rather than derived here
+ *  because the page renders it beside this answer. A hidden button with no
+ *  note is a page that refuses and never says why, so the two must come
+ *  from one reading. */
 export const canUpdatePackage = (page: {
   latest: VersionRow | undefined;
   installed: VersionRow | undefined;
   metaLoaded: boolean;
   updatesLoaded: boolean;
-  row: UpdateRow | null;
+  withheld: string | null;
 }): boolean =>
   page.latest != null &&
   !page.latest.installed &&
   page.installed != null &&
   page.metaLoaded &&
   page.updatesLoaded &&
-  page.row !== null &&
-  updateAvailability(page.row).withheld === null;
+  page.withheld === null;
