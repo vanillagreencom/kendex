@@ -478,8 +478,7 @@ else
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     i=$((i + 1))
-    printf '%s\n' "$out" |
-      grep -Fqx -- "$probe_files/probe-$i.sh:1:$line" ||
+    grep -Fqx -- "$probe_files/probe-$i.sh:1:$line" <<<"$out" ||
       unreported="$unreported$line
 "
   done <<EOF
