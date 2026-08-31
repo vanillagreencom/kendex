@@ -65,8 +65,8 @@ handled under these rules:
   which states the branches and their limits. Bots drip-feeding one class
   get the class exhausted in one audit pass, then dispositions without
   pushes. The overseer never orders a blanket `Declined` across a PR's open
-  findings: each one is dispositioned on its own mechanism, and the gate
-  rejects a decline that names none.
+  findings: each one is dispositioned on its own mechanism, and a decline
+  that is nothing but a label turns the gate red.
 - **Fix the source.** The same finding class on a third PR is a mechanism
   gap: file it and route the smallest deterministic check (a guard lane, a
   preflight rule, a refusing script) or one sentence in the owning skill

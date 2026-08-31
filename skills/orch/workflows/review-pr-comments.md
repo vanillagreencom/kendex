@@ -293,7 +293,7 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 
 The word "tracked" (any form) without a `KEN-` or `#` issue id turns the gate red (`untracked-claim`) unless the reply opens with `Fixed in <sha>` or `Declined:`; only a later reply of one of the three forms clears it, and resolving the thread does not. A decline is a decline — say so.
 
-`[REASON]` is the mechanism the decline disproves: the passing state, or the false premise the finding rests on. A decline whose reason is empty, or is only a label — `frozen`, `at the cap`, `out of scope`, `pre-existing`, `flagged separately`, a test count — turns the gate red the same way (`unreasoned-decline`), and dropping the colon exempts nothing: `Declined, out of scope` is read as the decline it is. A label beside a real reason is fine; a label instead of one is not.
+`[REASON]` is the mechanism the decline disproves: the passing state, or the false premise the finding rests on. A label instead of a reason — `frozen`, `at the cap`, `out of scope`, `pre-existing`, `flagged separately`, a test count — is never one. An empty reason, or one that is nothing but labels the gate knows, turns it red (`unreasoned-decline`), and dropping the colon exempts nothing: `Declined, out of scope` is read as the decline it is. A label beside a real reason is fine.
 
 ```bash
 .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" "[REPLY_BODY]" --pr "[PR_NUMBER]"
@@ -340,7 +340,7 @@ A thread is new when its `threads[].id` is not in `known`. No new threads → §
 | Blocked or issue created | `Tracked: [ISSUE_ID]` (issue exists first) |
 | Question | The finding's `draft_response` |
 
-`[REASON]` is what § 6.3 defines, the passing state or the false premise the finding rests on. A reply of only "not actionable" is a label, and the gate counts a label-only decline as unreasoned.
+`[REASON]` is what § 6.3 defines, the passing state or the false premise the finding rests on. A reply of only "not actionable" is a label, and it turns the gate red.
 
 Use inline `--body` only for plain strings; Markdown with backticks or fences goes to a file and `--body-file` (`post-reply` for threads, `post-comment` for PR-level). Number lists `1.` `2.` `3.`, never `#N`.
 

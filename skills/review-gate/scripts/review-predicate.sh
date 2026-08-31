@@ -1385,6 +1385,9 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # non-reason tokens and the words carrying no content alone; a reply whose
 # reason strips to nothing is counted, which is what leaves a token INSIDE a
 # real reason harmless. Widen this list from tests/corpus/, never alone.
+# Punctuation normalization keeps every letter and number, not only ASCII:
+# the word lists are ASCII, so a reason written in another script survives
+# whole, and surviving text is residue, which is a stated reason.
 #
 # Tracker ids go first, while each is still one token and still uppercase:
 # punctuation normalization would otherwise leave the letters behind, and
@@ -1400,7 +1403,7 @@ t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decli
     sub("(?i)^\\s*declined\\b"; "")
     | gsub("[A-Z][A-Z0-9]+-[0-9]+|#[0-9]+"; " ")
     | ascii_downcase
-    | gsub("[^a-z0-9]+"; " ")
+    | gsub("[^\\p{L}\\p{N}]+"; " ")
     | gsub("\\b(frozen|freezes?|freezing|cap|capped|round [0-9]+|round|rounds|tests?|suites?|pass|passes|passed|passing|green|count|out of scope|scope|pre existing|preexisting|existing|flagged separately|flagged|separately|as discussed|discussed|noted|won ?t ?fix|false positives?|by design|design|not applicable|n a|actionable|no change|nothing to do|later|known|intentional|deliberate|works as intended|as intended|intended|owners?|instruction(s|ed)?|previous|pushe[sd]?|push|last|head|disposition(ed|s)?|findings?|fix(es|ed)?|track(s|ed|ing|er)?|filed|filing|logged)\\b"; " ")
     | gsub("\\b[0-9a-f]{7,40}\\b"; " ")
     | gsub("\\b[0-9]+\\b"; " ")

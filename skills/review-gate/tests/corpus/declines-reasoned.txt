@@ -35,6 +35,13 @@ Declined — the mechanism is real and the form is adversary-only.
 Declined: pre-existing and unchanged by this diff, and the remedy it names is a valid route rather than a dead end.
 Declined: the label is accurate as written. The premise that the seed-time classification falsifies it does not hold.
 
+# --- a reason written in another script -----------------------------------
+# The word lists are ASCII, so nothing here is subtracted and the whole reason
+# is residue. This reds if the punctuation pass is ever narrowed back to
+# stripping everything outside ASCII, which erases these to the empty string.
+Declined: 该加载器从不读取那个键，因此该分支无法到达。
+Declined: загрузчик никогда не читает этот ключ
+
 # --- from #1860: a freeze that concedes the mechanism ----------------------
 # The same wrapper as the reply that shipped the defects, and it says
 # something about the finding, so widening the freeze vocabulary must not
