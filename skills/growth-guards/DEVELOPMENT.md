@@ -126,7 +126,8 @@ some shim is drifted or absent, or `core.hooksPath` is set and empty, which
 switches git hooks off outright. `2`: the question could not be answered (an
 unreadable hooks directory, a hook file that cannot be read); failure to
 measure is never a pass, and definitive drift outranks an unmeasured
-component. The one stdout line carries every component finding, and it is what `kendex check` prints.
+component. The one stdout line carries every component finding, and it is what `kendex check` relays
+where there is something to report; a clean result folds into kendex's own all-clear instead.
 
 The helper is compared BYTE FOR BYTE against what this installer generates.
 The marker inside it is only a comment, and `--check` writes nothing, so it

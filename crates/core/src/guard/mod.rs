@@ -73,6 +73,27 @@ pub const HELPER: &str = "kendex-guards";
 /// said nothing would be indistinguishable from one that lost it.
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How much the session-start `--check` may write before the run is
+/// refused, and why that bound exists at all.
+///
+/// [`CHECK_TIMEOUT`]'s argument for the other unbounded resource. That call
+/// runs a script the checkout supplies, unattended, and the reader holds
+/// what the script writes in memory until it exits — so a bound on the wall
+/// clock alone still lets one that loops on `echo` grow this process for ten
+/// seconds.
+///
+/// Sixty-four kibibytes because the report declines to carry a relayed line
+/// past `drift::report::RELAYED_CHARS`, which is 2000 characters, so a real
+/// verdict — the summary line the package contracts to write, plus whatever
+/// its shell put on stderr behind it — sits far below this.
+///
+/// Past the bound the process layer refuses rather than truncates, so
+/// [`run_installer`] returns the error and the fold in `commands::check`
+/// classes it the way it already classes an installer that exited with no
+/// verdict: a check that could not be taken. Output that was cut off is not
+/// a repository anybody measured.
+const CHECK_OUTPUT_CAP: usize = 64 * 1024;
+
 /// Room for the whole chain, which ends in whatever the repository pointed
 /// `GROWTH_GUARDS_PRE_COMMIT_LOCAL` at — a cold clippy build, in this repo,
 /// and no bound kendex can derive. Half an hour is chosen to be longer than
@@ -267,7 +288,13 @@ pub fn check(dir: &Path) -> Result<GuardReport> {
 /// fold pays those five once per project scope.
 pub fn check_repo(repo: &Repo) -> Result<GuardReport> {
     let installed = installed_or_err(repo, INSTALLER)?;
-    run_installer(repo, &installed, &["--check"], CHECK_TIMEOUT)
+    run_installer(
+        repo,
+        &installed,
+        &["--check"],
+        CHECK_TIMEOUT,
+        Some(CHECK_OUTPUT_CAP),
+    )
 }
 
 /// The installer, run from the repository it was pointed at, with its
@@ -281,7 +308,11 @@ pub fn check_repo(repo: &Repo) -> Result<GuardReport> {
 /// does not compile.
 fn installer(dir: &Path, args: &[&str], timeout: Duration) -> Result<GuardReport> {
     let (repo, installed) = bind(dir, INSTALLER)?;
-    run_installer(&repo, &installed, args, timeout)
+    // Uncapped, named rather than omitted for the same reason the timeout
+    // is: what a verb somebody typed prints is that person's to read, and a
+    // script running away in front of them is theirs to stop.
+    // [`CHECK_OUTPUT_CAP`] is for the call nobody is watching.
+    run_installer(&repo, &installed, args, timeout, None)
 }
 
 fn run_installer(
@@ -289,6 +320,7 @@ fn run_installer(
     installed: &Installed,
     args: &[&str],
     timeout: Duration,
+    max_output: Option<usize>,
 ) -> Result<GuardReport> {
     // `--repo` is a path, so it travels as one: a work tree whose name is
     // not UTF-8 would otherwise reach the installer as replacement
@@ -298,8 +330,12 @@ fn run_installer(
         repo.worktree.as_os_str().to_owned(),
     ];
     argv.extend(args.iter().map(OsString::from));
-    let output = Hardened::guard_script(&installed.script, argv, &repo.worktree)
-        .timeout(timeout)
+    let mut script =
+        Hardened::guard_script(&installed.script, argv, &repo.worktree).timeout(timeout);
+    if let Some(cap) = max_output {
+        script = script.max_output(cap);
+    }
+    let output = script
         .run()
         .map_err(|error| guard_err("hooks", error.to_string()))?;
     Ok(relay(&output))

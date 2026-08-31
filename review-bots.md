@@ -80,7 +80,7 @@ These are known, deliberate trade-offs. Raising them again is noise:
   reaching that state takes local write access, and anyone with it bypasses
   any predicate by writing a passing hook outright. Integrity lives in the
   package's own `--check`, which `kendex guard check` and `kendex check`
-  both print. Settled by KEN-670; marker-trust findings are not a finding
+  both ask. Settled by KEN-670; marker-trust findings are not a finding
   surface.
 - **Windows-only resolution paths (PATHEXT, `.cmd` shims) are out of
   scope until a Windows report exists.**

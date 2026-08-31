@@ -83,8 +83,9 @@ The `kendex guard` verbs invoke this installer: `install`, `uninstall`
 (`--uninstall`) and `check` (`--check`). Arming and disarming are
 repository-level: every work tree and nested project shares one hooks
 directory, so an uninstall from any of them disarms the repository. Disarm
-before removing this skill: shims whose scripts are gone block every commit. `kendex check` prints
-this installer's own `--check` verdict, and asks for it only where
+before removing this skill: shims whose scripts are gone block every commit. `kendex check` relays
+this installer's own `--check` verdict where there is something to report — a clean result folds
+into kendex's own all-clear — and asks for it only where
 `.git/hooks/kendex-guards` is already there: git clones no hooks, so that
 file is a local act, and without it nothing is run out of the checkout at
 all. The verdicts are:

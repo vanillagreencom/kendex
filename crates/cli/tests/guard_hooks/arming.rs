@@ -719,3 +719,59 @@ fn a_wedged_installer_gives_up_inside_the_session_start_bound() {
         "the line does not name the timeout: {text}"
     );
 }
+
+/// The session-start output bound is applied, and an installer that writes
+/// past it is a check that could not be taken.
+///
+/// The sibling of the timeout above, for the other resource the unattended
+/// call cannot bound by itself. `check_repo` runs a script the checkout
+/// supplies, and the reader holds what it writes until it exits — so a
+/// script looping on output grows the kendex process for the whole ten
+/// seconds unless something refuses first.
+///
+/// The fixture exits 0 with a non-empty stdout, which is the arm that would
+/// otherwise report `all clear`: uncapped, this run is a clean verdict
+/// about a repository whose 200 KiB of output kendex swallowed whole. So
+/// the assertion below reds the moment `CHECK_OUTPUT_CAP` stops reaching
+/// the process layer, rather than passing on some other refusal.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_installer_that_outruns_the_session_start_output_bound_is_not_all_clear() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    // Armed for real, so the fold gets past the consent gate and reaches
+    // the script.
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    // The control: whole and armed is silence, exit 0.
+    let clean = run(home, &root, "kendex", &["check"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
+
+    // 200 x 1 KiB, past the 64 KiB bound, written a line at a time and
+    // ending in the exit a clean verdict carries.
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    std::fs::write(
+        &installer,
+        "#!/usr/bin/env bash\nline=$(printf 'x%.0s' {1..1023})\n\
+         for _ in {1..200}; do printf '%s\\n' \"$line\"; done\nexit 0\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let out = run(home, &root, "kendex", &["check"]);
+    let text = said(&out);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "output past the bound was reported as a clean check: {text}"
+    );
+    assert!(text.contains("commit hooks"), "{text}");
+    assert!(
+        text.contains("output exceeded"),
+        "the line does not name the bound that fired: {text}"
+    );
+}

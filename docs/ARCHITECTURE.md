@@ -390,7 +390,8 @@ lives in one capability table read by core and UI.
   that drops a package runs its declared uninstaller before the files go (`engine_common::apply_report`, the one
   executor of an `EngineReport`), and `guard run <hook>` execs its script with git's redirects passed through, the
   one child not scrubbed because it is a hook body naming the snapshot judged. `guard check` asks the package too.
-  `kendex check` prints that same `--check`, sentence and exit, where a project's lock enables the skill AND the
+  `kendex check` relays that same `--check`: the package's sentence and exit where it has something to report, a
+  clean result folding into kendex's own all-clear. It asks only where a project's lock enables the skill AND the
   helper is already in `.git/hooks` — git clones none, so that file is the local arming that licenses the run.
   So there is one implementation of every verdict and one policy dialect:
   the flat `GROWTH_GUARDS_*` / `SIZE_RATCHET_*` keys, baselines and

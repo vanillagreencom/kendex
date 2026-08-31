@@ -72,11 +72,13 @@ clones `.git/hooks`, so a fresh clone carries the scripts but no shims. One
 committed shell and git on a machine that has never installed kendex.
 
 **kendex only arms and reports.** `kendex guard install` and `kendex guard
-uninstall` invoke the installer, and so does `kendex check` — it prints this
-installer's `--check` verdict rather than a second opinion of its own. It
-asks only where `.git/hooks/kendex-guards` is already there. git clones no
-hooks, so that file is there because of a local act on this machine, and
-cloning a repository and asking after its status runs none of its code.
+uninstall` invoke the installer, and so does `kendex check` — it relays this
+installer's `--check` verdict where there is something to report, rather than
+a second opinion of its own, and a clean result folds into kendex's own
+all-clear. It asks only where `.git/hooks/kendex-guards` is already there.
+git clones no hooks, so that file is there because of a local act on this
+machine, and cloning a repository and asking after its status runs none of
+its code.
 The verdicts a commit is judged by are all this skill's.
 
 **The `pre-commit-check` harness hook never stands in.** Where BOTH git hooks
