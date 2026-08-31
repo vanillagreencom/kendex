@@ -6,6 +6,10 @@ pkgdesc='Package manager for agents, skills, and hooks across AI coding tools'
 arch=('x86_64' 'aarch64')
 url='https://kendex.ai'
 license=('MIT')
+# kendex shells out to git to materialize a catalog, and 2.41 is the
+# first that takes `--attr-source` — below it every install of a
+# package from a git repository is refused.
+depends=('git>=2.41')
 provides=('kendex')
 conflicts=('kendex-git')
 options=('!strip')

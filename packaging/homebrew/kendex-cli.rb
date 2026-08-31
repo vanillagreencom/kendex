@@ -13,6 +13,12 @@ class KendexCli < Formula
   version "5.0.1"
   license "MIT"
 
+  # Materializing a catalog shells out to git, and kendex refuses on
+  # anything below 2.41 — the first that takes `--attr-source`. A
+  # formula dependency carries no version, so the floor itself is
+  # left to that refusal; brew's own git is well past it.
+  depends_on "git"
+
   on_macos do
     on_arm do
       url "https://github.com/vanillagreencom/kendex/releases/download/v#{version}/kendex-aarch64-apple-darwin"

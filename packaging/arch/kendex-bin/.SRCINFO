@@ -6,6 +6,7 @@ pkgbase = kendex-bin
 	arch = x86_64
 	arch = aarch64
 	license = MIT
+	depends = git>=2.41
 	depends = fuse2
 	depends = hicolor-icon-theme
 	provides = kendex

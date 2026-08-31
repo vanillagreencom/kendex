@@ -8,6 +8,12 @@ url='https://kendex.ai'
 license=('MIT')
 provides=('kendex')
 conflicts=('kendex')
+# Runtime as well as build time, and they are different needs: the
+# build clones with git, and the installed program materializes a
+# catalog with it. 2.41 is the first that takes `--attr-source`,
+# below which every install of a package from a git repository is
+# refused.
+depends=('git>=2.41')
 makedepends=('rust' 'cargo' 'git')
 source=('git+https://github.com/vanillagreencom/kendex.git')
 sha256sums=('SKIP')
