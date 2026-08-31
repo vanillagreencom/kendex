@@ -10,9 +10,8 @@
 //! files it then declined to name, and the same cut later took the remedy
 //! off the end of a relayed verdict.
 //!
-//! [`shown`] still cuts fragments, and every line `scope` composes is built
-//! around it. What no longer exists is a way to hand a WHOLE line to that
-//! cut.
+//! [`shown`] still cuts fragments, and `scope` composes lines around it.
+//! What no longer exists is a way to hand a WHOLE line to that cut.
 
 use super::*;
 
@@ -88,9 +87,9 @@ pub(super) const FOREIGN_CHARS: usize = 300;
 /// Foreign text on its way into the report: control characters become
 /// spaces, credentials become fingerprints, length is bounded.
 ///
-/// A fragment bounder, not a line one. It goes around each piece that came
+/// A fragment bounder, not a line one. It goes around a piece that came
 /// from outside — an error's message, a name off a source — and the line is
-/// composed around the results. Wrapped around a whole composed line it
+/// composed around the result. Wrapped around a whole composed line it
 /// cuts kendex's own prose instead, which is what left a `commit hooks`
 /// line naming files to delete with the second one spelled half way.
 pub(super) fn shown(raw: &str) -> String {
@@ -99,11 +98,10 @@ pub(super) fn shown(raw: &str) -> String {
 
 /// How long a relayed line may be before the report declines to carry it.
 ///
-/// Generous against every verdict any delegated script actually writes —
-/// the longest growth-guards has runs to about 400 characters — because
-/// the point is not to trim, it is to have an answer for a program that
-/// answers with a megabyte. A report line is one line, and `--json`
-/// carries whatever this returns.
+/// Generous, because the point is not to trim: a verdict a delegated
+/// script actually writes should arrive whole, and this exists to have an
+/// answer for a program that answers with a megabyte. A report line is one
+/// line, and `--json` carries whatever this returns.
 pub(super) const RELAYED_CHARS: usize = 2000;
 
 /// A whole relayed line, scrubbed and never cut.

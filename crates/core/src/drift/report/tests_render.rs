@@ -180,12 +180,18 @@ fn a_composed_line_is_scrubbed_even_though_it_is_not_cut() {
 /// A foreign fragment keeps its cut. Nothing outside bounds how much an
 /// error or a source's own name may say, so `shown` does.
 ///
-/// Asked of `shown` directly rather than through a folded line: every one
-/// of `scope`'s lines is composed around a call to it, and the variant
-/// that used to hand it a whole line is gone.
+/// Asked of `shown` directly rather than through a folded line: `scope`
+/// composes lines around it, and the variant that used to hand it a whole
+/// line is gone.
+///
+/// The length is written out rather than taken from the constant. Compared
+/// against `FOREIGN_CHARS` both sides moved together, so the cut could be
+/// loosened to 1000 or tightened to 10 with this still green — the shape
+/// this file has already been caught in once.
 #[test]
 fn a_foreign_fragment_is_still_cut_at_the_bound() {
-    assert_eq!(shown(&"e".repeat(4000)).chars().count(), FOREIGN_CHARS);
+    assert_eq!(shown(&"e".repeat(4000)).chars().count(), 300);
+    assert_eq!(FOREIGN_CHARS, 300, "the bound moved; this test decides it");
 }
 
 /// A relayed line past the bound is REPLACED, never trimmed.
@@ -249,9 +255,9 @@ fn a_relayed_line_past_the_bound_is_replaced_rather_than_cut() {
 /// And within the bound it is carried whole, which is the case the bound
 /// exists to protect.
 ///
-/// Every verdict any delegated script actually writes is here, remedy and
-/// all. A cap set low enough to catch them would trade the defect this
-/// variant closed for the one it replaced.
+/// A verdict of the length a delegated script actually writes arrives
+/// whole, remedy and all. A cap set low enough to catch one would trade
+/// the defect this variant closed for the one it replaced.
 #[test]
 fn a_relayed_line_within_the_bound_keeps_its_every_word() {
     let mut report = check_report();

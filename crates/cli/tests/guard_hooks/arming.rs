@@ -663,3 +663,59 @@ fn an_installer_that_exits_zero_with_no_verdict_is_not_all_clear() {
         "the line does not say what happened: {text}"
     );
 }
+
+/// The session-start bound is actually applied, and a wedged script costs
+/// one line rather than the whole report.
+///
+/// Three guards sit on this bound and each closes a different way of
+/// losing it. `run_installer` takes a `Duration` and not an `Option`, so a
+/// lane cannot reach the process default by saying nothing.
+/// `guard_timeout_budget` reads the hook's frontmatter, so the number
+/// cannot drift past the budget. Neither notices `check_repo` naming a
+/// different `Duration`: swapping `CHECK_TIMEOUT` for `DEFAULT_TIMEOUT`
+/// compiles, and the session-start `--check` then runs for 120 seconds
+/// inside a hook the harness gives 20 — the whole drift report lost to the
+/// harness's own kill. This is what notices.
+///
+/// One test, because it costs the bound in wall clock. The assertion is
+/// not the discriminating one: a bound that fired relays `no result after
+/// 10s` and a `sleep` that ran to completion relays an exit with no
+/// verdict, so the wall clock only has to separate 10 seconds from 60.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_wedged_installer_gives_up_inside_the_session_start_bound() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    // Armed for real, so the fold gets past the consent gate and reaches
+    // the script.
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+
+    let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    std::fs::write(&installer, "#!/usr/bin/env bash\nsleep 60\n").unwrap();
+    std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let started = std::time::Instant::now();
+    let out = run(home, &root, "kendex", &["check"]);
+    let elapsed = started.elapsed();
+    let text = said(&out);
+
+    assert!(
+        elapsed < std::time::Duration::from_secs(50),
+        "the bound was not applied — the run took {elapsed:?}, which is the \
+         script finishing rather than the check giving up:\n{text}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a check that could not be taken was not reported as one: {text}"
+    );
+    assert!(text.contains("commit hooks"), "{text}");
+    assert!(
+        text.contains("no result after"),
+        "the line does not name the timeout: {text}"
+    );
+}
