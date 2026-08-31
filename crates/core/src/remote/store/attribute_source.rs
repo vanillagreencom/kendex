@@ -3,13 +3,13 @@
 //!
 //! A checkout reads its `.gitattributes` out of a tree kendex names rather
 //! than out of the commit it is writing, so nothing a catalog committed is
-//! in force for any path. Naming that tree can fail two ways, and both end
-//! the same: kendex refuses rather than writing a checkout git was free to
-//! convert.
+//! in force for any path. Naming that tree can fail two ways — no object
+//! format has ids of that length, or the git here cannot be told to read
+//! that tree — and both end the same: kendex refuses rather than writing a
+//! checkout git was free to convert.
 
 use std::sync::{Mutex, PoisonError};
 
-use super::stdout;
 use crate::error::{CoreError, Result};
 use crate::process::Hardened;
 
@@ -17,18 +17,18 @@ use crate::process::Hardened;
 /// attributes from, or the refusal that stops the write before a file
 /// exists.
 pub(super) fn for_commit(commit: &str) -> Result<&'static str> {
-    pinned(git_version().as_deref(), commit)
+    pinned(&git_version(), commit)
 }
 
 /// Both halves of naming that tree are asked here — the id, and the git
 /// that has to take it — because both have the same answer when they
 /// cannot be met, and it is never "write it anyway".
 ///
-/// The version arrives as an argument so that this order can be held to
+/// The reading arrives as an argument so that this order can be held to
 /// from a test: no host that runs the suite has a git below the floor, so
 /// nothing else could show that the floor is asked about at all.
-fn pinned(reported: Option<&str>, commit: &str) -> Result<&'static str> {
-    if let Some(refusal) = below_floor(reported) {
+fn pinned(probe: &Probe, commit: &str) -> Result<&'static str> {
+    if let Some(refusal) = below_floor(probe) {
         return Err(refused(commit, refusal));
     }
     no_attributes(commit)
@@ -58,6 +58,30 @@ fn refused(commit: &str, reason: String) -> CoreError {
 /// that cannot be wrong in silence.
 const GIT_FLOOR: (u32, u32) = (2, 41);
 
+/// What asking this host's git for its version came back with.
+///
+/// Three answers rather than one, because they call for three different
+/// sentences and only the first is about a version. A git that runs and
+/// refuses has already written the sentence that fixes the problem — a
+/// malformed gitconfig says `fatal: bad config line 1 in file ...` — and
+/// routing that through "kendex could not run git" would throw away the
+/// one useful thing said and point the reader at a version that is not
+/// the fault.
+#[cfg_attr(test, derive(Debug))]
+enum Probe {
+    /// The version line git printed, and where that git keeps its
+    /// programs when the version is one that cannot write a checkout.
+    Answered {
+        line: String,
+        installed: Option<String>,
+    },
+    /// git ran, refused, and said why.
+    Refused(String),
+    /// Nothing came back: the spawn did not happen, or the call did not
+    /// return, or it failed without a word.
+    Silent,
+}
+
 /// Asked once and then remembered — but only a reading that clears the
 /// floor is worth remembering.
 ///
@@ -66,66 +90,131 @@ const GIT_FLOOR: (u32, u32) = (2, 41);
 /// materializes many commits and only the first of them spends a spawn.
 ///
 /// Every other reading is worth nothing, and keeping one would outlive its
-/// cause. Two of them, and both are a person following the refusal's own
-/// advice. `stdout` says `None` for a spawn that did not happen as readily
-/// as for a git that is not there, and a Mac without the command line
-/// tools has a `/usr/bin/git` shim that exits non-zero until they are
-/// installed: remembered, that reading tells them to install git and then
-/// refuses all the same once they have. A reading below the floor is the
-/// same shape one step later — the app is open, the refusal says to
-/// upgrade, and a remembered 2.34 keeps refusing after they upgrade. Both
-/// recover on the next checkout instead of on the next restart, and the
-/// cost is one spawn per checkout only while kendex is refusing anyway.
+/// cause. Two of them are a person following the refusal's own advice: a
+/// Mac without the command line tools has a `/usr/bin/git` shim that exits
+/// non-zero until they are installed, and a host below the floor is told
+/// to upgrade — remembered, either reading keeps refusing after they have
+/// done it. Both recover on the next checkout instead of on the next
+/// restart, and the cost is one spawn per checkout only while kendex is
+/// refusing anyway.
 ///
 /// The lock is held across the asking, not merely around the remembering,
 /// so two publishes starting together spend one spawn between them rather
 /// than one each. On the paths that ask again they each spend one, which
 /// are the paths that end in a refusal either way.
-fn git_version() -> Option<String> {
+fn git_version() -> Probe {
     static CLEARED: Mutex<Option<String>> = Mutex::new(None);
-    reading(&CLEARED, || stdout(Hardened::git(&["--version"], None)))
+    reading(&CLEARED, ask_git)
 }
 
 /// The asking and the remembering, given the cell to remember in, so that
 /// what it keeps and what it asks for again can be shown without a git
 /// that fails and without a git that is old.
-fn reading(cell: &Mutex<Option<String>>, ask: impl FnOnce() -> Option<String>) -> Option<String> {
+fn reading(cell: &Mutex<Option<String>>, ask: impl FnOnce() -> Probe) -> Probe {
     let mut kept = cell.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(cleared) = kept.as_deref() {
-        return Some(cleared.to_owned());
+        return Probe::Answered {
+            line: cleared.to_owned(),
+            installed: None,
+        };
     }
-    let answer = ask();
-    if answer
-        .as_deref()
-        .is_some_and(|line| below_floor(Some(line)).is_none())
+    let probe = ask();
+    if let Probe::Answered { line, .. } = &probe
+        && clears(line)
     {
-        kept.clone_from(&answer);
+        *kept = Some(line.clone());
     }
-    answer
+    probe
 }
 
-/// What a `git --version` line earns, or `None` when it clears the floor.
-/// Kept apart from the reading of it so the sentence can be held to on
-/// versions no test host has.
-fn below_floor(reported: Option<&str>) -> Option<String> {
+/// The one call, kept whole rather than reduced to its stdout: a failing
+/// git says what is wrong on stderr, and the status is what tells the two
+/// apart.
+///
+/// Whitespace in what git said is collapsed on the way in, because it
+/// lands mid-sentence in a refusal a person reads and git wraps its own
+/// output.
+fn ask_git() -> Probe {
+    probed(Hardened::git(&["--version"], None))
+}
+
+/// The call arrives built so that a test can hand over one that really
+/// fails — a git pointed at a malformed config exits non-zero and says so
+/// — rather than asserting against a `Probe` the test made up.
+fn probed(call: Hardened) -> Probe {
+    let Ok(output) = call.run() else {
+        return Probe::Silent;
+    };
+    if !output.status.success() {
+        let said = collapsed(&output.stderr);
+        return match said.is_empty() {
+            true => Probe::Silent,
+            false => Probe::Refused(said),
+        };
+    }
+    let line = collapsed(&output.stdout);
+    // Only a reading that cannot write a checkout has to say where it came
+    // from, and only that reading pays the second spawn for it.
+    let installed = (!clears(&line)).then(exec_path).flatten();
+    Probe::Answered { line, installed }
+}
+
+/// Where the git that just answered keeps its programs — asked of that
+/// git, never resolved out of `PATH` a second time. A second resolution
+/// could name a different file than the one that ran, and the whole point
+/// of saying it is that a person who installed a newer git elsewhere can
+/// see that this is not the one kendex reached.
+fn exec_path() -> Option<String> {
+    let output = Hardened::git(&["--exec-path"], None).run().ok()?;
+    let path = collapsed(&output.stdout);
+    output
+        .status
+        .success()
+        .then_some(path)
+        .filter(|at| !at.is_empty())
+}
+
+fn collapsed(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Whether a version line is one a checkout can be written under.
+fn clears(line: &str) -> bool {
+    version_of(line).is_some_and(|found| found >= GIT_FLOOR)
+}
+
+/// What a reading earns, or `None` when it clears the floor. Kept apart
+/// from the taking of it so every sentence can be held to on hosts that
+/// have none of these gits.
+fn below_floor(probe: &Probe) -> Option<String> {
     let (want_major, want_minor) = GIT_FLOOR;
     let needed = format!(
         "kendex needs git {want_major}.{want_minor} or newer to write a checkout: it is the first git that can be told to read no attributes, and one that cannot be told converts the files in silence"
     );
-    match reported.map(|line| (line, version_of(line))) {
-        Some((_, Some(found))) if found >= GIT_FLOOR => None,
-        Some((_, Some((major, minor)))) => {
-            Some(format!("this host runs git {major}.{minor}, and {needed}"))
-        }
-        // Answered, but not with anything a version could be read out of.
-        Some((line, None)) => Some(format!(
-            "this host's git did not say which version it is, answering \"{line}\", and {needed}"
+    match probe {
+        Probe::Answered { line, installed } => match version_of(line) {
+            Some(found) if found >= GIT_FLOOR => None,
+            // Where it came from, when there is a where: a Mac that has a
+            // newer git in another directory is otherwise told to install
+            // what it already has.
+            Some((major, minor)) => Some(format!(
+                "this host runs git {major}.{minor}{}, and {needed}",
+                installed
+                    .as_deref()
+                    .map_or(String::new(), |at| format!(", installed at {at}"))
+            )),
+            None => Some(format!(
+                "this host's git did not say which version it is, answering \"{line}\", and {needed}"
+            )),
+        },
+        // git's own sentence, which is the one that fixes the problem.
+        Probe::Refused(said) => Some(format!(
+            "git here answered \"{said}\" instead of a version, and {needed}"
         )),
-        // Never answered at all, which is a different thing and almost
-        // never the user's git: a checkout runs only after a clone or a
-        // fetch already spawned git here, so the probe is what did not come
-        // back. Saying so keeps the refusal off the wrong suspect.
-        None => Some(format!(
+        Probe::Silent => Some(format!(
             "kendex could not run git --version here, and {needed}"
         )),
     }
@@ -179,159 +268,4 @@ fn no_attributes(commit: &str) -> Result<&'static str> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The number, written out rather than read back off the constant. The
-    /// floor is a promise the README and a **Breaking:** changelog line
-    /// both make in words, so a test that formats its expectation from
-    /// `GIT_FLOOR` checks the sentence against its own echo and holds
-    /// nothing. Both neighbours are named, because 2.40 is the value most
-    /// likely to be reached for by mistake: it is the release that taught
-    /// `git check-attr` a tree-ish, one short of the release that taught
-    /// git itself the option.
-    ///
-    /// The lines are the shapes real hosts print: Apple's command line
-    /// tools carry a build suffix, the Windows build carries a fourth
-    /// number. A git below the floor cannot be installed on the machine
-    /// running this, so the sentence is held to here instead.
-    #[test]
-    fn a_git_below_the_floor_is_refused_by_both_versions() {
-        const NEEDED: &str = "git 2.41 or newer";
-
-        assert_eq!(below_floor(Some("git version 2.41.0")), None);
-        assert_eq!(below_floor(Some("git version 2.55.0")), None);
-        assert_eq!(below_floor(Some("git version 3.0.0")), None);
-
-        for (line, found) in [
-            ("git version 2.40.1", "git 2.40"),
-            ("git version 2.39.5 (Apple Git-154)", "git 2.39"),
-            ("git version 2.34.1", "git 2.34"),
-            ("git version 1.9.1", "git 1.9"),
-        ] {
-            let refusal = below_floor(Some(line)).expect("a git below the floor was accepted");
-            assert!(refusal.contains(found), "{line}: {refusal}");
-            assert!(refusal.contains(NEEDED), "{line}: {refusal}");
-        }
-
-        // An answer nothing could read is refused too, and separately from
-        // no answer at all: only the first is about the user's git.
-        for unreadable in ["", "git version", "hg 5.9"] {
-            let refusal = below_floor(Some(unreadable)).expect("an unreadable answer was accepted");
-            assert!(refusal.contains(unreadable), "{unreadable:?}: {refusal}");
-            assert!(refusal.contains(NEEDED), "{unreadable:?}: {refusal}");
-        }
-        let silent = below_floor(None).expect("a silent probe was accepted");
-        assert!(silent.contains("could not run git --version"), "{silent}");
-        assert!(silent.contains(NEEDED), "{silent}");
-    }
-
-    /// Only a reading that clears the floor is kept, and every other one
-    /// is asked for again on the next checkout.
-    ///
-    /// Both of the others are a person doing what the refusal told them
-    /// to. A Mac whose `/usr/bin/git` shim exits non-zero until the
-    /// command line tools arrive would be told to install them and then
-    /// refused all the same; a host on 2.34 would be told to upgrade and
-    /// then refused after upgrading. Remembering either makes the app's
-    /// own advice take a restart to work.
-    ///
-    /// The keeping is what bounds the asking, so the count is asserted
-    /// with it: one spawn for a host that clears the floor, however many
-    /// checkouts follow.
-    #[test]
-    fn only_a_reading_that_clears_the_floor_is_remembered() {
-        let cell = Mutex::new(None);
-        let probes = std::cell::Cell::new(0);
-        let ask = |answer: Option<&str>| {
-            reading(&cell, || {
-                probes.set(probes.get() + 1);
-                answer.map(str::to_owned)
-            })
-        };
-
-        assert_eq!(ask(None), None);
-        assert_eq!(ask(None), None);
-        assert_eq!(
-            probes.get(),
-            2,
-            "a failure was remembered instead of asked again"
-        );
-
-        let old = Some("git version 2.34.1");
-        assert_eq!(ask(old).as_deref(), old);
-        assert_eq!(ask(old).as_deref(), old);
-        assert_eq!(
-            probes.get(),
-            4,
-            "a git below the floor was remembered, so upgrading it would take a restart"
-        );
-
-        let current = Some("git version 2.55.0");
-        assert_eq!(ask(current).as_deref(), current);
-        for _ in 0..29 {
-            assert_eq!(
-                ask(None).as_deref(),
-                current,
-                "the reading was not kept, so every checkout would ask again"
-            );
-        }
-        assert_eq!(
-            probes.get(),
-            5,
-            "the reading cost one asking and the 29 checkouts after it cost none"
-        );
-    }
-
-    /// The floor is asked before anything else about a checkout, and a git
-    /// below it stops the write whatever the commit is. Only reachable from
-    /// here: every host that runs this suite carries a git above the floor,
-    /// so no end-to-end test can put one below it.
-    #[test]
-    fn a_checkout_is_refused_on_an_old_git_whatever_the_commit_is() {
-        let commit = "a".repeat(40);
-        let (_, sha1_empty_tree) = NO_ATTRIBUTES[0];
-
-        assert_eq!(
-            pinned(Some("git version 2.41.0"), &commit).unwrap(),
-            sha1_empty_tree
-        );
-        let refusal = pinned(Some("git version 2.34.1"), &commit)
-            .expect_err("an old git was allowed to write a checkout")
-            .to_string();
-        assert!(refusal.contains("git 2.34"), "{refusal}");
-    }
-
-    /// Every refusal this file writes is a sentence a person reads, and it is
-    /// written where nothing reflows it: rustfmt leaves string contents alone,
-    /// so a line continuation that keeps the source narrow can leave a run of
-    /// indentation in the message. The refusals name the operation kendex
-    /// declined rather than a git call, because none was made.
-    #[test]
-    fn a_refusal_reads_as_one_sentence_about_what_kendex_declined() {
-        let commit = "abc1234";
-        // Every refusal the module can write, not a sample of them: the
-        // one branch left out is the one a space run lands in next.
-        let said = |reported| refused(commit, below_floor(reported).unwrap()).to_string();
-        let refusals = [
-            no_attributes(commit).unwrap_err().to_string(),
-            said(Some("git version 2.34.1")),
-            said(Some("hg 5.9")),
-            said(None),
-        ];
-        for refusal in refusals {
-            assert!(
-                !refusal.contains("  "),
-                "a run of spaces reached the reader: {refusal}"
-            );
-            assert!(
-                refusal.starts_with(&format!("materializing {commit} failed:")),
-                "the refusal names something other than what kendex declined: {refusal}"
-            );
-            assert!(
-                !refusal.contains("git checkout-index"),
-                "the refusal names a git call that was never made: {refusal}"
-            );
-        }
-    }
-}
+mod tests;
