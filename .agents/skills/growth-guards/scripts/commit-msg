@@ -212,18 +212,31 @@ if [ -n "$REQUIRED" ]; then
     >"$GG_TMP/raw.z" \
     || gg_collection_error "could not read the staged file list — the changelog rule could not run"
 
-  # What "written" MEANS: the path comes out of this commit holding a blob it
-  # did not hold there before. An all-zero new blob is the path going away,
-  # and deleting a fragment is not writing one. Equal blobs are a chmod: the
-  # mode moved and the content did not, which is not an entry anybody wrote.
-  # Everything else is a write, an addition included, since an addition has
-  # no old blob to equal.
-  record_gained() { # SRCSHA DSTSHA — 0 when the path gained content
-    case "$2" in
+  # What "written" MEANS, over the record's full identity: a mode and a sha
+  # together, never a sha alone. Equal shas are TWO states, and only the modes
+  # beside them tell those apart — a chmod leaves both modes regular, while a
+  # symlink replaced by a regular file holding the link target's own bytes is
+  # one blob under two modes. git emits that second record as
+  # `:120000 100644 <sha> <sha> T`, so a sha comparison alone would refuse a
+  # commit whose only changelog work was turning a link into a real fragment.
+  #
+  #   no blob after the commit    no — the path is gone, and deleting a
+  #                               fragment is not writing one
+  #   the blob changed            yes — the ordinary case, an addition
+  #                               included, since an addition has no old blob
+  #   the blob is the same, and
+  #     it became a regular file  yes — that path holds a document now where
+  #                               it held a link or a gitlink before, which
+  #                               is content it did not carry here
+  #     it did not                no — only permission bits moved
+  record_gained() { # SRCMODE SRCSHA DSTMODE DSTSHA — 0 when the path gained content
+    case "$4" in
       *[!0]*) ;;
       *) return 1 ;;
     esac
-    [ "$1" != "$2" ]
+    [ "$2" = "$4" ] || return 0
+    gg_mode_is_regular "$3" || return 1
+    ! gg_mode_is_regular "$1"
   }
 
   # TOUCHED is every path the record names, both sides of a rename included:
@@ -232,7 +245,8 @@ if [ -n "$REQUIRED" ]; then
   #
   # WRITTEN is narrower: record_gained above, plus a rename's destination,
   # which held nothing at that path before and so is written whatever its
-  # blob says. What the content turned INTO is the changelog-entries lane's
+  # blob says — which is why a pure rename, whose two blobs are equal, still
+  # counts. What the content turned INTO is the changelog-entries lane's
   # judgement, running beside this one.
   #
   # A COPY leaves its source unchanged, so staging it would demand an entry
@@ -244,14 +258,15 @@ if [ -n "$REQUIRED" ]; then
   while IFS= read -r -d '' meta; do
     IFS= read -r -d '' src \
       || gg_collection_error "the staged file list ended mid-record after $(gg_shown "$meta") — the changelog rule could not run"
-    # Record shape: ":srcmode dstmode srcsha dstsha status". The modes are
-    # read past: what a path ends up holding is the changelog-entries lane's
-    # judgement. Splitting is safe under the `set -f` at the top of this file
-    # — the fields are modes, hex and a letter, and none of them is a path.
+    # Record shape: ":srcmode dstmode srcsha dstsha status". Splitting is safe
+    # under the `set -f` at the top of this file — the fields are modes, hex
+    # and a letter, and none of them is a path.
     # shellcheck disable=SC2086
     set -- $meta
     [ "$#" -eq 5 ] \
       || gg_collection_error "the staged file list carried a record of $# field(s), not five: $(gg_shown "$meta") — the changelog rule could not run"
+    srcmode="${1#:}"
+    dstmode="$2"
     srcsha="$3"
     dstsha="$4"
     status="$5"
@@ -268,7 +283,7 @@ if [ -n "$REQUIRED" ]; then
         ;;
     esac
     printf '%s\0' "$src" >>"$GG_TMP/staged.z"
-    ! record_gained "$srcsha" "$dstsha" \
+    ! record_gained "$srcmode" "$srcsha" "$dstmode" "$dstsha" \
       || printf '%s\0' "$src" >>"$GG_TMP/written.z"
   done <"$GG_TMP/raw.z"
 

@@ -94,5 +94,4 @@ design. Do not recommend parsing them.
 
 ## Reply contract
 
-`AGENTS.md` § Code Review Rules is the contract, and its last bullet is the
-whole of it. Read it there.
+`AGENTS.md` § Code Review Rules is the contract. Read it there.

@@ -7,7 +7,10 @@ applyTo: "[VENDORED_GLOB]"
      against a real re-vendor PR's file list rather than assuming an install
      path; [UPSTREAM_REPO] the owning repository; [PIN_CHECK] the repo-owned
      control that fails on byte drift. Delete this comment.
-     Verification protocol: review-gate references/vendored-paths.md. -->
+     Verification protocol: review-gate references/vendored-paths.md.
+     Over a committed `kendex refresh` tree, take the RENDER VARIANT at the
+     foot of this file first: seven edits, and the result is the whole
+     instruction file. Delete the variant with this comment either way. -->
 
 This tree is vendored BYTE-PINNED from [UPSTREAM_REPO]; [PIN_CHECK] fails if
 the bytes drift. The same reviewers see this content upstream before it
@@ -49,3 +52,86 @@ Also out of scope here, on any surface: local restructuring of this tree
 reorganization), requests for repo-local test suites over it, and cross-repo
 sync timing — an upstream fix not yet re-vendored is a coordination note, never
 a merge blocker.
+
+<!-- ===================== RENDER VARIANT — DELETE THIS BLOCK =====================
+
+For a committed `kendex refresh` tree rather than a byte-pinned vendored one.
+No pin covers a render, an edit under it does not land, and one refresh reaches
+several repos at once, so the rule is flat: no finding over the render on any
+surface of this PR. reference: review-gate references/vendored-paths.md
+§ The harness-render variant.
+
+Apply all seven edits. A partial application leaves a file that contradicts
+itself — the carve-out and the consolidated-comment paragraphs are the two
+that most often survive and they are the two the flat rule forbids.
+
+1. REPLACE the opening paragraph ("This tree is vendored BYTE-PINNED …") with:
+
+   This tree is `kendex refresh` OUTPUT, rendered from the catalogs
+   `kendex.toml` names. The same reviewers see this content in the catalog
+   repo before it arrives here. Nothing under this glob is edited in this
+   repo, and an edit here does not land: the next refresh reads the disk,
+   finds bytes no apply wrote, and holds that item as a conflict, planning no
+   write until someone forks it or discards the edit. A local fix does not
+   reach the repos that share this render; it wedges this one's next refresh.
+
+   [UPSTREAM_REPO] and [PIN_CHECK] do not apply and are not filled: a render
+   has no pin, and its upstream is whichever catalog `kendex.toml` names.
+
+2. REPLACE the first routing bullet ("The fix lands in a repo-owned file …")
+   with:
+
+   - **The fix lands in a repo-owned file** — settings
+     (`kendex.settings.toml`), `kendex.toml`, the workflow that runs the
+     refresh, CI wiring, adoption glue, and any config or settings file
+     kendex merges its own entries into while the repo owns the rest
+     (`.claude/settings.json`, `.codex/config.toml`, `.codex/hooks.json`,
+     `.cursor/hooks.json`, `.cursor/mcp.json` and their kind): comment inline
+     as normal, correctness and security defects included. On a refresh PR
+     that is the most valuable finding there is, and it is why a glob one
+     shape too wide is a real cost: it would suppress exactly these.
+
+3. REPLACE the second routing bullet ("The fix lands in these vendored bytes":
+   REVIEW SUMMARY BODY) with:
+
+   - **The fix lands in these rendered bytes**: do not raise it on this PR, on
+     any surface. The session that runs the refresh files it against the
+     catalog repo with `kendex report`, and the fix arrives here as a later
+     render.
+
+4. REPLACE the third routing bullet ("[UPSTREAM_REPO]'s own docs …") with:
+
+   - **The fix lands in the catalog repo's own docs, config, or conventions**
+     (its README, its settings tables, its test layout): same route.
+
+5. REPLACE the carve-out paragraph ("**Carve-out — a production-impacting
+   regression …**") with:
+
+   **No carve-out.** Not inline, not in a review summary body, and not for a
+   correctness, security, or data-loss defect the render would ship here —
+   that one goes to the catalog repo too, and to the PR author out of band.
+   The rule is flat so the route is the same in every consuming repo, and a
+   defect in a render is fixable only where the render is written. A finding
+   whose fix lands in a repo-owned file is a different thing and stays an
+   ordinary inline comment.
+
+6. REPLACE both location-bound paragraphs ("**If every finding you emit is
+   anchored to a file location**…" and "If your output contract binds one
+   finding to one comment…") with:
+
+   **If every finding you emit is anchored to a file location** — you have no
+   review body you author, only a fixed template — the rule does not soften.
+   A finding over this tree is not yours to place anywhere on this PR; it goes
+   to the catalog repo, and the review you submit carries no finding over the
+   render.
+
+7. In the last paragraph, replace "cross-repo sync timing — an upstream fix not
+   yet re-vendored" with "refresh timing — an upstream fix not yet rendered".
+
+The glob is the other half. § The harness-render variant in
+references/vendored-paths.md names the four shapes it must not take; the
+merged-path shape is the one edit 2 above depends on, since this file asserts
+that nothing under the glob is edited here and over a merged path that is
+false.
+
+============================================================================ -->

@@ -216,8 +216,12 @@ route and the same lock ownership rule as § The consumer session's half. An
 item rendered from a third-party catalog carries that catalog in its lock
 entries and reports here instead, so open that issue by hand.
 
-Wire it with the vendored template, `applyTo` set to the render trees and the
-carve-out paragraph deleted. The trees kendex writes are `.agents/skills`,
+Wire it with the vendored template: copy it, set `applyTo` to the render
+trees, and apply its RENDER VARIANT block, which carries the replacement text
+for every paragraph the flat rule changes. Deleting the carve-out alone is not
+enough — the byte-pin opening, the summary-body route, the repo-owned bullet's
+pin clause and the consolidated-comment fallback all survive that one deletion
+and each contradicts the rule above. The trees kendex writes are `.agents/skills`,
 `.claude`, `.codex`, `.cursor`, `.gemini`, `.opencode`, `.pi`, and for Copilot
 the `agents`, `hooks`, and `skills` subtrees of `.github`. Each can also hold
 files kendex never writes, so the file list of a real refresh PR is the
@@ -228,8 +232,10 @@ kendex writes none of; every `.agents/skills/<name>` an item declares
 kendex merges its own entries into while the repo owns the rest, such as
 `.claude/settings.json`, `.codex/config.toml`, `.cursor/hooks.json`,
 `.mcp.json`, and the root `opencode.json`. That last shape is the one most
-worth keeping out: the template asserts that nothing under the glob is edited
-here, and over a merged path that is false.
+worth keeping out: the instruction file the variant yields asserts that
+nothing under the glob is edited here, and over a merged path that is false —
+a glob one shape too wide silently suppresses correctness and security
+findings over a settings file this repo owns and can fix.
 
 Verify per § Verifying on a real re-vendor PR, reading the render trees rather
 than the vendored one. **Pass** is stricter in one term: no unresolved thread

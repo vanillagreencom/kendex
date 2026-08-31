@@ -34,8 +34,7 @@ every push. Rounds are the scarce resource. Calibrate:
   do not re-raise it unless the relevant code changed since.
 
 ## Reply contract (context for reading threads)
-`AGENTS.md` § Code Review Rules is the contract, and its last bullet is the
-whole of it. Read it there.
+`AGENTS.md` § Code Review Rules is the contract. Read it there.
 
 ## Severity honesty
 Mark a finding blocking only if you would stop a human colleague's merge

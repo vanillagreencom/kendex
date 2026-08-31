@@ -235,7 +235,7 @@ run_writer() {
 # The pending status text the predicate emits for this verdict. The
 # writer is idempotent on state+description, so the fixture histories
 # below reuse this exact string.
-AWAITING_DETAIL="no review evidence at headsha yet; expected from botty[bot]"
+AWAITING_DETAIL="no review evidence at headsha yet"
 AWAITING="verdict=awaiting detail=$AWAITING_DETAIL"
 APPROVED="verdict=approved detail=reviewed at head with no unresolved threads"
 CR="verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"

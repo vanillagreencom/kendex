@@ -184,21 +184,58 @@ fi
 [ "$(readlink .claude/CLAUDE.md 2>/dev/null)" = "../AGENTS.md" ] ||
   say ".claude/CLAUDE.md must be a symlink to ../AGENTS.md"
 
-# The reply contract lives in AGENTS.md and nowhere else. These two files are
-# what the review bots read, and a second copy in either is a paraphrase that
-# drifts: what the merge gate actually accepts is one set of forms, and a bot
-# told a looser version of them raises findings the gate then refuses to let
-# an author answer. Each file must name AGENTS.md and must not restate the
-# reply forms.
-grep -qE 'Author replies are .Fixed in <sha>., .Declined: <reason>., or' AGENTS.md ||
-  say "AGENTS.md no longer carries the reply contract the bot-facing files send readers to"
-for f in .github/copilot-instructions.md review-bots.md; do
-  grep -qF 'AGENTS.md' "$f" ||
-    say "$f must point at AGENTS.md for the reply contract, not restate it"
-  contract_copy=$(grep -cE '`?Fixed in' "$f")
-  [ "$contract_copy" = "0" ] ||
-    say "$f restates the reply contract ($contract_copy line(s) naming a reply form) — AGENTS.md is the one copy"
+# One reply contract for the review bots, in AGENTS.md § Code Review Rules.
+# The orch skill carries a second one on purpose, for working agents, and
+# AGENTS.md says so two lines above the forms; what must not exist is a third
+# copy in a file a bot reads, because what the merge gate accepts is one set
+# of forms and a bot told a looser set raises findings the gate then refuses
+# to let an author answer.
+#
+# Two halves, and both are pinned by what they are ABOUT rather than by a
+# substring that happens to appear. The three forms are matched literally and
+# one at a time, so a rewrap of the bullet cannot red this and the loss of any
+# one form is its own diagnosis. Bot-facing files are the glob, not a list, so
+# an instruction file added later is covered the day it lands.
+REPLY_FORMS=('Fixed in <sha>' 'Declined: <reason>' 'Tracked: KEN-<n>')
+for form in "${REPLY_FORMS[@]}"; do
+  grep -qF -- "$form" AGENTS.md ||
+    say "AGENTS.md no longer states the reply form '$form' — the bot-facing files point readers there for it"
 done
+
+# A file may point at AGENTS.md; it may not restate the forms.
+#
+# The pointer is the SENTENCE, not a mention: review-bots.md names AGENTS.md
+# in an unrelated line near the top, so a bare name check passes a file whose
+# whole pointer section has been deleted. It is required unconditionally of
+# both files rather than "if the section is present", because a check
+# conditioned on the thing it protects passes by deleting that thing.
+REPLY_POINTER='§ Code Review Rules is the contract. Read it there.'
+for f in .github/copilot-instructions.md review-bots.md; do
+  grep -qF -- "$REPLY_POINTER" "$f" ||
+    say "$f no longer points at AGENTS.md for the reply contract — delete nothing here without moving the pointer"
+done
+# The ban is wider than the pointer: every bot-facing file, from the same
+# working set the content rules above scan, so a staged instruction file is
+# judged on the commit that adds it. What it looks for is the SHAPE of a
+# contract, two or more forms named together on one line. A single form is how
+# a file legitimately cites one rule, which is what the do-not-re-raise bullet
+# in .github/copilot-instructions.md does with `Declined: <reason>`.
+bot_facing=$(printf '%s\n' "$files" | grep -E '^(review-bots\.md|\.github/copilot-instructions\.md|\.github/instructions/.+\.instructions\.md)$')
+[ -n "$bot_facing" ] || say "no bot-facing instruction file matched the reply-contract glob — the rule measured nothing"
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  [ -f "$f" ] || continue
+  restated=$(awk '
+    { n = 0
+      if (index($0, "Fixed in")) n++
+      if (index($0, "Declined:")) n++
+      if (index($0, "Tracked:")) n++
+      if (n >= 2) c++ }
+    END { print c + 0 }
+  ' "$f")
+  [ "$restated" = "0" ] ||
+    say "$f restates the reply contract on $restated line(s) naming two or more forms together — AGENTS.md is the one copy"
+done <<<"$bot_facing"
 
 if [ -f Cargo.toml ] && cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
   say "crates/core must not depend on tauri"
