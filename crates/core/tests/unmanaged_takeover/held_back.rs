@@ -213,3 +213,57 @@ fn a_sweep_that_can_replace_nothing_refuses() {
         "and the files in the way stay where they are"
     );
 }
+
+/// An item swept up and then dropped is still an item the sweep swept up.
+/// A tree stages its canonical take-over and only then meets the harness
+/// link it cannot touch, so the refusal rolls that staged work back and
+/// the item leaves nothing behind but its dead stop. Read from what
+/// survived, the sweep sees a blocked item it never took and lets the run
+/// replace everything else — the hold-back this engine no longer does,
+/// arrived at by losing the evidence rather than by deciding to.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_item_rolled_back_after_its_take_over_still_refuses_the_sweep() {
+    let w = world();
+    lint_in_catalog(&w);
+    // Symlink delivery, so the canonical tree and the harness position are
+    // two places of one item and the second is only reached after the
+    // first is staged.
+    fs::write(
+        w.home.join("app/kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{BOTH_SKILLS}",
+            source_path(&w.home.join("catalog"))
+        ),
+    )
+    .unwrap();
+    // lint: a stranger's files at its canonical position, wholly replaceable.
+    let lint = w.home.join("app/.agents/skills/lint");
+    fs::create_dir_all(&lint).unwrap();
+    fs::write(lint.join("SKILL.md"), "the tool that came before").unwrap();
+    // deploy: the same, with a foreign link at the harness position.
+    let deploy = w.home.join("app/.agents/skills/deploy");
+    fs::create_dir_all(&deploy).unwrap();
+    fs::write(deploy.join("SKILL.md"), "the tool that came before").unwrap();
+    let elsewhere = w.home.join("documents");
+    fs::create_dir_all(&elsewhere).unwrap();
+    let link = w.home.join("app/.claude/skills/deploy");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+
+    let refused = plan_apply(&w.env, &w.scope, &take_over());
+    let Err(error) = refused else {
+        panic!("the sweep replaced the rest and dropped the item it could not settle: {refused:?}");
+    };
+    assert!(
+        matches!(&error, CoreError::TakeOverSweepBlocked { blocked }
+            if blocked.len() == 1 && blocked[0].starts_with("skill deploy — ")),
+        "{error:?}"
+    );
+    // Nothing was planned, so the neighbour it would have replaced is
+    // exactly as it was.
+    assert_eq!(
+        fs::read_to_string(lint.join("SKILL.md")).unwrap(),
+        "the tool that came before"
+    );
+}

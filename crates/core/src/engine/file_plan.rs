@@ -193,9 +193,22 @@ fn plan_absent_file(
 /// The path is shown, not printed: these bytes were written by something
 /// that is not kendex, and a folder name carrying an escape sequence must
 /// reach a terminal as its own characters.
+/// The two halves of what [`set_aside`] writes, so the pass that has to
+/// recognise one of its ops reads them from here rather than spelling the
+/// sentence a second time.
+const SET_ASIDE: (&str, &str) = ("Move the files already at ", " to the trash");
+
+/// Whether this op is one [`set_aside`] built — the take-over that moves
+/// what kendex did not write out of the way. Asked by the pass that rolls
+/// an item's staged work back, which has to know whether the item it is
+/// dropping had been swept up.
+pub(super) fn is_set_aside(op: &PlannedOp) -> bool {
+    op.description == Description::around(SET_ASIDE.0, SET_ASIDE.1)
+}
+
 pub(super) fn set_aside(path: &std::path::Path, pre: Pre) -> PlannedOp {
     PlannedOp {
-        description: Description::around("Move the files already at ", " to the trash"),
+        description: Description::around(SET_ASIDE.0, SET_ASIDE.1),
         op: Op::Trash {
             absent_is_done: false,
             path: path.to_path_buf(),

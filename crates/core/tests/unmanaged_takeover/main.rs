@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use kendex_core::apply;
 use kendex_core::engine::{DriftCause, DriftRow, DriftState, PlanOptions, audit, plan_apply};
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::error::CoreError;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 
 struct World {
@@ -290,6 +291,11 @@ fn an_installation_kendex_wrote_is_never_called_a_stranger() {
 /// stranger's arrives after the tree's ops are already staged — and those
 /// ops would otherwise run: the user's canonical tree in the trash, the
 /// render in its place, and no lock entry recording any of it.
+///
+/// Under the scope-wide flag the item was swept up before that refusal
+/// rolled it back, so the run refuses for it rather than carrying on
+/// without it. The tree is untouched either way, which is what this holds:
+/// nothing is planned, and now nothing runs.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_refusal_at_the_link_leaves_the_tree_untouched() {
@@ -304,19 +310,14 @@ fn a_refusal_at_the_link_leaves_the_tree_untouched() {
     fs::create_dir_all(link.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
 
-    let report = plan_apply(&w.env, &w.scope, &take_over()).unwrap();
-    let row = deploy_row(&report.drift);
-    assert_eq!(row.state, DriftState::Conflict, "{row:?}");
+    let refused = plan_apply(&w.env, &w.scope, &take_over());
     assert!(
-        !report
-            .plan
-            .ops
-            .iter()
-            .any(|op| format!("{:?}", op.op).contains("deploy")),
-        "nothing is planned for a refused item: {:?}",
-        report.plan.ops
+        matches!(&refused, Err(CoreError::TakeOverSweepBlocked { blocked })
+            if blocked.len() == 1 && blocked[0].starts_with("skill deploy — ")),
+        "{refused:?}"
     );
-    apply::execute(&w.env, &report.plan).unwrap();
+    // Nothing was planned, so nothing ran, and the staged ops that would
+    // have trashed the canonical tree went back off with the rest.
     assert_eq!(
         fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
         "the tool that came before"

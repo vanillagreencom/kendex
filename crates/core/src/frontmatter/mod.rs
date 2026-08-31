@@ -189,6 +189,23 @@ pub fn parse_tolerant(yaml: &str) -> Result<Parsed, String> {
     Ok(parsed)
 }
 
+/// Whether an inline value closes every flow collection it opens. Bracket
+/// depth, which is what tells `[a, b]` from `[` running on to the next
+/// line — a flow collection is the one value that continues at column 0,
+/// where an indent test reads it as a value that ended. A value opening
+/// none is closed by definition.
+pub fn flow_closes(value: &str) -> bool {
+    let mut depth = 0i32;
+    for c in value.chars() {
+        match c {
+            '[' | '{' => depth += 1,
+            ']' | '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
 /// A plain inline value is one where verbatim capture and YAML agree apart
 /// from comment stripping — no quoting, no flow collections, no block
 /// indicators, no anchors/aliases/tags.

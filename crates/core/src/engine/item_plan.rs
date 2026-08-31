@@ -12,6 +12,7 @@ use crate::model::Scope;
 
 use super::config_edits::ConfigEditPlan;
 use super::desired::{Artifact, Desired};
+use super::file_plan;
 use super::file_plan::{plan_file, plan_written_file};
 use super::item_record::{registration, rendered_hash};
 use super::tree_plan::plan_tree;
@@ -119,6 +120,16 @@ pub(super) fn plan_item(
         Planned::Clean => None,
     };
     if let Some((cause, detail, compared, also)) = refused {
+        // Under the scope-wide flag an item that staged a take-over was
+        // swept up, and this refusal is about to drop it. The rows it
+        // leaves carry no trace of that, so the sweep's all-or-none check
+        // would find its dead stop with nothing to pair against and let the
+        // run replace the other items without it — the hold-back this
+        // engine no longer does. The evidence is still in the ops here, so
+        // the row that records it goes out beside the conflict.
+        if replace_unmanaged && ops[staged..].iter().any(file_plan::is_set_aside) {
+            drift.push(row(DriftState::Missing, file_plan::TAKEN_OVER.into()));
+        }
         ops.truncate(staged);
         written.undo_item();
         let mut conflict = row(DriftState::Conflict, detail);
