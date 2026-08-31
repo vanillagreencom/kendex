@@ -4,12 +4,7 @@
 # silently dropped.
 #
 # What this pins is the three QA signal VALUES and the absence of the retired
-# tracker mutation. review-bots.md: a token pin establishes that a structural
-# element is present, never that a behavioral claim written in prose is true.
-# So these rules have no lint: that signals are recorded in the artifact and
-# not the tracker, that a triggered signal is never silently dropped, that
-# `none` is an explicit answer rather than a default, and that feature-gated
-# work is exempt from the perf signal.
+# tracker mutation.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

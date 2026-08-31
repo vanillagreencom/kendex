@@ -5,20 +5,12 @@
 # and the user is asked about work rather than about metadata mechanics. This
 # test pins each rule's NAME at the place that cites it — the names are what
 # other documents reference — and pins the retired parallelism ceremony as
-# absent. What each rule requires is prose, listed below as uncovered.
+# absent.
 #
 # What this pins is STRUCTURE — the `## Disposition` heading, the three
 # bolded rule labels other documents cite by name, the § 10.1 heading, the
 # below_bar evidence fields, the two gate questions verbatim, and the report
-# template lines. review-bots.md: a token pin establishes that a structural
-# element is present, never that a behavioral claim written in prose is true.
-#
-# So the bar's own content has no lint: that all three tests must hold, what
-# each one asks, that everything else is declined with one line, and the
-# severe-edge-case, low-severity and critical-harm carve-outs. Nor does the
-# skip reason naming its failed test, architecture gaps facing the same bar,
-# the list of mechanics applied without asking, or the audit gate's own
-# statement that it asks about work and not mechanics.
+# template lines.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

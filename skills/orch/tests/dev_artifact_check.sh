@@ -637,12 +637,7 @@ done
 # dev_delegated_at must arm the watchdog. kendex#818 re-homed both mandates into
 # the numbered "orchestrator owns round closure" list (same requirements, new
 # wording) and made that list the primary path rather than a recovery fallback.
-# The two bolded list items are the anchors. The sentences around them are
-# not: nothing here checks that round closure is the orchestrator's rather
-# than a return's, that a round is never classified from wording or elapsed
-# time, or that the return message is display-only. Nor that a delegation
-# point arms the watchdog — the arming instruction is prose, and the bare word
-# `watchdog` is satisfied by a sentence saying none is armed.
+# The two bolded list items are the anchors.
 orch_skill="$REPO_ROOT/skills/orch/SKILL.md"
 assert_file_contains "$orch_skill" "Run the check on every wake and at the deadline" "SKILL mandates the per-wake and deadline check"
 assert_file_contains "$orch_skill" '`verdict`' "SKILL names the one-word verdict acceptance reads"

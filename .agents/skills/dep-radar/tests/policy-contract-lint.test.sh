@@ -2,24 +2,10 @@
 # Doc-contract lint for the dep-radar operating policy.
 #
 # The policy is a table and each rule is a row keyed by name. This lint pins
-# every ROW KEY inside the Operating policy section, and nothing else.
-# review-bots.md: a token pin establishes that a structural element is present,
-# never that a behavioral claim written in prose is true, and prose negates and
-# qualifies around any literal — so the second column is not pinned and may be
-# reworded freely. Dropping or renaming a key is what this catches, and a key
-# is what an inventory owner-rule cites when it demotes a tier, so the key is
-# the part that has to hold still.
-#
-# NOT covered: that the rows form a well-formed table at all — a header, a
-# delimiter on the line below it, and a consistent cell count across every row.
-# The reason is not the usual one. That property is not prose; it is a
-# DOCUMENT-LEVEL fact, and it has no home that stays fail-closed here. This
-# suite ships inside the skill, so a checker it calls must ship inside the
-# skill too; the identical checker orch's escalated-outcome lint would need
-# cannot be shared, because dep-radar declares `required: [github]` and no test
-# in this repo reaches into another skill. A repo-level `tools/` lane is the
-# right home and is filed as its own work; until it lands, table
-# well-formedness has no lint anywhere.
+# every ROW KEY inside the Operating policy section, and nothing else: the
+# second column may be reworded freely. Dropping or renaming a key is what
+# this catches, and a key is what an inventory owner-rule cites when it
+# demotes a tier, so the key is the part that has to hold still.
 #
 # Teeth: every check is re-run against a copy of the doc with its row deleted.
 set -euo pipefail

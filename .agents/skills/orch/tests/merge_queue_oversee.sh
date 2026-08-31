@@ -9,14 +9,16 @@ mkdir -p "$TMP/repo/.agents/skills" "$TMP/bin"
 ln -s "$ORCH" "$TMP/repo/.agents/skills/orch"
 git -C "$TMP/repo" init -q
 
-cat > "$TMP/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-case "${1:-} ${2:-}" in
-  'auth status') echo logged-in ;;
-  'pr list') echo '[]' ;;
-  *) echo "unexpected gh: $*" >&2; exit 1 ;;
-esac
-EOF
+# The shared `gh` fake. The source tree is found through git rather than a
+# relative hop, so this file works unchanged from skills/ and from the
+# .agents/ render beside it; a consuming repo carries the render but runs no
+# suite from it (.github/workflows/skill-tests.yml proves them at the source).
+# shellcheck source=../../../tools/tests/lib/gh-stub.sh
+. "$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/gh-stub.sh"
+GH_STUB_DIR="$TMP/gh-stub" gh_stub_install "$TMP/bin"
+gh_stub_answer auth-status logged-in
+gh_stub_answer pr-list '[]'
+
 cat > "$TMP/bin/pr-watch" <<'EOF'
 #!/usr/bin/env bash
 exit 0
@@ -26,7 +28,7 @@ cat > "$TMP/bin/event" <<'EOF'
 [[ "${*: -1}" == KEN-829 ]] || exit 1
 printf 'ready KEN-829 WATCH-123\n'
 EOF
-chmod +x "$TMP/bin/gh" "$TMP/bin/pr-watch" "$TMP/bin/event"
+chmod +x "$TMP/bin/pr-watch" "$TMP/bin/event"
 
 run_watch() {
   local script="$1"

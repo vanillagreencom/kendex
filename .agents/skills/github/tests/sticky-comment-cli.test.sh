@@ -43,51 +43,23 @@ assert_fails_with() {
     fi
 }
 
-cat >"$TMPDIR/gh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-case "${1:-}" in
-  auth)
-    if [[ "${2:-}" == "status" ]]; then
-      echo "Logged in"
-      exit 0
-    fi
-    ;;
-  repo)
-    if [[ "${2:-}" == "view" ]]; then
-      echo '{"owner":{"login":"owner"},"name":"repo"}'
-      exit 0
-    fi
-    ;;
-  api)
-    endpoint="${2:-}"
-    case "$endpoint" in
-      repos/{owner}/{repo}/issues/123/comments|repos/owner/repo/issues/123/comments)
-        cat "$STUB_FIXTURES/mixed_bot_comments.json"
-        exit 0
-        ;;
-      repos/owner/repo/issues/124/comments)
-        cat "$STUB_FIXTURES/codex_own_comment.json"
-        exit 0
-        ;;
-      repos/{owner}/{repo}/pulls/123/reviews)
-        printf '[]\n'
-        exit 0
-        ;;
-      *)
-        printf '[]\n'
-        exit 0
-        ;;
-    esac
-    ;;
-esac
-printf 'unexpected gh call: %s\n' "$*" >&2
-exit 1
-EOF
-chmod +x "$TMPDIR/gh"
+# The shared `gh` fake. The comment endpoints are staged under both the
+# templated and the expanded spelling, because the CLI reaches them both
+# ways and neither spelling is what these tests are about. The source tree is
+# found through git rather than a relative hop, so this works from skills/
+# and from the .agents/ render beside it.
+# shellcheck source=../../../tools/tests/lib/gh-stub.sh
+. "$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/gh-stub.sh"
+GH_STUB_DIR="$TMPDIR/gh-stub" gh_stub_install "$TMPDIR"
+
+gh_stub_answer 'api-repos/{owner}/{repo}/issues/123/comments' \
+  "$(cat "$FIXTURES/mixed_bot_comments.json")"
+gh_stub_answer 'api-repos/owner/repo/issues/123/comments' \
+  "$(cat "$FIXTURES/mixed_bot_comments.json")"
+gh_stub_answer 'api-repos/owner/repo/issues/124/comments' \
+  "$(cat "$FIXTURES/codex_own_comment.json")"
 
 export PATH="$TMPDIR:$PATH"
-export STUB_FIXTURES="$FIXTURES"
 unset GH_BOT_USERNAME || true
 
 echo "=== sticky-comment.sh CLI fallback ==="

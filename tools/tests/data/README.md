@@ -1,11 +1,11 @@
 # bash32 proof fixtures
 
-Read by `tools/tests/bash32-pattern-parity.test.sh`, one line per case, plain
-text and never sourced.
+Read by `tools/tests/bash32-lint.test.sh`, one line per case, plain text and
+never sourced. The set they prove lives in `tools/bash32-lint`.
 
 - `bash32-probes.txt` — Bash 4 constructs the shared pattern set must flag.
   Every line is a must-fail probe: dropped into a scanned `scripts/` tree it
-  turns that skill's bash32-portability suite red.
+  turns `tools/bash32-lint` red.
 
   One line per SPELLING, not one per construct. A construct absent from this
   file cannot be proven by any number of green injections, and a family
@@ -14,7 +14,8 @@ text and never sourced.
   pattern carries its whole family here: every command word and flag cluster
   the declare rule accepts including the `+` form and a tab separator, every
   redirection shape `{fd}` takes, every parameter and operator form of case
-  conversion including a pattern argument, and each name against every
+  conversion including a pattern argument, the braced `"${@}"` spelling that
+  Bash 3.2.57 aborts on under `set -u`, and each name against every
   neighbour that can precede or follow it.
 - `bash32-controls.txt` — Bash 3.2-legal source the set must leave alone,
   including the real bracket expressions and separator strings in this repo

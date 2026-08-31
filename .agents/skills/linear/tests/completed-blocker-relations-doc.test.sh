@@ -6,14 +6,6 @@
 # metadata or remove it, and that the only legitimate audit output is a
 # scheduling signal. What this test pins is the two ANCHORS in that section:
 # the bolded term the rule defines and the quoted signal string it names.
-
-#
-# What this pins is the bolded term the rule defines and the quoted signal
-# string it names. review-bots.md: a token pin establishes that a structural
-# element is present, never that a behavioral claim written in prose is true,
-# so the sentences around them have no lint — that Linear already treats the
-# dependent issue as unblocked, and that the relation is never removed or
-# classified as stale.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

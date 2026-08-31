@@ -52,3 +52,6 @@ run --local -A x
 declare=1
 local=2
 v="${arr[x[0]]}"
+run "$@"
+run ${@+"$@"}
+total=${#@}

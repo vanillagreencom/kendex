@@ -19,15 +19,9 @@
 # the branch fire only when it matters.
 #
 # The doc checks pin the schema's own names — `measurement_failed`, and the
-# `zero_sample`, `invalid_declaration` and `valid_undermeasured` states.
-# review-bots.md: a token pin establishes that a structural element is
-# present, never that a behavioral claim written in prose is true, so the
-# Ethos sentence around those names has no lint. Nothing here checks that
-# zero samples or a nonzero measuring pipeline is an instrument failure, that
-# the declaration is top-level and cites no numbers, that a zero RESULT is a
-# result, that quoted numbers are never scanned, or that omitting the numbers
-# is not the way past the gate. The gate's own behaviour is exercised against
-# the script above, which is what proves it.
+# `zero_sample`, `invalid_declaration` and `valid_undermeasured` states. The
+# gate's own behaviour is exercised against the script above, which is what
+# proves it.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

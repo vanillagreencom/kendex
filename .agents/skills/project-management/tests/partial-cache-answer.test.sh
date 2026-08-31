@@ -8,29 +8,12 @@
 # backlog with a cancellation. This test pins the ANCHORS those rules hang on:
 # the batch fetch command, the section that owns the subtree continuation rule
 # and the call sites that defer to it, and the team-scope sections and table.
-# What each rule then requires is prose, and is listed below as uncovered.
 #
 # What this pins is STRUCTURE — the bulk-get, auth-check, teams-get and
 # recursive-children commands, the `Reading a Full Subtree`, `Resolve Team
 # Scope`, `Team Scope` and `Scope by Path` sections, the project-order route,
 # the `--all-projects` flag, the TEAM_PREFIX placeholder, and each mode's row
-# in the scope table. review-bots.md: a token pin establishes that a
-# structural element is present, never that a behavioral claim written in
-# prose is true.
-#
-# So these rules have no lint: that the batch fetch exits 0 whether or not it
-# matched, is reconciled against the requested set, and halts naming what came
-# back missing. That every row at the maximum depth is a frontier, the call
-# repeats rooted at every one, identifiers deduplicate across calls, and the
-# round stops when nothing new returns. That a team with no issues still
-# resolves, an unresolvable scope halts, an out-of-scope resolution halts,
-# every read below is filtered, the sweep's comparison set discards
-# out-of-scope rows, and the pre-output invariant checks the prefix. That
-# exemption from the sweep is never exemption from scope. That the cache
-# holds the whole workspace while only the two analysis workflows resolve a
-# team, that silence is not inheritance for a new mode, which modes audit
-# Linear projects, and that the roadmap analysis drops everything outside its
-# scope.
+# in the scope table.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

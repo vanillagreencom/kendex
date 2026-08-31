@@ -8,12 +8,6 @@
 # What this pins is STRUCTURE — the `auto-satisfied` defined term, the
 # `ready_to_schedule` and `cleared_blockers` schema fields, `remove_relations`,
 # and the JSON template and summary literals.
-# review-bots.md: a token pin establishes that a structural element is
-# present, never that a behavioral claim written in prose is true. So these
-# rules have no lint: that the relation stays as satisfied history and is
-# never removed, that a completed-blocker relation never enters
-# remove_relations and is never reported under a stale-metadata heading, and
-# that the field is a scheduling signal only rather than stale metadata.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

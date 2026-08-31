@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Help is inert: every --help form is answered before repository resolution
-# and before any project env file is sourced, so a .env.local statement can
-# never run under --help and help works outside a git repository. check takes no
+# Every worktree command's --help is answered, at any argv position, and the
+# top-level help states the settings loader's real precedence. check takes no
 # target: it inspects only the main checkout, and an argument is a usage
 # error rather than a silently ignored one.
+#
+# That help is INERT — answered before any project env file is sourced, and
+# answered outside a git repository — is tools/tests/help-inert.test.sh,
+# which holds every shipped CLI to that contract in one loop.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,12 +41,9 @@ assert_contains() {
 
 echo "=== worktree help dispatch runs before repository and env initialization ==="
 
-# A repo whose .env.local records that it was sourced. Any help invocation
-# that loads project config trips the marker.
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO"
 git -C "$REPO" init -q
-printf 'touch "%s/env-executed"\n' "$TMP_ROOT" >"$REPO/.env.local"
 
 for form in "--help" "-h" "help"; do
   out=$(cd "$REPO" && "$WORKTREE_SCRIPT" "$form")
@@ -74,14 +74,6 @@ out=$(cd "$REPO" && "$WORKTREE_SCRIPT" push some-id -h)
 assert_eq "$?" 0 "worktree push some-id -h exits 0"
 assert_contains "$out" "Usage: worktree push" "late -h prints the push help"
 
-if [[ -e "$TMP_ROOT/env-executed" ]]; then
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n' "help sourced the project .env.local"
-else
-  PASS=$((PASS + 1))
-  printf '  ok    %s\n' "no help form sourced the project .env.local"
-fi
-
 out=$(cd "$REPO" && "$WORKTREE_SCRIPT" list --help)
 assert_contains "$out" "Usage: worktree list" "list --help prints the list help"
 out=$(cd "$REPO" && "$WORKTREE_SCRIPT" path --help)
@@ -89,11 +81,11 @@ assert_contains "$out" "Usage: worktree path" "path --help prints help, not an i
 out=$(cd "$REPO" && "$WORKTREE_SCRIPT" exists -h)
 assert_contains "$out" "worktree exists" "exists -h prints help, not an issue lookup"
 
-# Help needs no repository at all.
+# Per-command help needs no repository at all. The top-level form is
+# tools/tests/help-inert.test.sh's; these three resolve a worktree when they
+# run, so their help is the one that could reach for a repository.
 NOREPO="$TMP_ROOT/norepo"
 mkdir -p "$NOREPO"
-out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" --help)
-assert_eq "$?" 0 "worktree --help exits 0 outside a git repository"
 for cmd in list path exists; do
   out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" "$cmd" --help)
   assert_eq "$?" 0 "worktree $cmd --help exits 0 outside a git repository"

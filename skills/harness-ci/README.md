@@ -113,9 +113,11 @@ There is no flag that turns any of these into a `true`.
 | `fail-closed` | Unclassified events, unresolvable endpoints, an empty diff, a merge-base diff git refuses, a path git had to quote |
 | `wiring-errors` | Exit 2 on bad calls (a flag where a value belongs included), `--output` and `$GITHUB_OUTPUT` behaviour |
 | `wiring-shapes` | Every shape in `references/wiring.md` keeps each expression on one line, orders the push endpoints, names the shipped script path, and steps its indentation by two |
-| `bash32-portability` | No Bash 4+ syntax; consumer runners include macOS system Bash |
 
 Run one locally with `bash skills/harness-ci/tests/path-set.test.sh`.
+
+Bash 4+ syntax in the shipped script is `tools/bash32-lint`, which scans every
+skill at once — consumer runners include macOS system Bash 3.2.
 
 ## Upgrades
 

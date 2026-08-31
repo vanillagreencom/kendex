@@ -4,25 +4,12 @@
 # labels without loading the live inventory and computing a full final set
 # silently strips labels or ships an unlabeled issue. (b) The research workflow
 # label is project-defined; a hard-coded `research` finds nothing in a repo
-# that names it otherwise. What is pinned is the ANCHORS: the inventory load
-# command, the policy route, and the taxonomy placeholder. Neither failure
-# mode's rule is pinned — both are prose, and both are listed below.
+# that names it otherwise.
 #
 # What this pins is STRUCTURE — the inventory and issue-fetch commands, the
 # labels.md route, the two bolded rules other documents cite, the
 # RESEARCH_WORKFLOW_LABEL placeholder, and the relation fields the cached
-# payload carries. review-bots.md: a token pin establishes that a structural
-# element is present, never that a behavioral claim written in prose is true.
-#
-# So these rules have no lint: that an invalid final set halts before
-# mutation; that an update replaces the whole set, preserves unrelated
-# labels, and that a bare --labels strips the rest; that the CLI's
-# warn-and-skip is not a validator; that a label lookup never falls back to a
-# hard-coded name and a create never assumes the literal `research` label
-# exists; that the TPM returns its JSON inline and writes no artifact itself,
-# and that the caller writes it, falls back to a readable existing artifact,
-# and otherwise halts for a rerun; and that the File: line is a destination
-# hint rather than a promise.
+# payload carries.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
