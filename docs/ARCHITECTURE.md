@@ -403,8 +403,8 @@ lives in one capability table read by core and UI.
   Sidestepping an armed one is refused, whether by the no-verify flag, a cluster
   holding its letter, or a word carrying a `core.hooksPath` key: git skips
   commit-msg too, unjudgeable here. It reads no shell, but drops the quote
-  characters and splits on redirection operators first, so the word judged is
-  the word bash would hand git: a bypass in a message, a heredoc or a comment
+  characters and splits on bash's own metacharacters first, so the word judged
+  is the word bash would hand git: a bypass in a message, a heredoc or a comment
   reads as one, and a bypass assembled any other way, through an alias or an
   `include.path`, does not.
   It gates its working directory only, naming the one it judged where it cannot

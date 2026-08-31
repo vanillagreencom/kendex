@@ -3,8 +3,8 @@
 # name: pre-commit-check
 # event: PreToolUse
 # matcher: Bash
-# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command carrying a word that would skip it is refused: the no-verify flag, a short-option cluster holding that letter, or a word carrying a core.hooksPath key (an attached -c value, the value after a bare -c, a --config-env, a git config argument, a GIT_CONFIG_* assignment). Git would skip the commit-msg hook too, and nothing here can check the message. A commit is a `git` word with a later `commit` word, both read as whitespace-separated words of the command after quote characters are dropped and redirection operators are turned into spaces, which is what bash would hand git; a leading path, backtick or `$(` comes off the git word, and nothing comes off the commit word. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Reads no shell. Two character-for-character rewrites come first, because the word bash hands git is not always the word written: every quote character is dropped and every `<` and `>` becomes a space, so `g''it commit --no-verify` and `git commit>/dev/null -n` are the bypassed commits they will be by the time git sees them. Neither rewrite remembers anything about the character before it, and nothing here tracks a quoted run, a heredoc or a substitution depth. A word is then text between spaces, so `git log | grep 'commit'` counts as a commit, and a bypass written inside a quoted message, a heredoc body or a comment tail is refused as if it were the flag; the refusal says so and names the rewrite. The reverse still holds: a bypass assembled out of anything but quotes and redirections is invisible here, and so is a key reached through an include.path rather than spelled in a word. Git's own armed hooks are the control, and this hook only decides whether to defer to them.
+# description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command carrying a word that would skip it is refused: the no-verify flag, a short-option cluster holding that letter, or a word carrying a core.hooksPath key (an attached -c value, the value after a bare -c, a --config-env, a git config argument, a GIT_CONFIG_* assignment). Git would skip the commit-msg hook too, and nothing here can check the message. A commit is a `git` word with a later `commit` word, both read as whitespace-separated words of the command after quote characters are dropped and bash's metacharacters (`| & ; ( ) < >`) are turned into spaces, which is what bash would hand git; a leading path, backtick or `$(` comes off the git word, and nothing comes off the commit word. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
+# safety: Reads no shell. Two character-for-character rewrites come first, because the word bash hands git is not always the word written: every quote character is dropped and every metacharacter becomes a space, so `g''it commit --no-verify`, `true;git commit --no-verify` and `git commit&>/dev/null -n` are the bypassed commits they will be by the time git sees them. The separator set is bash's own nine, `| & ; ( ) < > space tab newline`, taken whole. Neither rewrite remembers anything about the character before it, and nothing here tracks a quoted run, a heredoc or a substitution depth. A word is then text between spaces, so `git log | grep 'commit'` counts as a commit, and a bypass written inside a quoted message, a heredoc body or a comment tail is refused as if it were the flag; the refusal says so and names the rewrite. The reverse still holds: a bypass assembled out of anything but quotes and metacharacters is invisible here, and so is a key reached through an include.path rather than spelled in a word. Git's own armed hooks are the control, and this hook only decides whether to defer to them.
 # timeout: 60
 # ---
 
@@ -39,15 +39,35 @@ fi
 # Two rewrites before anything is read, because the word bash hands git is not
 # always the word written. Bash drops the quote characters when it assembles a
 # word, so `g''it commit --no-verify` reaches git as a bypassed commit; and it
-# ends a word at a redirection operator, so `git commit>/dev/null -n` does too.
-# Both were commits nothing checked, since --no-verify is what switches off the
-# hooks this whole design calls the judge.
+# separates words at a metacharacter, so `true;git commit --no-verify` and
+# `git commit&>/dev/null -n` do too. Those were commits nothing checked, since
+# --no-verify is what switches off the hooks this whole design calls the judge.
+#
+# The separator set is bash's own and is taken whole rather than a character at
+# a time. bash(1) defines a metacharacter as "a character that, when unquoted,
+# separates words" and lists nine: | & ; ( ) < > space tab newline. Space, tab
+# and newline are already IFS below, so the other six are these lines. Naming
+# the class from the manual rather than from the forms that were reported is
+# the point: `;` and `&` were the two found, and taking only those would have
+# left `|`, a subshell paren, and the next report.
 #
 # Each rewrite is one character class and no state: every quote character goes,
-# every `<` and `>` becomes a space, and neither line knows what stood before
-# the character it is on. That boundary is the point. Quote tracking, heredoc
+# every metacharacter becomes a space, and no line knows what stood before the
+# character it is on. That boundary is the point. Quote tracking, heredoc
 # terminators and `$(`-depth counting are the tokenizer this hook replaced, and
 # it grew back one construct at a time over three issues before it was deleted.
+#
+# Three shell characters are deliberately NOT in the set, and each is a stated
+# limit rather than an oversight. `{` and `}` are not metacharacters: bash only
+# reads `{` as a group when a blank follows it, so `{git commit -n` is a command
+# literally named `{git` and splitting there would refuse what bash never runs.
+# A backtick is not one either, and splitting it would turn `` git commit
+# `--no-verify` `` into a refusal though bash runs `--no-verify` as a command
+# and hands git nothing; the one backtick that hides a commit, the one in front
+# of the git word, comes off in the word loop below. `\` and `#` belong to the
+# quoting and comment class this design does not model at all, and both already
+# fall on the over-refusal side.
+#
 # What is left unseen stays unseen: a bypass assembled through an alias, a
 # variable or an include.path is not in any word here, and git's armed hooks
 # are what catches it.
@@ -55,18 +75,23 @@ COMMAND=${COMMAND//\'/}
 COMMAND=${COMMAND//\"/}
 COMMAND=${COMMAND//>/ }
 COMMAND=${COMMAND//</ }
+COMMAND=${COMMAND//;/ }
+COMMAND=${COMMAND//&/ }
+COMMAND=${COMMAND//\|/ }
+COMMAND=${COMMAND//\(/ }
+COMMAND=${COMMAND//\)/ }
 
 # The whole rule over the command, and it reads no shell. Split on whitespace,
 # then a `git` word with a later `commit` word is the commit and a word that is
-# --no-verify or a cluster holding -n is the bypass. Whole words, and quoting
-# no longer hides one: `git log | grep 'commit'` is a commit word here, which
-# is the cost of the two rewrites above and is paid on purpose.
+# --no-verify or a cluster holding -n is the bypass. Whole words, and neither
+# quoting nor a metacharacter hides one: `git log | grep 'commit'` is a commit
+# word here, which is the cost of the rewrites above and is paid on purpose.
 #
 # Nothing else is modelled. Every round that tried named one more construct and
 # opened the next hole, and two tokenizers in this class were deleted before
 # this one. The trade is stated in the frontmatter and runs both ways: a bypass
 # spelled in a commit message is refused as the flag, and a bypass the shell
-# assembles out of anything but quotes and redirections is not seen. Git's
+# assembles out of anything but quotes and metacharacters is not seen. Git's
 # armed hooks are the judge; this hook only decides whether to defer to them.
 set -f
 IFS=$' \t\n\r'
