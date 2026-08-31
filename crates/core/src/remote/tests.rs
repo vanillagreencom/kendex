@@ -333,13 +333,15 @@ fn a_failed_checkout_publishes_nothing() {
 /// the driver's `smudge` command lives in configuration, so honouring it
 /// gives one commit different bytes on two machines.
 ///
-/// The hash is the whole claim. It is over a tree with no link and no
-/// executable in it, the two things a checkout can spell differently
-/// across platforms, so Linux, macOS and Windows all owe this number.
+/// The hash is the whole claim, and it is one number for all three
+/// platforms: `tree_signature` spells every path with `/` and records only
+/// the one permission bit git keeps, so nothing in this tree — no link, no
+/// executable, no separator — is spelled differently on Windows.
 ///
 /// A control keeps it from passing for the wrong reason: the same commit
-/// materialized the way git would materialize it, against the same mirror
-/// and the same host configuration, comes out converted and rewritten.
+/// written with its own tree as the attribute source, against the same
+/// mirror and the same host configuration, comes out converted and
+/// rewritten.
 #[test]
 fn a_catalogs_own_attributes_do_not_decide_what_it_checks_out() {
     const SKILL: &str = "---\nname: gh\n---\nv1\n";
@@ -367,9 +369,8 @@ fn a_catalogs_own_attributes_do_not_decide_what_it_checks_out() {
     assert!(set.status.success());
 
     // The pin is not the mirror's HEAD, and the tree HEAD names holds no
-    // attributes file at all: taking one out of the index must be about
-    // the commit being written and not about what the repository points
-    // at now.
+    // attributes file at all: the guarantee must be about the commit being
+    // written and not about what the repository points at now.
     fs::remove_file(f.upstream.join(".gitattributes")).unwrap();
     fs::remove_file(f.upstream.join("skills/.gitattributes")).unwrap();
     commit(&f.upstream, "no attributes");
@@ -399,6 +400,8 @@ fn a_catalogs_own_attributes_do_not_decide_what_it_checks_out() {
         "4a7d5d6b36d50b5095a29d7da4e051ba354c3a9e00595d9fa40611eee51b9057"
     );
 
+    // The control: the same commit written with its own tree as the
+    // attribute source, which is the catalog getting what it asked for.
     let elsewhere = tempfile::tempdir().unwrap();
     let control = elsewhere.path().join("control");
     fs::create_dir_all(&control).unwrap();
@@ -410,11 +413,16 @@ fn a_catalogs_own_attributes_do_not_decide_what_it_checks_out() {
             .success()
     );
     assert!(
-        Hardened::git_into(&mirror, &control, &["checkout-index", "--all", "--force"])
-            .run()
-            .unwrap()
-            .status
-            .success()
+        Hardened::git_into(
+            &mirror,
+            &control,
+            &published.commit,
+            &["checkout-index", "--all", "--force"],
+        )
+        .run()
+        .unwrap()
+        .status
+        .success()
     );
     assert_eq!(
         fs::read(control.join("eol.txt")).unwrap(),
@@ -428,39 +436,92 @@ fn a_catalogs_own_attributes_do_not_decide_what_it_checks_out() {
     );
 }
 
-/// An attributes file is written back the way git records it, not merely
-/// as bytes. Git keeps one permission bit and whether an entry is a link,
-/// `tree_signature` hashes both, and a checkout missing either is not the
-/// commit. Unix-only because those are the two things a Windows checkout
-/// cannot spell — which is why the tree the hash above is taken over holds
-/// neither.
-#[cfg(unix)]
+/// The attribute source is named or the checkout does not happen. A
+/// commit id whose length belongs to no object format leaves nothing to
+/// name the empty tree with, and the one outcome that must not be
+/// reachable is a write git converted because nothing told it not to — so
+/// it is refused, loudly, rather than written unpinned.
 #[test]
-fn an_attributes_file_is_written_back_in_the_mode_it_was_committed_in() {
-    use std::os::unix::fs::PermissionsExt as _;
-
+fn a_commit_id_of_no_known_object_format_is_refused() {
     let f = fixture();
-    fs::write(f.upstream.join("rules"), "* text eol=crlf\n").unwrap();
-    std::os::unix::fs::symlink("rules", f.upstream.join(".gitattributes")).unwrap();
-    let nested = f.upstream.join("skills/.gitattributes");
-    fs::write(&nested, "nothing.txt text\n").unwrap();
-    fs::set_permissions(&nested, fs::Permissions::from_mode(0o755)).unwrap();
-    commit(&f.upstream, "attributes");
+    let published = sync(&f.env, REPO, None).unwrap();
+    let key = key_for(&f.env);
+    let mirror = store::mirror_dir(&f.env, &key);
+    let abbreviated = &published.commit[..7];
 
-    let root = sync(&f.env, REPO, None).unwrap().root;
+    let error = store::publish(&f.env, &key, &mirror, abbreviated).unwrap_err();
 
-    let link = root.join(".gitattributes");
-    assert!(link.is_symlink(), "the link was written as a file");
-    assert_eq!(fs::read_link(&link).unwrap(), Path::new("rules"));
-    let nested = root.join("skills/.gitattributes");
-    assert_eq!(fs::read(&nested).unwrap(), b"nothing.txt text\n");
     assert!(
-        fs::metadata(&nested).unwrap().permissions().mode() & 0o111 != 0,
-        "the executable bit did not survive"
+        error.to_string().contains("attribute source"),
+        "refused for some other reason: {error}"
     );
-    // The `* text eol=crlf` the link points at is the only rule that
-    // reaches SKILL.md, and it reached nothing.
-    assert_eq!(body(&root), "---\nname: gh\n---\nv1\n");
+    assert!(!store::checkout_dir(&f.env, &key, abbreviated).exists());
+}
+
+/// The host's git templates reach no mirror. A template directory is
+/// copied into every repository git creates, and one holding
+/// `info/attributes` puts a rule beside the object store where no setting
+/// on the checkout can reach it — not the global attributes file, not the
+/// system one, and not the attribute source, which names a tree rather
+/// than a file. Both halves are here: an `info/attributes` in a mirror
+/// really does convert past everything the write settles, and the mirror
+/// kendex clones carries no `info` directory for one to sit in.
+#[test]
+fn the_hosts_git_templates_reach_no_mirror() {
+    let f = fixture();
+    let published = sync(&f.env, REPO, None).unwrap();
+    let key = key_for(&f.env);
+    let mirror = store::mirror_dir(&f.env, &key);
+    assert!(
+        !mirror.join("info").exists(),
+        "the mirror carries an info directory a host template could fill"
+    );
+
+    // The threat, made real in the one place a template would have put it.
+    fs::create_dir_all(mirror.join("info")).unwrap();
+    fs::write(mirror.join("info/attributes"), "* text eol=crlf\n").unwrap();
+    fs::remove_dir_all(&published.root).unwrap();
+    fs::remove_file(store::receipt_path(&f.env, &key, &published.commit)).unwrap();
+    let converted = store::publish(&f.env, &key, &mirror, &published.commit).unwrap();
+    assert_eq!(
+        body(&converted),
+        "---\r\nname: gh\r\n---\r\nv1\r\n",
+        "an info/attributes in the mirror no longer converts, so an empty \
+         template proves nothing"
+    );
+}
+
+/// The receipt's rules line is what rebuilds a checkout an older kendex
+/// wrote, and it is the whole upgrade path for a machine that already
+/// holds a converted tree: the directory is there, its signature matches
+/// what was written, and only the rules line says those were not today's
+/// rules.
+///
+/// It has to be a well-formed older receipt to reach that comparison at
+/// all — a rules line, a newline, and a signature that does match the
+/// directory. A receipt missing the newline is refused a step earlier, for
+/// having no rules line to read.
+#[test]
+fn a_checkout_published_under_older_rules_is_rebuilt() {
+    let f = fixture();
+    let published = sync(&f.env, REPO, None).unwrap();
+    let key = key_for(&f.env);
+    let receipt = store::receipt_path(&f.env, &key, &published.commit);
+    let signature = store::tree_signature(&published.root).unwrap();
+    fs::write(&receipt, format!("kendex-checkout 1\n{signature}\n")).unwrap();
+
+    assert!(
+        store::published(&f.env, &key, &published.commit).is_none(),
+        "a checkout written under older rules was served as if it were today's"
+    );
+
+    let rebuilt = cached(&f.env, REPO, None).unwrap().unwrap();
+    assert_eq!(rebuilt.root, published.root);
+    assert!(store::published(&f.env, &key, &published.commit).is_some());
+    assert_eq!(
+        fs::read_to_string(&receipt).unwrap(),
+        format!("kendex-checkout 2\n{signature}\n")
+    );
 }
 
 /// Two resolvers must not materialize one repository at once. A refresh is

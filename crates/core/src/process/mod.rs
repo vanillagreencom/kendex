@@ -83,7 +83,7 @@ const PINNED: &[&str] = &["protocol.ext.allow=never"];
 /// writes one is what needs this and nothing else does. `git_into` is
 /// where the only such operation kendex runs lives, `checkout-index` out
 /// of the mirror. A later call that writes a working tree owes them too,
-/// wherever it is built.
+/// wherever it is built — and owes the attribute source below with them.
 ///
 /// What the host's git is configured to do to line endings must not decide
 /// what a catalog checks out. Both settings tell git to rewrite them as it
@@ -102,13 +102,16 @@ const PINNED: &[&str] = &["protocol.ext.allow=never"];
 /// `core.attributesFile` is emptied here, which is git's documented unset,
 /// and `GIT_ATTR_NOSYSTEM` in the environment takes the system file out.
 ///
-/// What the *catalog* says is silenced too, and elsewhere: a repository's
-/// own committed `.gitattributes` outranks every setting on a command
-/// line, so it is not answered by one. `remote::store::check_out` takes
-/// those files out of the index before git writes the tree and lays their
-/// committed bytes down afterwards, which leaves no rule in force for any
-/// path. Between the two, a catalog checks out the bytes it committed on
-/// every machine.
+/// What the *catalog* says is silenced too, and by a setting these three
+/// cannot carry: `git_into`'s `--attr-source` argument, which names the
+/// tree git reads `.gitattributes` from instead of the commit it is
+/// writing. Pointed at the empty tree it leaves no rule in force for any
+/// path — neither the `text eol=crlf` a repository commits nor the
+/// `filter=<driver>` that would reach for a `smudge` command living in
+/// somebody's configuration. It is an argument rather than an entry here
+/// because its value is that repository's empty tree and so differs by
+/// object format. Between the two, a catalog checks out the bytes it
+/// committed on every machine.
 ///
 /// It goes nowhere else, and the reach is the point rather than an
 /// oversight. A call that only *inspects* a repository is asking what that

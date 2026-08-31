@@ -66,14 +66,26 @@ fn asking_repository(dir: &Path, attributes: Option<&str>, asked: &[&str]) {
     }
 }
 
-/// The two doors. `core.autocrlf=true` is what Git for Windows' installer
-/// writes into the system config, and it decides for a repository that says
-/// nothing about its own files; `core.eol` decides for one that marks them
-/// as text.
-const ASKING: [(Option<&str>, &[&str]); 2] = [
+/// The three doors. `core.autocrlf=true` is what Git for Windows'
+/// installer writes into the system config, and it decides for a
+/// repository that says nothing about its own files; `core.eol` decides
+/// for one that marks them as text; and a repository that commits the
+/// whole rule itself needs no host configuration at all.
+const ASKING: [(Option<&str>, &[&str]); 3] = [
     (None, &["config", "core.autocrlf", "true"]),
     (Some("* text\n"), &["config", "core.eol", "crlf"]),
+    (
+        Some("* text eol=crlf\n"),
+        &["config", "core.autocrlf", "false"],
+    ),
 ];
+
+/// The empty tree, which is what `remote::store` hands the materialising
+/// call as the tree to read `.gitattributes` from — the SHA-1 spelling,
+/// because a repository `git init` makes here is SHA-1. `store` derives
+/// this per mirror; a test that names one fixture's format can name the
+/// constant.
+const NO_ATTRIBUTES: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Content is materialised the way `remote::store` materialises it, and
 /// what lands is what was committed however the repository asks for it to
@@ -96,9 +108,14 @@ fn catalog_content_is_written_as_committed_whatever_the_repository_asks() {
                 .status
                 .success()
         );
-        let written = Hardened::git_into(&git_dir, &into, &["checkout-index", "--all", "--force"])
-            .run()
-            .unwrap();
+        let written = Hardened::git_into(
+            &git_dir,
+            &into,
+            NO_ATTRIBUTES,
+            &["checkout-index", "--all", "--force"],
+        )
+        .run()
+        .unwrap();
         assert!(written.status.success(), "{asked:?}");
         assert_eq!(
             fs::read_to_string(into.join("SKILL.md")).unwrap(),
@@ -161,11 +178,16 @@ fn a_host_attributes_file_does_not_reach_the_content_kendex_reads() {
                 .status
                 .success()
         );
-        let written = Hardened::git_into(&git_dir, &into, &["checkout-index", "--all", "--force"])
-            .env("HOME", home.to_str().unwrap())
-            .env("XDG_CONFIG_HOME", home.to_str().unwrap())
-            .run()
-            .unwrap();
+        let written = Hardened::git_into(
+            &git_dir,
+            &into,
+            NO_ATTRIBUTES,
+            &["checkout-index", "--all", "--force"],
+        )
+        .env("HOME", home.to_str().unwrap())
+        .env("XDG_CONFIG_HOME", home.to_str().unwrap())
+        .run()
+        .unwrap();
         assert!(written.status.success(), "named={named}");
         assert_eq!(
             fs::read_to_string(into.join("SKILL.md")).unwrap(),
@@ -178,6 +200,7 @@ fn a_host_attributes_file_does_not_reach_the_content_kendex_reads() {
         child_env(&Hardened::git_into(
             Path::new("/nowhere/.git"),
             Path::new("/nowhere/into"),
+            NO_ATTRIBUTES,
             &["checkout-index", "--all"],
         ))[OsStr::new("GIT_ATTR_NOSYSTEM")],
         Some(OsStr::new("1"))
@@ -230,7 +253,7 @@ fn an_attribute_source_from_the_environment_reaches_no_git_call() {
     }
 
     let git_dir = repo.join(".git");
-    let materialise = |source: Option<&str>| {
+    let materialise = |call: Hardened| {
         assert!(
             Hardened::git_bare(&git_dir, &["read-tree", "main"])
                 .run()
@@ -238,18 +261,45 @@ fn an_attribute_source_from_the_environment_reaches_no_git_call() {
                 .status
                 .success()
         );
-        let mut call = Hardened::git_into(&git_dir, &into, &["checkout-index", "--all", "--force"]);
-        if let Some(source) = source {
-            call = call.env("GIT_ATTR_SOURCE", source);
-        }
         assert!(call.run().unwrap().status.success());
         fs::read_to_string(into.join("SKILL.md")).unwrap()
     };
+    let unpinned = || {
+        Hardened::git(
+            &[
+                "--git-dir",
+                &git_dir.display().to_string(),
+                "--work-tree",
+                &into.display().to_string(),
+                "checkout-index",
+                "--all",
+                "--force",
+            ],
+            None,
+        )
+        .env("GIT_ATTR_SOURCE", "attrs")
+    };
 
     // The threat is real: handed the variable, git reads the other tree's
-    // rule and converts. This is what the scrub exists to stop.
-    assert_eq!(materialise(Some("attrs")), "one\r\ntwo\r\n");
-    assert_eq!(materialise(None), "one\ntwo\n");
+    // rule and converts. This is what the scrub exists to stop, and it is
+    // shown on a call that pins no attribute source of its own, because
+    // that is every call kendex makes but the write.
+    assert_eq!(materialise(unpinned()), "one\r\ntwo\r\n");
+
+    // The write is answered twice over: the source it pins on the command
+    // line outranks the variable even when the variable arrives.
+    assert_eq!(
+        materialise(
+            Hardened::git_into(
+                &git_dir,
+                &into,
+                NO_ATTRIBUTES,
+                &["checkout-index", "--all", "--force"],
+            )
+            .env("GIT_ATTR_SOURCE", "attrs"),
+        ),
+        "one\ntwo\n"
+    );
 
     // And it never arrives on its own: an exported one is dropped from
     // every call, the write and the reads alike.
@@ -260,6 +310,7 @@ fn an_attribute_source_from_the_environment_reaches_no_git_call() {
         Hardened::git_into(
             Path::new("/nowhere/.git"),
             Path::new("/nowhere/into"),
+            NO_ATTRIBUTES,
             &["checkout-index", "--all"],
         ),
     ] {

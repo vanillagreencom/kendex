@@ -26,9 +26,24 @@ pub fn tree_signature(root: &Path) -> Result<String> {
     Ok(out)
 }
 
+/// The name a path contributes to the hash, with `/` between components on
+/// every platform.
+///
+/// `PathBuf::join` writes the platform's separator, so the path grown while
+/// walking a tree spells `skills/gh/SKILL.md` on Unix and `skills\gh\SKILL.md`
+/// on Windows. Hashing that directly gives one tree two signatures by
+/// platform, which is precisely the difference the signature exists to
+/// detect rather than to introduce.
+fn hashed_name(rel: &Path) -> String {
+    rel.iter()
+        .map(|part| part.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 fn hash_entry(hasher: &mut Sha256, path: &Path, rel: &Path) -> Result<()> {
     let meta = fs::symlink_metadata(path).map_err(|e| CoreError::io(path, e))?;
-    let name = rel.to_string_lossy();
+    let name = hashed_name(rel);
     if meta.is_symlink() {
         let target = fs::read_link(path).map_err(|e| CoreError::io(path, e))?;
         hasher.update(b"l\0");
@@ -73,4 +88,21 @@ fn executable(meta: &fs::Metadata) -> u8 {
 #[cfg(not(unix))]
 fn executable(_meta: &fs::Metadata) -> u8 {
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hashed_name;
+    use std::path::{Path, PathBuf};
+
+    /// Grown the way `hash_entry` grows it, and spelled the way every
+    /// platform has to spell it. On Windows `join` writes a backslash, so
+    /// this is the assertion that reds there if the separator reaches the
+    /// hash; on Unix it is the statement that nothing else does either.
+    #[test]
+    fn a_hashed_name_joins_its_components_with_a_forward_slash() {
+        let rel = PathBuf::new().join("skills").join("gh").join("SKILL.md");
+        assert_eq!(hashed_name(&rel), "skills/gh/SKILL.md");
+        assert_eq!(hashed_name(Path::new("")), "");
+    }
 }

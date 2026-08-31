@@ -17,7 +17,6 @@ use crate::error::{CoreError, Result};
 use crate::fs::atomic_write;
 use crate::process::Hardened;
 
-mod attributes;
 mod signature;
 
 pub use signature::tree_signature;
@@ -131,17 +130,10 @@ pub fn lock_repo(env: &Env, key: &str) -> Result<CacheGuard> {
 }
 
 fn run(git: Hardened) -> Result<()> {
-    captured(git).map(|_| ())
-}
-
-/// The same, handing back what the call printed. Bytes rather than text:
-/// git prints a path as the bytes it stored, and a blob is not text at
-/// all, so neither survives a trip through lossy UTF-8.
-fn captured(git: Hardened) -> Result<Vec<u8>> {
     let command = git.label().to_owned();
     let output = git.run()?;
     if output.status.success() {
-        Ok(output.stdout)
+        Ok(())
     } else {
         Err(CoreError::GitFailed {
             command,
@@ -161,6 +153,17 @@ fn stdout(git: Hardened) -> Option<String> {
 
 /// Clone the mirror if it is missing. A mirror holds objects and refs only,
 /// so nothing here can write outside the cache.
+///
+/// An empty `--template` is the third attribute source, and the last one
+/// the host still had. A template directory — the host's `init.templateDir`
+/// or `GIT_TEMPLATE_DIR` — is copied into every repository git creates,
+/// and one holding `info/attributes` lands it inside the mirror, where no
+/// setting on the checkout reaches it: `core.attributesFile=` is the
+/// global file, `GIT_ATTR_NOSYSTEM` the system one, and an attribute
+/// source names a tree, not a file beside the object store. Measured: with
+/// `* text eol=crlf` in a template, a mirror cloned without this converts
+/// the checkout even with the attribute source pinned. Emptied, git copies
+/// no template at all and the mirror carries no `info` directory.
 pub fn ensure_mirror(mirror: &Path, url: &str) -> Result<()> {
     if mirror.join("HEAD").is_file() {
         return Ok(());
@@ -179,6 +182,7 @@ pub fn ensure_mirror(mirror: &Path, url: &str) -> Result<()> {
             "clone",
             "--quiet",
             "--mirror",
+            "--template=",
             url,
             &mirror.display().to_string(),
         ],
@@ -328,18 +332,53 @@ pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<Path
 /// deliberately unused: it would leave admin state in the mirror and a
 /// `.git` pointer inside a directory that is meant to be plain content.
 ///
-/// A catalog's own `.gitattributes` decides nothing about what lands: it
-/// is held out of the write and laid down afterwards, so the checkout is
-/// the bytes the source committed on every machine. [`attributes`] says
-/// why that is the answer rather than a setting.
+/// The catalog's own `.gitattributes` decides nothing about what lands
+/// either: the write reads its attributes out of [`NO_ATTRIBUTES`] instead
+/// of out of the commit, so no rule the source committed is in force for
+/// any path. `process::MATERIALISING` says why the host half is settled
+/// where it is and this half is an argument.
 fn check_out(into: &Path, mirror: &Path, commit: &str) -> Result<()> {
     fs::create_dir_all(into).map_err(|e| CoreError::io(into, e))?;
     run(Hardened::git_bare(mirror, &["read-tree", commit]))?;
-    let withheld = attributes::withhold(mirror, into)?;
     run(Hardened::git_into(
         mirror,
         into,
+        no_attributes(commit)?,
         &["checkout-index", "--all", "--force"],
-    ))?;
-    attributes::restore(mirror, into, &withheld)
+    ))
+}
+
+/// The empty tree, which is the tree with no `.gitattributes` in it, in
+/// each object format git has. Both are constants of the format rather
+/// than of any repository: git answers for the empty tree whether or not
+/// the object was ever stored.
+const NO_ATTRIBUTES: [(usize, &str); 2] = [
+    (40, "4b825dc642cb6eb9a060e54bf8d69288fbee4904"),
+    (
+        64,
+        "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321",
+    ),
+];
+
+/// Which of them this repository owes, read off the length of the commit
+/// id in hand — the id git itself printed out of this mirror, so its
+/// length is that mirror's hash size and no extra call has to ask.
+///
+/// Wrong would be loud, not quiet: git refuses an attribute source in the
+/// other format outright (`fatal: bad --attr-source or GIT_ATTR_SOURCE`),
+/// and a length that is neither is refused here for the same reason. The
+/// one answer that must never be reachable is a checkout written with no
+/// attribute source at all, because that one converts in silence.
+fn no_attributes(commit: &str) -> Result<&'static str> {
+    NO_ATTRIBUTES
+        .iter()
+        .find(|(length, _)| *length == commit.len())
+        .map(|(_, tree)| *tree)
+        .ok_or_else(|| CoreError::GitFailed {
+            command: format!("git checkout-index {commit}"),
+            stderr: format!(
+                "no object format has ids of {} characters, so the attribute source                  this checkout must be written under cannot be named",
+                commit.len()
+            ),
+        })
 }
