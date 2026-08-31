@@ -86,14 +86,27 @@ lane_context_emit() {
     }'
 }
 
+# The shape a pane's foreground process ($1) offers, decided here and in no
+# other place: `codex` the codex shape alone, a claude wrapper spelling the
+# claude shape alone, and anything else `both`, because a reader with no rule
+# for a harness has nothing better than the shapes themselves — `pi`, an empty
+# name for a pane that has left the enumeration, and `agent-confine`, which is
+# the launcher BOTH harnesses exec through and so names neither. Reading the
+# screen and refusing it both select on this answer, so a wrapper spelling
+# added to one list and not the other cannot read one harness's screen and
+# name the other's in its refusal.
+lane_context_shape() {
+  case "${1:-}" in
+    codex) printf 'codex\n' ;;
+    *claude) printf 'claude\n' ;;
+    *) printf 'both\n' ;;
+  esac
+}
+
 # Read one context figure from a captured screen on stdin. $1 is the pane's
-# foreground process, and it decides which shape is offered: `codex` the codex
-# shape alone, a claude wrapper spelling the claude shape alone. Anything else
-# is offered both, because a reader with no rule for a harness has nothing
-# better than the shapes themselves — `pi`, an empty name for a pane that has
-# left the enumeration, and `agent-confine`, which is the launcher BOTH
-# harnesses exec through and so names neither. Prints
-# `<harness>\t<used percent>`; exits 1 when the shape offered found nothing.
+# foreground process, which `lane_context_shape` turns into the shape offered.
+# Prints `<harness>\t<used percent>`; exits 1 when the shape offered found
+# nothing.
 #
 # The codex shape is offered the FINAL NON-EMPTY line and no other. The
 # claude shape is offered every line and its LAST match wins; no window is
@@ -137,11 +150,8 @@ lane_context_emit() {
 # context figure and is dropped rather than reported, whichever shape carried
 # it.
 lane_context_parse() {
-  local out shape="both"
-  case "${1:-}" in
-    codex) shape="codex" ;;
-    *claude) shape="claude" ;;
-  esac
+  local out shape
+  shape="$(lane_context_shape "${1:-}")"
   out="$(awk -v shape="$shape" '
     {
       if ($0 ~ /[^ \t]/) last = $0
@@ -233,9 +243,9 @@ lane_context_collect() {
         continue
       fi
       if ! parsed="$(lane_context_parse "$cmd" <<<"$screen")"; then
-        case "$cmd" in
+        case "$(lane_context_shape "$cmd")" in
           codex) detail="the screen does not end in a valid codex context figure; the last non-empty row is the only row a codex reading is taken from" ;;
-          *claude) detail="the screen carries no claude status line" ;;
+          claude) detail="the screen carries no claude status line" ;;
           *) detail="the screen carries neither harness's context figure" ;;
         esac
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
