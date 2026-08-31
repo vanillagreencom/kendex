@@ -112,11 +112,21 @@ pub(super) fn fold_commit_hooks(
                 // not in. Drift with a remedy, which is what it was before
                 // this fold delegated. A search that could not be made says
                 // so instead.
+                //
+                // And it stops at the two things that were read. It used to
+                // add that every commit therefore fails, which the license
+                // above does not establish: that is one stat on the helper,
+                // and the lanes that invoke the helper are separate files
+                // nothing here opens. Delete those and leave the helper,
+                // and commits go through while this line says they cannot.
+                // What git does next is the package's to report, and
+                // reading the lane files to find out is the second grammar
+                // this module exists to be rid of.
                 Err(error) => match kendex_core::guard::installer_present(&repo) {
                     Ok(false) => (
                         Class::Drift,
                         Text::Own(format!(
-                            "{} is declared in {} but its scripts are not there, so every commit fails — `kendex refresh` renders it again",
+                            "{} is declared in {} but its scripts are not there — `kendex refresh` renders it again",
                             kendex_core::guard::SKILL,
                             root.display()
                         )),

@@ -562,11 +562,14 @@ fn an_installer_that_could_not_run_is_never_relayed_as_a_verdict() {
 /// A package this project declared, armed, and no longer renders is drift
 /// with a remedy that fits it.
 ///
-/// The shims exec scripts that are not there, so every commit fails closed
-/// — a state to fix, not one nobody could measure. And the fix is a render:
-/// the lock already records the package, so `kendex add` would be advice
-/// about a state the reader is not in, which is what the resolver's own
-/// refusal says when nothing tells it the lock has already spoken.
+/// The lock records the package and the search finds no copy: a state to
+/// fix, not one nobody could measure. The line says those two and stops,
+/// because predicting that every commit fails is an inference off one stat
+/// on the helper, and the lane files that would settle it are not read
+/// here. The fix is a render: the lock already records the package, so
+/// `kendex add` would be advice about a state the reader is not in, which
+/// is what the resolver's own refusal says when nothing tells it the lock
+/// has already spoken.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_package_with_no_render_is_drift_naming_the_render() {
@@ -603,6 +606,10 @@ fn a_declared_package_with_no_render_is_drift_naming_the_render() {
     assert!(
         !text.contains("kendex add"),
         "it names an install the lock already records: {text}"
+    );
+    assert!(
+        !text.contains("every commit"),
+        "it predicts commit behaviour nothing here measured: {text}"
     );
 }
 
