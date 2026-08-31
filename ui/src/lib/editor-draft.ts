@@ -11,6 +11,7 @@ import type {
   SourceDecl_Deserialize,
   SourceDecl_Serialize,
 } from "@/bindings";
+import { MANIFEST_SCHEMA } from "@/bindings";
 
 /** The editor edits the shape `update_manifest` accepts. */
 export type Draft = Manifest_Deserialize;
@@ -42,8 +43,15 @@ export const EMPTY_FRONTMATTER: DraftFrontmatter = {
   "nickname-candidates": null,
 };
 
+/**
+ * The draft the editor opens for a scope with no kendex.toml yet. The
+ * schema is the one this build writes, read off the exported constant:
+ * `save::check` validates this draft before the plan's `manifest::save`
+ * would stamp anything, so a number of our own here would be a first save
+ * refused by its own validator.
+ */
 export function emptyDraft(): Draft {
-  return { schema: 1 };
+  return { schema: MANIFEST_SCHEMA };
 }
 
 export function emptyHook(): DraftHook {

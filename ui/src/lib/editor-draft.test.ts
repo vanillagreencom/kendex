@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MANIFEST_SCHEMA } from "@/bindings";
 import {
   addCustomHook,
   type Draft,
@@ -19,6 +20,16 @@ import {
 function draft(overrides: Partial<Draft> = {}): Draft {
   return { ...emptyDraft(), ...overrides };
 }
+
+describe("emptyDraft", () => {
+  // The backend validates this draft before anything stamps a schema on
+  // it, so a literal here is a first save on a scope with no kendex.toml
+  // refused by our own validator. The number comes from the same constant
+  // the writer uses; nothing in this file may hard-code one.
+  it("carries the schema this build writes", () => {
+    expect(emptyDraft().schema).toBe(MANIFEST_SCHEMA);
+  });
+});
 
 describe("toDraft", () => {
   it("fills the keys the write shape requires without inventing values", () => {

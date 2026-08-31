@@ -13,7 +13,11 @@ import { markFor } from "@/lib/package-mark";
 import { scopeKey } from "@/lib/scope";
 import { openInventory, useEditorStore } from "./editor";
 
-vi.mock("@/bindings", () => ({
+// The real module comes through, with only the commands stubbed: the
+// constants it exports are the numbers the code under test writes into a
+// draft, and a second copy of one here is the drift the export removed.
+vi.mock("@/bindings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/bindings")>()),
   commands: {
     getManifest: vi.fn(),
     editorInventory: vi.fn(),

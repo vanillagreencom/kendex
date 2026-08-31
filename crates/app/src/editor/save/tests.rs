@@ -9,6 +9,16 @@ use std::collections::BTreeMap;
 mod test_util;
 use test_util::source_path;
 
+/// A project scope with no kendex.toml at all: the state the editor opens
+/// an empty draft for, and the one a first save creates the file from.
+fn scope_without_manifest() -> (tempfile::TempDir, Env, Scope) {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), kendex_core::env::FakeOs::Linux);
+    let project = tmp.path().join("dev/app");
+    std::fs::create_dir_all(project.join(".claude")).unwrap();
+    (tmp, env, Scope::Project { root: project })
+}
+
 /// A project scope with a manifest already on disk, under a sandboxed
 /// home, so a save runs the real plan-and-apply.
 fn scope_with_manifest() -> (tempfile::TempDir, Env, Scope) {
@@ -174,6 +184,42 @@ fn a_refusal_through_a_symlinked_root_is_still_the_stale_choice() {
         ),
         "{error:?}"
     );
+}
+
+/// The first save on a scope with no kendex.toml creates the file. The
+/// schema the draft arrives with is what decides it: `check` runs before
+/// the plan's `manifest::save` would stamp one, so a draft naming any
+/// other version is refused and nothing is created. That is why the
+/// editor's empty draft reads the number off the exported
+/// `MANIFEST_SCHEMA` rather than keeping a copy — see `emptyDraft` in
+/// ui/src/lib/editor-draft.ts.
+#[test]
+fn a_first_save_creates_the_manifest_and_the_draft_schema_decides_it() {
+    let (_tmp, env, scope) = scope_without_manifest();
+    let path = manifest::manifest_path(&env, &scope);
+    assert!(!path.exists(), "{}", path.display());
+
+    let stale = Manifest {
+        schema: MANIFEST_SCHEMA - 1,
+        ..Manifest::default()
+    };
+    let Err(refused) = write_customize(&env, scope.clone(), Some((stale, Base::absent())), None)
+    else {
+        panic!("a draft below this build's schema must not create a file");
+    };
+    let WriteRefused::Failed { message } = &refused else {
+        panic!("the schema refusal is a validation failure, not a stale copy: {refused:?}");
+    };
+    assert!(message.contains("schema"), "{message}");
+    assert!(!path.exists(), "and nothing is created: {}", path.display());
+
+    let draft = Manifest {
+        schema: MANIFEST_SCHEMA,
+        ..Manifest::default()
+    };
+    write_customize(&env, scope, Some((draft, Base::absent())), None).unwrap();
+    let (created, _) = manifest::read_for_mutation(&path).unwrap();
+    assert_eq!(created.unwrap().schema, MANIFEST_SCHEMA);
 }
 
 #[test]

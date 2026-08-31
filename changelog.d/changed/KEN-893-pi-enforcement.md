@@ -1,0 +1,1 @@
+- **Breaking:** a pi hook left in the older layout beside a scope root is no longer enforced: the carrier runs `kendex/hooks/<name>.sh` alone. Install the item fresh to have it guard again.

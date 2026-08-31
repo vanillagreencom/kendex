@@ -29,7 +29,12 @@ fn constants(builder: Builder<tauri::Wry>) -> Builder<tauri::Wry> {
     // The zoom range is a constant rather than a command: the slider needs
     // the same floor, ceiling, and step the settings file is held to, and
     // two copies of three numbers is two places for them to drift.
-    builder.constant("ZOOM", kendex_core::settings::ZOOM)
+    let builder = builder.constant("ZOOM", kendex_core::settings::ZOOM);
+    // The schema the editor mints into a draft for a scope with no
+    // manifest yet. `save::check` validates that draft before the plan's
+    // `manifest::save` would stamp anything, so a second copy of this
+    // number in the UI is a first save refused by its own validator.
+    builder.constant("MANIFEST_SCHEMA", kendex_core::manifest::MANIFEST_SCHEMA)
 }
 
 pub fn specta_builder() -> Builder<tauri::Wry> {

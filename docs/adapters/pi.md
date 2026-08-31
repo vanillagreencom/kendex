@@ -66,14 +66,18 @@ only `<root>/kendex/hooks/<name>.sh`, and `harness::pi::hook_surfaces`
 lists only the first — so a `hooks.json` or `hooks/` an older kendex left
 beside the root is read by nothing, written by nothing, scanned by
 nothing, listed by nothing and removed by nothing, `kendex remove`
-included. A refresh renders the hook under `kendex/` and stops there; what
-is beside the root stays exactly where it is, and both entries keep firing
-for as long as Pi loads them. What becomes of them is the person's, by
-hand: `<root>/hooks.json` and the `<root>/hooks/` directory both. Nothing
-in this build reads there, so nothing here can say which of them an older
-kendex wrote and which are the person's own. Look at them, and move
-aside what is no longer wanted; the directory is the one Pi warns about
-on the name alone.
+included. A refresh renders the hook under `kendex/` and stops there, and
+what is beside the root stays exactly where it is. It does not go on
+running: `renderedHook` looks for `<root>/kendex/hooks/<name>.sh` and
+nowhere else, so a script left only in the older layout is not found, and
+a name neither root holds is a hook this project has not installed — the
+call is allowed. An install whose scripts sit only beside the root is
+therefore unenforced until the item is installed fresh under `kendex/`.
+What becomes of the leftovers is the person's, by hand: `<root>/hooks.json`
+and the `<root>/hooks/` directory both. Nothing in this build reads there,
+so nothing here can say which of them an older kendex wrote and which are
+the person's own. Look at them, and move aside what is no longer wanted;
+the directory is the one Pi warns about on the name alone.
 
 Enforcement is read live (`pi_ext::carrier::enforcement`): with the carrier
 registered in either scope's settings the hook is enforced; with no carrier
