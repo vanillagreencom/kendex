@@ -135,8 +135,8 @@ jobs:
           done < <(git ls-files -- 'skills/*/SKILL.md')
           exit "$fail"
 
-      # One scan for Bash 4+ syntax over skills/*/scripts and review-gate's
-      # tests/, the roster `--list` prints. bash32-lint.test.sh proves its teeth.
+      # One scan for Bash 4+ syntax over the roster `tools/bash32-lint --list`
+      # prints. bash32-lint.test.sh proves its teeth.
       - name: bash32-lint (Bash 3.2 portability across the skill tree)
         if: matrix.shard == 'shell'
         run: tools/bash32-lint
