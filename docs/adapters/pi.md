@@ -68,9 +68,12 @@ beside the root is read by nothing, written by nothing, scanned by
 nothing, listed by nothing and removed by nothing, `kendex remove`
 included. A refresh renders the hook under `kendex/` and stops there; what
 is beside the root stays exactly where it is, and both entries keep firing
-for as long as Pi loads them. Deleting them is the person's, by hand:
-`<root>/hooks.json` and the `<root>/hooks/` directory both, and the
-directory first — it is the one Pi warns about on the name alone.
+for as long as Pi loads them. What becomes of them is the person's, by
+hand: `<root>/hooks.json` and the `<root>/hooks/` directory both. Nothing
+in this build reads there, so nothing here can say which of them an older
+kendex wrote and which are the person's own. Look at them, and move
+aside what is no longer wanted; the directory is the one Pi warns about
+on the name alone.
 
 Enforcement is read live (`pi_ext::carrier::enforcement`): with the carrier
 registered in either scope's settings the hook is enforced; with no carrier

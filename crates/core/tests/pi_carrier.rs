@@ -327,8 +327,8 @@ fn a_command_registered_twice_holds_rather_than_adding_a_third() {
 /// pass after it changes nothing.
 ///
 /// Said plainly because `docs/adapters/pi.md` says it: what is beside the
-/// root is the person's to delete by hand. `kendex remove` does not take
-/// it, and nothing in this build does.
+/// root is the person's to deal with by hand. `kendex remove` does not
+/// touch it, and nothing in this build does.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_older_layout_beside_the_root_is_left_exactly_where_it_is() {
