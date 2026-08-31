@@ -35,13 +35,12 @@ const queue: QueueItem[] = [];
 const queued = new Set<string>();
 let draining = false;
 
-/** Empty the cache and the queue — called when any mutation can have moved
- * a catalog, so no score describes the commit before the change. The bump
- * is here rather than only in the caller: a scan already in flight would
- * otherwise land in the slot this just emptied, and `want` short-circuits
- * on a stored score, so nothing would ever ask again. */
+/** Empty the cache and the queue — half of [dropCatalogCaches], which is
+ * where a drop is declared and where the one [catalogDrops] bump is taken.
+ * Call that rather than this: a scan already in flight would otherwise land
+ * in the slot this just emptied, and `want` short-circuits on a stored
+ * score, so nothing would ever ask again. */
 export function resetPreinstallSafety() {
-  catalogDrops.moved();
   queue.length = 0;
   queued.clear();
   usePreinstallSafety.setState({ scores: {} });

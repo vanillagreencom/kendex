@@ -128,9 +128,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       return;
     }
     const held = get().account;
-    // A read that comes back signed out found nothing, which is what the
-    // expiry already said; it does not get to unsay the verdict. Any other
-    // answer reached the server, or a credential really on the machine.
+    // The expiry was set by a call refused under the sign-in, and only a
+    // read that reached the server may take it back. One that found
+    // nothing, or that served the cached identity because it could not
+    // ask, knows no more than the refusal already said.
     if (keepsExpiry(held, answer.ok)) {
       set({ readError: null });
       return;

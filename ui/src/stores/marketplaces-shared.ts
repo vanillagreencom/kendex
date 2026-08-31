@@ -5,12 +5,12 @@ import type { Catalog, MarketplaceRow, Scope } from "@/bindings";
 import { invalidations, type ReadState } from "@/lib/read-state";
 import { resetPreinstallSafety } from "./preinstall-safety";
 
-/** Bumped by every cache drop. A read that began before one describes a
- * checkout that may no longer be the one installed from, and every derived
- * cache keys on presence rather than freshness — a stale answer landing in
- * the emptied slot would pin the commit before the change for the session,
- * with nothing left to ask again. Shared with the pre-install scores, which
- * the same drop clears. */
+/** Bumped once by [dropCatalogCaches], the one place a drop is declared. A
+ * read that began before one describes a checkout that may no longer be the
+ * one installed from, and every derived cache keys on presence rather than
+ * freshness — a stale answer landing in the emptied slot would pin the
+ * commit before the change for the session, with nothing left to ask
+ * again. Shared with the pre-install scores, which the same drop clears. */
 export const catalogDrops = invalidations();
 
 /** One subscription's cache key: where it lives plus its alias, encoded so
@@ -93,7 +93,11 @@ export function without<T>(
  * summary says which subscription a page carries on as, and a mutation is
  * exactly what changes that answer. */
 export function dropCatalogCaches(set: (partial: object) => void) {
+  // Before anything is emptied, and once for the whole drop: this is where
+  // the invalidation is declared, so it cannot be stubbed out from under
+  // the caches it guards.
   catalogDrops.moved();
+  resetPreinstallSafety();
   set({
     packages: {},
     bundles: {},
@@ -101,7 +105,6 @@ export function dropCatalogCaches(set: (partial: object) => void) {
     summaries: {},
     readErrors: {},
   });
-  resetPreinstallSafety();
 }
 
 /** The error key one cached read fails under, kept apart from the other
@@ -126,11 +129,12 @@ export async function openLead(scope: Scope, source: string, lead: string) {
  * Two things have to be known first, or Subscribe is offered on a guess and
  * a declared repository refuses it. The key, which comes from the
  * directory's row or the summary and never from the requested spelling,
- * which may differ in case. And a first read of the list: before one
- * answers there are no rows to look in, so every repository would look
- * undeclared. A read that failed is different — rows kept from a better one
- * are what this machine last knew, and acting on them is what the engine is
- * there to refuse. */
+ * which may differ in case. And rows some read actually produced: with none,
+ * every repository looks undeclared, and a read that has not landed is no
+ * reason to believe that. Rows kept from a read that later failed are what
+ * this machine last knew and go on being acted on — the engine refuses
+ * whatever they were wrong about — so it is the emptiness that holds the
+ * page neutral, not the failure. */
 export type RepoActionKind = "checking" | "subscribe" | "turn-on" | "refresh";
 
 export function repoAction(
@@ -138,7 +142,7 @@ export function repoAction(
   read: ReadState,
   repoKey: string | null,
 ): { kind: RepoActionKind; holder: MarketplaceRow | null } {
-  if (repoKey === null || read.status === "pending") {
+  if (repoKey === null || (read.status !== "landed" && rows.length === 0)) {
     return { kind: "checking", holder: null };
   }
   const holder = declaredHolder(rows, repoKey);

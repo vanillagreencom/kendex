@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
+import { dropCatalogCaches } from "./marketplaces-shared";
 import {
   resetPreinstallSafety,
   safetyKey,
@@ -49,8 +50,10 @@ describe("a score that outlives a reset", () => {
     await tick();
     expect(commands.marketplacePackagePreview).toHaveBeenCalledTimes(1);
 
-    // An install lands: every score goes, and so does the queue.
-    resetPreinstallSafety();
+    // An install lands. Driven through the drop the app declares rather
+    // than the half of it this file is about, so the test covers the path
+    // a mutation actually takes.
+    dropCatalogCaches(() => {});
 
     // The scan begun before it now answers.
     land(scored(90));

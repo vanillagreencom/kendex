@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { readOrder } from "@/lib/read-state";
+import { settled } from "@/lib/settled";
 
 /** How a read of one address stands. `loading` is both the first read and
  *  every re-read after the address changes: what is on screen belonged to
@@ -35,12 +36,20 @@ export function useOrderedRead<T>(
   const [answer, setAnswer] = useState<OrderedRead<T>>({ status: "loading" });
 
   useEffect(() => {
-    // A null address is a page not ready to read yet — it stays loading,
-    // and the read that follows is still the newest when it comes.
+    // A null address asks nothing and leaves whatever is on screen: the
+    // first read's loading state before any answer, and the last answer
+    // after one. A page whose address goes null has not moved — it is
+    // waiting on something else, as available-package does while a dropped
+    // summary re-reads — so holding its view beats flashing a skeleton.
     if (address === null) return;
     const ticket = order.current.begin();
     setAnswer({ status: "loading" });
-    void latest.current().then((response) => {
+    // `settled` so a transport rejection lands as the failure the page
+    // already knows how to draw, under this ticket like any other answer.
+    // Left raw, the landing never ran at all: the ticket was spent, the
+    // page held its skeleton or drew a blank with no message and no retry,
+    // and the rejection went out unhandled.
+    void settled(latest.current()).then((response) => {
       if (!order.current.lands(ticket)) return;
       setAnswer(
         response.status === "ok"

@@ -367,6 +367,71 @@ describe("an audit that lands after a command it cannot answer for", () => {
     expect(useAuditStore.getState().auditedAt).toBeNull();
   });
 
+  // The two orderings the pair of marks exists for, each reachable on its
+  // own. An attempt is a span, not a moment: a command writes throughout
+  // its own run, so a reading that overlaps either end of that span is out
+  // of date. Awaiting the command to completion inside the audit puts its
+  // whole span under both marks at once, which is why the cases below park
+  // one side or the other.
+
+  // The audit lands while the command is still out: only the mark at the
+  // START of the attempt has fired, and it is what says this reading
+  // cannot answer.
+  it("drops a reading that landed while an attempt was still running", async () => {
+    const audit = park<{ status: "ok"; data: AuditView[] }>();
+    const command = park<{ status: "ok"; data: AuditView }>();
+    vi.mocked(commands.auditAll).mockReturnValue(
+      audit.parked as ReturnType<typeof commands.auditAll>,
+    );
+    vi.mocked(commands.removeItem).mockReturnValue(
+      command.parked as ReturnType<typeof commands.removeItem>,
+    );
+
+    const running = useAuditStore.getState().refresh();
+    const acting = useAuditStore
+      .getState()
+      .removeItem(globalScope, "hook", "lint");
+    audit.land({ status: "ok", data: [stale] });
+    await running;
+
+    expect(useAuditStore.getState().views).toEqual([emptyView]);
+    expect(useAuditStore.getState().auditedAt).toBeNull();
+
+    command.land({ status: "ok", data: settled });
+    await acting;
+  });
+
+  // The mirror: the command's start mark has already fired when the audit
+  // begins, so that one cannot tell this reading apart. Only the mark at
+  // the END of the attempt moves the counter under it.
+  it("drops a reading an attempt finished under", async () => {
+    const audit = park<{ status: "ok"; data: AuditView[] }>();
+    const command = park<{ status: "ok"; data: AuditView }>();
+    vi.mocked(commands.removeItem).mockReturnValue(
+      command.parked as ReturnType<typeof commands.removeItem>,
+    );
+    const acting = useAuditStore
+      .getState()
+      .removeItem(globalScope, "hook", "lint");
+    // The attempt is under way before the audit is asked for.
+    await Promise.resolve();
+
+    vi.mocked(commands.auditAll).mockReturnValue(
+      audit.parked as ReturnType<typeof commands.auditAll>,
+    );
+    const running = useAuditStore.getState().refresh();
+
+    command.land({ status: "ok", data: settled });
+    await acting;
+    audit.land({ status: "ok", data: [stale] });
+    await running;
+
+    // The command's own view stands, undated so the next visit pays for a
+    // reading that can speak for what it did.
+    expect(useAuditStore.getState().views).toEqual([settled]);
+    expect(useAuditStore.getState().auditedAt).toBeNull();
+  });
+
   // Dropping the read is only half of it. The command installed its own
   // scope and nothing re-read the rest, so a stamp left standing would hold
   // the freshness window open over the very bytes the force was about — an

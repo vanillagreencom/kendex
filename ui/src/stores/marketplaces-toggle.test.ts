@@ -110,6 +110,16 @@ describe("a bare repository page's action", () => {
     expect(repoAction([], READ_LANDED, "acme/kit").kind).toBe("subscribe");
   });
 
+  // A FIRST read that failed leaves no rows at all, so every repository
+  // looks undeclared. Offering Subscribe there is the guess the engine
+  // then refuses as a duplicate, with the person having pressed a button
+  // for nothing.
+  it("stays neutral when the first read failed and left no rows", () => {
+    expect(repoAction([], readFailed("offline"), "acme/kit").kind).toBe(
+      "checking",
+    );
+  });
+
   // A read that failed is not the same: the rows it kept are what this
   // machine last knew, and the engine refuses anything they were wrong
   // about. Holding the page neutral there would leave no way back.

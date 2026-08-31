@@ -124,6 +124,22 @@ describe("a read whose address changes while it is out", () => {
     expect(host.textContent).not.toContain("the older answer");
   });
 
+  // A transport rejection is a read that failed, not an exception for the
+  // page to drop: left raw it spent the ticket with no landing at all,
+  // leaving the reader a skeleton or a blank with nothing to retry from
+  // and an unhandled rejection on its way out.
+  it("shows the failure when the read rejects rather than answering", async () => {
+    const read = vi
+      .fn<(address: string) => Promise<Answer>>()
+      .mockRejectedValue(new Error("the bridge is gone"));
+
+    const host = mount(<Host read={read} />);
+    await settle();
+
+    expect(host.textContent).toContain("failed: the bridge is gone");
+    expect(host.textContent).not.toContain("loading");
+  });
+
   // The control: with nothing newer behind it a read lands as it always
   // did, so the cases above hold the ordering rather than a reader that
   // never shows anything.

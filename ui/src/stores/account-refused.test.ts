@@ -9,7 +9,7 @@ import {
   load,
   serves,
 } from "@/test/account-store";
-import { useAccountStore } from "./account";
+import { hasCredential, useAccountStore } from "./account";
 
 // `vi.mock` is hoisted above the imports, so its factory cannot reach one.
 vi.mock("@/bindings", () => ({
@@ -81,6 +81,41 @@ describe("a call refused because the sign-in expired", () => {
     });
     await useAccountStore.getState().loadSubmissions();
     expect(useAccountStore.getState().submissions).toBeNull();
+  });
+
+  // KEN-742 leaves the credential, and its cached identity, where the
+  // removal fails. An outage then answers `offline` off that warm cache
+  // for a sign-in the server has already refused, and offline holds a
+  // credential: without the same rule the signed-out answer gets, the dead
+  // sign-in comes back usable and the Submit it cannot carry is offered
+  // again.
+  it("keeps expired through a read that could not reach the server", async () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA },
+    });
+    met();
+    expect(account()).toEqual({ kind: "expired" });
+
+    serves({ kind: "offline", identity: ADA });
+    await load();
+
+    expect(account()).toEqual({ kind: "expired" });
+    // What the submit dialog gates its Submit button on.
+    expect(hasCredential(account())).toBe(false);
+  });
+
+  // The control: a read that reached the server is news that outranks the
+  // verdict, or an expiry could never be cleared at all.
+  it("lets a signed-in read take the expiry back", async () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA },
+    });
+    met();
+
+    serves({ kind: "signed-in", identity: BOB });
+    await load();
+
+    expect(account()).toEqual({ kind: "signed-in", identity: BOB });
   });
 
   it("changes nothing once the account has already moved on", () => {
@@ -272,6 +307,27 @@ describe("a submissions read the server could not answer", () => {
     expect(account()).toEqual({ kind: "expired" });
     expect(useAccountStore.getState().submissions).toBeNull();
     expect(useAccountStore.getState().submissionsError).toBeNull();
+  });
+
+  // A rejected call is a read that failed, not an exception for the poll's
+  // `void` caller to drop on the floor. It says nothing about the
+  // credential, so the account stays where it is and the rows say why they
+  // are not current.
+  it("lands a rejected poll as a failed read, not a thrown one", async () => {
+    useAccountStore.setState({ account: signedIn, submissions: [ROW] });
+    vi.mocked(commands.mineSubmissions).mockRejectedValue(
+      new Error("the bridge is gone"),
+    );
+
+    await expect(
+      useAccountStore.getState().loadSubmissions(),
+    ).resolves.toBeUndefined();
+
+    expect(useAccountStore.getState().submissionsError).toBe(
+      "the bridge is gone",
+    );
+    expect(useAccountStore.getState().submissions).toEqual([ROW]);
+    expect(account()).toEqual(signedIn);
   });
 
   it("goes with the credential when the person signs out", async () => {

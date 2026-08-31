@@ -42,12 +42,19 @@ export const asOffline = (account: AccountState): SettledAccount | null =>
 
 /** Whether a settled read leaves a standing expiry where it is.
  *
- *  Only a signed-out answer does. `me::load` forgets the cached identity on
- *  every `SignInExpired`, including the arm where the store would not give
- *  the credential up, so no later read can serve a cached name: it either
- *  finds nothing and says signed out, or reaches the server and answers for
- *  whatever credential is really there. Signed out is therefore the one
- *  answer that says nothing new, and every other is news the verdict was
- *  never about. */
+ *  The verdict comes from a call refused under the sign-in (`refused`), not
+ *  from the account read, so nothing on the read's own path forgot the
+ *  cached identity. An offline answer is that warm cache being served
+ *  because the server could not be asked, and it knows strictly less than
+ *  the server already said: where the credential was left installed by a
+ *  failed removal, it would hand back a name for a sign-in ruled dead and
+ *  put Submit in front of the person again.
+ *
+ *  So only a read that reached the server may overturn the verdict. Signed
+ *  out and offline both leave it standing; a signed-in answer is the server
+ *  accepting the credential, which is news that outranks it. The cost is a
+ *  wrongly-held expiry that the next reachable read clears, which is the
+ *  direction a gate on an auth verdict should fail. */
 export const keepsExpiry = (held: AccountState, read: AccountState): boolean =>
-  held.kind === "expired" && read.kind === "signed-out";
+  held.kind === "expired" &&
+  (read.kind === "signed-out" || read.kind === "offline");

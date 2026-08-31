@@ -12,6 +12,7 @@ import { ProblemCard } from "@/components/problem-card";
 import { Sidebar } from "@/components/sidebar";
 import { SCAN_AGAIN_LABEL } from "@/lib/copy";
 import { OverviewPage } from "@/pages/overview";
+import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useScanStore } from "@/stores/scan";
 import { mount, settle } from "@/test/dom";
 
@@ -20,7 +21,6 @@ vi.mock("@/bindings", async (importOriginal) => ({
   commands: {
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
-    marketplacesOverview: vi.fn(),
   },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -44,10 +44,12 @@ const press = async (host: HTMLElement, label: string) => {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
-  vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-    status: "ok",
-    data: [],
-  });
+  // Home reads the marketplaces overview on mount. It is nothing to do
+  // with the button under test, and a command still in flight when the
+  // file's module registry comes down throws from a mock that is no longer
+  // there — so the store's own read is stubbed out rather than mocked at
+  // the command.
+  useMarketplacesStore.setState({ load: async () => {} });
   useScanStore.setState({
     scanning: false,
     result: null,

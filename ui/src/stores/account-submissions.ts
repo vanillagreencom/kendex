@@ -7,6 +7,7 @@ import {
   type SubmissionRow,
 } from "@/bindings";
 import { readOrder } from "@/lib/read-state";
+import { caught } from "@/lib/settled";
 
 /** The submissions half of the account store. */
 export interface Submissions {
@@ -49,11 +50,31 @@ export const readSubmissions = async (
 ): Promise<void> => {
   const ticket = order.begin();
   const before = handovers();
-  const answer = await commands.mineSubmissions();
+  // A transport rejection is a read that failed, not an exception for a
+  // `void` caller to drop: it lands as the same refusal shape the server
+  // returns, under the same guards.
+  const answer = asRefusal(await caught(commands.mineSubmissions()));
   if (!order.lands(ticket) || before !== handovers()) return;
   if (answer.status === "error") refused(answer.error, before);
   write(fromSubmissionsRead(answer));
 };
+
+/** What the command answers with, refusal and all. */
+type SubmissionsRead =
+  | { status: "ok"; data: SubmissionRow[] }
+  | { status: "error"; error: AccountCallRefused };
+
+/** A rejected call in the shape the guards and the writer already read. It
+ *  says nothing about the credential, only that this read did not happen,
+ *  so it takes the `failed` kind rather than `expired`. */
+const asRefusal = (
+  answer:
+    | { status: "ok"; data: SubmissionsRead }
+    | { status: "error"; error: string },
+): SubmissionsRead =>
+  answer.status === "ok"
+    ? answer.data
+    : { status: "error", error: { kind: "failed", message: answer.error } };
 
 /** What a read's answer writes.
  *
@@ -63,11 +84,7 @@ export const readSubmissions = async (
  *  why they are not current: stale and labelled beats an empty tab, which
  *  reads as a marketplace nobody ever submitted and offers a first submit
  *  over work already in review. */
-const fromSubmissionsRead = (
-  answer:
-    | { status: "ok"; data: SubmissionRow[] }
-    | { status: "error"; error: AccountCallRefused },
-): Partial<Submissions> => {
+const fromSubmissionsRead = (answer: SubmissionsRead): Partial<Submissions> => {
   if (answer.status === "ok") {
     return { submissions: answer.data, submissionsError: null };
   }
