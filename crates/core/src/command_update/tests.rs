@@ -13,10 +13,6 @@ use record::{Write, record_as};
 
 mod described;
 
-#[path = "../../../test_util.rs"]
-mod test_util;
-use test_util::no_record_on_this_runner;
-
 #[path = "../../../fixture_url.rs"]
 mod fixture_url;
 use fixture_url::file_url;
@@ -396,19 +392,12 @@ fn a_command_no_installer_recorded_is_never_replaced() {
 /// record is what refused the wrapper, and not a fixture that could never
 /// have been carried in the first place.
 ///
-/// The record is rewritten for what landed, too: it has to keep naming the
-/// command the app just replaced, or the next release finds one it cannot
-/// prove and refuses an update nobody had to be refused.
+/// The record is left exactly as it was, too: it names a path, so the
+/// bytes that land at that path are still the command it names, and the
+/// next release finds a command it can prove rather than one it has to
+/// refuse.
 #[test]
 fn the_command_an_installer_recorded_is_carried_across() {
-    // The rewrite this asserts is `across_in`'s own, through the entry
-    // point that asks the process — the one write here that is not a
-    // fixture, and so the one that cannot be told a different identity.
-    // A root runner suppresses it, correctly: the record is repaired by
-    // the person's next unprivileged run, which is not this process.
-    if no_record_on_this_runner() {
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     let (env, command) = a_kendex_on_this_machine(&dir);
     record_as(&env, Write::Command(&command), false).unwrap();
@@ -418,15 +407,17 @@ fn the_command_an_installer_recorded_is_carried_across() {
     assert_eq!(beside, CommandBeside::Ours(Host.resolve(&command)));
 
     let (feed_url, _) = a_release_is_out(&dir);
+    let record = env.installed_command_file();
+    let written = std::fs::read(&record).unwrap();
     assert_eq!(
         across(&beside, &feed_url, RELEASE).unwrap(),
         CommandHalf::Moved
     );
     assert_eq!(std::fs::read(&command).unwrap(), OFFERED);
     assert_eq!(
-        recorded_command(&env).map(|record| record.path),
-        Some(command.clone()),
-        "the record stopped naming the command that was replaced"
+        std::fs::read(&record).unwrap(),
+        written,
+        "the command half rewrote a record that already named the path it replaced"
     );
     assert_eq!(
         command_beside_app(&Host, &probed, &[], recorded_command(&env).as_ref()),

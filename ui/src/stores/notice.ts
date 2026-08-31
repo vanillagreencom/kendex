@@ -105,16 +105,23 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
   install: async () => {
     if (get().installing) return;
     set({ installing: true, error: null });
-    const response = await settled(commands.appUpdateInstall());
+    // What the card is showing about the command beside the app, handed
+    // over so the engine can say when the command it found was not the one
+    // this card described. The card is the only place that sentence could
+    // be read, and a successful install takes the card away with the
+    // restart.
+    const response = await settled(
+      commands.appUpdateInstall(get().commandChannel),
+    );
     // A replacement that worked does not come back: the app restarts into
     // the new version. So only a failure ends the in-flight state, and it
     // leaves the action on the card to try again.
     if (response.status === "error") {
       set({ installing: false, error: response.error });
-      // The card is the only surface left saying what happens to the
-      // command beside the app, and a failed install is where that answer
-      // is most likely to have moved. Read it again so the card the person
-      // is left looking at says what is there.
+      // One of those answers is that the command was not what this card
+      // says, and it points the person at the card for what is there. Read
+      // again so that is true, and so pressing Update now again acts on
+      // the answer rather than repeating the same sentence.
       const fresh = await settled(commands.appUpdateCommandChannel());
       if (fresh.status === "ok") set({ commandChannel: fresh.data });
     }

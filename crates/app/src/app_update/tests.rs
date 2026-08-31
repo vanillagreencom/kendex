@@ -347,3 +347,80 @@ fn the_running_executable_is_excluded_where_the_updater_names_no_path() {
         "neither the mounted executable nor the image it came from is the command"
     );
 }
+
+/// One machine with a `kendex` command an installer recorded, and the
+/// notice the card would have drawn for it.
+#[allow(clippy::unwrap_used)]
+fn a_recorded_command(dir: &tempfile::TempDir) -> (Env, std::ffi::OsString, PathBuf) {
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let command = bin.join("kendex");
+    std::fs::write(&command, b"the kendex command an installer put here").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let env = Env::host_rooted(dir.path());
+    kendex_core::command_update::record_command(&env, &command).unwrap();
+    (env, std::ffi::OsString::from(&bin), command)
+}
+
+/// A card is on screen for as long as a person leaves it there, and what
+/// is beside the app in that time is not this app's to control. The lookup
+/// runs again when Update now is pressed, so it can answer differently
+/// from the card — and the command half then acts on the new answer, which
+/// here means leaving behind a command the card offered to carry across.
+/// The restart takes the card away, so the split is spoken before it.
+///
+/// Driven through the real lookup rather than a described state: a second
+/// install records its own `kendex` between the two reads, and the command
+/// beside this app is one nothing vouches for any more.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_command_that_changed_under_the_card_is_reported_before_the_restart() {
+    if no_record_on_this_runner() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (env, path_var, _) = a_recorded_command(&dir);
+    let install = AppInstall::AppImage(None);
+    let card = CommandNotice::for_card(&command_beside(&env, &install, Some(&path_var)));
+
+    // The control: unchanged, both halves land and nothing is owed.
+    assert_eq!(card, None, "a recorded command is the app's to carry");
+    assert_eq!(
+        CommandNotice::not_as_shown("5.1.0", CommandHalf::Moved, card.as_ref(), card.as_ref()),
+        None
+    );
+
+    kendex_core::command_update::record_command(&env, &dir.path().join("other/kendex")).unwrap();
+    let now = CommandNotice::for_card(&command_beside(&env, &install, Some(&path_var)));
+    assert_eq!(
+        now,
+        Some(CommandNotice::Unknown),
+        "the fixture only means something if the answer actually changed"
+    );
+
+    let told =
+        CommandNotice::not_as_shown("5.1.0", CommandHalf::Untouched, now.as_ref(), card.as_ref())
+            .expect("a command the card offered to carry across, left behind, has to be said");
+    assert!(told.contains("kendex 5.1.0 is installed"), "{told}");
+    assert!(told.contains("left on the release it is on"), "{told}");
+}
+
+/// The other direction, and why it is said too: the card offered no
+/// command, and the app replaced one anyway. A person told the file would
+/// be left alone hears that it was not.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_command_that_became_ours_under_the_card_is_reported_too() {
+    let told = CommandNotice::not_as_shown(
+        "5.1.0",
+        CommandHalf::Moved,
+        None,
+        Some(&CommandNotice::Unknown),
+    )
+    .expect("a command the card promised to leave alone, replaced, has to be said");
+    assert!(told.contains("carried across"), "{told}");
+}

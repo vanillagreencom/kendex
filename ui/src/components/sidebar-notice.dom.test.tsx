@@ -302,6 +302,25 @@ describe("the action each channel allows", () => {
 });
 
 describe("a replacement that did not happen", () => {
+  // The engine says when the command it found was not the one the card
+  // described, and it can only tell that if it is handed what the card
+  // said. Handing it nothing would leave every such install going ahead on
+  // an answer the person never saw, and never hearing about it.
+  it("hands the engine the note the card is showing", async () => {
+    vi.mocked(commands.appUpdateInstall).mockResolvedValue({
+      status: "ok",
+      data: null,
+    });
+    const showing: CommandNotice = {
+      kind: "managed",
+      manager: "Homebrew",
+      command: "brew upgrade kendex-cli",
+    };
+    const container = await show({ kind: "direct" }, showing);
+    await press(container, APP_UPDATE_INSTALL_LABEL);
+    expect(commands.appUpdateInstall).toHaveBeenCalledWith(showing);
+  });
+
   // The card is the only surface left saying what happens to the command
   // beside the app, and a failed install is where that answer is most
   // likely to have moved. Left unread, the card the person is looking at
