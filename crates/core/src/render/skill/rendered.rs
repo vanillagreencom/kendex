@@ -90,11 +90,17 @@ pub(crate) fn with_name(text: &str, installed: &str) -> std::result::Result<Stri
 }
 
 /// Whether this line opens a new top-level entry rather than continuing
-/// the one above it: unindented, and carrying a key. An indentless block
-/// sequence needs no clause of its own — it can only be the value of an
-/// entry whose own line held none, which the value test refuses first.
+/// the one above it. Indentation is the whole of it: YAML continues a
+/// value by indenting under it, and the one exception — a block sequence
+/// at column 0 — can only be the value of an entry whose own line held
+/// none, which the value test refuses first.
+///
+/// Asked of the shape rather than of the spelling, so a line kendex does
+/// not model still opens an entry: an explicit key writes `? extra` with
+/// its colon on the line below, and a name whole on its own line is no
+/// less whole for what a later entry looks like.
 fn opens_entry(line: &str) -> bool {
-    !line.starts_with([' ', '\t']) && line.contains(':')
+    !line.starts_with([' ', '\t'])
 }
 
 /// A rendered tree as apply materializes it: relative path, bytes.
@@ -230,6 +236,26 @@ mod tests {
                 "mine",
                 "---\nname: mine\nnames: many\n---\n",
             ),
+            // What follows a whole value need not be a shape kendex
+            // models. An explicit key carries its colon on the line
+            // below, and a line carrying none at all is not this name's
+            // business either way: neither is indented under it, so
+            // neither continues it.
+            (
+                "---\nname: gh\n? extra\n: value\ndescription: d\n---\nBody.\n",
+                "mine",
+                "---\nname: mine\n? extra\n: value\ndescription: d\n---\nBody.\n",
+            ),
+            (
+                "---\nname: gh\n- old\n---\nBody.\n",
+                "mine",
+                "---\nname: mine\n- old\n---\nBody.\n",
+            ),
+            (
+                "---\nname: gh\njust text\n---\n",
+                "mine",
+                "---\nname: mine\njust text\n---\n",
+            ),
         ];
         for (text, name, want) in cases {
             assert_eq!(with_name(text, name).as_deref(), Ok(want), "{text:?}");
@@ -299,12 +325,6 @@ mod tests {
             ),
             (
                 "---\nname: \"gh\" trailing\n---\n",
-                "its frontmatter's `name` runs on past its own line",
-            ),
-            // A line carrying no key opens no entry, so nothing here
-            // proves the name's own node ended on its line.
-            (
-                "---\nname: gh\njust text\n---\n",
                 "its frontmatter's `name` runs on past its own line",
             ),
             // An entry with nothing after its colon takes its value from

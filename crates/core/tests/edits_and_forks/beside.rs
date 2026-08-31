@@ -433,3 +433,52 @@ fn fork_beside_rewrites_the_copys_name_line() {
         assert_eq!(manifest_text(&w), before);
     }
 }
+
+/// A skill whose frontmatter carries an explicit YAML key right under its
+/// name. Both readers take the document and it installs with nothing said
+/// about it, so a fork takes it too: the name is whole on its own line,
+/// and the entry below it is not this name's business. The key must sit
+/// immediately under `name`, the only position the reading looks at.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_takes_a_name_followed_by_an_explicit_key() {
+    let w = world();
+    let gh = w.upstream.join("skills/gh/SKILL.md");
+    fs::create_dir_all(gh.parent().unwrap()).unwrap();
+    fs::write(
+        &gh,
+        "---\nname: gh\n? extra\n: value\ndescription: about gh\n---\nUpstream.\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    let installed = skill_file(&w);
+    assert!(
+        installed.is_file(),
+        "the fixture proves nothing unless the skill installs"
+    );
+    fs::write(
+        &installed,
+        "---\nname: gh\n? extra\n: value\ndescription: mine\n---\nMy fork.\n",
+    )
+    .unwrap();
+
+    let plan = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        HarnessId::Claude,
+        "gh-mine",
+        None,
+    )
+    .unwrap_or_else(|error| panic!("a fork of a skill the loader takes was refused: {error}"));
+    apply::execute(&w.env, &plan).unwrap();
+    let own = fs::read_to_string(w.home.join("app/.kendex-local/skills/gh-mine/SKILL.md")).unwrap();
+    assert!(own.contains("name: gh-mine"), "{own}");
+    assert!(
+        own.contains("? extra"),
+        "the entry below it is untouched: {own}"
+    );
+}
