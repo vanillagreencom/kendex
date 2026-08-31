@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
@@ -77,6 +77,24 @@ export function piUserDir(): string {
  * walked: ownership beyond these two questions is a second security model, and
  * one of those in the carrier is enough.
  *
+ * The second test is decided on canonical paths, and the root that comes back
+ * is the canonical one. `resolve` normalizes `.` and `..` and stops there, so a
+ * comparison against its output is a comparison of spelling, while the spawn
+ * that follows is the filesystem dereferencing symlinks. An absolute root that
+ * is a symlink into the workspace reads as outside it and lands inside it.
+ * Returning what was actually compared closes the gap between the two as well:
+ * the path this answers with is the path the caller opens.
+ *
+ * A path that cannot be canonicalized withholds the global scope, whatever the
+ * reason — it does not exist yet, only part of it does, a component denies
+ * access, a symlink loops. None of those is evidence of an attack and none is
+ * evidence of safety, and this can only say the root is outside the workspace
+ * when both sides resolve. The ordinary case costs nothing: a root that does
+ * not resolve holds no script to spawn and no settings.json to read, so
+ * withholding it and searching it come to the same answer. Resolving to the
+ * nearest existing ancestor instead would be the parent walk this does not do,
+ * and would judge a path other than the one the filesystem will follow.
+ *
  * Withholding the global scope is the safe direction on both sides. For a hook
  * it reads as a hook kendex did not install here, which allows the command and
  * is the answer this carrier already gives for that. For settings it leaves
@@ -85,11 +103,24 @@ export function piUserDir(): string {
 export function actionableUserDir(workspace: string | undefined, trusted: boolean): string | undefined {
 	const override = process.env.PI_CODING_AGENT_DIR;
 	if (override !== undefined && !isAbsolute(override)) return undefined;
-	const root = piUserDir();
+	const root = canonicalPath(piUserDir());
+	if (root === undefined) return undefined;
 	if (trusted || workspace === undefined) return root;
-	const project = projectRoot(workspace);
+	const project = canonicalPath(projectRoot(workspace));
+	if (project === undefined) return undefined;
 	if (root === project || root.startsWith(project + sep)) return undefined;
 	return root;
+}
+
+/** A path with every symlink and `..` resolved, or `undefined` where the
+ * filesystem cannot answer. The caller decides what an unanswerable path
+ * means; here it is always withholding. */
+function canonicalPath(path: string): string | undefined {
+	try {
+		return realpathSync(path);
+	} catch {
+		return undefined;
+	}
 }
 
 /**

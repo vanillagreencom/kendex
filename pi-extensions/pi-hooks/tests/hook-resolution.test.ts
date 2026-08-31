@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -243,4 +243,96 @@ describe("pi-hooks rendered-hook resolution", () => {
 			rmSync(project, { recursive: true, force: true });
 		}
 	});
+	// An absolute value passes the first test and can still land inside the
+	// workspace, because `resolve` normalizes `.` and `..` and stops there. The
+	// comparison was on spelling; the spawn is the filesystem following the
+	// link. Both sides are canonicalized now, and the root that comes back is
+	// the canonical one, so what was compared is what gets opened.
+	test("an absolute PI_CODING_AGENT_DIR symlinked into the workspace runs nothing", async () => {
+		const outside = mkdtempSync(join(tmpdir(), "pi-hooks-symlink-outside-"));
+		const workspace = initRustRepo("pi-hooks-symlink-untrusted-");
+		const log = join(workspace, "payload.log");
+		const saved = process.env.PI_CODING_AGENT_DIR;
+		try {
+			// The checkout's own script, and a link to it from a path that reads
+			// as external to any comparison of strings.
+			plantGlobalScript(join(workspace, "inside-agent"), log, "the checkout's script ran");
+			const link = join(outside, "pi-agent");
+			symlinkSync(join(workspace, "inside-agent"), link);
+			process.env.PI_CODING_AGENT_DIR = link;
+			const handler = installToolCallHandler();
+
+			// The lexical root really does reach the checkout's script, so what
+			// follows is the containment test refusing rather than a path missing.
+			expect(existsSync(join(piUserDir(), "kendex", "hooks", "pre-commit-check.sh"))).toBe(true);
+
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: workspace, isProjectTrusted: () => false })).toBeUndefined();
+			expect(readLog(log)).toBe("");
+		} finally {
+			restoreAgentDir(saved);
+			rmSync(outside, { recursive: true, force: true });
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	// The same link, the reading door. Both callers go through one test, so
+	// this fails with the one above and passes with it.
+	test("settings reached through a symlinked root cannot switch the guards off", async () => {
+		const outside = mkdtempSync(join(tmpdir(), "pi-hooks-symlink-cfg-"));
+		const workspace = initRustRepo("pi-hooks-symlink-settings-");
+		const saved = process.env.PI_CODING_AGENT_DIR;
+		try {
+			const inside = join(workspace, "inside-agent");
+			mkdirSync(inside, { recursive: true });
+			writeFileSync(join(inside, "settings.json"), JSON.stringify({
+				kendex: { extensionManager: { config: { [CONFIG_ID]: { enabled: false, preCommitCheck: false } } } },
+			}));
+			const link = join(outside, "pi-agent");
+			symlinkSync(inside, link);
+			process.env.PI_CODING_AGENT_DIR = link;
+
+			expect(existsSync(join(piUserDir(), "settings.json"))).toBe(true);
+
+			const cfg = readConfig(workspace);
+			expect(cfg.enabled).toBeUndefined();
+			expect(cfg.preCommitCheck).toBeUndefined();
+		} finally {
+			restoreAgentDir(saved);
+			rmSync(outside, { recursive: true, force: true });
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	// A root the filesystem cannot answer for withholds the global scope, and
+	// that costs nothing: there is no script under a path that does not resolve
+	// and no settings.json either, so withholding it and searching it come to
+	// the same answer. Pinned because the alternative — walking to the nearest
+	// existing ancestor — would judge a path other than the one that gets
+	// followed, and because a person whose ~/.pi/agent has never been created
+	// must not notice this at all.
+	test("a global root that does not resolve costs nothing that searching it would have found", async () => {
+		const outside = mkdtempSync(join(tmpdir(), "pi-hooks-absent-root-"));
+		const workspace = initRustRepo("pi-hooks-absent-untrusted-");
+		const saved = process.env.PI_CODING_AGENT_DIR;
+		try {
+			process.env.PI_CODING_AGENT_DIR = join(outside, "never-created", "agent");
+			const handler = installToolCallHandler();
+
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(workspace))).toBeUndefined();
+			// The project's own settings still merge, and the user scope
+			// contributes exactly what a settings.json nobody could find
+			// contributes: this is the whole of what initRustRepo writes.
+			expect(readConfig(workspace)).toEqual({
+				enabled: true,
+				preCommitCheck: true,
+				taskCompletedCheck: false,
+				clippyTimeoutMs: 3000,
+			});
+		} finally {
+			restoreAgentDir(saved);
+			rmSync(outside, { recursive: true, force: true });
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
 });
