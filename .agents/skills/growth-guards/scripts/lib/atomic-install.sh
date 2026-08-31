@@ -24,15 +24,6 @@
 
 set -euo pipefail
 
-# The staging file lands beside the DESTINATION, not inside GG_TMP, so it is
-# the one piece of scratch here that gg_tmpdir does not create. Arming on
-# source is what keeps preflight's mktemp-trap lane green over this file, and
-# it is safe for the two callers this family has: both source common.sh, then
-# this file, then arm gg_tmpdir, so nothing of theirs is replaced and the
-# handler is the one gg_tmpdir would set anyway. A caller that arms its OWN
-# EXIT trap before sourcing would lose it, which is why nothing does.
-trap gg_cleanup EXIT
-
 # -L on both spellings: stat lstats by default, so a symlink destination would
 # answer with the LINK's own 0777 rather than the file behind it, and the chmod
 # below would publish a world-writable ratchet input any local account could
@@ -81,6 +72,15 @@ gg_install_file() { # SRC DEST LABEL
   # sitting there, and `cp` writes THROUGH a symlink — so a planted
   # `.gg-install.<pid>.<name>` link would redirect the write anywhere the
   # user can reach. mktemp creates the file itself, exclusively.
+  #
+  # A bash trap is process-wide wherever it is armed, so the arming belongs
+  # here rather than at file scope: the handler exists exactly when there is
+  # something for it to remove, and merely SOURCING this file leaves a
+  # caller's own EXIT trap alone. gg_tmpdir armed the same handler already,
+  # which the precondition above proves it ran, so the two never disagree.
+  # The staging file is the one piece of scratch here that gg_tmpdir did not
+  # create: it lands beside the DESTINATION, not inside GG_TMP.
+  trap gg_cleanup EXIT
   GG_INSTALL_TMP="$(mktemp "$dest.gg-install.XXXXXX" 2>"$err")" \
     || gg_collection_error "could not stage the replacement for $label beside $(gg_shown "$dest")$(gg_install_why "$err")"
   # Past mktemp the staging file has ONE owner: gg_cleanup, which the EXIT trap

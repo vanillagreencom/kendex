@@ -18,10 +18,10 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 SCRIPTS="$SKILL_DIR/scripts"
 COMMON="$SCRIPTS/lib/common.sh"
-# The writer lives beside common.sh rather than inside it, and reaches back
-# across that boundary for the staging file common.sh declares and its exit
-# trap removes. So every probe below sources the pair, in that order, except
-# the settings-cache probes at the end, which pair common.sh with SETTINGS.
+# The lib holding the install helpers, which a probe exercising them sources
+# alongside COMMON: the writer lives beside common.sh rather than inside it,
+# and reaches back across that boundary for the staging file common.sh
+# declares and its exit trap removes.
 INSTALL="$SCRIPTS/lib/atomic-install.sh"
 SETTINGS="$SCRIPTS/lib/settings.sh"
 ROOT="$TMP"
