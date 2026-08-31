@@ -588,8 +588,15 @@ fn the_line_shown_while_a_verb_waits_is_escaped() {
         !sent.contains("we\u{1b}[31m"),
         "the place reached the terminal as its own escape sequence: {sent:?}"
     );
+    // On the spinner's own line, not merely somewhere on the screen: the
+    // escaped name reaches the terminal on the safety lines, the conflict
+    // lines and the closing verdict too, and other tests cover those. What
+    // follows the last "planning " is the label the spinner drew, so an
+    // empty one fails here rather than riding on a line it did not write.
+    let label = sent.rsplit("planning ").next().expect("a tail");
+    let shown = format!("{}/we\\u{{1b}}[31mi\\nrd", home.display());
     assert!(
-        sent.contains("we\\u{1b}[31mi\\nrd"),
+        label.starts_with(&shown),
         "the place was not shown as what it is: {sent:?}"
     );
 }

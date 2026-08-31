@@ -66,11 +66,13 @@ fn kendex(home: &Path, cwd: &Path, ui: &str, args: &[&str]) -> Output {
 ///
 /// Returns everything the terminal was sent, colour codes and redraws
 /// included. Reading runs until the last writer closes, which on Linux
-/// arrives as `EIO` rather than end of file.
+/// arrives as `EIO` rather than end of file. Stdout goes nowhere: only
+/// the terminal is under test, and a pipe nobody drains deadlocks the
+/// pair once a chattier verb fills its buffer.
 #[allow(clippy::expect_used)]
 fn kendex_on_a_terminal(home: &Path, cwd: &Path, args: &[&str]) -> String {
     use std::io::Read;
-    use std::os::fd::{AsFd, OwnedFd};
+    use std::os::fd::OwnedFd;
 
     let controller =
         rustix::pty::openpt(rustix::pty::OpenptFlags::RDWR | rustix::pty::OpenptFlags::NOCTTY)
@@ -102,7 +104,7 @@ fn kendex_on_a_terminal(home: &Path, cwd: &Path, args: &[&str]) -> String {
         .stderr(std::process::Stdio::from(
             terminal.try_clone().expect("a third handle"),
         ))
-        .stdout(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
         .spawn()
         .expect("kendex binary runs");
     // The parent's own handle goes now, or the read below never ends: the
@@ -112,14 +114,17 @@ fn kendex_on_a_terminal(home: &Path, cwd: &Path, args: &[&str]) -> String {
     let mut sent = Vec::new();
     let mut buffer = [0u8; 4096];
     let mut reader = std::fs::File::from(controller);
-    while let Ok(read) = Read::read(&mut reader, &mut buffer) {
-        if read == 0 {
-            break;
+    loop {
+        match Read::read(&mut reader, &mut buffer) {
+            Ok(0) => break,
+            Ok(read) => sent.extend_from_slice(&buffer[..read]),
+            // A signal arriving mid-read is not the end of the stream.
+            // Taking it for one cuts the capture short without saying so.
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
         }
-        sent.extend_from_slice(&buffer[..read]);
     }
     let _ = child.wait();
-    let _ = reader.as_fd();
     String::from_utf8_lossy(&sent).into_owned()
 }
 
