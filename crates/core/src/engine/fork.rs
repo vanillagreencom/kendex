@@ -76,7 +76,6 @@ pub fn fork(
         },
         &edited,
     )?;
-    let uncarried = captured.uncarried;
     let mut ops = capture_ops(env, scope, kind, name, &edited, captured.files)?;
     let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
     // The catalog's mapping tables shaped the rendering and the fork stops
@@ -99,10 +98,7 @@ pub fn fork(
 
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
-        description: recorded(
-            format!("record the fork of {name} in kendex.toml"),
-            &uncarried,
-        ),
+        description: format!("record the fork of {name} in kendex.toml").into(),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,
@@ -110,17 +106,6 @@ pub fn fork(
         },
     });
     Plan::landed(scope.clone(), ops)
-}
-
-/// The line the manifest write draws, with whatever the copy will not
-/// reproduce named after it. A restriction the fork cannot carry is not a
-/// refusal any more, so this is where the person is told about it: a
-/// preview that says nothing is the silence a fork must never keep.
-fn recorded(line: String, uncarried: &[String]) -> crate::apply::Description {
-    match uncarried.is_empty() {
-        true => line.into(),
-        false => format!("{line} — not carried: {}", uncarried.join("; ")).into(),
-    }
 }
 
 /// The file or tree holding this rendering's edited bytes. Skills capture
@@ -210,10 +195,6 @@ struct Captured {
     /// skill: a skill's tree is one capture no per-tool rendering derives
     /// from, so no tool can be at odds with it.
     read_at: Option<String>,
-    /// What the person's own file states that no manifest entry can hold,
-    /// named on the plan so the copy never drops it in silence. Empty for
-    /// a skill: a skill states no per-harness settings.
-    uncarried: Vec<String>,
 }
 
 /// One fork's inputs, gathered so the capture side reads them in one
@@ -234,7 +215,6 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
             files: Capture::Tree(source_form(crate::capture::read_tree(edited)?)),
             carry: None,
             read_at: None,
-            uncarried: Vec::new(),
         },
         // Every other kind is turned away by `edited_rendering` first, so
         // what reaches here is an agent.
@@ -244,7 +224,6 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
                 files: Capture::File(captured.bytes),
                 carry: captured.carry,
                 read_at: captured.read_at,
-                uncarried: captured.uncarried,
             }
         }
     })

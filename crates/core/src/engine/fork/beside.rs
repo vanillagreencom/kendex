@@ -73,7 +73,6 @@ pub fn fork_beside(
         files,
         carry,
         read_at,
-        uncarried,
     } = captured;
     let mut ops = capture_ops(env, scope, kind, new_name, &edited, named(files, new_name)?)?;
     let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
@@ -121,10 +120,7 @@ pub fn fork_beside(
 
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
-        description: super::recorded(
-            format!("record the fork of {name} as {new_name} in kendex.toml"),
-            &uncarried,
-        ),
+        description: format!("record the fork of {name} as {new_name} in kendex.toml").into(),
         op: Op::WriteManifest {
             pre: Pre::observed(&manifest_path)?,
             path: manifest_path,

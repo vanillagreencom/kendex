@@ -123,7 +123,11 @@ pub fn normalize(tool: &str) -> String {
     tool.trim().to_ascii_lowercase().replace(['_', '-'], "")
 }
 
-fn same_tool(a: &str, b: &str) -> bool {
+/// Whether two spellings name the same tool. The one owner of that
+/// question: the merge that unions denies and the capture that carries
+/// them have to agree on it, or a spelling one side folds together is a
+/// difference the other reports.
+pub(crate) fn same_tool(a: &str, b: &str) -> bool {
     normalize(a) == normalize(b)
 }
 

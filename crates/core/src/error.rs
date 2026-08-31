@@ -261,6 +261,13 @@ pub enum CoreError {
     #[error("keeping '{name}' as your own cannot answer for {problem}")]
     ForkRevisionsDiffer { name: String, problem: String },
 
+    /// A fork refused before writing anything: the rendering states
+    /// settings kendex.toml has no field for, so the copy would revert
+    /// them to the publisher's. Refused rather than named on a plan, which
+    /// only one of the two surfaces prints.
+    #[error("keeping '{name}' as your own cannot carry {problem}")]
+    ForkKeysUncarried { name: String, problem: String },
+
     /// A fork refused before writing anything: the generated document
     /// around this agent's prose does not read back as the sections the
     /// renderer wrote, so there is no telling the person's own words from

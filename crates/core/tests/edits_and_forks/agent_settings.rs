@@ -3,19 +3,29 @@
 //! may do, and a copy must be no more permissive than the agent it came
 //! from. The source form has no key for any of them, so what the override
 //! table can hold rides into `[agent-frontmatter.<harness>]` under the
-//! copy's name, and what nothing can hold is named on the plan.
+//! copy's name — and there is no third outcome: what nothing can hold
+//! refuses the fork, naming the keys, before anything is written.
 
 use std::fs;
 
 use super::*;
 
-/// Every line the plan draws, which is where the fork says what it will
-/// not reproduce.
-fn preview(plan: &kendex_core::apply::Plan) -> String {
-    plan.ops
-        .iter()
-        .map(|op| format!("{}\n", op.line()))
-        .collect()
+/// The refusal a fork raises, as its printed reason. Every caller here
+/// wants the same two facts of it: which keys it names, and that nothing
+/// reached disk.
+#[allow(clippy::unwrap_used)]
+fn refuses(w: &World, harness: HarnessId) -> String {
+    let refused = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", harness).unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            kendex_core::error::CoreError::ForkKeysUncarried { .. }
+        ),
+        "{refused:?}"
+    );
+    assert!(!captured(w, "rev").exists(), "nothing was written");
+    assert!(!manifest_text(w).contains("[forks.agent.rev]"));
+    refused.to_string()
 }
 
 /// The `[agent-frontmatter.<harness>]` record the fork wrote for this
@@ -111,26 +121,21 @@ fn a_hand_added_allowlist_rides_into_the_manifest() {
     );
 }
 
-/// A person who changes a setting in the generated file changed something
-/// the override table has a field for. Those ride into the manifest rather
-/// than being dropped, so the set a fork loses is only what nothing can
-/// hold: `description:` and `tags:`, which the table has no field for.
+/// A person who changes a setting the override table has a field for gets
+/// it carried. One it has no field for gets the fork refused: `description:`
+/// would otherwise come back as the publisher wrote it, which is the
+/// person's edit undone by the very operation meant to keep it.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_settings_edit_rides_into_the_manifest_and_a_description_edit_does_not() {
-    let w = agent_world(
-        "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\ncolor: blue\n---\nUpstream body.\n",
-        "",
-        "",
-    );
+fn a_settings_edit_rides_into_the_manifest_and_a_description_edit_refuses() {
+    let source = "---\nname: rev\ndescription: agent rev\ncolor: blue\n---\nUpstream body.\n";
+    let w = agent_world("\"claude\"", source, "", "");
     let file = rendered(&w, HarnessId::Claude, "rev");
     let text = fs::read_to_string(&file).unwrap();
     fs::write(
         &file,
         text.replace("color: blue", "color: magenta")
-            .replace("background: true", "background: false")
-            .replace("description: \"agent rev\"", "description: \"my rev\""),
+            .replace("background: true", "background: false"),
     )
     .unwrap();
 
@@ -144,9 +149,21 @@ fn a_settings_edit_rides_into_the_manifest_and_a_description_edit_does_not() {
     let settled = fs::read_to_string(&file).unwrap();
     assert!(settled.contains("color: magenta"), "{settled}");
     assert!(settled.contains("background: false"), "{settled}");
+
+    // The same edit with a description change beside it: no field holds
+    // one, so the fork refuses rather than reverting it.
+    let w = agent_world("\"claude\"", source, "", "");
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("description: \"agent rev\"", "description: \"my rev\""),
+    )
+    .unwrap();
+    let refused = refuses(&w, HarnessId::Claude);
     assert!(
-        settled.contains("description: \"agent rev\""),
-        "a description edit has no override field and comes back from the publisher: {settled}"
+        refused.contains("description"),
+        "the refusal names the key it cannot carry: {refused}"
     );
 }
 
@@ -233,12 +250,11 @@ fn a_deleted_pi_delegation_list_survives_the_fork() {
 
 /// Deleting a rendered key is an edit in the restrictive direction. An
 /// override states what a value is and never that there is none, so only
-/// an effort can be cleared; a deleted colour comes back from the
-/// publisher, and the plan says so rather than the copy changing in
-/// silence.
+/// an effort can be cleared; a deleted colour would come back from the
+/// publisher, so the fork refuses instead of undoing the deletion.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_cleared_effort_rides_and_a_deleted_colour_is_named_on_the_plan() {
+fn a_cleared_effort_rides_and_a_deleted_colour_refuses() {
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\nmodel: sonnet\neffort: high\ncolor: blue\n---\nUpstream body.\n",
@@ -257,11 +273,6 @@ fn a_cleared_effort_rides_and_a_deleted_colour_is_named_on_the_plan() {
         .collect();
     fs::write(&file, &without_effort).unwrap();
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    let drawn = preview(&plan);
-    assert!(
-        !drawn.contains("not carried"),
-        "a cleared effort is carried, so nothing is named: {drawn}"
-    );
     apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
     let settled = fs::read_to_string(&file).unwrap();
@@ -285,28 +296,24 @@ fn a_cleared_effort_rides_and_a_deleted_colour_is_named_on_the_plan() {
         .map(|line| format!("{line}\n"))
         .collect();
     fs::write(&file, &without_color).unwrap();
-    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    let drawn = preview(&plan);
+    let refused = refuses(&w, HarnessId::Claude);
     assert!(
-        drawn.contains("not carried") && drawn.contains("`color:`"),
-        "the plan names the setting the copy will not reproduce: {drawn}"
+        refused.contains("color"),
+        "the refusal names the deleted setting: {refused}"
     );
-    apply::execute(&w.env, &plan).unwrap();
-    resettle(&w);
     assert!(
-        fs::read_to_string(&file).unwrap().contains("color: blue"),
-        "and it does come back, which is why the plan had to say so"
+        !fs::read_to_string(&file).unwrap().contains("color:"),
+        "and the person's file is left as they wrote it"
     );
 }
 
 /// A hook written into a Claude agent file gates tool use from inside that
 /// file. No override table holds one — a hook is a custom-hooks entry with
-/// a selector, not a field — so a gate the fork would not run again is
-/// named on the plan. The gate's scope is part of its name: the same
-/// command on another event is a different gate.
+/// a selector, not a field — so a gate the fork would not run again is a
+/// restriction it cannot carry, and it refuses.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_hand_written_hook_is_named_on_the_plan() {
+fn a_hand_written_hook_refuses_the_fork() {
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -324,35 +331,35 @@ fn a_hand_written_hook_is_named_on_the_plan() {
     )
     .unwrap();
 
-    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    let drawn = preview(&plan);
+    let refused = refuses(&w, HarnessId::Claude);
     assert!(
-        drawn.contains("./guard.sh") && drawn.contains("PreToolUse on Bash"),
-        "the plan names the gate it will not run again, scope and all: {drawn}"
+        refused.contains("hooks"),
+        "the refusal names the key it cannot carry: {refused}"
     );
-    apply::execute(&w.env, &plan).unwrap();
-    resettle(&w);
     assert!(
-        !fs::read_to_string(&file).unwrap().contains("./guard.sh"),
-        "and the gate is gone, which is why the plan had to say so"
+        fs::read_to_string(&file).unwrap().contains("./guard.sh"),
+        "and the gate still stands, because nothing was written"
     );
 }
 
 /// Frontmatter that will not parse is not the same answer as frontmatter
-/// stating nothing. What the person set cannot be read, so none of it can
-/// be carried, and the plan says that rather than the copy going quietly
-/// wider.
+/// stating nothing. What the person set cannot be read, so it cannot be
+/// shown carried either, and a reading that took it for an empty file
+/// would take every absent value for a deliberate clearing — writing
+/// `effort: none` over the effort the publisher set. The fork refuses
+/// rather than guess.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_unreadable_frontmatter_is_named_on_the_plan() {
+fn an_unreadable_frontmatter_refuses_the_fork() {
     let w = agent_world(
         "\"claude\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "---\nname: rev\ndescription: agent rev\neffort: high\n---\nUpstream body.\n",
         "",
         "",
     );
     let file = rendered(&w, HarnessId::Claude, "rev");
     let text = fs::read_to_string(&file).unwrap();
+    assert!(text.contains("effort: high"), "{text}");
     fs::write(
         &file,
         text.replace(
@@ -362,11 +369,15 @@ fn an_unreadable_frontmatter_is_named_on_the_plan() {
     )
     .unwrap();
 
-    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
-    let drawn = preview(&plan);
+    let refused = refuses(&w, HarnessId::Claude);
     assert!(
-        drawn.contains("not carried") && drawn.contains("cannot be read"),
-        "the plan says the file's settings could not be read: {drawn}"
+        refused.contains("cannot be read"),
+        "the refusal says why the file could not be read: {refused}"
+    );
+    assert!(
+        !manifest_text(&w).contains("effort"),
+        "and no clearing was invented from an unreadable file: {}",
+        manifest_text(&w)
     );
 }
 
@@ -402,5 +413,83 @@ fn the_projects_entry_beats_the_catalogs_default_through_the_carry() {
     assert!(
         fs::read_to_string(&file).unwrap().contains("color: red"),
         "and the copy renders it"
+    );
+}
+
+/// A deny the person deleted from the rendered list. `deny-tools` is
+/// unioned into what the renderer computes and never subtracted from it,
+/// so no override can state the deletion — the copy would come back
+/// denying what they took off. The direction is safe and the refusal is
+/// still the rule: what cannot be carried is named, never dropped.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_deleted_deny_refuses_the_fork() {
+    let w = agent_world(
+        "\"claude\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-frontmatter.claude]\nrev = { deny-tools = [\"Bash\"] }\n",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    assert!(
+        deny_line(&text, "disallowedTools:").contains("Bash"),
+        "the fixture needs a deny in the rendering to delete: {text}"
+    );
+    fs::write(&file, text.replace(", Bash", "")).unwrap();
+
+    let refused = refuses(&w, HarnessId::Claude);
+    assert!(
+        refused.contains("disallowedTools"),
+        "the refusal names the key no override can subtract from: {refused}"
+    );
+}
+
+/// A document the person wrote over the rendering — their own frontmatter
+/// and their own prose — is not a rendering with a key deleted. There was
+/// never a rendered value in it to take away, so nothing absent from it
+/// reads as a clearing: a reading that took the missing `allowed-subagents:`
+/// for a deliberate one would write an empty list into kendex.toml and put
+/// `delegate_subagent` back in the copy's deny list.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hand_written_frontmatter_clears_nothing() {
+    let w = agent_world(
+        "\"pi\"",
+        "---\nname: rev\ndescription: agent rev\nrole: engineer\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Pi, "rev");
+    let rendering = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        deny_line(&rendering, "allowed-subagents:"),
+        "allowed-subagents: scout",
+        "the fixture needs a delegation list the wrong reading would strip"
+    );
+    fs::write(
+        &file,
+        "---\nname: rev\ndescription: mine\n---\n\nMy own notes.\n",
+    )
+    .unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Pi).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let settled = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        deny_line(&settled, "allowed-subagents:"),
+        "allowed-subagents: scout",
+        "an absent key in a file the person wrote is not a clearing: {settled}"
+    );
+    assert!(
+        !deny_line(&settled, "deny-tools:").contains("delegate_subagent"),
+        "and the tool that goes with it is not denied either: {settled}"
+    );
+    assert_eq!(
+        record(&w, "pi", "rev").allowed_subagents,
+        None,
+        "nothing was invented into kendex.toml"
     );
 }

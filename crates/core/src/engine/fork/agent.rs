@@ -27,14 +27,13 @@ mod prose;
 mod wrapper;
 
 use super::ForkOf;
-use super::stated::{Stated, carried_edits, stated, uncarried as uncarried_settings};
+use super::stated::{carried_edits, stated, unreproduced};
 use crate::engine::agent_carry::{AgentCarry, agent_carry};
 use prose::prose;
 use wrapper::{Wrapper, wrapper};
 
-/// One captured agent: the source-form bytes for the local source, the
-/// catalog values that have to reach the manifest with them, and whatever
-/// the person's own file states that no manifest entry can hold.
+/// One captured agent: the source-form bytes for the local source and the
+/// catalog values that have to reach the manifest with them.
 pub(super) struct CapturedAgent {
     pub bytes: Vec<u8>,
     pub carry: Option<AgentCarry>,
@@ -42,10 +41,6 @@ pub(super) struct CapturedAgent {
     /// copy answers for has to be installed from it, or one capture cannot
     /// speak for all of them.
     pub read_at: Option<String>,
-    /// What the fork will not reproduce, named. Empty is the ordinary
-    /// answer; anything in it goes on the plan, because a restriction the
-    /// copy drops without saying so is the one thing a fork must not do.
-    pub uncarried: Vec<String>,
 }
 
 /// The agent as the local source should hold it: the publisher's
@@ -93,49 +88,69 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         }
     })?;
     let bytes = source_form(&published, &edited_text, name, read.as_ref())?;
-    // What the person changed in the generated file, against what the fork
-    // would render in its place. The harness may refuse this agent's
-    // permission intent, in which case the fork installs no file for it at
-    // all: no rendering to compare against, and no edit to that rendering
-    // to carry.
+    // The harness may refuse this agent's permission intent, in which case
+    // the fork installs no file for it at all: no rendering to compare
+    // against, and no edit to a rendering to carry.
     let Some(rendering) = render(scope, &publisher, harness, &around) else {
         return Ok(CapturedAgent {
             bytes,
             carry,
             read_at,
-            uncarried: Vec::new(),
         });
     };
-    // Frontmatter that will not read is not the same answer as frontmatter
-    // stating nothing: what the person set cannot be read, so it cannot be
-    // carried, and the plan says so rather than the copy going quietly
-    // wider.
-    let (on_disk, unreadable) = match stated(harness, &edited_text) {
-        Ok(on_disk) => (on_disk, Vec::new()),
-        Err(problem) => (
-            Stated::default(),
-            vec![format!(
-                "every setting its {} file states: its frontmatter cannot be read ({problem})",
-                harness.display_name()
-            )],
-        ),
+    let refused = |problem: String| CoreError::ForkKeysUncarried {
+        name: crate::names::shown(name),
+        problem: format!("its {} file: {problem}", harness.display_name()),
     };
-    let after =
-        stated(harness, &rendering).map_err(|problem| CoreError::ForkWrapperUnreadable {
+    // Frontmatter that will not read is not the same answer as frontmatter
+    // stating nothing. What the person set cannot be read, so it cannot be
+    // shown carried either, and reading its absent values as deliberate
+    // clearings would write overrides they never asked for.
+    let on_disk = stated(harness, &edited_text)
+        .map_err(|problem| refused(format!("its frontmatter cannot be read ({problem})")))?;
+    let after = stated(harness, &rendering)
+        .map_err(|problem| CoreError::ForkWrapperUnreadable {
             name: crate::names::shown(name),
             harness: harness.display_name().to_owned(),
             problem: format!("its own rendering reads back as {problem}"),
-        })?;
-    let mut uncarried = unreadable;
-    uncarried.extend(uncarried_settings(&on_disk, &after, harness));
-    let carry = carry
-        .unwrap_or_default()
-        .over(harness.name(), carried_edits(&on_disk, &after));
+        })?
+        .unwrap_or_default();
+    // A file stating no frontmatter at all is a document the person wrote
+    // over the top of the rendering: it states no setting to carry, and
+    // there was never a rendered value in it to change or take away.
+    let Some(on_disk) = on_disk else {
+        return Ok(CapturedAgent {
+            bytes,
+            carry,
+            read_at,
+        });
+    };
+    let edits = carried_edits(&on_disk, &after);
+    // Proven, not assumed: the agent is rendered once more with those
+    // overrides folded in, and every key the person's file still spells
+    // differently is one nothing could carry. Asking the rendering rather
+    // than a list kept here is what makes a key this module never heard of
+    // — `description:`, a hook block, one a renderer grows tomorrow —
+    // refuse instead of reverting to the publisher's value in silence.
+    if on_disk.is_rendering()
+        && let Some(reproduced) = render(scope, &publisher, harness, &around.over(&edits))
+    {
+        let keys = unreproduced(&edited_text, &rendering, &reproduced)
+            .map_err(|problem| refused(format!("its frontmatter cannot be read ({problem})")))?;
+        if !keys.is_empty() {
+            return Err(refused(format!(
+                "the {} setting{} it states that kendex.toml has no field for: {}",
+                keys.len(),
+                if keys.len() == 1 { "" } else { "s" },
+                keys.join(", ")
+            )));
+        }
+    }
+    let carry = carry.unwrap_or_default().over(harness.name(), edits);
     Ok(CapturedAgent {
         bytes,
         carry: (!carry.is_empty()).then_some(carry),
         read_at,
-        uncarried,
     })
 }
 
@@ -239,6 +254,21 @@ struct Around<'a> {
     launch: Option<String>,
     additional: Option<String>,
     hooks: Vec<&'a crate::manifest::CustomHook>,
+}
+
+impl Around<'_> {
+    /// The same surroundings with the person's own edits folded in above
+    /// them, which is what the copy will render from once the carry
+    /// reaches the manifest.
+    fn over(&self, edits: &FrontmatterOverrides) -> Around<'_> {
+        Around {
+            skills: self.skills.clone(),
+            overrides: merge_overrides(Some(&self.overrides), Some(edits)),
+            launch: self.launch.clone(),
+            additional: self.additional.clone(),
+            hooks: self.hooks.clone(),
+        }
+    }
 }
 
 /// One rendering of this agent for this harness, or `None` where the
