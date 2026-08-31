@@ -32,7 +32,8 @@ docs live in README.md.
   they own: a rename inside the destination's own directory, so a policy file
   is never left truncated. Sourced by `suppression-ban` and
   `changelog-entries` alone; its staging file is declared and removed in
-  `common.sh`, where the reset reaches every guard and the one exit trap lives
+  `common.sh`, where the reset reaches every guard and the one exit handler
+  lives
 - `scripts/lib/hook-check.sh` — the read-only verdict `install-git-hooks
   --check` returns over the shims this installer writes
 - `scripts/lib/hooks-path.sh` — where git reads hooks from, and whether

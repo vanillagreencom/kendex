@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Pins for lib/common.sh's index reads and lib/atomic-install.sh's policy
-# writes: a probe git could not answer never becomes an answer, a configured
-# path is matched literally, a --cached scan refuses an unmerged index, and a
-# policy file is replaced by a same-directory rename or not at all. Every clean assertion is paired with
-# a control that proves it can fail.
+# Pins for three libs the checks share: lib/common.sh's index reads,
+# lib/atomic-install.sh's policy writes, and the settings cache
+# lib/settings.sh materializes. A probe git could not answer never becomes an
+# answer, a configured path is matched literally, a --cached scan refuses an
+# unmerged index, a policy file is replaced by a same-directory rename or not
+# at all, and no partial cache file survives a resolve. Every clean assertion
+# is paired with a control that proves it can fail.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,7 +20,8 @@ SCRIPTS="$SKILL_DIR/scripts"
 COMMON="$SCRIPTS/lib/common.sh"
 # The writer lives beside common.sh rather than inside it, and reaches back
 # across that boundary for the staging file common.sh declares and its exit
-# trap removes. So every probe below sources the pair, in that order.
+# trap removes. So every probe below sources the pair, in that order, except
+# the settings-cache probes at the end, which pair common.sh with SETTINGS.
 INSTALL="$SCRIPTS/lib/atomic-install.sh"
 SETTINGS="$SCRIPTS/lib/settings.sh"
 ROOT="$TMP"

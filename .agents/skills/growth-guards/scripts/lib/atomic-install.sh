@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # atomic-install.sh — how this family REPLACES a file it owns: a policy
 # baseline, a collated changelog record. One helper does the write, and the
-# two beneath it are what it needs to do it safely — the destination's mode,
-# and what a failing step said.
+# two it leans on are what it needs to do that safely — the destination's
+# mode, and what a failing step said.
 #
 # The rule the whole file exists for: a destination is replaced whole or not
 # at all. A truncated policy file reads as a complete one, and for a ratchet
@@ -24,11 +24,13 @@
 
 set -euo pipefail
 
-# The staging file lands beside the DESTINATION, not inside GG_TMP, so
-# gg_tmpdir's trap covers it only by happening to be the same handler.
-# Arming on source says it directly: from the moment this writer exists, the
-# family's one exit handler removes what it stages. gg_cleanup is idempotent
-# and gg_tmpdir arms the same trap, so the two never disagree.
+# The staging file lands beside the DESTINATION, not inside GG_TMP, so it is
+# the one piece of scratch here that gg_tmpdir does not create. Arming on
+# source is what keeps preflight's mktemp-trap lane green over this file, and
+# it is safe for the two callers this family has: both source common.sh, then
+# this file, then arm gg_tmpdir, so nothing of theirs is replaced and the
+# handler is the one gg_tmpdir would set anyway. A caller that arms its OWN
+# EXIT trap before sourcing would lose it, which is why nothing does.
 trap gg_cleanup EXIT
 
 # -L on both spellings: stat lstats by default, so a symlink destination would
