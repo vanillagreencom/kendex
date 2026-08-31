@@ -357,7 +357,7 @@ for drop in "${REPLY_FORMS[@]}"; do
     [ "$other" = "$drop" ] && continue
     [[ "$OUT" == *"reply form '$other'"* ]] && others=$((others + 1))
   done
-  [ "$RC" != 0 ] && [[ "$OUT" == *"reply-contract bullet no longer states the reply form '$drop'"* ]] && [ "$others" = 0 ] \
+  [ "$RC" != 0 ] && [[ "$OUT" == *"§ Code Review Rules no longer states the reply form '$drop'"* ]] && [ "$others" = 0 ] \
     && ok "the contract bullet losing $drop reds, naming that form and no other" \
     || bad "the contract bullet losing $drop reds, naming that form and no other" "rc=$RC others=$others out=$OUT"
 done
@@ -373,7 +373,7 @@ grep -qF -- "$DECOY_BULLET" "$R/AGENTS.md" \
 reply_fixture 'Tracked: KEN-<n>'
 printf '%s\n' '- File the remainder as `Tracked: KEN-<n>` once the round closes.' >>"$R/AGENTS.md"
 reply_run
-[ "$RC" != 0 ] && [[ "$OUT" == *"reply-contract bullet no longer states the reply form 'Tracked: KEN-<n>'"* ]] \
+[ "$RC" != 0 ] && [[ "$OUT" == *"§ Code Review Rules no longer states the reply form 'Tracked: KEN-<n>'"* ]] \
   && ok "a form dropped from the contract and spelled by the bullet under it reds" \
   || bad "a form dropped from the contract and spelled by the bullet under it reds" "rc=$RC out=$OUT"
 
@@ -412,24 +412,28 @@ for f in "${BOT_FACING[@]}"; do
 done
 
 # Deleting a form outright is the one mutation a whole-file substring search
-# catches. These four are what stand between the arm and a green AGENTS.md
-# with no contract in it: the bullet is gone and the three forms survive
-# somewhere else in the file. Each defeats one predicate this arm has worn in
-# turn — a whole-file search, a heading-to-heading slice, that slice's `## `
-# exit rule, and that slice's start rule re-arming on a repeated heading — and
-# all four red on the one diagnosis, because the arm reads the bullet and no
-# heading at all.
-gutted_probe() { # LABEL — the AGENTS.md that replaces the fixture's arrives on stdin
-  local label="$1"
+# catches. These six are what stand between the arm and a green AGENTS.md with
+# no contract under the heading the bot files name: the section keeps its
+# heading or loses it, and the three forms survive somewhere the arm must not
+# accept. Each defeats one predicate this arm has worn in turn — a whole-file
+# search, a heading-to-heading slice, that slice's `## ` exit rule, that
+# slice's start rule re-arming on a repeated heading, and the bullet scope
+# that replaced the slice, which took any bullet in the file. The section and
+# the bullet are both load-bearing, so each probe names which of the two is
+# missing.
+gutted_probe() { # LABEL EXPECTED — the AGENTS.md that replaces the fixture's arrives on stdin
+  local label="$1" expected="$2"
   reply_fixture
   cat >"$R/AGENTS.md"
   reply_run
-  [ "$RC" != 0 ] && [[ "$OUT" == *"AGENTS.md has no '- Author replies are' bullet"* ]] \
+  [ "$RC" != 0 ] && [[ "$OUT" == *"$expected"* ]] \
     && ok "$label" \
     || bad "$label" "rc=$RC out=$OUT"
 }
+NO_SECTION="AGENTS.md has no § Code Review Rules section"
+NO_BULLET="AGENTS.md § Code Review Rules has no '- Author replies are' bullet"
 
-gutted_probe "the section gone and the forms recited in a glossary reds" <<'MD'
+gutted_probe "the section gone and the forms recited in a glossary reds" "$NO_SECTION" <<'MD'
 # fixture
 
 ## Glossary
@@ -438,7 +442,7 @@ Historical note: older repos spelled replies `Fixed in <sha>`,
 `Declined: <reason>`, or `Tracked: KEN-<n>`; that convention is retired here.
 MD
 
-gutted_probe "the section kept and the forms moved into a later ## section reds" <<'MD'
+gutted_probe "the section kept and the forms moved into a later ## section reds" "$NO_BULLET" <<'MD'
 # fixture
 
 ## Code Review Rules
@@ -451,7 +455,7 @@ Replies were once written `Fixed in <sha>`,
 `Declined: <reason>`, or `Tracked: KEN-<n>`.
 MD
 
-gutted_probe "the forms recited under a following # heading reds" <<'MD'
+gutted_probe "the forms recited under a following # heading reds" "$NO_BULLET" <<'MD'
 # fixture
 
 ## Code Review Rules
@@ -465,7 +469,7 @@ Retired spellings: `Fixed in <sha>`, `Declined: <reason>`,
 `Tracked: KEN-<n>`.
 MD
 
-gutted_probe "a repeated ## Code Review Rules heading reciting the forms reds" <<'MD'
+gutted_probe "a repeated ## Code Review Rules heading reciting the forms reds" "$NO_BULLET" <<'MD'
 # fixture
 
 ## Code Review Rules
@@ -476,6 +480,40 @@ Raise only defects in the changed lines.
 
 Replies were once written `Fixed in <sha>`, `Declined: <reason>`, or
 `Tracked: KEN-<n>`; that convention is retired here.
+MD
+
+# The two the bullet scope alone let through: the contract bullet is whole and
+# unedited, and it is somewhere the bot-facing files do not send readers.
+gutted_probe "the whole contract bullet moved into a later section reds" "$NO_BULLET" <<'MD'
+# fixture
+
+## Code Review Rules
+
+- Do not re-raise a finding class answered `Declined: <reason>` on this PR
+  unless the relevant code changed since.
+
+## Reply contract
+
+- Author replies are one of
+  `Fixed in <sha>`,
+  `Declined: <reason>`, or
+  `Tracked: KEN-<n>` / `#<n>`.
+MD
+
+gutted_probe "the whole contract bullet moved into an earlier section reds" "$NO_BULLET" <<'MD'
+# fixture
+
+## Reply contract
+
+- Author replies are one of
+  `Fixed in <sha>`,
+  `Declined: <reason>`, or
+  `Tracked: KEN-<n>` / `#<n>`.
+
+## Code Review Rules
+
+- Do not re-raise a finding class answered `Declined: <reason>` on this PR
+  unless the relevant code changed since.
 MD
 
 # The pointer's two-file list is a decision, not an oversight: a path-scoped

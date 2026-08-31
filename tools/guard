@@ -188,34 +188,42 @@ fi
 # The orch skill carries a second one on purpose, for working agents, and
 # AGENTS.md § Code Review Rules says so in its opening lines.
 #
-# What is read is the contract bullet itself, not the section around it. The
-# section holds a second bullet that spells `Declined: <reason>` — the one
-# forbidding a re-raise — so a search over the section is satisfied by that
-# neighbour with the contract gutted. The run starts at the line beginning
-# `- Author replies are` and ends at the next bullet or blank line, so the
-# neighbouring bullets are outside it and no heading is read at all. Each form
-# is matched literally inside that run, so a rewrap of the bullet cannot red
-# this and the loss of any one form is its own diagnosis. `#<n>` is not a
-# fourth form: it is the other spelling of the id inside `Tracked:`, and the
-# merge gate accepts either, so a contract written with only the KEN- spelling
-# is whole.
+# What is read is the contract bullet WITHIN that section, and neither scope
+# holds on its own. The section alone is satisfied by the neighbouring
+# do-not-re-raise bullet, which spells `Declined: <reason>` outside the
+# contract. The bullet alone is satisfied by a contract moved into some other
+# section, while both bot-facing files still send readers to this one. So the
+# slice runs from the heading to the next heading at its level or above, and
+# the run inside it starts at `- Author replies are` and ends at the next
+# bullet or blank line. The exit rule is tested before the start rule, or a
+# repeated `## Code Review Rules` heading re-arms the slice instead of ending
+# it and a gutted first section passes on the later copy's forms. Each form is
+# matched literally inside the run, so a rewrap of the bullet cannot red this
+# and the loss of any one form is its own diagnosis. `#<n>` is not a fourth
+# form: it is the other spelling of the id inside `Tracked:`, and the merge
+# gate accepts either, so a contract written with only the KEN- spelling is
+# whole.
 #
-# An absent file, and a file with no such bullet, are each their own diagnosis
-# rather than three missing substrings.
+# An absent file, a file with no such section, and a section with no such
+# bullet are each their own diagnosis rather than three missing substrings.
 REPLY_FORMS=('Fixed in <sha>' 'Declined: <reason>' 'Tracked: KEN-<n>')
 if [ ! -f AGENTS.md ]; then
   say "AGENTS.md is gone — it holds the one copy of the reply contract the bot-facing files point at"
+elif ! grep -q '^## Code Review Rules$' AGENTS.md; then
+  say "AGENTS.md has no § Code Review Rules section — that section is where the bot-facing files send readers for the reply contract"
 else
   reply_bullet=$(awk '
-    /^- Author replies are/ { inside = 1; print; next }
-    inside && (/^- / || /^[[:space:]]*$/) { exit }
-    inside' AGENTS.md)
+    inside && /^##? / { exit }
+    /^## Code Review Rules$/ { inside = 1; next }
+    inside && /^- Author replies are/ { collecting = 1; print; next }
+    collecting && (/^- / || /^[[:space:]]*$/) { exit }
+    collecting' AGENTS.md)
   if [ -z "$reply_bullet" ]; then
-    say "AGENTS.md has no '- Author replies are' bullet — that bullet is the one copy of the reply contract the bot-facing files point at"
+    say "AGENTS.md § Code Review Rules has no '- Author replies are' bullet — that bullet is the one copy of the reply contract the bot-facing files point at"
   else
     for form in "${REPLY_FORMS[@]}"; do
       grep -qF -- "$form" <<<"$reply_bullet" ||
-        say "AGENTS.md's reply-contract bullet no longer states the reply form '$form' — the bot-facing files point readers at § Code Review Rules for it"
+        say "AGENTS.md § Code Review Rules no longer states the reply form '$form' — the bot-facing files point readers there for it"
     done
   fi
 fi
