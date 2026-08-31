@@ -87,13 +87,42 @@ OUT=""; RC=0
 OUT="$(cd "$TMP" && { unset REVIEW_GATE_TD 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="-e" rg_setting REVIEW_GATE_TD "dflt" 2>"$TMP/err"; })" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "dashfile" ]] && ok "dash-prefixed settings path reads its value (no option-injection fallback)" || bad "dash-prefixed settings path reads its value (no option-injection fallback)" "rc=$RC out=$OUT"
 
-# A symlinked settings file is an ordinary install shape and reads its
-# target, not the link.
+echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
+# A directory (FIFO/socket/device are the same shape) fails -f exactly like
+# an absent file, so the reader would resolve every key to its caller
+# default with nothing said — fail-open on permissive defaults.
+mkdir -p "$TMP/nonregular.dir"
+OUT=""; RC=0
+OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/nonregular.dir" rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -ne 0 ]] && grep -q "not a regular file" "$TMP/err" && ok "a DIRECTORY settings path is a config error, not a silent default" || bad "a DIRECTORY settings path is a config error, not a silent default" "rc=$RC out=$OUT"
+
+if mkfifo "$TMP/nonregular.fifo" 2>/dev/null; then
+  OUT=""; RC=0
+  OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/nonregular.fifo" rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?
+  [[ "$RC" -ne 0 ]] && grep -q "not a regular file" "$TMP/err" && ok "a FIFO settings path is a config error, not a silent default" || bad "a FIFO settings path is a config error, not a silent default" "rc=$RC out=$OUT"
+else
+  echo "  skip  mkfifo unavailable — FIFO shape not exercised"
+fi
+
+# A symlink that does not resolve fails -e as well as -f, so an existence
+# test alone never sees it — the same silent-defaults trap one shape over.
+ln -s missing.toml "$TMP/dangling.settings.toml"
+OUT=""; RC=0
+OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/dangling.settings.toml" rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -ne 0 ]] && grep -q "does not resolve" "$TMP/err" && ok "a DANGLING symlink settings path is a config error, not a silent default" || bad "a DANGLING symlink settings path is a config error, not a silent default" "rc=$RC out=$OUT"
+
+ln -s cycle-b.settings.toml "$TMP/cycle-a.settings.toml"
+ln -s cycle-a.settings.toml "$TMP/cycle-b.settings.toml"
+OUT=""; RC=0
+OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/cycle-a.settings.toml" rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -ne 0 ]] && grep -q "does not resolve" "$TMP/err" && ok "a CYCLIC symlink settings path is a config error, not a silent default" || bad "a CYCLIC symlink settings path is a config error, not a silent default" "rc=$RC out=$OUT"
+
+# A RESOLVING symlink is an ordinary install shape and must still read.
 printf '[env]\nREVIEW_GATE_TL = "linked"\n' >"$TMP/link-target.settings.toml"
 ln -s link-target.settings.toml "$TMP/link.settings.toml"
 OUT=""; RC=0
 OUT="$(unset REVIEW_GATE_TL 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/link.settings.toml" rg_setting REVIEW_GATE_TL "dflt" 2>"$TMP/err")" || RC=$?
-[[ "$RC" -eq 0 && "$OUT" == "linked" ]] && ok "a RESOLVING symlink reads its target" || bad "a RESOLVING symlink reads its target" "rc=$RC out=$OUT"
+[[ "$RC" -eq 0 && "$OUT" == "linked" ]] && ok "a RESOLVING symlink reads its target (control)" || bad "a RESOLVING symlink reads its target (control)" "rc=$RC out=$OUT"
 
 echo "=== an UNREADABLE settings source fails loud, never falls back ==="
 # grep exits 0/1 are measurements; anything else means the source could not
@@ -252,10 +281,21 @@ printf 'REVIEW_GATE_TD="17"#note\n' >"$TMP/layers/.env.local"
 dot REVIEW_GATE_TD "dflt"
 [[ "$RC" -ne 0 ]] && grep -q "unsupported syntax" "$TMP/err" && ok "an adjacent # after a quoted value is a segment, not a comment — fails loud" || bad "adjacent-hash dotenv" "rc=$RC out=$OUT"
 
-echo "=== an UNREADABLE .env.local fails loud, never falls through ==="
-# The dotenv layer sits ABOVE the settings files, so silently skipping a
-# source the read itself could not open would resolve from a lower layer.
+echo "=== an UNUSABLE .env.local fails loud, never falls through ==="
+# The dotenv layer sits ABOVE the settings files, so silently skipping an
+# unusable .env.local would resolve from a lower layer — same silent-value
+# swap the settings-file shapes above pin.
 rm -f "$TMP/layers/.env.local"
+mkdir -p "$TMP/layers/.env.local"
+dot REVIEW_GATE_TD "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "not a regular file" "$TMP/err" && ok "a DIRECTORY at .env.local is a config error, not a skipped layer" || bad "directory .env.local" "rc=$RC out=$OUT"
+rmdir "$TMP/layers/.env.local"
+
+ln -s missing.env "$TMP/layers/.env.local"
+dot REVIEW_GATE_TD "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "does not resolve" "$TMP/err" && ok "a DANGLING symlink at .env.local is a config error, not a skipped layer" || bad "dangling .env.local" "rc=$RC out=$OUT"
+rm -f "$TMP/layers/.env.local"
+
 if [ "$(id -u)" -eq 0 ]; then
   echo "  skip  unreadable-.env.local pin needs a non-root reader (chmod 000 cannot deny root)"
 else
@@ -306,15 +346,48 @@ run_setting $'[env]\nUNRELATED = bare\nREVIEW_GATE_TW = "v"' REVIEW_GATE_TW "dfl
 run_setting $'[env]\nUNRELATED = "a"\nUNRELATED = "b"\nREVIEW_GATE_TW = "v"' REVIEW_GATE_TW "dflt"
 [[ "$RC" -ne 0 ]] && grep -q "UNRELATED is assigned more than once" "$TMP/err" && ok "an unrelated duplicated key fails the read" || bad "unrelated duplicated key" "rc=$RC out=$OUT"
 
-# REVIEW_GATE_MODE reads only ITS sources: an .env.local value must not
-# reach the switch that CI, on a clean checkout, would resolve from the
-# committed file — that split is what the exception exists to prevent.
-printf '[env]\nREVIEW_GATE_MODE = "off"\n' >"$TMP/layers/kendex.settings.toml"
-printf 'REVIEW_GATE_MODE="enforce"\n' >"$TMP/layers/.env.local"
-OUT=""; RC=0
-OUT="$(cd "$TMP/layers" && { unset REVIEW_GATE_MODE REVIEW_GATE_SETTINGS_FILE 2>/dev/null; rg_setting REVIEW_GATE_MODE "dflt" 2>"$TMP/err"; })" || RC=$?
-[[ "$RC" -eq 0 && "$OUT" == "off" ]] && ok "REVIEW_GATE_MODE reads the committed file, never .env.local" || bad "MODE over .env.local" "rc=$RC out=$OUT"
+echo "=== a leading UTF-8 BOM fails loud, never parses as content ==="
+# The BOM is neither whitespace nor `[` nor a key character: a BOM'd [env]
+# header would hide the whole table behind silent defaults, and a BOM'd
+# first dotenv assignment would silently skip the layer.
+run_setting "$(printf '\357\273\277')"$'[env]\nREVIEW_GATE_TM = "hidden"' REVIEW_GATE_TM "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "byte-order mark" "$TMP/err" && ok "a BOM-prefixed settings file is a config error, not an invisible table" || bad "BOM settings file" "rc=$RC out=$OUT"
+
+printf '\357\273\277REVIEW_GATE_TM="first"\n' >"$TMP/layers/.env.local"
+dot REVIEW_GATE_TM "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "byte-order mark" "$TMP/err" && ok "a BOM-prefixed .env.local is a config error, not a skipped layer" || bad "BOM .env.local" "rc=$RC out=$OUT"
 rm -f "$TMP/layers/.env.local"
+
+echo "=== a malformed lower file fails even under a higher-precedence override ==="
+# kendex-env validates before its parent-env skip; an exported value or an
+# .env.local hit must never let a broken committed file pass silently.
+printf '[env]\nDUP = "a"\nDUP = "b"\n' >"$TMP/settings.toml"
+OUT=""; RC=0
+OUT="$(REVIEW_GATE_TV=envwin REVIEW_GATE_SETTINGS_FILE="$TMP/settings.toml" rg_setting REVIEW_GATE_TV "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -ne 0 ]] && grep -q "assigned more than once" "$TMP/err" && ok "an exported value does not mask a malformed settings file" || bad "env override over malformed file" "rc=$RC out=$OUT"
+
+printf '[env]\nDUP = "a"\nDUP = "b"\n' >"$TMP/layers/kendex.settings.toml"
+printf 'REVIEW_GATE_TV="local"\n' >"$TMP/layers/.env.local"
+dot REVIEW_GATE_TV "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "assigned more than once" "$TMP/err" && ok "a .env.local hit does not mask a malformed settings file" || bad "dotenv override over malformed file" "rc=$RC out=$OUT"
+rm -f "$TMP/layers/.env.local"
+
+# ...and it must not mask a BROKEN .env.local either: the layer's
+# usability is part of every resolution, same as the generic loader.
+printf '[env]\nREVIEW_GATE_TP = "root"\n' >"$TMP/layers/kendex.settings.toml"
+mkdir -p "$TMP/layers/.env.local"
+OUT=""; RC=0
+OUT="$(cd "$TMP/layers" && { unset REVIEW_GATE_SETTINGS_FILE 2>/dev/null; REVIEW_GATE_TV=envwin rg_setting REVIEW_GATE_TV "dflt" 2>"$TMP/err"; })" || RC=$?
+[[ "$RC" -ne 0 ]] && grep -q "not a regular file" "$TMP/err" && ok "an exported value does not mask a DIRECTORY at .env.local" || bad "env override over broken .env.local" "rc=$RC out=$OUT"
+
+# ...but REVIEW_GATE_MODE probes only ITS sources: a broken machine-local
+# .env.local must not fail the switch that CI, on a clean checkout, would
+# resolve normally — that split is what the exception exists to prevent.
+printf '[env]\nREVIEW_GATE_MODE = "off"\n' >"$TMP/layers/kendex.settings.toml"
+OUT=""; RC=0
+OUT="$(cd "$TMP/layers" && { unset REVIEW_GATE_MODE REVIEW_GATE_SETTINGS_FILE 2>/dev/null; rg_setting REVIEW_GATE_MODE "enforce" 2>"$TMP/err"; })" || RC=$?
+[[ "$RC" -eq 0 && "$OUT" == "off" ]] && ok "REVIEW_GATE_MODE resolves past a broken .env.local it never reads" || bad "MODE over broken .env.local" "rc=$RC out=$OUT"
+rmdir "$TMP/layers/.env.local"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

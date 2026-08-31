@@ -310,12 +310,12 @@ $(printf '%s\n' "$badheaders" | sed 's/^/        /')"
   else
     ok "every table header parses as a lone [name]"
   fi
-  # A BOM is neither whitespace nor `[` nor a key character to any settings
-  # reader, so it misclassifies the line it hides: a BOM'd `[env]` header
-  # leaves the whole table read by nothing, and no reader says so. Findings
-  # below a BOM describe that corrupted read — remove the BOM first.
+  # Every settings reader refuses a BOM-prefixed file whole (lib/settings.sh
+  # rg_bom_guard): the BOM is neither whitespace nor `[` nor a key
+  # character, so the first line would misclassify. Findings below a BOM
+  # describe that corrupted read — remove the BOM first.
   if [ "$(head -c 3 < "$sf" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
-    bad "$sf starts with a UTF-8 byte-order mark; remove it (it hides the line it precedes from every settings reader)"
+    bad "$sf starts with a UTF-8 byte-order mark; remove it (every settings reader refuses the file whole)"
   else
     ok "no UTF-8 byte-order mark before the first line"
   fi
@@ -329,10 +329,16 @@ $(printf '%s\n' "$unread" | sed 's/^/        /')"
 
 if [ "$SETTINGS_FILE" = "/dev/null" ]; then
   note "REVIEW_GATE_SETTINGS_FILE=/dev/null — settings are forced to built-in defaults; no committed file is being validated"
-elif [ ! -f "$SETTINGS_FILE" ]; then
-  note "$SETTINGS_FILE is absent — every key resolves to its built-in default, which is a valid install carrying no per-repo values"
-else
+elif [ -f "$SETTINGS_FILE" ]; then
   scan_settings_source "$SETTINGS_FILE"
+elif [ -e "$SETTINGS_FILE" ] || [ -L "$SETTINGS_FILE" ]; then
+  # Present but not a regular file. Testing -f alone called this shape
+  # absent, so the scan said nothing about the policy file it was pointed
+  # at. The resolver refuses it below whichever key is read first; naming
+  # the path here is what tells a reader which file to fix.
+  bad "$SETTINGS_FILE exists but is not a file the loader can read (directory, FIFO, socket, device, or a symlink that does not resolve); a source is skipped only when it is ABSENT"
+else
+  note "$SETTINGS_FILE is absent — every key resolves to its built-in default, which is a valid install carrying no per-repo values"
 fi
 # The resolver treats .kendex/settings.toml as the AUTHORITATIVE default
 # TOML source when present, so with no explicit override the same checks

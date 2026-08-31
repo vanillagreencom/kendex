@@ -65,11 +65,12 @@ Two env-only PER-INVOCATION seams are NOT settings keys:
 - `REVIEW_GATE_SETTINGS_FILE` — overrides the settings-file path (e.g. in
   tests, or a caller resolving settings for a different checkout).
   Set-but-empty is unset: `""` names no file, so the default sources apply.
-  A path `-f` does not see as a regular file falls back to the built-in
-  defaults; one that exists but cannot be READ is a configuration error
-  every reader fails loud on. A symlink that resolves to a readable regular
-  file reads normally. `/dev/null` is the one exempt path — the handle for
-  forcing defaults.
+  Falling back to built-in defaults covers an ABSENT PLAIN FILE only: a path that
+  exists as a directory, FIFO, socket or device, a symlink that does not
+  resolve, or a file that exists but cannot be READ is a configuration
+  error every reader fails loud on. A symlink that resolves to a readable
+  regular file reads normally. `/dev/null` is the one exempt path — the
+  handle for forcing defaults.
 - `REVIEW_GATE_STATUS_SNAPSHOT_FILE` — path to a caller-supplied status
   snapshot the predicate evaluates instead of fetching statuses itself.
   Snapshot shape, the list-endpoint-only rule, and refusal conditions:

@@ -316,10 +316,10 @@ reviewed diff is the point.
 ## Settings sources
 
 Env files use `KEY=value` or `export KEY=value`; they are parsed, never
-sourced. A source is read when `-f` finds a regular file there and skipped
-otherwise; one the read itself cannot open is a config error (exit 2),
-never a fall-through to the next layer.
-`GROWTH_GUARDS_SETTINGS_FILE=/dev/null` selects no settings
+sourced. Only an ABSENT source is skipped: a source that exists but is
+unusable — unreadable, a directory, FIFO, socket or device, or a symlink
+that does not resolve — is a config error (exit 2), never a fall-through to
+the next layer. `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` selects no settings
 source at all — `.env.local` and the settings files are both skipped —
 leaving explicit environment variables and the built-in defaults. The
 scripts `cd` to `git rev-parse --show-toplevel` before resolving anything,

@@ -200,6 +200,40 @@ s6_case "an unquoted value" $'[env]\nUNQ = bare' "unsupported syntax for UNQ"
 s6_case "a commented [env] header" $'[env] # comment\nHIDDEN = "x"' "unsupported table header shape"
 s6_case "a quoted foreign header after [env]" $'[env]\nGOOD = "y"\n["notes"]\nLEAK = "z"' "unsupported table header shape"
 
+# Scenario 7: a source the read itself cannot open fails the load. The
+# loader skips a source only when -f finds no regular file there; a
+# mode-000 file IS one, so the settings redirect and the .env.local
+# `source` are what see it. Nothing else in this suite would notice a
+# reader that swallowed the read error and resolved on an empty file.
+s7_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside a fresh project dir
+  local name="$1" stage="$2" want="$3" code=0 err proj
+  proj="$(mktemp -d "$TMP_ROOT/proj7.XXXXXX")"
+  ( cd "$proj" && eval "$stage" )
+  set +e
+  err=$(
+    set -euo pipefail
+    source "$LIB"
+    kendex_load_project_env "$proj" 2>&1 >/dev/null
+  )
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 && "$err" == *"$want"* ]]; then
+    PASS=$((PASS + 1)); printf '  ok    scenario 7: %s fails the load\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 7: %s fails the load (code=%s err=%s)\n' "$name" "$code" "$err"
+  fi
+}
+if [ "$(id -u)" -eq 0 ]; then
+  printf '  skip  scenario 7: unreadable-source pins need a non-root reader (chmod 000 cannot deny root)\n'
+else
+  s7_case "an UNREADABLE kendex.settings.toml" \
+    'printf "[env]\nX = \"y\"\n" > kendex.settings.toml && chmod 000 kendex.settings.toml' \
+    "kendex.settings.toml: Permission denied"
+  s7_case "an UNREADABLE .env.local" \
+    'printf "A=b\n" > .env.local && chmod 000 .env.local' \
+    ".env.local: Permission denied"
+fi
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

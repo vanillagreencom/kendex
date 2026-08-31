@@ -200,13 +200,54 @@ dir="$DIR"
 printf '\n[env] # comment\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
 expect_fail "a header the loader cannot parse is its own finding" "$dir" "table header(s) the loader cannot parse"
 
-# A BOM hides the line it precedes from every settings reader with nothing
-# said, so it is its own finding — without it the report would blame lines
-# the corrupted read never classified.
+# Every settings reader refuses a BOM-prefixed file whole, so the BOM is
+# its own finding — without it the report would blame lines the corrupted
+# read never classified.
 sandbox
 dir="$DIR"
 printf '\357\273\277[env]\nREVIEW_GATE_THREADS = "off"\n' >"$dir/kendex.settings.toml"
 expect_fail "a leading UTF-8 BOM is its own finding" "$dir" "byte-order mark"
+
+# An override naming something other than a regular file used to read as
+# ABSENT here, so the scan reported "every key resolves to its built-in
+# default" about a policy file it never opened. Present-but-unusable is a
+# finding naming the path, and the ABSENT control below keeps that branch
+# from swallowing the install shape it is for.
+override_validate() { # NAME DIR OVERRIDE SUBSTRING
+  local out rc=0
+  out="$(cd "$2" && REVIEW_GATE_SETTINGS_FILE="$3" "./$VALIDATE_REL" 2>&1)" || rc=$?
+  if [ "$rc" -ne 1 ]; then
+    bad "$1 — expected exit 1, got $rc" "$out"
+  elif printf '%s' "$out" | grep -F -- "$4" | grep -q '^FAIL'; then
+    ok "$1"
+  else
+    bad "$1 — no FAIL line carrying: $4" "$out"
+  fi
+}
+
+sandbox
+dir="$DIR"
+mkdir -p "$dir/nonregular.dir"
+override_validate "a DIRECTORY override is a finding, not an absent source" \
+  "$dir" "nonregular.dir" "is not a file the loader can read"
+
+sandbox
+dir="$DIR"
+ln -s missing.toml "$dir/dangling.settings.toml"
+override_validate "a DANGLING symlink override is a finding, not an absent source" \
+  "$dir" "dangling.settings.toml" "is not a file the loader can read"
+
+# Control: a genuinely absent override is a valid install and still passes.
+sandbox
+dir="$DIR"
+absent_out=""
+absent_rc=0
+absent_out="$(cd "$dir" && REVIEW_GATE_SETTINGS_FILE="absent.settings.toml" "./$VALIDATE_REL" 2>&1)" || absent_rc=$?
+if [ "$absent_rc" -eq 0 ] && printf '%s' "$absent_out" | grep -q "absent.settings.toml is absent"; then
+  ok "an ABSENT override still reads as absent and passes (control)"
+else
+  bad "an ABSENT override still reads as absent and passes (control) (rc=$absent_rc)" "$absent_out"
+fi
 
 # An inline table puts the setting AFTER the line's first `=`, which is why
 # the rule judges the line rather than a position inside it.
