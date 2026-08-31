@@ -286,6 +286,13 @@ for name in gh ghostty tmux; do
 done
 
 echo "=== every supervisor-launching suite arms both ==="
+# An inner run reaches here only if it outlived its own abort; without this it
+# would probe itself forever.
+if [[ "${MQ_TEARDOWN_INNER:-0}" == 1 ]]; then
+  printf 'merge-queue-teardown: %d pass, %d fail (inner run, arming audit skipped)\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
+fi
 
 # The roster is derived, never listed: a suite that starts launching real
 # supervisors and forgets to arm is caught because it is FOUND, where a list
@@ -295,42 +302,126 @@ echo "=== every supervisor-launching suite arms both ==="
 launching_suites() {
   grep -lE 'cp [^#]*scripts/merge-queue-watch' "$1"/*.sh 2>/dev/null || true
 }
-# $1 suite path -> 0 armed, 1 no reaping EXIT trap, 2 an unsealed PATH. The
-# trap test names mq_reap on a trap line and nothing about how it is spelled,
-# so a suite that raises its exit status on a failed reap still passes.
-suite_arms_containment() {
-  grep -qE '^[[:space:]]*trap .*mq_reap' "$1" &&
-    grep -q 'lib/merge-queue-reaper.sh' "$1" && grep -q 'mq_reap_own' "$1" || return 1
-  grep -q 'tools/tests/lib/sealed-bin' "$1" && grep -qF '$SEALED:$PATH' "$1" || return 2
+
+# Teardown is judged by RUNNING the suite, not by reading it: a text scan
+# passes on a comment that names the reaper, and fails a stricter arming it
+# was not written to expect. mktemp honours TMPDIR, so pointing it at a
+# directory this suite owns makes the child's whole fixture tree findable —
+# then the child is aborted the way the box's load reaper aborts one, and what
+# is left under that directory is the answer.
+#
+# $1 label, $2... the command -> two words: whether the decoy was running when
+# the signal landed, and whether it survived.
+#
+# The decoy is what makes the answer attributable. Counting the suite's OWN
+# supervisors cannot decide anything: these suites terminate supervisors all
+# through their run, so an abort that lands beside one of those steps reads as
+# teardown working when nothing tore anything down. This process instead sits
+# inside the child's fixture root, is detached from it, and is known to
+# nothing in the suite — so the only thing that can end it is a teardown
+# reaping by argv, which is the contract under test.
+aborted_suite_clears_its_root() {
+  local label="$1" root child_root decoy decoy_pid i pid alive=none; shift
+  root="$TMP/probe-$label"; mkdir -p "$root"
+  ( export TMPDIR="$root" MQ_TEARDOWN_INNER=1; exec "$@" ) >"$root.log" 2>&1 &
+  pid=$!
+  # The fixture root is the first thing every one of these suites makes, and
+  # the teardown it is judged on is installed in the lines right after it.
+  child_root=""
+  for ((i=0; i<600; i++)); do
+    child_root=$(ls -d "$root"/tmp.* 2>/dev/null | head -1) || child_root=""
+    [[ -n "$child_root" ]] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  [[ -n "$child_root" ]] || { kill -TERM "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    printf 'no-fixture-root %s\n' "$label"; return 0; }
+  # Then let it get on with launching, so the abort lands on a suite doing its
+  # work. Not a precondition: the decoy is what the assertion reads, and
+  # waiting on the suite's own supervisors made the answer depend on where in
+  # its run the signal happened to fall.
+  for ((i=0; i<600; i++)); do
+    [[ "$(count_supervisors "$root")" -gt 0 ]] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  decoy="$child_root/reaper-decoy"
+  printf '#!/usr/bin/env bash\nprintf %%s "$$" > "$1"\nwhile :; do sleep 1; done\n' > "$decoy"
+  chmod +x "$decoy"
+  setsid -f "$decoy" "$root/decoy.pid" </dev/null >/dev/null 2>&1 || true
+  wait_exists "$root/decoy.pid" || { kill -TERM "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    printf 'no-decoy %s\n' "$label"; return 0; }
+  decoy_pid=$(cat < "$root/decoy.pid")
+  ps -p "$decoy_pid" -o pid= >/dev/null 2>&1 && alive=alive
+  kill -TERM "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  sleep 0.5
+  if ps -p "$decoy_pid" -o pid= >/dev/null 2>&1; then
+    kill -KILL "$decoy_pid" 2>/dev/null || true
+    printf '%s survived\n' "$alive"
+  else printf '%s gone\n' "$alive"; fi
 }
-audit_arming() {
-  local suite="$1" name rc=0
-  name=$(basename "$suite" .sh)
-  suite_arms_containment "$suite" || rc=$?
-  case "$rc" in
-    0) ok "$name arms trap-based teardown and seals its PATH" ;;
-    1) bad "$name launches supervisors without arming teardown" ;;
-    *) bad "$name launches supervisors without sealing its PATH" ;;
-  esac
+
+# Sealing has no equivalent behavioural probe — a PATH nothing reached for
+# proves nothing — so it stays a text check, with whole-line comments removed
+# so a comment cannot answer for a statement.
+suite_seals_path() {
+  local body
+  body=$(grep -v '^[[:space:]]*#' "$1") || return 1
+  grep -q 'tools/tests/lib/sealed-bin' <<<"$body" && grep -qF '$SEALED:$PATH' <<<"$body"
 }
 
 roster=$(launching_suites "$TEST_DIR")
 if [[ -n "$roster" ]]; then ok "the launching-suite roster derived a non-empty set"; else bad "no suite derived as launching supervisors; the audit below would pass vacuously"; fi
 while IFS= read -r suite; do
-  [[ -n "$suite" ]] && audit_arming "$suite"
+  [[ -n "$suite" ]] || continue
+  suite_name=$(basename "$suite" .sh)
+  eq "$(aborted_suite_clears_its_root "$suite_name" bash "$suite")" "alive gone" "$suite_name aborted mid-run clears its whole fixture root"
+  if suite_seals_path "$suite"; then ok "$suite_name seals its PATH behind the stub directory"
+  else bad "$suite_name launches supervisors without sealing its PATH"; fi
 done <<< "$roster"
 
-# Control: the derivation must FIND a suite nobody added to any list, and the
-# audit must then fail it. A planted pair stands in for the fourth suite.
+# Controls. The derivation must FIND a suite nobody listed; the behavioural
+# probe must RED on one that tears down the pre-KEN-995 way; and the sealing
+# check must red on a file where only a comment names the sealed directory.
 planted="$TMP/planted"
 mkdir -p "$planted"
-cp "$TEST_DIR/merge_queue_rearm_e2e.sh" "$planted/armed_suite.sh"
 printf '#!/usr/bin/env bash\ncp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"\n' > "$planted/unarmed_suite.sh"
 planted_roster=$(launching_suites "$planted")
 case "$planted_roster" in *"$planted/unarmed_suite.sh"*) ok "the derivation finds a launching suite no list names" ;;
   *) bad "the derivation missed a planted launching suite: $planted_roster" ;; esac
-if suite_arms_containment "$planted/unarmed_suite.sh"; then bad "an unarmed launching suite passed the audit"; else ok "an unarmed launching suite fails the audit"; fi
-if suite_arms_containment "$planted/armed_suite.sh"; then ok "an armed launching suite passes the same audit"; else bad "the audit fails a suite that arms both"; fi
+
+cat > "$planted/no_teardown_suite.sh" <<'PLANT'
+#!/usr/bin/env bash
+# A suite that launches a real supervisor and tears down the way every
+# merge-queue suite did before KEN-995: the fixture tree removed, the
+# processes it started left running.
+set -euo pipefail
+SB="$(mktemp -d)"
+trap 'rm -rf -- "${SB:?}"' EXIT
+build_sandbox "$SB/sandbox"
+S="$SB/sandbox/orch/scripts"; M="$SB/sandbox/main"
+"$S/merge-queue-watch" init --worktree "$M" --issue KEN-995-plant \
+  --branch "$(git -C "$M" branch --show-current)" >/dev/null
+p=$("$S/merge-queue-watch" prepare --worktree "$M" --issue KEN-995-plant \
+  --repo owner/repo --pr 42 --head "$HEAD" --root "$M" --gate-mode off \
+  --recovery-count 0 --cleanup-worktree false)
+"$S/merge-queue-watch" launch --root "$M" --issue KEN-995-plant \
+  --watch-id "$(jq -r .watch_id <<<"$p")" --poll 1 --max-wait 600 >/dev/null
+while :; do sleep 1; done
+PLANT
+export -f build_sandbox
+export ORCH HEAD
+planted_result=$(aborted_suite_clears_its_root planted bash "$planted/no_teardown_suite.sh")
+case "$planted_result" in
+  "alive survived") ok "the probe reds on a suite that tears down the pre-KEN-995 way" ;;
+  "alive gone") bad "a suite with no reaping teardown passed the probe" ;;
+  *) bad "the planted probe never got a live decoy to judge: $planted_result" ;;
+esac
+mq_reap "$TMP/probe-planted" || bad "reaper reported survivors under the planted probe"
+
+printf '#!/usr/bin/env bash\n# tools/tests/lib/sealed-bin and "$SEALED:$PATH" named only here\nexport PATH="$BIN:$PATH"\n' > "$planted/comment_decoy.sh"
+if suite_seals_path "$planted/comment_decoy.sh"; then bad "a comment naming the sealed directory passed the sealing check"; else ok "a comment naming the sealed directory does not pass for a statement"; fi
 
 printf 'merge-queue-teardown: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
