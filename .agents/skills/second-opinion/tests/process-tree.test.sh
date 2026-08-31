@@ -541,6 +541,11 @@ spawn_leader_zombie() { # sets ZOMBIE to a reaped process leading its own group
   bash -c 'set -m; sleep 1 & printf "%s\n" "$!" > "$1"; set +m; exec sleep 60' \
     _ "$pidfile" > /dev/null 2>&1 &
   STRAYS+=("$!")
+  # Disowned for the same reason the bystander is: cleanup kills it, and the
+  # 3.2 bash macOS ships announces a killed job it still tracks. `Killed: 9`
+  # in a suite about processes outliving their run reads as a failure to
+  # anyone scanning the output. Killing by pid does not need the job table.
+  disown %% 2>/dev/null || true
   await_file "$pidfile" || fail "the zombie fixture never reported its pid"
   ZOMBIE="$(read_pid "$pidfile" "the zombie fixture")"
   STRAYS+=("$ZOMBIE")
