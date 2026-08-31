@@ -681,6 +681,12 @@ fn an_installer_that_exits_zero_with_no_verdict_is_not_all_clear() {
 /// not the discriminating one: a bound that fired relays `no result after
 /// 10s` and a `sleep` that ran to completion relays an exit with no
 /// verdict, so the wall clock only has to separate 10 seconds from 60.
+///
+/// Two shapes, because the direct child is not the only thing that can hold
+/// the run open. The second exits at once and leaves a descendant on the
+/// pipes, which is the shape that read `check_repo` as finished and then
+/// blocked in collection for the full minute, outliving the bound and the
+/// hook budget both.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_wedged_installer_gives_up_inside_the_session_start_bound() {
@@ -695,29 +701,34 @@ fn a_wedged_installer_gives_up_inside_the_session_start_bound() {
     assert!(armed.status.success(), "{}", said(&armed));
 
     let installer = root.join(".agents/skills/growth-guards/scripts/install-git-hooks");
-    std::fs::write(&installer, "#!/usr/bin/env bash\nsleep 60\n").unwrap();
-    std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for script in [
+        "#!/usr/bin/env bash\nsleep 60\n",
+        "#!/usr/bin/env bash\nsleep 60 &\nexit 0\n",
+    ] {
+        std::fs::write(&installer, script).unwrap();
+        std::fs::set_permissions(&installer, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let started = std::time::Instant::now();
-    let out = run(home, &root, "kendex", &["check"]);
-    let elapsed = started.elapsed();
-    let text = said(&out);
+        let started = std::time::Instant::now();
+        let out = run(home, &root, "kendex", &["check"]);
+        let elapsed = started.elapsed();
+        let text = said(&out);
 
-    assert!(
-        elapsed < std::time::Duration::from_secs(50),
-        "the bound was not applied — the run took {elapsed:?}, which is the \
-         script finishing rather than the check giving up:\n{text}"
-    );
-    assert_eq!(
-        out.status.code(),
-        Some(2),
-        "a check that could not be taken was not reported as one: {text}"
-    );
-    assert!(text.contains("commit hooks"), "{text}");
-    assert!(
-        text.contains("no result after"),
-        "the line does not name the timeout: {text}"
-    );
+        assert!(
+            elapsed < std::time::Duration::from_secs(50),
+            "the bound was not applied to {script:?} — the run took {elapsed:?}, \
+             which is the script finishing rather than the check giving up:\n{text}"
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "a check that could not be taken was not reported as one, for {script:?}: {text}"
+        );
+        assert!(text.contains("commit hooks"), "{script:?}: {text}");
+        assert!(
+            text.contains("no result after"),
+            "the line does not name the timeout, for {script:?}: {text}"
+        );
+    }
 }
 
 /// The session-start output bound is applied, and an installer that writes

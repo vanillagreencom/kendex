@@ -231,6 +231,44 @@ fn an_unarmable_repository_is_never_told_to_run_an_install_that_stands_down() {
     );
 }
 
+/// A verdict pointing at stderr arrives with the stderr it points at.
+///
+/// The same setting as the case above, from the other side of it: armed
+/// first, so the helper that licenses the run is already in place, and
+/// `core.hooksPath` set after. The package answers exit 2 with a summary
+/// line saying git's report of where the setting comes from is on stderr,
+/// and `hooks_path_origins` writes those origins and the one remedy there.
+/// Relaying the summary by itself printed the pointer and not the thing it
+/// points at, on the one report a reader gets at session start.
+///
+/// Asserted on the single folded line, because both halves travel as one
+/// and the bound measures them together.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_verdict_that_points_at_stderr_arrives_with_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let root = repo(home);
+    install_package(home, &root, &["growth-guards"]);
+    let armed = run(home, &root, "kendex", &["guard", "install"]);
+    assert!(armed.status.success(), "{}", said(&armed));
+    assert!(root.join(".git/hooks/kendex-guards").exists());
+    git_ok(home, &root, &["config", "core.hooksPath", ".githooks"]);
+
+    let out = run(home, &root, "kendex", &["check"]);
+    let text = said(&out);
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    let line = commit_hooks_line(&text);
+    assert!(
+        line.contains("is on stderr"),
+        "the fixture stopped being the pointer case: {line}"
+    );
+    assert!(
+        line.contains("Clear the setting at its source"),
+        "the verdict names a report kendex did not print: {line}"
+    );
+}
+
 /// A hooks directory that cannot be read is a check that could not be
 /// taken, never a claim about an armed repository.
 ///

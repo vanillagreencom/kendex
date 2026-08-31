@@ -210,6 +210,18 @@ fn verdict_of(
         0 => None,
         // The package's taxonomy: 1 not armed, everything else could not
         // determine. Its sentence is relayed whole, remedy included.
+        //
+        // And its stderr travels with it, because the sentence can point
+        // there: under a configured `core.hooksPath` the summary line says
+        // git's report of where the setting comes from is on stderr, and
+        // `hooks_path_origins` puts the origins and the one remedy there.
+        // Relaying the pointer without what it points at gave the reader a
+        // verdict naming a report they were never shown.
+        //
+        // Still one line, and still the bounded one: the composition
+        // happens here, so `Text::Relayed` measures the whole of it against
+        // `RELAYED_CHARS` and replaces it past that rather than handing
+        // back a remedy cut in half.
         code => Some((
             match code {
                 1 => Class::Drift,
@@ -217,9 +229,20 @@ fn verdict_of(
             },
             relayed(
                 "the growth-guards installer (`kendex guard check` prints it)",
-                said.to_owned(),
+                with_aside(said, &report.stderr),
             ),
         )),
+    }
+}
+
+/// The package's verdict with whatever it wrote alongside, or the verdict
+/// alone where it wrote nothing.
+fn with_aside(said: &str, stderr: &[String]) -> String {
+    let aside = stderr.join(" ");
+    let aside = aside.trim();
+    match aside.is_empty() {
+        true => said.to_owned(),
+        false => format!("{said} — its stderr said: {aside}"),
     }
 }
 

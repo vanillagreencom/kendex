@@ -481,3 +481,30 @@ fn output_past_the_cap_is_an_error_not_a_memory_hole() {
         .unwrap();
     assert_eq!(under.stdout, b"hello");
 }
+
+/// A descendant holding the pipes does not get to outlive the timeout.
+///
+/// `sleep 5 & exit 0` is a direct child that returns its status at once and
+/// a grandchild that keeps stdout and stderr open behind it. Waiting on the
+/// child alone declared the run over and then blocked in collection for the
+/// grandchild's whole five seconds, with no deadline anywhere near it — the
+/// caller's bound bought nothing. Ended inside the bound, this is a timeout
+/// like any other.
+#[cfg(unix)]
+#[test]
+fn a_descendant_holding_the_pipes_does_not_outlive_the_timeout() {
+    let started = Instant::now();
+    let error = Hardened::program("/bin/sh", &["-c", "sleep 5 & exit 0"])
+        .timeout(Duration::from_millis(200))
+        .run()
+        .unwrap_err();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "collection ran past the bound: {:?}",
+        started.elapsed()
+    );
+    let CoreError::Io { source, .. } = error else {
+        panic!("timeout must report as an io error");
+    };
+    assert_eq!(source.kind(), io::ErrorKind::TimedOut);
+}

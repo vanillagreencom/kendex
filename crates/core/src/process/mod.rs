@@ -183,11 +183,21 @@ impl Hardened {
         let reading_err = std::thread::spawn(move || read(&mut stderr, cap));
 
         let deadline = Instant::now() + self.timeout;
+        // The deadline covers the READ, not only the wait: breaking on the
+        // direct child's exit handed the pipes to `collect` with nothing
+        // timing them, and a descendant that inherited them holds
+        // `read_to_end` open — `sleep 60 & exit 0` returned at once and then
+        // held collection for a minute, past every bound asked for. Reaped
+        // last because `try_wait` reaps, and `end_tree` signals the group by
+        // the leader's pid: a number held only while the group still has a
+        // member, so a kill after the reap can land on a stranger.
         let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => {}
-                Err(error) => return Err(CoreError::io(&self.label, error)),
+            if reading_out.is_finished() && reading_err.is_finished() {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status,
+                    Ok(None) => {}
+                    Err(error) => return Err(CoreError::io(&self.label, error)),
+                }
             }
             if Instant::now() >= deadline {
                 end_tree(&mut child);
