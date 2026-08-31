@@ -85,9 +85,9 @@ assert_contains "$out" "Usage: worktree path" "path --help prints help, not an i
 out=$(cd "$REPO" && "$WORKTREE_SCRIPT" exists -h)
 assert_contains "$out" "worktree exists" "exists -h prints help, not an issue lookup"
 
-# Every help form run inside $REPO is above this line, so the marker answers
-# for all of them at once. The one that runs below it, `check --help`, is the
-# spelling the 16-command loop already ran here.
+# Every help form run inside $REPO is above this line except `check --help`,
+# which the 16-command loop already ran here — so the marker answers for all
+# of them at once.
 if [[ -e "$TMP_ROOT/env-executed" ]]; then
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n' "help sourced the project .env.local"

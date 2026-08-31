@@ -132,10 +132,10 @@ stage_tree() {
   printf '#!/bin/sh\nexit 1\n' >"$dest/bin/codex"
   # curl is the channel the Linear CLI reaches the network through, and NO row
   # here has any business making an HTTP request at all. So the stub logs its
-  # argv and every loop below reds on a non-empty log. The stub is its own
-  # control where an enumerated list of credential variables is not: it cannot
-  # go stale when the CLI grows another credential source, and it names the
-  # call rather than trusting that none was made.
+  # argv and every loop below reds on a non-empty log — the control for that
+  # branch is § 4's plant_curl_call. An enumerated list of credential variables
+  # could not do the same job: it goes stale when the CLI grows another
+  # credential source, where the stub names the call itself.
   cat >"$dest/bin/curl" <<STUB
 #!/bin/sh
 printf '%s\n' "\$*" >>"$dest/curl-called"
@@ -476,11 +476,27 @@ plant_repo_required() {
   grep -qF 'control: not a git repository' "$f"
 }
 
+# A script that reaches the network before it answers help. The stub logs the
+# call and refuses, and the log is the first branch of every loop — so this is
+# the control for that branch, which no row of the tables can supply.
+plant_curl_call() {
+  local f="$1/.agents/skills/decider/scripts/decisions" body=""
+  [ -f "$f" ] || return 1
+  body="$(tail -n +2 "$f")" || return 1
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'curl -sS https://control.invalid/ >/dev/null 2>&1 || true\n'
+    printf '%s\n' "$body"
+  } >"$f" || return 1
+  grep -qF 'https://control.invalid/' "$f"
+}
+
 control "a script that sources .env.local before answering help" plant_env_load 1
 control "a command index that stops naming itself" plant_missing_token 2
 control "a help form that exits nonzero" plant_nonzero_help 3
 control "an option value the help scan stops skipping" plant_value_not_skipped 4 check_data
 control "help that demands a repository" plant_repo_required 5 check_norepo stage_tree
+control "a script that reaches the network before answering help" plant_curl_call 6
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
