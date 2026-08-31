@@ -229,6 +229,13 @@ fn say_scope_exit(rows: &[&DriftRow], blocked: &[Blocked]) {
     let (true, Some(row)) = (blocked.iter().any(|item| item.replace), rows.first()) else {
         return;
     };
+    // The sweep answers for every item it sweeps up or for none of them, so
+    // one item it takes and cannot settle refuses the whole run. Printed
+    // there, this offers a command that cannot succeed on the scope it is
+    // printed under; each item's own way out above still stands.
+    if blocked.iter().any(|item| item.sweep_refuses) {
+        return;
+    }
     say(&format!(
         "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged{}",
         scope_flag(&row.scope)

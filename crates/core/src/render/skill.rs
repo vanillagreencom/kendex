@@ -77,12 +77,13 @@ fn with_instructions(
 /// carrying no `name` gets one as its first line, in the file's own line
 /// ending.
 ///
-/// `None` where no single line carries the name: the file has no
-/// frontmatter at all, it names itself twice, or its `name` runs on past
-/// its own line. The validators say each of those plainly, and writing
-/// around them here would hide them.
-pub(crate) fn with_name(text: &str, installed: &str) -> Option<String> {
-    let (yaml, _) = crate::frontmatter::split(text).ok()?;
+/// `Err` where no single line carries the name, saying which of the three
+/// shapes the file is in: the reader is going to go and look at it, and
+/// "add a frontmatter block", "you named it twice" and "the name runs past
+/// its line" send them to three different edits. The validators say the
+/// same things plainly, and writing around any of them here would hide it.
+pub(crate) fn with_name(text: &str, installed: &str) -> std::result::Result<String, &'static str> {
+    let (yaml, _) = crate::frontmatter::split(text).map_err(|_| "it has no frontmatter")?;
     let yaml_start = yaml.as_ptr() as usize - text.as_ptr() as usize;
     let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
     let entry = format!("name: {}", super::yaml_scalar(installed));
@@ -103,7 +104,7 @@ pub(crate) fn with_name(text: &str, installed: &str) -> Option<String> {
             continue;
         }
         if found.is_some() {
-            return None;
+            return Err("its frontmatter names it twice");
         }
         // Blank and comment-only lines attach to the entry without
         // extending its value (YAML ignores them); real indented content
@@ -115,7 +116,7 @@ pub(crate) fn with_name(text: &str, installed: &str) -> Option<String> {
             .find(|(_, text)| !text.is_empty() && !text.starts_with('#'))
             .is_some_and(|(indented, _)| indented);
         if continued {
-            return None;
+            return Err("its frontmatter's `name` runs on past its own line");
         }
         found = Some((start, start + line.trim_end_matches(['\r', '\n']).len()));
     }
@@ -124,13 +125,13 @@ pub(crate) fn with_name(text: &str, installed: &str) -> Option<String> {
             true => "\r\n",
             false => "\n",
         };
-        return Some(format!(
+        return Ok(format!(
             "{}{entry}{newline}{}",
             &text[..yaml_start],
             &text[yaml_start..]
         ));
     };
-    Some(format!("{}{entry}{}", &text[..from], &text[to..]))
+    Ok(format!("{}{entry}{}", &text[..from], &text[to..]))
 }
 
 /// Inject (or refresh) the project-instructions block right after the
@@ -248,22 +249,33 @@ mod tests {
             ),
         ];
         for (text, name, want) in cases {
-            assert_eq!(with_name(text, name).as_deref(), Some(want), "{text:?}");
+            assert_eq!(with_name(text, name).as_deref(), Ok(want), "{text:?}");
         }
     }
 
     /// No single line to stand in for: nothing to write a name into, two
     /// of them, or a value running on past its own line. Each is a
-    /// refusal rather than a guess at which line meant it.
+    /// refusal rather than a guess at which line meant it, and each says
+    /// which shape the file is in — the three send a reader to three
+    /// different edits.
     #[test]
     fn with_name_refuses_where_no_one_line_carries_the_name() {
-        for text in [
-            "Body.\n",
-            "---\nname: a\nname: b\n---\n",
-            "---\nname: |\n  gh\n---\n",
-            "---\nname: gh\n  continued\n---\n",
+        for (text, problem) in [
+            ("Body.\n", "it has no frontmatter"),
+            (
+                "---\nname: a\nname: b\n---\n",
+                "its frontmatter names it twice",
+            ),
+            (
+                "---\nname: |\n  gh\n---\n",
+                "its frontmatter's `name` runs on past its own line",
+            ),
+            (
+                "---\nname: gh\n  continued\n---\n",
+                "its frontmatter's `name` runs on past its own line",
+            ),
         ] {
-            assert_eq!(with_name(text, "mine"), None, "{text:?}");
+            assert_eq!(with_name(text, "mine"), Err(problem), "{text:?}");
         }
     }
 

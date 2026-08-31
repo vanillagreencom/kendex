@@ -277,14 +277,13 @@ pub(super) fn resolve_selection(
 /// Root-level licence and attribution files of one catalog — the evidence
 /// that must travel with copied bytes.
 ///
-/// A read the source refuses is the refusal, not an empty list — the
-/// listing, the open that reaches it, and each file's own bytes alike.
-/// Every other listing in this crate answers an unreadable directory by
-/// drawing no rows, which costs a surface some rows; here it would copy
-/// somebody's bytes with their licence left behind and say nothing. A
-/// source that is not resolvable at all is the one different answer: it
-/// has no root to carry evidence from, and the import's own provenance
-/// rules judge that.
+/// Every read the source refuses is the refusal: the open, the listing,
+/// each entry's own nature, and each file's bytes. Other listings in this
+/// crate answer an unreadable directory by drawing no rows, which costs a
+/// surface some rows; here it would copy somebody's bytes with their
+/// licence left behind and say nothing. A source that is not resolvable at
+/// all is the one answer that is not a refusal: it has no root to carry
+/// evidence from, and the import's own provenance rules judge that.
 pub(super) fn notice_files(
     env: &Env,
     scope: &Scope,
@@ -299,13 +298,20 @@ pub(super) fn notice_files(
     let sealed = SealedSource::open(&resolved.root)?;
     let mut notices = Vec::new();
     for entry in sealed.entries(&resolved.root)? {
+        // A name no UTF-8 spells is no evidence file: every name this
+        // collects is ASCII, so passing over it drops nothing.
         let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
         let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
-        if matches!(stem.as_str(), "LICENSE" | "LICENCE" | "NOTICE" | "COPYING")
-            && sealed.is_file(&entry)
-        {
+        if !matches!(stem.as_str(), "LICENSE" | "LICENCE" | "NOTICE" | "COPYING") {
+            continue;
+        }
+        // Asked through the sealed reader, which refuses a link rather
+        // than following it: read as a boolean, a symlinked LICENSE is
+        // skipped as though it were no file at all, and the copy goes out
+        // without the notice it was standing for.
+        if sealed.entry(&entry)?.is_some_and(|meta| meta.is_file()) {
             notices.push((name.to_owned(), sealed.read(&entry)?));
         }
     }

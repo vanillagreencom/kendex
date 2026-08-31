@@ -129,9 +129,9 @@ pub enum CoreError {
     #[error("{name} changed while you were deciding — nothing was changed")]
     TakeOverLeavesSome { name: String },
 
-    /// Each blocked item as `kind name — why`: no plan survives to carry them.
-    #[error("nothing was replaced: an item in the way has a conflict to settle first — {}", held.join("; "))]
-    TakeOverAllHeld { held: Vec<String> },
+    /// Each blocked item as `kind name — why`: nothing is planned, so this is where those reasons are carried.
+    #[error("nothing was replaced: an item in the way has a conflict to settle first — {}", blocked.join("; "))]
+    TakeOverSweepBlocked { blocked: Vec<String> },
 
     #[error(
         "{name}'s files are different for {first} and {second}. kendex keeps one copy of an item, so move the copy you don't want somewhere else first."

@@ -258,7 +258,7 @@ fn named_bytes(bytes: Vec<u8>, name: &str) -> Result<Vec<u8>> {
         std::str::from_utf8(&bytes).map_err(|_| refused("the file is not text".to_owned()))?;
     crate::render::skill::with_name(text, name)
         .map(String::into_bytes)
-        .ok_or_else(|| refused("no one line of its frontmatter carries the name".to_owned()))
+        .map_err(|problem| refused(problem.to_owned()))
 }
 
 /// The local source's path for an item of this kind under `name`.

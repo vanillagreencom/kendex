@@ -2,8 +2,14 @@
 //! adversarial input: every read resolves against the canonical source
 //! root, refuses to look through symlinks (a hostile catalog must not pull
 //! host files into rendered artifacts or recurse forever), and carries
-//! depth, count, and byte budgets. Raw `fs` calls over catalog paths are
-//! banned by the guard — this module is the only door.
+//! depth, count, and byte budgets. This is the door for a catalog's bytes,
+//! and the guard bans raw `fs` reads over catalog paths to keep it so.
+//!
+//! One probe is asked outside it: `source::slot_free` reads a local-source
+//! path through `fs::entry`, which is the raw half, because a write-guard
+//! has to see a dangling link as an occupant where the containment check
+//! here refuses outright. That is a path no source contains yet, not a
+//! catalog's content.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -187,13 +193,14 @@ impl SealedSource {
     /// A name the directory will not hand over is an error, never a
     /// shorter listing: a caller about to decide what a write would land
     /// on top of must not read an unknown answer as an empty directory.
-    /// Every caller takes that same answer and does one of two things with
-    /// it. A listing drops the rows of that directory and draws the rest,
-    /// which is what it already does when the directory itself cannot be
-    /// opened. A walk carries the refusal up, so one unhandable name costs
-    /// the discovery pass, the README lookup or the extension search whole
-    /// — which is the direction a reader of those wants when the answer is
-    /// unknown.
+    /// Every caller takes that same answer and does one of three things
+    /// with it. A listing drops the rows of that directory and draws the
+    /// rest, which is what it already does when the directory itself
+    /// cannot be opened. A walk carries the refusal up, so one unhandable
+    /// name costs the discovery pass or the README lookup whole. And a
+    /// lookup for one name — `find_item`, the extension search over a
+    /// scoped directory — answers not-found, because it is asking whether
+    /// a name is there and a directory it cannot read is not offering it.
     pub fn entries(&self, dir: &Path) -> Result<Vec<PathBuf>> {
         self.contained(dir)?;
         let mut entries: Vec<PathBuf> = Vec::new();

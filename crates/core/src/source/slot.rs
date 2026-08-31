@@ -13,11 +13,14 @@ use crate::model::{ItemKind, Scope};
 use super::{find_item, layout, local_source_root, source_config_for};
 
 /// Where a catalog-shaped tree stores one item of this kind under `name`.
-/// The local source, the in-place tree and an authored marketplace are all
-/// this one layout, and a name that nests (`plugin/item`) nests one
-/// directory level inside its kind's own — which is what the reader lists
-/// back. One spelling, because a write and the check that guards it
-/// resolving the name differently is a write nothing guarded.
+/// Two trees resolve here: the local source, for adopt, detach and fork,
+/// and an authored marketplace, for import. A name that nests
+/// (`plugin/item`) nests one directory level inside its kind's own, which
+/// is what the reader lists back. One spelling, because a write and the
+/// check that guards it resolving the name differently is a write nothing
+/// guarded. The in-place tree is not one of the two: it spells a name
+/// through `harness::canonical_name` in `engine::adopt::inplace`, where a
+/// namespaced name would flatten rather than nest, and it refuses those.
 pub(crate) fn local_slot(root: &Path, kind: ItemKind, name: &str) -> PathBuf {
     match kind {
         ItemKind::Skill => root.join("skills").join(name),

@@ -105,7 +105,7 @@ fn one_unsettleable_item_refuses_the_sweep_and_names_what_holds_it() {
         panic!("{refused:?}");
     };
     assert!(
-        matches!(&error, CoreError::TakeOverAllHeld { .. }),
+        matches!(&error, CoreError::TakeOverSweepBlocked { .. }),
         "{error:?}"
     );
     let said = error.to_string();
@@ -124,7 +124,7 @@ fn one_unsettleable_item_refuses_the_sweep_and_names_what_holds_it() {
     declare("[skills.deploy]\nsource = \"cat\"\n");
     let refused = plan_apply(&w.env, &w.scope, &take_over());
     assert!(
-        matches!(refused, Err(CoreError::TakeOverAllHeld { .. })),
+        matches!(refused, Err(CoreError::TakeOverSweepBlocked { .. })),
         "{refused:?}"
     );
 }
@@ -199,7 +199,7 @@ fn a_sweep_that_can_replace_nothing_refuses() {
         panic!("a sweep with nothing to do did not say so: {refused:?}");
     };
     assert!(
-        matches!(&error, CoreError::TakeOverAllHeld { held } if held.len() == 1 && held[0].starts_with("skill deploy — ")),
+        matches!(&error, CoreError::TakeOverSweepBlocked { blocked } if blocked.len() == 1 && blocked[0].starts_with("skill deploy — ")),
         "{error:?}"
     );
     assert!(

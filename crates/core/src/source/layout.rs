@@ -375,9 +375,9 @@ mod tests {
         let parent = root.join("skills");
         let held = parent.join("data-science");
         // A second item stored under the slot, so the answer where the
-        // probe DOES succeed is an occupant rather than an empty slot —
-        // a directory holding no SKILL.md is no item and would make the
-        // root branch assert nothing.
+        // probe DOES succeed is an occupant. A directory holding no
+        // SKILL.md is no item, so the search under a replaceable slot
+        // would find nothing and the root branch would fail outright.
         std::fs::create_dir_all(held.join("nested")).unwrap();
         std::fs::write(held.join("SKILL.md"), "---\nname: x\n---\n").unwrap();
         std::fs::write(held.join("nested/SKILL.md"), "---\nname: n\n---\n").unwrap();

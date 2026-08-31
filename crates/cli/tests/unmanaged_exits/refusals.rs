@@ -135,14 +135,14 @@ fn a_folder_that_is_not_a_skill_is_not_offered_the_keep() {
     assert_eq!(offer(&planned), "move them somewhere else first");
 }
 
-/// The scope-wide flag replaces every item it can take over whole and
-/// holds back one it could only half settle, naming it in the notes — it
-/// refuses only when nothing settles. So one wholly replaceable item makes
-/// the command worth typing, and a held-back neighbour is no reason to
-/// withhold it.
+/// The scope-wide flag answers for every item it sweeps up or for none of
+/// them, so an item it takes and can only half settle refuses the whole
+/// run. Offering the command beside a wholly replaceable neighbour would
+/// name one that cannot succeed on the scope it is printed under, so it is
+/// withheld — while each item's own way out still stands.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn one_wholly_replaceable_item_is_reason_enough_for_the_scope_exit() {
+fn an_item_the_sweep_would_refuse_on_withholds_the_scope_exit() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let project = project_with(home, "[\"claude\", \"codex\"]", "copy");
@@ -175,9 +175,11 @@ fn one_wholly_replaceable_item_is_reason_enough_for_the_scope_exit() {
     let planned = plan(home, &project);
     assert!(planned.contains("conflict: skill lint"), "{planned}");
     assert!(
-        planned.contains("--replace-unmanaged"),
-        "the exit the sweep would follow through on was withheld: {planned}"
+        !planned.contains("--replace-unmanaged"),
+        "a command that would refuse on this scope was offered: {planned}"
     );
+    // The per-item ways out are untouched: only the scope-wide offer goes.
+    assert!(planned.contains("conflict: skill deploy"), "{planned}");
 }
 
 /// A hard conflict beside files in the way. Both exits act on the whole

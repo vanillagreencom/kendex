@@ -53,19 +53,17 @@ pub(crate) fn refuse_unsettled_takeover(
 /// beside them is looked at.
 pub(crate) fn refuse_unsettleable_sweep(
     options: &PlanOptions,
-    report: &super::EngineReport,
+    drift: &[DriftRow],
 ) -> crate::error::Result<()> {
     if !options.replace_unmanaged {
         return Ok(());
     }
-    let mut held: Vec<String> = Vec::new();
-    for row in report
-        .drift
+    let mut blocked: Vec<String> = Vec::new();
+    for row in drift
         .iter()
         .filter(|row| row.detail == super::file_plan::TAKEN_OVER)
     {
-        let Some(stop) = report
-            .drift
+        let Some(stop) = drift
             .iter()
             .find(|other| other.kind == row.kind && other.name == row.name && other.dead_stop())
         else {
@@ -81,12 +79,12 @@ pub(crate) fn refuse_unsettleable_sweep(
             // them.
             crate::names::shown(&stop.detail)
         );
-        if !held.contains(&said) {
-            held.push(said);
+        if !blocked.contains(&said) {
+            blocked.push(said);
         }
     }
-    match held.is_empty() {
+    match blocked.is_empty() {
         true => Ok(()),
-        false => Err(crate::error::CoreError::TakeOverAllHeld { held }),
+        false => Err(crate::error::CoreError::TakeOverSweepBlocked { blocked }),
     }
 }

@@ -467,7 +467,10 @@ fn fork_beside_refuses_a_slot_the_filesystem_will_not_describe() {
     fs::set_permissions(&local, fs::Permissions::from_mode(0o755)).unwrap();
 
     match denied {
-        true => assert!(matches!(asked, Err(CoreError::Io { .. })), "GOT {asked:?}"),
+        true => assert!(
+            matches!(asked, Err(CoreError::Io { .. })),
+            "an unreadable render destination must reach the caller as a refusal: {asked:?}"
+        ),
         false => assert!(asked.is_ok(), "{asked:?}"),
     }
 }
@@ -562,7 +565,10 @@ fn fork_beside_refuses_a_render_destination_it_cannot_describe() {
     fs::set_permissions(&shared, fs::Permissions::from_mode(0o755)).unwrap();
 
     match denied {
-        true => assert!(matches!(asked, Err(CoreError::Io { .. })), "GOT {asked:?}"),
+        true => assert!(
+            matches!(asked, Err(CoreError::Io { .. })),
+            "an unreadable render destination must reach the caller as a refusal: {asked:?}"
+        ),
         false => assert!(asked.is_ok(), "{asked:?}"),
     }
 }

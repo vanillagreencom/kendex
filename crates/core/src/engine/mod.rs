@@ -207,7 +207,7 @@ pub fn plan_scope(
     report.notes.extend(scope_notes);
     unmanaged_rows(env, scope, &manifest, lock, &state.items, &mut report.drift)?;
     takeover::refuse_unsettled_takeover(options, &report.drift)?;
-    takeover::refuse_unsettleable_sweep(options, &report)?;
+    takeover::refuse_unsettleable_sweep(options, &report.drift)?;
     Ok(report)
 }
 

@@ -26,6 +26,10 @@ pub struct Blocked {
     pub offer: Option<Offer>,
     /// The scope-wide take-over settles this item whole.
     pub replace: bool,
+    /// The scope-wide take-over sweeps this item up and then cannot settle
+    /// it: one place it can replace, so the sweep takes the item, and one
+    /// it cannot, so the run refuses rather than replacing half of it.
+    pub sweep_refuses: bool,
 }
 
 impl Blocked {
@@ -62,6 +66,7 @@ pub fn blocked_items(env: &Env, rows: &[&DriftRow]) -> Vec<Blocked> {
             name: row.name.clone(),
             offer: offer_for(env, &item),
             replace: item_replaceable(&item),
+            sweep_refuses: sweep_refuses(&item),
         });
     }
     items
@@ -85,15 +90,25 @@ fn offer_for(env: &Env, item: &[&DriftRow]) -> Option<Offer> {
     })
 }
 
-/// Whether the scope-wide take-over settles this one item whole. The flag
-/// replaces each item it can settle whole and holds back the ones it could
-/// only half settle, so a single row it cannot take stops the item.
+/// Whether the flag can take this row's place.
+fn can_replace(row: &&DriftRow) -> bool {
+    row.cause.is_some_and(DriftCause::can_replace)
+}
+
+/// Whether the scope-wide take-over settles this one item whole. It
+/// answers for every item it sweeps up or for none of them, so a single
+/// row it cannot take stops the item.
 fn item_replaceable(item: &[&DriftRow]) -> bool {
-    item.iter()
-        .any(|row| row.cause.is_some_and(DriftCause::can_replace))
-        && item
-            .iter()
-            .all(|row| row.cause.is_some_and(DriftCause::can_replace))
+    item.iter().any(can_replace) && item.iter().all(can_replace)
+}
+
+/// Whether the sweep takes this item and then refuses over it. One place
+/// it can replace is what sweeps the item up; one it cannot is what makes
+/// the run refuse, since replacing the rest would leave that place in the
+/// way with the item no longer its tool's. An item with no replaceable
+/// place at all is never swept and is no reason to withhold anything.
+fn sweep_refuses(item: &[&DriftRow]) -> bool {
+    item.iter().any(can_replace) && !item.iter().all(can_replace)
 }
 
 /// Whether the offer belongs under this row: the last of the item's rows

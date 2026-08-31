@@ -199,6 +199,30 @@ fn a_catalog_that_will_not_be_listed_refuses_rather_than_copying_bare() {
     }
 }
 
+/// A symlinked LICENSE is the same loss with no permissions in it. The
+/// sealed reader refuses to look through a link inside a source, and read
+/// as a boolean that refusal says "no file here" — so the entry is passed
+/// over and the package is copied with its notice left behind.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_symlinked_licence_refuses_rather_than_copying_bare() {
+    let (tmp, env, scope) = seeded();
+    let elsewhere = tmp.path().join("LICENSE-real");
+    fs::write(&elsewhere, "MIT text here\n").unwrap();
+    std::os::unix::fs::symlink(&elsewhere, tmp.path().join("catalog/LICENSE")).unwrap();
+    let scopes = [scope];
+    let target = target(&env, &tmp, "mine-linked-licence");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let gh = find(&candidates, "gh");
+
+    let asked = apply(&env, &scopes, &target, &[selection(gh, true)]);
+    assert!(
+        matches!(asked, Err(CoreError::SourceEscape { .. })),
+        "{asked:?}"
+    );
+}
+
 /// And the same for one evidence file the catalog will not hand over. The
 /// directory lists, so the licence is known to be there and known not to
 /// have travelled — copying the bytes anyway is the harm this refusal

@@ -405,9 +405,12 @@ fn fork_beside_rewrites_the_copys_name_line() {
         assert_eq!(own, want);
     }
 
-    for text in [
-        "---\nname: |\n  gh\n---\nBody.\n",
-        "---\nname: gh\nname: gh\n---\nBody.\n",
+    for (text, problem) in [
+        (
+            "---\nname: |\n  gh\n---\nBody.\n",
+            "runs on past its own line",
+        ),
+        ("---\nname: gh\nname: gh\n---\nBody.\n", "names it twice"),
     ] {
         let (w, _one, _two) = edited_world();
         fs::write(skill_file(&w), text).unwrap();
@@ -423,8 +426,9 @@ fn fork_beside_rewrites_the_copys_name_line() {
         )
         .unwrap_err();
         assert!(
-            matches!(refused, CoreError::ForkNameUnusable { .. }),
-            "{text:?}: {refused:?}"
+            matches!(&refused, CoreError::ForkNameUnusable { problem: said, .. }
+                if said.contains(problem)),
+            "the refusal says which shape the file is in — {text:?}: {refused:?}"
         );
         assert_eq!(manifest_text(&w), before);
     }

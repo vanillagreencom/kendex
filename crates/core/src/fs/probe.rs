@@ -1,6 +1,7 @@
-//! What is at a path, and what it will do if something runs it. Every
-//! reading of an existing file's own nature is here; the writers are in
-//! the module above.
+//! Two probes: what is at a path, and whether it would run. The first
+//! keeps the filesystem's refusal to answer apart from its saying nothing
+//! is there; the second collapses both into a no, which is all a caller
+//! asking "would a shell run this" can act on.
 
 use std::fs;
 use std::io::ErrorKind::{NotADirectory, NotFound};

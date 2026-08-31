@@ -267,17 +267,6 @@ fn reselect(agents: &mut HookAgents, from: &str, to: &str, gone: bool) {
     };
 }
 
-/// Where this scope already configures an agent under `to`, said as the
-/// person would find it in kendex.toml. A fork or a rename landing on a
-/// name that carries configuration would replace what is there, so the
-/// operation refuses instead: the same enumeration as [`rekey_agent_tables`],
-/// asked as a question rather than moved.
-///
-/// `from` is the name being left, which the one table read by fallback
-/// needs: a destination reaching the source agent's own row shadows
-/// nothing, since that row is what [`carry_skills`] moves. Only a row some
-/// other agent's name resolves to is in the way — the same distinction
-/// [`unwritable_under`] draws between owning a spelling and reaching it.
 /// Why an agent's configuration cannot travel from `from` to `to`: this
 /// scope already configures an agent under the new name, or the new name
 /// is a spelling some reader takes for a population and cannot hold one
@@ -292,6 +281,17 @@ pub(crate) fn cannot_carry(manifest: &Manifest, from: &str, to: &str) -> Option<
     unwritable_under(manifest, from, to)
 }
 
+/// Where this scope already configures an agent under `to`, said as the
+/// person would find it in kendex.toml. A fork or a rename landing on a
+/// name that carries configuration would replace what is there, so the
+/// operation refuses instead: the same enumeration as [`rekey_agent_tables`],
+/// asked as a question rather than moved.
+///
+/// `from` is the name being left, which the one table read by fallback
+/// needs: a destination reaching the source agent's own row shadows
+/// nothing, since that row is what [`carry_skills`] moves. Only a row some
+/// other agent's name resolves to is in the way — the same distinction
+/// [`unwritable_under`] draws between owning a spelling and reaching it.
 fn configured_as(manifest: &Manifest, from: &str, to: &str) -> Option<&'static str> {
     if manifest
         .agent_frontmatter
