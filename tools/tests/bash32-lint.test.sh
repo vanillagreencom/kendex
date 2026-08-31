@@ -135,6 +135,31 @@ done
 [ "$planted" -eq "$roster_count" ] ||
   bad "planted into $planted of $roster_count roster directories"
 
+# A violation the lint cannot name is a report nobody can act on. The filename
+# used to be interpolated into a sed PROGRAM, so a `|` in it closed the s
+# command's delimiter and a `\1` read as a backreference; sed died either way
+# and every hit for that file was discarded under a header that still printed.
+# Asserted on the exact reported line — file, line number, matched text —
+# because a check on the exit code alone passes against that prefixer: the run
+# reds regardless, on a trailing newline rather than on a report.
+mkdir -p "$TMP/odd-name" || bad "could not stage the odd-name directory"
+odd="$TMP/odd-name/a|b\\1.sh"
+printf '#!/usr/bin/env bash\n:\n' >"$TMP/odd-name/clean.sh"
+printf '#!/usr/bin/env bash\nlocal -A cache\n' >"$odd"
+if [ ! -f "$odd" ]; then
+  bad "the odd-name fixture was not staged, so nothing here is proven"
+else
+  status=0
+  out="$("$LINT" "$TMP/odd-name" 2>&1)" || status=$?
+  if [ "$status" -ne 1 ]; then
+    bad "a construct in a file whose name holds | and \\ exited $status, not 1" "$out"
+  elif grep -Fqx -- "$odd:2:local -A cache" <<<"$out"; then
+    ok "a violation names its file and matched text whatever the filename holds"
+  else
+    bad "the violation output names neither $odd nor its matched text" "$out"
+  fi
+fi
+
 # --- 4. the lint's fail-closed paths, each proven red -------------------
 expect_die() { # expect_die LABEL DIR
   local status=0 out=""

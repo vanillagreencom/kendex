@@ -252,8 +252,20 @@ for f in $files; do
   status=0
   hits="$(grep -nE -- "$PATTERN" "$f")" || status=$?
   [ "$status" -le 1 ] || die "the scan over $f could not run (grep exited $status)"
-  [ -z "$hits" ] || violations="$violations$(printf '%s\n' "$hits" | sed "s|^|$f:|")
+  # The name is data, never program text. Prefixing each hit with a sed
+  # program built from "$f" made a path holding `|` close the s command's
+  # delimiter: sed died, every hit for that file was discarded, and the run
+  # printed its header with nothing under it. It still exited 1, but only
+  # because the trailing newline below is appended whatever the prefixer
+  # yields — a report that names no file, held open by an accident.
+  if [ -n "$hits" ]; then
+    while IFS= read -r hit; do
+      violations="$violations$f:$hit
 "
+    done <<EOF
+$hits
+EOF
+  fi
   # A construct this set does not name still has to be syntax.
   bash -n -- "$f" || syntax_fail=1
 done
