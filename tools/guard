@@ -188,12 +188,14 @@ fi
 # The orch skill carries a second one on purpose, for working agents, and
 # AGENTS.md § Code Review Rules says so in its opening lines.
 #
-# Two arms, both pinned by what they are ABOUT rather than by a substring
-# that happens to appear. The forms are matched literally and one at a time,
-# so a rewrap of the bullet cannot red this and the loss of any one form is
-# its own diagnosis. `#<n>` is not a fourth form: it is the other spelling
-# of the id inside `Tracked:`, and the merge gate accepts either, so a
-# contract written with only the KEN- spelling is still whole.
+# The forms arm is three literal searches over the whole of AGENTS.md, one
+# per form. It says each string still occurs somewhere in the file and no
+# more than that: not that a § Code Review Rules section is still there, and
+# not that the occurrence found is the contract rather than a mention of it.
+# What it does buy is that a rewrap of the bullet cannot red it, and that the
+# loss of any one form is its own diagnosis. `#<n>` is not a fourth form: it
+# is the other spelling of the id inside `Tracked:`, and the merge gate
+# accepts either, so a contract written with only the KEN- spelling is whole.
 #
 # An absent file is its own diagnosis, not a missing substring: grep on a
 # path that is gone reports a read error and a "no longer states" line,
