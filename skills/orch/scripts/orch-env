@@ -8,7 +8,11 @@
 # number.
 #
 # Usage: orch-env VAR_NAME DEFAULT
-#   orch-env CI_FIX_MAX_CYCLES 6
+#   orch-env PR_REVIEW_WAIT_SECS 900
+#
+# Not for a round cap. Those resolve through `workflow-state cap`, which
+# holds the one table of their defaults; pairing orch-env with a default
+# here would be the second copy that table exists to prevent.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then

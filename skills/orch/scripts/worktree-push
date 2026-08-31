@@ -56,15 +56,20 @@
 #                   surviving copy
 #   push ok      -> 0 when no rebase-map printed, or every mapping was
 #                   recorded and applied
-#   1            -> the push landed (or never ran: usage error, or state that
-#                   would not resolve or does not match the arguments) but
-#                   reconciliation did not (no state file, unparseable map
-#                   line, jq/update failure). The recorded SHAs are NOT
-#                   reconciled, and re-running does not repair them: the
-#                   rebase is done, so a second run prints no map and reports
-#                   success over the same stale record. Repair the state, then
-#                   apply the transcript's `rebase-map:` lines by hand with
-#                   `workflow-state update` before publishing any of them.
+#   1 (pushed)   -> the push landed but reconciliation did not (no state file,
+#                   unparseable map line, jq/update failure). The recorded SHAs
+#                   are NOT reconciled, and re-running does not repair them:
+#                   the rebase is done, so a second run prints no map and
+#                   reports success over the same stale record. Repair the
+#                   state, then apply the transcript's `rebase-map:` lines by
+#                   hand with `workflow-state update` before publishing any of
+#                   them.
+#   1 (no push)  -> the run refused before the push: a usage error, a state
+#                   that would not resolve, or a state that does not match the
+#                   arguments. Nothing was pushed and nothing was rebased, no
+#                   map was printed, and no recorded SHA went stale. Correct
+#                   the arguments or the state named on stderr and re-run —
+#                   that IS the repair here; there is nothing to hand-apply.
 
 set -euo pipefail
 

@@ -56,14 +56,17 @@ P1_NODES='[{"id":"T1","isResolved":false},{"id":"T2","isResolved":true}]'
 P2_NODES='[{"id":"T3","isResolved":false}]'
 
 # Call the helper in a subshell with the lib sourced, so a case's environment
-# never leaks into the next one.
+# never leaks into the next one. The helper's stderr is kept, not discarded:
+# neighbouring rules refuse the same shapes, and the diagnostic each one emits
+# is the only thing that says WHICH rule did the refusing.
+CALL_ERR="$TMP_ROOT/call.err"
 call() {
     ( set +e
       export PATH="$TMP_ROOT/bin:$PATH"
       cd "$TMP_ROOT/repo" || exit 9
       # shellcheck source=/dev/null
       . "$LIB" >/dev/null 2>&1
-      gh_graphql_threads owner repo 7 'id isResolved' 2>/dev/null
+      gh_graphql_threads owner repo 7 'id isResolved' 2>"$CALL_ERR"
       exit $? )
 }
 
@@ -89,36 +92,57 @@ echo
 echo "--- fail-closed: an unverifiable page prints nothing ---"
 
 # Each case is a must-fail control for one rule of the validation: without
-# that rule the helper would emit a partial list a caller reads as clean.
-fails_closed() { # $1 = case name, $2 = page-1 body
+# that rule the helper would emit a partial list a caller reads as clean. $3
+# is the diagnostic that rule emits -- two rules refusing the same body would
+# both leave the case green on the outcome alone, so the cause is asserted
+# too and each case names the rule it actually isolates.
+fails_closed() { # $1 = case name, $2 = page-1 body, $3 = expected stderr cause
     STUB_PAGE1="$2"
     STUB_PAGE2="$(page "$P2_NODES" false null)"
     local out rc=0
+    : >"$CALL_ERR"
     out="$(call)" || rc=$?
     if [[ "$rc" -ne 0 && -z "$out" ]]; then
         ok "$1"
     else
         bad "$1" "rc=$rc out=$out"
     fi
+    if grep -Fq -- "$3" "$CALL_ERR"; then
+        ok "$1, and the diagnostic names its cause"
+    else
+        bad "$1, and the diagnostic names its cause" "wanted: $3  got: $(cat "$CALL_ERR")"
+    fi
 }
 
+MALFORMED='malformed review thread pagination data'
+NO_ADVANCE='pagination cursor did not advance'
+
 fails_closed "a null reviewThreads is refused" \
-    '{"repository":{"pullRequest":{"reviewThreads":null}}}'
+    '{"repository":{"pullRequest":{"reviewThreads":null}}}' "$MALFORMED"
 fails_closed "nodes that are not an array is refused" \
-    '{"repository":{"pullRequest":{"reviewThreads":{"nodes":{},"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
+    '{"repository":{"pullRequest":{"reviewThreads":{"nodes":{},"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' "$MALFORMED"
 fails_closed "a non-boolean hasNextPage is refused" \
-    '{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":"no","endCursor":null}}}}}'
-fails_closed "hasNextPage with a null cursor is refused" \
-    "$(page "$P1_NODES" true null)"
-fails_closed "hasNextPage with an empty cursor is refused" \
-    "$(page "$P1_NODES" true '""')"
+    '{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":"no","endCursor":null}}}}}' "$MALFORMED"
+# These two are the endCursor type/length clause's own controls. The refusal
+# alone does not isolate it: an absent cursor also equals the empty starting
+# cursor, so the non-advancing rule below would refuse them too and deleting
+# the clause would leave the outcome green. The CAUSE is the discriminator --
+# the clause fails the page validation, the other rule reports a stalled walk.
+fails_closed "hasNextPage with a null cursor is refused as malformed, not as a stall" \
+    "$(page "$P1_NODES" true null)" "$MALFORMED"
+fails_closed "hasNextPage with an empty cursor is refused as malformed, not as a stall" \
+    "$(page "$P1_NODES" true '""')" "$MALFORMED"
 
 # A cursor that repeats forever: the walk must stop rather than spin.
 STUB_PAGE1="$(page "$P1_NODES" true '"CURSOR2"')"
 STUB_PAGE2="$(page "$P2_NODES" true '"CURSOR2"')"
+: >"$CALL_ERR"
 rc=0; out="$(call)" || rc=$?
 [[ "$rc" -ne 0 && -z "$out" ]] && ok "a cursor that does not advance is refused" \
   || bad "a cursor that does not advance is refused" "rc=$rc out=$out"
+grep -Fq -- "$NO_ADVANCE" "$CALL_ERR" \
+  && ok "the stalled walk is reported as a stall, not as a malformed page" \
+  || bad "the stalled walk is reported as a stall, not as a malformed page" "$(cat "$CALL_ERR")"
 
 echo
 echo "=== pr-data reads its threads through the same pager ==="

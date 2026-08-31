@@ -317,6 +317,21 @@ assert_contains "$help_out" "re-running does not repair them" \
   "the exit-code table denies that a re-run repairs the record"
 assert_contains "$help_out" "workflow-state update" "the exit-code table names the manual repair"
 
+# Exit 1 covers two families and they want opposite repairs. The refusals
+# asserted below (bad arguments, a state that does not resolve or does not
+# match) exit before the push, so for them the sentences above are all false --
+# nothing was rebased, no map was printed, and correcting the arguments and
+# re-running IS the repair. Each family carries its own row or the split rots
+# back into one sentence that misdirects half the operators who read it.
+assert_contains "$help_out" "the run refused before the push" \
+  "the exit-code table carries a row for the family where the push never ran"
+assert_contains "$help_out" "Nothing was pushed and nothing was rebased" \
+  "the never-ran row denies the rebase the post-push row asserts"
+assert_contains "$help_out" "there is nothing to hand-apply" \
+  "the never-ran row sends the operator back through the command instead of workflow-state"
+assert_eq "$(grep -cE '^ *1 \(' <<<"$help_out")" "2" \
+  "the exit-1 families are two rows, not one"
+
 echo
 echo "=== the arguments must match the state they would rewrite ==="
 

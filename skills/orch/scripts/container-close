@@ -10,7 +10,10 @@ Derives the shared main repository and serializes closure per Linear container.
 Prints `closed <PARENT_ID>` when the container is Done, including an idempotent
 repeat. Prints `deferred` followed by pending or canceled child ids when closure
 must wait. A bare `deferred` means the 120-second lock wait expired. Operational
-and validation failures exit 1. A successful `closed` result may carry completion
+and validation failures exit 1, naming the cause on stderr; the parent is left
+open and the run is safe to repeat once the cause is gone -- including a `gh pr
+list` that failed or would not parse, whether the reason was a rate limit or an
+unauthenticated `gh`. A successful `closed` result may carry completion
 diagnostics on stderr; callers must preserve every one.
 EOF
 }
@@ -68,12 +71,14 @@ print_deferred() {
 # a later run short-circuits on a completed parent and never rebuilds it, so
 # whatever this prints is the permanent record. `unavailable` therefore states
 # one thing only — the lookup ran, was valid, and matched no PR.
-# A failed `gh pr list` or a response that will not parse is transient (rate
-# limit, 5xx, network), so it exits non-zero and the close is retried while the
-# references still resolve. Only a missing `gh` fails open, because no retry
-# can produce the reference there, and it prints `lookup failed` so the record
-# never claims the child had no PR. Reasons reach stderr, which the caller
-# preserves.
+# A failed `gh pr list` or a response that will not parse is NOT retried here:
+# it exits non-zero with its reason on stderr, leaving the parent open and the
+# summary unwritten. Nothing about that failure is classified -- a rate limit,
+# a 5xx and an unauthenticated or unscoped `gh` all take it, and the durable
+# ones stay durable until someone fixes them. The close is safe to re-run once
+# `gh` answers. Only a missing `gh` fails open, because no re-run can produce
+# the reference there, and it prints `lookup failed` so the record never claims
+# the child had no PR.
 child_pr() {
   local child_id="$1" rows number
   if ! command -v gh >/dev/null 2>&1; then

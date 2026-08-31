@@ -28,10 +28,15 @@ ERR="$TMP_ROOT/gh.err"
 # The stub answers page 1 from STUB_PAGE1 and every later page from STUB_PAGE2,
 # keyed on the cursor the walk sends. Each body is the whole response, so a
 # case can hand back any malformed shape it wants to see refused, and
-# STUB_GH_EXIT makes the call itself fail.
+# STUB_GH_EXIT makes the call itself fail. Every call is tallied in STUB_CALLS:
+# some rules are only distinguishable from their neighbour by how many queries
+# the walk spends before refusing.
+STUB_CALLS="$TMP_ROOT/gh.calls"
+export STUB_CALLS
 cat >"$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s' "$(( $(cat "$STUB_CALLS") + 1 ))" >"$STUB_CALLS"
 if [[ -n "${STUB_GH_EXIT:-}" ]]; then
   echo "stub gh failure" >&2
   exit "$STUB_GH_EXIT"
@@ -43,6 +48,7 @@ else
 fi
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
+printf '0' >"$STUB_CALLS"
 
 # $1 = nodes JSON, $2 = hasNextPage, $3 = endCursor JSON
 page() {
@@ -112,10 +118,6 @@ fails_closed "a non-boolean hasNextPage is refused" \
   '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":"no","endCursor":null}}}}}}'
 fails_closed "a non-boolean isResolved is refused" \
   '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":"false"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}'
-fails_closed "hasNextPage with a null cursor is refused" \
-  "$(page "$P1" true null)"
-fails_closed "hasNextPage with an empty cursor is refused" \
-  "$(page "$P1" true '""')"
 # A partial response: well-shaped data beside a top-level errors array is data
 # for the pages GitHub could serve, and counting it undercounts the blockers.
 fails_closed "a partial response with a top-level errors array is refused" \
@@ -130,21 +132,72 @@ fails_closed "a response that is not an object is refused" '"not an object"'
 # page bound.
 STUB_PAGE1="$(page "$P1" true '"CURSOR2"')"
 STUB_PAGE2="$(page "$P2" true '"CURSOR2"')"
+printf '0' >"$STUB_CALLS"
 rc=0; out="$(call)" || rc=$?
 [[ "$rc" -ne 0 && -z "$out" ]] && ok "a cursor that does not advance is refused" \
   || bad "a cursor that does not advance is refused" "rc=$rc out=$out"
+eq "$(cat "$STUB_CALLS")" "2" "the non-advancing cursor is caught on the page that repeats it"
 
-# A cursor that keeps advancing past the page bound: an unbounded walk is not
-# a verified one, so the bound is a refusal and never a truncation.
+# The missing-cursor rule, isolated from the non-advancing one beside it. On
+# page 1 the two are indistinguishable -- an empty cursor equals the empty
+# starting cursor, so either rule refuses after one query and deleting one
+# leaves the case green. From page 2 they part: an empty cursor no longer
+# equals "CURSOR2", so with `[ -n "$page_cursor" ]` deleted the walk accepts
+# it, restarts from page 1 and oscillates to the page bound. The query TALLY
+# is what tells the two apart -- two calls means the missing cursor was
+# refused where it appeared, not swallowed and rediscovered 18 pages later.
+cursor_missing_on_page_two() { # $1 = case name, $2 = page-2 endCursor JSON
+  STUB_PAGE1="$(page "$P1" true '"CURSOR2"')"
+  STUB_PAGE2="$(page "$P2" true "$2")"
+  printf '0' >"$STUB_CALLS"
+  local out rc=0
+  out="$(call)" || rc=$?
+  [[ "$rc" -ne 0 && -z "$out" ]] && ok "$1" || bad "$1" "rc=$rc out=$out"
+  eq "$(cat "$STUB_CALLS")" "2" "$1, on the page that omitted it"
+}
+cursor_missing_on_page_two "hasNextPage with a null cursor is refused" null
+cursor_missing_on_page_two "hasNextPage with an empty cursor is refused" '""'
+
+# --- where the page bound sits ---------------------------------------------
+# The bound is new to approval-wait, which paginated without one before, so a
+# PR past it now fails the waiter and the late-findings guard closed and stays
+# that way. That cliff has to be measured, not just shown to exist: an
+# always-advancing stub driven by a call COUNTER (never $RANDOM, so the page
+# number is the call number) walks exactly the bound, then one page more.
 cat >"$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false}],"pageInfo":{"hasNextPage":true,"endCursor":"C%s"}}}}}}\n' "$RANDOM$RANDOM"
+n=$(( $(cat "$STUB_CALLS") + 1 ))
+printf '%s' "$n" >"$STUB_CALLS"
+next=true
+[[ "$n" -ge "${STUB_LAST_PAGE:?}" ]] && next=false
+printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false}],"pageInfo":{"hasNextPage":%s,"endCursor":"C%s"}}}}}}\n' "$next" "$n"
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
+
+# Read the bound off the lib: spelling 20 here would pin the test to itself.
+PAGE_MAX="$( . "$LIB"; printf '%s' "$ORCH_THREAD_PAGE_MAX" )"
+[[ "$PAGE_MAX" =~ ^[0-9]+$ && "$PAGE_MAX" -ge 2 ]] && ok "the lib names a numeric page bound" \
+  || bad "the lib names a numeric page bound" "ORCH_THREAD_PAGE_MAX=$PAGE_MAX"
+
+printf '0' >"$STUB_CALLS"
+STUB_LAST_PAGE="$PAGE_MAX"; export STUB_LAST_PAGE
 rc=0; out="$(call)" || rc=$?
-[[ "$rc" -ne 0 && -z "$out" ]] && ok "a walk past the page bound is refused, not truncated" \
-  || bad "a walk past the page bound is refused, not truncated" "rc=$rc out=$out"
+[[ "$rc" -eq 0 && "$out" == "$PAGE_MAX" ]] \
+  && ok "a walk of exactly ORCH_THREAD_PAGE_MAX pages succeeds and counts every page" \
+  || bad "a walk of exactly ORCH_THREAD_PAGE_MAX pages succeeds and counts every page" \
+     "rc=$rc out=$out want=$PAGE_MAX pages=$(cat "$STUB_CALLS")"
+eq "$(cat "$STUB_CALLS")" "$PAGE_MAX" "the walk stopped on the last page it was given"
+
+printf '0' >"$STUB_CALLS"
+STUB_LAST_PAGE=$((PAGE_MAX + 1))
+rc=0; out="$(call)" || rc=$?
+[[ "$rc" -ne 0 && -z "$out" ]] \
+  && ok "a walk of ORCH_THREAD_PAGE_MAX+1 pages is refused, not truncated" \
+  || bad "a walk of ORCH_THREAD_PAGE_MAX+1 pages is refused, not truncated" \
+     "rc=$rc out=$out pages=$(cat "$STUB_CALLS")"
+eq "$(cat "$STUB_CALLS")" "$PAGE_MAX" "the refusal spends no query past the bound"
+unset STUB_LAST_PAGE
 
 # A failed gh call: its stderr must reach ERR_FILE, which is what the callers
 # classify as transient or terminal.
@@ -177,6 +230,82 @@ for script in approval-wait queue-wait; do
   else
     ok "$script carries no reviewThreads query of its own"
   fi
+done
+
+
+echo
+echo "=== what a refused page does to approval-wait ==="
+
+# The grep pair above proves approval-wait reads through this walk. This proves
+# what happens when the walk refuses. approval-wait's old counter tolerated a
+# reviewThreads page with no pageInfo (`.pageInfo.hasNextPage // false`) and
+# counted it as ZERO open threads; this walk refuses it, so the exit below is
+# newly reachable and no case had been seen to take it.
+#
+# The classification is the part worth pinning. gh_failure_is_transient reads
+# GH_ERR_FILE, and a SHAPE failure leaves that file EMPTY -- the lib appends
+# only gh's own stderr, and here gh exits 0 having printed a well-formed but
+# unusable body. An empty error file matches no transient token, so the failure
+# is terminal and the wait exits at once. A classifier that read "no error text"
+# as transient would instead spend the entire wait budget re-reading a page that
+# will never parse, and report the PR as still pending rather than as broken.
+AW="$SKILL_DIR/scripts/approval-wait"
+AW_REPO="$TMP_ROOT/aw-repo"
+mkdir -p "$AW_REPO/.agents/skills" "$TMP_ROOT/awbin"
+ln -sfn "$SKILL_DIR" "$AW_REPO/.agents/skills/orch"
+git init -q "$AW_REPO"
+
+# The smallest gh approval-wait needs: an auth probe, the repo name, the
+# approval snapshot, and the thread query whose body this case controls.
+cat >"$TMP_ROOT/awbin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-} ${2:-}" in
+  "auth status") exit 0 ;;
+  "repo view")   echo "owner/repo"; exit 0 ;;
+  "api graphql") printf '%s\n' "${STUB_AW_THREADS:?}"; exit 0 ;;
+  "pr view")
+    if [[ "$*" == *"-q .headRefOid"* ]]; then echo "headsha1"; exit 0; fi
+    echo '{"reviewDecision":"APPROVED","latestReviews":[{"author":{"login":"r1"},"state":"APPROVED"}],"headRefOid":"headsha1","author":{"login":"pr-author"}}'
+    exit 0 ;;
+esac
+printf 'unexpected gh call: %s\n' "$*" >&2
+exit 1
+EOF
+chmod +x "$TMP_ROOT/awbin/gh"
+
+run_aw() { # $1 = graphql body
+  ( set +e
+    cd "$AW_REPO" || exit 9
+    PATH="$TMP_ROOT/awbin:$PATH" STUB_AW_THREADS="$1" \
+      .agents/skills/orch/scripts/approval-wait 7 1 4 --json
+    exit $? )
+}
+
+# The control first: a page the walk accepts must reach the approved verdict,
+# or the refusals below would prove nothing about the shape and everything
+# about the stub.
+aw_err="$TMP_ROOT/aw-ok.err"
+rc=0; out="$(run_aw "$(page '[]' false null)" 2>"$aw_err")" || rc=$?
+eq "$rc" "0" "approval-wait reaches its verdict on a page the walk accepts"
+eq "$(jq -r .status <<<"$out")" "approved" "the accepted page produces the approved verdict"
+
+for body_name in null_threads bad_isresolved; do
+  case "$body_name" in
+    null_threads)    body='{"data":{"repository":{"pullRequest":{"reviewThreads":null}}}}' ;;
+    bad_isresolved)  body="$(page '[{"isResolved":"false"}]' false null)" ;;
+  esac
+  aw_err="$TMP_ROOT/aw-$body_name.err"
+  rc=0; out="$(run_aw "$body" 2>"$aw_err")" || rc=$?
+  eq "$rc" "1" "$body_name: approval-wait exits 1 rather than counting an unverifiable page"
+  eq "$(jq -r .status <<<"$out")" "error" "$body_name: it reports status error"
+  grep -Fq "review thread query failed" <<<"$(jq -r '.error // ""' <<<"$out")" \
+    && ok "$body_name: the error names the thread query" \
+    || bad "$body_name: the error names the thread query" "$out"
+  eq "$(jq -r '.transient_api_errors // "null"' <<<"$out")" "null" \
+    "$body_name: an empty error file classifies terminal, never transient"
+  eq "$(jq -r '.elapsed_seconds < 3' <<<"$out")" "true" \
+    "$body_name: it terminates at once rather than retrying to the deadline"
 done
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"

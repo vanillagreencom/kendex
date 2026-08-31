@@ -201,9 +201,11 @@ printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"compl
 [[ -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && ok "validation-shape mutant accepts string true" || fail "validation-shape mutant accepts string true"
 
 # The summary is written once — a later run short-circuits on the completed
-# parent and never rebuilds it — so a transient lookup failure must not bake a
-# reference into it. A failed or unparseable `gh pr list` exits non-zero and
-# leaves the parent open for the retry.
+# parent and never rebuilds it — so a lookup failure must not bake a reference
+# into it. A failed or unparseable `gh pr list` exits non-zero and leaves the
+# parent open, whatever the cause: the script classifies none of them, so a
+# rate limit and an unauthenticated `gh` take the same path and the close is
+# re-run once `gh` answers.
 for gh_mode in exit invalid; do
   reset_state
   printf '%s\n' "$gh_mode" > "$FAKE_LINEAR_ROOT/gh.mode"

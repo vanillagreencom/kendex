@@ -1429,13 +1429,13 @@ classify_index_entry() {
 # The visitor is called for each child as
 #   <visitor> "$wt" "$rel" "$name" "$child" "$exact" "$descendants" "$depth"
 # with $exact set when $rel is a tracked leaf in EITHER index and $descendants
-# when either tracks something beneath it. A nonzero return does not abort the
-# siblings; it is re-signaled once as this function's own status. Recursion
-# and the depth cap stay with the visitor — the passes disagree on what an
-# uninspected subtree means, so each states its own before calling here.
+# when either tracks something beneath it. Recursion and the depth cap stay
+# with the visitor. The walk is ALWAYS 0: no pass reads a visitor's status --
+# the repair banks unsettled children in LUC_UNRESOLVED, the diagnostics print
+# theirs -- so a failing visitor cannot take the repair down through set -e.
 walk_symlink_entry_children() {
   local visitor="$1" path="$2" wt="$3" depth="$4"
-  local src="$PROJECT_ROOT/$path" child="" name="" rel="" exact="" descendants="" failed=""
+  local src="$PROJECT_ROOT/$path" child="" name="" rel="" exact="" descendants=""
   for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
     [[ -e "$child" || -L "$child" ]] || continue
     name="${child##*/}"
@@ -1445,9 +1445,9 @@ walk_symlink_entry_children() {
     classify_index_entry "$PROJECT_ROOT" "$rel"
     [[ -n "$CIE_EXACT" ]] && exact=1
     [[ -n "$CIE_DESCENDANTS" ]] && descendants=1
-    "$visitor" "$wt" "$rel" "$name" "$child" "$exact" "$descendants" "$depth" || failed=1
+    "$visitor" "$wt" "$rel" "$name" "$child" "$exact" "$descendants" "$depth" || true
   done
-  [[ -z "$failed" ]]
+  return 0
 }
 
 # link_untracked_children's visitor: decide one classified child, and append
@@ -1692,7 +1692,7 @@ collect_materialized_child_links() {
 
 # collect_materialized_child_links' visitor. Damage is an untracked child that
 # should be a link and is a real path instead; everything else is silence. A
-# capped deeper subtree returns nonzero, which the walk re-signals once.
+# capped deeper subtree prints an uninspected line; no status comes back.
 collect_materialized_child() {
   local wt="$1" rel="$2" name="$3" child="$4" exact="$5" descendants="$6" depth="$7"
   if [[ -z "$exact" && -z "$descendants" ]]; then
@@ -1743,7 +1743,7 @@ collect_unhealthy_child_links() {
   fi
   # Reporting only: every unhealthy child is a printed line, never a status,
   # so this stays 0 for the command substitutions that read it under set -e.
-  walk_symlink_entry_children collect_unhealthy_child "$path" "$wt" "$depth" || true
+  walk_symlink_entry_children collect_unhealthy_child "$path" "$wt" "$depth"
   return 0
 }
 

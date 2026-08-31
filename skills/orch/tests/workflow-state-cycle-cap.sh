@@ -380,8 +380,10 @@ done
 # same table, and `review-external-rounds-cap.test.sh` used to prove its row
 # from its own scratch repos. This is where that proof lives now. This repo's
 # `kendex.settings.toml` names every cap at the table's own number, so a bare
-# read here would hold whatever default the table carried: every default below
-# resolves from this settings-free checkout, where only the table can answer.
+# read here would hold whatever default the table carried. Where a default is
+# proved below it resolves from this settings-free checkout with the setting
+# stripped from the process environment, the two layers orch-env ranks above
+# the table, leaving only the table to answer.
 no_settings="$TMP_ROOT/no-settings"
 git init -q "$no_settings"
 got="$(cd "$no_settings" && env -u REVIEW_MAX_EXTERNAL_ROUNDS "$WS" --state-dir "$cd_sd" cap REVIEW_MAX_EXTERNAL_ROUNDS)"
@@ -412,14 +414,16 @@ rc=0; "$WS" --state-dir "$cd_sd" cap NOT_A_CAP >/dev/null 2>&1 || rc=$?
 rc=0; "$WS" --state-dir "$cd_sd" cap CI_FIX_MAX_CYCLES --issue KEN-CAP >/dev/null 2>&1 || rc=$?
 [[ "$rc" -eq 2 ]] && ok "a cap with no state field refuses --issue" \
   || bad "a cap with no state field refuses --issue" "rc=$rc"
-got="$("$WS" --state-dir "$cd_sd" cap CI_FIX_MAX_CYCLES --count 5)"
+got="$(env -u CI_FIX_MAX_CYCLES "$WS" --state-dir "$cd_sd" cap CI_FIX_MAX_CYCLES --count 5)"
 [[ "$got" == "below 5/6" ]] && ok "CI_FIX_MAX_CYCLES defaults to 6 through the table" \
   || bad "CI_FIX_MAX_CYCLES defaults to 6 through the table" "got=$got"
 
 # The assertion above ran where this repo's own [env] names CI_FIX_MAX_CYCLES at
 # the table's number, so it would have held whatever default the table carried.
-# The settings-free checkout is what proves the number comes from the table.
-got="$(cd "$no_settings" && "$WS" --state-dir "$cd_sd" cap CI_FIX_MAX_CYCLES --count 5)"
+# The settings-free checkout is what proves the number comes from the table --
+# and `env -u`, because orch-env ranks the process environment above the file,
+# so an exported CI_FIX_MAX_CYCLES would answer over both.
+got="$(cd "$no_settings" && env -u CI_FIX_MAX_CYCLES "$WS" --state-dir "$cd_sd" cap CI_FIX_MAX_CYCLES --count 5)"
 [[ "$got" == "below 5/6" ]] && ok "the table's default is what resolves where no setting overrides it" \
   || bad "the table's default is what resolves where no setting overrides it" "got=$got"
 
@@ -442,16 +446,30 @@ done <<<"$refusal_roster"
   || bad "every cap the roster names resolves through the table" "unresolved:$missing"
 
 # The default lives in the table alone: no reader may carry its own copy.
-cap_strays() { grep -rn 'orch-env" *CI_FIX_MAX_CYCLES\|orch-env" *REVIEW_MAX' "$1" 2>/dev/null || true; }
-stray="$(cap_strays "$REPO_ROOT/skills/orch/scripts")"
-[[ -z "$stray" ]] && ok "no orch script resolves a round cap outside the table" \
-  || bad "no orch script resolves a round cap outside the table" "$stray"
-# Planted: a reader that went back to pairing orch-env with its own default.
+# The scan covers the WORKFLOWS as well as the scripts, and the quote before
+# the setting name is optional, because a workflow spells the same read as a
+# bare command line -- `.agents/skills/orch/scripts/orch-env CI_FIX_MAX_CYCLES
+# 6`. Scripts-and-quotes-only, this check watched the two sites that already
+# had rule pins and none of the four this branch rewrote in the workflows,
+# where the two-spellings-disagree shape it exists to close would have gone
+# back in unseen.
+CAP_STRAY_RE='orch-env"? *(CI_FIX_MAX_CYCLES|REVIEW_MAX)'
+cap_strays() { grep -rnE "$CAP_STRAY_RE" "$@" 2>/dev/null || true; }
+stray="$(cap_strays "$REPO_ROOT/skills/orch/scripts" "$REPO_ROOT/skills/orch/workflows")"
+[[ -z "$stray" ]] && ok "no orch script or workflow resolves a round cap outside the table" \
+  || bad "no orch script or workflow resolves a round cap outside the table" "$stray"
+# Planted, in both spellings: a reader that went back to pairing orch-env with
+# its own default. The workflow one is the control for the widened scan --
+# under the old scripts-only root it read clean.
 CTRL_DIR="$TMP_ROOT/cap-stray-scripts"
-mkdir -p "$CTRL_DIR"
+CTRL_WF="$TMP_ROOT/cap-stray-workflows"
+mkdir -p "$CTRL_DIR" "$CTRL_WF"
 printf 'max=$("$SCRIPT_DIR/orch-env" CI_FIX_MAX_CYCLES 6)\n' > "$CTRL_DIR/watcher"
-[[ -n "$(cap_strays "$CTRL_DIR")" ]] && ok "the stray check flags a reader carrying its own cap default" \
-  || bad "the stray check flags a reader carrying its own cap default"
+printf '.agents/skills/orch/scripts/orch-env CI_FIX_MAX_CYCLES 6\n' > "$CTRL_WF/merge-pr.md"
+[[ -n "$(cap_strays "$CTRL_DIR")" ]] && ok "the stray check flags a script carrying its own cap default" \
+  || bad "the stray check flags a script carrying its own cap default"
+[[ -n "$(cap_strays "$CTRL_WF")" ]] && ok "the stray check flags a workflow carrying its own cap default" \
+  || bad "the stray check flags a workflow carrying its own cap default"
 
 # --- `append-file`: reviewer text never crosses argv ------------------------
 echo

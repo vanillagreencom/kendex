@@ -104,7 +104,7 @@ skills/orch/scripts/oversee-watch	651
 skills/orch/scripts/queue-wait	1056
 skills/orch/scripts/review-artifact-check	413
 skills/orch/scripts/workflow-state	664
-skills/orch/scripts/worktree-push	416
+skills/orch/scripts/worktree-push	421
 skills/orch/tests/approval_wait.sh	1585
 skills/orch/tests/ci_wait.sh	824
 skills/orch/tests/lanes.sh	890
