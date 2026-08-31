@@ -4,7 +4,7 @@
 # repo that installed only that one skill. Sameness is therefore a pin, not
 # a consequence — this suite is what makes an edit to one copy red.
 #
-# Two families:
+# WHAT IT ENFORCES, over the source tree and its .agents render alike:
 #   * kendex-env.sh — every skill carrying it carries the same bytes.
 #   * lib/settings.sh — growth-guards, review-gate and size-ratchet each
 #     hold their own prefixed copy of a shared helper set. Every helper is
@@ -14,13 +14,23 @@
 #     is never excusable. Which helpers those are is not written down here —
 #     the rule is over whatever the copies declare, so a helper added
 #     tomorrow is pinned without editing this file.
-# Both families are pinned over the source tree AND its .agents render,
-# because a render is where a hand edit looks least wrong.
+#   * the path shapes named below — a rostered path is a regular file or is
+#     absent, no directory component below the root is a link, and a render
+#     git tracks is present.
 #
-# EVERY CHECK FAILS CLOSED. A roster is globbed, never listed, so a seventh
-# copy is compared the day it lands; an empty glob, a copy whose prefix
-# cannot be derived, and a declaration naming nothing all end in red rather
-# than in a pass with nothing compared.
+# WHAT IT DOES NOT ATTEMPT. It does not decide whether a tree is a readable
+# catalog. SealedSource::contained answers that at read time, over every
+# component of every path, and says so with SourceEscape; re-deriving it in
+# bash would be a second opinion that is always the weaker one. Nor does it
+# judge the index: a render deleted in the same commit as its source is a
+# question for review and for the engine at use. So a green run here says
+# these copies match and the shapes named above are clean. It is not a
+# statement that the tree is a valid catalog or that it installs.
+#
+# Each check fails closed on its own terms. A roster is globbed, never
+# listed, so a seventh copy is compared the day it lands; an empty glob, a
+# copy whose prefix cannot be derived, and a declaration naming nothing all
+# end in red rather than in a pass with nothing compared.
 #
 # Behavioral changes belong in skills/orch/scripts/lib/kendex-env.sh and
 # skills/review-gate/scripts/lib/settings.sh, then re-vendored to the rest.
