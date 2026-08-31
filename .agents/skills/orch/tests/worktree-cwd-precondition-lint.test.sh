@@ -47,6 +47,14 @@
 #      inside a `<delegation_format>` block; rule 3 reads the lines between
 #      one block and the block before it.
 #
+# A block ends at three terminators, not one: its closing tag, a new opening
+# tag arriving while it is still open, and end of file. All three route
+# through one `close_block`, so no rule is reachable only through a
+# well-formed block — deleting a closing tag along with the pair used to
+# leave the delegation unscanned and the suite green. An unterminated block
+# is itself reported, naming the opener's line, so a reader sees that the
+# document is malformed and not only that a pair is missing.
+#
 # Scope is every skill doc that can carry a delegation, in BOTH trees where
 # both exist: the `skills/` source and the `.agents/skills/` render agents
 # actually load. Deriving the scan root from this file's own location would
@@ -139,16 +147,29 @@ CANON_FILL='Fill `Worktree:` and its `Worktree Check:` from `git-context repo-ro
 # scan_worktree_precondition <file>
 # Emits one "file:line: ..." line per defect, per the two rules above.
 # Lines outside a delegation block are never scanned.
+#
+# Every rule that judges a whole block lives in `close_block`, and all three
+# terminators call it: the closing tag, a new opening tag, and END. Writing
+# them at the closing tag alone was the fail-open — a block missing that tag
+# escaped both rules, so deleting the pair and the tag together shipped an
+# unguarded delegation with the suite green. `reason` is empty for the one
+# terminator that is well formed; the other two also report the block itself.
 scan_worktree_precondition() {
   awk -v f="$1" -v canon="$CANON" '
     function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    function close_block(reason) {
+      if (!indel) return
+      if (reason != "") printf "%s:%d: delegation block is never closed (%s)\n", f, delline, reason
+      if (pending) printf "%s:%d: Worktree: [%s] ends the delegation with no Worktree Check line\n", f, pendline, token
+      if (!haswt) printf "%s:%d: delegation carries no Worktree:/Worktree Check: pair\n", f, delline
+      indel = 0; pending = 0; haswt = 0
+    }
     /^[[:space:]]*<delegation_format>[[:space:]]*$/ {
+      close_block("a new <delegation_format> opens at line " NR)
       indel = 1; pending = 0; haswt = 0; delline = NR; next
     }
     /^[[:space:]]*<\/delegation_format>[[:space:]]*$/ {
-      if (pending) printf "%s:%d: Worktree: [%s] ends the delegation with no Worktree Check line\n", f, pendline, token
-      if (indel && !haswt) printf "%s:%d: delegation carries no Worktree:/Worktree Check: pair\n", f, delline
-      indel = 0; pending = 0; next
+      close_block(""); next
     }
     indel {
       if (pending) {
@@ -166,6 +187,7 @@ scan_worktree_precondition() {
         token = line; pendline = NR; pending = 1; haswt = 1
       }
     }
+    END { close_block("reached end of file") }
   ' "$1"
 }
 
@@ -175,20 +197,30 @@ scan_worktree_precondition() {
 # canonical resolution once and a divergent one before a later block passed a
 # file-wide assertion, and the later block is the one that poured a logical
 # path into a `pwd -P` comparison. So the demand is raised at every opening
-# tag and the evidence is cleared at every closing tag — each block is asked
+# tag and the evidence is cleared at every terminator — each block is asked
 # for the sentence again, in the lines between it and the block before it.
 # Equality against $CANON_FILL is the whole predicate, so a resolution
 # reworded back to `.` or to the current directory reds.
+#
+# The clearing routes through one `close_block` for the same reason as the
+# scanner above: clearing at the closing tag alone let an unterminated block
+# carry its evidence forward, and the next block passed on a fill line it is
+# not preceded by. The function is a no-op outside a block, so a closed
+# block's successor keeps the lines read since. Malformed structure is
+# reported once, by scan_worktree_precondition.
 scan_worktree_fill() {
   awk -v f="$1" -v canon="$CANON_FILL" '
     function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    function close_block() { if (!indel) return; indel = 0; hasfill = 0 }
     /^[[:space:]]*<delegation_format>[[:space:]]*$/ {
+      close_block()
       if (!hasfill)
         printf "%s:%d: delegation block is not preceded by the canonical Worktree fill line\n", f, NR
       indel = 1; next
     }
-    /^[[:space:]]*<\/delegation_format>[[:space:]]*$/ { indel = 0; hasfill = 0; next }
+    /^[[:space:]]*<\/delegation_format>[[:space:]]*$/ { close_block(); next }
     !indel { if (trim($0) == canon) hasfill = 1 }
+    END { close_block() }
   ' "$1"
 }
 
@@ -398,6 +430,33 @@ else
   fail "lint MISSED a delegation with no Worktree pair"
 fi
 
+# b.14 — RULE 2 THROUGH THE END-OF-FILE TERMINATOR. Codex's mutation: the
+# pair and the closing tag deleted together, the fill line kept so rule 3 is
+# satisfied at the opener. With the block rules written at the closing tag
+# alone, this shipped a delegation carrying no precondition at all and the
+# suite stayed green. The output is compared whole, so the probe fails if the
+# scan names the wrong line as readily as if it names none.
+EOFOPEN="$TMP_ROOT/probe-eof-open.md"
+printf '<delegation_format>\nRead: [RESEARCH_DOCS_PATH]/findings.md\nArguments: --project-order\n' > "$EOFOPEN"
+if [ "$(scan_worktree_precondition "$EOFOPEN")" = "$EOFOPEN:1: delegation block is never closed (reached end of file)
+$EOFOPEN:1: $NOPAIR" ]; then
+  pass "lint reds on a delegation block left open at end of file"
+else
+  fail "lint MISSED a delegation block left open at end of file"
+fi
+
+# b.15 — and through the other terminator: the closing tag replaced by the
+# next opening tag. The second block is well formed, so nothing but the
+# first block's own rules can produce this output.
+NEXTOPEN="$TMP_ROOT/probe-next-open.md"
+printf '<delegation_format>\nRead: [RESEARCH_DOCS_PATH]/findings.md\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' "$CHECK" > "$NEXTOPEN"
+if [ "$(scan_worktree_precondition "$NEXTOPEN")" = "$NEXTOPEN:1: delegation block is never closed (a new <delegation_format> opens at line 3)
+$NEXTOPEN:1: $NOPAIR" ]; then
+  pass "lint reds on a block whose closing tag is replaced by the next opener"
+else
+  fail "lint MISSED a block whose closing tag is replaced by the next opener"
+fi
+
 # b.5 — a Worktree: mention outside a delegation block is NOT scanned.
 PROSE="$TMP_ROOT/probe-prose.md"
 printf 'Fill the delegation Worktree: [WORKTREE_PATH] from the claim output, per .agents/skills/orch/SKILL.md.\n' > "$PROSE"
@@ -604,6 +663,20 @@ if [ -z "$(scan_worktree_fill "$BOTHFILLED")" ]; then
   pass "lint accepts a doc whose every block carries the canonical fill line"
 else
   fail "lint false-flagged a doc filling both its blocks canonically"
+fi
+
+# e.8 — RULE 3 THROUGH THE SAME TERMINATOR. The first block carries the
+# canonical fill line and is never closed; the second is preceded by nothing
+# but the first block's body. Clearing the evidence at the closing tag alone
+# carried it across and the second block passed on a sentence it does not
+# follow. Compared whole: naming the first block instead would be wrong.
+CARRIED="$TMP_ROOT/probe-carried-fill.md"
+printf '%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' \
+  "$CANON_FILL" "$CHECK" "$CHECK" > "$CARRIED"
+if [ "$(scan_worktree_fill "$CARRIED")" = "$CARRIED:6: $NOFILL" ]; then
+  pass "lint flags a block whose fill line was carried across an unclosed block"
+else
+  fail "lint let an unclosed block carry its fill line to the next block"
 fi
 
 echo
