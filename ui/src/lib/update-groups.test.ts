@@ -248,14 +248,20 @@ describe("updateWithheld", () => {
 // has a note, because the page's only update gate is whether this returns
 // one — a state that cannot say why would hide the button in silence.
 describe("pageUpdateWithheld", () => {
-  /** A store standing: a landed read with no write running, unless said
-   *  otherwise. `checking` and `overviewInFlight` are deliberately not
-   *  here — the page does not read them, and a fixture offering them
-   *  would invite a test that thinks it proves a gate the page has not
-   *  got. */
+  /** A store standing: a landed read with nothing running, unless said
+   *  otherwise. `checking` and `overviewInFlight` bar no row that exists —
+   *  they decide only whether a place with no row has been ruled out or
+   *  merely not reached yet. */
   const standing = (
     over: Partial<Parameters<typeof pageUpdateWithheld>[1]> = {},
-  ) => ({ loaded: true, error: null, pendingFollows: [], ...over });
+  ) => ({
+    loaded: true,
+    error: null,
+    checking: false,
+    overviewInFlight: false,
+    pendingFollows: [],
+    ...over,
+  });
 
   it("says the check is running before the first read lands", () => {
     expect(pageUpdateWithheld(null, standing({ loaded: false }))).toBe(
@@ -325,6 +331,8 @@ describe("pageUpdateWithheld", () => {
       {},
       { loaded: false },
       { loaded: false, error: "no network" },
+      { checking: true },
+      { overviewInFlight: true },
       { pendingFollows: [{ scope: refused.scope }] },
     ]) {
       expect(pageUpdateWithheld(refused, standing(over))).toBe(
@@ -340,8 +348,31 @@ describe("pageUpdateWithheld", () => {
     expect(pageUpdateWithheld(row("gh", "/a"), standing())).toBeNull();
   });
 
-  it("says so for a place the landed read never spoke for", () => {
+  it("says so for a place a settled read never spoke for", () => {
     expect(pageUpdateWithheld(null, standing())).toBe(NO_UPDATE_STANDING_NOTE);
+  });
+
+  // The mirror of the wrong cause this round closed: ruling a place out
+  // while the read that would cover it is still running claims a verdict
+  // the check has not reached. The button is hidden either way; the
+  // difference is whether the reason is true.
+  it("does not rule a place out while a read is still running", () => {
+    expect(pageUpdateWithheld(null, standing({ checking: true }))).toBe(
+      UPDATES_CHECKING,
+    );
+    expect(pageUpdateWithheld(null, standing({ overviewInFlight: true }))).toBe(
+      UPDATES_CHECKING,
+    );
+  });
+
+  // And the counterpart: a row that exists is not barred by either flag.
+  it("still offers a row that exists while a read is running", () => {
+    expect(
+      pageUpdateWithheld(row("gh", "/a"), standing({ checking: true })),
+    ).toBeNull();
+    expect(
+      pageUpdateWithheld(row("gh", "/a"), standing({ overviewInFlight: true })),
+    ).toBeNull();
   });
 
   it("hands a settled place to the shared reading", () => {

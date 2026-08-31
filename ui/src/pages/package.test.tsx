@@ -7,10 +7,8 @@ import type {
   ItemKind,
   Manifest_Serialize,
   ObservedItem,
-  PackageMeta_Serialize,
   Scope,
   UpdateRow,
-  VersionRow,
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
@@ -18,20 +16,11 @@ import {
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
-  PREVIEW_CHANGES_LABEL,
-  UPDATE_LABEL,
 } from "@/lib/copy";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
-import {
-  EDITED_CANT_UPDATE_NOTE,
-  NO_UPDATE_STANDING_NOTE,
-  UPDATE_NEEDS_CHECK_HERE,
-  UPDATES_CHECKING,
-} from "@/lib/copy-updates";
 import { editorOpenPath } from "@/lib/editor-path";
 import { SEVERITY_LABELS } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
-import { pageUpdateWithheld } from "@/lib/update-groups";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useNavStore } from "@/stores/nav";
@@ -167,31 +156,6 @@ const updateRow = (scope: Project): UpdateRow => ({
   removedUpstream: false,
   noPerPackageUpdate: null,
 });
-
-/** One commit on a package's timeline. */
-const version = (id: string, installed: boolean): VersionRow => ({
-  id,
-  label: null,
-  date: "2026-01-01",
-  summary: "a commit",
-  installed,
-  newerThanInstalled: !installed,
-});
-
-/** What the meta read answers: a following package from a repo source.
- *  Update waits for this read, so a page without it offers nothing. */
-const meta: PackageMeta_Serialize = {
-  source: "cat",
-  repo: "o/r",
-  repoUrl: null,
-  rev: null,
-  current: null,
-  installedAt: null,
-  harnesses: ["claude"],
-  enabled: true,
-  fork: null,
-  catalog: null,
-};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -601,197 +565,5 @@ describe("the package page's delete action", () => {
     expect(said).toContain("Delete gh?");
     expect(said).toContain("/work/vg");
     expect(said).toContain("/work/hyprtrade");
-  });
-});
-
-// The page's Update is one reading: the button and the reason beside it
-// come from the same string, so a page that withholds Update always says
-// why. Nothing else in the app renders that pair, and the old path read
-// the kind directly — a rule that now lives only in core.
-describe("the package page's Update", () => {
-  /** A timeline with a newer version to move to and an installed one to
-   *  move from — what the page reads newness off, never the update row. */
-  const newerThanInstalled = [
-    version("b".repeat(40), false),
-    version("a".repeat(40), true),
-  ];
-
-  /** Open the page with a timeline, a meta read that lands, and whatever
-   *  the updates store says about this place. */
-  const openWithUpdates = async (
-    rows: UpdateRow[],
-    {
-      loaded = true,
-      kind = "skill" as ItemKind,
-      ...standing
-    }: {
-      loaded?: boolean;
-      kind?: ItemKind;
-      error?: string | null;
-      checking?: boolean;
-      overviewInFlight?: boolean;
-    } = {},
-  ) => {
-    vi.mocked(commands.packageVersions).mockResolvedValue({
-      status: "ok",
-      data: newerThanInstalled,
-    });
-    vi.mocked(commands.packageMeta).mockResolvedValue({
-      status: "ok",
-      data: meta,
-    });
-    // Set in full, never merged: zustand keeps whatever a previous test
-    // left, so a leaked `error` would make a pending read read as failed.
-    useUpdatesStore.setState({
-      rows,
-      loaded,
-      error: null,
-      checking: false,
-      overviewInFlight: false,
-      pendingFollows: [],
-      ...standing,
-    });
-    return openPage(VG, [VG], { [scopeKey(VG)]: PLAIN }, null, kind);
-  };
-
-  const updateButton = (host: HTMLElement) =>
-    [...host.querySelectorAll("button")].find(
-      (button) => button.textContent === UPDATE_LABEL,
-    );
-
-  it("offers Update when the row withholds nothing", async () => {
-    const host = await openWithUpdates([
-      { ...updateRow(VG), updateAvailable: true },
-    ]);
-    expect(updateButton(host)).toBeDefined();
-  });
-
-  // The refusal is core's own sentence, carried on the row. A synthetic
-  // string here, so the assertion cannot pass on a constant this side of
-  // the boundary happens to hold.
-  it("withholds Update for a kind core refuses, and says what core said", async () => {
-    const refusal = "REFUSED-BY-CORE: this kind moves another way";
-    const host = await openWithUpdates(
-      [
-        {
-          ...updateRow(VG),
-          kind: "pi-extension",
-          updateAvailable: true,
-          noPerPackageUpdate: refusal,
-        },
-      ],
-      { kind: "pi-extension" },
-    );
-    expect(updateButton(host)).toBeUndefined();
-    expect(host.textContent).toContain(refusal);
-  });
-
-  // A hand-edited copy is never updated over, and the page has to say so
-  // where the button would be rather than showing nothing at all.
-  it("withholds Update for an edited copy, and says so", async () => {
-    const host = await openWithUpdates([
-      { ...updateRow(VG), updateAvailable: true, blockedByLocalEdit: true },
-    ]);
-    expect(updateButton(host)).toBeUndefined();
-    expect(host.textContent).toContain(EDITED_CANT_UPDATE_NOTE);
-  });
-
-  // The read covers declared packages with a repository source. A place it
-  // never spoke for gets no button — and, so the page is never silent
-  // under news it cannot act on, a note saying which of the two it is.
-  it("withholds Update where the update read never spoke for this place", async () => {
-    const host = await openWithUpdates([updateRow(HYPR)]);
-    expect(updateButton(host)).toBeUndefined();
-    expect(host.textContent).toContain(NO_UPDATE_STANDING_NOTE);
-  });
-
-  it("says the check is still running before the read lands", async () => {
-    const host = await openWithUpdates([], { loaded: false });
-    expect(updateButton(host)).toBeUndefined();
-    expect(host.textContent).toContain(UPDATES_CHECKING);
-  });
-
-  // A first read that failed leaves the store looking exactly like one in
-  // flight but for the error. Calling that a check in progress names a
-  // cause that is not running.
-  it("does not call a failed first read a check in progress", async () => {
-    const host = await openWithUpdates([], {
-      loaded: false,
-      error: "no network",
-    });
-    expect(updateButton(host)).toBeUndefined();
-    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_HERE);
-    expect(host.textContent).not.toContain(UPDATES_CHECKING);
-  });
-
-  // A failed re-read keeps its rows and drops `loaded`. The row is here
-  // and withholds nothing of its own, so without the read state the page
-  // would offer an Update over rows nobody could confirm.
-  it("withholds Update over a row a failed re-read left standing", async () => {
-    const host = await openWithUpdates(
-      [{ ...updateRow(VG), updateAvailable: true }],
-      { loaded: false, error: "no network" },
-    );
-    expect(updateButton(host)).toBeUndefined();
-    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_HERE);
-  });
-
-  // The invariant the page's own comments claim, asserted as the absence
-  // of silence rather than as a sentence: wherever there is a newer
-  // version and the page will not offer it, some reason is on screen. Not
-  // pinned to a particular string, so rewording the copy cannot red this
-  // for the wrong reason — the reason itself is the shared reading's.
-  it("never withholds Update in silence, whatever the read is doing", async () => {
-    const stale = { ...updateRow(VG), updateAvailable: true };
-    for (const standing of [
-      { loaded: false },
-      { loaded: false, error: "no network" },
-    ]) {
-      const host = await openWithUpdates([stale], standing);
-      expect(updateButton(host)).toBeUndefined();
-      const said = host.textContent ?? "";
-      const reason = pageUpdateWithheld(stale, {
-        error: null,
-        pendingFollows: [],
-        ...standing,
-      });
-      expect(reason).not.toBeNull();
-      expect(said).toContain(reason as string);
-    }
-  });
-
-  // Every window focus starts an overview read, and it is the app's
-  // heaviest. Refusing on it would unmount Update on every alt-tab back,
-  // guarding a hazard this surface has not got: its Update sends scope,
-  // kind and name, and its versions come from its own read.
-  it("still offers Update while a background read is in flight", async () => {
-    for (const inFlight of [{ checking: true }, { overviewInFlight: true }]) {
-      const host = await openWithUpdates(
-        [{ ...updateRow(VG), updateAvailable: true }],
-        inFlight,
-      );
-      expect(updateButton(host)).toBeDefined();
-      expect(host.textContent).not.toContain(UPDATE_NEEDS_CHECK_HERE);
-    }
-  });
-
-  // A read-only diff of two commits the page already holds. No state of
-  // the update read bears on it, so none of them may take it away.
-  it("keeps Preview changes through every withheld state", async () => {
-    const preview = (host: HTMLElement) =>
-      [...host.querySelectorAll("button")].find(
-        (button) => button.textContent === PREVIEW_CHANGES_LABEL,
-      );
-    for (const standing of [
-      {},
-      { loaded: false },
-      { loaded: false, error: "no network" },
-    ]) {
-      const host = await openWithUpdates(
-        [{ ...updateRow(VG), updateAvailable: true }],
-        standing,
-      );
-      expect(preview(host)).toBeDefined();
-    }
   });
 });

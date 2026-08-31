@@ -8,7 +8,11 @@ import {
   USER_LEVEL_PLACE,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
-import { settlingIn, updatesReadState } from "@/lib/updates-read-state";
+import {
+  settlingIn,
+  unsettled,
+  updatesReadState,
+} from "@/lib/updates-read-state";
 
 /** One package with every place it is out of date in. The same skill
  *  installed in three projects is one decision with three places, not
@@ -87,6 +91,7 @@ export const canUpdatePlace = (row: UpdateRow): boolean =>
 /** Everything `updates-read-state.ts` needs to say how the read went and
  *  whether a write is running in a given place. */
 type UpdatesReadStanding = Parameters<typeof settlingIn>[0] &
+  Parameters<typeof unsettled>[0] &
   Parameters<typeof updatesReadState>[0];
 
 /** A read state nobody handled. The union is closed and every arm above
@@ -115,12 +120,15 @@ const unhandledReadState = (state: never): never => {
  *  read supplied and a read that has not landed cannot vouch for it. Then
  *  the row's own remaining reasons.
  *
- *  A read merely *in flight* is not among them. That guard belongs to the
- *  Updates table, whose actions send `row.latest.commit` and so must not
- *  commit values a landing read is about to replace; this page's Update
- *  sends only scope, kind and name, and takes its versions from its own
- *  read. Refusing here would unmount the button on every window focus,
- *  which raises `overviewInFlight` for the whole overview read.
+ *  A read merely *in flight* does not bar a row that exists. That guard
+ *  belongs to the Updates table, whose actions send `row.latest.commit`
+ *  and so must not commit values a landing read is about to replace; this
+ *  page's Update sends only scope, kind and name, and takes its versions
+ *  from its own read. Refusing here would unmount the button on every
+ *  window focus, which raises `overviewInFlight` for the whole overview
+ *  read. It does bear on a place with no row, which is a different
+ *  question — not whether a value is stale, but whether the read has
+ *  finished saying which places it covers.
  *
  *  Of the reasons [`updateWithheld`] gives, the owner's hold is the one
  *  this page never renders: it wants a derived place, and core's version
@@ -143,9 +151,13 @@ export const pageUpdateWithheld = (
     default:
       return unhandledReadState(read);
   }
-  // The read landed and covers declared packages with a repository source,
-  // so a place with no row is one it does not cover.
-  if (row === null) return NO_UPDATE_STANDING_NOTE;
+  // No row here. Whether that is a fact depends on whether the read is
+  // finished: one about to replace every row may be about to produce this
+  // one, and saying it has not spoken for the place claims a ruling it is
+  // still making. Only a settled read may say "nothing here".
+  if (row === null) {
+    return unsettled(standing) ? UPDATES_CHECKING : NO_UPDATE_STANDING_NOTE;
+  }
   // A Follow source flip is applying in this very place; a second write
   // would contend for the same writer lock.
   if (settlingIn(standing, row)) return UPDATE_NEEDS_CHECK_HERE;
