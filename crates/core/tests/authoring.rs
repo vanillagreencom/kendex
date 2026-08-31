@@ -190,50 +190,79 @@ fn a_path_whose_last_component_is_not_a_name_refuses_and_writes_nothing() {
     );
 }
 
-/// A link whose target is gone answers `exists` with false. Creating into
-/// it would write through it, and the failure path would delete it.
+/// A link whose target is gone answers `exists` with false, and the
+/// failure path's `remove_dir_all` deletes the link itself.
+///
+/// Asked of the three spellings that reach one place, because they do not
+/// all resolve alike: `made` stops at the link, while `made/` and
+/// `made/.` send the kernel through it and answer NotFound. A guard on
+/// the caller's spelling passes for the last two while the build and the
+/// removal work on the place all three name.
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_dangling_link_at_the_destination_refuses_and_survives() {
-    let (tmp, env) = fake();
-    let dir = tmp.path().join("made");
-    std::os::unix::fs::symlink(tmp.path().join("absent"), &dir).unwrap();
+fn a_dangling_link_at_the_destination_refuses_in_every_spelling() {
+    for spelling in ["made", "made/", "made/."] {
+        let (tmp, env) = fake();
+        let link = tmp.path().join("made");
+        std::os::unix::fs::symlink(tmp.path().join("nowhere-at-all"), &link).unwrap();
 
-    let refused = author::create(&env, &request(&dir, License::Mit)).unwrap_err();
-    assert!(refused.to_string().contains("already exists"), "{refused}");
-    assert!(dir.is_symlink(), "the link somebody made is still there");
-    assert!(
-        !tmp.path().join("absent").exists(),
-        "nothing was written through it"
-    );
+        let asked = tmp.path().join(spelling);
+        let refused = author::create(&env, &request(&asked, License::Mit)).unwrap_err();
+        assert!(
+            refused.to_string().contains("already exists"),
+            "{spelling}: {refused}"
+        );
+        assert!(
+            link.is_symlink(),
+            "{spelling}: the link somebody made is still there"
+        );
+        assert!(
+            author::list(&env).unwrap().is_empty(),
+            "{spelling}: nothing was registered"
+        );
+    }
 }
 
-/// A registry that refuses after the build removes the folder this call
-/// made, and nothing else. The folder is named through a path that walks
-/// back out of itself, which is the spelling `remove_dir_all` must never
-/// be handed.
+/// A registry that refuses after the build takes the folder back, and
+/// takes nothing else.
+///
+/// The refusal has to land after `build_in`, or the removal this pins
+/// never runs: `can_register` only reads the registry, so the fixture
+/// makes the write fail instead, by taking write permission off the
+/// directory `authored.toml` sits in once the read has been satisfied.
+#[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_registry_refusal_after_the_build_removes_only_the_folder_it_made() {
+    use std::os::unix::fs::PermissionsExt as _;
     let (tmp, env) = fake();
     let work = tmp.path().join("work");
-    fs::create_dir_all(&work).unwrap();
+    fs::create_dir_all(work.join("sub")).unwrap();
     fs::write(work.join("keep.txt"), "somebody's file").unwrap();
 
-    // The row this create would add is already under Mine, so `register`
-    // refuses once `build_in` has written.
-    let made = work.join("made");
-    fs::create_dir_all(&made).unwrap();
-    author::register(&env, &made).unwrap();
-    fs::remove_dir_all(&made).unwrap();
+    // One registration, so the registry file and its directory exist.
+    let other = tmp.path().join("other");
+    fs::create_dir_all(&other).unwrap();
+    author::register(&env, &other).unwrap();
 
-    let spelled = work.join("sub/../made");
-    fs::create_dir_all(work.join("sub")).unwrap();
-    let refused = author::create(&env, &request(&spelled, License::Mit)).unwrap_err();
+    let registry = env.settings_file().parent().unwrap().to_path_buf();
+    fs::set_permissions(&registry, fs::Permissions::from_mode(0o500)).unwrap();
+    let unlock = || fs::set_permissions(&registry, fs::Permissions::from_mode(0o700)).unwrap();
+    if fs::write(registry.join("probe"), "").is_ok() {
+        // Permissions do not bind this user (root): the write cannot be
+        // made to fail here.
+        unlock();
+        return;
+    }
+
+    let made = work.join("made");
+    let refused = author::create(&env, &request(&made, License::Mit)).unwrap_err();
+    unlock();
+
     assert!(
-        refused.to_string().contains("already under Mine"),
-        "{refused}"
+        !refused.to_string().contains("left behind"),
+        "the folder came back, so the error is the registry's own: {refused}"
     );
     assert!(!made.exists(), "the folder this call made is gone");
     assert_eq!(
@@ -241,6 +270,7 @@ fn a_registry_refusal_after_the_build_removes_only_the_folder_it_made() {
         "somebody's file"
     );
     assert!(work.join("sub").is_dir(), "nothing else was removed");
+    assert!(other.is_dir(), "and nothing of anybody else's");
 }
 
 #[test]

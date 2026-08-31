@@ -1,7 +1,6 @@
 //! The copy itself: previewed selections into an authored catalog, with
 //! every refusal decided before the first byte is written.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::env::Env;
@@ -26,7 +25,6 @@ pub fn apply(
 ) -> Result<ImportOutcome> {
     let target = registered_target(env, target)?;
     let mut resolved: Vec<(usize, ResolvedSelection, PathBuf)> = Vec::new();
-    let mut taken: BTreeSet<(ItemKind, String)> = BTreeSet::new();
     for (at, selection) in selections.iter().enumerate() {
         if let Some(problem) = crate::names::item_problem(&selection.destination) {
             return Err(CoreError::Authoring {
@@ -52,21 +50,10 @@ pub fn apply(
                 ),
             });
         }
-        // Two selections folding to one destination would silently
-        // overwrite each other during the copy — refused up front.
-        let key = (selection.kind, crate::names::fold(&selection.destination));
-        if !taken.insert(key) {
-            return Err(CoreError::Authoring {
-                message: format!(
-                    "two selections both land at {} '{}' — give one a different destination name",
-                    selection.kind.name(),
-                    selection.destination
-                ),
-            });
-        }
+        let dest = destination(&target, selection.kind, &selection.destination);
+        occupies(&resolved, selections, &dest, selection)?;
         let answer = super::resolve_selection(env, scopes, selection)?;
         license_gate(selection, &answer.group)?;
-        let dest = destination(&target, selection.kind, &selection.destination);
         origin_overlap(&target, &answer)?;
         resolved.push((at, answer, dest));
     }
@@ -77,6 +64,61 @@ pub fn apply(
     };
     write_all(&target, &resolved, selections, &mut outcome)?;
     Ok(outcome)
+}
+
+/// Whether a selection already taken occupies the place this one wants.
+///
+/// One question, asked once per selection, because the collision is per
+/// selection: `Foo` and `foo` are one file on macOS and Windows, and a
+/// skill destined for `p` carrying a `sub/` of its own meets a skill
+/// destined for `p/sub` without the two sharing a single filename. Asking
+/// per written file catches only the second of those, and asking per
+/// `<kind, name>` only the first.
+///
+/// Compared component by component under [`crate::names::fold`], which is
+/// the spelling a folding filesystem hands both names to, and equal or
+/// either one a prefix of the other is the same answer: neither selection
+/// may decide what the other's bytes are by landing second.
+fn occupies(
+    resolved: &[(usize, ResolvedSelection, PathBuf)],
+    selections: &[ImportSelection],
+    dest: &Path,
+    selection: &ImportSelection,
+) -> Result<()> {
+    let wanted = folded(dest);
+    for (at, _, taken) in resolved {
+        let held = folded(taken);
+        if !(held.starts_with(&wanted) || wanted.starts_with(&held)) {
+            continue;
+        }
+        return Err(CoreError::Authoring {
+            message: format!(
+                "'{}' and '{}' both land at {} — give one of them a different destination name",
+                selections[*at].destination,
+                selection.destination,
+                shorter(taken, dest).display()
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// A path's components in the spelling a folding filesystem stores them
+/// under, so a prefix comparison answers for `Foo/Bar` and `foo/bar` the
+/// way the disk will.
+fn folded(path: &Path) -> Vec<String> {
+    path.components()
+        .map(|part| crate::names::fold(&part.as_os_str().to_string_lossy()))
+        .collect()
+}
+
+/// The place the two selections meet: the outer of the pair, which is the
+/// one that holds the other.
+fn shorter<'a>(one: &'a Path, other: &'a Path) -> &'a Path {
+    match one.components().count() <= other.components().count() {
+        true => one,
+        false => other,
+    }
 }
 
 /// Imports write only into a folder the person registered — and into its

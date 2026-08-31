@@ -57,9 +57,11 @@ fn a_journal_without_meta_is_not_pending_and_is_swept() {
 ///
 /// Pinned with a journal directory that takes an unlink and refuses to be
 /// opened, which is what separates the two orders rather than testing
-/// them both. `remove_dir_all` opens the directory before it removes
-/// anything, so it fails having taken nothing, meta.json included; the
-/// unlink ahead of it needs no read and goes through.
+/// them both. Under the order here the unlink needs no read and goes
+/// through, and what stops the run is the `sync_dir_durable` behind it.
+/// Under the other order `remove_dir_all` opens the directory before it
+/// removes anything, so it would fail having taken nothing, meta.json
+/// included, and the journal would still be pending.
 #[cfg(unix)]
 #[test]
 fn clear_takes_meta_down_before_the_sweep() {

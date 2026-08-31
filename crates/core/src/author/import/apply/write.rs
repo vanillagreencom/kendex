@@ -15,12 +15,24 @@ struct Write<'a> {
     label: String,
 }
 
+impl<'a> Write<'a> {
+    fn new(dest: PathBuf, bytes: &'a [u8], label: &str) -> Write<'a> {
+        Write {
+            dest,
+            bytes,
+            label: label.to_owned(),
+        }
+    }
+}
+
 /// Write every selection at its destination.
 ///
 /// Two passes, so a refusal reaches nothing: the first decides every one
 /// this copy can make — a destination already holding other bytes, a
-/// case-folding sibling, two selections claiming one place — and notes
-/// the exact copies that are already there; the second writes.
+/// case-folding sibling — and notes the exact copies that are already
+/// there; the second writes. Two selections claiming one place is decided
+/// before either reaches here, by the caller, over the selections
+/// themselves.
 ///
 /// A disk that fails in the second pass is not a refusal and is not
 /// undone. The error names what reached the folder, because the next
@@ -53,10 +65,10 @@ pub(super) fn write_all(
             continue;
         }
         match &answer.bytes {
-            Bytes::File(bytes) => claim(&mut planned, dest.clone(), bytes, &label)?,
+            Bytes::File(bytes) => planned.push(Write::new(dest.clone(), bytes, &label)),
             Bytes::Tree(files) => {
                 for (rel, bytes) in files {
-                    claim(&mut planned, dest.join(rel), bytes, &label)?;
+                    planned.push(Write::new(dest.join(rel), bytes, &label));
                 }
             }
         }
@@ -68,48 +80,6 @@ pub(super) fn write_all(
             return Err(interrupted(&planned[..index], write, error));
         }
     }
-    Ok(())
-}
-
-/// Take a destination for this write, or refuse the second selection that
-/// wants the same place.
-///
-/// Nothing stops two selections overlapping: a skill destined for `p`
-/// carrying a `sub/` of its own, and a second skill destined for `p/sub`,
-/// are two legal names whose trees meet. Decided by the writing order the
-/// later one would replace the earlier one's bytes and the outcome would
-/// report both as copied, so the pair is refused by name instead. A path
-/// one write claims and another writes underneath is the same collision
-/// one step out.
-fn claim<'a>(
-    planned: &mut Vec<Write<'a>>,
-    dest: PathBuf,
-    bytes: &'a [u8],
-    label: &str,
-) -> Result<()> {
-    for held in planned.iter() {
-        if !(held.dest == dest || held.dest.starts_with(&dest) || dest.starts_with(&held.dest)) {
-            continue;
-        }
-        // The same bytes at the same place are one write, not a clash:
-        // two origins carrying the same licence file, say.
-        if held.dest == dest && held.bytes == bytes {
-            return Ok(());
-        }
-        return Err(CoreError::Authoring {
-            message: format!(
-                "'{}' and '{}' both write {} — give one of them a different destination name",
-                held.label,
-                label,
-                dest.display()
-            ),
-        });
-    }
-    planned.push(Write {
-        dest,
-        bytes,
-        label: label.to_owned(),
-    });
     Ok(())
 }
 
@@ -127,9 +97,9 @@ fn plan_notices<'a>(
     };
     for (name, bytes) in &answer.notices {
         let dest = target.join("NOTICES").join(source).join(name);
-        // The path itself, never the label a path renders as: two names
-        // that are not valid UTF-8 render the same and the second would
-        // be dropped while the outcome reported it written.
+        // The path is what a write is claimed under, so the question is
+        // asked of it rather than of the label it renders as. A shared
+        // licence file reached through two origins is one write.
         if planned.iter().any(|held| held.dest == dest) {
             continue;
         }
@@ -143,7 +113,7 @@ fn plan_notices<'a>(
             continue;
         }
         let label = rel_name(target, &dest);
-        claim(planned, dest, bytes, &label)?;
+        planned.push(Write::new(dest, bytes, &label));
         outcome.written.push(label);
     }
     Ok(())

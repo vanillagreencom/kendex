@@ -241,26 +241,24 @@ fn a_write_that_stops_part_way_names_what_reached_the_folder() {
     );
 }
 
-/// Two legal destination names whose trees meet. `mine` carries a
-/// `nested/` of its own and `stray` is destined for `mine/nested`, so
-/// both write `skills/mine/nested/SKILL.md`. Decided by the writing order
-/// the second would replace the first's bytes and the outcome would
-/// report both as copied.
+/// Two legal destination names whose trees meet in a directory without
+/// sharing a single filename. `mine` carries `nested/notes.md` and the
+/// second selection is destined for `mine/nested`, so neither writes a
+/// path the other writes and one skill's file would still end up sitting
+/// in the other skill's directory, with the outcome reporting both as
+/// copied cleanly.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn two_selections_claiming_one_destination_refuse_and_write_nothing() {
+fn two_selections_whose_trees_meet_refuse_and_write_nothing() {
     let (tmp, env, scope) = seeded();
     let Scope::Project { root } = &scope else {
         unreachable!()
     };
-    // A subdirectory inside the skill the first selection copies whole.
-    skill(
-        &root
-            .join(crate::source::LOCAL_SOURCE_DIR)
-            .join("skills/mine"),
-        "nested",
-        "the parent tree's copy",
-    );
+    let nested = root
+        .join(crate::source::LOCAL_SOURCE_DIR)
+        .join("skills/mine/nested");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("notes.md"), "the parent tree's own file").unwrap();
     let scopes = [scope.clone()];
     let target = target(&env, &tmp, "mine-overlap");
     let candidates = inventory(&env, &scopes).unwrap();
@@ -268,9 +266,11 @@ fn two_selections_claiming_one_destination_refuse_and_write_nothing() {
     under.destination = "mine/nested".to_owned();
     let selections = [selection(find(&candidates, "mine"), false), under];
 
-    let refused = apply(&env, &scopes, &target, &selections);
-    let message = refused.unwrap_err().to_string();
-    assert!(message.contains("both write"), "{message}");
+    let message = apply(&env, &scopes, &target, &selections)
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("both land at"), "{message}");
+    assert!(message.contains("mine/nested"), "it names both: {message}");
     assert!(
         !target.join("skills").exists(),
         "a refused apply writes nothing at all"
