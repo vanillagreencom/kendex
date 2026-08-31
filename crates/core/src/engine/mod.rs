@@ -51,7 +51,7 @@ pub use settings_scan::settings_templates;
 mod scoring;
 mod set_change;
 mod stale;
-mod takeover;
+pub mod takeover;
 mod targets;
 mod tree_plan;
 mod unmanaged;

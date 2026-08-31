@@ -45,7 +45,7 @@ pub fn print_conflicts(env: &Env, report: &EngineReport) -> Vec<Blocked> {
         }
         say_offer(&rows, group.last().unwrap_or(first), offer);
     }
-    say_scope_exit(&rows, &blocked);
+    say_scope_exit(report, &rows, &blocked);
     blocked
 }
 
@@ -79,7 +79,7 @@ pub fn print_drift(env: &Env, report: &EngineReport) -> Vec<Blocked> {
         }
         say_offer(&rows, row, offer);
     }
-    say_scope_exit(&rows, &blocked);
+    say_scope_exit(report, &rows, &blocked);
     blocked
 }
 
@@ -225,15 +225,16 @@ fn plural(n: u32) -> &'static str {
 /// copies of it bury the paths that differ. Indented with them all the same
 /// — at column 0 it reads as a heading over the plan that follows, which is
 /// the plan that runs without it.
-fn say_scope_exit(rows: &[&DriftRow], blocked: &[Blocked]) {
+fn say_scope_exit(report: &EngineReport, rows: &[&DriftRow], blocked: &[Blocked]) {
     let (true, Some(row)) = (blocked.iter().any(|item| item.replace), rows.first()) else {
         return;
     };
-    // The sweep answers for every item it sweeps up or for none of them, so
-    // one item it takes and cannot settle refuses the whole run. Printed
-    // there, this offers a command that cannot succeed on the scope it is
-    // printed under; each item's own way out above still stands.
-    if blocked.iter().any(|item| item.sweep_refuses) {
+    // The engine's own verdict on this scope, not a second reading of it:
+    // the sweep answers for every item it sweeps up or for none of them, so
+    // one item it takes and cannot settle refuses the whole run, and
+    // printing the flag there offers a command that cannot succeed on the
+    // scope it is printed under. Each item's own way out above still stands.
+    if kendex_core::engine::takeover::sweep_would_refuse(&report.drift) {
         return;
     }
     say(&format!(

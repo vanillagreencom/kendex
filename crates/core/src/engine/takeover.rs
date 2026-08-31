@@ -59,16 +59,14 @@ pub(crate) fn refuse_unsettleable_sweep(
         return Ok(());
     }
     let mut blocked: Vec<String> = Vec::new();
-    for row in drift
-        .iter()
-        .filter(|row| row.detail == super::file_plan::TAKEN_OVER)
-    {
-        let Some(stop) = drift
-            .iter()
-            .find(|other| other.kind == row.kind && other.name == row.name && other.dead_stop())
-        else {
-            continue;
-        };
+    // In a plan the flag already shaped, the row says both halves itself: a
+    // place it took reads as taken over, and a place still standing as a
+    // dead stop is one it could not take.
+    for (row, stop) in blocked_sweep(
+        drift,
+        |row| row.detail == super::file_plan::TAKEN_OVER,
+        DriftRow::dead_stop,
+    ) {
         let said = format!(
             "{} {} — replacing cannot settle its conflict for {}: {}",
             row.kind.name(),
@@ -87,4 +85,64 @@ pub(crate) fn refuse_unsettleable_sweep(
         true => Ok(()),
         false => Err(crate::error::CoreError::TakeOverSweepBlocked { blocked }),
     }
+}
+
+/// Whether the scope-wide sweep would refuse on this scope, asked of a
+/// plan the flag has NOT shaped — what a surface offering the flag has to
+/// know before it names a command the run would refuse.
+///
+/// The same rule as [`refuse_unsettleable_sweep`], reading "taken" from
+/// the only thing an unflagged plan says about it: a place the take-over
+/// can replace is a place it would take. Both readings are declared here,
+/// beside each other and over one walk, because a surface deriving this
+/// separately is a second judgement that drifts silently — and the
+/// direction it drifts in is a command offered to somebody that cannot
+/// succeed.
+///
+/// Bounded by what the unflagged pass reports. A conflict it stops at
+/// before looking past — a stranger's tree in the canonical position,
+/// with the harness link beside it never inspected — is a place this
+/// cannot see and cannot answer for.
+pub fn sweep_would_refuse(drift: &[DriftRow]) -> bool {
+    let replaceable = |row: &DriftRow| {
+        row.cause
+            .is_some_and(crate::engine::DriftCause::can_replace)
+    };
+    // Both halves read off the cause, because before the flag runs every
+    // place of the item is still a conflict: one the take-over can replace
+    // is a place it would take, and one it cannot is what blocks it. A
+    // place it can replace never blocks — the flag takes that one too.
+    !blocked_sweep(drift, replaceable, |row| {
+        row.dead_stop() && !replaceable(row)
+    })
+    .is_empty()
+}
+
+/// Each row a sweep takes, paired with a row BESIDE it, of the same item,
+/// that the sweep cannot settle. `taken` says which rows a reading counts
+/// as swept up and `blocking` which it counts as stopping them; the two
+/// differ by whether the plan has already been shaped by the flag.
+///
+/// Beside it, never itself: before the flag runs, a place the take-over
+/// would replace is a conflict in its own right, so a row read as taken
+/// would otherwise answer for its own blocking. What blocks a take-over is
+/// always some other place of the same item.
+fn blocked_sweep(
+    drift: &[DriftRow],
+    taken: impl Fn(&DriftRow) -> bool,
+    blocking: impl Fn(&DriftRow) -> bool,
+) -> Vec<(&DriftRow, &DriftRow)> {
+    drift
+        .iter()
+        .filter(|row| taken(row))
+        .filter_map(|row| {
+            let stop = drift.iter().find(|other| {
+                !std::ptr::eq(*other, row)
+                    && other.kind == row.kind
+                    && other.name == row.name
+                    && blocking(other)
+            });
+            stop.map(|stop| (row, stop))
+        })
+        .collect()
 }
