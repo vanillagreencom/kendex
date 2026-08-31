@@ -5,7 +5,8 @@ Working on kendex itself. To install and use it, start from the
 
 ## Build from source
 
-Rust and Node required.
+Rust, Node, and git 2.41 or newer required — kendex materializes a
+catalog with `git --attr-source`, which no earlier git takes.
 
 ```sh
 cargo build --release -p kendex-cli               # the `kendex` CLI

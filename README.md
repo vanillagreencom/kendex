@@ -78,6 +78,10 @@ the command; get the app with the cask below.
   run` and `guard check` need the `sh` that Git for Windows ships — the
   same one git uses to run a hook there.
 
+git 2.41 or newer is needed to install from a source; kendex refuses on
+anything older and names the version it found. Ubuntu 22.04, Debian 12 and
+Xcode's command line tools all ship an earlier one.
+
 For the CLI on its own: `brew install vanillagreencom/kendex/kendex-cli`,
 `yay -S kendex`, or the curl
 command on macOS. Every install option is on

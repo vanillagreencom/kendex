@@ -451,9 +451,14 @@ fn a_commit_id_of_no_known_object_format_is_refused() {
 
     let error = store::publish(&f.env, &key, &mirror, abbreviated).unwrap_err();
 
+    let refusal = error.to_string();
     assert!(
-        error.to_string().contains("attribute source"),
-        "refused for some other reason: {error}"
+        refusal.starts_with(&format!("materializing {abbreviated} failed:")),
+        "the refusal names something other than what kendex declined: {refusal}"
+    );
+    assert!(
+        refusal.contains("attribute source"),
+        "refused for some other reason: {refusal}"
     );
     assert!(!store::checkout_dir(&f.env, &key, abbreviated).exists());
 }

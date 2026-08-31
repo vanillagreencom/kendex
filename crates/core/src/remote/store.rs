@@ -17,6 +17,7 @@ use crate::error::{CoreError, Result};
 use crate::fs::atomic_write;
 use crate::process::Hardened;
 
+mod attribute_source;
 mod signature;
 
 pub use signature::tree_signature;
@@ -333,52 +334,19 @@ pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<Path
 /// `.git` pointer inside a directory that is meant to be plain content.
 ///
 /// The catalog's own `.gitattributes` decides nothing about what lands
-/// either: the write reads its attributes out of [`NO_ATTRIBUTES`] instead
-/// of out of the commit, so no rule the source committed is in force for
-/// any path. `process::MATERIALISING` says why the host half is settled
-/// where it is and this half is an argument.
+/// either: the write reads its attributes out of the tree
+/// [`attribute_source`] names instead of out of the commit, so no rule the
+/// source committed is in force for any path. `process::MATERIALISING`
+/// says why the host half is settled where it is and this half is an
+/// argument.
 fn check_out(into: &Path, mirror: &Path, commit: &str) -> Result<()> {
+    let attributes = attribute_source::for_commit(commit)?;
     fs::create_dir_all(into).map_err(|e| CoreError::io(into, e))?;
     run(Hardened::git_bare(mirror, &["read-tree", commit]))?;
     run(Hardened::git_into(
         mirror,
         into,
-        no_attributes(commit)?,
+        attributes,
         &["checkout-index", "--all", "--force"],
     ))
-}
-
-/// The empty tree, which is the tree with no `.gitattributes` in it, in
-/// each object format git has. Both are constants of the format rather
-/// than of any repository: git answers for the empty tree whether or not
-/// the object was ever stored.
-const NO_ATTRIBUTES: [(usize, &str); 2] = [
-    (40, "4b825dc642cb6eb9a060e54bf8d69288fbee4904"),
-    (
-        64,
-        "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321",
-    ),
-];
-
-/// Which of them this repository owes, read off the length of the commit
-/// id in hand — the id git itself printed out of this mirror, so its
-/// length is that mirror's hash size and no extra call has to ask.
-///
-/// Wrong would be loud, not quiet: git refuses an attribute source in the
-/// other format outright (`fatal: bad --attr-source or GIT_ATTR_SOURCE`),
-/// and a length that is neither is refused here for the same reason. The
-/// one answer that must never be reachable is a checkout written with no
-/// attribute source at all, because that one converts in silence.
-fn no_attributes(commit: &str) -> Result<&'static str> {
-    NO_ATTRIBUTES
-        .iter()
-        .find(|(length, _)| *length == commit.len())
-        .map(|(_, tree)| *tree)
-        .ok_or_else(|| CoreError::GitFailed {
-            command: format!("git checkout-index {commit}"),
-            stderr: format!(
-                "no object format has ids of {} characters, so the attribute source                  this checkout must be written under cannot be named",
-                commit.len()
-            ),
-        })
 }
