@@ -1,9 +1,11 @@
+#[cfg(unix)]
 use kendex_core::install_channel::HostProbe as _;
 
 use super::*;
 
 #[path = "../../../test_util.rs"]
 mod test_util;
+#[cfg(unix)]
 use test_util::no_record_on_this_runner;
 
 #[test]
@@ -279,6 +281,13 @@ fn a_failed_app_half_says_whether_the_command_went_ahead_of_it() {
 /// never inside it. Read as a difference rather than an absolute, because
 /// the candidate list ends with a system path this machine may well have a
 /// kendex in.
+///
+/// Unix only, because there is no command beside the app on Windows: the
+/// installer carries the app alone, so the name there only ever fails to
+/// exist and every lookup below would answer `Absent` — which the first
+/// assertion, a difference, would pass without reaching the exclusion it
+/// is about.
+#[cfg(unix)]
 #[test]
 fn the_app_s_own_image_is_never_the_command_it_carries() {
     if no_record_on_this_runner() {
@@ -350,6 +359,7 @@ fn the_running_executable_is_excluded_where_the_updater_names_no_path() {
 
 /// One machine with a `kendex` command an installer recorded, and the
 /// notice the card would have drawn for it.
+#[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn a_recorded_command(dir: &tempfile::TempDir) -> (Env, std::ffi::OsString, PathBuf) {
     let bin = dir.path().join("bin");
@@ -375,6 +385,11 @@ fn a_recorded_command(dir: &tempfile::TempDir) -> (Env, std::ffi::OsString, Path
 /// Driven through the real lookup rather than a described state: a second
 /// install records its own `kendex` between the two reads, and the command
 /// beside this app is one nothing vouches for any more.
+///
+/// Unix only, for the same reason: the second answer is a command found by
+/// name on `PATH` and vouched for by nobody, and Windows has no command
+/// beside the app to find.
+#[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_that_changed_under_the_card_answers_differently() {
