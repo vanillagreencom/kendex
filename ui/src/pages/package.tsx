@@ -128,10 +128,10 @@ export function PackagePage() {
   const installed = installedRow(versions);
   const latest = latestRow(versions);
   // The button and the note beside it come from the one string above, so
-  // a reason the update read carries — its own state, or the row's — is
-  // always said where the button would have been. Update also waits for
-  // meta (held vs following), and takes its newness from this page's own
-  // version rows.
+  // wherever there is a newer version to move to, a reason the update read
+  // carries — its own state, or the row's — is always said where the
+  // button would have been. Update also waits for meta (held vs
+  // following), and takes its newness from this page's own version rows.
   const canUpdate = canUpdatePackage({
     latest,
     installed,

@@ -279,6 +279,14 @@ describe("pageUpdateWithheld", () => {
     ).toBe(UPDATE_NEEDS_CHECK_NOTE);
   });
 
+  // The shape the old reading got wrong: a row is present, so it answered
+  // off the row and never looked at the read under it.
+  it("holds a row the first read has not answered for yet", () => {
+    expect(
+      pageUpdateWithheld(row("gh", "/a"), standing({ loaded: false })),
+    ).toBe(UPDATES_CHECKING);
+  });
+
   // A failed re-read keeps the rows it had and drops `loaded`. The row is
   // there and withholds nothing of its own, so only the read state stands
   // between the reader and an Update over rows nobody could confirm.

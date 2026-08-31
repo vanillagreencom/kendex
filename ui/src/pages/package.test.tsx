@@ -30,6 +30,7 @@ import {
 import { editorOpenPath } from "@/lib/editor-path";
 import { SEVERITY_LABELS } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
+import { pageUpdateWithheld } from "@/lib/update-groups";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useNavStore } from "@/stores/nav";
@@ -232,7 +233,14 @@ beforeEach(() => {
     dirty: false,
     manifestDirty: false,
   });
-  useUpdatesStore.setState({ rows: [], loaded: true });
+  useUpdatesStore.setState({
+    rows: [],
+    loaded: true,
+    error: null,
+    checking: false,
+    overviewInFlight: false,
+    pendingFollows: [],
+  });
   useAuditStore.setState({
     views: [],
     auditedAt: null,
@@ -631,7 +639,17 @@ describe("the package page's Update", () => {
       status: "ok",
       data: meta,
     });
-    useUpdatesStore.setState({ rows, loaded, ...standing });
+    // Set in full, never merged: zustand keeps whatever a previous test
+    // left, so a leaked `error` would make a pending read read as failed.
+    useUpdatesStore.setState({
+      rows,
+      loaded,
+      error: null,
+      checking: false,
+      overviewInFlight: false,
+      pendingFollows: [],
+      ...standing,
+    });
     return openPage(VG, [VG], { [scopeKey(VG)]: PLAIN }, null, kind);
   };
 
@@ -715,6 +733,35 @@ describe("the package page's Update", () => {
     );
     expect(updateButton(host)).toBeUndefined();
     expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_NOTE);
+  });
+
+  // The invariant the page's own comments claim, asserted as the absence
+  // of silence rather than as a sentence: wherever there is a newer
+  // version and the page will not offer it, some reason is on screen. Not
+  // pinned to a particular string, so rewording the copy cannot red this
+  // for the wrong reason — the reason itself is the shared reading's.
+  it("never withholds Update in silence, whatever the read is doing", async () => {
+    const stale = { ...updateRow(VG), updateAvailable: true };
+    for (const standing of [
+      { loaded: false },
+      { loaded: false, error: "no network" },
+      { checking: true },
+      { overviewInFlight: true },
+    ]) {
+      const host = await openWithUpdates([stale], standing);
+      expect(updateButton(host)).toBeUndefined();
+      const said = host.textContent ?? "";
+      const reason = pageUpdateWithheld(stale, {
+        loaded: true,
+        error: null,
+        checking: false,
+        overviewInFlight: false,
+        pendingFollows: [],
+        ...standing,
+      });
+      expect(reason).not.toBeNull();
+      expect(said).toContain(reason as string);
+    }
   });
 
   // A check or a refresh is about to answer for every row on screen. The

@@ -358,8 +358,9 @@ mod tests {
     /// it cannot be satisfied by the list [`plans_per_package`] reads: a
     /// kind moved into `PLANNED_KINDS` turns this red, and a variant added
     /// to the enum stops this test compiling until it is classified here.
-    /// Exhaustiveness is checked against the type, so a variant left out
-    /// of `ItemKind::ALL` is caught too.
+    /// The other half is not this test's to hold: a kind dropped from
+    /// `ItemKind::ALL` would leave the loop skipping it in silence, so
+    /// `model.rs` keeps that list complete at build time.
     #[test]
     fn only_the_kinds_a_plan_derives_have_a_per_package_update() {
         for kind in ItemKind::ALL {

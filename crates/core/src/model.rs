@@ -84,6 +84,10 @@ pub enum ItemKind {
 }
 
 impl ItemKind {
+    /// Every kind, and the sweep every caller walks to reach them all. A
+    /// kind missing from here is one every one of those sweeps skips
+    /// silently, so the assertion under this impl holds it complete at
+    /// build time rather than leaving it to a test to notice.
     pub const ALL: [ItemKind; 7] = [
         ItemKind::Agent,
         ItemKind::Skill,
@@ -93,6 +97,20 @@ impl ItemKind {
         ItemKind::Plugin,
         ItemKind::PiExtension,
     ];
+
+    /// Where this kind sits in [`Self::ALL`]. Exhaustive, so a variant added
+    /// to the enum has to be given a place before anything builds.
+    const fn slot(self) -> usize {
+        match self {
+            ItemKind::Agent => 0,
+            ItemKind::Skill => 1,
+            ItemKind::Hook => 2,
+            ItemKind::Command => 3,
+            ItemKind::McpServer => 4,
+            ItemKind::Plugin => 5,
+            ItemKind::PiExtension => 6,
+        }
+    }
 
     pub fn name(self) -> &'static str {
         match self {
@@ -106,6 +124,18 @@ impl ItemKind {
         }
     }
 }
+
+/// [`ItemKind::ALL`] really holds every kind, each at its own slot — the
+/// half `slot`'s exhaustive match cannot state on its own. A kind dropped
+/// from `ALL`, or reordered out of step with its slot, fails the build
+/// here rather than quietly shrinking every sweep that walks it.
+const _: () = {
+    let mut slot = 0;
+    while slot < ItemKind::ALL.len() {
+        assert!(ItemKind::ALL[slot].slot() == slot);
+        slot += 1;
+    }
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(tag = "scope", rename_all = "kebab-case")]
