@@ -30,13 +30,17 @@ set -euo pipefail
 #   A time cap. The session is killed after CAP seconds and reported as
 #   GG_PTY_STATE=capped. A probe that HANGS yields no measurement at all, so
 #   a mutation run scores it as "not killed" and prints a silent miss instead
-#   of a wedge. gg_pty_reap is what keeps a capped session from outliving the
-#   report that it was capped.
+#   of a wedge. gg_pty_reap takes the session's own process group, waits up
+#   to 5s for it, and says so when it could not finish — `capped` is a claim
+#   that the session is gone, and a reap that did not get there reports
+#   `leaked` rather than making it.
 #
 # What a call sets:
 #
 #   GG_PTY_STATE  ok      the session ran to its own end; GG_PTY_RC is its status
-#                 capped  the cap fired; the session was killed
+#                 capped  the cap fired and the session's group is gone
+#                 leaked  the cap fired and the reap did not finish; GG_PTY_ERR
+#                         says which way, and the scratch tree is left in place
 #                 gone    the session died before its own last line
 #   GG_PTY_RC     the session's own exit status, and EMPTY in any other state,
 #                 so a caller reading it past a cap gets a loud comparison
@@ -81,6 +85,7 @@ GG_PTY_OUT=""
 GG_PTY_STATE=""
 GG_PTY_ERR=""
 GG_PTY_CAPPED=0
+GG_PTY_REAPED=""
 
 # `script` is the one pty spawner both platforms ship, under two incompatible
 # grammars: util-linux takes the command as an argument to -e -c, BSD (macOS)
@@ -101,21 +106,34 @@ gg_pty_spawn() { # FORM SH_COMMAND
 #
 # The session's group is read from the file its own first line wrote, because
 # nothing on this side can derive it: the spawner is between us and it.
-gg_pty_reap() { # SPAWNER_PID_OR_EMPTY SID_FILE
+gg_pty_reap() { # SPAWNER_PID_OR_EMPTY SID_FILE — sets GG_PTY_REAPED
   local group="" waited=0
+  GG_PTY_REAPED=yes
   [ ! -f "$2" ] || group="$(tr -dc '0-9' <"$2" 2>/dev/null || true)"
-  # The session first, while the timeout that named it is one instant old: a
-  # pid read from a file is only as current as the process it came from.
-  [ -z "$group" ] || kill -9 -- "-$group" 2>/dev/null || true
+  if [ -n "$group" ]; then
+    # The session first, while the timeout that named it is one instant old:
+    # a pid read from a file is only as current as the process it came from.
+    kill -9 -- "-$group" 2>/dev/null || true
+  else
+    # No group to take: the session died before its first line, or this
+    # host's ps answers no -o pgid=. The spawner's goes below either way, but
+    # that is not the session's, and a reap that took only the spawner is the
+    # leak this function exists to report rather than the cap it looks like.
+    GG_PTY_REAPED=no-group
+  fi
   if [ -n "$1" ]; then
     kill -9 -- "-$1" 2>/dev/null || kill -9 "$1" 2>/dev/null || true
     wait "$1" 2>/dev/null || true
   fi
-  # Nothing is reported capped while the session is still there. The caller
-  # removes the scratch directory next, and an orphan inside it is the leak
-  # this reap exists to prevent, so the wait is part of the guarantee.
+  # The reap waits up to 5s for the group to go. A group still there after
+  # that is REPORTED, not absorbed: the caller removes the scratch directory
+  # next, and a live session holding fds inside it is the leak. The bound
+  # stays — an unbounded wait is the wedge this file exists to refuse.
   while [ -n "$group" ] && kill -0 -- "-$group" 2>/dev/null; do
-    [ "$waited" -lt 50 ] || break
+    if [ "$waited" -ge 50 ]; then
+      GG_PTY_REAPED=timeout
+      break
+    fi
     sleep 0.1
     waited=$((waited + 1))
   done
@@ -128,6 +146,7 @@ gg_pty_reap() { # SPAWNER_PID_OR_EMPTY SID_FILE
 gg_pty_bounded() { # CAP_SECONDS FORM SH_COMMAND SID_FILE OUT_FILE
   local cap="$1" form="$2" cmd="$3" sidfile="$4" outfile="$5" pid ticks=0 limit
   GG_PTY_CAPPED=0
+  GG_PTY_REAPED=""
   limit=$((cap * 10))
   # Job control, so the spawner is a group of its own and the reap can take it
   # whole. The session's group is a separate matter; see gg_pty_reap.
@@ -154,7 +173,17 @@ gg_pty_bounded() { # CAP_SECONDS FORM SH_COMMAND SID_FILE OUT_FILE
 gg_pty_form() {
   local dir form cmd
   [ -z "$GG_PTY_FORM" ] || { [ "$GG_PTY_FORM" != none ]; return; }
-  dir="$(mktemp -d "$TMPDIR/gg-ptyform.XXXXXX" 2>/dev/null)" || { GG_PTY_FORM=none; return 1; }
+  # 2>&1 rather than 2>/dev/null: on failure mktemp's own words ARE the cause,
+  # and they land in $dir, which the branch below reads and then clears. On
+  # success mktemp writes the path and nothing else.
+  #
+  # No memo is recorded here. `none` is reserved for "both grammars ran and
+  # neither opened a pty"; latching it for a scratch-root fault would answer
+  # the same wrong cause for the rest of the run, with TMPDIR long fixed.
+  dir="$(mktemp -d "$TMPDIR/gg-ptyform.XXXXXX" 2>&1)" || {
+    GG_PTY_ERR="could not create a scratch directory under TMPDIR ($TMPDIR): $dir"
+    return 1
+  }
   {
     printf '%s\n' 'ps -o pgid= -p $$ >"$2" 2>/dev/null || true'
     printf '%s\n' '[ -t 0 ] && [ -t 1 ] && [ -t 2 ] && : >"$1"'
@@ -173,7 +202,9 @@ gg_pty_form() {
     fi
   done
   rm -rf -- "${dir:?}"
+  # Both grammars ran and neither opened a pty. That, and only that, is none.
   GG_PTY_FORM=none
+  GG_PTY_ERR="no pty spawner on this host: neither script grammar opened a pseudo-terminal"
   return 1
 }
 
@@ -196,14 +227,16 @@ gg_pty_run() { # CAP_SECONDS SCRIPT_FILE
   GG_PTY_OUT=""
   GG_PTY_STATE=""
   GG_PTY_ERR=""
+  # gg_pty_form names its own cause, and the specific one survives: a sealed
+  # TMPDIR reported as a missing spawner sends an operator after devpts.
   gg_pty_form || {
-    GG_PTY_ERR="no pty spawner on this host: neither script grammar opened a pseudo-terminal"
+    [ -n "$GG_PTY_ERR" ] || GG_PTY_ERR="the pty spawner could not be resolved"
     return 1
   }
   # Named apart from the spawner, because a caller told "no spawner" over a
   # full or unwritable TMPDIR goes looking at devpts for a scratch problem.
-  dir="$(mktemp -d "$TMPDIR/gg-pty.XXXXXX" 2>/dev/null)" || {
-    GG_PTY_ERR="could not create a scratch directory under TMPDIR ($TMPDIR)"
+  dir="$(mktemp -d "$TMPDIR/gg-pty.XXXXXX" 2>&1)" || {
+    GG_PTY_ERR="could not create a scratch directory under TMPDIR ($TMPDIR): $dir"
     return 1
   }
   # The session's own group, its output marker, and its status, in that order.
@@ -230,7 +263,15 @@ gg_pty_run() { # CAP_SECONDS SCRIPT_FILE
   printf -v cmd '/bin/sh %q' "$dir/session.sh"
   gg_pty_bounded "$cap" "$GG_PTY_FORM" "$cmd" "$dir/sid" "$dir/out"
   gg_pty_capture "$dir/out"
-  if [ "$GG_PTY_CAPPED" = 1 ]; then
+  if [ "$GG_PTY_CAPPED" = 1 ] && [ "$GG_PTY_REAPED" != yes ]; then
+    # The cap fired and the reap did not finish. `capped` would say the
+    # session is gone, which is the one thing this branch cannot claim.
+    GG_PTY_STATE=leaked
+    case "$GG_PTY_REAPED" in
+      no-group) GG_PTY_ERR="the session never recorded its process group, so only the spawner's was killed" ;;
+      *) GG_PTY_ERR="the session's process group was still alive 5s after SIGKILL" ;;
+    esac
+  elif [ "$GG_PTY_CAPPED" = 1 ]; then
     GG_PTY_STATE=capped
   elif [ -f "$dir/rc" ]; then
     GG_PTY_STATE=ok
@@ -241,5 +282,12 @@ gg_pty_run() { # CAP_SECONDS SCRIPT_FILE
     # mistaken for something the probe returned.
     GG_PTY_STATE=gone
   fi
-  rm -rf -- "${dir:?}"
+  # A tree a live session may hold fds in is left where it is, and the caller
+  # is told. Removing it is what turns an incomplete reap into an orphan
+  # running inside a deleted directory.
+  if [ "$GG_PTY_STATE" = leaked ]; then
+    GG_PTY_ERR="$GG_PTY_ERR; the scratch directory is left in place at $dir"
+  else
+    rm -rf -- "${dir:?}"
+  fi
 }
