@@ -19,7 +19,8 @@
 #   order NAME FILE RE_A RE_B         RE_A's first match precedes RE_B's
 #   forbid NAME RE SAMPLE FILE...     no line in any FILE matches RE
 #   forbid_fenced NAME RE SAMPLE F... no ```bash/```sh command line matches RE
-#   permits[_fenced] NAME RE SAMPLE F a near-miss SAMPLE is not flagged
+#   permits[_fenced] NAME RE PROBE SAMPLE FILE
+#                                     SAMPLE is not flagged where PROBE is
 #   check NAME CMD...                 a bespoke predicate, for what the above
 #                                     cannot express
 #   section FILE HEADING              the section body, for a `check` predicate
@@ -30,6 +31,15 @@
 # One rule is one token set on one line. A rule that needs a second token set
 # is a second rule, and a contract too subtle for that is uncovered here rather
 # than covered in appearance.
+#
+# NO TRANSCRIBED VALUES, in this file or in any suite's header. That covers two
+# kinds, and the second is the one a sweep for counts misses: a count OF the
+# tree — suites, rules, files, lines — and a value copied OUT of another file,
+# a CI timeout or a setting's default. Both go stale silently, because nothing
+# rechecks a comment. Give the command that derives it and the scope it runs
+# over, or pin the other file's line with a `rule` so the two fail together.
+# Inherent counts stay: "the two state buckets" names the contract itself, and
+# no change to the tree can make it wrong.
 #
 # A suite also gets, beyond the rule forms: `pass` and `fail` for a verdict it
 # reaches itself, `md_report` to close, the path variables SKILL_DIR,
@@ -80,8 +90,16 @@
 #   forbid, forbid_fenced
 #                      the SAMPLE is appended to a scratch copy of EVERY
 #                      registered file in turn, and each must be flagged.
-#   check, permits     no automatic control. A suite using them owns proving
-#                      their teeth.
+#   permits            no registry and no control loop: it carries its own
+#                      positive half, the PROBE, in line.
+#   check              no automatic control. A suite using it owns proving its
+#                      teeth.
+#
+# Three forms can pass on an empty search result — `absent`, `forbid` and
+# `permits` — and each now carries a positive control, so none of them can
+# report a proof it did not perform. That enumeration is the whole of it: every
+# other `pass` here follows a match that was found, or a mutation that was
+# verified to have planted something.
 #
 # The rule control re-evaluates every held rule once per rule, so a suite's
 # control pass costs O(N^2) file reads in its rule count. Measure the law
@@ -95,16 +113,19 @@
 #
 # The shape that run showed: doubling the rules costs roughly four times the
 # time, while every orch lint suite together still finishes in a few seconds,
-# well inside the shell shard's 25-minute budget. What the law means for an
-# author is that a suite growing past roughly thirty rules is paying a
-# superlinear price and is better split by contract.
+# well inside the shell shard's timeout — `timeout-minutes` on the
+# skill-suites-shard job in `.github/workflows/skill-tests.yml`, which is where
+# to read it rather than here. What the law means for an author is that a suite
+# growing past roughly thirty rules is paying a superlinear price and is better
+# split by contract.
 #
-# One optimization is applied, above: the held-set pre-check is loop-invariant
-# and is computed once, which halved every measured suite. What was measured
-# and declined is a different set — per-path memoization of the reader, a
-# pre-stripped control scratch, and a file-grouped loop, each at 20 percent or
-# worse against the shell shard's budget, which is what the redesign they
-# pointed at was declined against.
+# One optimization is applied, above: the held-set pre-check is loop-invariant,
+# so computing it once takes the control pass from 2N^2 reads to N^2 + N. The
+# commands above are what measure what that is worth on a given machine. What
+# was measured and declined is a different set — per-path memoization of the
+# reader, a pre-stripped control scratch, and a file-grouped loop, each at 20
+# percent or worse against the shell shard's budget, which is what the redesign
+# they pointed at was declined against.
 
 MD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$(cd "$MD_LIB_DIR/.." && pwd)"
@@ -519,24 +540,51 @@ _md_forbid() {
 forbid() { _md_forbid line "$@"; }
 forbid_fenced() { _md_forbid fenced "$@"; }
 
-# permits NAME RE SAMPLE FILE — the near-miss half of a `forbid`: SAMPLE
-# appended to a clean FILE must NOT be flagged.
+# permits NAME RE PROBE SAMPLE FILE — the near-miss half of a `forbid`: SAMPLE
+# appended to FILE must NOT be flagged.
+#
+# PROBE is the positive half, and it is what makes the pass mean something.
+# `permits` is the third of the three forms that pass on an empty search
+# result, and the only one with no control loop behind it, so nothing else
+# would notice that the scan never reached the appended line at all. Two real
+# shapes do exactly that: a base whose last line opens an HTML comment that
+# never closes blanks whatever is appended after it, and a base with an odd
+# number of fences turns the fenced append's opening ``` into the closer of the
+# fence already open. PROBE goes down the same append path, in the same mode,
+# and must be flagged — so "the scanner read my appended line" is a
+# precondition of the near-miss verdict rather than an assumption.
 _md_permits() {
-  local name="$1" re="$2" sample="$3" file="$4" mode="$5"
-  MD_PERMITS=$((MD_PERMITS + 1))
-  local scratch="$MD_TMP/permit-$MD_PERMITS.md" hit
-  cp "$file" "$scratch"
-  if [ "$mode" = fenced ]; then
-    printf '\n```bash\n%s\n```\n' "$sample" >>"$scratch"
-    hit="$(_md_fenced_hits "$re" "$scratch")"
-  else
-    printf '\n%s\n' "$sample" >>"$scratch"
-    hit="$(_md_offenders "$re" "$scratch")"
+  local name="$1" re="$2" probe="$3" sample="$4" file="$5" mode="$6"
+  if ! _md_scannable "$file"; then
+    fail "$name — ${file#$REPO_ROOT/} is not a readable file"
+    return
   fi
+  local hit
+  hit="$(_md_permit_hits "$re" "$file" "$probe" "$mode")"
+  if [ -z "$hit" ]; then
+    fail "$name — the probe line was not flagged, so the scan never reached what it appended"
+    return
+  fi
+  hit="$(_md_permit_hits "$re" "$file" "$sample" "$mode")"
   if [ -z "$hit" ]; then pass "$name"; else fail "$name — flagged: $hit"; fi
 }
-permits() { _md_permits "$1" "$2" "$3" "$4" line; }
-permits_fenced() { _md_permits "$1" "$2" "$3" "$4" fenced; }
+
+# _md_permit_hits RE FILE LINE MODE — offenders after appending LINE to a
+# scratch copy of FILE, through the mode's own append path.
+_md_permit_hits() {
+  MD_PERMITS=$((MD_PERMITS + 1))
+  local scratch="$MD_TMP/permit-$MD_PERMITS.md"
+  cp "$2" "$scratch"
+  if [ "$4" = fenced ]; then
+    printf '\n```bash\n%s\n```\n' "$3" >>"$scratch"
+    _md_fenced_hits "$1" "$scratch"
+  else
+    printf '\n%s\n' "$3" >>"$scratch"
+    _md_offenders "$1" "$scratch"
+  fi
+}
+permits() { _md_permits "$1" "$2" "$3" "$4" "$5" line; }
+permits_fenced() { _md_permits "$1" "$2" "$3" "$4" "$5" fenced; }
 
 # check NAME CMD... — a bespoke predicate, for a contract the rule forms above
 # cannot express: a count across a directory, a containment, a rendered

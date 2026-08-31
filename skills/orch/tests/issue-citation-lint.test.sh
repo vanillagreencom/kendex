@@ -29,6 +29,7 @@ forbid "no issue-number citation in SKILL.md or agents/*.md" \
 
 permits "a bare hex colour is not a citation" \
   'kendex#[0-9]+|\(#[0-9]+\)' \
+  'Always ask before merge (kendex#944), same class as (#42).' \
   'The default canvas is near-black, not pure #000000.' \
   "$REPO_ROOT/skills/orch/SKILL.md"
 

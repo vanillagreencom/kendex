@@ -41,8 +41,10 @@ LITERAL_BOUND='(iterations?[^A-Za-z0-9_]*(>=|<=|==|>|<)[[:space:]]*[0-9]|max[-[:
 echo "=== orch external review-round cap lint ==="
 
 # Where the cap is declared to whoever has to set it.
-rule "the README configuration table documents the cap" \
-  "$SKILL_DIR/README.md" "" '`REVIEW_MAX_EXTERNAL_ROUNDS`'
+# The default is named in this file's own header, so it is pinned here rather
+# than transcribed: changing the README row reddens the header that states it.
+rule "the README table documents the cap and its default" \
+  "$SKILL_DIR/README.md" "" '`REVIEW_MAX_EXTERNAL_ROUNDS`' '| `4` |'
 rule "the settings example seeds the cap" \
   "$SKILL_DIR/kendex.settings.toml.example" "" 'REVIEW_MAX_EXTERNAL_ROUNDS ='
 rule "finding-disposition names the counter and the cap that bounds it" \

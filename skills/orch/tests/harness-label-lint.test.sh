@@ -71,10 +71,16 @@ unlabeled() {
 
 echo "=== orch/dev harness-label lint ==="
 
+# A doc that is not a readable file is an offender, not a clean read: awk
+# would abort the suite with a bare fatal and no tally.
 offenders=""
 for doc in "$SKILL_DIR/SKILL.md" "$SKILL_DIR/DEVELOPMENT.md" \
   "$SKILL_DIR"/workflows/*.md "$SKILL_DIR"/references/*.md "$SKILL_DIR"/schemas/*.md \
   "$SKILLS_ROOT/dev/SKILL.md" "$SKILLS_ROOT"/dev/workflows/*.md; do
+  if ! _md_scannable "$doc"; then
+    offenders="$offenders${doc#$REPO_ROOT/}: not a readable file"$'\n'
+    continue
+  fi
   hit="$(unlabeled "$doc")"
   [ -n "$hit" ] && offenders="$offenders$hit"$'\n'
 done

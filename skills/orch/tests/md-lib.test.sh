@@ -109,16 +109,22 @@ check "line_has requires every token on ONE line" \
 # Every capture below is `|| true`-guarded: the sub-suite's exit status is the
 # case's subject, and an unguarded one aborts this file under `set -e` before
 # md_report prints which checks failed.
-subsuite() {
-  local script="$MD_TMP/sub-$1.sh"
-  local fixture="$2"
-  shift 2
+_subsuite() {
+  local opts="$1" script="$MD_TMP/sub-$2.sh" fixture="$3"
+  shift 3
   {
-    printf '%s\n' 'set -uo pipefail' "source \"$MD_LIB_DIR/md.sh\"" "FIX=\"$fixture\""
+    printf '%s\n' "set -$opts" "source \"$MD_LIB_DIR/md.sh\"" "FIX=\"$fixture\""
     printf '%s\n' "$@" 'md_report'
   } >"$script"
   bash "$script" 2>&1
 }
+subsuite() { _subsuite uo\ pipefail "$@"; }
+# The real lint suites run `set -euo pipefail`, and an arm that only exists to
+# survive `set -e` is invisible to a sub-suite without it. `subsuite_e` is the
+# variant that can observe those: a command substitution that exits non-zero
+# aborts the run there, so a case asserting the tally still prints is asserting
+# that nothing aborted.
+subsuite_e() { _subsuite euo\ pipefail "$@"; }
 
 RULES="$MD_TMP/rules.md"
 cat >"$RULES" <<'MD'
@@ -159,6 +165,21 @@ check "two rules pinning one line through each other are reported overlapping" \
 
 out="$(subsuite missing "$RULES" 'rule "absentee" "$FIX" "## Rules" "delta"')" || true
 check "a rule whose token is gone fails outright" grep -q "FAIL  absentee" <<<"$out"
+
+# The same fixture under `set -e`, which is the shell every real lint suite
+# runs. A rule matching nothing must report itself and let the pass continue:
+# an unguarded capture aborts _md_controls there, and an unguarded strike on an
+# empty line number adds a second spurious failure. The tally is what proves
+# neither happened.
+out="$(subsuite_e missinge "$RULES" \
+  'rule "absentee" "$FIX" "## Rules" "delta"' \
+  'rule "alpha" "$FIX" "## Rules" "alpha" "beta"')" || true
+check "one rule matching nothing does not abort the control pass" \
+  grep -qE '^pass: [0-9]+   fail: [0-9]+$' <<<"$out"
+check "the surviving rule still gets its control" \
+  grep -q "control: 'alpha' goes red alone" <<<"$out"
+check "the broken rule is reported once, not twice" \
+  test "$(grep -c 'absentee' <<<"$out")" = 1
 
 # One physical file spelled two ways must still compare equal, or each rule is
 # evaluated against the unmutated file during the other's control and the
@@ -261,6 +282,23 @@ printf '# D\n\nthe banned word lives here\n' >"$SCAN_DIR/inside.md"
 out="$(subsuite forbiddir "$SCAN_A" \
   "forbid \"no banned word\" 'banned' 'the banned word' \"\$FIX\" \"$SCAN_DIR\"")" || true
 check "a forbid over a directory goes red rather than reading it clean" \
+  grep -q "not a readable file" <<<"$out"
+
+# `permits` is the third form that passes on an empty search result, and the
+# only one with no control loop. Its PROBE is the positive half: a base whose
+# last line opens an HTML comment that never closes swallows whatever the
+# append adds, so without the probe a near-miss verdict is reported over a scan
+# that read nothing. Run under `set -e`, which also exercises the cp guard.
+OPENC="$MD_TMP/open-comment.md"
+printf '# Base\n\nclean\n\n<!-- opened and never closed\n' >"$OPENC"
+out="$(subsuite_e permitprobe "$OPENC" \
+  "permits \"near-miss\" 'banned' 'the banned word' 'a safe word' \"\$FIX\"")" || true
+check "a permits whose probe never reaches the scan goes red" \
+  grep -q "the probe line was not flagged" <<<"$out"
+
+out="$(subsuite_e permitdir "$SCAN_A" \
+  "permits \"near-miss\" 'banned' 'the banned word' 'a safe word' \"$SCAN_DIR\"")" || true
+check "a permits over a directory reports a verdict, not a cp error" \
   grep -q "not a readable file" <<<"$out"
 
 # And a list of no files is an absence check over nothing, the same fail-open

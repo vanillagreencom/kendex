@@ -19,6 +19,7 @@ forbid_fenced "no fenced command carries a literal backtick" '`' \
   "$SKILLS_ROOT/dev/SKILL.md" "$SKILLS_ROOT"/dev/workflows/*.md
 
 permits_fenced "the canonical \\x60 hex escape is not a backtick" '`' \
+  'grep -rn "`workflow-state`" skills/' \
   'grep -rnE '"'"'\x60workflow-state\x60'"'"' skills/' \
   "$SKILL_DIR/SKILL.md"
 

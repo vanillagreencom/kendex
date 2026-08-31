@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # orch's scripts run wherever an orchestrator runs, and `skills/orch/SKILL.md`
-# § System dependencies declares `bash` 3.2 — macOS system bash. So a shipped
+# § Configuration declares `bash` 3.2 on its System dependencies line — macOS
+# system bash. So a shipped
 # orch script may not use a Bash 4+ builtin or syntax: mapfile/readarray,
 # associative arrays, automatic FD-allocation redirections, case-conversion
 # expansions.

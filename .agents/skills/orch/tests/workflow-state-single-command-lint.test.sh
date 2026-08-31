@@ -26,8 +26,14 @@ stacked() {
 
 echo "=== orch workflow-state single-command lint ==="
 
+# A doc that is not a readable file is an offender, not a clean read: awk
+# would abort the suite with a bare fatal and no tally.
 offenders=""
 for doc in "$SKILL_DIR/SKILL.md" "$SKILL_DIR"/workflows/*.md "$SKILL_DIR"/references/*.md; do
+  if ! _md_scannable "$doc"; then
+    offenders="$offenders${doc#$REPO_ROOT/}: not a readable file"$'\n'
+    continue
+  fi
   hit="$(stacked "$doc")"
   [ -n "$hit" ] && offenders="$offenders$hit"$'\n'
 done

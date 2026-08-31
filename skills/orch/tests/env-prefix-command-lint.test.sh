@@ -36,8 +36,8 @@ forbid_fenced "no fenced command opens with a quoted-value prefix" "$ENV_PREFIX"
   "$SKILLS_ROOT/dev/SKILL.md" "$SKILLS_ROOT"/dev/workflows/*.md
 
 permits_fenced "a bare assignment is a value, not a prefix" "$ENV_PREFIX" \
-  'RATCHET_RAISE=1' "$SKILL_DIR/SKILL.md"
+  'LC_ALL=C tools/test-ci-changes' 'RATCHET_RAISE=1' "$SKILL_DIR/SKILL.md"
 permits_fenced "an assignment whose quoted value holds a space is not a prefix" "$ENV_PREFIX" \
-  'KEYWORDS="worktree lease"' "$SKILL_DIR/SKILL.md"
+  'LC_ALL=C tools/test-ci-changes' 'KEYWORDS="worktree lease"' "$SKILL_DIR/SKILL.md"
 
 md_report
