@@ -19,7 +19,6 @@ const page = (
     latest: version(),
     installed: version({ id: "a".repeat(40), installed: true, label: "v1" }),
     metaLoaded: true,
-    updatesLoaded: true,
     withheld: null,
     ...overrides,
   }) satisfies Parameters<typeof canUpdatePackage>[0];
@@ -42,7 +41,6 @@ describe("canUpdatePackage", () => {
     expect(canUpdatePackage(page({ latest: undefined }))).toBe(false);
     expect(canUpdatePackage(page({ installed: undefined }))).toBe(false);
     expect(canUpdatePackage(page({ metaLoaded: false }))).toBe(false);
-    expect(canUpdatePackage(page({ updatesLoaded: false }))).toBe(false);
     expect(
       canUpdatePackage(page({ latest: version({ installed: true }) })),
     ).toBe(false);

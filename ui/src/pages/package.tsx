@@ -86,12 +86,12 @@ export function PackagePage() {
     view,
     diffHarness(view, installationAt(group, ref?.scope)?.harness ?? null),
   );
-  const updatesLoaded = useUpdatesStore((s) => s.loaded);
-  // This place's update standing, or null where the read never spoke for
-  // it. Whether Update belongs here — and what to say where it does not —
-  // is the row's to answer, core's refusal for the kind included.
-  const updateRow = useUpdatesStore(
-    (s) =>
+  // Why this place has no Update, or null when nothing withholds one —
+  // the read behind the rows and then the row itself, in one reading off
+  // the live store. A string, so this selector answers the same value on
+  // every render that changes nothing.
+  const withheld = useUpdatesStore((s) =>
+    pageUpdateWithheld(
       s.rows.find(
         (row) =>
           ref != null &&
@@ -99,6 +99,8 @@ export function PackagePage() {
           row.name === ref.name &&
           sameScope(row.scope, ref.scope),
       ) ?? null,
+      s,
+    ),
   );
 
   const mark = usePackageMark(group);
@@ -125,18 +127,15 @@ export function PackagePage() {
   const displayName = packageDisplayName(ref);
   const installed = installedRow(versions);
   const latest = latestRow(versions);
-  // One reading answers both halves. The button and the note beside it
-  // come from the same string, so a page that withholds Update always says
-  // why — the kind's refusal in core's own words, this page keeping no
-  // account of the rule.
-  const withheld = pageUpdateWithheld(updateRow, updatesLoaded);
-  // Update also waits for meta (held vs following), and takes its newness
-  // from this page's own version rows.
+  // The button and the note beside it come from the one string above, so
+  // a reason the update read carries — its own state, or the row's — is
+  // always said where the button would have been. Update also waits for
+  // meta (held vs following), and takes its newness from this page's own
+  // version rows.
   const canUpdate = canUpdatePackage({
     latest,
     installed,
     metaLoaded: meta != null,
-    updatesLoaded,
     withheld,
   });
   // Said where the button would be. A page with nothing newer to move to

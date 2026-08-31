@@ -28,7 +28,12 @@ import {
   UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
-import { placeName, switchLockedBy, updateWithheld } from "@/lib/update-groups";
+import {
+  canUpdatePlace,
+  placeName,
+  switchLockedBy,
+  updateWithheld,
+} from "@/lib/update-groups";
 import { rowUnsettled } from "@/lib/updates-read-state";
 import { versionLabel } from "@/lib/versions";
 import { useNavStore } from "@/stores/nav";
@@ -160,9 +165,7 @@ export function PlaceCells({
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={
-                      busy || held || !row.updateAvailable || withheld !== null
-                    }
+                    disabled={busy || held || !canUpdatePlace(row)}
                     // What stands in the way is the row's own reading;
                     // the pending check is this surface's alone.
                     title={

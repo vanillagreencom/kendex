@@ -41,11 +41,13 @@ export function PackageActions({
   name: string;
   primaryPath: string;
   updateAvailable: boolean;
-  /** Why there is no Update here, when the page has news it cannot act
-   *  on: a kind core never brings current one package at a time, an edit
-   *  of the reader's own, or an update read that has not spoken for this
-   *  place. Rendered whenever `updateAvailable` is false and this is set,
-   *  so a withheld Update is never a page that stays silent. */
+  /** Why there is no Update here, when the reason is one the update read
+   *  carries: how that read went, or what the place's row says — a kind
+   *  core never brings current one package at a time, an edit of the
+   *  reader's own, a hold that is not this row's to move. Rendered
+   *  whenever `updateAvailable` is false and this is set. The page has
+   *  other reasons to offer nothing, an unmappable installed commit among
+   *  them, and those it does not word. */
   withheldNote?: string | null;
   busy: boolean;
   onUpdate: () => void;

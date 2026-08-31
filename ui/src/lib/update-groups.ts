@@ -3,10 +3,12 @@ import {
   EDITED_CANT_UPDATE_NOTE,
   HELD_BY_OWNER_NOTE,
   NO_UPDATE_STANDING_NOTE,
+  UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
   USER_LEVEL_PLACE,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
+import { rowUnsettled, updatesReadState } from "@/lib/updates-read-state";
 
 /** One package with every place it is out of date in. The same skill
  *  installed in three projects is one decision with three places, not
@@ -81,23 +83,49 @@ export const updateWithheld = (row: UpdateRow): string | null => {
 export const canUpdatePlace = (row: UpdateRow): boolean =>
   row.updateAvailable && updateWithheld(row) === null;
 
-/** Why the package page has no Update for the place it is showing. The
- *  page can be open before the update read has landed, and on a place that
- *  read does not cover at all — it covers declared packages with a
- *  repository source — so a page with news it cannot act on says which of
- *  the two it is. Silence there is a page that refuses and never says why.
+/** Everything `updates-read-state.ts` needs to say whether a row may be
+ *  acted on: how the read went, and whether one that would replace it is
+ *  running. Wider than package-places' `UpdatesStanding`, which asks only
+ *  the settling half. */
+type UpdatesReadStanding = Parameters<typeof rowUnsettled>[0] &
+  Parameters<typeof updatesReadState>[0];
+
+/** Why the package page has no Update for the place it is showing.
  *
- *  Of the reasons [`updateWithheld`] gives, the owner's hold is the one
- *  this page never renders: it wants a derived place, and core's version
- *  timeline refuses a package the manifest does not declare, so the page
- *  has no newer version to offer there in the first place. Proven in
- *  crates/core/tests/package_versions.rs, not assumed here. */
+ *  The read answers before the row, because a row is only as true as the
+ *  read under it: one nobody could refresh is last-known rather than fact,
+ *  and one on screen while a check runs is about to be replaced. Both are
+ *  the state `updates-read-state.ts` owns, so this asks that module rather
+ *  than working readiness out again — blurring its three answers is how a
+ *  page says "checking" over a read that failed, or offers an Update over
+ *  rows nobody confirmed.
+ *
+ *  Every answer below is a note, so this is the page's only update-read
+ *  gate: [`canUpdatePackage`] reads `withheld === null` and keeps none of
+ *  its own, and a state that cannot say why is a state that cannot hide
+ *  the button. Of the reasons [`updateWithheld`] gives, the owner's hold
+ *  is the one this page never renders: it wants a derived place, and
+ *  core's version timeline refuses a package the manifest does not
+ *  declare, so the page has no newer version to offer there in the first
+ *  place. Proven in crates/core/tests/package_versions.rs, not assumed
+ *  here. */
 export const pageUpdateWithheld = (
   row: UpdateRow | null,
-  updatesLoaded: boolean,
+  standing: UpdatesReadStanding,
 ): string | null => {
-  if (row !== null) return updateWithheld(row);
-  return updatesLoaded ? NO_UPDATE_STANDING_NOTE : UPDATES_CHECKING;
+  const read = updatesReadState(standing);
+  // A first read still on its way is the only state that is checking.
+  if (read === "pending") return UPDATES_CHECKING;
+  // A failed read leaves whatever rows it had standing; they are not to be
+  // acted on, and this is the note the Updates table already shows for it.
+  if (read === "failed") return UPDATE_NEEDS_CHECK_NOTE;
+  // The read landed and covers declared packages with a repository source,
+  // so a place with no row is one it does not cover.
+  if (row === null) return NO_UPDATE_STANDING_NOTE;
+  // A check or an operation replacing every row, or a follow flip settling
+  // in this place: the row on screen is about to be answered for again.
+  if (rowUnsettled(standing, row)) return UPDATE_NEEDS_CHECK_NOTE;
+  return updateWithheld(row);
 };
 
 /** The places "Update all" can act on: a newer version exists and nothing

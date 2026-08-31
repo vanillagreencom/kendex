@@ -24,6 +24,7 @@ import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import {
   EDITED_CANT_UPDATE_NOTE,
   NO_UPDATE_STANDING_NOTE,
+  UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
 } from "@/lib/copy-updates";
 import { editorOpenPath } from "@/lib/editor-path";
@@ -610,7 +611,17 @@ describe("the package page's Update", () => {
    *  the updates store says about this place. */
   const openWithUpdates = async (
     rows: UpdateRow[],
-    { loaded = true, kind = "skill" as ItemKind } = {},
+    {
+      loaded = true,
+      kind = "skill" as ItemKind,
+      ...standing
+    }: {
+      loaded?: boolean;
+      kind?: ItemKind;
+      error?: string | null;
+      checking?: boolean;
+      overviewInFlight?: boolean;
+    } = {},
   ) => {
     vi.mocked(commands.packageVersions).mockResolvedValue({
       status: "ok",
@@ -620,7 +631,7 @@ describe("the package page's Update", () => {
       status: "ok",
       data: meta,
     });
-    useUpdatesStore.setState({ rows, loaded });
+    useUpdatesStore.setState({ rows, loaded, ...standing });
     return openPage(VG, [VG], { [scopeKey(VG)]: PLAIN }, null, kind);
   };
 
@@ -679,5 +690,43 @@ describe("the package page's Update", () => {
     const host = await openWithUpdates([], { loaded: false });
     expect(updateButton(host)).toBeUndefined();
     expect(host.textContent).toContain(UPDATES_CHECKING);
+  });
+
+  // A first read that failed leaves the store looking exactly like one in
+  // flight but for the error. Calling that a check in progress names a
+  // cause that is not running.
+  it("does not call a failed first read a check in progress", async () => {
+    const host = await openWithUpdates([], {
+      loaded: false,
+      error: "no network",
+    });
+    expect(updateButton(host)).toBeUndefined();
+    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_NOTE);
+    expect(host.textContent).not.toContain(UPDATES_CHECKING);
+  });
+
+  // A failed re-read keeps its rows and drops `loaded`. The row is here
+  // and withholds nothing of its own, so without the read state the page
+  // would offer an Update over rows nobody could confirm.
+  it("withholds Update over a row a failed re-read left standing", async () => {
+    const host = await openWithUpdates(
+      [{ ...updateRow(VG), updateAvailable: true }],
+      { loaded: false, error: "no network" },
+    );
+    expect(updateButton(host)).toBeUndefined();
+    expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_NOTE);
+  });
+
+  // A check or a refresh is about to answer for every row on screen. The
+  // Updates table disables its own button for this; the page said nothing.
+  it("withholds Update while a check or a refresh is in flight", async () => {
+    for (const inFlight of [{ checking: true }, { overviewInFlight: true }]) {
+      const host = await openWithUpdates(
+        [{ ...updateRow(VG), updateAvailable: true }],
+        inFlight,
+      );
+      expect(updateButton(host)).toBeUndefined();
+      expect(host.textContent).toContain(UPDATE_NEEDS_CHECK_NOTE);
+    }
   });
 });

@@ -24,24 +24,23 @@ export function installedRow(rows: VersionRow[]): VersionRow | undefined {
 /** Whether the package page may offer Update. Newness is the page's own:
  *  it reads a newer version to move to and an installed one to move from
  *  off its version rows, not off the update row, so the timeline it draws
- *  and the button above it agree. Both reads have to be in, and nothing
- *  may be withholding the update.
+ *  and the button above it agree.
  *
  *  `withheld` is the reason, not a verdict — `update-groups.ts`
- *  [`pageUpdateWithheld`] — and it is passed in rather than derived here
- *  because the page renders it beside this answer. A hidden button with no
- *  note is a page that refuses and never says why, so the two must come
- *  from one reading. */
+ *  [`pageUpdateWithheld`] — and it is the whole of the update read's say
+ *  here. There is deliberately no second gate on how that read went: a
+ *  reason that cannot be said cannot hide the button, and a page that
+ *  refuses without saying why is the shape that costs. So this asks only
+ *  what the page itself knows — a version to move to and from, and the
+ *  meta read that says held or following — and defers the rest. */
 export const canUpdatePackage = (page: {
   latest: VersionRow | undefined;
   installed: VersionRow | undefined;
   metaLoaded: boolean;
-  updatesLoaded: boolean;
   withheld: string | null;
 }): boolean =>
   page.latest != null &&
   !page.latest.installed &&
   page.installed != null &&
   page.metaLoaded &&
-  page.updatesLoaded &&
   page.withheld === null;
