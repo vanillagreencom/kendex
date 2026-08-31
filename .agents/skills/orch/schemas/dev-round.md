@@ -4,7 +4,7 @@ The on-disk record of a fix round's delegated items, starting commit, and allowe
 
 ## Identity: the round id
 
-The recovery copy is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`. The authorization is `<git-common-dir>/kendex/dev-round-authorizations/[ISSUE_ID]-[ROUND_ID].json`, outside the delegated worktree. Both carry `"round_id": ROUND_ID`; readers require both regular files and exact equality across issue, round id, base SHA, additions, and items.
+The recovery copy is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`. The authorization is `<git-common-dir>/kendex/dev-round-authorizations/[ISSUE_ID]-[ROUND_ID].json`, outside the delegated worktree. Both carry `"round_id": ROUND_ID`; readers require both regular files and exact equality across issue, round id, base SHA, additions, and items. The external authorization alone carries Boolean `live`, initially `true`.
 
 `[ISSUE_ID]` is the normalized workflow-state key — dev-side workflows name the same value `[ARTIFACT_KEY]`, and a bundled round uses the Parent ID. It and `[ROUND_ID]` must match `^[A-Za-z0-9._-]+$` with no `..`.
 
@@ -36,13 +36,15 @@ The recovery copy is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`.
 
 An `Adds:` delegation line maps to a JSON array passed through `--adds-file`; repository paths never enter shell command text. The writer and reader reject absolute paths, leading or trailing empty components, double slashes, `.` and `..` components, newlines, carriage returns, and duplicates. Omit the line and flag when no additions are allowed.
 
-The external authorization adds `"schema_version": 1` and `"worktree": "[CANONICAL_WORKTREE_ROOT]"` to the same issue, round, base, additions, and items fields.
+The external authorization adds `"schema_version": 1`, `"worktree": "[CANONICAL_WORKTREE_ROOT]"`, and `"live": true` to the same issue, round, base, additions, and items fields.
 
-**Immutable per round.** Re-running when both records exist with byte-identical content is an idempotent retry. Different content, a missing half, or a symlink exits 2. Never recreate either half after delegation and never fall back to an unbound item list. Mint a new round. An analysis round has no delegated items and writes no record.
+**Immutable per round.** Delegation fields never change. Re-running before acceptance when both records have byte-identical content is an idempotent retry. Different delegated content, a missing half, or a symlink exits 2. Never recreate either half after delegation and never fall back to an unbound item list. Mint a new round. An analysis round has no delegated items and writes no record.
+
+**Liveness.** On an `accept` verdict, `dev-artifact-check` atomically replaces the external authorization with the same record carrying `"live": false`. Repeat checks accept the retired record. `worktree-push` remaps only a live authorization, so a completed round cannot block a later rebase after its recovery copy is gone.
 
 ## Readers
 
-- **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the external authorization after checking the worktree copy exactly matches it. It compares the exact `base_sha` snapshot directly to `HEAD` through a checked, NUL-delimited Git probe. `worktree-push` remaps both authorization copies when a restack rewrites that snapshot. Comparison failures return `comparison_failed`; an unusable classifier result returns `classifier_failed`.
+- **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the external authorization after checking the worktree copy exactly matches it. It compares the exact `base_sha` snapshot directly to `HEAD` through a checked, NUL-delimited Git probe, then retires an accepted authorization. `worktree-push` remaps both copies only while the authorization is live. Comparison failures return `comparison_failed`; an unusable classifier result returns `classifier_failed`.
 - **A respawned dev agent** reads `items[]` to recover the item numbers and texts.
 - **The tail-reconciliation nudge** points at the record.
 

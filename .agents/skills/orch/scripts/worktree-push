@@ -18,7 +18,7 @@
 #     form `dropped:<recorded-sha>` when the mapping is `dropped` — the
 #     commit no longer exists on the branch, so publishers must omit it or
 #     cite the upstream equivalent, never print it as a live SHA;
-#   - remaps the active fix-round base_sha in the external authorization and
+#   - remaps the active, live fix-round base_sha in the external authorization and
 #     worktree recovery copy together, refusing divergent copies, ambiguous
 #     same-subject mappings, or a dropped base whose exact replacement snapshot
 #     is unknown;
@@ -179,7 +179,7 @@ authorization_mapping_is_unambiguous() {
 }
 
 reconcile_round_authorizations() {
-	local map_json="$1" active_round_id="$2" auth_dir auth round_id recovery base_sha new_sha
+	local map_json="$1" active_round_id="$2" auth_dir auth round_id recovery base_sha new_sha live
 	local auth_tmp recovery_tmp auth_backup recovery_backup
 	[[ -n "$active_round_id" ]] || return 0
 	[[ "$active_round_id" =~ ^[A-Za-z0-9._-]+$ && "$active_round_id" != *..* ]] || {
@@ -194,6 +194,11 @@ reconcile_round_authorizations() {
 			printf 'worktree-push: round authorization is not a regular file: %s\n' "$auth" >&2
 			return 1
 		}
+		live="$(jq -er 'if has("live") then select((.live | type) == "boolean") | (.live | tostring) else "true" end' "$auth")" || {
+			printf 'worktree-push: authorization has no usable liveness state: %s\n' "$auth" >&2
+			return 1
+		}
+		[[ "$live" == "true" ]] || return 0
 		base_sha="$(jq -er 'select((.base_sha? | type) == "string" and .base_sha != "") | .base_sha' "$auth")" || {
 			printf 'worktree-push: authorization has no usable base_sha: %s\n' "$auth" >&2
 			return 1

@@ -304,6 +304,7 @@ jq -n \
   --arg issue "$issue" \
   --arg worktree "$worktree_root" \
   --arg base_sha "$base_sha" \
+  --argjson live true \
   --argjson adds "$adds_json" \
   --argjson items "$items_json" \
   '{
@@ -312,6 +313,7 @@ jq -n \
      issue: $issue,
      worktree: $worktree,
      base_sha: $base_sha,
+     live: $live,
      adds: $adds,
      items: $items
    }' > "$auth_tmp"

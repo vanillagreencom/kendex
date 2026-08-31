@@ -135,6 +135,7 @@ auth="$worktree/.git/kendex/dev-round-authorizations/issue-1230-$RID.json"
 assert_eq "$([[ -f "$auth" && ! -L "$auth" ]] && echo yes)" "yes" "writes the authorization outside the worktree"
 assert_eq "$(jq -r '.worktree' "$auth")" "$worktree" "authorization binds the canonical worktree"
 assert_eq "$(jq -r '.base_sha' "$auth")" "$base_sha" "authorization binds the delegation-time base"
+assert_eq "$(jq -r '.live' "$auth")" "true" "authorization starts live"
 assert_eq "$(jq -c '.adds' "$auth")" '["crates/parser/src/lib.rs","skills/orch/scripts/new-check"]' "authorization binds the allowed paths"
 assert_eq "$(jq -c '.items' "$auth")" "$(jq -c '.items' "$out")" "authorization binds the delegated items"
 assert_eq "$(jq -r '.items | length' "$out")" "2" ".items carries one entry per --item"
@@ -184,6 +185,15 @@ mv "$TMP_ROOT/auth8.json" "$auth8"
 set +e
 "$CHECK" --worktree "$worktree" --issue issue-1230 --round-id 8-8 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "authorization with a non-string base_sha fails its schema arm"
+set -e
+
+"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 8-9 --item 1 schema >/dev/null
+auth89="$worktree/.git/kendex/dev-round-authorizations/issue-1230-8-9.json"
+jq '.live = "yes"' "$auth89" > "$TMP_ROOT/auth89.json"
+mv "$TMP_ROOT/auth89.json" "$auth89"
+set +e
+"$CHECK" --worktree "$worktree" --issue issue-1230 --round-id 8-9 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "authorization with non-boolean liveness fails its schema arm"
 set -e
 
 "$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 9-9 --item 1 schema >/dev/null

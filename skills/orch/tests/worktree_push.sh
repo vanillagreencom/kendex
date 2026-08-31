@@ -222,15 +222,14 @@ assert_eq "$(jq -r '.base_sha' "$restack_recovery")" "$restack_base" "recovery c
 after_restack="$($ARTIFACT_CHECK --worktree "$restack_wt" --issue KEN-RESTACK --round-id 1-1)"
 assert_eq "$(jq -r '.reason' <<<"$after_restack")" "valid" \
   "upstream protected addition is outside the remapped round snapshot"
+assert_eq "$(jq -r '.live' "$restack_auth")" "false" "accepted round authorization is retired"
 
-"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 2-2 --item 1 stale >/dev/null
-stale_auth="$restack_wt/.git/kendex/dev-round-authorizations/KEN-RESTACK-2-2.json"
-rm -f "$restack_wt/tmp/dev-round-KEN-RESTACK-2-2.json"
-STUB_PUSH_STDOUT="rebase-map: $restack_head $restack_base" \
+rm -f "$restack_recovery"
+STUB_PUSH_STDOUT="rebase-map: $restack_base $restack_head" \
   run_push "$restack_state" --worktree "$restack_wt" --issue KEN-RESTACK
-assert_eq "$RUN_RC" "0" "mapped historical authorization missing recovery does not block the current round"
-assert_eq "$(jq -r '.base_sha' "$stale_auth")" "$restack_head" \
-  "historical authorization is not remapped"
+assert_eq "$RUN_RC" "0" "accepted historical round missing recovery does not block a later map"
+assert_eq "$(jq -r '.base_sha' "$restack_auth")" "$restack_base" \
+  "retired authorization is not remapped"
 
 "$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 3-3 --item 1 active >/dev/null
 rm -f "$restack_wt/tmp/dev-round-KEN-RESTACK-3-3.json"

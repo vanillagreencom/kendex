@@ -307,8 +307,11 @@ rr_head="$(git -C "$rr_wt" rev-parse HEAD)"
   --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items-from-round)" "valid" \
   "artifact covering the persisted round set → valid (writers round-trip)"
+rr_auth="$rr_wt/.git/kendex/dev-round-authorizations/issue-9-7-8.json"
+assert_eq "$(jq -r '.live' "$rr_auth")" "false" "acceptance retires the external authorization"
 assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8)" "valid" \
   "flagless fix automatically resolves bound round authorization"
+assert_eq "$(jq -r '.live' "$rr_auth")" "false" "repeat acceptance keeps the authorization retired"
 # an artifact missing a delegated item must fail exactly as with explicit numbers
 "$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a >/dev/null
