@@ -1,10 +1,9 @@
 use clap::Subcommand;
 use kendex_core::env::Env;
-use kendex_core::names::shown;
 use kendex_core::source_ops;
 
 use super::engine_common::apply_report;
-use super::{CliResult, out, resolve_scopes, say, scope_label};
+use super::{CliResult, answer, out, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 
 #[derive(Subcommand)]
@@ -220,7 +219,7 @@ fn run_list(env: &Env, json: bool, global: bool, scope: Option<String>) -> CliRe
         rows.extend(source_ops::list_subscriptions(env, &scope)?);
     }
     if json {
-        out(&serde_json::to_string_pretty(&serde_json::json!({
+        answer(&serde_json::to_string_pretty(&serde_json::json!({
             "schema": 1,
             "subscriptions": rows,
         }))?);
@@ -268,19 +267,16 @@ fn run_subscribe(
         && let Some(repo) = decl.repo.clone()
         && let Err(error) = kendex_core::remote::sync(env, &repo, decl.rev.as_deref())
     {
-        say(&format!(
-            "warning: not fetched yet ({})",
-            shown(&error.to_string())
-        ));
+        say(&format!("warning: not fetched yet ({})", error));
     }
     say(&format!(
         "{}: subscribed to '{}' ({})",
         scope_label(&scope),
-        shown(&subscribed.name),
-        shown(&subscribed.reference)
+        subscribed.name,
+        subscribed.reference
     ));
     if let Some(lead) = subscribed.lead {
-        say(&format!("package: {}", shown(&lead)));
+        say(&format!("package: {}", lead));
     }
     Ok(())
 }

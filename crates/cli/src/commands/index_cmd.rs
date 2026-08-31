@@ -4,11 +4,10 @@
 
 use std::path::PathBuf;
 
-use kendex_core::names::shown;
 use kendex_core::source;
 use kendex_core::source_read::SealedSource;
 
-use super::{CliResult, out, say};
+use super::{CliResult, answer, say};
 
 pub fn run(dir: Option<PathBuf>, json: bool) -> CliResult {
     let dir = match dir {
@@ -19,12 +18,12 @@ pub fn run(dir: Option<PathBuf>, json: bool) -> CliResult {
     let display = source::repo_leaf(&sealed.root().display().to_string()).to_owned();
     let report = source::index::index(&sealed, &display)?;
     if json {
-        out(&serde_json::to_string_pretty(&report)?);
+        answer(&serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
     say(&format!(
         "{}: {} package(s), {} bundle(s), {} finding(s)",
-        shown(&report.name),
+        report.name,
         report.counts.packages,
         report.counts.bundles,
         report.findings.len()
@@ -32,17 +31,13 @@ pub fn run(dir: Option<PathBuf>, json: bool) -> CliResult {
     for row in &report.found {
         say(&format!(
             "  {} {}(s) under {}",
-            row.count,
-            shown(row.kind),
-            shown(&row.root)
+            row.count, row.kind, row.root
         ));
     }
     for finding in &report.findings {
         say(&format!(
             "  problem: {}: {} — fix: {}",
-            shown(&finding.location),
-            shown(&finding.problem),
-            shown(&finding.fix)
+            finding.location, finding.problem, finding.fix
         ));
     }
     Ok(())

@@ -9,7 +9,7 @@
 
 use std::io::Write;
 
-use super::{Mode, mode};
+use super::{Mode, escaped, mode};
 
 /// Ask. The caller has already established there is somebody to ask: a
 /// run needing an answer with no terminal on stdin refuses before its
@@ -23,7 +23,10 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
     // question asked over an undrawn block is asked about the block
     // before it, and the answer decides a write.
     super::flush();
-    let asked = format!("{question} [y/N]");
+    // A question names what a yes writes, and what it names comes off a
+    // catalog or a tree kendex did not write — so it is escaped where
+    // every other sentence is.
+    let asked = escaped(&format!("{question} [y/N]"));
     let answer = match mode() {
         Mode::Pretty => cliclack::input(asked)
             .default_input("N")
@@ -49,6 +52,7 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
 /// without coming through one of these.
 pub fn ask(label: &str) -> std::io::Result<String> {
     super::flush();
+    let label = &escaped(label);
     match mode() {
         // The widget [`confirm`] uses, so the question and the answer land
         // inside the frame the run opened rather than at column 0 beside
@@ -105,7 +109,7 @@ pub fn spinner(label: &str) -> Task {
         return Task(None);
     }
     let bar = cliclack::spinner();
-    bar.start(label);
+    bar.start(escaped(label));
     Task(Some(bar))
 }
 

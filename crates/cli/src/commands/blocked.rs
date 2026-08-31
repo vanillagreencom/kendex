@@ -6,7 +6,6 @@
 use kendex_core::engine::{Comparison, DriftCause, DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
-use kendex_core::names::shown;
 
 use super::offers::{Blocked, Offer, blocked_items, offer_goes_under, scope_flag};
 use super::say;
@@ -30,7 +29,7 @@ pub fn print_conflicts(env: &Env, report: &EngineReport) -> Vec<Blocked> {
         say(&format!(
             "conflict: {} {} for {}: {}",
             first.kind.name(),
-            shown(&first.name),
+            first.name,
             tools(&group).join(", "),
             conflict_detail(first)
         ));
@@ -38,7 +37,7 @@ pub fn print_conflicts(env: &Env, report: &EngineReport) -> Vec<Blocked> {
         // reader moving the files themselves, and a place the output does
         // not name is a place they cannot go to.
         for place in also_at(first, rest) {
-            say(&format!("  also at {}", shown(&place)));
+            say(&format!("  also at {}", place));
         }
         let offer = offer.and_then(|item| item.offer.as_ref());
         if let Some(line) = compared_line(first.compared.as_ref(), offer) {
@@ -65,7 +64,7 @@ pub fn print_drift(env: &Env, report: &EngineReport) -> Vec<Blocked> {
         say(&format!(
             "{} {} [{}]: {:?} — {}",
             row.kind.name(),
-            shown(&row.name),
+            row.name,
             row.harness.name(),
             row.state,
             conflict_detail(row)
@@ -73,7 +72,7 @@ pub fn print_drift(env: &Env, report: &EngineReport) -> Vec<Blocked> {
         // More detail is a superset of less: the collapsed listing names
         // every position, so this one cannot name fewer.
         for place in &row.also_in_the_way {
-            say(&format!("  also at {}", shown(place)));
+            say(&format!("  also at {}", place));
         }
         if let Some(line) = compared_line(row.compared.as_ref(), offer) {
             say(&format!("  {line}"));
@@ -87,7 +86,7 @@ pub fn print_drift(env: &Env, report: &EngineReport) -> Vec<Blocked> {
 /// One remedy per item, said under the last of the rows that can carry it.
 fn say_offer(rows: &[&DriftRow], row: &DriftRow, offer: Option<&Offer>) {
     if let (Some(offer), true) = (offer, offer_goes_under(rows, row)) {
-        say(&format!("  to keep those files: {}", shown(&offer.line)));
+        say(&format!("  to keep those files: {}", offer.line));
     }
 }
 
@@ -168,7 +167,7 @@ fn also_at(first: &DriftRow, rest: &[&DriftRow]) -> Vec<String> {
             }
         }
     }
-    places.into_iter().map(shown).collect()
+    places.into_iter().map(str::to_owned).collect()
 }
 
 /// Every position one row is about, its own first.
@@ -193,11 +192,11 @@ fn compared_line(compared: Option<&Comparison>, offer: Option<&Offer>) -> Option
         };
         return Some(format!("identical to the catalog{safe}"));
     }
-    let named: Vec<String> = compared
+    let named: Vec<&str> = compared
         .differing
         .iter()
         .take(NAMED_FILES)
-        .map(|file| shown(file))
+        .map(String::as_str)
         .collect();
     let total = compared.differing_total;
     let more = match total.saturating_sub(u32::try_from(named.len()).unwrap_or(u32::MAX)) {
@@ -240,7 +239,7 @@ fn say_scope_exit(rows: &[&DriftRow], blocked: &[Blocked]) {
 /// there carries the path alone — the cause is what says the rest, and only
 /// a surface knows how to word it — so the sentence is written here.
 fn conflict_detail(row: &DriftRow) -> String {
-    let detail = shown(&row.detail);
+    let detail = &row.detail;
     match row.cause {
         Some(DriftCause::UnmanagedContent | DriftCause::UnmanagedWrongShape) => {
             format!("{detail} already holds files kendex did not write")
@@ -251,7 +250,7 @@ fn conflict_detail(row: &DriftRow) -> String {
         Some(DriftCause::SharedLink) => {
             format!("{detail} is a folder kendex did not write, read through a shortcut")
         }
-        _ => detail,
+        _ => detail.clone(),
     }
 }
 
@@ -275,10 +274,12 @@ mod tests {
         }
     }
 
-    /// A position is an identity, and `shown` is not injective: a path
-    /// holding a real newline and one holding the two characters that
-    /// spell its escape render alike. Deduplicated on the rendering, one
-    /// of two real places would never be printed.
+    /// A position is an identity, and the escape the `ui` seam prints it
+    /// through is not injective: a path holding a real newline and one
+    /// holding the two characters that spell its escape reach the screen
+    /// alike. Deduplicated here, on the paths themselves, both survive to
+    /// be printed — one of two real places would otherwise be dropped
+    /// before the seam ever saw it.
     #[test]
     fn two_positions_that_render_alike_are_both_named() {
         let head = row(HarnessId::Claude, "/a/head");
@@ -287,7 +288,7 @@ mod tests {
         let places = also_at(&head, &[&real, &literal]);
         assert_eq!(
             places,
-            vec!["/a/one\\ntwo".to_owned(), "/a/one\\ntwo".to_owned()],
+            vec!["/a/one\ntwo".to_owned(), "/a/one\\ntwo".to_owned()],
             "two real places rendered alike were printed as one"
         );
     }

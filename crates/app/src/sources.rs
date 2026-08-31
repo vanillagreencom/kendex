@@ -4,21 +4,7 @@ use kendex_core::model::Scope;
 use kendex_core::source_ops::{self, BundleRow, SourceRow};
 use kendex_core::{apply, manifest, remote};
 
-fn env() -> Result<Env, String> {
-    Env::detect().map_err(|e| e.to_string())
-}
-
-fn all_scopes(env: &Env) -> Result<Vec<Scope>, String> {
-    let settings = kendex_core::settings::load(env).map_err(|e| e.to_string())?;
-    let mut scopes = vec![Scope::Global];
-    scopes.extend(
-        settings
-            .projects
-            .into_iter()
-            .map(|root| Scope::Project { root }),
-    );
-    Ok(scopes)
-}
+use crate::scopes::{all as all_scopes, env};
 
 /// Every declared source in every scope — the Sources page's one query.
 #[tauri::command(async)]

@@ -193,17 +193,42 @@ pub fn set_rev_with(
     rev: Option<&str>,
     options: &crate::engine::PlanOptions,
 ) -> Result<EngineReport> {
+    set_revs_with(env, scope, &[(kind, name.to_owned(), rev)], options)
+}
+
+/// The same move for a set of packages at once, and the one definition
+/// behind [`set_rev_with`].
+///
+/// Every selector resolves against the manifest as it stands before any of
+/// them is written (invariant 11): a selector reads a declaration's source,
+/// so a write that landed first would change what a later one resolves
+/// against, and one package the source cannot place leaves the manifest
+/// exactly as it was.
+pub fn set_revs_with(
+    env: &Env,
+    scope: &Scope,
+    holds: &[(ItemKind, String, Option<&str>)],
+    options: &crate::engine::PlanOptions,
+) -> Result<EngineReport> {
     let mut manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
-    let normalized = rev
-        .map(|selector| resolve_hold(env, &manifest, kind, name, selector))
-        .transpose()?;
-    let Some(entry) = manifest.declared_mut(kind).get_mut(name) else {
-        return Err(CoreError::NotDeclared {
-            kind,
-            name: name.to_owned(),
-        });
-    };
-    entry.rev = normalized;
+    let resolved: Vec<(ItemKind, &String, Option<String>)> = holds
+        .iter()
+        .map(|(kind, name, rev)| {
+            let normalized = rev
+                .map(|selector| resolve_hold(env, &manifest, *kind, name, selector))
+                .transpose()?;
+            Ok((*kind, name, normalized))
+        })
+        .collect::<Result<_>>()?;
+    for (kind, name, normalized) in resolved {
+        let Some(entry) = manifest.declared_mut(kind).get_mut(name) else {
+            return Err(CoreError::NotDeclared {
+                kind,
+                name: name.clone(),
+            });
+        };
+        entry.rev = normalized;
+    }
     crate::source_ops::persist_and_plan_with(env, scope, manifest, options)
 }
 

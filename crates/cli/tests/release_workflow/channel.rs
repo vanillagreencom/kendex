@@ -22,7 +22,7 @@ fn core_calls_it_a_candidate(version: &str) -> bool {
 /// The CLI the classifier reads the built version back from, named the way
 /// the staging step leaves it in `dist/`. A release job runs on Linux
 /// x86_64, so this is the one lane's binary it can execute.
-const BUILT_CLI: &str = "kendex-x86_64-unknown-linux-gnu";
+pub(crate) const BUILT_CLI: &str = "kendex-x86_64-unknown-linux-gnu";
 
 /// Runs the classifier step for one tag against a `dist/` holding `cli` as
 /// the release binary. Returns the exit code and the `prerelease` output,

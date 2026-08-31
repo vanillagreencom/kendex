@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 use kendex_core::command_update::{fetch, record_command, replace_executable};
 use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
-use kendex_core::names::shown;
 use kendex_core::release_digests::{ReleaseDigests, release_digests_url};
-use kendex_core::update_channel::feed_url_for;
 use kendex_core::update_feed::{
     ReleaseFeed, UPDATER_PUBLIC_KEY, VersionRelation, app_image_signature_url, app_image_url,
     release_notes_url, signature_url, verify_signature,
@@ -15,29 +13,9 @@ use super::{CliResult, out, say};
 
 /// The release feed is parsed by core so the CLI and app accept one schema,
 /// and core picks which feed off the running version so both shells follow
-/// one channel.
+/// one channel — the override rule included.
 fn feed_url() -> String {
-    #[cfg(debug_assertions)]
-    {
-        selected_feed(std::env::var("KENDEX_UPDATE_FEED").ok(), true)
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        selected_feed(None, false)
-    }
-}
-
-/// The feed a run reads, given the override it was handed. A debug build
-/// honors it so the compat suite can point a run at a local fixture; a
-/// release build takes the channel's own URL and nothing else, because the
-/// feed names the bytes that replace the running command and an override
-/// would let anything that can set a variable name them instead. The app
-/// gates the same variable the same way (`crates/app/src/app_update.rs`).
-fn selected_feed(override_url: Option<String>, debug_build: bool) -> String {
-    match (debug_build, override_url) {
-        (true, Some(url)) => url,
-        (true, None) | (false, _) => feed_url_for(env!("CARGO_PKG_VERSION")).to_owned(),
-    }
+    kendex_core::update_channel::feed_url(env!("CARGO_PKG_VERSION"))
 }
 
 /// The feed keys its assets by the build target, one per lane in
@@ -124,7 +102,7 @@ fn run_on(
         return Ok(());
     };
 
-    say(&format!("updating {} → {}", shown(current), shown(latest)));
+    say(&format!("updating {} → {}", current, latest));
     // The command's own baked version is the state marker for the whole
     // install, so it is the last thing written. Any failure before it
     // leaves the old command in place, the next run still reads the feed
@@ -256,7 +234,7 @@ fn replace_app(
 ) -> Result<(), String> {
     say(&format!(
         "updating the desktop app at {}",
-        shown(&half.path.display().to_string())
+        half.path.display()
     ));
     let image = fetch(&half.url)?;
     // The release job publishes each AppImage beside a minisign signature

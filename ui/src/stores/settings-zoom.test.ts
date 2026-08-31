@@ -11,6 +11,8 @@ import {
   settings,
   stored,
   tick,
+  windowAt,
+  windowTakes,
   zoom,
 } from "./zoom-fixture";
 
@@ -52,7 +54,7 @@ describe("zoom, on screen", () => {
   /// from it: a readout of the stored size would name a size nobody is
   /// looking at, and the next press would move from there.
   it("reads the size a launch that could not zoom actually opened at", async () => {
-    useSettingsStore.setState({ settings: null, tookZoom: null });
+    useSettingsStore.setState({ settings: null, zoom: null });
     vi.mocked(commands.getSettings).mockResolvedValue(
       ok({ settings: { ...settings, zoom: 150 }, base: "file" }),
     );
@@ -92,8 +94,7 @@ describe("zoom, on screen", () => {
     // The reload: a new store, and a window still at the resized size.
     useSettingsStore.setState({
       settings: null,
-      shownZoom: null,
-      tookZoom: null,
+      zoom: null,
     });
     vi.mocked(commands.getSettings).mockResolvedValue(
       ok({ settings: { ...settings, zoom: 150 }, base: "file" }),
@@ -136,8 +137,9 @@ describe("zoom, on screen", () => {
     // the person was working at rather than falling back to full size.
     useSettingsStore.setState({
       settings: { ...settings, zoom: 150 },
-      tookZoom: 150,
+      zoom: 150,
     });
+    windowAt(150);
     vi.mocked(commands.windowSetZoom).mockResolvedValue(failed("no webview"));
 
     await useSettingsStore.getState().setZoom(160);
@@ -151,8 +153,9 @@ describe("zoom, on screen", () => {
   it("puts the size back when the bridge throws, and lets Retry ask again", async () => {
     useSettingsStore.setState({
       settings: { ...settings, zoom: 150 },
-      tookZoom: 150,
+      zoom: 150,
     });
+    windowAt(150);
     vi.mocked(commands.windowSetZoom).mockRejectedValue(new Error("no bridge"));
 
     await expect(
@@ -165,7 +168,7 @@ describe("zoom, on screen", () => {
     expect(dialog().title).toBe("Couldn't change the zoom");
     expect(dialog().message).toContain("no bridge");
 
-    vi.mocked(commands.windowSetZoom).mockResolvedValue(ok(null));
+    windowTakes();
     dialog().actions[0].onClick();
     await vi.waitFor(() => expect(commands.saveZoom).toHaveBeenCalled());
 
@@ -173,20 +176,43 @@ describe("zoom, on screen", () => {
     expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(160);
   });
 
+  /// A refusal is about the press that was refused. Another press made
+  /// while it was out has already moved the display past it, and putting
+  /// the old size back would take the person off the size they are looking
+  /// at because an earlier one failed.
   it("does not undo a newer size when an older resize comes back refused", async () => {
     const first = deferred<ReturnType<typeof failed>>();
-    vi.mocked(commands.windowSetZoom)
-      .mockReturnValueOnce(first.promise)
-      .mockResolvedValue(ok(null));
+    vi.mocked(commands.windowSetZoom).mockReturnValueOnce(first.promise);
 
-    // The second press is made while the first is still out: it moves the
-    // store at once and waits its turn at the window.
     const refused = useSettingsStore.getState().setZoom(150);
     const next = useSettingsStore.getState().setZoom(160);
     first.settle(failed("no webview"));
     await Promise.all([refused, next]);
 
     expect(zoom()).toBe(160);
+  });
+
+  /// Two presses out and both refused: the display goes back to the size
+  /// the window says it is at, never to the other refused one — which it
+  /// is not showing either.
+  it("puts back the size the window is showing, not one it also refused", async () => {
+    const first = deferred<ReturnType<typeof failed>>();
+    const second = deferred<ReturnType<typeof failed>>();
+    vi.mocked(commands.windowSetZoom)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    const step = useSettingsStore.getState().setZoom(150);
+    const next = useSettingsStore.getState().setZoom(160);
+    first.settle(failed("no webview"));
+    await tick();
+    second.settle(failed("no webview"));
+    await Promise.all([step, next]);
+    await useSettingsStore.getState().saveZoom();
+
+    // The window never left 100, so 100 is what the file gets.
+    expect(zoom()).toBe(100);
+    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(100);
   });
 
   it("stores the size an accepted retry manages to show", async () => {
@@ -196,7 +222,7 @@ describe("zoom, on screen", () => {
 
     await useSettingsStore.getState().setZoom(150);
     const retry = dialog().actions[0];
-    vi.mocked(commands.windowSetZoom).mockResolvedValue(ok(null));
+    windowTakes();
     retry.onClick();
     await vi.waitFor(() => expect(commands.saveZoom).toHaveBeenCalled());
 

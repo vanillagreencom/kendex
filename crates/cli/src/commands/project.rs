@@ -117,11 +117,11 @@ fn offer_to_manage(env: &Env, root: &std::path::Path) {
         out(&format!(
             "  - {} {} [{}]  (cd {} && kendex adopt {} {}{tools})",
             item.kind.name(),
-            kendex_core::names::shown(&item.name),
+            item.name,
             item.tools.join(", "),
             kendex_core::names::quoted(&root.display().to_string()),
             item.kind.name(),
-            kendex_core::names::shown(&item.name),
+            item.name,
         ));
     }
 }

@@ -8,11 +8,10 @@ import {
 } from "@/bindings";
 import { type Draft, emptyDraft } from "@/lib/editor-draft";
 
-import { sameScope } from "@/lib/scope";
+import { everyPlace, sameScope } from "@/lib/scope";
 import { settingsDraft, withEdit } from "@/lib/settings-rows";
 import { useAuditStore } from "./audit";
 import {
-  everyPlace,
   mergedPlaces,
   opening,
   placesOf,

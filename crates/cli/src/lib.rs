@@ -185,6 +185,10 @@ enum Command {
         #[arg(short = 'f', long)]
         force: bool,
     },
+    /// Where the first version stands against the second under SemVer
+    /// precedence: newer, same, or older
+    #[command(name = "version-compare")]
+    VersionCompare(commands::version_compare::VersionCompareArgs),
     /// Update Pi extension packages
     #[command(name = "update-pi")]
     UpdatePi {
@@ -375,6 +379,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Index { dir, json } => commands::index_cmd::run(dir, json)?,
         Command::Init { name, kind } => commands::init::run(name, kind)?,
         Command::Update { force } => commands::update::run(&env, force)?,
+        Command::VersionCompare(args) => commands::version_compare::run(args)?,
     }
     Ok(ExitCode::SUCCESS)
 }

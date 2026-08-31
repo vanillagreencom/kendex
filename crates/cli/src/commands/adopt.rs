@@ -1,7 +1,6 @@
 use kendex_core::engine::{adopt, audit};
 use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, ItemKind};
-use kendex_core::names::shown;
 
 use super::engine_common::{apply_report, print_safety};
 use super::{CliResult, resolve_scopes, say};
@@ -39,7 +38,7 @@ pub fn run(
 
     let move_plan = adopt::adopt(env, &scope, kind, &name, &harnesses)?;
     for op in &move_plan.ops {
-        say(&format!("  - {}", shown(&op.line())));
+        say(&format!("  - {}", op.line()));
     }
     kendex_core::apply::execute(env, &move_plan)?;
 
@@ -48,6 +47,6 @@ pub fn run(
     let report = audit(env, &scope)?;
     print_safety(&report);
     apply_report(env, &report)?;
-    say(&format!("adopted {} '{}'", kind.name(), shown(&name)));
+    say(&format!("adopted {} '{}'", kind.name(), name));
     Ok(())
 }

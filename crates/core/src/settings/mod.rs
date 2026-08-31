@@ -8,6 +8,7 @@ use crate::base::Base;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::fs::{atomic_write, read_if_exists};
+use crate::model::Scope;
 
 mod zoom;
 use zoom::bring_zoom_into_range;
@@ -34,10 +35,6 @@ pub struct AppSettings {
     /// inherit the mute.
     #[serde(default)]
     pub muted_app_notice: Option<String>,
-    /// Whether startup may contact the release feed. A manual refresh is a
-    /// separate, explicit request.
-    #[serde(default = "default_true")]
-    pub auto_update_check: bool,
     /// How large the interface draws, as a percent. Machine-local like
     /// everything else in this file: how big text needs to be belongs to
     /// the person and the display in front of them, not to a project.
@@ -49,8 +46,20 @@ fn default_zoom() -> u16 {
     ZOOM.default
 }
 
-fn default_true() -> bool {
-    true
+impl AppSettings {
+    /// Every place this machine manages: the personal scope, then each
+    /// registered project in registration order. One definition, because a
+    /// surface that built the list itself would answer about a different
+    /// set of places than the one the settings file names.
+    pub fn scopes(&self) -> Vec<Scope> {
+        std::iter::once(Scope::Global)
+            .chain(
+                self.projects
+                    .iter()
+                    .map(|root| Scope::Project { root: root.clone() }),
+            )
+            .collect()
+    }
 }
 
 impl Default for AppSettings {
@@ -62,7 +71,6 @@ impl Default for AppSettings {
             appearance: Appearance::System,
             ignored_updates: Vec::new(),
             muted_app_notice: None,
-            auto_update_check: true,
             zoom: ZOOM.default,
         }
     }
@@ -251,13 +259,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn settings_written_before_update_checks_keep_automatic_checks_on() {
+    fn a_settings_file_written_before_the_app_notice_mutes_nothing() {
         let tmp = tempfile::tempdir().unwrap();
         let env = env_in(tmp.path());
         write_settings(&env, "schema = 1\n");
-        let settings = load(&env).unwrap();
-        assert!(settings.auto_update_check);
-        assert_eq!(settings.muted_app_notice, None);
+        assert_eq!(load(&env).unwrap().muted_app_notice, None);
     }
 
     #[test]

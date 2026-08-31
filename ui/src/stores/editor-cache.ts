@@ -177,9 +177,3 @@ export const mergedPlaces =
       held.savedSettings,
     ),
   });
-
-/** Every place the app knows: the personal scope and each project. */
-export const everyPlace = (projects: string[]): Scope[] => [
-  { scope: "global" },
-  ...projects.map((root) => ({ scope: "project" as const, root })),
-];

@@ -160,10 +160,10 @@ fn remove() {
 /// A name off a tree kendex did not write reaches the terminal as its own
 /// characters, never as the escape or the line break it would act on.
 ///
-/// The escaping is per fragment, at the site that knows which half of its
-/// sentence is foreign — never over the composed line, where a newline
-/// somebody else wrote is indistinguishable from a break the caller meant
-/// and a filename can forge output lines of its own.
+/// The one test the escaping has, because there is one place it happens:
+/// every verb's lines leave through `ui`, which escapes the composed
+/// sentence there. A per-command copy of this would prove the seam over
+/// again and say nothing about the command.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
@@ -212,16 +212,11 @@ fn a_name_off_a_foreign_tree_cannot_forge_a_line() {
             carrying[0].contains("[Claude Code]"),
             "the name forged a line of its own ({ui}): {printed}"
         );
-    }
-}
 
-/// The place a run names is escaped too. A scope label is a path somebody
-/// chose, and a path carries whatever the filesystem allowed, so the
-/// closing line cannot hand a terminal an escape sequence to act on.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_scope_a_line_names_is_escaped_with_the_rest() {
-    for ui in ["plain", "pretty"] {
+        // The closing line goes out through the same seam by a different
+        // door: a ledger writes its own head and steps rather than saying
+        // them. The place a run names is a path somebody chose, so it
+        // carries whatever the filesystem allowed.
         let tmp = tempfile::tempdir().unwrap();
         let home = &rooted(&tmp);
         let project = home.join("we\u{1b}[31mird");

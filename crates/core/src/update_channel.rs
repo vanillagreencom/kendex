@@ -45,6 +45,39 @@ pub fn feed_url_for(current_version: &str) -> &'static str {
     }
 }
 
+/// The feed a run reads, given the override it was handed. A debug build
+/// honors it so a suite can point a run at a local fixture; a release build
+/// takes the channel's own URL and nothing else, because the feed names the
+/// bytes that replace the running install and an override would let anything
+/// that can set a variable name them instead.
+///
+/// One definition for both shells. The rule is the same on each, and two
+/// copies of it is one copy that can be relaxed on its own — the copy that
+/// honours an override in a release build is the whole of the attack.
+pub fn selected_feed(current_version: &str, override_url: Option<String>, debug: bool) -> String {
+    match (debug, override_url) {
+        (true, Some(url)) => url,
+        (true, None) | (false, _) => feed_url_for(current_version).to_owned(),
+    }
+}
+
+/// The feed this build reads: [`selected_feed`] with the override a debug
+/// build is allowed to read off the environment, and none otherwise.
+pub fn feed_url(current_version: &str) -> String {
+    #[cfg(debug_assertions)]
+    {
+        selected_feed(
+            current_version,
+            std::env::var("KENDEX_UPDATE_FEED").ok(),
+            true,
+        )
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        selected_feed(current_version, None, false)
+    }
+}
+
 /// The signed manifest `current_version` installs the desktop app from,
 /// chosen by the same rule as the feed above.
 pub fn manifest_url_for(current_version: &str) -> &'static str {
@@ -57,6 +90,23 @@ pub fn manifest_url_for(current_version: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A release build takes the channel's own feed and nothing else: an
+    /// override there names the bytes that replace a running install, and
+    /// both shells read this one rule.
+    #[test]
+    fn only_debug_builds_accept_a_feed_override() {
+        let fixture = "file:///fixtures/feed.json".to_owned();
+        assert_eq!(selected_feed("1.0.0", Some(fixture.clone()), true), fixture);
+        assert_eq!(
+            selected_feed("1.0.0", Some(fixture.clone()), false),
+            RELEASE_FEED_URL
+        );
+        assert_eq!(
+            selected_feed("1.0.0-rc1", Some(fixture), false),
+            PRERELEASE_FEED_URL
+        );
+    }
 
     /// The rule the whole pre-release test path rests on, read from both
     /// ends: a candidate follows candidates, and a shipped release never

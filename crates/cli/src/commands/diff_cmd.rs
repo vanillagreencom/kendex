@@ -1,7 +1,6 @@
 use clap::Args;
 
 use kendex_core::env::Env;
-use kendex_core::names::shown;
 use kendex_core::package::diff::{FileStatus, LineKind, VersionSel};
 
 use super::pin::parse_kind;
@@ -73,9 +72,7 @@ pub fn run(env: &Env, args: DiffArgs) -> CliResult {
         };
         say(&format!(
             "\n{}{status}  +{} -{}",
-            shown(&file.path),
-            file.additions,
-            file.deletions
+            file.path, file.additions, file.deletions
         ));
         for hunk in &file.hunks {
             say(&hunk.header);

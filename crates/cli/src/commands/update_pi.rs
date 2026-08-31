@@ -6,7 +6,6 @@ use kendex_core::harness::HarnessAdapter;
 use kendex_core::harness::pi::Pi;
 use kendex_core::manifest::ManifestFile;
 use kendex_core::model::Scope;
-use kendex_core::names::shown;
 use kendex_core::process::Hardened;
 use kendex_core::{manifest, pi_ext, settings, source};
 
@@ -284,11 +283,7 @@ fn semver(version: &str) -> Vec<u64> {
 }
 
 fn print_plan(plan: &ScopePlan) {
-    say(&format!(
-        "{} ({})",
-        shown(&plan.label),
-        shown(&plan.root.display().to_string())
-    ));
+    say(&format!("{} ({})", plan.label, plan.root.display()));
     if plan.rows.is_empty() {
         say("  no pi packages installed");
     }
@@ -301,7 +296,7 @@ fn print_plan(plan: &ScopePlan) {
         ));
     }
     for note in &plan.notes {
-        say(&format!("  ! {}", shown(note)));
+        say(&format!("  ! {}", note));
     }
 }
 
@@ -358,16 +353,12 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
                     for bin in &outcome.unbuilt_bins {
                         say(&format!(
                             "  ! {}: bin '{bin}' is not built, so no command was linked",
-                            shown(&row.name)
+                            row.name
                         ));
                     }
                 }
                 Err(error) => {
-                    say(&format!(
-                        "  failed {}: {}",
-                        shown(&row.name),
-                        shown(&error.to_string())
-                    ));
+                    say(&format!("  failed {}: {}", row.name, error));
                     failures.push(format!("{} ({})", row.name, plan.label));
                 }
             }

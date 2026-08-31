@@ -28,7 +28,8 @@ pub const MAX_DIGESTS_BYTES: usize = 4 * 1024;
 /// SHA-256 in lowercase hex, the shape `sha256sum` prints.
 const DIGEST_CHARS: usize = 64;
 /// A target triple is the widest name a lane carries; nothing longer is one.
-const MAX_TARGET_BYTES: usize = 128;
+/// The feed's asset keys are the same names, and read it from here.
+pub(crate) const MAX_TARGET_BYTES: usize = 128;
 
 /// One release lane's signed statement. Unknown fields stay readable within
 /// a schema version, the way the feed's do, so a lane can add data without

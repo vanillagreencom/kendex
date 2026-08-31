@@ -9,8 +9,6 @@ use crate::error::{CoreError, Result};
 use crate::manifest::Manifest;
 use crate::model::{ItemKind, Scope};
 
-use super::resolve_hold;
-
 /// Bring one package current and leave the rest of the scope where it is:
 /// the plan resolves this package — and, for a derived one, the
 /// declarations that carry it, since the owner is what holds its revision —
@@ -84,31 +82,20 @@ pub fn update_many(env: &Env, scope: &Scope, targets: &[UpdateTarget]) -> Result
             .iter()
             .map(|target| (target.kind, target.name.clone())),
     );
-    let holds: Vec<(&UpdateTarget, &str)> = targets
+    let holds: Vec<(ItemKind, String, Option<&str>)> = targets
         .iter()
-        .filter_map(|target| Some((target, target.hold.as_deref()?)))
+        .filter_map(|target| {
+            Some((
+                target.kind,
+                target.name.clone(),
+                Some(target.hold.as_deref()?),
+            ))
+        })
         .collect();
     if holds.is_empty() {
         return crate::engine::plan_apply(env, scope, &options);
     }
-    let mut manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
-    // Resolved against the manifest as it stands, all of them, before any
-    // one of them is written: a selector reads a declaration's source, and
-    // nothing here changes one.
-    let resolved: Vec<(ItemKind, String, String)> = holds
-        .iter()
-        .map(|(target, selector)| {
-            let commit = resolve_hold(env, &manifest, target.kind, &target.name, selector)?;
-            Ok((target.kind, target.name.clone(), commit))
-        })
-        .collect::<Result<_>>()?;
-    for (kind, name, commit) in resolved {
-        let Some(decl) = manifest.declared_mut(kind).get_mut(&name) else {
-            return Err(CoreError::NotDeclared { kind, name });
-        };
-        decl.rev = Some(commit);
-    }
-    crate::source_ops::persist_and_plan_with(env, scope, manifest, &options)
+    super::set_revs_with(env, scope, &holds, &options)
 }
 
 /// The manifest a targeted update plans against, `None` where the scope

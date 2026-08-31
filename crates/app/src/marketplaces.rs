@@ -21,21 +21,7 @@ use specta::Type;
 
 pub mod install;
 
-fn env() -> Result<Env, String> {
-    Env::detect().map_err(|e| e.to_string())
-}
-
-fn all_scopes(env: &Env) -> Result<Vec<Scope>, String> {
-    let settings = kendex_core::settings::load(env).map_err(|e| e.to_string())?;
-    let mut scopes = vec![Scope::Global];
-    scopes.extend(
-        settings
-            .projects
-            .into_iter()
-            .map(|root| Scope::Project { root }),
-    );
-    Ok(scopes)
-}
+use crate::scopes::{all as all_scopes, env};
 
 /// The scope's manifest for reading. Browsing observes: a manifest this
 /// build cannot read answers for none of its own rows rather than blanking

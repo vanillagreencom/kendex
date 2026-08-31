@@ -1,4 +1,3 @@
-use kendex_core::env::Env;
 use kendex_core::harness::{KindCaps, capabilities};
 use kendex_core::model::{HarnessId, ItemKind};
 use kendex_core::scan;
@@ -7,9 +6,7 @@ use kendex_core::settings;
 use serde::Serialize;
 use specta::Type;
 
-fn env() -> Result<Env, String> {
-    Env::detect().map_err(|e| e.to_string())
-}
+use crate::scopes::env;
 
 #[tauri::command]
 #[specta::specta]
@@ -88,17 +85,6 @@ pub struct ReportRouteView {
     pub issue_url: Option<String>,
 }
 
-fn urlencode(text: &str) -> String {
-    text.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                char::from(b).to_string()
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
-}
-
 /// Where a problem report about this item belongs: the kendex upstream
 /// (with a prefilled issue link) or the user's own repo.
 #[tauri::command(async)]
@@ -128,7 +114,7 @@ fn route_for(
     let issue_url = route.repo.as_ref().map(|repo| {
         let mut url = format!(
             "https://github.com/{repo}/issues/new?title={}",
-            urlencode(&format!("{name}: "))
+            kendex_core::names::urlencoded(&format!("{name}: "))
         );
         if let Some(label) = &route.label {
             url.push_str(&format!("&labels={label}"));

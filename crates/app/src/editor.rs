@@ -10,9 +10,7 @@ mod save;
 // (`__cmd__*`) that `collect_commands!` resolves through this module.
 pub use save::*;
 
-fn env() -> Result<Env, String> {
-    Env::detect().map_err(|e| e.to_string())
-}
+use crate::scopes::env;
 
 /// What the Customize page needs to offer real choices: the names already
 /// declared here plus the skills any ready source can supply.

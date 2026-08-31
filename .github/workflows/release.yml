@@ -291,7 +291,11 @@ jobs:
           files: dist/*
           draft: ${{ steps.tag.outputs.prerelease == 'false' }}
           prerelease: ${{ steps.tag.outputs.prerelease == 'true' }}
-      # The channel job writes these onto the fixed pre-release release.
+      # The channel job writes these onto the fixed pre-release release. The
+      # Linux CLI travels with them and is not published: it is what the
+      # channel job's guard runs `version-compare` on, so the channel is
+      # ordered by the parser every candidate reads its feed with rather
+      # than by a second opinion about SemVer.
       - uses: actions/upload-artifact@v4
         with:
           name: manifests
@@ -299,6 +303,7 @@ jobs:
             dist/latest.json
             dist/feed.json
             dist/digests-*
+            dist/kendex-x86_64-unknown-linux-gnu
           if-no-files-found: error
 
   # Because "latest" skips pre-releases, a candidate has no way to reach the

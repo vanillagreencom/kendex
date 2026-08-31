@@ -13,39 +13,28 @@ import { useProblemsStore } from "./problems";
 
 interface ZoomFields {
   settings: AppSettings | null;
-  shownZoom: number | null;
-  tookZoom: number | null;
+  zoom: number | null;
 }
 
 interface ZoomSlice {
   /**
-   * The size on screen while it is ahead of the window. A press shows at
-   * once and the window is asked afterwards, so until the reply lands this
-   * is a size nothing has confirmed — and it stays out of `settings` for
-   * exactly that reason: every other settings action writes the whole
-   * object, so one that ran now would faithfully persist a size the window
-   * may be about to refuse.
+   * The size on screen — one value, because the window is the authority on
+   * it and a second copy could only ever disagree. Seeded at load with the
+   * size the launch actually opened at, moved ahead by a press so the
+   * control feels live, and put back from the window when it refuses one.
    *
-   * Null until the first press, when the window is showing the size it
-   * last confirmed. Readers want `onScreen()`.
-   */
-  shownZoom: number | null;
-  /**
-   * The size the window has taken, and the only size ever written. What the
-   * settings object says is not evidence of this: it holds the size the
-   * person asked for, which survives a session the window would not honour
-   * it in, and every settings action replies with the whole file, so a
-   * reply read before the person last resized puts an older size back. Only
-   * the window moves this, so nothing else can undo a resize.
+   * Deliberately not `settings.zoom`: the file holds the size the person
+   * asked for, which survives a session the window would not honour it in,
+   * and every settings reply carries the whole file.
    *
-   * Seeded at load from the size the launch actually opened at.
+   * Null until the first load. Readers want `onScreen()`.
    */
-  tookZoom: number | null;
-  /** The size the app is showing, which a press moves ahead of the window. */
+  zoom: number | null;
+  /** The size the app is showing, or full size before the first load. */
   onScreen: () => number;
   /** Resize the window to follow the input. Nothing is written. */
   setZoom: (percent: number) => Promise<void>;
-  /** The commit boundary: remember the size now on screen. */
+  /** The commit boundary: remember the size the window is at. */
   saveZoom: () => Promise<void>;
 }
 
@@ -69,11 +58,6 @@ function zoomActions(
   // the person has already moved past.
   let saving: Promise<void> | null = null;
   let again = false;
-  // One request to the window at a time, each queued behind the last, so
-  // there is never a second reply to interleave with: a queue removes the
-  // orderings rather than reconciling them. The commit waits on the tail of
-  // this, so a size the window refused cannot reach the file.
-  let asking: Promise<void> = Promise.resolve();
 
   function report(title: string, message: string, retry: () => void) {
     useProblemsStore.getState().showError({
@@ -84,23 +68,8 @@ function zoomActions(
     });
   }
 
-  /** The size the window has taken. The launch reports what it opened at,
-   *  so this is true from the first frame — including when the window
-   *  refused the stored size and full size is what is really on screen. */
-  function confirmedZoom(): number {
-    return get().tookZoom ?? ZOOM.default;
-  }
-
-  /** The size the app is showing, which a press moves ahead of the window. */
   function onScreen(): number {
-    return get().shownZoom ?? confirmedZoom();
-  }
-
-  /** Show a size the window has not answered for. Nowhere that writes the
-   *  settings file reads this, which is what keeps an unanswered size from
-   *  being persisted by an unrelated save. */
-  function preview(percent: number) {
-    set({ shownZoom: percent });
+    return get().zoom ?? ZOOM.default;
   }
 
   /** Take the size the file now holds into the settings object — the size
@@ -109,6 +78,16 @@ function zoomActions(
   function storedZoom(percent: number) {
     const current = get().settings;
     if (current) set({ settings: { ...current, zoom: percent } });
+  }
+
+  /** What the window is showing, asked of the window. Null when even that
+   *  could not be read, which is the one case nothing here can correct. */
+  async function showing(): Promise<number | null> {
+    try {
+      return (await commands.windowZoomState()).percent;
+    } catch {
+      return null;
+    }
   }
 
   /** Why the window did not take the size, or null when it did. A bridge
@@ -123,38 +102,23 @@ function zoomActions(
     }
   }
 
-  /// Its turn in the queue: ask the window, and put the display back if it
-  /// says no.
-  async function ask(percent: number) {
+  async function setZoom(percent: number): Promise<void> {
+    if (!get().settings || onScreen() === percent) return;
+    // The size shows at once and the window is asked afterwards, so a held
+    // key redraws at every step instead of once the last reply lands.
+    set({ zoom: percent });
     const problem = await refused(percent);
-    if (problem === null) {
-      set({ tookZoom: percent });
-      return;
-    }
+    if (problem === null) return;
     // A size the window did not take is not the size the app is showing, so
-    // put the display back. Only if nothing newer has landed meanwhile: a
-    // press made while this one waited its turn has already moved past it.
-    if (get().shownZoom === percent) preview(confirmedZoom());
+    // the display goes back to what the window says it is at — asked of the
+    // window, never guessed. Only while this press is still the one on
+    // display: a press made since has already moved past it, and the
+    // display belongs to that one.
+    if (get().zoom === percent) {
+      const shown = await showing();
+      if (shown !== null) set({ zoom: shown });
+    }
     report("Couldn't change the zoom", problem, () => void retry(percent));
-  }
-
-  function setZoom(percent: number): Promise<void> {
-    if (!get().settings || onScreen() === percent) return Promise.resolve();
-    // The size shows at once and the window is asked in turn, so a second
-    // press reads a display that has already moved and cannot collapse into
-    // the first.
-    preview(percent);
-    const run = asking
-      .then(() => ask(percent))
-      .catch((error: unknown) => {
-        report(
-          "Couldn't change the zoom",
-          String(error),
-          () => void retry(percent),
-        );
-      });
-    asking = run;
-    return run;
   }
 
   /** A retry has to store what it manages to show: an accepted second try
@@ -166,26 +130,11 @@ function zoomActions(
 
   async function write() {
     try {
-      // The size on screen is settled only once the queue has drained.
-      // `asking` is a closure variable `setZoom` reassigns, and awaiting it
-      // hands control back, which is exactly when a new press can join — so
-      // the identity check asks again until nothing new arrived while we
-      // waited. It terminates because every caller comes through a settle
-      // timer that has already outlasted the input stream; wire `saveZoom`
-      // to something that fires mid-gesture and this becomes an unbounded
-      // wait holding the one-save-at-a-time slot.
-      let awaited: Promise<void>;
-      do {
-        awaited = asking;
-        await awaited;
-      } while (asking !== awaited);
-
-      // Every request has been answered by now, so this is a size the
-      // window took — never one it refused or has not seen. It goes to the
-      // file on its own: a whole-settings write would carry fields read
-      // before this size was chosen, and would be carrying them back.
+      // The size on screen, written on its own: a whole-settings write
+      // would carry fields read before this size was chosen, and would be
+      // carrying them back.
       if (!get().settings) return;
-      const response = await commands.saveZoom(confirmedZoom());
+      const response = await commands.saveZoom(onScreen());
       if (response.status === "ok") {
         storedZoom(response.data);
         return;
@@ -219,7 +168,7 @@ function zoomActions(
     }
   }
 
-  return { shownZoom: null, tookZoom: null, onScreen, setZoom, saveZoom };
+  return { zoom: null, onScreen, setZoom, saveZoom };
 }
 
 interface ProjectFields {
@@ -445,7 +394,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       ]);
       if (settings.status === "ok") {
         hold(settings.data, at);
-        set({ capabilities, tookZoom: webview.percent });
+        set({ capabilities, zoom: webview.percent });
         // The opening had no UI to say this in, so it is said here rather
         // than leaving the person with an app that quietly ignored their
         // size. Both halves are needed: the refusal stands for the whole

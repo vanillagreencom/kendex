@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 use kendex_core::model::ItemKind;
-use kendex_core::names::shown;
 use kendex_core::process::Hardened;
 use kendex_core::report::DEFAULT_UPSTREAM;
 
@@ -146,15 +145,15 @@ pub fn run(env: &Env, args: ReportArgs) -> CliResult {
         "project-local"
     };
     if args.dry_run {
-        say(&format!("ownership: {}", shown(ownership)));
+        say(&format!("ownership: {}", ownership));
         say(&format!(
             "target: {}",
             target.as_deref().unwrap_or("current repo origin")
         ));
         if let Some(area) = area {
-            say(&format!("label: {}", shown(area)));
+            say(&format!("label: {}", area));
         }
-        say(&format!("would run: gh {}", shown(&shell_join(&gh_args))));
+        say(&format!("would run: gh {}", shell_join(&gh_args)));
         return Ok(());
     }
 
@@ -177,10 +176,7 @@ pub fn run(env: &Env, args: ReportArgs) -> CliResult {
             };
             let saved = save_body(&args.title, &sent_body);
             if let Some(path) = &saved {
-                say(&format!(
-                    "report body saved to {}",
-                    shown(&path.display().to_string())
-                ));
+                say(&format!("report body saved to {}", path.display()));
             }
             say("file it manually with the gh command above, or check `gh auth status`");
             Err(format!("failed to file the report via gh: {detail}").into())

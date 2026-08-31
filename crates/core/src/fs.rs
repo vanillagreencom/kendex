@@ -26,6 +26,31 @@ pub fn is_executable(path: &Path) -> bool {
     }
 }
 
+/// Give a file the execute bit. On Windows there is none to give, and the
+/// file being there is the whole of what a caller can arrange.
+#[cfg(unix)]
+pub(crate) fn make_executable(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .map_err(|error| CoreError::io(path, error))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn make_executable(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+/// Give a file the execute bit if its bytes open with a shebang. A tree
+/// carries bytes and not modes, so every path that writes one out asks this
+/// same question: a skill's helper that lands 644 fails its own hook the
+/// first time something calls it.
+pub(crate) fn executable_if_script(path: &Path, bytes: &[u8]) -> Result<()> {
+    match bytes.starts_with(b"#!") {
+        true => make_executable(path),
+        false => Ok(()),
+    }
+}
+
 /// Write via a sibling temp file + rename so readers never see a torn file.
 /// A symlink at the path is followed: the file it points at is replaced and
 /// the link stays — renaming over the link itself would swap a user's

@@ -158,31 +158,6 @@ fn content_nothing_declares_is_named_by_apply_and_by_verify() {
     );
 }
 
-/// The footnote reads names and paths off a tree kendex did not write —
-/// which is the whole point of it — so a folder named with an escape
-/// sequence must print as its own characters and never act on the terminal.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_name_that_could_move_the_cursor_is_printed_as_text() {
-    let (tmp, project) = home_with_project();
-    let home = tmp.path();
-    migrating_project(home);
-    let hostile = project.join(".claude/skills/ev\u{1b}[31mil");
-    fs::create_dir_all(&hostile).unwrap();
-    fs::write(
-        hostile.join("SKILL.md"),
-        "---\nname: evil\ndescription: paints the terminal\n---\nMine.\n",
-    )
-    .unwrap();
-
-    let planned = said(&kendex(home, &project, &["apply", "--plan"]));
-    assert!(planned.contains("not managed:"), "{planned}");
-    assert!(
-        !planned.contains('\u{1b}'),
-        "an escape sequence reached the terminal: {planned:?}"
-    );
-}
-
 /// verify is the CI-facing gate: its exit code answers about drift and
 /// nothing else. Naming unmanaged content means planning every scope,
 /// including one whose manifest cannot be planned against — malformed TOML

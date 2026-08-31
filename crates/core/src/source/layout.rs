@@ -210,17 +210,12 @@ pub(super) fn agent_stems(sealed: &SealedSource, dir: &str) -> Vec<String> {
 
 /// The item names one kind dir holds — every file with the kind's extension,
 /// by stem, at the top level or one segment down.
-fn file_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<String> {
+pub(super) fn file_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<String> {
     let is_item =
         |path: &std::path::Path| path.extension().is_some_and(|e| e == ext) && sealed.is_file(path);
     nested_names(sealed, dir, &is_item, |path| {
         path.file_stem()?.to_str().map(str::to_owned)
     })
-}
-
-/// The item names a fixed kind dir holds, by file stem.
-pub(super) fn ext_stems(sealed: &SealedSource, dir: &str, ext: &str) -> Vec<String> {
-    file_stems(sealed, dir, ext)
 }
 
 /// Every entry under `dir` that `is_item` accepts, plus every such entry one

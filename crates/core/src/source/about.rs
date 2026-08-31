@@ -94,7 +94,7 @@ pub fn about(sealed: &SealedSource, config: &SourceConfig) -> AboutReport {
                         &mut found,
                         dir,
                         kind,
-                        super::layout::ext_stems(sealed, dir, ext).len(),
+                        super::layout::file_stems(sealed, dir, ext).len(),
                     );
                 }
             }

@@ -15,9 +15,7 @@ use crate::audit::{AuditView, view};
 
 pub mod update;
 
-fn env() -> Result<Env, String> {
-    Env::detect().map_err(|e| e.to_string())
-}
+use crate::scopes::env;
 
 #[tauri::command(async)]
 #[specta::specta]
@@ -135,7 +133,7 @@ pub fn fork_rename(
             .map_err(|e| e.to_string())?,
         &engine::PlanOptions {
             remove_orphans: true,
-            removal_filter: Some(vec![old_name]),
+            removal_filter: Some(vec![(None, old_name)]),
             ..Default::default()
         },
     )

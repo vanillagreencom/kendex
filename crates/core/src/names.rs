@@ -6,7 +6,8 @@
 //! one `<plugin>/<leaf>` segment pair, and nothing more.
 //!
 //! And what catalog text looks like on its way out: `shown` for a screen,
-//! `quoted` for a command a person is going to paste.
+//! `quoted` for a command a person is going to paste, `urlencoded` for a
+//! URL something is going to follow.
 
 mod stored;
 pub use stored::folding_sibling;
@@ -199,6 +200,23 @@ fn is_deceptive(c: char) -> bool {
 /// prints as a command to paste is a command somebody runs.
 pub fn quoted(word: &str) -> String {
     format!("'{}'", word.replace('\'', "'\\''"))
+}
+
+/// A value inside a URL, percent-encoded. Every byte outside the unreserved
+/// set goes, not the ones that look dangerous: which characters are live is
+/// the URL grammar's judgement and not this function's, and a query kendex
+/// builds is a request somebody's machine makes.
+pub fn urlencoded(text: &str) -> String {
+    let mut encoded = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(char::from(byte));
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 /// Why this item name cannot be installed. A name from a plugin-registry-shaped

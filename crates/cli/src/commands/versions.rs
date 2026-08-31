@@ -1,7 +1,6 @@
 use clap::Args;
 
 use kendex_core::env::Env;
-use kendex_core::names::shown;
 
 use super::pin::parse_kind;
 use super::{CliResult, resolve_scopes, say};
@@ -33,13 +32,13 @@ pub fn run(env: &Env, args: VersionsArgs) -> CliResult {
         let marker = if row.installed { "*" } else { " " };
         let label = row
             .label
-            .map(|label| format!("  ({})", shown(&label)))
+            .map(|label| format!("  ({})", label))
             .unwrap_or_default();
         say(&format!(
             "{marker} {}  {}{label}  {}",
-            shown(&row.id[..7.min(row.id.len())]),
-            shown(&row.date),
-            shown(&row.summary)
+            &row.id[..7.min(row.id.len())],
+            row.date,
+            row.summary
         ));
     }
     Ok(())

@@ -18,9 +18,7 @@ use specta::Type;
 
 use crate::whole_file::{WriteRefused, refusal};
 
-fn env() -> Result<Env, String> {
-    Env::detect().map_err(|e| e.to_string())
-}
+use crate::scopes::env;
 
 /// The settings and the base of the exact file they describe — paired by
 /// one read, or handed back by the write that produced the file. One

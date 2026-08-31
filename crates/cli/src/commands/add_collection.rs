@@ -7,7 +7,6 @@
 use kendex_core::engine::ops::{self, AddRequest};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
-use kendex_core::names::shown;
 use kendex_core::registry::{CurlFetch, collections};
 use kendex_core::source_ops::{self, SourceAction};
 
@@ -23,7 +22,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     // name, the repositories it points at, and the members it claims.
     say(&format!(
         "collection '{}': {} package(s) across {} repositor{}",
-        shown(&collection.name),
+        collection.name,
         collection.members.len(),
         steps.len(),
         if steps.len() == 1 { "y" } else { "ies" }
@@ -31,25 +30,17 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     for step in &steps {
         let action = match &step.action {
             SourceAction::Reuse { name } => {
-                format!("using existing subscription '{}'", shown(name))
+                format!("using existing subscription '{}'", name)
             }
             SourceAction::Subscribe { .. } => match &step.commit {
                 Some(commit) => format!("subscribe at {}", &commit[..commit.len().min(7)]),
                 None => "subscribe (follows its default branch)".to_owned(),
             },
         };
-        let members: Vec<String> = step
-            .agents
-            .iter()
-            .chain(&step.skills)
-            .chain(&step.hooks)
-            .chain(&step.commands)
-            .chain(&step.mcp_servers)
-            .map(|name| shown(name))
-            .collect();
+        let members: Vec<&str> = step.members().map(|(_, name)| name.as_str()).collect();
         say(&format!(
             "  {}  [{action}]  {}",
-            shown(&step.repo),
+            step.repo,
             members.join(", ")
         ));
     }
@@ -193,7 +184,7 @@ fn install_step(
             say(&format!(
                 "{}: subscribed to '{}'",
                 scope_label(scope),
-                shown(&subscribed.name)
+                subscribed.name
             ));
             subscribed.name
         }
@@ -266,23 +257,14 @@ fn prevalidate(env: &Env, step: &kendex_core::source_ops::CollectionStep) -> Cli
     let sealed = kendex_core::source_read::SealedSource::open(&resolution.root)?;
     let config =
         kendex_core::source::source_config(&sealed, kendex_core::source::repo_leaf(&step.repo))?;
-    let wanted: [(kendex_core::model::ItemKind, &Vec<String>); 5] = [
-        (kendex_core::model::ItemKind::Agent, &step.agents),
-        (kendex_core::model::ItemKind::Skill, &step.skills),
-        (kendex_core::model::ItemKind::Hook, &step.hooks),
-        (kendex_core::model::ItemKind::Command, &step.commands),
-        (kendex_core::model::ItemKind::McpServer, &step.mcp_servers),
-    ];
-    for (kind, names) in wanted {
-        for name in names {
-            if kendex_core::source::find_item(&sealed, &config, kind, name).is_none() {
-                return Err(format!(
-                    "{} does not offer {} '{name}' at the collection's snapshot — nothing was installed",
-                    shown(&step.repo),
-                    kind.name()
-                )
-                .into());
-            }
+    for (kind, name) in step.members() {
+        if kendex_core::source::find_item(&sealed, &config, kind, name).is_none() {
+            return Err(format!(
+                "{} does not offer {} '{name}' at the collection's snapshot — nothing was installed",
+                step.repo,
+                kind.name()
+            )
+            .into());
         }
     }
     Ok(())

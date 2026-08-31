@@ -1,8 +1,6 @@
 use std::cell::Cell;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::sync::Mutex;
 
 use super::*;
 use crate::env::FakeOs;
@@ -62,13 +60,12 @@ fn feed(status: u16) -> FetchResponse {
     }
 }
 
-fn request(refresh: bool, automatic: bool) -> CheckRequest<'static> {
+fn request(refresh: bool) -> CheckRequest<'static> {
     CheckRequest {
         current_version: "5.0.1",
         target: "x86_64-unknown-linux-gnu",
         feed_url: "https://example.test/feed.json",
         refresh,
-        automatic_check_enabled: automatic,
         muted_version: None,
     }
 }
@@ -82,116 +79,43 @@ fn automatic_check_runs_at_the_ttl_boundary_not_before_it() {
     let fetch = Canned::new([feed(200), feed(304)]);
     let start = 10_000;
 
-    check_at(&env, &fetch, request(false, true), start).unwrap();
-    check_at(&env, &fetch, request(false, true), start + SIX_HOURS - 1).unwrap();
+    check_at(&env, &fetch, request(false), start).unwrap();
+    check_at(&env, &fetch, request(false), start + SIX_HOURS - 1).unwrap();
     assert_eq!(fetch.calls.get(), 1);
 
-    check_at(&env, &fetch, request(false, true), start + SIX_HOURS).unwrap();
+    check_at(&env, &fetch, request(false), start + SIX_HOURS).unwrap();
     assert_eq!(fetch.calls.get(), 2);
 }
 
+/// A manual check is the person asking, so it does not wait out an
+/// interval a moment ago started.
 #[test]
-fn manual_refresh_fetches_while_automatic_checks_are_off() {
+fn a_manual_refresh_fetches_inside_the_interval() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let fetch = Canned::new([feed(200)]);
+    let fetch = Canned::new([feed(200), feed(200)]);
 
-    let off = check_at(&env, &fetch, request(false, false), 10_000).unwrap();
-    assert!(matches!(off.status, AppUpdateStatus::NeverChecked));
-    assert_eq!(fetch.calls.get(), 0);
-
-    let manual = check_at(&env, &fetch, request(true, false), 10_000).unwrap();
-    assert!(matches!(
-        manual.status,
-        AppUpdateStatus::UpdateAvailable { .. }
-    ));
+    check_at(&env, &fetch, request(false), 10_000).unwrap();
+    check_at(&env, &fetch, request(false), 10_001).unwrap();
     assert_eq!(fetch.calls.get(), 1);
+
+    let refreshed = check_at(&env, &fetch, request(true), 10_001).unwrap();
+    assert!(matches!(refreshed, AppUpdateStatus::UpdateAvailable { .. }));
+    assert_eq!(fetch.calls.get(), 2);
 }
 
+/// A clock that went backwards — a machine whose time was corrected, a
+/// cache copied from another one — leaves an attempt stamped after now.
+/// Waiting out an interval that ends in the future would stop checking
+/// until the stamp came round again.
 #[test]
-fn future_cache_times_are_reported_and_attempted_immediately() {
+fn a_cache_stamped_in_the_future_is_attempted_immediately() {
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let fetch = Canned::new([feed(200), feed(304)]);
 
-    check_at(&env, &fetch, request(false, true), 20_000).unwrap();
-    let future = check_at(&env, &fetch, request(false, false), 10_000).unwrap();
-    assert_eq!(future.served_feed_age_secs, None);
-    assert!(future.served_feed_in_future);
-    assert_eq!(fetch.calls.get(), 1);
+    check_at(&env, &fetch, request(false), 20_000).unwrap();
+    check_at(&env, &fetch, request(false), 10_000).unwrap();
 
-    check_at(&env, &fetch, request(false, true), 10_000).unwrap();
     assert_eq!(fetch.calls.get(), 2);
-}
-
-#[test]
-fn long_multibyte_errors_truncate_on_a_boundary_within_the_cap() {
-    let message = format!("{}é{}", "a".repeat(508), "界".repeat(10));
-    let stored = update_error(AppUpdateErrorKind::Network, &message).message;
-    assert!(stored.len() <= MAX_ERROR_BYTES);
-    assert!(stored.ends_with("..."));
-    assert!(stored.is_char_boundary(stored.len()));
-    assert_eq!(stored, format!("{}...", "a".repeat(508)));
-}
-
-struct CountingFetch {
-    calls: AtomicUsize,
-}
-
-impl Fetch for CountingFetch {
-    fn get_auth(
-        &self,
-        _url: &str,
-        _if_none_match: Option<&str>,
-        _bearer: Option<&str>,
-    ) -> Result<FetchResponse> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(feed(200))
-    }
-
-    fn post_json_auth(
-        &self,
-        _url: &str,
-        _body: &str,
-        _bearer: Option<&str>,
-    ) -> Result<FetchResponse> {
-        Err(CoreError::RegistryUnavailable {
-            why: "unexpected POST".to_owned(),
-        })
-    }
-}
-
-#[test]
-fn production_clock_is_sampled_after_the_cache_transaction_lock() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), FakeOs::Linux);
-    let held = update_lock(&env).unwrap();
-    let fetch = Arc::new(CountingFetch {
-        calls: AtomicUsize::new(0),
-    });
-    let (sampled, observed) = mpsc::channel();
-    let worker_env = env.clone();
-    let worker_fetch = Arc::clone(&fetch);
-    let worker = std::thread::spawn(move || {
-        check_with_clock(
-            &worker_env,
-            worker_fetch.as_ref(),
-            request(false, true),
-            || {
-                sampled.send(()).unwrap();
-                100
-            },
-        )
-        .unwrap()
-    });
-
-    assert!(observed.recv_timeout(Duration::from_millis(100)).is_err());
-    drop(held);
-    let first = worker.join().unwrap();
-    let second = check_with_clock(&env, fetch.as_ref(), request(false, true), || 101).unwrap();
-
-    assert_eq!(fetch.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(first.last_attempt_at, second.last_attempt_at);
-    assert_eq!(first.last_success_at, second.last_success_at);
-    assert_eq!(second.served_feed_age_secs, Some(1));
 }

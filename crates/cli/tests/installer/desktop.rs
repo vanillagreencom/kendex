@@ -1,6 +1,7 @@
-//! What a launcher makes of the entry the installer writes. A menu item
-//! that runs the wrong thing says nothing about it, so the Exec value is
-//! read back here the way a launcher reads it.
+//! What the installer writes into a menu item's Exec value. A menu item
+//! that runs the wrong thing says nothing about it, so the encoding is
+//! held to the bytes the Desktop Entry spec calls for, character by
+//! character, rather than to a reader of the grammar written here.
 
 use crate::{CURL, ICONS, installer_output, posix_shell, repo_root};
 
@@ -30,145 +31,60 @@ fn desktop_arg(path: &str) -> String {
     String::from_utf8(run.stdout).expect("the encoder answers in utf-8")
 }
 
-/// Field codes come out of every argument before it is run: `%%` stands for
-/// a literal percent, and a percent before a letter is a code the launcher
-/// fills in or drops. A percent that arrives any other way is not part of a
-/// path.
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-fn without_field_codes(argument: &str) -> Result<String, String> {
-    let mut literal = String::new();
-    let mut argument = argument.chars();
-    while let Some(character) = argument.next() {
-        if character != '%' {
-            literal.push(character);
-            continue;
-        }
-        match argument.next() {
-            Some('%') => literal.push('%'),
-            Some(code) => return Err(format!("%{code} is a field code, not part of the path")),
-            None => return Err("the argument ends on a percent".to_owned()),
-        }
-    }
-    Ok(literal)
-}
-
-/// The arguments a launcher makes of an Exec value, or why it makes none.
-/// Three passes, the way the Desktop Entry spec has them: the file's own
-/// escapes come off first — `\\` is one backslash, and anything else behind
-/// a backslash costs the whole key — then the result is split into
-/// arguments, where a double-quoted run is one argument and a backslash
-/// inside it stands for the character after it, and finally each argument
-/// gives up its field codes.
-fn launcher_arguments(value: &str) -> Result<Vec<String>, String> {
-    let mut unescaped = String::new();
-    let mut file = value.chars();
-    while let Some(character) = file.next() {
-        if character != '\\' {
-            unescaped.push(character);
-            continue;
-        }
-        match file.next() {
-            Some('\\') => unescaped.push('\\'),
-            Some('s') => unescaped.push(' '),
-            Some('n') => unescaped.push('\n'),
-            Some('t') => unescaped.push('\t'),
-            Some('r') => unescaped.push('\r'),
-            Some(other) => return Err(format!("a launcher refuses the key over \\{other}")),
-            None => return Err("the value ends on a backslash".to_owned()),
-        }
-    }
-
-    let mut arguments = Vec::new();
-    let mut argument = String::new();
-    let mut started = false;
-    let mut quoted = false;
-    let mut value = unescaped.chars();
-    while let Some(character) = value.next() {
-        match character {
-            ' ' | '\t' | '\n' if !quoted => {
-                if started {
-                    arguments.push(std::mem::take(&mut argument));
-                    started = false;
-                }
-            }
-            '"' => {
-                quoted = !quoted;
-                started = true;
-            }
-            '\\' if quoted => match value.next() {
-                Some(escaped) => argument.push(escaped),
-                None => return Err("a quoted argument ends on a backslash".to_owned()),
-            },
-            _ => {
-                argument.push(character);
-                started = true;
-            }
-        }
-    }
-    if quoted {
-        return Err("the value never closes its quote".to_owned());
-    }
-    if started {
-        arguments.push(argument);
-    }
-    arguments.iter().map(|a| without_field_codes(a)).collect()
-}
-
 /// Every character the spec reserves, plus the percent that introduces a
 /// field code — one case each, because an encoder built from the characters
 /// someone thought of is how the same defect arrives twice.
+///
+/// Held to the bytes on disk rather than to a round trip through a reader
+/// written here. A reader is the Desktop Entry grammar spelled a second
+/// time, and a writer and a reader that drift together still agree with
+/// each other; these spellings come off the spec, so drifting away from
+/// them is what fails.
+///
+/// The value goes inside double quotes, so the three passes a launcher
+/// makes decide each row. The file's own escaping doubles a backslash and
+/// spells the whitespace characters `\t`, `\r` and `\n`. Inside the quotes
+/// only `"`, `` ` ``, `$` and `\` need a backslash of their own, and that
+/// backslash is itself doubled by the file escaping. A percent introduces a
+/// field code and is written `%%`. Every other reserved character is
+/// carried by the quotes alone and appears as itself.
 #[test]
 fn the_encoder_carries_every_character_the_spec_reserves() {
-    let reserved = [
-        ("space", ' '),
-        ("tab", '\t'),
-        ("newline", '\n'),
-        ("carriage return", '\r'),
-        ("double quote", '"'),
-        ("single quote", '\''),
-        ("backslash", '\\'),
-        ("greater-than", '>'),
-        ("less-than", '<'),
-        ("tilde", '~'),
-        ("vertical bar", '|'),
-        ("ampersand", '&'),
-        ("semicolon", ';'),
-        ("dollar", '$'),
-        ("asterisk", '*'),
-        ("question mark", '?'),
-        ("hash", '#'),
-        ("open parenthesis", '('),
-        ("close parenthesis", ')'),
-        ("backtick", '`'),
-        ("percent", '%'),
-    ];
-    for (name, character) in reserved {
+    for (name, character, encoded) in RESERVED {
         let path = format!("/home/me/a{character}b/kendex/kendex.AppImage");
-        let value = format!("\"{}\"", desktop_arg(&path));
         assert_eq!(
-            launcher_arguments(&value),
-            Ok(vec![path.clone()]),
-            "{name}: Exec={value}"
+            desktop_arg(&path),
+            format!("/home/me/a{encoded}b/kendex/kendex.AppImage"),
+            "{name}"
         );
     }
-
-    // The text on disk, not only the round trip: a writer and a reader that
-    // drift together still agree with each other. These are the sequences a
-    // launcher was measured against.
-    for (path, written) in [
-        ("a b", "a b"),
-        ("a\\b", "a\\\\\\\\b"),
-        ("a$b", "a\\\\$b"),
-        ("a`b", "a\\\\`b"),
-        ("a\"b", "a\\\\\"b"),
-        ("a%b", "a%%b"),
-        ("a\tb", "a\\tb"),
-        ("a\rb", "a\\rb"),
-        ("a\nb", "a\\nb"),
-    ] {
-        assert_eq!(desktop_arg(path), written, "{path:?}");
-    }
 }
+
+/// Each character a Desktop Entry value reserves, and what the encoder has
+/// to write it as inside the quotes.
+const RESERVED: [(&str, char, &str); 21] = [
+    ("space", ' ', " "),
+    ("tab", '\t', "\\t"),
+    ("newline", '\n', "\\n"),
+    ("carriage return", '\r', "\\r"),
+    ("double quote", '"', "\\\\\""),
+    ("single quote", '\'', "'"),
+    ("backslash", '\\', "\\\\\\\\"),
+    ("greater-than", '>', ">"),
+    ("less-than", '<', "<"),
+    ("tilde", '~', "~"),
+    ("vertical bar", '|', "|"),
+    ("ampersand", '&', "&"),
+    ("semicolon", ';', ";"),
+    ("dollar", '$', "\\\\$"),
+    ("asterisk", '*', "*"),
+    ("question mark", '?', "?"),
+    ("hash", '#', "#"),
+    ("open parenthesis", '(', "("),
+    ("close parenthesis", ')', ")"),
+    ("backtick", '`', "\\\\`"),
+    ("percent", '%', "%%"),
+];
 
 /// A data directory that reserves characters — a percent in a folder name,
 /// a space, the punctuation people put in one — is where this breaks, and
@@ -204,18 +120,18 @@ fn the_entry_names_one_path_when_the_data_directory_is_awkward() {
         .lines()
         .find_map(|line| line.strip_prefix("Exec="))
         .expect("the entry has an Exec key");
+    let plain = installed.display().to_string();
     assert_eq!(
-        launcher_arguments(exec),
-        Ok(vec![installed.display().to_string()]),
-        "Exec={exec}"
+        exec,
+        format!("\"{}\"", desktop_arg(&plain)),
+        "the entry does not carry the encoding the installer built"
     );
-    // The reading above is worth only what it refuses. The same path
-    // written plainly is what an unquoted Exec holds, and a launcher does
-    // not read that back as one path — so this asserts the encoding, not
-    // the reader agreeing with itself.
+    // Worth only what it refuses. A data directory reserving nothing would
+    // encode to itself, and the line above would pass on an installer that
+    // wrote the path plainly.
     assert_ne!(
-        launcher_arguments(&installed.display().to_string()),
-        Ok(vec![installed.display().to_string()]),
+        desktop_arg(&plain),
+        plain,
         "the directory under test reserves nothing, so nothing is being proved"
     );
 }

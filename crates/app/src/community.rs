@@ -2,14 +2,11 @@
 //! honest about staleness) and skills.sh search — thin shells over core's
 //! registry, like every other command here.
 
-use kendex_core::env::Env;
 use kendex_core::registry::CurlFetch;
 use kendex_core::registry::skillssh::{self, SkillsShHit};
 use kendex_core::registry::view::{self, DirectoryView};
 
-fn env() -> Result<Env, String> {
-    Env::detect().map_err(|e| e.to_string())
-}
+use crate::scopes::env;
 
 /// The directory as the tab shows it. `refresh` forces a revalidation;
 /// otherwise the cached list is served within its TTL.

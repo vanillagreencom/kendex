@@ -18,22 +18,21 @@
 //! installs and never arms anything, and a repository is armed by the
 //! invocation that says so — this one, or `kendex guard install`.
 //!
-//! Every value a package chose goes out through `names::shown`. This block
-//! is read immediately before a consent prompt, and it is catalog-controlled
-//! text: a summary carrying an escape sequence repaints the lines above it,
-//! and one carrying a newline forges the shape of the block itself. What is
-//! being consented to has to be what is on the screen.
+//! Every value a package chose goes out through the `ui` seam, which
+//! escapes it. This block is read immediately before a consent prompt, and
+//! it is catalog-controlled text: a summary carrying an escape sequence
+//! repaints the lines above it, and one carrying a newline forges the shape
+//! of the block itself. What is being consented to has to be what is on the
+//! screen.
 
 use std::io::IsTerminal;
-
-use kendex_core::names::shown;
 
 use kendex_core::engine::EngineReport;
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::repo_effects::{DeclaredEffects, Disclosure};
 
-use super::{CliResult, out, say};
+use super::{CliResult, answer, say};
 
 mod disclose;
 pub use disclose::disclose;
@@ -84,7 +83,7 @@ pub fn walkthrough(scope: &Scope, shown_to_them: &[Disclosure], allowed: bool) -
     for disclosure in shown_to_them {
         say(&format!(
             "{}: installed; its repository changes were not applied",
-            shown(&disclosure.name)
+            disclosure.name
         ));
     }
     Ok(())
@@ -106,7 +105,7 @@ pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, Box<dyn st
         return Ok(false);
     }
     let question = match pending.len() {
-        1 => format!("apply {}'s repository changes?", shown(&pending[0].name)),
+        1 => format!("apply {}'s repository changes?", pending[0].name),
         n => format!("apply the repository changes of {n} packages?"),
     };
     // The shared prompt, not a write of our own: it draws whatever block
@@ -148,7 +147,7 @@ fn relay(report: &kendex_core::guard::GuardReport) {
         say(line);
     }
     for line in &report.stdout {
-        out(line);
+        answer(line);
     }
 }
 
@@ -210,7 +209,7 @@ pub fn undo(scope: &Scope, report: &EngineReport) -> CliResult {
         .any(|declared| kendex_core::repo_effects::touches_git(&declared.effects))
         && kendex_core::guard::Repo::probe(root)?.is_some();
     for declared in leaving {
-        let name = shown(&declared.name);
+        let name = &declared.name;
         if kendex_core::repo_effects::touches_git(&declared.effects) && !git_here {
             say(&format!(
                 "{name}: not inside a git work tree, so nothing it armed is here to undo"
@@ -221,13 +220,13 @@ pub fn undo(scope: &Scope, report: &EngineReport) -> CliResult {
             say(&format!(
                 "{name}: declares no uninstaller — what it changed about this repository stays{}",
                 match &declared.effects.removal {
-                    Some(removal) => format!("; to undo: {}", shown(removal)),
+                    Some(removal) => format!("; to undo: {}", removal),
                     None => String::new(),
                 }
             ));
             continue;
         };
-        say(&format!("{name}: running {}", shown(uninstaller)));
+        say(&format!("{name}: running {}", uninstaller));
         let report = run(scope, declared, uninstaller)?;
         if report.code != 0 {
             // No verb named: under an apply or a refresh the package is
@@ -236,8 +235,7 @@ pub fn undo(scope: &Scope, report: &EngineReport) -> CliResult {
             return Err(format!(
                 "{name}: {} exited {} — its files stay in place; \
                  fix what it reported and run this again",
-                shown(uninstaller),
-                report.code
+                uninstaller, report.code
             )
             .into());
         }

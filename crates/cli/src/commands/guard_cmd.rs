@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use clap::Subcommand;
 use kendex_core::guard::{self, GuardReport};
 
-use super::{out, say};
+use super::{answer, out, say};
 
 /// Exit taxonomy, the family contract: 0 clean, 1 violations, 2 the check
 /// could not run. Both nonzero verdicts block a commit. kendex implements
@@ -38,7 +38,7 @@ fn report(report: &GuardReport) -> ExitCode {
         say(line);
     }
     for line in &report.stdout {
-        out(line);
+        answer(line);
     }
     ExitCode::from(report.code)
 }

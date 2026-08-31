@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/select";
 import { scopeLabel } from "@/lib/derive";
 import { scopeName } from "@/lib/labels";
+import { everyPlace } from "@/lib/scope";
 import { useSettingsStore } from "@/stores/settings";
 
 /** Where an install lands. Browsing a personal subscription may redirect
@@ -25,12 +26,7 @@ export function DestinationSelect({
 }) {
   const projects = useSettingsStore((s) => s.settings?.projects ?? []);
   const options: Scope[] =
-    browsing.scope === "global"
-      ? [
-          browsing,
-          ...projects.map((root): Scope => ({ scope: "project", root })),
-        ]
-      : [browsing];
+    browsing.scope === "global" ? everyPlace(projects) : [browsing];
 
   return (
     <Select

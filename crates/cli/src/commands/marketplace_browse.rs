@@ -4,7 +4,7 @@
 use kendex_core::env::Env;
 use kendex_core::source_ops;
 
-use super::{CliResult, out, resolve_scopes};
+use super::{CliResult, answer, out, resolve_scopes};
 use crate::scope::ScopeFilter;
 
 type BrowseRow = (
@@ -56,7 +56,7 @@ pub fn run_browse(
                 })
             })
             .collect();
-        out(&serde_json::to_string_pretty(&serde_json::json!({
+        answer(&serde_json::to_string_pretty(&serde_json::json!({
             "schema": 1,
             "packages": items,
         }))?);

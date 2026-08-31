@@ -1,15 +1,18 @@
 //! Strict parsing and version comparison for the public release feed, and
 //! the pinned key the desktop app download is verified under.
 
-use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use base64::Engine;
 use minisign_verify::{PublicKey, Signature};
-use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
+use crate::release_digests::MAX_TARGET_BYTES;
+
+mod version;
+use version::parse_version;
+pub use version::{VersionRelation, precedence};
 
 pub const FEED_SCHEMA: u32 = 1;
 pub const MAX_FEED_BYTES: usize = 64 * 1024;
@@ -20,7 +23,6 @@ pub const MAX_FEED_BYTES: usize = 64 * 1024;
 pub const UPDATER_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJENUIwQjkxMUFGNTJFOTIKUldTU0x2VWFrUXRidmJFQnhKSi9iU3pwTVVJVlhrY3JHbVoyV1BjVmJSdDYzZ2VjVnZzSjlEMDkK";
 const MAX_VERSION_BYTES: usize = 128;
 const MAX_ASSETS: usize = 32;
-const MAX_TARGET_BYTES: usize = 128;
 const MAX_URL_BYTES: usize = 2 * 1024;
 
 /// One additive generation of the release feed. Unknown fields remain
@@ -37,14 +39,6 @@ pub struct ReleaseFeed {
 
 fn default_feed_schema() -> u32 {
     FEED_SCHEMA
-}
-
-/// How a feed version relates to the running build under SemVer precedence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VersionRelation {
-    Older,
-    Current,
-    Newer,
 }
 
 impl ReleaseFeed {
@@ -64,13 +58,8 @@ impl ReleaseFeed {
     }
 
     pub fn relation_to(&self, current: &str) -> Result<VersionRelation> {
-        let latest = parse_version("feed", &self.version)?;
-        let current = parse_version("running build", current)?;
-        Ok(match latest.cmp_precedence(&current) {
-            Ordering::Less => VersionRelation::Older,
-            Ordering::Equal => VersionRelation::Current,
-            Ordering::Greater => VersionRelation::Newer,
-        })
+        precedence("feed", &self.version, "running build", current)
+            .map_err(|why| CoreError::UpdateFeedMalformed { why })
     }
 
     pub fn asset_for(&self, target: &str) -> Option<&str> {
@@ -188,12 +177,6 @@ fn refused(why: String) -> CoreError {
     CoreError::UpdateSignatureRefused { why }
 }
 
-fn parse_version(source: &str, value: &str) -> Result<Version> {
-    Version::parse(value).map_err(|error| CoreError::UpdateFeedMalformed {
-        why: format!("{source} version '{value}' is not SemVer: {error}"),
-    })
-}
-
 fn malformed<T>(why: String) -> Result<T> {
     Err(CoreError::UpdateFeedMalformed { why })
 }
@@ -278,58 +261,31 @@ mod tests {
         assert!(ReleaseFeed::parse(&vec![b' '; MAX_FEED_BYTES + 1]).is_err());
     }
 
+    /// The wiring, not the ordering: which of the two strings is the feed's
+    /// and which is the running build's. `version`'s own tests hold the
+    /// SemVer rules — asked twice, one copy would go on passing while the
+    /// sides were the wrong way round.
     #[test]
-    fn compares_semver_precedence_not_text_or_build_metadata() {
-        assert_eq!(
-            ReleaseFeed::parse(&feed("5.10.0"))
-                .unwrap()
-                .relation_to("5.9.0")
-                .unwrap(),
-            VersionRelation::Newer
-        );
-        assert_eq!(
-            ReleaseFeed::parse(&feed("5.0.1+feed"))
-                .unwrap()
-                .relation_to("5.0.1+local")
-                .unwrap(),
-            VersionRelation::Current
-        );
-        assert_eq!(
-            ReleaseFeed::parse(&feed("5.0.0"))
-                .unwrap()
-                .relation_to("5.0.1")
-                .unwrap(),
-            VersionRelation::Older
-        );
-        // A release candidate is behind the next candidate and behind the
-        // release it leads to. Plain text order puts 1.0.0 behind
-        // 1.0.0-rc1, which offers a downgrade as an update. Within the
-        // identifiers, though, text order is the rule: rc10 is behind rc2,
-        // because SemVer compares an identifier numerically only when it
-        // is all digits.
-        for latest in ["1.0.0-rc2", "1.0.0-rc10", "1.0.0"] {
+    fn the_relation_reads_the_feed_against_the_running_build() {
+        for (published, running, relation) in [
+            ("5.10.0", "5.9.0", VersionRelation::Newer),
+            ("5.9.0", "5.10.0", VersionRelation::Older),
+            ("5.9.0", "5.9.0", VersionRelation::Current),
+        ] {
             assert_eq!(
-                ReleaseFeed::parse(&feed(latest))
+                ReleaseFeed::parse(&feed(published))
                     .unwrap()
-                    .relation_to("1.0.0-rc1")
+                    .relation_to(running)
                     .unwrap(),
-                VersionRelation::Newer,
-                "{latest}"
+                relation,
+                "feed {published} against a running {running}"
             );
         }
-        assert_eq!(
-            ReleaseFeed::parse(&feed("1.0.0-rc1"))
+        assert!(
+            ReleaseFeed::parse(&feed("5.9.0"))
                 .unwrap()
-                .relation_to("1.0.0")
-                .unwrap(),
-            VersionRelation::Older
-        );
-        assert_eq!(
-            ReleaseFeed::parse(&feed("1.0.0-rc10"))
-                .unwrap()
-                .relation_to("1.0.0-rc2")
-                .unwrap(),
-            VersionRelation::Older
+                .relation_to("not a version")
+                .is_err()
         );
     }
 

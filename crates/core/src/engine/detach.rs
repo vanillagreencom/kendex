@@ -196,11 +196,11 @@ pub fn remove(
     // unrelated pre-existing orphan is swept along.
     let options = super::PlanOptions {
         remove_orphans: true,
-        removal_filter_typed: Some(
+        removal_filter: Some(
             closure
                 .items
                 .iter()
-                .map(|i| (i.kind, i.name.clone()))
+                .map(|i| (Some(i.kind), i.name.clone()))
                 .collect(),
         ),
         sweep_unneeded: true,

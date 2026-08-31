@@ -1,7 +1,7 @@
 //! Titlebar controls for the frameless window — the UI draws its own
 //! chrome, so these replace what the OS window frame used to provide.
 
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// The window this app opens. `tauri.conf.json` names it explicitly: with
 /// the window built hidden, this lookup is the only thing that shows it, and
@@ -9,36 +9,36 @@ use std::sync::atomic::{AtomicU16, Ordering};
 /// default that no test or compiler here would notice changing.
 const MAIN: &str = "main";
 
-/// The size the webview is at, and how it got there. The zoom belongs to
-/// the webview and survives a page reload, while the page that comes back
-/// remembers nothing — so the page asks here rather than working its size
-/// out from the settings file, which holds a preference and not a fact.
-pub struct WebviewZoom {
-    at: AtomicU16,
-    launch_refused: bool,
-}
+/// The size the webview is at, and how it got there — held as the one
+/// value the page reads, so there is no second copy of either fact to fall
+/// out of step with it. The zoom belongs to the webview and survives a page
+/// reload, while the page that comes back remembers nothing, so the page
+/// asks here rather than working its size out from the settings file, which
+/// holds a preference and not a fact.
+pub struct WebviewZoom(Mutex<ZoomState>);
 
 impl WebviewZoom {
-    fn opened_at(percent: u16, launch_refused: bool) -> Self {
-        Self {
-            at: AtomicU16::new(percent),
-            launch_refused,
-        }
+    fn opened(state: ZoomState) -> Self {
+        Self(Mutex::new(state))
+    }
+
+    /// A panic while the size was being read or written leaves the size,
+    /// not the process: the window is at whatever it was last put at
+    /// either way.
+    fn held(&self) -> MutexGuard<'_, ZoomState> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn moved_to(&self, percent: u16) {
-        self.at.store(percent, Ordering::Relaxed);
+        self.held().percent = percent;
     }
 
     fn read(&self) -> ZoomState {
-        ZoomState {
-            percent: self.at.load(Ordering::Relaxed),
-            launch_refused: self.launch_refused,
-        }
+        self.held().clone()
     }
 }
 
-#[derive(Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ZoomState {
     /// The size on screen. Every resize the window takes moves it, so a
@@ -116,10 +116,16 @@ fn reveal_at(window: &impl Drive, percent: u16) -> Result<WebviewZoom, String> {
     // A webview that will not zoom is a far smaller problem than a window
     // that never opens, so this is said out loud and the window still shows.
     let opened = match window.scale_to(kendex_core::settings::zoom_scale(percent)) {
-        Ok(()) => WebviewZoom::opened_at(percent, false),
+        Ok(()) => WebviewZoom::opened(ZoomState {
+            percent,
+            launch_refused: false,
+        }),
         Err(error) => {
             let _ = writeln!(std::io::stderr(), "zoom not applied: {error}");
-            WebviewZoom::opened_at(kendex_core::settings::ZOOM.default, true)
+            WebviewZoom::opened(ZoomState {
+                percent: kendex_core::settings::ZOOM.default,
+                launch_refused: true,
+            })
         }
     };
     window.unhide()?;

@@ -91,7 +91,7 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
       commands.appVersion().catch(() => null),
     ]);
     if (view.status === "error" || current === null) return;
-    const status = view.data.status;
+    const status = view.data;
     if (status.kind !== "updateAvailable" || status.muted) return;
     set({
       notice: {

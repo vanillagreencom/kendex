@@ -752,7 +752,7 @@ lives in one capability table read by core and UI.
   fetched from a catalog, and still a declared, user-approved per-scope
   install rendered and removed like any other hook.
 - **One presentation layer, two renderings** (`crates/cli/src/ui.rs`). Every
-  human line leaves through it and stdout stays clean for composition;
+  human line leaves through it, escaped there, and stdout stays clean;
   `ui::intro` arms the framed rendering, so a verb that opened none prints
   the plain lines scripts parse. Framing needs a terminal on *both* streams;
   `KENDEX_UI=plain|pretty` overrides. Non-interactive stays a mode, not a

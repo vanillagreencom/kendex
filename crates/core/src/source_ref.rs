@@ -63,11 +63,7 @@ pub fn parse_typed(reference: &str) -> Result<SourceRef> {
     if reference.starts_with('-') {
         return refuse(reference, "a reference cannot start with '-'");
     }
-    if let Some(rest) = reference
-        .strip_prefix("https://")
-        .or_else(|| reference.strip_prefix("http://"))
-    {
-        let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    if let Some(rest) = after_scheme(reference, &["https://", "http://"]) {
         if let Some(path) = rest.strip_prefix("github.com/") {
             return parse_github_url(reference, path);
         }
@@ -114,8 +110,7 @@ pub fn parse_untrusted(reference: &str) -> Result<SourceRef> {
     if reference.starts_with('-') {
         return refuse(reference, "a reference cannot start with '-'");
     }
-    if let Some(rest) = reference.strip_prefix("https://") {
-        let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    if let Some(rest) = after_scheme(reference, &["https://"]) {
         let Some(path) = rest.strip_prefix("github.com/") else {
             return refuse(reference, "only github.com is accepted from this channel");
         };
@@ -159,6 +154,17 @@ pub fn parse_untrusted(reference: &str) -> Result<SourceRef> {
         repo: repo.to_owned(),
         rev: rev.map(str::to_owned),
     })
+}
+
+/// A web URL's host and path, with the scheme and any `www.` taken off —
+/// the shape every host route below matches on. Both parsers strip it, and
+/// a `www.` handled on one road and not the other would let one channel
+/// accept a URL the other refused.
+fn after_scheme<'a>(reference: &'a str, schemes: &[&str]) -> Option<&'a str> {
+    let rest = schemes
+        .iter()
+        .find_map(|scheme| reference.strip_prefix(scheme))?;
+    Some(rest.strip_prefix("www.").unwrap_or(rest))
 }
 
 /// Whether a reference is `owner/repo`-shaped rather than a path: exactly

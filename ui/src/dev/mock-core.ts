@@ -38,28 +38,18 @@ const settingsRead = () => ({ settings: store.state.settings, base: null });
 
 export const coreHandlers: Record<string, Handler> = {
   app_version: () => RUNNING_VERSION,
-  app_update_check: () => ({
-    automaticCheckEnabled: true,
-    status:
-      wanted("update") === "none" || wanted("update") === null
-        ? { kind: "upToDate", version: RUNNING_VERSION }
-        : {
-            kind: "updateAvailable",
-            version: RELEASED_VERSION,
-            releaseNotesUrl: `https://github.com/vanillagreencom/kendex/releases/tag/v${RELEASED_VERSION}`,
-            cliAssetAvailable: true,
-            // What a dismissal wrote, read back the way the engine reads
-            // it: one version, so the next release notifies again.
-            muted:
-              store.state.settings["muted-app-notice"] === RELEASED_VERSION,
-          },
-    lastAttemptAt: "2026-08-25T16:00:00Z",
-    lastSuccessAt: "2026-08-25T16:00:00Z",
-    servedFeedAt: "2026-08-25T16:00:00Z",
-    servedFeedAgeSecs: 0,
-    servedFeedInFuture: false,
-    lastError: null,
-  }),
+  app_update_check: () =>
+    wanted("update") === "none" || wanted("update") === null
+      ? { kind: "upToDate", version: RUNNING_VERSION }
+      : {
+          kind: "updateAvailable",
+          version: RELEASED_VERSION,
+          releaseNotesUrl: `https://github.com/vanillagreencom/kendex/releases/tag/v${RELEASED_VERSION}`,
+          cliAssetAvailable: true,
+          // What a dismissal wrote, read back the way the engine reads
+          // it: one version, so the next release notifies again.
+          muted: store.state.settings["muted-app-notice"] === RELEASED_VERSION,
+        },
   app_update_channel: () => {
     switch (wanted("update")) {
       case "managed":

@@ -39,8 +39,11 @@ tauri-plugin-updater = "2"
 
 [dev-dependencies]
 # Reads the bundled icons back: asserting what they depict is the only way
-# to catch a stale or wrongly regenerated one, and tauri already builds it.
-png = "0.18"
+# to catch a stale or wrongly regenerated one. These are the two `tauri icon`
+# writes them with, so the suite reads a container the way its bundler does
+# rather than through a decoder of its own.
+ico = "0.5"
+tauri-icns = "0.1"
 tempfile.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]

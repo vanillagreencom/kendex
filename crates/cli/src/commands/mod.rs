@@ -32,6 +32,7 @@ pub mod update;
 pub mod update_pi;
 pub mod updates_cmd;
 pub mod verify;
+pub mod version_compare;
 pub mod versions;
 
 use std::path::PathBuf;
@@ -45,17 +46,15 @@ use crate::scope::ScopeFilter;
 // Every human line a command says leaves through the presentation module,
 // which decides between the plain lines a script parses and the framed
 // session a terminal gets. A command never writes to a stream itself.
-pub use crate::ui::{fail, note, out, say, warn};
+pub use crate::ui::{answer, fail, note, out, payload, say, warn};
 
 pub type CliResult = Result<(), Box<dyn std::error::Error>>;
 
 /// A scope as a human line names it. The label is a path somebody chose,
-/// and a path carries whatever the filesystem allowed, so it is escaped
-/// here — where a foreign value enters a sentence, not where the sentence
-/// is printed. [`out`] never takes this: stdout carries the label as its
-/// own bytes, for whatever is parsing it.
+/// and a path carries whatever the filesystem allowed; the `ui` seam
+/// escapes it on the way out, wherever it was composed in.
 pub fn scope_label(scope: &Scope) -> String {
-    kendex_core::names::shown(&scope.label())
+    scope.label()
 }
 
 /// The scopes a filter selects on this machine: the current project (walked

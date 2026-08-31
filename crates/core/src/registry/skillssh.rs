@@ -59,7 +59,7 @@ pub fn search(fetch: &dyn Fetch, query: &str) -> Result<Vec<SkillsShHit>> {
     }
     let url = format!(
         "https://skills.sh/api/search?q={}&limit={MAX_RESULTS}",
-        urlencode(&trimmed)
+        crate::names::urlencoded(&trimmed)
     );
     let response = fetch.get(&url, None)?;
     if response.status != 200 {
@@ -165,17 +165,4 @@ fn component_ok(part: &str) -> bool {
         && part
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-}
-
-fn urlencode(text: &str) -> String {
-    let mut encoded = String::new();
-    for byte in text.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char);
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
 }

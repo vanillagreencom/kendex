@@ -18,17 +18,21 @@
 //! is somebody reading the bytes, whatever stderr is attached to.
 //! `KENDEX_UI` takes `plain` or `pretty` and overrides the detection.
 //!
-//! **This module escapes nothing.** A line arrives composed, and by then
-//! a newline inside a name somebody else wrote is indistinguishable from
-//! a break the caller meant — so escaping here would either flatten the
-//! caller's paragraphs or let a filename forge output lines. Text off a
-//! catalog, a lock or a tree kendex did not write is escaped with
-//! `names::shown` where it is interpolated, by the site that knows which
-//! half of its sentence is foreign.
+//! **A sentence is escaped here, and only here.** Names, paths and
+//! messages off a catalog, a lock or a tree kendex did not write reach a
+//! terminal through these functions, where a control character would move
+//! the cursor or colour the line and a newline would forge a line of
+//! kendex's own. Escaping the composed sentence rather than each fragment
+//! of it is what makes that one rule instead of a rule every call site
+//! has to remember: a break inside a foreign name is printed as `\n`, so
+//! one name is one line whatever it holds.
 //!
-//! What this module does do is honour a break: a message carrying one is
-//! said a line at a time, so `kendex diff`'s blank line before a file
-//! heading is a blank line in both renderings.
+//! A sentence is not the only thing a verb prints. What a reader asked to
+//! see — a package's file, its readme — goes out through [`payload`], and
+//! a serialized answer for a program through [`answer`]; both are the
+//! bytes themselves, and escaping either would hand back one line of
+//! literal `\n` instead of the thing. Those two honour a break: they are
+//! said a line at a time, so a file's lines are lines in both renderings.
 //!
 //! **A line said right before a wait has to be drawn first.** A block is
 //! held open until something follows it, so a verb that says where it is
@@ -75,10 +79,9 @@ fn capable() -> bool {
             //
             // The value came off the environment, so it is escaped here
             // like any other foreign fragment.
-            write_line(&format!(
-                "warning: KENDEX_UI={} is not plain, pretty or auto — detecting instead",
-                kendex_core::names::shown(value)
-            ));
+            write_line(&escaped(&format!(
+                "warning: KENDEX_UI={value} is not plain, pretty or auto — detecting instead"
+            )));
         }
         asked
             .ok()
@@ -140,13 +143,44 @@ fn write_line(line: &str) {
     let _ = writeln!(std::io::stderr(), "{line}");
 }
 
+/// The one place foreign text is made safe to print. Control characters
+/// and the invisible or direction-flipping ones are shown as their own
+/// escapes rather than acted on, which is why a call site composes its
+/// sentence out of raw names and leaves this to the seam.
+///
+/// Idempotent on its own output: an escape is backslashes and letters,
+/// and neither is escaped again.
+pub(crate) fn escaped(text: &str) -> String {
+    kendex_core::names::shown(text)
+}
+
 /// v1 prints human tables to stderr; stdout stays clean for composition.
-/// A verb's own machine-facing content goes here and is never framed —
-/// but the block above it is drawn first, so the two streams reach a
-/// terminal in the order they were written.
+/// A sentence a verb puts on stdout goes here and is never framed — but
+/// the block above it is drawn first, so the two streams reach a terminal
+/// in the order they were written. What a program parses goes through
+/// [`answer`], which escapes nothing.
 pub fn out(line: &str) {
     flush();
-    let _ = writeln!(std::io::stdout(), "{line}");
+    let _ = writeln!(std::io::stdout(), "{}", escaped(line));
+}
+
+/// A serialized answer for whatever is reading stdout — JSON a verb built,
+/// or the lines another program already wrote. Its own escaping authority:
+/// JSON spells a control character as its own escape, and running that
+/// through [`escaped`] would break the pretty printing into one line of
+/// literal `\n` and spell a zero-width character as something no JSON
+/// parser reads.
+pub fn answer(text: &str) {
+    flush();
+    let _ = writeln!(std::io::stdout(), "{text}");
+}
+
+/// What the reader asked to be shown: a package's file, a readme. Printed
+/// as itself, because the bytes are the whole feature — escaped the way a
+/// value in a sentence is, `show --file` hands back one line of literal
+/// `\n` instead of the file.
+pub fn payload(text: &str) {
+    said_lines(Tone::Step, text);
 }
 
 /// One line of human output. Two leading spaces make it detail of the
@@ -170,11 +204,17 @@ pub fn fail(line: &str) {
     tell(Tone::Error, line);
 }
 
-/// One message, said a line at a time. A caller's break is a break in
-/// both renderings: plain writes the same bytes it always did, and a
-/// blank line in the framed one closes the block above it, which is what
-/// a caller writing `\n` before a heading was asking for.
+/// One composed sentence, escaped at the seam and then said. Nothing
+/// survives the escape that could break it in two, so a sentence is a
+/// line however hostile the names inside it are.
 fn tell(tone: Tone, text: &str) {
+    said_lines(tone, &escaped(text));
+}
+
+/// Text already fit to print, said a line at a time. A break is a break in
+/// both renderings: plain writes the same bytes it always did, and a blank
+/// line in the framed one closes the block above it.
+fn said_lines(tone: Tone, text: &str) {
     for line in text.split('\n') {
         match mode() {
             Mode::Plain => write_line(line),
@@ -187,23 +227,26 @@ fn tell(tone: Tone, text: &str) {
 /// that has one. Held open — with nothing after it, this is the line the
 /// frame closes on rather than one more block inside it.
 pub fn ledger(head: &str, steps: &[String]) {
+    let head = escaped(head);
+    let steps: Vec<String> = steps.iter().map(|step| escaped(step)).collect();
     if mode() == Mode::Plain {
-        write_line(head);
-        for step in steps {
+        write_line(&head);
+        for step in &steps {
             write_line(&format!("  {step}"));
         }
         return;
     }
-    blocks::open(Tone::Done, head, true, steps);
+    blocks::open(Tone::Done, &head, true, &steps);
 }
 
 /// The last line of a run that failed. Plain mode prints what it always
 /// printed; a frame closes on it in the failure style.
 pub fn outro_fail(line: &str) {
+    let line = escaped(line);
     if mode() == Mode::Plain {
-        return write_line(line);
+        return write_line(&line);
     }
-    blocks::fail_frame(line);
+    blocks::fail_frame(&line);
 }
 
 #[cfg(test)]
@@ -233,6 +276,19 @@ mod tests {
         }
         for typo in ["", "Pretty", "AUTO", "1", "true", "plane", "auto "] {
             assert!(!named_a_mode(typo), "{typo:?} passed as a mode");
+        }
+    }
+
+    /// Core composes some of its own refusals with the same escape before
+    /// they ever reach a verb, so the seam runs over text that is already
+    /// escaped. Escaping it twice has to be escaping it once — otherwise
+    /// every such message reaches the reader with its backslashes doubled.
+    #[test]
+    fn escaping_what_is_already_escaped_changes_nothing() {
+        for raw in ["gh\u{1b}[31m", "a\nb", "pay\u{202e}gnp", "plain-name", ""] {
+            let once = escaped(raw);
+            assert_eq!(escaped(&once), once, "{raw:?}");
+            assert!(!once.contains('\u{1b}') && !once.contains('\n'), "{once:?}");
         }
     }
 

@@ -30,6 +30,24 @@ pub struct CollectionStep {
     pub mcp_servers: Vec<String>,
 }
 
+impl CollectionStep {
+    /// Every member this step installs, with the kind it installs as. One
+    /// definition of the five lists, because a reader that walked them
+    /// itself would keep answering about four of them the day a sixth kind
+    /// is added.
+    pub fn members(&self) -> impl Iterator<Item = (ItemKind, &String)> {
+        [
+            (ItemKind::Agent, &self.agents),
+            (ItemKind::Skill, &self.skills),
+            (ItemKind::Hook, &self.hooks),
+            (ItemKind::Command, &self.commands),
+            (ItemKind::McpServer, &self.mcp_servers),
+        ]
+        .into_iter()
+        .flat_map(|(kind, names)| names.iter().map(move |name| (kind, name)))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceAction {
     /// The scope already subscribes to this repository at a compatible

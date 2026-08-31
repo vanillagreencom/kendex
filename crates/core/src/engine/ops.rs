@@ -183,7 +183,7 @@ fn removal(
         &lock,
         &PlanOptions {
             remove_orphans: true,
-            removal_filter: Some(removing),
+            removal_filter: Some(removing.iter().map(|name| (None, name.clone())).collect()),
             sweep_unneeded: sweep,
             uninstalled_bundles: bundles,
             hold_upstream_skills: !disown,

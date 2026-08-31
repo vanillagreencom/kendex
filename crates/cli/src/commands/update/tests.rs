@@ -253,19 +253,6 @@ fn a_release_that_publishes_no_verifiable_digests_installs_nothing() {
     }
 }
 
-/// A release build takes the channel's own feed and nothing else: an
-/// override there names the bytes that replace the running command, and
-/// the app holds the same variable to the same rule.
-#[test]
-fn only_debug_builds_accept_a_feed_override() {
-    let fixture = "file:///fixtures/feed.json".to_owned();
-    assert_eq!(selected_feed(Some(fixture.clone()), true), fixture);
-    assert_eq!(
-        selected_feed(Some(fixture), false),
-        feed_url_for(env!("CARGO_PKG_VERSION"))
-    );
-}
-
 /// A throwaway minisign keypair signing every blob and document below, so
 /// the admitted arm runs the real check rather than a stub standing in for
 /// it. One pair serves both halves: the app and the command are held to

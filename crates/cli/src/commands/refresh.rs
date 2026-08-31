@@ -1,7 +1,6 @@
 use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
-use kendex_core::names::shown;
 
 use super::engine_common::{
     apply_report, confirm_and_apply, print_conflicts, print_drift, print_notes, print_safety,
@@ -53,9 +52,9 @@ fn print_set_changes(
         say(&format!(
             "  - {verb} {} {} for {} — {}",
             change.kind.name(),
-            shown(&change.name),
+            change.name,
             change.harness.display_name(),
-            shown(&change.reason)
+            change.reason
         ));
     }
 }
@@ -98,10 +97,7 @@ fn record_snapshots(env: &Env, scopes: &[kendex_core::model::Scope]) {
             Ok(kendex_core::manifest::ManifestFile::Current(_))
         ) && let Err(error) = kendex_core::drift::snapshot::record(env, scope)
         {
-            warn(&format!(
-                "warning: snapshot not derived ({})",
-                shown(&error.to_string())
-            ));
+            warn(&format!("warning: snapshot not derived ({})", error));
         }
     }
 }
@@ -156,7 +152,7 @@ pub fn run(
                 kendex_core::remote::sync_declared_sources(env, &manifest)
             };
             for note in notes {
-                warn(&format!("warning: {}", shown(&note)));
+                warn(&format!("warning: {}", note));
             }
         }
         let options = PlanOptions {
@@ -247,7 +243,7 @@ pub fn run(
     }
     if !failures.is_empty() {
         for failure in &failures {
-            super::fail(&format!("failed: {}", shown(failure)));
+            super::fail(&format!("failed: {}", failure));
         }
         return Err(format!("failed to refresh {} item/source(s)", failures.len()).into());
     }

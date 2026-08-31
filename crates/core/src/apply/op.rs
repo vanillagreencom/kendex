@@ -212,7 +212,7 @@ impl Op {
                 pre.check(path)?;
                 ensure_parent(path)?;
                 fs::write(path, bytes).map_err(|e| CoreError::io(path, e))?;
-                executable_bit(path)
+                crate::fs::make_executable(path)
             }
             Op::GitConfigSwap {
                 file,
@@ -276,24 +276,8 @@ fn write_tree(root: &Path, files: &[(PathBuf, Vec<u8>)], pre: &Pre) -> Result<()
         let dest = root.join(rel);
         ensure_parent(&dest)?;
         fs::write(&dest, bytes).map_err(|e| CoreError::io(&dest, e))?;
-        // A tree carries bytes, not modes; a script that opens with a
-        // shebang was written to be run, and a skill's helper that lands
-        // 644 fails its own hook the first time something calls it.
-        if bytes.starts_with(b"#!") {
-            executable_bit(&dest)?;
-        }
+        crate::fs::executable_if_script(&dest, bytes)?;
     }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn executable_bit(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).map_err(|e| CoreError::io(path, e))
-}
-
-#[cfg(not(unix))]
-fn executable_bit(_path: &Path) -> Result<()> {
     Ok(())
 }
 

@@ -185,6 +185,12 @@ pub struct EngineReport {
     pub repo_effects_leaving: Vec<crate::repo_effects::DeclaredEffects>,
 }
 
+/// One name a removal was asked for, with the kind it must be when the
+/// caller knew one. `None` names the name alone, which is what the `remove`
+/// verb has to go on; a caller that knew the kind never sweeps a same-named
+/// item of another kind along with it.
+pub type RemovalName = (Option<ItemKind>, String);
+
 #[derive(Debug, Clone, Default)]
 pub struct PlanOptions {
     /// Render each agent with the skills its declaration holds and keep the
@@ -196,12 +202,11 @@ pub struct PlanOptions {
     /// Remove orphaned (locked-but-undeclared) artifacts. Refresh keeps
     /// them (v1 semantics); reconcile and `remove` clean them up.
     pub remove_orphans: bool,
-    /// Restrict orphan removal to these names (the `remove` verb).
-    pub removal_filter: Option<Vec<String>>,
-    /// Restrict orphan removal to these exact kind+name pairs (the unsubscribe
-    /// closure). Preferred over `removal_filter` where set, so a same-named
-    /// orphan of another kind is never swept along.
-    pub removal_filter_typed: Option<Vec<(ItemKind, String)>>,
+    /// Restrict orphan removal to these names. One list rather than a
+    /// typed one beside an untyped one: a caller that set both would have
+    /// had one of them silently ignored, and which one won was a rule the
+    /// call sites could not see.
+    pub removal_filter: Option<Vec<RemovalName>>,
     /// Also remove installations nothing asked for that nothing needs
     /// anymore — a dependency whose last dependent went away, or one an
     /// upstream item stopped requiring.
@@ -304,17 +309,13 @@ impl PlanOptions {
 
     /// Whether the caller named this exact installation for removal: an
     /// instruction about this item, never a judgement about what anything
-    /// still wants. Every hold that a typed removal releases asks it here,
-    /// so no two of them can disagree about what the person asked for.
-    /// The typed pairs win where they are set, so a same-named item of
-    /// another kind is never taken along.
+    /// still wants. Every hold that a removal releases asks it here, so no
+    /// two of them can disagree about what the person asked for.
     pub(crate) fn named_for_removal(&self, kind: ItemKind, name: &str) -> bool {
-        match &self.removal_filter_typed {
-            Some(pairs) => pairs.iter().any(|(k, n)| *k == kind && n == name),
-            None => self
-                .removal_filter
-                .as_ref()
-                .is_some_and(|names| names.iter().any(|n| n == name)),
-        }
+        self.removal_filter.as_ref().is_some_and(|named| {
+            named
+                .iter()
+                .any(|(wanted, n)| n == name && wanted.is_none_or(|wanted| wanted == kind))
+        })
     }
 }

@@ -2265,8 +2265,8 @@ dependencies = [
 name = "kendex-app"
 version = "5.0.1"
 dependencies = [
+ "ico",
  "kendex-core",
- "png 0.18.1",
  "rustix",
  "serde",
  "serde_json",
@@ -2274,6 +2274,7 @@ dependencies = [
  "specta-typescript",
  "tauri",
  "tauri-build",
+ "tauri-icns",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-plugin-updater",
@@ -4222,6 +4223,16 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-icns"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03b7eb4d0d43724ba9ba6a6717420ee68aee377816a3edbb45db8c18862b1431"
+dependencies = [
+ "byteorder",
+ "png 0.17.16",
 ]
 
 [[package]]

@@ -10,7 +10,7 @@ export const commands = {
 	 *  Read the remembered app release status, refreshing it when requested or
 	 *  when the six-hour automatic interval has elapsed.
 	 */
-	appUpdateCheck: (refresh: boolean) => typedError<AppUpdateView, string>(__TAURI_INVOKE("app_update_check", { refresh })),
+	appUpdateCheck: (refresh: boolean) => typedError<AppUpdateStatus, string>(__TAURI_INVOKE("app_update_check", { refresh })),
 	/**
 	 *  Who owns the running bytes, so the notice offers the one action that can
 	 *  work on this machine.
@@ -541,11 +541,6 @@ export type AppSettings = {
 	 */
 	"muted-app-notice"?: string | null,
 	/**
-	 *  Whether startup may contact the release feed. A manual refresh is a
-	 *  separate, explicit request.
-	 */
-	"auto-update-check"?: boolean,
-	/**
 	 *  How large the interface draws, as a percent. Machine-local like
 	 *  everything else in this file: how big text needs to be belongs to
 	 *  the person and the display in front of them, not to a project.
@@ -553,25 +548,7 @@ export type AppSettings = {
 	zoom?: number,
 };
 
-export type AppUpdateError = {
-	kind: AppUpdateErrorKind,
-	message: string,
-};
-
-export type AppUpdateErrorKind = "network" | "http" | "invalidFeed";
-
 export type AppUpdateStatus = { kind: "neverChecked" } | { kind: "upToDate"; version: string } | { kind: "updateAvailable"; version: string; releaseNotesUrl: string; cliAssetAvailable: boolean; muted: boolean } | { kind: "feedOlder"; version: string };
-
-export type AppUpdateView = {
-	automaticCheckEnabled: boolean,
-	status: AppUpdateStatus,
-	lastAttemptAt: string | null,
-	lastSuccessAt: string | null,
-	servedFeedAt: string | null,
-	servedFeedAgeSecs: number | null,
-	servedFeedInFuture: boolean,
-	lastError: AppUpdateError | null,
-};
 
 export type Appearance = "system" | "light" | "dark";
 

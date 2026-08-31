@@ -6,7 +6,11 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppUpdateView, CommandNotice, InstallChannel } from "@/bindings";
+import type {
+  AppUpdateStatus,
+  CommandNotice,
+  InstallChannel,
+} from "@/bindings";
 import { commands } from "@/bindings";
 import {
   APP_UPDATE_COMMAND_UNKNOWN_NOTE,
@@ -43,22 +47,13 @@ const RELEASED = "5.1.0";
 const NOTES = `https://github.com/vanillagreencom/kendex/releases/tag/v${RELEASED}`;
 
 const view = (
-  status: AppUpdateView["status"],
-): { status: "ok"; data: AppUpdateView } => ({
+  status: AppUpdateStatus,
+): { status: "ok"; data: AppUpdateStatus } => ({
   status: "ok",
-  data: {
-    automaticCheckEnabled: true,
-    status,
-    lastAttemptAt: null,
-    lastSuccessAt: null,
-    servedFeedAt: null,
-    servedFeedAgeSecs: null,
-    servedFeedInFuture: false,
-    lastError: null,
-  },
+  data: status,
 });
 
-const available = (muted = false): { status: "ok"; data: AppUpdateView } =>
+const available = (muted = false): { status: "ok"; data: AppUpdateStatus } =>
   view({
     kind: "updateAvailable",
     version: RELEASED,

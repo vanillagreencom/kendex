@@ -2,26 +2,11 @@
 //! reading is, and which packages are muted — thin shells over core, like
 //! every other command here.
 
-use kendex_core::env::Env;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::package::updates;
 use kendex_core::{manifest, remote};
 
-fn env() -> Result<Env, String> {
-    Env::detect().map_err(|e| e.to_string())
-}
-
-fn all_scopes(env: &Env) -> Result<Vec<Scope>, String> {
-    let settings = kendex_core::settings::load(env).map_err(|e| e.to_string())?;
-    let mut scopes = vec![Scope::Global];
-    scopes.extend(
-        settings
-            .projects
-            .into_iter()
-            .map(|root| Scope::Project { root }),
-    );
-    Ok(scopes)
-}
+use crate::scopes::{all as all_scopes, env};
 
 /// Every scope's update standing in one query — the sidebar badge, the
 /// Updates page, and the Library's fork/edited flags all read this. Rows

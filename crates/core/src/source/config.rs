@@ -348,7 +348,7 @@ pub fn list_items(sealed: &SealedSource, config: &SourceConfig, kind: ItemKind) 
             if config.mode == CatalogMode::Explicit =>
         {
             let (dir, ext) = super::layout::fixed_kind_dir(kind);
-            names.extend(super::layout::ext_stems(sealed, dir, ext));
+            names.extend(super::layout::file_stems(sealed, dir, ext));
         }
         _ => {}
     }

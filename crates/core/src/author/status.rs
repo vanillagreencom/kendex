@@ -157,7 +157,14 @@ fn git_readiness(path: &Path) -> GitReadiness {
     GitReadiness {
         repository: true,
         clean: porcelain.map(|changes| changes.is_empty()),
-        candidate: remote.as_deref().and_then(github_candidate),
+        // A remote is a URL, so the bare `owner/repo` shorthand
+        // `owner_repo` also folds is not one: a relative path remote like
+        // `../bare.git` is that shape too, and would read as a GitHub
+        // repository the folder could be submitted as.
+        candidate: remote
+            .as_deref()
+            .filter(|url| url.contains("://") || url.contains('@'))
+            .and_then(crate::source_ref::owner_repo),
         remote,
         ahead,
     }
@@ -179,23 +186,6 @@ fn git_line(path: &Path, args: &[&str]) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-}
-
-/// `owner/repo` out of a GitHub remote in either transport spelling.
-fn github_candidate(url: &str) -> Option<String> {
-    let rest = url
-        .strip_prefix("https://github.com/")
-        .or_else(|| url.strip_prefix("http://github.com/"))
-        .or_else(|| url.strip_prefix("git@github.com:"))
-        .or_else(|| url.strip_prefix("ssh://git@github.com/"))?;
-    let repo = rest.strip_suffix(".git").unwrap_or(rest);
-    let mut segments = repo.split('/');
-    let owner = segments.next().filter(|owner| !owner.is_empty())?;
-    let name = segments.next().filter(|name| !name.is_empty())?;
-    if segments.next().is_some() {
-        return None;
-    }
-    Some(format!("{owner}/{name}"))
 }
 
 /// Register an existing folder under Mine, reading it as-is: zero bytes

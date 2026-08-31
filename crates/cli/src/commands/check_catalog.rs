@@ -12,7 +12,7 @@ use kendex_core::check_catalog::{CHECK_SCHEMA, CatalogCheck, CheckFinding};
 use kendex_core::source_read::SealedSource;
 
 use super::engine_common::{ScoredAt, print_advisory};
-use super::{CliResult, out, say};
+use super::{CliResult, answer, say};
 
 pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
     let sealed = SealedSource::open(catalog)?;
@@ -38,7 +38,7 @@ pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
 /// written order here is the field order a consumer sees.
 fn machine(report: &CatalogCheck, ok: bool) -> CliResult {
     let tally = report.tally();
-    out(&serde_json::to_string_pretty(&serde_json::json!({
+    answer(&serde_json::to_string_pretty(&serde_json::json!({
         "schema": CHECK_SCHEMA,
         "findings": report.findings().collect::<Vec<CheckFinding>>(),
         "breakage": tally.breakage,
@@ -52,24 +52,17 @@ fn machine(report: &CatalogCheck, ok: bool) -> CliResult {
 /// than inside it: `file` is what something opens, and `PATH:LINE` is how a
 /// terminal spells a place.
 fn say_finding(finding: &kendex_core::check_catalog::CheckFinding) {
-    use kendex_core::names::shown;
     let at = match finding.line {
-        Some(line) => format!("{}:{line}", shown(&finding.file)),
-        None => shown(&finding.file),
+        Some(line) => format!("{}:{line}", finding.file),
+        None => finding.file.clone(),
     };
     say(&format!(
         "[{}] {}: {at}: {}",
-        finding.severity,
-        finding.pass,
-        shown(&finding.message)
+        finding.severity, finding.pass, finding.message
     ));
-    say(&format!("    fix: {}", shown(&finding.fix)));
+    say(&format!("    fix: {}", finding.fix));
 }
 
-/// Every file, name and message here is read off the catalog's own
-/// files, so each is printed as what it is, never as an escape sequence
-/// the terminal would act on — the rule the plan's safety printer follows.
-///
 /// The structural pass prints first and carries a fix line: a loader that
 /// will not hold an item is a thing the author does something about. The
 /// safety pass prints as the advisory block every other verb prints, fix

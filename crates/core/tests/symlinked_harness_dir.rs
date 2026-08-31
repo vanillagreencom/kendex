@@ -176,7 +176,7 @@ fn a_recorded_path_that_now_lands_outside_takes_nothing_with_it() {
         &f.scope,
         &kendex_core::engine::PlanOptions {
             remove_orphans: true,
-            removal_filter: Some(vec!["ship".into()]),
+            removal_filter: Some(vec![(None, "ship".into())]),
             ..kendex_core::engine::PlanOptions::default()
         },
     )

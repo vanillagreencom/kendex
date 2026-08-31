@@ -145,7 +145,7 @@ fn put(dest: &Path, bytes: &[u8]) -> Result<()> {
         std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
     }
     std::fs::write(dest, bytes).map_err(|e| CoreError::io(dest, e))?;
-    executable_if_script(dest, bytes)
+    crate::fs::executable_if_script(dest, bytes)
 }
 
 /// A sibling whose name folds to the destination's spelling occupies it on
@@ -172,21 +172,6 @@ fn occupied(dest: &Path, name: &str) -> CoreError {
             dest.display()
         ),
     }
-}
-
-/// A file whose bytes open with a shebang was written to be run — the
-/// copy keeps that runnable.
-fn executable_if_script(path: &Path, bytes: &[u8]) -> Result<()> {
-    if !bytes.starts_with(b"#!") {
-        return Ok(());
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| CoreError::io(path, e))?;
-    }
-    Ok(())
 }
 
 /// What the outcome calls one written file: its path under the import

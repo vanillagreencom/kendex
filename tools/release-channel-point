@@ -86,38 +86,46 @@ else
   fi
 fi
 
-# SemVer precedence is jq's own ordering once each version becomes the key
-# SemVer compares by: the numeric core, then a release ranking above the
-# pre-releases leading to it, then the pre-release identifiers, where an
-# all-digit one ranks below an alphanumeric one and alphanumerics compare as
-# text. That last rule is why `sort -V` cannot stand in: it reads rc10 as past
-# rc2, where SemVer puts rc10 first. Build metadata is not part of the version
-# and comes off first. A string that is not a version has no place in the
-# ordering, so `key` refuses it and jq leaves no verdict behind.
+# SemVer precedence is the release's own parser, run on the binary this tag
+# built and downloaded into `dist` beside the manifests. Nothing here orders
+# the two strings itself: `sort -V` reads rc10 as past rc2, where SemVer puts
+# rc10 first, and every regex written to stand in for the parser has admitted
+# a version the parser refuses. A string that is not a version is not ordered
+# at all, and the verb exits non-zero rather than leaving a verdict behind.
 #
-# Every digit class is spelled out rather than written `\d`, which jq reads
-# as any Unicode digit: `1.0.0-1١` would pass as a version here and be
-# ordered against `1.0.0-rc2`, while the parser every candidate reads the
-# manifest with refuses it.
-verdict=$(jq -rn --arg state "$state" --arg current "$current" \
-  --arg new "$NEW_VERSION" '
-  def semver: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$";
-  def ident: if test("^[0-9]+$") then [0, tonumber] else [1, .] end;
-  def key: (if test(semver) then . else error("not a version: \(.)") end
-            | split("+")[0]) as $v
-    | ($v | index("-")) as $i
-    | [($v | split("-")[0] | split(".") | map(tonumber)),
-       (if $i == null then 1 else 0 end),
-       (if $i == null then [] else ($v[$i + 1:] | split(".") | map(ident)) end)];
-  # Only a strictly newer current holds the channel, so re-running the tag it
-  # already carries refreshes it. A tag re-run after a later one would
-  # otherwise roll every candidate back to it, which on this channel looks
-  # exactly like the update path being broken.
-  ($new | key) as $want
-  | if $state == "fresh" then "write"
-    elif $state != "carrying" then "stop"
-    elif ($current | key) > $want then "hold"
-    else "write" end') || verdict=stop
+# Only a strictly newer current holds the channel, so re-running the tag it
+# already carries refreshes it. A tag re-run after a later one would
+# otherwise roll every candidate back to it, which on this channel looks
+# exactly like the update path being broken.
+compare=dist/kendex-x86_64-unknown-linux-gnu
+if [ "$state" != fresh ] && [ "$state" != carrying ]; then
+  verdict=stop
+elif [ ! -f "$compare" ]; then
+  verdict=stop
+  why="the release's own binary is not in dist, so nothing here can order ${NEW_VERSION}"
+elif ! chmod +x "$compare"; then
+  # The artifact upload does not carry the executable bit across.
+  verdict=stop
+  why="the release's own binary in dist could not be made runnable, so nothing here can order ${NEW_VERSION}"
+elif [ "$state" = fresh ]; then
+  # A fresh channel has nothing to order against, and the tag still has to
+  # be a version: published under a string no candidate can read, the
+  # channel is broken from its first write. Ordering it against itself is
+  # that question — the verb refuses what is not a version and orders what
+  # is, and the answer to this one is never in doubt.
+  if "./$compare" version-compare "$NEW_VERSION" "$NEW_VERSION" > /dev/null; then
+    verdict=write
+  else
+    verdict=stop
+    why="${NEW_VERSION} is not a version this build can read"
+  fi
+elif ! ordered=$("./$compare" version-compare "$current" "$NEW_VERSION"); then
+  verdict=stop
+elif [ "$ordered" = newer ]; then
+  verdict=hold
+else
+  verdict=write
+fi
 case "$verdict" in
   write) ;;
   hold)

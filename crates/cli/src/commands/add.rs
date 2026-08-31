@@ -4,7 +4,6 @@ use kendex_core::lock::{load as load_lock, lock_path};
 use kendex_core::model::Scope;
 
 use kendex_core::manifest::Method;
-use kendex_core::names::shown;
 
 use super::engine_common::{confirm_and_apply, parse_harnesses, print_report};
 use super::ledger::{Wrote, say_ledger};
@@ -162,7 +161,7 @@ pub fn run(env: &Env, mut args: AddArgs) -> CliResult {
                 kendex_core::remote::sync_sources(env, &manifest)?
             };
             for warning in synced {
-                warn(&format!("warning: {}", shown(&warning)));
+                warn(&format!("warning: {}", warning));
             }
             let _planning = ui::spinner("planning the install");
             ops::add(env, &scope, &request)?

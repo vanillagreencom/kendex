@@ -18,6 +18,20 @@ use crate::channel::{REFUSED_VERSIONS, channel_step_env, core_can_read};
 use crate::test_util::rooted;
 use crate::{job, job_declaring, step, workflow};
 
+/// The binary the guard runs `version-compare` on, named by reading the
+/// guard rather than by writing the name down twice: renamed on one side
+/// only, every run here would stage a file the guard never looks at and
+/// stop, which reads as the guard refusing rather than as a broken fixture.
+#[allow(clippy::expect_used)]
+pub(crate) fn compare_binary() -> String {
+    let script = std::fs::read_to_string(channel_script()).expect("the channel guard");
+    script
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("compare=dist/"))
+        .expect("the guard names the binary it compares with")
+        .to_owned()
+}
+
 /// The guard the channel job runs, as a path this test can execute.
 pub(crate) fn channel_script() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../{CHANNEL_SCRIPT}"))
@@ -111,6 +125,12 @@ impl Fixture {
         for name in staged {
             fs::write(dist.join(name), "{}").unwrap();
         }
+        // The release stages its own CLI beside the manifests, and the
+        // guard orders the two versions by running it. This is that binary
+        // — the one these tests were built from — so the ordering under
+        // test is the parser candidates read their feed with rather than a
+        // stub posed to agree with it.
+        fs::copy(env!("CARGO_BIN_EXE_kendex"), dist.join(compare_binary())).unwrap();
         let bin = root.join("bin");
         fs::create_dir_all(&bin).unwrap();
         fs::write(
@@ -679,6 +699,28 @@ fn the_channel_job_runs_the_guard_these_tests_run() {
         "the channel step does not run {CHANNEL_SCRIPT}"
     );
     assert!(channel_script().is_file(), "{CHANNEL_SCRIPT} is not a file");
+    // The guard runs a binary the channel job never builds: it arrives in
+    // the artifact the publish job uploads. Named on three sides — the
+    // upload, the guard, and the classifier that reads the same lane's
+    // binary — and a rename on any one of them leaves the guard with
+    // nothing to order versions with and every candidate stopped.
+    let compare = compare_binary();
+    assert_eq!(
+        compare,
+        crate::channel::BUILT_CLI,
+        "the guard compares with a binary the classifier does not read"
+    );
+    let staged: Vec<&str> = workflow
+        .lines()
+        .skip_while(|line| line.trim() != "name: manifests")
+        .take_while(|line| !line.trim().starts_with("if-no-files-found"))
+        .collect();
+    assert!(
+        staged
+            .iter()
+            .any(|line| line.trim() == format!("dist/{compare}")),
+        "the manifests artifact does not carry dist/{compare}: {staged:?}"
+    );
     // The job has to check the repository out, or that line runs nothing.
     assert!(
         job(&workflow, job_declaring(&workflow, CHANNEL_SCRIPT))

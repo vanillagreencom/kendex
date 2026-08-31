@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use kendex_core::drift::report::{self, CheckReport};
 use kendex_core::env::Env;
 
-use super::{out, resolve_scopes};
+use super::{answer, out, resolve_scopes};
 mod commit_hooks;
 use crate::scope::ScopeFilter;
 use crate::ui;
@@ -41,7 +41,7 @@ pub fn run(
     }
 
     if json {
-        out(&serde_json::to_string_pretty(&checked)?);
+        answer(&serde_json::to_string_pretty(&checked)?);
     } else {
         render_text(&checked, quiet);
     }
@@ -173,7 +173,7 @@ mod tests {
 
     /// What survived the page is still what the count is taken from.
     #[test]
-    fn the_count_comes_off_the_lines_the_reader_was_shown() {
+    fn the_count_comes_off_the_lines_the_reader_saw() {
         let page = "drift:\n  one — fix: kendex apply\n  two — fix: kendex apply\n";
         let said = verdict(&reported(vec!["one", "two"]), page);
         assert!(said.starts_with("2 items need attention"), "{said}");

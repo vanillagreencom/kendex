@@ -3,7 +3,6 @@ pub use super::blocked::{print_conflicts, print_drift};
 use kendex_core::engine::{DriftRow, DriftState, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, ItemKind};
-use kendex_core::names::shown;
 
 use std::io::IsTerminal;
 
@@ -26,7 +25,7 @@ pub fn parse_harnesses(values: &[String]) -> Result<Vec<HarnessId>, String> {
 /// plan still prints these.
 pub fn print_notes(report: &EngineReport) {
     for line in &report.notes {
-        note(&format!("note: {}", shown(line)));
+        note(&format!("note: {}", line));
     }
 }
 
@@ -37,12 +36,12 @@ pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Bloc
     print_notes(report);
     for warning in &report.warnings {
         let target = match warning.harness {
-            Some(harness) => format!("{} ({})", shown(&warning.name), harness.display_name()),
-            None => shown(&warning.name),
+            Some(harness) => format!("{} ({})", warning.name, harness.display_name()),
+            None => warning.name.clone(),
         };
-        warn(&format!("warning: {target}: {}", shown(&warning.message)));
+        warn(&format!("warning: {target}: {}", warning.message));
         if let Some(fix) = &warning.remediation {
-            say(&format!("  fix: {}", shown(fix)));
+            say(&format!("  fix: {}", fix));
         }
     }
     print_safety(report);
@@ -61,7 +60,7 @@ pub fn print_report(env: &Env, report: &EngineReport) -> Vec<super::offers::Bloc
     // asked to approve a count was never shown what it covers.
     say(&format!("plan: {} change{}", ops, plural(ops)));
     for op in &report.plan.ops {
-        say(&format!("  - {}", shown(&op.line())));
+        say(&format!("  - {}", op.line()));
     }
     blocked
 }
@@ -93,14 +92,12 @@ pub fn print_unmanaged(drift: &[DriftRow]) {
         if rows.len() == 1 { "" } else { "s" }
     ));
     for row in rows.iter().take(UNMANAGED_SHOWN) {
-        // Names and paths read off a tree kendex did not write: printed as
-        // what they are, never as the escape sequences they might hold.
         say(&format!(
             "  - {} {} [{}] {}",
             row.kind.name(),
-            shown(&row.name),
+            row.name,
             row.harness.display_name(),
-            shown(&row.detail)
+            row.detail
         ));
     }
     if rows.len() > UNMANAGED_SHOWN {
@@ -130,7 +127,7 @@ pub fn print_safety(report: &EngineReport) {
 /// installation belongs to a tool, a catalog item to a path inside its
 /// catalog. Naming the two shapes is what keeps the caller from
 /// hand-building a subject string, so every score line is worded the same
-/// way and escapes the same parts of itself.
+/// way.
 pub enum ScoredAt<'a> {
     /// The tool whose copy of the item was scored.
     Harness(HarnessId),
@@ -153,11 +150,6 @@ pub enum ScoredAt<'a> {
 /// Severity leads the finding as a word, never as a colour: the line has
 /// to carry it for a reader who has no colour, and this printer emits
 /// none.
-///
-/// Every part that came off a file kendex did not write is escaped here
-/// rather than by the caller — the name, the catalog path, the finding
-/// messages and their locations. A harness's display name is kendex's own
-/// string and is printed as it is.
 pub fn print_advisory(
     kind: ItemKind,
     name: &str,
@@ -167,12 +159,12 @@ pub fn print_advisory(
     let at = match at {
         ScoredAt::Harness(harness) => format!(" for {}", harness.display_name()),
         ScoredAt::CatalogPath("") => String::new(),
-        ScoredAt::CatalogPath(path) => format!(" at {}", shown(path)),
+        ScoredAt::CatalogPath(path) => format!(" at {}", path),
     };
     say(&format!(
         "safety: {} {}{at} scores {}/100",
         kind.name(),
-        shown(name),
+        name,
         advisory.safety.score
     ));
     for finding in &advisory.findings {
@@ -182,13 +174,13 @@ pub fn print_advisory(
         // of the line, where nothing has to read it back.
         let at = match (finding.location.is_empty(), finding.line) {
             (true, _) => String::new(),
-            (false, None) => format!(" ({})", shown(&finding.location)),
-            (false, Some(line)) => format!(" ({}:{line})", shown(&finding.location)),
+            (false, None) => format!(" ({})", finding.location),
+            (false, Some(line)) => format!(" ({}:{line})", finding.location),
         };
         say(&format!(
             "  [{}] {}{at}",
             finding.severity.name(),
-            shown(&finding.message)
+            finding.message
         ));
     }
     print_skipped(advisory);
@@ -202,7 +194,7 @@ fn print_skipped(advisory: &kendex_core::quality::AuditResult) {
     say(&format!(
         "  not fully checked: {} rule(s) had nothing to read — {}",
         advisory.skipped.len(),
-        shown(&first.reason)
+        first.reason
     ));
 }
 

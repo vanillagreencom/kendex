@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use kendex_core::app_update::AppUpdateView;
+use kendex_core::app_update::AppUpdateStatus;
 use kendex_core::command_update::{
     CommandBeside, CommandHalf, CommandNotice, bring_command_across, command_beside_app,
     command_candidates, recorded_command,
@@ -13,27 +13,13 @@ use kendex_core::update_channel::manifest_url_for;
 use kendex_core::update_feed::{UPDATER_PUBLIC_KEY, signature_url};
 use tauri_plugin_updater::UpdaterExt;
 
+/// Core picks the channel off the running version, override rule included,
+/// so the app and `kendex update` cannot end up reading different feeds.
 fn feed_url() -> String {
-    #[cfg(debug_assertions)]
-    {
-        selected_feed(std::env::var("KENDEX_UPDATE_FEED").ok(), true)
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        selected_feed(None, false)
-    }
+    kendex_core::update_channel::feed_url(env!("CARGO_PKG_VERSION"))
 }
 
-fn selected_feed(override_url: Option<String>, debug_build: bool) -> String {
-    match (debug_build, override_url) {
-        (true, Some(url)) => url,
-        (true, None) | (false, _) => {
-            kendex_core::update_channel::feed_url_for(env!("CARGO_PKG_VERSION")).to_owned()
-        }
-    }
-}
-
-fn check(refresh: bool) -> Result<AppUpdateView, String> {
+fn check(refresh: bool) -> Result<AppUpdateStatus, String> {
     let env = Env::detect().map_err(|error| error.to_string())?;
     let settings = kendex_core::settings::load(&env).map_err(|error| error.to_string())?;
     kendex_core::app_update::check(
@@ -44,7 +30,6 @@ fn check(refresh: bool) -> Result<AppUpdateView, String> {
             target: env!("KENDEX_TARGET"),
             feed_url: &feed_url(),
             refresh,
-            automatic_check_enabled: settings.auto_update_check,
             muted_version: settings.muted_app_notice.as_deref(),
         },
     )
@@ -55,7 +40,7 @@ fn check(refresh: bool) -> Result<AppUpdateView, String> {
 /// when the six-hour automatic interval has elapsed.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn app_update_check(refresh: bool) -> Result<AppUpdateView, String> {
+pub fn app_update_check(refresh: bool) -> Result<AppUpdateStatus, String> {
     check(refresh)
 }
 

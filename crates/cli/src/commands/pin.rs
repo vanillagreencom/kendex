@@ -2,7 +2,6 @@ use clap::Args;
 
 use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
-use kendex_core::names::shown;
 
 use super::engine_common::{confirm_and_execute, print_report};
 use super::{CliResult, resolve_scopes, say};
@@ -67,13 +66,13 @@ pub fn run(env: &Env, args: PinArgs) -> CliResult {
         Some(version) => say(&format!(
             "{} '{}' held at {}",
             kind.name(),
-            shown(&args.name),
-            shown(&version)
+            args.name,
+            version
         )),
         None => say(&format!(
             "{} '{}' follows its source again",
             kind.name(),
-            shown(&args.name)
+            args.name
         )),
     }
     Ok(())

@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { scopeLabel } from "@/lib/derive";
 import { scopeName } from "@/lib/labels";
+import { everyPlace } from "@/lib/scope";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useSettingsStore } from "@/stores/settings";
 
@@ -44,10 +45,7 @@ export function SubscribeDialog({
   const [name, setName] = useState("");
   const [where, setWhere] = useState("global");
 
-  const scopes: Scope[] = [
-    { scope: "global" },
-    ...projects.map((root): Scope => ({ scope: "project", root })),
-  ];
+  const scopes = everyPlace(projects);
 
   const submit = () => {
     if (!reference.trim()) return;

@@ -3,15 +3,12 @@
 
 use kendex_core::apply;
 use kendex_core::engine::ops as engine_ops;
-use kendex_core::env::Env;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::source_ops;
 use serde::Serialize;
 use specta::Type;
 
-fn env() -> Result<Env, String> {
-    Env::detect().map_err(|e| e.to_string())
-}
+use crate::scopes::env;
 
 /// One package named in an unsubscribe preview.
 #[derive(Debug, Clone, Serialize, Type)]

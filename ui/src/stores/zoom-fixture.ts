@@ -50,24 +50,36 @@ export const dialog = () => useProblemsStore.getState().dialog;
  *  one does: the zoom outlives the page, so a reload has to read it back. */
 let webviewAt = settings.zoom ?? 100;
 
+/** Put the stand-in webview at a size, as a launch or an accepted resize
+ *  would. A test that seeds the store away from full size moves the window
+ *  with it — the store's copy is what is being drawn, and the window is
+ *  what a refusal reads the real size back from. */
+export function windowAt(percent: number) {
+  webviewAt = percent;
+}
+
+/** A window that takes every size it is asked for, and remembers it. */
+export function windowTakes() {
+  vi.mocked(commands.windowSetZoom).mockImplementation(async (percent) => {
+    webviewAt = percent;
+    return ok(null);
+  });
+}
+
 /** A store at 100%, a closed dialog, and a window that takes every size —
- *  including at launch, so `tookZoom` starts where the stored size is. */
+ *  including at launch, so the store opens where the stored size is. */
 export function freshZoomStore() {
   webviewAt = settings.zoom ?? 100;
   useSettingsStore.setState({
     settings,
-    shownZoom: null,
-    tookZoom: webviewAt,
+    zoom: webviewAt,
     capabilities: [],
   });
   useProblemsStore.setState({
     dialog: { open: false, title: "", steps: [], actions: [] },
   });
   vi.clearAllMocks();
-  vi.mocked(commands.windowSetZoom).mockImplementation(async (percent) => {
-    webviewAt = percent;
-    return ok(null);
-  });
+  windowTakes();
   vi.mocked(commands.windowZoomState).mockImplementation(async () => ({
     percent: webviewAt,
     launchRefused: false,

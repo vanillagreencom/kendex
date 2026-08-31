@@ -8,16 +8,6 @@ mod test_util;
 #[cfg(unix)]
 use test_util::no_record_on_this_runner;
 
-#[test]
-fn only_debug_builds_accept_a_feed_override() {
-    let fixture = "file:///fixtures/feed.json".to_owned();
-    assert_eq!(selected_feed(Some(fixture.clone()), true), fixture);
-    assert_eq!(
-        selected_feed(Some(fixture), false),
-        kendex_core::update_channel::feed_url_for(env!("CARGO_PKG_VERSION"))
-    );
-}
-
 /// The card's check and the install have to be looking at one release,
 /// or a candidate is offered an update the installer then cannot find.
 /// Both read the running version, so this asserts they land on the same
@@ -32,7 +22,7 @@ fn the_notice_and_the_install_read_one_channel() {
     );
     use kendex_core::update_channel::{PRERELEASE_FEED_URL, PRERELEASE_MANIFEST_URL};
     assert_eq!(
-        selected_feed(None, false) == PRERELEASE_FEED_URL,
+        kendex_core::update_channel::feed_url_for(version) == PRERELEASE_FEED_URL,
         endpoint.as_str() == PRERELEASE_MANIFEST_URL,
         "the feed and the manifest are on different channels for {version}"
     );

@@ -209,7 +209,7 @@ pub(super) fn orphans(
             continue;
         }
         let unneeded = derived_only(entry);
-        let unfiltered = options.removal_filter.is_none() && options.removal_filter_typed.is_none();
+        let unfiltered = options.removal_filter.is_none();
         let removable = (options.remove_orphans && (named || unfiltered))
             || (options.sweep_unneeded && unneeded);
         drift.push(DriftRow {

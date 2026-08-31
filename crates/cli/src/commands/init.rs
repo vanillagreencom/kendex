@@ -1,4 +1,3 @@
-use kendex_core::names::shown;
 use std::fs;
 use std::path::Path;
 
@@ -72,10 +71,7 @@ fn declare_catalog(cwd: &Path) -> CliResult {
          # [marketplace] name, description, author, license, tags\n\
          # [bundles.<name>] description, members\n",
     )?;
-    say(&format!(
-        "declared the catalog ({})",
-        shown(&control.display().to_string())
-    ));
+    say(&format!("declared the catalog ({})", control.display()));
     Ok(())
 }
 

@@ -6,9 +6,7 @@ use kendex_core::{apply, manifest};
 use serde::Serialize;
 use specta::Type;
 
-fn env() -> Result<Env, String> {
-    Env::detect().map_err(|e| e.to_string())
-}
+use crate::scopes::env;
 
 /// Why a scope couldn't be audited: a kind the UI can act on (retry, remove
 /// the project, show the file) plus the plain-words message underneath it.
