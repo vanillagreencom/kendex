@@ -260,14 +260,23 @@ fn a_registry_refusal_after_the_build_removes_only_the_folder_it_made() {
     let refused = author::create(&env, &request(&made, License::Mit)).unwrap_err();
     unlock();
 
-    // `can_register` and `register` word a duplicate row identically, so
-    // the refusal that must NOT have fired is named rather than the one
-    // that did: a duplicate would refuse before `build_in` and this would
-    // stop reaching the removal it exists to pin.
+    // The refusal has to be the registry's own write, because only that
+    // one lands after `build_in` and reaches the removal this fixture
+    // exists to pin. Said positively, naming the file the write failed
+    // on: `atomic_write` reports its sibling temp name, so the assertion
+    // is on the stem both spellings share, and a refusal arriving from
+    // anywhere else reds this rather than passing quietly. The negative
+    // stands beside it because `can_register` and `register` word a
+    // duplicate row identically, so that string alone says nothing about
+    // which of them fired.
     let said = refused.to_string();
     assert!(
+        said.contains(&registry.join("authored").display().to_string()),
+        "the refusal has to be the registry's own write: {said}"
+    );
+    assert!(
         !said.contains("already under Mine"),
-        "the refusal has to be the registry's write, not its duplicate check: {said}"
+        "and not its duplicate check, which refuses before the build: {said}"
     );
     assert!(
         !said.contains("left behind"),
