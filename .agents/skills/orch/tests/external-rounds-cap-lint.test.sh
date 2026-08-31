@@ -23,8 +23,9 @@
 #     it by counting the phrase `fix set` in a prose region; a count of a
 #     phrase is a sentence pin wearing a number.
 #   * That § 6.1 reads the cap before it delegates. `order` compares first
-#     matches across a whole file, and `<delegation_format>` appears in § 2 of
-#     the same file, so the comparison would answer about the wrong pair.
+#     matches across a whole file, and `<delegation_format>` first appears far
+#     ahead of § 6.1 in the same file, so the comparison would answer about the
+#     wrong pair.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 

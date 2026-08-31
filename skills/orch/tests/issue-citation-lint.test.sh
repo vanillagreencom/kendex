@@ -15,19 +15,17 @@ echo "=== issue-citation lint (always-loaded skill/agent markdown) ==="
 
 # The rendered copy under `.agents/` sits in a tree carrying `skills/` alone,
 # so the agent definitions are scanned where they exist and their absence is
-# not a failure. Both trees missing is: there would be nothing to scan.
+# not a failure. Both trees missing leaves the list empty, which `forbid`
+# refuses on its own: an absence check over nothing passes for the wrong
+# reason.
 SCAN=()
 [ -d "$REPO_ROOT/skills" ] && SCAN+=("$REPO_ROOT"/skills/*/SKILL.md)
 [ -d "$REPO_ROOT/agents" ] && SCAN+=("$REPO_ROOT"/agents/*.md)
-if [ "${#SCAN[@]}" -eq 0 ]; then
-  echo "FAIL  neither $REPO_ROOT/skills nor $REPO_ROOT/agents exists — nothing to scan" >&2
-  exit 2
-fi
 
 forbid "no issue-number citation in SKILL.md or agents/*.md" \
   'kendex#[0-9]+|\(#[0-9]+\)' \
   'Always ask before merge (kendex#944), same class as (#42).' \
-  "${SCAN[@]}"
+  ${SCAN+"${SCAN[@]}"}
 
 permits "a bare hex colour is not a citation" \
   'kendex#[0-9]+|\(#[0-9]+\)' \

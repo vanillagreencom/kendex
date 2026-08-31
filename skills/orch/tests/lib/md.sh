@@ -39,9 +39,10 @@
 # A suite must NOT install its own EXIT trap. Sourcing this file installs one
 # that removes MD_TMP, and `trap ... EXIT` replaces rather than adds, so a
 # suite setting its own leaks a mktemp directory per run — no symptom but
-# growth under TMPDIR. Three suites in this directory use that idiom, so it is
-# the shape a new lint would copy from its neighbours. Put scratch under
-# MD_TMP and let this trap clean it up.
+# growth under TMPDIR. The idiom is common in this directory, which makes it
+# the shape a new lint would copy from its neighbours; see for yourself with
+# `grep -l 'trap .* EXIT' skills/orch/tests/*.sh`. Put scratch under MD_TMP and
+# let this trap clean it up.
 #
 # READING RULES. Every read goes through `_md_scan`, one pass that classifies
 # each line as outside a fence, inside one, or a fence delimiter, and blanks
@@ -82,23 +83,28 @@
 #   check, permits     no automatic control. A suite using them owns proving
 #                      their teeth.
 #
-# The rule control re-evaluates every rule once per rule, so a suite's control
-# pass costs O(N^2) file reads in its rule count. Re-derive it rather than
-# trusting these numbers, which are one machine's:
+# The rule control re-evaluates every held rule once per rule, so a suite's
+# control pass costs O(N^2) file reads in its rule count. Measure the law
+# rather than trusting a number here, which is one machine's on one day:
 #
 #   for n in 10 20 30 40; do   # N rules, each matching its own fixture line
 #     ... build the fixture and the suite, then: time bash the-suite
 #   done
+#   time (for f in skills/orch/tests/*lint*.test.sh; do bash "$f"; done)
+#   grep -cE '^(rule|rule_fenced) ' skills/orch/tests/*lint*.test.sh
 #
-# That gave 0.42s, 1.67s, 3.12s and 6.79s — doubling the rules costs four
-# times the time. The real suites sit far below that: all fourteen orch lints
-# together run in about 7.5s and the largest, at 26 rules over real workflow
-# files, in about 2.5s, well inside the shell shard's 25-minute budget. What
-# the law means for an author is that a suite growing past roughly thirty rules
-# is paying a superlinear price and is better split by contract. The loop is
-# deliberately not optimized: per-path memoization, a pre-stripped scratch and
-# a file-grouped loop were each measured at 20 percent or worse, and only a
-# redesign would help.
+# The shape that run showed: doubling the rules costs roughly four times the
+# time, while every orch lint suite together still finishes in a few seconds,
+# well inside the shell shard's 25-minute budget. What the law means for an
+# author is that a suite growing past roughly thirty rules is paying a
+# superlinear price and is better split by contract.
+#
+# One optimization is applied, above: the held-set pre-check is loop-invariant
+# and is computed once, which halved every measured suite. What was measured
+# and declined is a different set — per-path memoization of the reader, a
+# pre-stripped control scratch, and a file-grouped loop, each at 20 percent or
+# worse against the shell shard's budget, which is what the redesign they
+# pointed at was declined against.
 
 MD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$(cd "$MD_LIB_DIR/.." && pwd)"
@@ -430,15 +436,21 @@ _md_absent() {
 absent() { _md_absent "" "$@"; }
 absent_i() { _md_absent -i "$@"; }
 
+# _md_scannable F — true when F is a regular file this process can read. A
+# directory passes `-r`, and awk then warns and skips it while grep's no-match
+# 1 is the rightmost status `pipefail` reports, so an unreadable target would
+# read as a clean one. This is guard code: what nobody read is not clean.
+_md_scannable() { [ -f "$1" ] && [ -r "$1" ]; }
+
 # _md_offenders RE FILE... — "file:line: text" per matching line. A target that
-# cannot be read or scanned is itself an offender: a scan that fails silently
-# would report a clean file for a file nobody read, and this is guard code.
+# is not a readable regular file, or that a scan fails on, is itself an
+# offender.
 _md_offenders() {
   local re="$1" f out rc
   shift
   for f in "$@"; do
-    if [ ! -r "$f" ]; then
-      printf '%s: unreadable scan target\n' "${f#$REPO_ROOT/}"
+    if ! _md_scannable "$f"; then
+      printf '%s: not a readable file\n' "${f#$REPO_ROOT/}"
       continue
     fi
     out="$(_md_text "$f" | grep -nE -e "$re")" && rc=0 || rc=$?
@@ -457,8 +469,8 @@ _md_fenced_hits() {
   local re="$1" f out rc
   shift
   for f in "$@"; do
-    if [ ! -r "$f" ]; then
-      printf '%s: unreadable scan target\n' "${f#$REPO_ROOT/}"
+    if ! _md_scannable "$f"; then
+      printf '%s: not a readable file\n' "${f#$REPO_ROOT/}"
       continue
     fi
     out="$(fenced "$f" | md_re="$re" awk -F'\t' -v p="${f#$REPO_ROOT/}" '
@@ -480,6 +492,13 @@ _md_fenced_hits() {
 _md_forbid() {
   local mode="$1" name="$2" re="$3" sample="$4"
   shift 4
+  # An absence check over no files passes for the wrong reason, exactly as one
+  # over an empty section does. A suite building its list conditionally is the
+  # reachable shape; an unexpanded glob is caught below as an unreadable path.
+  if [ "$#" -eq 0 ]; then
+    fail "$name — no scan target was registered, so there is nothing to check"
+    return
+  fi
   local rec="$name$MD_SEP$re$MD_SEP$sample$MD_SEP$mode" f
   for f in "$@"; do rec="$rec$MD_SEP$f"; done
   MD_FORBIDS+=("$rec")
@@ -552,12 +571,25 @@ _md_strike() {
 
 # _md_controls — the planted control for every registered rule.
 _md_controls() {
-  local i j rec scratch ln reddened victim
+  local i j k rec scratch ln reddened victim
+  # Which rules hold on the UNMUTATED tree. A rule already red reported its own
+  # failure above, and counting it inside a control would blame that control
+  # for it. The answer does not depend on which rule is being mutated, so it is
+  # computed once here rather than N times inside the inner loop: it is the
+  # difference between N^2 + N reads and 2N^2. Bash 3.2 has no associative
+  # array, so membership is a space-delimited index string.
+  local held=" "
+  for k in $(_md_indices "${#MD_RULES[@]}"); do
+    if _md_holds "${MD_RULES[$k]}" "" ""; then held="$held$k "; fi
+  done
   for i in $(_md_indices "${#MD_RULES[@]}"); do
     rec="${MD_RULES[$i]}"
     _md_fields "$rec"
     local name="${MD_F[0]}" mode="${MD_F[1]}" file="${MD_F[2]}"
-    ln="$(_md_match "$mode" "$file" "${MD_F[3]}" "${MD_F[@]:4}")"
+    # `|| true` or the first rule matching nothing aborts this function under
+    # `set -e`, which is what the guard below exists to prevent: a maintainer
+    # fixing one broken rule would learn nothing about the rest of the suite.
+    ln="$(_md_match "$mode" "$file" "${MD_F[3]}" "${MD_F[@]:4}" || true)"
     # No match: the rule itself already reported FAIL above, and a control over
     # a line that is not there would only repeat it.
     if [ -z "$ln" ]; then continue; fi
@@ -569,9 +601,7 @@ _md_controls() {
     fi
     reddened=""
     for j in $(_md_indices "${#MD_RULES[@]}"); do
-      # A rule already red on the unmutated tree reported its own failure
-      # above; counting it here would blame this control for it.
-      _md_holds "${MD_RULES[$j]}" "" "" || continue
+      case "$held" in *" $j "*) ;; *) continue ;; esac
       if _md_holds "${MD_RULES[$j]}" "$file" "$scratch"; then :; else
         _md_fields "${MD_RULES[$j]}"
         reddened="$reddened ${MD_F[0]}"
@@ -646,8 +676,10 @@ _md_controls() {
       [ "$k" -lt 4 ] && continue
       base="${MD_F[$k]}"
       scratch="$MD_TMP/forbid-$i-$k.md"
-      if [ ! -r "$base" ]; then
-        fail "control for '$fname' — ${base#$REPO_ROOT/} is not readable"
+      # Tested before `cp`, which on a directory dies under `set -e` and takes
+      # the tally with it, leaving a cp error where the verdict should be.
+      if ! _md_scannable "$base"; then
+        fail "control for '$fname' — ${base#$REPO_ROOT/} is not a readable file"
         missed=$((missed + 1))
         continue
       fi
@@ -663,7 +695,11 @@ _md_controls() {
       fail "control for '$fname' — the sample is not flagged in ${base#$REPO_ROOT/}"
       missed=$((missed + 1))
     done
-    [ "$missed" -eq 0 ] && pass "control: '$fname' flags its sample in all $checked file(s)"
+    if [ "$checked" -eq 0 ]; then
+      fail "control for '$fname' — no registered file could be read, so it proved nothing"
+    elif [ "$missed" -eq 0 ]; then
+      pass "control: '$fname' flags its sample in every file it read ($checked)"
+    fi
   done
 }
 

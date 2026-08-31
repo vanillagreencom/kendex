@@ -184,8 +184,9 @@ check "rule_fenced is not satisfied by a prose mention" \
   grep -q "no fenced command under" <<<"$out"
 
 # A selector naming a heading that two lines answer to, or none, is reported
-# rather than resolved by document position — and an absence check over a
-# section that is not there passes for the wrong reason.
+# rather than resolved by document position. And an absence check has two ways
+# to run over nothing, each closed on its own: the heading is missing, or the
+# heading is there with nothing under it.
 DUP="$MD_TMP/duplicate-heading.md"
 printf '## Rules\n\nfirst\n\n## Rules\n\nsecond\n' >"$DUP"
 out="$(subsuite ambiguous "$DUP" 'rule "dup" "$FIX" "## Rules" "first"')" || true
@@ -196,6 +197,17 @@ out="$(subsuite absentnohead "$RULES" \
   'absent "nothing here" "$FIX" "## Nowhere" "forbidden" "forbidden"')" || true
 check "an absence check over a missing heading fails closed" \
   grep -q "carries no heading" <<<"$out"
+
+# The other half: the heading is there and nothing is under it. The automatic
+# control cannot cover this arm — it inserts its sample UNDER the heading,
+# which makes the body non-empty, so it reports teeth whether the arm is there
+# or not.
+EMPTYSEC="$MD_TMP/empty-section.md"
+printf '## A\n\n## B\n\nreal line\n' >"$EMPTYSEC"
+out="$(subsuite absentemptybody "$EMPTYSEC" \
+  'absent "nothing under it" "$FIX" "## A" "forbidden" "forbidden"')" || true
+check "an absence check over an empty section body fails closed" \
+  grep -q "has an empty body" <<<"$out"
 
 # A decoy heading whose text merely CONTAINS the selector, sitting ahead of the
 # real one, used to capture the read: the section inspected was the decoy's and
@@ -233,12 +245,29 @@ printf '# B\n\nclean\n' >"$SCAN_B"
 out="$(subsuite forbidall "$SCAN_A" \
   "forbid \"no banned word\" 'banned' 'the banned word' \"\$FIX\" \"$SCAN_B\"")" || true
 check "a forbid control flags its sample in every registered file" \
-  grep -q "flags its sample in all 2 file(s)" <<<"$out"
+  grep -q "flags its sample in every file it read (2)" <<<"$out"
 
 UNREADABLE="$MD_TMP/gone.md"
 out="$(subsuite forbidunreadable "$SCAN_A" \
   "forbid \"no banned word\" 'banned' 'the banned word' \"\$FIX\" \"$UNREADABLE\"")" || true
 check "a forbid over an unreadable target goes red" \
-  grep -q "unreadable scan target" <<<"$out"
+  grep -q "not a readable file" <<<"$out"
+
+# A directory passes `-r`, and the scanner that skips it reports no offender,
+# so a readability test alone reads an unscanned target as a clean one.
+SCAN_DIR="$MD_TMP/scan-dir"
+mkdir -p "$SCAN_DIR"
+printf '# D\n\nthe banned word lives here\n' >"$SCAN_DIR/inside.md"
+out="$(subsuite forbiddir "$SCAN_A" \
+  "forbid \"no banned word\" 'banned' 'the banned word' \"\$FIX\" \"$SCAN_DIR\"")" || true
+check "a forbid over a directory goes red rather than reading it clean" \
+  grep -q "not a readable file" <<<"$out"
+
+# And a list of no files is an absence check over nothing, the same fail-open
+# an empty section is.
+out="$(subsuite forbidnone "$SCAN_A" \
+  'EMPTY=(); forbid "over nothing" '"'"'banned'"'"' '"'"'the banned word'"'"' ${EMPTY+"${EMPTY[@]}"}')" || true
+check "a forbid registering no file at all goes red" \
+  grep -q "no scan target was registered" <<<"$out"
 
 md_report

@@ -23,8 +23,8 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 # `tests/lib` ships in the committed render too, and every doc lint sources it.
-# A Bash 4 construct entering it breaks all thirteen suites on a 3.2 host with
-# every gate green — the KEN-837 shape, one directory over.
+# A Bash 4 construct entering it breaks every suite that sources it on a 3.2
+# host, with every gate green — the KEN-837 shape, one directory over.
 LIB_DIR="$(cd "$TEST_DIR/lib" && pwd)"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
