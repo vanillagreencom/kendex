@@ -41,7 +41,7 @@ Here for the packages? Browse the
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
 | Agents | ● | ● | ● | ● | ● | ● | ● |
 | Skills | ● | ● | ● | ● | ● | ● | ● |
-| Hooks | ● | ● | ● | ● | —§ | ● | ● |
+| Hooks | ● | ● | ● | ● | ●§ | ● | ● |
 | Commands | ● | ○ | ○ | ○ | ○ | ● | — |
 | MCP servers | ● | ○ | ○ | ○ | — | ●‡ | ● |
 | Plugins | ◐ | ○ | ○ | ○ | — | ○ | ◐ |
@@ -57,7 +57,7 @@ Notes:
 - †Copilot reads Claude Code's skills; one file stays one installation, listed under the tool it belongs to.
 - ‡Gemini records MCP server state in one machine-wide file, so a project can declare a server but not switch it off there.
 - ‡Gemini extensions install globally and switch on through an undocumented file, so they stay read-only.
-- §Pi has no hooks of its own to write to. The same behaviour ships as the `pi-hooks` Pi extension, which kendex installs and manages like any other.
+- §kendex manages Pi hooks at both scopes like any other surface; the `pi-hooks` extension is what makes Pi run them, and without it registered they are only instructions Pi can ignore.
 
 ## Install
 
@@ -135,9 +135,9 @@ kendex apply --plan                                     # preview the full recon
 ## What you can count on
 
 - Delete anything kendex generated and the next apply builds it back. What you asked for is written down in `kendex.toml` and nowhere else.
-- Nothing you set is overwritten, and nothing you removed comes back on its own.
-- A file kendex did not create is reported to you, never written. A link pointing somewhere kendex does not own stops the apply instead of being written through.
-- Every installed item remembers the source it came from. Two sources offering one name stop the apply and name the one that got there first.
+- A value you set is never overwritten, and one you deleted is never put back. That holds for `kendex.toml` and for the keys kendex does not own in a tool's own config.
+- A file kendex did not create is reported to you, never deleted. A link pointing somewhere kendex does not own is a conflict for you to settle, not a target it writes through.
+- Every installed item remembers where it came from. A second source claiming the same name is refused, and the refusal names the source that holds it.
 - Switching an item off keeps it whole, so switching it back on gets you what you had. Every unrelated setting in that file stays as you left it.
 - Two applies to the same place never interleave. Start one while another is running there and it tells you kendex is busy.
 
