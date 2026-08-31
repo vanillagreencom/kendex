@@ -45,14 +45,53 @@ docs live in README.md.
 - `README.md` — consumer documentation
 - `CHECKS.md` — what each check bans, and how it is scoped
 - `tests/` — run any file directly; every suite sources the harness first
+- `tests/terminal-paths.test.sh` — the cases that only exist at a tty, and
+  the pins for the pty probe itself
 - `tests/lib/install-hooks.bash` — the consumer-shaped fixture repository
   and installer invocations the four `install-git-hooks` suites share
 - `tests/lib/harness.bash` — the scratch root a suite owns, a `TMPDIR`
-  inside it, and git-config isolation; sourced, so the name stays outside
-  the `tests/*.sh` glob runners execute
+  inside it, git-config isolation, and `gg_pty_run` for the code paths a
+  headless suite cannot reach; sourced, so the name stays outside the
+  `tests/*.sh` glob runners execute
 
 `bash tests/*.sh` is the lane `tools/validate-changed` derives for a change
 under this skill.
+
+## Probing a terminal-only code path
+
+Every suite runs with stdin off a pipe, so a branch that behaves differently
+at a terminal is unreachable there and a probe written headless measures
+nothing. `mv` prompts before replacing a destination that denies write ONLY
+at a tty, which makes plain `mv` and `mv -f` indistinguishable to a headless
+suite — how a prompting `gg_install_file` shipped green.
+
+`gg_pty_run CAP SCRIPT_FILE` runs a bash script file with fds 0, 1 and 2 on a
+pseudo-terminal, setting `GG_PTY_RC` to that script's own exit status and
+`GG_PTY_OUT` to its combined output. `terminal-paths.test.sh` is where such a
+case goes and where the probe's own rules are pinned; its `pty_call` is the
+wrapper shape a new one copies. Two rules hold, and a probe that drops either
+is worse than no probe:
+
+- **Stdin redirected.** The spawner reads `/dev/null`, so a prompt is
+  answered by EOF the moment it is written and pre-fix code declines and
+  reports — a measurement. Without it the session waits for a person who is
+  not there.
+- **A time cap.** The session is killed by process group after `CAP` seconds
+  and comes back as `GG_PTY_RC=124`. A probe that HANGS yields no measurement
+  at all, so a mutation run scores it as not killed and prints a silent miss
+  rather than a wedge.
+
+Assert on the effect the branch has, not on the spawner's status: a `mv`
+answered no exits 1 on GNU and 0 on BSD — silently, with nothing on stderr —
+so the destination's content is the portable claim, and `!= 124` is the
+separate claim that the probe failed rather than wedged. The two platforms
+diverge under the helper as well, which is why it normalizes both: the status
+travels in a file because BSD `script` has no util-linux `-e`, and the output
+starts at a marker because BSD echoes the end-of-file this helper delivers
+into the typescript ahead of the session's first line. The grammar itself is
+chosen by running each and asking the session whether its own fds are a
+terminal, never by a version banner. A host with no working spawner is a red,
+not a skip: a case that cannot reach the terminal branch is not covering it.
 
 ## Design
 
