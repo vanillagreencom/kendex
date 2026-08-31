@@ -136,7 +136,8 @@ kendex apply --plan                                     # preview the full recon
 
 - Delete anything kendex generated and the next apply builds it back. What you asked for is written down in `kendex.toml` and nowhere else.
 - A value you set is never overwritten, and one you deleted is never put back. That holds for `kendex.toml` and for the keys kendex does not own in a tool's own config.
-- A file kendex did not create is reported to you, never deleted. A link pointing somewhere kendex does not own is a conflict for you to settle, not a target it writes through.
+- A file kendex did not create is reported to you, never deleted. A link standing where an installed item belongs is a conflict for you to settle, not something kendex writes over.
+- Keep a tool's config file in your dotfiles and symlink it into place. kendex edits the real file through the link and leaves the link alone.
 - Every installed item remembers where it came from. A second source claiming the same name is refused, and the refusal names the source that holds it.
 - Switching an item off keeps it whole, so switching it back on gets you what you had. Every unrelated setting in that file stays as you left it.
 - Two applies to the same place never interleave. Start one while another is running there and it tells you kendex is busy.
