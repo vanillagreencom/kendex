@@ -76,9 +76,9 @@ struct WireMe {
 /// Only a different sign-in is refused as retryable, because then the
 /// identity in hand is the previous account's. An expiry ends the read
 /// ahead of that comparison and is named for the sign-in it opened under:
-/// `client.rs` removes the credential the rejected call authenticated as,
-/// and answers a retryable refusal instead where the sign-in installed by
-/// then is another writer's.
+/// `client.rs` removes the family its own call was refused under and no
+/// other, answering a retryable refusal instead where the sign-in
+/// installed by then is another writer's.
 pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<AccountState> {
     let Some(credential) = store.load()? else {
         return Ok(AccountState::SignedOut);

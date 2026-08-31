@@ -106,6 +106,7 @@ beforeEach(() => {
     channel: { kind: "unknown" },
     installing: false,
     error: null,
+    note: null,
   });
   vi.mocked(commands.appVersion).mockResolvedValue(RUNNING);
   vi.mocked(commands.appUpdateCheck).mockResolvedValue(available());
@@ -298,6 +299,39 @@ describe("the action each channel allows", () => {
     await settle();
     expect(container.textContent).toContain(APP_UPDATE_UNKNOWN_NOTE);
     expect(container.textContent).not.toContain(APP_UPDATE_INSTALL_LABEL);
+  });
+});
+
+describe("a replacement that went through", () => {
+  // The install answered, so it did not restart, and what came back is the
+  // sentence it still owed about the command beside the app. The release
+  // is on disk: saying so in the failure colour and offering the action
+  // again would send a person to re-download what they already have.
+  it("says what is left over without calling the update a failure", async () => {
+    const left = "kendex 5.1.0 is installed and starts on the next launch";
+    vi.mocked(commands.appUpdateInstall).mockResolvedValue({
+      status: "ok",
+      data: left,
+    });
+    const container = await show({ kind: "direct" }, null);
+    vi.mocked(commands.appUpdateCommandChannel).mockResolvedValue({
+      status: "ok",
+      data: { kind: "unknown" },
+    });
+
+    await press(container, APP_UPDATE_INSTALL_LABEL);
+    await settle();
+
+    const said = [...container.querySelectorAll("p")].find(
+      (node) => node.textContent === left,
+    );
+    expect(said).toBeDefined();
+    expect(said?.className).not.toContain("text-critical");
+    expect(useNoticeStore.getState().error).toBeNull();
+    // And the action is gone rather than disabled: there is nothing left
+    // to run, and the card now says what is beside the app.
+    expect(() => offer(container, APP_UPDATE_INSTALL_LABEL)).toThrow();
+    expect(container.textContent).toContain(APP_UPDATE_COMMAND_UNKNOWN_NOTE);
   });
 });
 

@@ -80,6 +80,12 @@ impl CommandNotice {
     /// different paths say the same nothing to a person and are the same
     /// answer here, while `Ours` become `NotOurs` says something new, and
     /// so does the reverse.
+    ///
+    /// Which sentence is `half`'s to decide, with one exception it cannot
+    /// tell on its own: nothing there at all also says nothing to a card,
+    /// so a lookup answering `None` is either the command this app just
+    /// carried across — that is `Moved` — or no command on the machine,
+    /// which is `Untouched` with nothing left behind to report.
     pub fn not_as_shown(
         release: &str,
         half: CommandHalf,
@@ -89,12 +95,16 @@ impl CommandNotice {
         if found == shown {
             return None;
         }
-        Some(match half {
-            CommandHalf::Untouched => format!(
-                "kendex {release} is installed and starts on the next launch; the kendex command beside this app is no longer the one the notice described, so it was left on the release it is on — the notice now says what is there"
+        let installed = format!("kendex {release} is installed and starts on the next launch");
+        Some(match (half, found) {
+            (CommandHalf::Untouched, None) => format!(
+                "{installed}; the kendex command the notice described is not beside this app any more, so nothing was carried across"
             ),
-            CommandHalf::Moved => format!(
-                "kendex {release} is installed and starts on the next launch; the kendex command beside this app is no longer the one the notice described, so it was carried across rather than left where the notice said it would be"
+            (CommandHalf::Untouched, Some(_)) => format!(
+                "{installed}; the kendex command beside this app is no longer the one the notice described, so it was left on the release it is on — the notice now says what is there"
+            ),
+            (CommandHalf::Moved, _) => format!(
+                "{installed}; the kendex command beside this app is no longer the one the notice described, so it was carried across rather than left where the notice said it would be"
             ),
         })
     }

@@ -28,6 +28,7 @@ export function SidebarNotice() {
   const commandChannel = useNoticeStore((s) => s.commandChannel);
   const installing = useNoticeStore((s) => s.installing);
   const error = useNoticeStore((s) => s.error);
+  const note = useNoticeStore((s) => s.note);
   const install = useNoticeStore((s) => s.install);
   const openNotes = useNoticeStore((s) => s.openNotes);
   const dismiss = useNoticeStore((s) => s.dismiss);
@@ -66,21 +67,26 @@ export function SidebarNotice() {
 
       {channel.kind === "direct" ? (
         <>
-          <Button
-            size="sm"
-            className="mt-2.5 w-full"
-            disabled={installing}
-            onClick={() => void install()}
-          >
-            {installing ? (
-              <>
-                <Loader2 className="animate-spin" />
-                {APP_UPDATE_INSTALLING_LABEL}
-              </>
-            ) : (
-              APP_UPDATE_INSTALL_LABEL
-            )}
-          </Button>
+          {/* Once the release is installed there is nothing left to press:
+              the next launch is what completes it, and offering the action
+              again would download and write a release already on disk. */}
+          {note !== null ? null : (
+            <Button
+              size="sm"
+              className="mt-2.5 w-full"
+              disabled={installing}
+              onClick={() => void install()}
+            >
+              {installing ? (
+                <>
+                  <Loader2 className="animate-spin" />
+                  {APP_UPDATE_INSTALLING_LABEL}
+                </>
+              ) : (
+                APP_UPDATE_INSTALL_LABEL
+              )}
+            </Button>
+          )}
           {/* The app is kendex's to replace and the command beside it is
               not, so Update now moves one and leaves the other. Said
               before the button is pressed, because afterwards the app has
@@ -131,6 +137,13 @@ export function SidebarNotice() {
           app is untouched and still usable either way. */}
       {error === null ? null : (
         <p className="mt-2 break-words text-xs text-critical">{error}</p>
+      )}
+
+      {/* What an install that went through still owed the person. The
+          release is on disk and the next launch runs it, so this is a
+          sentence about the command beside the app and not a failure. */}
+      {note === null ? null : (
+        <p className="mt-2 break-words text-xs text-muted-foreground">{note}</p>
       )}
 
       <button

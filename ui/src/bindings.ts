@@ -55,9 +55,11 @@ export const commands = {
 	 *  release published for this target, and the app's bytes are held to both.
 	 *  The discovery feed never supplies an install URL, and the command's
 	 *  bytes are held to the key the CLI holds them to. A failure leaves the
-	 *  running app untouched and usable; the one error that is not a failure is
-	 *  that report, answered after both halves have landed and in place of the
-	 *  restart.
+	 *  running app untouched and usable, and is the `Err` half alone: the
+	 *  report is `Ok(Some(_))`, answered after both halves have landed and in
+	 *  place of the restart, so a card carrying it is not calling a finished
+	 *  update a failure. `Ok(None)` is the restart, which no caller lives to
+	 *  read.
 	 * 
 	 *  The command moves first. What this flow's notice card reads is the
 	 *  app's own baked version, so the app is the state marker here and is
@@ -82,7 +84,7 @@ export const commands = {
  *  Kendex's own command, where this app cannot write. `command` is
  *  what carries it across with the privilege the app lacks.
  */
-{ kind: "needsPrivilege"; path: string; command: string } | null) => typedError<null, string>(__TAURI_INVOKE("app_update_install", { shown })),
+{ kind: "needsPrivilege"; path: string; command: string } | null) => typedError<string | null, string>(__TAURI_INVOKE("app_update_install", { shown })),
 	scanMachine: () => typedError<ScanResult, string>(__TAURI_INVOKE("scan_machine")),
 	getSettings: () => typedError<SettingsRead, string>(__TAURI_INVOKE("get_settings")),
 	/**

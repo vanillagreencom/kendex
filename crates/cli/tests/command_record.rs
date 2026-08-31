@@ -185,14 +185,16 @@ fn a_record_already_there_is_not_written_over_by_a_first_run() {
     );
 }
 
-/// Concurrent first runs leave one whole record and nothing beside it.
+/// Concurrent first runs both answer `Ok` and leave one readable record,
+/// naming one of the two files that ran.
 ///
-/// Not a proof of the ordering — two threads rarely land inside the window
-/// that would show it, and a version deciding by reading passes this too.
-/// What stands behind it is `create_new`: the name is taken or it is not,
-/// so the run that loses writes nothing at all, and the record reads as
-/// the one line the other put there rather than as two answers over each
-/// other.
+/// Not a proof of the ordering, and not what holds `create_new` either: a
+/// writer that truncated and rewrote would pass this too, because each of
+/// the two writes a whole line. What reds on that is
+/// `a_record_already_there_is_not_written_over_by_a_first_run`, which has
+/// a record it must leave alone. What is left here is the pair — two runs
+/// starting together neither fail nor leave the record unreadable between
+/// them.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn concurrent_first_runs_leave_one_whole_record() {
@@ -230,6 +232,8 @@ fn concurrent_first_runs_leave_one_whole_record() {
         format!("{}\n", recorded.path.display()),
         "the record holds more than the line the run that won wrote"
     );
+    // Nothing writes a name like that today: this guards against a staged
+    // write coming back, not against one a writer here makes.
     let beside: Vec<_> = fs::read_dir(env.installed_command_file().parent().unwrap())
         .unwrap()
         .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))

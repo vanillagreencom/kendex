@@ -306,9 +306,11 @@ fn app_half_failed(release: &str, half: CommandHalf, error: &str) -> String {
 /// release published for this target, and the app's bytes are held to both.
 /// The discovery feed never supplies an install URL, and the command's
 /// bytes are held to the key the CLI holds them to. A failure leaves the
-/// running app untouched and usable; the one error that is not a failure is
-/// that report, answered after both halves have landed and in place of the
-/// restart.
+/// running app untouched and usable, and is the `Err` half alone: the
+/// report is `Ok(Some(_))`, answered after both halves have landed and in
+/// place of the restart, so a card carrying it is not calling a finished
+/// update a failure. `Ok(None)` is the restart, which no caller lives to
+/// read.
 ///
 /// The command moves first. What this flow's notice card reads is the
 /// app's own baked version, so the app is the state marker here and is
@@ -322,7 +324,7 @@ fn app_half_failed(release: &str, half: CommandHalf, error: &str) -> String {
 pub async fn app_update_install(
     app: tauri::AppHandle,
     shown: Option<CommandNotice>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     // The notice offers this on no other channel; the command asks anyway,
     // so nothing a caller gets wrong can overwrite a package manager's files.
     let install = app_install()?;
@@ -359,11 +361,13 @@ pub async fn app_update_install(
     install_published(&digests, bytes, &update)
         .map_err(|error| app_half_failed(&update.version, half, &error))?;
     // Both halves have landed. The restart is what takes the card away, so
-    // anything still owed about the command is owed before it.
+    // anything still owed about the command is owed before it — and the
+    // card is left standing to carry it rather than restarting into a
+    // version with nowhere left to say it.
     if let Some(unsaid) =
         CommandNotice::not_as_shown(&update.version, half, found.as_ref(), shown.as_ref())
     {
-        return Err(unsaid);
+        return Ok(Some(unsaid));
     }
     app.restart()
 }

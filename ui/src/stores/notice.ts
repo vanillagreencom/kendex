@@ -32,6 +32,11 @@ interface NoticeState {
   /** Why the last action on the card did not happen, shown on the card
    *  with the app still usable. */
   error: string | null;
+  /** What an install that went through still owed the person about the
+   *  `kendex` command beside the app. Not a failure: the release is
+   *  installed and the next launch is what completes it, so the card says
+   *  this and stops offering to run the update again. */
+  note: string | null;
   load: () => Promise<void>;
   install: () => Promise<void>;
   openNotes: () => Promise<void>;
@@ -74,6 +79,7 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
   commandChannel: null,
   installing: false,
   error: null,
+  note: null,
 
   load: async () => {
     const [view, channel, commandChannel, current] = await Promise.all([
@@ -99,12 +105,14 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
       // send a person to a package manager that does not own it.
       commandChannel:
         commandChannel.status === "ok" ? commandChannel.data : null,
+      // A card being drawn again says nothing about an install before it.
+      note: null,
     });
   },
 
   install: async () => {
     if (get().installing) return;
-    set({ installing: true, error: null });
+    set({ installing: true, error: null, note: null });
     // What the card is showing about the command beside the app, handed
     // over so the engine can say when the command it found was not the one
     // this card described. The card is the only place that sentence could
@@ -113,18 +121,24 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
     const response = await settled(
       commands.appUpdateInstall(get().commandChannel),
     );
-    // A replacement that worked does not come back: the app restarts into
-    // the new version. So only a failure ends the in-flight state, and it
-    // leaves the action on the card to try again.
-    if (response.status === "error") {
-      set({ installing: false, error: response.error });
-      // One of those answers is that the command was not what this card
-      // says, and it points the person at the card for what is there. Read
-      // again so that is true, and so pressing Update now again acts on
-      // the answer rather than repeating the same sentence.
-      const fresh = await settled(commands.appUpdateCommandChannel());
-      if (fresh.status === "ok") set({ commandChannel: fresh.data });
-    }
+    // A replacement that restarts does not come back: the app relaunches
+    // into the new version. What does come back is an install that failed,
+    // or one that went through with something still to say about the
+    // command beside the app — told apart here rather than read out of the
+    // sentence, because a person whose update worked must not be shown a
+    // failure and invited to run it again.
+    if (response.status === "ok" && response.data === null) return;
+    set(
+      response.status === "ok"
+        ? { installing: false, note: response.data }
+        : { installing: false, error: response.error },
+    );
+    // Either answer is about a command that may have moved, and both point
+    // the person at this card for what is there. Read again so that is
+    // true, and so a retry acts on the answer rather than repeating the
+    // same sentence.
+    const fresh = await settled(commands.appUpdateCommandChannel());
+    if (fresh.status === "ok") set({ commandChannel: fresh.data });
   },
 
   openNotes: async () => {
@@ -142,7 +156,7 @@ export const useNoticeStore = create<NoticeState>((set, get) => ({
     // the old build with nothing to say so and no second offer.
     if (notice === null || get().installing) return;
     const refused = await mute(notice.latest);
-    if (refused === null) set({ notice: null, error: null });
+    if (refused === null) set({ notice: null, error: null, note: null });
     else set({ error: refused });
   },
 }));
