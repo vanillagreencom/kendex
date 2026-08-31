@@ -100,7 +100,7 @@ prefix_of() { # FILE
 # exit for any divergence — the controls below run this against deliberately
 # edited copies of the tree and require that exit.
 check_tree() { # ROOT
-  local root="$1" rc=0 rel skill first parent copies prefix names n i seen opens closes
+  local root="$1" rc=0 rel skill first parent copies prefix names n i seen opens closes unprefixed
   local scratch="$TMP/map.$$.$RANDOM"
 
   # --- 1. every source has its render, byte for byte, in both families ---
@@ -153,12 +153,20 @@ check_tree() { # ROOT
       rc=1
       continue
     fi
-    # No match is "this copy declares nothing", answered two lines down.
+    # The comparison below collects PREFIXED definitions, so an unprefixed
+    # top-level one would sit outside it while still balancing the brace
+    # count — a helper that escapes the pin entirely. Requiring the prefix is
+    # what keeps the two halves talking about the same set.
+    unprefixed="$(grep -oE "^[A-Za-z_][A-Za-z0-9_]*\(\)" "$root/skills/$skill/scripts/lib/settings.sh" \
+      | sed 's/()$//' | grep -vE "^${prefix}_" | tr '\n' ' ' || true)"
+    if [ -n "$unprefixed" ]; then
+      echo "skills/$skill/scripts/lib/settings.sh defines top-level helpers without the ${prefix}_ prefix, so nothing here compares them: ${unprefixed% }"
+      rc=1
+    fi
     # body_of cuts at the first column-zero `}`, so one inside a helper body
     # would silently shorten that helper to its head and let drift below the
-    # cut pass. Every top-level definition in these files is prefixed, so the
-    # closing braces and the definitions come out even exactly while no body
-    # holds one.
+    # cut pass. With every definition prefixed, the closing braces and the
+    # definitions come out even exactly while no body holds one.
     opens="$(grep -cE "^[A-Za-z_][A-Za-z0-9_]*\(\)" "$root/skills/$skill/scripts/lib/settings.sh" || true)"
     closes="$(grep -cE '^\}$' "$root/skills/$skill/scripts/lib/settings.sh" || true)"
     if [ "$opens" != "$closes" ]; then
@@ -379,6 +387,14 @@ reds "a column-zero brace inside a helper body fails, never shortens the pin" \
   "column-zero closing braces" \
   'plant_body_brace "$control/skills/size-ratchet/scripts/lib/settings.sh"'
 restore skills size-ratchet settings.sh
+
+# Its partner: an UNPREFIXED top-level helper balances the brace count while
+# sitting outside the name comparison, so it escaped the pin entirely.
+reds "an UNPREFIXED top-level helper fails, never escapes the comparison" \
+  "without the rg_ prefix" \
+  'printf "\nrogue_helper() {\n  echo unprefixed\n}\n" \
+     >>"$control/skills/review-gate/scripts/lib/settings.sh"'
+restore skills review-gate settings.sh
 
 # The glob itself: a root carrying no copy must red, not pass with nothing
 # compared. This is the arm that keeps a moved path from reading as clean.
