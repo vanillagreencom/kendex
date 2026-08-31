@@ -79,7 +79,10 @@ impl CommandNotice {
     /// Compared as what was *said*, not as what was found: two `Ours` at
     /// different paths say the same nothing to a person and are the same
     /// answer here, while `Ours` become `NotOurs` says something new, and
-    /// so does the reverse.
+    /// so does the reverse. A value that prints a path said that path as
+    /// well, so two `NeedsPrivilege` naming different files are two
+    /// different sentences: the person was pointed at one file and another
+    /// is the one left behind, which is a change and is reported.
     ///
     /// Which sentence is `half`'s to decide, with one exception it cannot
     /// tell on its own: nothing there at all also says nothing to a card,

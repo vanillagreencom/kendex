@@ -107,3 +107,33 @@ fn a_card_whose_command_moved_is_told_what_became_of_it() {
         }
     }
 }
+
+/// Two `NeedsPrivilege` naming different files are two different
+/// sentences, because that arm prints the path: a person told about
+/// `/usr/local/bin/kendex` was pointed at one file, and a command left
+/// behind somewhere else is not the one they read about. `Ours` is the
+/// contrast and the reason this needs saying at all — it prints nothing,
+/// so two of those at different paths stay silent.
+#[test]
+fn one_privileged_command_is_not_another_at_a_different_path() {
+    let (here, half) = beside(&CommandBeside::NeedsPrivilege(
+        "/usr/local/bin/kendex".into(),
+    ));
+    let (there, _) = beside(&CommandBeside::NeedsPrivilege("/opt/kendex/kendex".into()));
+    assert_ne!(
+        here, there,
+        "the card prints the path, so the path is part of what was said"
+    );
+
+    let told = CommandNotice::not_as_shown("5.1.0", half, there.as_ref(), here.as_ref())
+        .expect("a card naming one file, and a command left at another");
+    assert!(told.contains("left on the release it is on"), "{told}");
+
+    let (one, moved) = beside(&CommandBeside::Ours("/home/pat/.local/bin/kendex".into()));
+    let (other, _) = beside(&CommandBeside::Ours("/usr/bin/kendex".into()));
+    assert_eq!(
+        CommandNotice::not_as_shown("5.1.0", moved, other.as_ref(), one.as_ref()),
+        None,
+        "a command this app carries across names no path on the card"
+    );
+}
