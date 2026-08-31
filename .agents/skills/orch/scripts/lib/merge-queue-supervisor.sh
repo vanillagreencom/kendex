@@ -10,9 +10,8 @@
 # registered one, so a dead attempt can never publish over its replacement.
 #
 # One exit publishes nothing: a supervisor whose launch home has been deleted
-# under it has no artifact path left to write into, so the attempt ends
-# unpublished and consume terminalizes it as watch_lost rather than routing a
-# recovery off a verdict nobody could have read.
+# under it has nothing left to publish into, so the attempt ends unpublished
+# and consume terminalizes it as watch_lost.
 
 merge_queue_supervise() {
   local state_file="$1" watch_id="$2" attempt_id="$3" runtime="$4" artifact="$5" deadline="$6"
@@ -122,10 +121,8 @@ merge_queue_supervise() {
   IFS= read -r event < "$event_fifo" || true
   exec 6>&- 7>&-
   wait "$watchdog_pid" 2>/dev/null || true; watchdog_pid=""
-  # Named refusal, and nothing published: publishing nothing is what lets
-  # consume reach watch_lost and terminalize. An artifact written under a home
-  # that is gone would bind a diagnostic to a deleted runtime and jam consume
-  # non-terminal on every call.
+  # Named refusal, and nothing published: once the home is gone there is
+  # nothing left to publish into.
   if [[ "$event" == home_lost ]] || ! home_present; then
     stop_worker; worker_pid=""; report_home_lost; trap - EXIT TERM HUP INT; return 1
   fi

@@ -70,7 +70,13 @@ mq_reap_collect() {
     done
     return 0
   fi
-  listing=$(ps -e -ww -o pid=,args= 2>/dev/null) || listing=""
+  # A census that could not run is not a tree with nothing in it. Saying so is
+  # the difference between a reap that found nothing and a reap that could not
+  # look, and the caller's exit status now rides on which it was.
+  listing=$(ps -e -ww -o pid=,args= 2>/dev/null) || {
+    echo "merge-queue-reaper: ps could not enumerate processes; the tree under $root was never judged" >&2
+    return 1
+  }
   while read -r pid arg; do
     [[ -n "$pid" && "$pid" != "$$" && "$pid" != "${BASHPID:-$$}" ]] || continue
     case " $arg " in *" $root"/*) MQ_REAP_PIDS[${#MQ_REAP_PIDS[@]}]="$pid" ;; esac
@@ -89,17 +95,19 @@ mq_reap() {
     echo "merge-queue-reaper: reap needs an absolute fixture root (got '$root')" >&2
     return 1
   }
-  mq_reap_collect "$root"
+  # Every census is a chance to fail unjudged, wait loops included, so each one
+  # carries its own status out rather than only the first.
+  mq_reap_collect "$root" || return 1
   for pid in ${MQ_REAP_PIDS+"${MQ_REAP_PIDS[@]}"}; do kill -TERM "$pid" 2>/dev/null || true; done
   for ((i=0; i<50; i++)); do
-    mq_reap_collect "$root"
+    mq_reap_collect "$root" || return 1
     [[ ${#MQ_REAP_PIDS[@]} -eq 0 ]] && return 0
     sleep 0.1
   done
-  mq_reap_collect "$root"
+  mq_reap_collect "$root" || return 1
   for pid in ${MQ_REAP_PIDS+"${MQ_REAP_PIDS[@]}"}; do kill -KILL "$pid" 2>/dev/null || true; done
   for ((i=0; i<20; i++)); do
-    mq_reap_collect "$root"
+    mq_reap_collect "$root" || return 1
     [[ ${#MQ_REAP_PIDS[@]} -eq 0 ]] && return 0
     sleep 0.1
   done
