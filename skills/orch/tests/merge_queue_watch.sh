@@ -643,13 +643,18 @@ rm -f -- "$WATCH_REGISTRATION_GATE.enabled" "$WATCH_REGISTRATION_GATE.entered" "
 prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
 bash -c 'while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$state_path" "$watch" "$SCRIPTS/queue-wait" 1 10 & legacy_supervisor=$!
-jq --argjson pid "$legacy_supervisor" '.status="watching"|.supervisor_pid=$pid|.deadline=((now|floor)+600)|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-watching.json"
+jq --argjson pid "$legacy_supervisor" '.status="launching"|.supervisor_pid=$pid|.setup_deadline=((now|floor)+10)|.deadline=((now|floor)+600)|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-watching.json"
 chmod 600 "$TMP/legacy-watching.json"; mv "$TMP/legacy-watching.json" "$state_path"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
-eq "$(jq -r .action <<<"$result")" pending "legacy watching state remains active"
+eq "$(jq -r .action <<<"$result")" pending "live legacy launching remains pending"
+jq '.setup_deadline=0' "$state_path" > "$TMP/legacy-launch-expired.json"; chmod 600 "$TMP/legacy-launch-expired.json"; mv "$TMP/legacy-launch-expired.json" "$state_path"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$result")" pending "expired live legacy launch is adopted"
+eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" watching "legacy launch adoption persists watching"
 running "$legacy_supervisor" && ok "legacy watching supervisor is preserved" || bad "legacy watching supervisor was terminated"
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 if ! running "$legacy_supervisor"; then ok "direct legacy failure terminates tokenless supervisor"; else bad "direct legacy failure left tokenless supervisor running"; fi
+kill "$legacy_supervisor" 2>/dev/null || true
 wait "$legacy_supervisor" 2>/dev/null || true
 
 prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
@@ -676,12 +681,16 @@ prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
 legacy_runtime=$(jq -r .runtime_dir "$state_path")
 printf '%s\n' "$watch" > "$legacy_runtime/token"
-jq '.status="launch_failed"|.action="launch"|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-launch-failed.json"
+bash -c 'while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$state_path" "$watch" "$SCRIPTS/queue-wait" 1 10 & legacy_retry_supervisor=$!
+jq --argjson pid "$legacy_retry_supervisor" '.status="launch_failed"|.action="launch"|.supervisor_pid=$pid|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-launch-failed.json"
 chmod 600 "$TMP/legacy-launch-failed.json"; mv "$TMP/legacy-launch-failed.json" "$state_path"
 launch_bounded "$watch"
 legacy_retry_state=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .status <<<"$legacy_retry_state")" watching "legacy launch failure retries on a migrated generation"
 [[ "$(jq -r .runtime_dir <<<"$legacy_retry_state")" != "$legacy_runtime" ]] && ok "legacy retry receives an isolated runtime" || bad "legacy retry reused legacy runtime"
+if ! running "$legacy_retry_supervisor"; then ok "legacy retry terminates old supervisor before replacement"; else bad "legacy retry left old supervisor running"; fi
+kill "$legacy_retry_supervisor" 2>/dev/null || true
+wait "$legacy_retry_supervisor" 2>/dev/null || true
 if [[ "$(jq -r .status <<<"$legacy_retry_state")" == watching ]]; then
   legacy_retry_artifact=$(jq -r .artifact_path <<<"$legacy_retry_state")
   touch "$RELEASE"; wait_file "$legacy_retry_artifact" || bad "legacy retry verdict missing"

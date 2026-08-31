@@ -177,7 +177,7 @@ terminate_legacy_supervisor() {
   return 1
 }
 launch_failure() {
-  local detail="$1" attempt_id="$2" runtime="$3" artifact="$4" supervisor_token="$5" pid="${6:-}" snapshot
+  local detail="$1" attempt_id="$2" runtime="$3" artifact="$4" supervisor_token="$5" pid="${6:-}" legacy="${7:-false}" snapshot
   atomic_update 'if .watch_id!=$watch or .launch_attempt_id!=$attempt or .runtime_dir!=$runtime or .artifact_path!=$artifact or
       .supervisor_token!=$token or
       (.status|IN("launching","watching")|not) then error("launch claim lost") else
@@ -188,7 +188,8 @@ launch_failure() {
     || die "could not claim launch recovery; inspect the active lifecycle before handback"
   snapshot=$(state_snapshot) || die "cannot snapshot claimed launch failure"
   pid=$(supervisor_pid "$runtime" "$(jq -r '.supervisor_pid // empty' <<<"$snapshot")")
-  [[ -z "$pid" ]] || terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" || true
+  if [[ -n "$pid" && "$legacy" == true ]]; then terminate_legacy_supervisor "$pid" || true
+  elif [[ -n "$pid" ]]; then terminate_supervisor "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" || true; fi
   atomic_update 'if .watch_id==$watch and .launch_attempt_id==$attempt and .status=="launch_failed"
       then .supervisor_pid=null|.updated_at=(now|floor) else error("launch failure claim changed") end' \
     --arg watch "$WATCH_ID" --arg attempt "$attempt_id"
@@ -268,7 +269,7 @@ prepare() {
 
 launch() {
   local poll=30 max_wait=2400 method pid deadline now ready log runtime waiter artifact attempt attempt_id supervisor_token
-  local snapshot status prior_attempt head runtime_root watch_dir created=false
+  local snapshot status prior_attempt head runtime_root watch_dir created=false legacy recorded_pid
   while [[ $# -gt 0 ]]; do
     case "$1" in --root) ROOT="${2:-}"; shift 2 ;; --issue) ISSUE="${2:-}"; shift 2 ;;
       --watch-id) WATCH_ID="${2:-}"; shift 2 ;; --poll) poll="${2:-}"; shift 2 ;;
@@ -280,6 +281,12 @@ launch() {
   snapshot=$(state_snapshot) || die "cannot snapshot prepared lifecycle"
   status=$(jq -r .status <<<"$snapshot"); prior_attempt=$(jq -r '.launch_attempt // 0' <<<"$snapshot")
   [[ "$prior_attempt" =~ ^[0-9]+$ && ( "$status" == prepared || "$status" == launch_failed ) ]] || die "prepared claim lost"
+  legacy=$(jq -r '.legacy_generation // false' <<<"$snapshot")
+  if [[ "$status" == launch_failed && "$legacy" == true ]]; then
+    runtime=$(jq -r .runtime_dir <<<"$snapshot"); recorded_pid=$(jq -r '.supervisor_pid // empty' <<<"$snapshot")
+    pid=$(supervisor_pid "$runtime" "$recorded_pid")
+    [[ -z "$pid" ]] || terminate_legacy_supervisor "$pid" || die "legacy supervisor survived launch recovery teardown"
+  fi
   attempt=$((prior_attempt+1)); attempt_id="$WATCH_ID-attempt-$attempt"; supervisor_token="$attempt_id-$RANDOM$RANDOM"
   head=$(jq -r .head_sha <<<"$snapshot")
   now=$(date +%s); deadline=$((now + max_wait + 90)); log=$(jq -r .log_path <<<"$snapshot")
@@ -393,7 +400,15 @@ consume() {
   legacy=$(jq -r '.legacy_generation // false' <<<"$snapshot")
   if [[ "$status" == launching && ! -s "$artifact" ]]; then
     pid=$(supervisor_pid "$runtime" "$recorded_pid")
-    if supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token"; then
+    if [[ "$legacy" == true ]] && legacy_supervisor_live "$pid"; then
+      if [[ "$now" -le "$setup_deadline" ]]; then
+        jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
+      fi
+      atomic_update 'if .watch_id==$watch and .launch_attempt_id==$attempt and .legacy_generation==true and
+          .status=="launching" then .status="watching"|.supervisor_pid=$pid|.updated_at=(now|floor)
+          else error("legacy launch attempt changed") end' --arg watch "$WATCH_ID" --arg attempt "$attempt_id" \
+        --argjson pid "$pid"; status=watching
+    elif supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token"; then
       if [[ "$now" -le "$setup_deadline" ]]; then
         jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
       fi
@@ -405,7 +420,7 @@ consume() {
     elif [[ -z "$pid" && "$now" -le "$setup_deadline" ]]; then
       jq -cn --arg watch "$WATCH_ID" '{status:"launching",watch_id:$watch,action:"pending"}'; return
     else
-      launch_failure "launching supervisor died or missed its setup deadline; see $log" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" "$recorded_pid"
+      launch_failure "launching supervisor died or missed its setup deadline; see $log" "$attempt_id" "$runtime" "$artifact" "$supervisor_token" "$recorded_pid" "$legacy"
       consume_report; return
     fi
   fi
@@ -486,6 +501,7 @@ event() {
   if [[ "$legacy" == true && "$status" == watching && ! -s "$artifact" && "$now" -le "$deadline" ]] &&
       legacy_supervisor_live "$pid"; then exit 1; fi
   if [[ "$status" == launching && ! -s "$artifact" ]]; then
+    if [[ "$legacy" == true ]] && legacy_supervisor_live "$pid"; then [[ "$now" -le "$setup_deadline" ]] && exit 1; printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; fi
     if supervisor_live "$pid" "$attempt_id" "$runtime" "$artifact" "$supervisor_token"; then [[ "$now" -le "$setup_deadline" ]] && exit 1; printf 'ready %s %s\n' "$ISSUE" "$WATCH_ID"; return 0; fi
     [[ -z "$pid" && "$now" -le "$setup_deadline" ]] && exit 1
   fi
