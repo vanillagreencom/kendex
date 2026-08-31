@@ -13,6 +13,7 @@ eq() { if [[ "$1" == "$2" ]]; then ok "$3"; else bad "$3 (expected $2, got $1)";
 wait_file() { local i; for ((i=0;i<100;i++)); do [[ -s "$1" ]] && return 0; sleep 0.05; done; return 1; }
 wait_exists() { local i; for ((i=0;i<100;i++)); do [[ -e "$1" ]] && return 0; sleep 0.05; done; return 1; }
 wait_state() { local i; for ((i=0;i<200;i++)); do [[ "$(jq -r .status "$1")" == "$2" ]] && return 0; sleep 0.05; done; return 1; }
+running() { local state; state=$(ps -p "$1" -o stat= 2>/dev/null) || return 1; state="${state//[[:space:]]/}"; [[ -n "$state" && "$state" != Z* ]]; }
 inode() { stat -c %i "$1" 2>/dev/null || stat -f %i "$1"; }
 
 MAIN="$TMP/main" WT="$TMP/worktree" BIN="$TMP/bin" SCRIPTS="$TMP/orch/scripts"
@@ -143,6 +144,7 @@ chmod +x "$BIN/flock"
 cat > "$BIN/ps" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -n "${WATCH_PS_ZOMBIE_PID:-}" && "$*" == "-p $WATCH_PS_ZOMBIE_PID -o stat=" ]]; then printf 'Z\n'; exit 0; fi
 if [[ "${MERGE_QUEUE_FORCE_PS_IDENTITY:-0}" == 1 ]]; then printf '%s\n' "$*" >> "$WATCH_PS_LOG"; fi
 if [[ -f "$WATCH_SUPERVISOR_PID_GATE.enabled" ]]; then
   calls=0; [[ ! -f "$WATCH_SUPERVISOR_PID_GATE.calls" ]] || calls=$(cat < "$WATCH_SUPERVISOR_PID_GATE.calls")
@@ -183,8 +185,8 @@ launch_bounded() {
   local watch="$1" out="$TMP/launch.out" err="$TMP/launch.err" pid i rc=0
   "$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" --poll 1 --max-wait 10 >"$out" 2>"$err" &
   pid=$!
-  for ((i=0;i<100;i++)); do kill -0 "$pid" 2>/dev/null || break; sleep 0.05; done
-  if kill -0 "$pid" 2>/dev/null; then kill -TERM "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; bad "launch returns before worker release"; return 1; fi
+  for ((i=0;i<100;i++)); do running "$pid" || break; sleep 0.05; done
+  if running "$pid"; then kill -TERM "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; bad "launch returns before worker release"; return 1; fi
   wait "$pid" || rc=$?
   eq "$rc" 0 "launch returns before worker release"
   [[ "$rc" -eq 0 ]] || sed 's/^/        /' "$err"
@@ -210,7 +212,7 @@ launch_bounded "$watch"
 grep -Fxq "$MAIN|owner/repo|ghp_project" "$WATCH_WORKER_LOG" && ok "detached waiter enters persisted main repo with its project auth and repo scope" || bad "detached waiter lost main repo auth or scope"
 if [[ ! -e "$artifact" ]]; then ok "no verdict exists before worker release"; else bad "partial verdict appeared"; fi
 supervisor=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .supervisor_pid)
-if kill -0 "$supervisor" 2>/dev/null; then ok "supervisor survives the launch command boundary"; else bad "supervisor died at command boundary"; fi
+if running "$supervisor"; then ok "supervisor survives the launch command boundary"; else bad "supervisor died at command boundary"; fi
 touch "$RELEASE"; wait_file "$artifact" || bad "merged verdict was not published"
 eq "$(jq -r .watch_id "$artifact")" "$watch" "artifact binds watch id"
 eq "$(jq -r .expected_head "$artifact")" "$HEAD_A" "artifact binds expected head"
@@ -368,7 +370,7 @@ eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
-jq --arg attempt "$watch-attempt-1" '.launch_attempt=1|.launch_attempt_id=$attempt|.status="launching"|.setup_deadline=((now|floor)+10)|.deadline=((now|floor)+600)' "$state_path" > "$TMP/completed-launch.json"
+jq --arg attempt "$watch-attempt-1" --arg token "$watch-attempt-1-test" '.launch_attempt=1|.launch_attempt_id=$attempt|.supervisor_token=$token|.status="launching"|.setup_deadline=((now|floor)+10)|.deadline=((now|floor)+600)' "$state_path" > "$TMP/completed-launch.json"
 chmod 600 "$TMP/completed-launch.json"; mv "$TMP/completed-launch.json" "$state_path"
 jq -n --arg watch "$watch" --arg attempt "$watch-attempt-1" --arg head "$HEAD_A" '{schema_version:1,status:"complete",verdict:"merged",repository:"owner/repo",pr_number:42,expected_head:$head,observed_head:"",watch_id:$watch,launch_attempt_id:$attempt}' > "$artifact"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
@@ -383,7 +385,7 @@ state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_
 jq '.deadline=0' "$state_path" > "$TMP/expired.json"; chmod 600 "$TMP/expired.json"; mv "$TMP/expired.json" "$state_path"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .diagnostic.cause <<<"$result")" watch_lost "overdue live supervisor fails closed"
-if ! kill -0 "$supervisor" 2>/dev/null; then ok "overdue verified supervisor is terminated"; else bad "overdue supervisor survived consume"; fi
+if ! running "$supervisor"; then ok "overdue verified supervisor is terminated"; else bad "overdue supervisor survived consume"; fi
 
 prep=$(prepare merged); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"; supervisor=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .supervisor_pid)
@@ -526,8 +528,8 @@ touch "$WATCH_FAIL_FLOCK_GATE.release"
 set +e; wait "$fail_race_pid"; fail_race_rc=$?; set -e
 [[ "$fail_race_rc" -ne 0 ]] && ok "stale fail refuses after retry registration" || bad "stale fail reported success across retry"
 eq "$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .status)" watching "stale fail leaves replacement state active"
-kill -0 "$replacement_supervisor" 2>/dev/null && ok "stale fail does not signal replacement supervisor" || bad "stale fail signaled replacement supervisor"
-kill -0 "$old_supervisor" 2>/dev/null && ok "stale fail does not confuse captured supervisor identity" || bad "stale fail signaled its captured supervisor after claim loss"
+running "$replacement_supervisor" && ok "stale fail does not signal replacement supervisor" || bad "stale fail signaled replacement supervisor"
+running "$old_supervisor" && ok "stale fail does not confuse captured supervisor identity" || bad "stale fail signaled its captured supervisor after claim loss"
 touch "$RELEASE"; wait_file "$replacement_artifact" || bad "replacement verdict missing after stale fail"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$result")" recovery "replacement verdict survives stale fail"
@@ -542,7 +544,7 @@ bash -c 'while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$s
 jq --argjson pid "$similar_attempt_pid" '.supervisor_pid=$pid' "$state_path" > "$TMP/similar-attempt-state.json"
 chmod 600 "$TMP/similar-attempt-state.json"; mv "$TMP/similar-attempt-state.json" "$state_path"
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
-kill -0 "$similar_attempt_pid" 2>/dev/null && ok "attempt identity compares argv fields exactly" || bad "attempt-1 matched and signaled attempt-10"
+running "$similar_attempt_pid" && ok "attempt identity compares argv fields exactly" || bad "attempt-1 matched and signaled attempt-10"
 kill "$similar_attempt_pid" 2>/dev/null || true; wait "$similar_attempt_pid" 2>/dev/null || true
 touch "$RELEASE"
 
@@ -554,7 +556,7 @@ ps_calls=$(wc -l < "$WATCH_PS_LOG")
 export MERGE_QUEUE_FORCE_PS_IDENTITY=1
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 [[ "$(wc -l < "$WATCH_PS_LOG")" -gt "$ps_calls" ]] && ok "forced whitespace identity check invokes ps" || bad "forced whitespace identity check bypassed ps"
-if ! kill -0 "$fallback_supervisor" 2>/dev/null; then ok "ps environment identity supports repository paths with spaces"; else bad "ps fallback rejected a valid supervisor under a whitespace path"; fi
+if ! running "$fallback_supervisor"; then ok "ps environment identity supports repository paths with spaces"; else bad "ps fallback rejected a valid supervisor under a whitespace path"; fi
 unset MERGE_QUEUE_FORCE_PS_IDENTITY
 touch "$RELEASE"
 
@@ -569,7 +571,7 @@ ps_calls=$(wc -l < "$WATCH_PS_LOG")
 export MERGE_QUEUE_FORCE_PS_IDENTITY=1
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 [[ "$(wc -l < "$WATCH_PS_LOG")" -gt "$ps_calls" ]] && ok "forced similar-generation check invokes ps" || bad "forced similar-generation check bypassed ps"
-kill -0 "$similar_identity_pid" 2>/dev/null && ok "ps environment identity rejects a similar generation" || bad "ps fallback matched a similar generation token"
+running "$similar_identity_pid" && ok "ps environment identity rejects a similar generation" || bad "ps fallback matched a similar generation token"
 unset MERGE_QUEUE_FORCE_PS_IDENTITY
 kill "$similar_identity_pid" 2>/dev/null || true; wait "$similar_identity_pid" 2>/dev/null || true
 touch "$RELEASE"
@@ -587,7 +589,7 @@ export MERGE_QUEUE_FORCE_PS_IDENTITY=1
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 [[ "$(wc -l < "$WATCH_PS_LOG")" -gt "$ps_calls" ]] && ok "forced identity-change check invokes ps" || bad "forced identity-change check bypassed ps"
 wait_exists "$identity_changed" && ok "teardown sent TERM to the captured identity" || bad "teardown never signaled the captured identity"
-kill -0 "$changed_identity_pid" 2>/dev/null && ok "teardown stops when the PID changes identity" || bad "teardown escalated KILL after identity changed"
+running "$changed_identity_pid" && ok "teardown stops when the PID changes identity" || bad "teardown escalated KILL after identity changed"
 unset MERGE_QUEUE_FORCE_PS_IDENTITY
 kill "$changed_identity_pid" 2>/dev/null || true; wait "$changed_identity_pid" 2>/dev/null || true
 touch "$RELEASE"
@@ -601,7 +603,7 @@ jq --argjson pid "$worker_pid" '.supervisor_pid=$pid' "$state_path" > "$TMP/work
 chmod 600 "$TMP/worker-pid-state.json"; mv "$TMP/worker-pid-state.json" "$state_path"
 export MERGE_QUEUE_FORCE_PS_IDENTITY=1
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
-kill -0 "$worker_pid" 2>/dev/null && ok "reused worker PID cannot identify as supervisor" || bad "supervisor teardown signaled queue-wait descendant"
+running "$worker_pid" && ok "reused worker PID cannot identify as supervisor" || bad "supervisor teardown signaled queue-wait descendant"
 unset MERGE_QUEUE_FORCE_PS_IDENTITY
 touch "$RELEASE"
 
@@ -614,7 +616,7 @@ jq --argjson pid "$wrong_command_pid" '.supervisor_pid=$pid' "$state_path" > "$T
 chmod 600 "$TMP/wrong-command-state.json"; mv "$TMP/wrong-command-state.json" "$state_path"
 export MERGE_QUEUE_FORCE_PS_IDENTITY=1
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
-kill -0 "$wrong_command_pid" 2>/dev/null && ok "ps fallback requires supervisor command identity" || bad "ps fallback accepted non-supervisor command"
+running "$wrong_command_pid" && ok "ps fallback requires supervisor command identity" || bad "ps fallback accepted non-supervisor command"
 unset MERGE_QUEUE_FORCE_PS_IDENTITY
 kill "$wrong_command_pid" 2>/dev/null || true; wait "$wrong_command_pid" 2>/dev/null || true
 touch "$RELEASE"
@@ -633,22 +635,42 @@ set +e; wait "$registration_launch_pid"; registration_launch_rc=$?; set -e
 sleep 0.3
 eq "$(wc -l < "$WATCH_WORKER_LOG")" "$worker_count" "supervisor rechecks state after PID publication"
 registration_pid=$(cat < "$registration_runtime/supervisor.pid")
-if ! kill -0 "$registration_pid" 2>/dev/null; then ok "late-registering supervisor exits before deadline"; else bad "late-registering supervisor survived its failed generation"; fi
+if ! running "$registration_pid"; then ok "late-registering supervisor exits before deadline"; else bad "late-registering supervisor survived its failed generation"; fi
 touch "$RELEASE"
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 rm -f -- "$WATCH_REGISTRATION_GATE.enabled" "$WATCH_REGISTRATION_GATE.entered" "$WATCH_REGISTRATION_GATE.release"
 
 prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
-launch_bounded "$watch"
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
-legacy_supervisor=$(jq -r .supervisor_pid "$state_path")
-jq 'del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-watching.json"
+bash -c 'while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$state_path" "$watch" "$SCRIPTS/queue-wait" 1 10 & legacy_supervisor=$!
+jq --argjson pid "$legacy_supervisor" '.status="watching"|.supervisor_pid=$pid|.deadline=((now|floor)+600)|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-watching.json"
 chmod 600 "$TMP/legacy-watching.json"; mv "$TMP/legacy-watching.json" "$state_path"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
 eq "$(jq -r .action <<<"$result")" pending "legacy watching state remains active"
-kill -0 "$legacy_supervisor" 2>/dev/null && ok "legacy watching supervisor is preserved" || bad "legacy watching supervisor was terminated"
+running "$legacy_supervisor" && ok "legacy watching supervisor is preserved" || bad "legacy watching supervisor was terminated"
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
-touch "$RELEASE"
+if ! running "$legacy_supervisor"; then ok "direct legacy failure terminates tokenless supervisor"; else bad "direct legacy failure left tokenless supervisor running"; fi
+wait "$legacy_supervisor" 2>/dev/null || true
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+bash -c 'while :; do sleep 1; done' "$SCRIPTS/merge-queue-watch" __supervise "$state_path" "$watch" "$SCRIPTS/queue-wait" 1 10 & zombie_pid=$!
+export WATCH_PS_ZOMBIE_PID="$zombie_pid"
+jq --argjson pid "$zombie_pid" '.status="watching"|.supervisor_pid=$pid|.deadline=((now|floor)+600)|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-zombie.json"
+chmod 600 "$TMP/legacy-zombie.json"; mv "$TMP/legacy-zombie.json" "$state_path"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .status <<<"$result")" failed "production liveness treats zombie state as exited"
+if ! running "$zombie_pid"; then ok "test liveness helper treats zombie state as exited"; else bad "test liveness helper accepted zombie state"; fi
+unset WATCH_PS_ZOMBIE_PID
+kill "$zombie_pid" 2>/dev/null || true; wait "$zombie_pid" 2>/dev/null || true
+
+prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
+state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+jq '.status="launching"|.setup_deadline=0|.deadline=((now|floor)+600)|del(.watch_dir,.runtime_root,.launch_attempt,.launch_attempt_id,.supervisor_token)' "$state_path" > "$TMP/legacy-launching.json"
+chmod 600 "$TMP/legacy-launching.json"; mv "$TMP/legacy-launching.json" "$state_path"
+result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
+eq "$(jq -r .action <<<"$result")" resume_launch "orphaned legacy launch enters recovery"
+"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 
 prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
