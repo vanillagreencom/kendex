@@ -83,22 +83,32 @@ pub fn apply(
 /// at the origin is the check's to report, not this copy's to quietly
 /// repair, and a tree with no declaration at all stays a tree with none.
 ///
-/// The other three kinds declare no name a tool keys on: a hook is a
-/// script, an MCP server registers under its file's name, and a command's
-/// frontmatter is regenerated at render. They are copied unchanged
-/// whatever they are renamed to.
+/// The other three kinds carry no name anything keys on, so they are
+/// copied unchanged whatever they are renamed to. A command is placed and
+/// listed by its filename (`desired_command::command_file`) and its own
+/// frontmatter declares no name; the two harnesses whose file is generated
+/// take the installed name from elsewhere — Codex writes it into the
+/// frontmatter it emits, Gemini from the `<name>.toml` it lands as. An MCP
+/// server registers under the item name. A hook's frontmatter does carry a
+/// `name:` line, which `hook::parse_hook` requires, but nothing that places
+/// or registers a hook reads it: `desired_kinds::restated_hook_artifact`
+/// works from the item name, and the catalog check never compares the two.
 fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelection) -> Result<()> {
-    let wanted = leaf(&selection.destination);
-    if wanted == leaf(&selection.name) {
+    let wanted = crate::names::leaf(&selection.destination);
+    if wanted == crate::names::leaf(&selection.name) {
         return Ok(());
     }
+    // A candidate name is read off a directory on disk, and the inventory
+    // keeps illegal spellings so the wizard can offer them under another
+    // destination — which is the path that reaches this refusal.
+    let shown = crate::names::shown;
     let renamed = |bytes: &[u8]| {
         crate::render::skill::bytes_named(bytes, wanted).map_err(|problem| CoreError::Authoring {
             message: format!(
                 "'{}' cannot be imported as '{}' — {problem}, so the copy would still call itself '{}'. Import it under its own name, or give it a frontmatter block naming it where it is now.",
-                selection.name,
-                selection.destination,
-                leaf(&selection.name),
+                shown(&selection.name),
+                shown(&selection.destination),
+                shown(crate::names::leaf(&selection.name)),
             ),
         })
     };
@@ -112,17 +122,29 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
             }
         }
         (ItemKind::Agent, Bytes::File(bytes)) => *bytes = renamed(bytes)?,
-        _ => {}
+        // Named rather than fallen through to, because "nothing to
+        // declare" and "a shape we did not expect" are different answers
+        // and only one of them is safe to be silent about. Their bytes go
+        // unasked: no shape any of the three arrives in carries a name.
+        (ItemKind::Hook | ItemKind::Command | ItemKind::McpServer, _) => {}
+        // Everything left is unconstructible today, and says so rather
+        // than copying quietly: `origins::read_bytes` is the one place
+        // bytes come from and it makes a skill a tree and every other kind
+        // a file, and `apply` turns away a plugin and a Pi extension before
+        // anything resolves. Falling through here would put the old name
+        // back into a renamed copy and call the import a success, which is
+        // the defect this function exists to end.
+        (kind, _) => {
+            return Err(CoreError::Authoring {
+                message: format!(
+                    "kendex has no way to give a copied {} a new name — import '{}' under its own name",
+                    kind.name(),
+                    shown(&selection.name),
+                ),
+            });
+        }
     }
     Ok(())
-}
-
-/// The name a declaration inside a file can carry: an item name may be
-/// spelled with the plugin it came from, and the file inside knows only
-/// its own leaf — which is the half the loaders and the catalog check
-/// compare a declaration against.
-fn leaf(name: &str) -> &str {
-    crate::names::split(name).map_or(name, |(_, leaf)| leaf)
 }
 
 /// Whether a selection already taken occupies the place this one wants.

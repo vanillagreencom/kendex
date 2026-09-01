@@ -15,7 +15,9 @@ const SKILL_FILE: &str = "SKILL.md";
 /// SKILL.md under either spelling, because a switched-off installation
 /// keeps its content under the `.disabled` name and that is the same
 /// claim on the same name. An agent's source is one file, so the file
-/// itself is the one — no list to consult.
+/// itself is the one — no list to consult. The enabled spelling is first
+/// and the switched-off one second, which is what `Rendered::disable`
+/// renames between rather than spelling either name again.
 pub(crate) const NAME_FILES: [&str; 2] = [SKILL_FILE, "SKILL.md.disabled"];
 
 /// Whether this file of a skill's tree is one of them.
@@ -30,10 +32,12 @@ pub(crate) fn carries_name(rel: &Path) -> bool {
 /// A frontmatter without a name gets one, exactly as rendering would give
 /// it one.
 ///
-/// `Err` is the shape no single scalar can carry the name in, said the
-/// way [`with_name`] says it. Every caller refuses on it rather than
-/// landing a copy that still answers to the old name; what differs is
-/// only whose copy each one names.
+/// `Err` is where no single line carries the name, said the way
+/// [`with_name`] says it — no frontmatter, a block never closed, two
+/// names, a value running past its own line — plus the one case this
+/// wrapper adds of its own: bytes that are not text at all. Every caller
+/// refuses on it rather than landing a copy that still answers to the old
+/// name; what differs is only whose copy each one names.
 pub(crate) fn bytes_named(bytes: &[u8], name: &str) -> std::result::Result<Vec<u8>, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| "the file is not text".to_owned())?;
     with_name(text, name)

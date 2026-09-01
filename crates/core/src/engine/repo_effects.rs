@@ -206,10 +206,6 @@ fn skill_names(lock: &crate::lock::Lock) -> BTreeSet<&str> {
         .collect()
 }
 
-/// The two names an installed skill's declaration can sit under: the
-/// second is what a switched-off installation keeps its content as.
-const DECLARATION_NAMES: [&str; 2] = ["SKILL.md", "SKILL.md.disabled"];
-
 /// A departing package's installed tree, and the declaration file read out
 /// of it — a path rather than the two names, because it is what an error
 /// about the declaration has to name for anyone to go and fix it.
@@ -276,7 +272,7 @@ fn installed_tree(
         }
     }
     for root in candidates {
-        for file in DECLARATION_NAMES {
+        for file in crate::render::skill::NAME_FILES {
             let declaration = root.join(file);
             if let Some(text) = crate::fs::read_if_exists(&declaration)? {
                 return Ok(Some(Installed {

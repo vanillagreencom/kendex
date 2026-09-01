@@ -9,8 +9,6 @@
 
 use std::path::PathBuf;
 
-use super::SKILL_FILE;
-
 /// The text with its frontmatter `name` set to `installed`, emitted as a
 /// YAML scalar so a value that would read as something else (`[copy]`,
 /// `gh #edited`) comes back quoted. Only that one line changes; every
@@ -133,7 +131,7 @@ impl Rendered {
     /// one.
     pub fn set_skill_name(&mut self, installed: &str) {
         for (rel, bytes) in self.files.iter_mut() {
-            if !matches!(rel.to_str(), Some("SKILL.md" | "SKILL.md.disabled")) {
+            if !super::carries_name(rel) {
                 continue;
             }
             let text = String::from_utf8_lossy(bytes).into_owned();
@@ -146,8 +144,9 @@ impl Rendered {
     /// Keep a disabled installation's content under the `.disabled` name.
     /// The rename is lossless.
     pub fn disable(&mut self) {
-        let from = PathBuf::from(SKILL_FILE);
-        let to = PathBuf::from("SKILL.md.disabled");
+        let [enabled, disabled] = super::NAME_FILES;
+        let from = PathBuf::from(enabled);
+        let to = PathBuf::from(disabled);
         for (rel, _) in self.files.iter_mut().filter(|(rel, _)| *rel == from) {
             *rel = to.clone();
         }

@@ -13,7 +13,7 @@ const CODEX_DESCRIPTION_MAX_CHARS: usize = 1024;
 /// enabling it later cannot install something broken.
 fn skill_md(files: &[(PathBuf, Vec<u8>)]) -> Option<&[u8]> {
     files.iter().find_map(|(rel, bytes)| {
-        matches!(rel.to_str(), Some("SKILL.md" | "SKILL.md.disabled")).then_some(bytes.as_slice())
+        crate::render::skill::carries_name(rel).then_some(bytes.as_slice())
     })
 }
 

@@ -337,7 +337,7 @@ fn content(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Result<Content
 /// name a problem the renderer has already solved and send an author off to
 /// fix something that is not broken.
 fn structural(kind: ItemKind, name: &str, file: &str, content: &Content) -> Vec<CheckFinding> {
-    let leaf = crate::names::split(name).map_or(name, |(_, leaf)| leaf);
+    let leaf = crate::names::leaf(name);
     let mut out = Vec::new();
     for harness in HarnessId::ALL {
         if !crate::harness::capabilities(harness, kind).install.global {

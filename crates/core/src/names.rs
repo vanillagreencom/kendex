@@ -247,6 +247,16 @@ pub fn split(name: &str) -> Option<(&str, &str)> {
     (item_problem(name).is_none()).then_some((plugin, leaf))
 }
 
+/// The half of a name a file inside the item can carry: the item half of a
+/// namespaced name, the whole of a plain one. A catalog file knows nothing
+/// of the plugin it is installed under, so this is what a declaration in
+/// it is read against — by the catalog check, and by the import that
+/// writes one. Asked of [`split`] for the same reason its doc gives: a
+/// second spelling of the split is a second answer to what is legal.
+pub fn leaf(name: &str) -> &str {
+    split(name).map_or(name, |(_, leaf)| leaf)
+}
+
 /// The spelling two names collide under. Case is folded because macOS and
 /// Windows hand the same file to both spellings, accents are composed
 /// because macOS hands `café` written as one character and as `e` plus an

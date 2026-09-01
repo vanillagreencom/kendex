@@ -54,15 +54,17 @@ fn raw_skill(dir: &Path, name: &str, skill_md: &str) {
     fs::write(skill.join("SKILL.md"), skill_md).unwrap();
 }
 
+/// One item that is a file rather than a tree, at the extension its kind
+/// is stored under.
 #[allow(clippy::unwrap_used)]
-fn file_item(dir: &Path, name: &str, text: &str) {
+fn file_item(dir: &Path, file: &str, text: &str) {
     fs::create_dir_all(dir).unwrap();
-    fs::write(dir.join(format!("{name}.md")), text).unwrap();
+    fs::write(dir.join(file), text).unwrap();
 }
 
 /// A project with all three origins: a marketplace skill (path source with
-/// a licence), the person's own local-source skill, and unmanaged content
-/// of the three kinds an import can carry.
+/// a licence), the person's own local-source content, and unmanaged
+/// content of the three kinds an unmanaged scan offers.
 #[allow(clippy::unwrap_used)]
 fn seeded() -> (tempfile::TempDir, Env, Scope) {
     let tmp = tempfile::tempdir().unwrap();
@@ -76,6 +78,15 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
     .unwrap();
     let project = tmp.path().join("app");
     skill(&project.join(".claude/skills"), "stray", "unmanaged bytes");
+    // A body file beside the declaration, because a skill is a tree and
+    // only the file that declares the name may be rewritten. It carries no
+    // frontmatter, so a rewrite reaching it refuses the whole import
+    // rather than landing something subtly wrong.
+    file_item(
+        &project.join(".claude/skills/stray/references"),
+        "notes.md",
+        "Body file. No frontmatter here.\n",
+    );
     // A tree no name can be written into, and the two non-skill kinds an
     // unmanaged scan offers.
     raw_skill(
@@ -85,18 +96,29 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
     );
     file_item(
         &project.join(".claude/agents"),
-        "drifter",
+        "drifter.md",
         "---\nname: drifter\ndescription: about drifter\n---\nAgent body.\n",
     );
     file_item(
         &project.join(".claude/commands"),
-        "note",
+        "note.md",
         "---\ndescription: a note\n---\nCommand body.\n",
     );
-    skill(
-        &project.join(crate::source::LOCAL_SOURCE_DIR).join("skills"),
-        "mine",
-        "my own bytes",
+    let local = project.join(crate::source::LOCAL_SOURCE_DIR);
+    skill(&local.join("skills"), "mine", "my own bytes");
+    // A hook and an MCP server reach the wizard as the person's own
+    // content: the unmanaged scan offers neither kind, but a lock entry
+    // pointing at the local source does, and that is an import candidate
+    // like any other.
+    file_item(
+        &local.join("hooks"),
+        "watcher.sh",
+        "#!/bin/sh\n# ---\n# name: watcher\n# event: SessionStart\n# ---\necho watching\n",
+    );
+    file_item(
+        &local.join("mcp"),
+        "server.toml",
+        "command = \"serve\"\nargs = []\n",
     );
     fs::write(
         project.join("kendex.toml"),
@@ -114,10 +136,15 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
         version: crate::lock::LOCK_VERSION,
         ..Lock::default()
     };
-    for (name, source, repo) in [("gh", "cat", "cat"), ("mine", "local", "local")] {
+    for (kind, name, source, repo) in [
+        (ItemKind::Skill, "gh", "cat", "cat"),
+        (ItemKind::Skill, "mine", "local", "local"),
+        (ItemKind::Hook, "watcher", "local", "local"),
+        (ItemKind::McpServer, "server", "local", "local"),
+    ] {
         lock.entries.insert(
-            crate::lock::entry_key(ItemKind::Skill, name, HarnessId::Claude),
-            entry(ItemKind::Skill, name, source, repo),
+            crate::lock::entry_key(kind, name, HarnessId::Claude),
+            entry(kind, name, source, repo),
         );
     }
     crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
@@ -524,7 +551,7 @@ fn checked(target: &Path) -> (usize, Vec<String>) {
 #[allow(clippy::unwrap_used)]
 fn a_renamed_skill_declares_its_destination_and_leaves_the_catalog_whole() {
     let (tmp, env, scope) = seeded();
-    let scopes = [scope];
+    let scopes = [scope.clone()];
     let target = target(&env, &tmp, "mine-renamed");
     fs::write(
         target.join("kendex.toml"),
@@ -547,6 +574,18 @@ fn a_renamed_skill_declares_its_destination_and_leaves_the_catalog_whole() {
     assert!(
         flat_md.contains("unmanaged bytes") && flat_md.contains("description: about stray"),
         "only the name line changes: {flat_md}"
+    );
+    // The rest of the tree is a copy. A rewrite reaching a body file would
+    // refuse the whole import, because a file with no frontmatter has no
+    // line to carry a name, so a skill with a references/ directory could
+    // not be imported under a new name at all.
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    assert_eq!(
+        fs::read(target.join("skills/renamed/references/notes.md")).unwrap(),
+        fs::read(root.join(".claude/skills/stray/references/notes.md")).unwrap(),
+        "the tree's body files are copied, not declared",
     );
     let nested_md = fs::read_to_string(target.join("skills/group/deep/SKILL.md")).unwrap();
     assert!(nested_md.contains("name: deep"), "{nested_md}");
@@ -625,25 +664,40 @@ fn a_rename_no_declaration_can_carry_refuses_and_writes_nothing() {
     );
 }
 
-/// What the other kinds do, stated rather than left to whatever the copy
-/// happens to do. An agent's own file carries the name its tool answers
-/// to, so a renamed agent declares its destination. A command declares no
-/// name a tool keys on — every harness that reads one reads the author's
-/// file untouched, and the two that generate one write the installed name
-/// themselves — so it is copied byte for byte whatever it is renamed to.
+/// What every other kind does under a rename, as a fixture rather than a
+/// claim in a comment.
+///
+/// An agent's own file carries the name its tool answers to, so a renamed
+/// agent declares its destination. The other three carry no name anything
+/// keys on and are copied byte for byte: a command is placed and listed by
+/// its filename and its own frontmatter declares no name, an MCP server
+/// registers under the item name, and a hook's `name:` line is read by
+/// nothing that places or registers it.
+///
+/// All three are real candidates. The unmanaged scan offers only skills,
+/// agents and commands, but a hook and an MCP server in the local source
+/// reach the wizard as the person's own content, which is how they are
+/// seeded here.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_renamed_agent_declares_its_destination_and_a_renamed_command_is_copied_verbatim() {
+fn a_renamed_agent_declares_its_destination_and_the_name_less_kinds_are_copied_verbatim() {
     let (tmp, env, scope) = seeded();
     let scopes = [scope.clone()];
     let target = target(&env, &tmp, "mine-kinds");
     let candidates = inventory(&env, &scopes).unwrap();
-    let mut agent = selection(find(&candidates, "drifter"), false);
-    agent.destination = "settled".to_owned();
-    let mut command = selection(find(&candidates, "note"), false);
-    command.destination = "memo".to_owned();
+    let renamed_to = |name: &str, destination: &str| {
+        let mut chosen = selection(find(&candidates, name), false);
+        chosen.destination = destination.to_owned();
+        chosen
+    };
+    let selections = [
+        renamed_to("drifter", "settled"),
+        renamed_to("note", "memo"),
+        renamed_to("watcher", "sentry"),
+        renamed_to("server", "relay"),
+    ];
 
-    apply(&env, &scopes, &target, &[agent, command]).unwrap();
+    apply(&env, &scopes, &target, &selections).unwrap();
 
     let written = fs::read_to_string(target.join("agents/settled.md")).unwrap();
     assert!(written.contains("name: settled"), "{written}");
@@ -654,8 +708,16 @@ fn a_renamed_agent_declares_its_destination_and_a_renamed_command_is_copied_verb
     let Scope::Project { root } = &scope else {
         unreachable!()
     };
-    assert_eq!(
-        fs::read(target.join("commands/memo.md")).unwrap(),
-        fs::read(root.join(".claude/commands/note.md")).unwrap(),
-    );
+    let local = root.join(crate::source::LOCAL_SOURCE_DIR);
+    for (landed, origin) in [
+        ("commands/memo.md", root.join(".claude/commands/note.md")),
+        ("hooks/sentry.sh", local.join("hooks/watcher.sh")),
+        ("mcp/relay.toml", local.join("mcp/server.toml")),
+    ] {
+        assert_eq!(
+            fs::read(target.join(landed)).unwrap(),
+            fs::read(&origin).unwrap(),
+            "{landed} is a copy, not a declaration",
+        );
+    }
 }
