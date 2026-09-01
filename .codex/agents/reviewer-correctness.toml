@@ -33,6 +33,7 @@ For each changed predicate, parser, or guard, mentally execute:
 - **Sibling consistency** — two code paths answering the same question with different logic.
 - **Surface enumeration** — when a change adds or edits a check, enumerate the surfaces it must cover (every extension, every directory, every syntactic form) and name each one it skips.
 - **Declarative formats** — a new manifest/grammar/config the code parses gets every field × every malformation (absent, empty, duplicated, extra, non-canonical, wrong type), never a sample; report what the parser silently accepts as one class.
+- **Git plumbing** — probe a consumer of git's machine-readable output with the whole enumeration it claims to handle: every status letter, `core.quotePath` escaping, `:(literal)` against a directory, the `0:` stage prefix, an `--amend` parent.
 - **Pre-steady-state** — behavior while detection is still pending, state is unseeded, or readiness was declared on selection rather than on answerability.
 - **Teardown symmetry** — for every install/enable/claim path, walk uninstall/disable/release under: another worktree still installed, the helper already missing, a partially applied prior run, and a foreign tool owning the same file.
 - **Staged vs worktree** — a `--staged` or index-reading mode reads its policy inputs (baseline, excludes, settings) from the index too, never from the worktree.
