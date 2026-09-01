@@ -275,6 +275,8 @@ git -C "[WORKTREE_PATH]" log -1 --oneline
 
 Apply the fix-round A×B table in [`dev-fix.md` § 2](dev-fix.md), which is canonical — including exact-commit binding on accept, the bounded git re-read on `accept` with B failing, the report-only tail-reconciliation nudge on `wait` with B passing, and the never-accept `retry` row, which never re-runs the fix. On accept: applied items are marked for reply, items the agent skipped go to the skipped list with their reason, and blocked items become issue candidates in § 6.2.
 
+**Rewrite the PR body before pushing.** Nothing else regenerates the description after round one, so rebuild it from the final diff per [`submit-pr.md` § 2](submit-pr.md) step 3 and post it with `pr-edit-body`.
+
 **Batch per fully-reviewed head.** Push a fix round only after every configured reviewer has reported on the current head. A pass with nothing to push skips this command:
 
 ```bash
