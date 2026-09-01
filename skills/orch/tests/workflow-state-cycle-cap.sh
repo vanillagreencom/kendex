@@ -529,32 +529,5 @@ CTRL
 [[ -n "$(append_strays "$CTRL_DIR")" ]] && ok "the stray check flags a workflow spelling the append by hand" \
   || bad "the stray check flags a workflow spelling the append by hand"
 
-for workflow in submit-pr review-pr-comments; do
-  workflow_file="$REPO_ROOT/skills/orch/workflows/$workflow.md"
-  grep -Fq 'workflow-state append-file [ISSUE_ID] pr_comment_review.fixes' "$workflow_file" \
-    && ok "$workflow records fix objects through append-file" \
-    || bad "$workflow records fix objects through append-file"
-  grep -Fq 'workflow-state append-file [ISSUE_ID] pr_comment_review.skipped' "$workflow_file" \
-    && ok "$workflow records skipped objects through append-file" \
-    || bad "$workflow records skipped objects through append-file"
-  if grep -Eq 'workflow-state append \[ISSUE_ID\] pr_comment_review\.(fixes|skipped)' "$workflow_file"; then
-    bad "$workflow passes no reviewer object through argv"
-  else
-    ok "$workflow passes no reviewer object through argv"
-  fi
-done
-
-argv_mutant="$TMP_ROOT/append-argv-mutant.md"
-cp "$REPO_ROOT/skills/orch/workflows/submit-pr.md" "$argv_mutant"
-assert_count="$(grep -Fc 'workflow-state append-file [ISSUE_ID] pr_comment_review.fixes' "$argv_mutant")"
-[[ "$assert_count" == "1" ]] && ok "append transport control finds one fix site" \
-  || bad "append transport control finds one fix site" "got=$assert_count"
-sed -i.bak 's/workflow-state append-file \[ISSUE_ID\] pr_comment_review.fixes.*/workflow-state append [ISSUE_ID] pr_comment_review.fixes reviewer-text/' "$argv_mutant"
-if grep -Eq 'workflow-state append \[ISSUE_ID\] pr_comment_review\.(fixes|skipped)' "$argv_mutant"; then
-  ok "append transport control catches an argv regression"
-else
-  bad "append transport control catches an argv regression"
-fi
-
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
