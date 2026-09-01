@@ -3,6 +3,7 @@
 // its proxied leaderboard.
 import { create } from "zustand";
 import { commands, type DirectoryView, type SkillsShHit } from "@/bindings";
+import { readOrder } from "@/lib/read-state";
 
 export type SkillsShMode = "search" | "all-time" | "trending" | "hot";
 
@@ -27,8 +28,9 @@ interface CommunityState {
   loadLeaderboard: (view: Exclude<SkillsShMode, "search">) => Promise<void>;
 }
 
-/** Stale results never land on a newer query. */
-let searchGeneration = 0;
+/** Stale results never land on a newer query: the search box asks on every
+ *  keystroke and a chip asks beside it, so several are routinely out. */
+const order = readOrder();
 
 export const useCommunityStore = create<CommunityState>((set) => ({
   directory: null,
@@ -62,7 +64,7 @@ export const useCommunityStore = create<CommunityState>((set) => ({
   },
 
   searchSkillssh: async (query) => {
-    const generation = ++searchGeneration;
+    const ticket = order.begin();
     if (!query.trim()) {
       set({
         skillsshHits: null,
@@ -74,7 +76,7 @@ export const useCommunityStore = create<CommunityState>((set) => ({
     }
     set({ skillsshSearching: true, skillsshMode: "search" });
     const response = await commands.communitySkillsshSearch(query);
-    if (generation !== searchGeneration) return;
+    if (!order.lands(ticket)) return;
     if (response.status === "ok") {
       set({
         skillsshHits: response.data,
@@ -87,10 +89,10 @@ export const useCommunityStore = create<CommunityState>((set) => ({
   },
 
   loadLeaderboard: async (view) => {
-    const generation = ++searchGeneration;
+    const ticket = order.begin();
     set({ skillsshSearching: true });
     const response = await commands.communitySkillsshLeaderboard(view);
-    if (generation !== searchGeneration) return;
+    if (!order.lands(ticket)) return;
     if (response.status === "ok") {
       set({
         skillsshHits: response.data,

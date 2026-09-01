@@ -19,7 +19,6 @@ export const FRONTMATTER_IGNORED = (harness: string): string =>
 // A package's own Customize tab.
 export const CUSTOMIZE_TAB = "Customize";
 export const OVERVIEW_TAB = "Overview";
-export const CUSTOMIZED_BADGE = "Customized";
 export const WRITTEN_INTO =
   "Written into every harness's copy, alongside what the author wrote.";
 export const LAUNCH_LABEL = "Launch instructions";
@@ -67,7 +66,7 @@ export const SETTINGS_RESET = "Reset to default";
 export const SETTINGS_DEFAULT_EMPTY = "empty by default";
 /** How a settings value shows up in the Customize index — a statement
  *  about the file, never about who wrote it. */
-export const SETTINGS_VALUES_MARK = "Non-default settings";
+const SETTINGS_VALUES_MARK = "Non-default settings";
 export const SETTINGS_TEMPLATE_UNREADABLE =
   "This skill's settings can't be read here";
 export const SETTINGS_TEMPLATE_INVALID =
@@ -180,7 +179,7 @@ export const STATUS_LABELS: Record<GroupStatus, string> = {
 
 /** What a person has set on one package, in a line — for the Customize
  *  index, where the point is to recognise your own edit and go to it. */
-export function customizationSummary(one: ItemCustomization): string {
+function customizationSummary(one: ItemCustomization): string {
   const parts: string[] = [];
   if (one.launch) parts.push(LAUNCH_LABEL);
   if (one.additional || one.instructions) parts.push(ADDITIONAL_LABEL);

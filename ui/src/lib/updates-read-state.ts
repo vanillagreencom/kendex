@@ -1,6 +1,12 @@
-import type { Scope } from "@/bindings";
+import type { ItemKind, Scope, UpdateRow } from "@/bindings";
+import {
+  NO_UPDATE_STANDING_NOTE,
+  UPDATE_NEEDS_CHECK_HERE,
+  UPDATES_CHECKING,
+} from "@/lib/copy-updates";
 import type { ReadState } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
+import { updateWithheld } from "@/lib/update-groups";
 
 /** What every predicate here reads: how the last read of the standing went,
  *  and whether one that will replace it is on its way — an explicit check,
@@ -21,7 +27,7 @@ interface PageState {
  *  own scope's, so ask `rowUnsettled` about a given row. The page-wide
  *  hold a flip's write takes is the store's `busy`, which nothing here
  *  reads. */
-export const unsettled = (state: PageState): boolean =>
+const unsettled = (state: PageState): boolean =>
   state.read.status !== "landed" || state.checking || state.reading;
 
 /** Whether a Follow source flip is settling in this row's own place. The
@@ -33,7 +39,7 @@ export const unsettled = (state: PageState): boolean =>
  *  [`unsettled`]: the page's Update carries no argument read off the row,
  *  so a read in flight cannot stale it — a flip in the same place is what
  *  still speaks against it. */
-export const settlingIn = (
+const settlingIn = (
   state: { pendingFollows: { scope: Scope }[] },
   row: { scope: Scope },
 ): boolean =>
@@ -48,3 +54,39 @@ export const rowUnsettled = (
   state: PageState & { pendingFollows: { scope: Scope }[] },
   row: { scope: Scope },
 ): boolean => unsettled(state) || settlingIn(state, row);
+
+/** Why the package page has no Update for the place it names, or null when
+ *  nothing withholds one.
+ *
+ *  The kind's refusal outranks the read, the way [`updateWithheld`] ranks
+ *  it for the Updates table: core derives it from the kind alone, so it is
+ *  why this place can never be updated one package at a time, where every
+ *  other reason is why not right now. Told to check again instead, a
+ *  person offline would retry something no successful check can win.
+ *
+ *  Then how the read went, which the row cannot say: a first read still on
+ *  its way has not spoken for this place, and one that failed left the
+ *  rows here last-known. A read merely running does not withhold a row
+ *  that exists — the row is the last answer and still the truth about it.
+ *
+ *  Only a settled read may say the check never covered this place, which
+ *  is [`unsettled`] and not the read status alone: a landed read with a
+ *  focus reload or a Check in flight is a read about to speak, and calling
+ *  its silence a fact is the blur `read-state.ts` forbids. */
+export const packageUpdateNote = (
+  state: PageState & { rows: UpdateRow[] },
+  place: { kind: ItemKind; name: string; scope: Scope } | null,
+): string | null => {
+  const row = state.rows.find(
+    (one) =>
+      place != null &&
+      one.kind === place.kind &&
+      one.name === place.name &&
+      sameScope(one.scope, place.scope),
+  );
+  if (row?.noPerPackageUpdate != null) return row.noPerPackageUpdate;
+  if (state.read.status === "pending") return UPDATES_CHECKING;
+  if (state.read.status === "failed") return UPDATE_NEEDS_CHECK_HERE;
+  if (row) return updateWithheld(row);
+  return unsettled(state) ? UPDATES_CHECKING : NO_UPDATE_STANDING_NOTE;
+};

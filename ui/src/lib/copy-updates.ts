@@ -76,57 +76,45 @@ export const installedBesideUnfinishedToast = (
   `Your edited copy is now ${own}, but ${name} didn't install: ${why}.`;
 export const OPEN_PACKAGE_LABEL = "Open package";
 
-export const updatedWithPlaceToastLabel = (
-  name: string,
-  place: string,
-): string => `Updated ${name} and everything else following in ${place}`;
-export const updatedSomeToastLabel = (
-  updated: number,
-  skipped: number,
-): string =>
-  `Updated ${updated === 1 ? "1 package" : `${updated} packages`} — ${skipped === 1 ? "1 place needs" : `${skipped} places need`} attention on its own row`;
 export const updatedCountToastLabel = (updated: number): string =>
   `Updated ${updated === 1 ? "1 package" : `${updated} packages`}`;
-// What a conflict stopped, said after whatever the surface already said
-// about its own action — an update, a version switch, a Follow source
-// flip. The lead is the surface's; this tail is everyone's, and it names
-// the tool because that is where the person goes to settle it.
+// The tools an apply's `held_back` or `removed` list names, because that is
+// where the person goes to settle it.
 const toolList = (tools: string[]): string =>
   tools.length > 1
     ? `${tools.slice(0, -1).join(", ")} and ${tools[tools.length - 1]}`
     : (tools[0] ?? "");
-export const needsAttentionToastLabel = (
-  lead: string,
-  tools: string[],
-): string =>
-  `${lead} — the copy in ${toolList(tools)} needs attention on the package page`;
+// A rendering the plan refused to write over and left exactly as it is.
+// Said without a lead, so the one line is true whether the package moved
+// in another tool or nowhere at all.
+export const heldBackToastLabel = (tools: string[]): string =>
+  `The copy in ${toolList(tools)} was left as it is — settle it on the package page`;
 // A refusal with nothing of the person's in the files does not leave the
 // old copy alone: it goes to the trash and nothing is written back. Said
-// plainly, because it is the one outcome that took something away.
+// plainly, because it is the one outcome that took something away, and
+// sized by the packages it took: the tools dedupe, so a run that lost five
+// packages in one tool would otherwise read as one copy.
 export const removedNotReplacedToastLabel = (
-  name: string,
+  packages: number,
   tools: string[],
 ): string =>
-  `${name} could not be installed — the copy in ${toolList(tools)} went to the trash and nothing replaced it`;
-export const removedNotReplacedCountToastLabel = (removed: number): string =>
-  removed === 1
-    ? "1 package could not be installed — its copy went to the trash and nothing replaced it"
-    : `${removed} packages could not be installed — their copies went to the trash and nothing replaced them`;
-export const notUpdatedToastLead = (name: string): string =>
-  `${name} was not updated`;
+  packages === 1
+    ? `The copy in ${toolList(tools)} went to the trash and nothing replaced it`
+    : `The copies of ${packages} packages in ${toolList(tools)} went to the trash and nothing replaced them`;
 // A place's apply answers for every package it was asked about. One
 // missing means the run cannot say what became of that package, and a
 // count that quietly leaves it out would claim more than the run knows.
 export const unansweredPackageError = (name: string): string =>
   `${name} was applied with its place, but the answer for it did not come back — check the package's own row`;
-// A run where one place failed: the error is already on screen, so this
-// says what the rest of it came to — as a fact, never as a success.
-export const movedDespiteErrorToastLabel = (packages: number): string =>
-  `${packages === 1 ? "1 package" : `${packages} packages`} came current in this run — what did not is in the error above`;
-export const nothingMovedToastLabel = (held: number): string =>
-  `Nothing was updated — ${held === 1 ? "1 place needs" : `${held} places need`} attention on its own row`;
 export const nothingToUpdateToastLabel = (skipped: number): string =>
   `Nothing to update — ${skipped === 1 ? "1 place needs" : `${skipped} places need`} attention on its own row`;
+// Every apply committed and the plan wrote nothing: what the run was asked
+// to move had already moved, by another window, another lane or the CLI,
+// between the check and the click. A run that says nothing at all over
+// that reads as a click that missed. Worded so no count is needed — one
+// place's button reaches the same run as "Update all".
+export const ALREADY_CURRENT_TOAST =
+  "Nothing to write — everything here was already up to date";
 
 // Before the first read answers there is nothing to be up to date about,
 // and a check that failed leaves the last rows on screen rather than

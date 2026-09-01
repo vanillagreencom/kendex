@@ -1,8 +1,8 @@
 // How the account is read, and who answers when it is.
 //
 // The store keeps what the last read settled on; this is the read itself —
-// the command, the rename from its wire shape, and the seam the dev harness
-// takes over so `?account=` can serve a state no server is behind.
+// the command, the rename from its wire shape, and the seam a test takes
+// over to answer as a state no server is behind.
 import { type AccountStatus, commands } from "@/bindings";
 import type { SettledAccount } from "./account";
 
@@ -10,7 +10,7 @@ import type { SettledAccount } from "./account";
  * could not be read. */
 export type AccountRead = { ok: SettledAccount } | { error: string };
 
-export type ReadAccount = () => Promise<AccountRead>;
+type ReadAccount = () => Promise<AccountRead>;
 
 /** The wire answers every settled state this store keeps; the unread one
  * is the UI's own, so the mapping is a rename. */
@@ -38,8 +38,8 @@ const fromBridge: ReadAccount = async () => {
 
 let reader: ReadAccount = fromBridge;
 
-/** Dev only, called by the mock bridge: the harness answers as the states
- * the backend will report once it can reach the server. Null puts the
+/** Answer reads with `read` rather than the command, so a test can serve
+ * any state the backend reports without a server behind it. Null puts the
  * command back. */
 export function setAccountReader(read: ReadAccount | null): void {
   reader = read ?? fromBridge;

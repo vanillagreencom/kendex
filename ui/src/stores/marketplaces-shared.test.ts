@@ -3,7 +3,6 @@ import {
   bundleKey,
   catalogKey,
   catalogLabel,
-  isRepoKey,
   marketKey,
   readErrorKey,
   subscription,
@@ -26,8 +25,6 @@ describe("catalog addressing", () => {
     );
     const repo = { by: "repo" as const, repo: "acme/kit" };
     expect(catalogKey(project)).not.toBe(catalogKey(repo));
-    expect(isRepoKey(catalogKey(project))).toBe(false);
-    expect(isRepoKey(catalogKey(repo))).toBe(true);
   });
 
   it("never folds a repository into a subscription of the same name", () => {
@@ -46,13 +43,6 @@ describe("catalog addressing", () => {
       "wshobson/agents",
     );
     expect(catalogLabel(undefined)).toBeNull();
-  });
-
-  it("tells repository keys from subscription keys", () => {
-    expect(isRepoKey(catalogKey({ by: "repo", repo: "acme/kit" }))).toBe(true);
-    expect(
-      isRepoKey(catalogKey(subscription({ scope: "global" }, "repo"))),
-    ).toBe(false);
   });
 
   it("keeps a set named like a read off that read's key", () => {

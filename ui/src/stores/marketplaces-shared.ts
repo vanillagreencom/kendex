@@ -56,10 +56,6 @@ export const rowSubscribed = (
 ): boolean =>
   live ? row.repoKey !== null && live.has(row.repoKey) : row.subscribed;
 
-/** Whether a [catalogKey] names a repository rather than a subscription. */
-export const isRepoKey = (key: string): boolean =>
-  (JSON.parse(key) as unknown[])[0] === "repo";
-
 /** One curated set's cache and error key, in its own namespace so a set
  * named like a read ("packages") can never land on that read's key. */
 export const bundleKey = (catalog: Catalog, name: string): string =>
@@ -135,7 +131,7 @@ export async function openLead(scope: Scope, source: string, lead: string) {
  * this machine last knew and go on being acted on — the engine refuses
  * whatever they were wrong about — so it is the emptiness that holds the
  * page neutral, not the failure. */
-export type RepoActionKind = "checking" | "subscribe" | "turn-on" | "refresh";
+type RepoActionKind = "checking" | "subscribe" | "turn-on" | "refresh";
 
 export function repoAction(
   rows: MarketplaceRow[],

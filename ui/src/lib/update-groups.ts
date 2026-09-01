@@ -2,13 +2,9 @@ import type { Scope, UpdateRow } from "@/bindings";
 import {
   EDITED_CANT_UPDATE_NOTE,
   HELD_BY_OWNER_NOTE,
-  NO_UPDATE_STANDING_NOTE,
-  UPDATE_NEEDS_CHECK_HERE,
-  UPDATES_CHECKING,
   USER_LEVEL_PLACE,
 } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
-import { settlingIn, unsettled } from "@/lib/updates-read-state";
 
 /** One package with every place it is out of date in. The same skill
  *  installed in three projects is one decision with three places, not
@@ -55,8 +51,13 @@ export const packageCount = (rows: UpdateRow[]): number =>
 
 /** Why this place's Update is withheld, or null when nothing withholds it.
  *  Every surface that offers Update reads this one function — "Update
- *  all", the row's own button, the package page — so an offer and the
- *  refusal beside it can never come from two readings of the same row.
+ *  all", the row's own button, and the package page through
+ *  `updates-read-state.ts` [`packageUpdateNote`], which takes the kind's
+ *  refusal off the row before the update read's own state and delegates
+ *  everything after that here. So an offer and the refusal beside it
+ *  still come from one reading of the row; where that reading ranks
+ *  against the read is `packageUpdateNote`'s to state, and it states it
+ *  in full.
  *
  *  One nullable note, and not a verdict beside it: a reason that cannot be
  *  said is a reason that cannot be added here, so a gate reading this can
@@ -68,9 +69,8 @@ export const packageCount = (rows: UpdateRow[]): number =>
  *  not refused, and each surface knows its own newness. [`canUpdatePlace`]
  *  is this reading plus the row's. */
 export const updateWithheld = (row: UpdateRow): string | null => {
-  // The kind first, for the reason [`pageUpdateWithheld`] states in full:
-  // it is why this row never can be updated here, where the rest are why
-  // not right now.
+  // The kind's refusal first: it is why this row can never be updated
+  // here, where the rest are why not right now.
   if (row.noPerPackageUpdate !== null) return row.noPerPackageUpdate;
   // An edited place is never updated over; its row offers the install
   // beside it instead.
@@ -84,79 +84,6 @@ export const updateWithheld = (row: UpdateRow): string | null => {
 export const canUpdatePlace = (row: UpdateRow): boolean =>
   row.updateAvailable && updateWithheld(row) === null;
 
-/** Everything `updates-read-state.ts` needs to say how the read went and
- *  whether a write is running in a given place. */
-type UpdatesReadStanding = Parameters<typeof settlingIn>[0] &
-  Parameters<typeof unsettled>[0];
-
-/** Unreachable by construction — `read` is `never` here, so nothing calls
- *  this and no test can reach it. Its point is the compile error a new
- *  `ReadStatus` variant raises: without it that state would fall through
- *  to the row and answer "nothing withheld" over an unread read. */
-const unhandledReadState = (state: never): never => {
-  throw new Error(`unhandled update read state: ${String(state)}`);
-};
-
-/** Why the package page has no Update for the place it is showing.
- *
- *  **The invariant**: every state in which this place may not be acted on
- *  — a read still pending, a read that failed, a place the read never
- *  covered, a write already running there, and the row's own reasons —
- *  answers with a note. That is what lets [`canUpdatePackage`] gate on
- *  `withheld === null` and keep no reading of its own: a state that cannot
- *  say why is a state that cannot hide the button. Nothing withheld
- *  answers null, and the cases in update-groups.test.ts are the proof.
- *
- *  **The order**, stated here once for both surfaces. The kind's refusal
- *  comes first: it is why this place can never be updated here rather than
- *  why not right now, and it is derived from the kind rather than from
- *  anything a read could refresh, so no check clears it and none should
- *  appear to. Then the read, because every remaining reason is a fact the
- *  read supplied and a read that has not landed cannot vouch for it. Then
- *  the row's own remaining reasons.
- *
- *  A check merely *running* does not bar a row that exists. That guard
- *  belongs to the Updates table, whose actions send `row.latest.commit`
- *  and so must not commit values a landing read is about to replace; this
- *  page's Update sends only scope, kind and name, and takes its versions
- *  from its own read. It does bear on a place with no row, which is a
- *  different question — not whether a value is stale, but whether the read
- *  has finished saying which places it covers.
- *
- *  Of the reasons [`updateWithheld`] gives, the owner's hold is the one
- *  this page never renders: it wants a derived place, and core's version
- *  timeline refuses a package the manifest does not declare, so the page
- *  has no newer version to offer there in the first place. Proven in
- *  crates/core/tests/package_versions.rs, not assumed here. */
-export const pageUpdateWithheld = (
-  row: UpdateRow | null,
-  standing: UpdatesReadStanding,
-): string | null => {
-  if (row?.noPerPackageUpdate != null) return row.noPerPackageUpdate;
-  const read = standing.read.status;
-  switch (read) {
-    case "pending":
-      return UPDATES_CHECKING;
-    case "failed":
-      return UPDATE_NEEDS_CHECK_HERE;
-    case "landed":
-      break;
-    default:
-      return unhandledReadState(read);
-  }
-  // No row here. Whether that is a fact depends on whether the read is
-  // finished: one about to replace every row may be about to produce this
-  // one, and saying it has not spoken for the place claims a ruling it is
-  // still making. Only a settled read may say "nothing here".
-  if (row === null) {
-    return unsettled(standing) ? UPDATES_CHECKING : NO_UPDATE_STANDING_NOTE;
-  }
-  // A Follow source flip is applying in this very place; a second write
-  // would contend for the same writer lock.
-  if (settlingIn(standing, row)) return UPDATE_NEEDS_CHECK_HERE;
-  return updateWithheld(row);
-};
-
 /** The places "Update all" can act on: a newer version exists and nothing
  *  stands in the way. */
 export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
@@ -164,8 +91,7 @@ export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
 
 /** A bundle member or dependency held at its owner's revision: the hold
  *  is the owner's to move, so nothing here can update or release it. */
-export const heldByOwner = (row: UpdateRow): boolean =>
-  row.pinned && row.derived;
+const heldByOwner = (row: UpdateRow): boolean => row.pinned && row.derived;
 
 /** Why the Follow source switch is not this row's to flip, if it is not:
  *  a derived package has no declaration of its own to set a hold on, and a

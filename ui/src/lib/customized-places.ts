@@ -34,7 +34,7 @@ export type PlaceStanding =
 /** Everything the standings are read from, gathered once per screen.
  *  Built through {@link placesSource}, never by hand: {@link settings} is
  *  an index over {@link manifests}, and the two must not drift apart. */
-export interface PlacesSource {
+interface PlacesSource {
   /** Each place's manifest, keyed by scope. A place absent here has not
    *  been read — which is the whole reason this is a record and not a
    *  list of the customized ones. */
@@ -104,7 +104,7 @@ export function manifestsForEditing(
  *  can say. Null is a real answer: a manifest that was not read and a
  *  place with no update row both leave the question open, and reading
  *  either as false is the mark lying in a new way. */
-export interface PlaceFacts {
+interface PlaceFacts {
   forked: boolean | null;
   settings: boolean | null;
   edited: boolean | null;
@@ -158,7 +158,7 @@ export function placeFacts(
 /** One word from three facts. Any of them makes the place theirs — the
  *  badge answers "is this place mine", and all three are ways of saying
  *  yes. The order decides where a click lands when more than one holds. */
-export function standingOf(scope: Scope, facts: PlaceFacts): PlaceStanding {
+function standingOf(scope: Scope, facts: PlaceFacts): PlaceStanding {
   if (facts.forked) return { scope, standing: "customized", why: "forked" };
   if (facts.settings) return { scope, standing: "customized", why: "settings" };
   if (facts.values) return { scope, standing: "customized", why: "values" };

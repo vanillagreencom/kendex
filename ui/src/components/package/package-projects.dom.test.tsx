@@ -28,7 +28,7 @@ import {
   REMOVE_LABEL,
   UPDATE_ALL_LABEL,
 } from "@/lib/copy-projects";
-import { READ_LANDED, readFailed } from "@/lib/read-state";
+import { READ_LANDED } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
 import { useProvenanceStore } from "@/stores/provenance";
@@ -276,55 +276,6 @@ describe("the update a place is waiting for", () => {
       expect.objectContaining({ scope: VG }),
     ]);
   });
-
-  // The store keeps the last-known rows through a failed or running read
-  // and refuses every update over them, saying so. A card that read those
-  // rows alone would offer a button whose only outcome is that error.
-  it("offers nothing while the update read has failed", async () => {
-    useUpdatesStore.setState({
-      rows: [row(VG, true), row(HYPR, true)],
-      read: readFailed("the read failed"),
-    });
-    const host = await openTab([VG, HYPR]);
-
-    expect(buttons(host).filter((one) => one.textContent === "Update")).toEqual(
-      [],
-    );
-    expect(host.textContent).not.toContain(UPDATE_ALL_LABEL);
-  });
-
-  it("offers nothing while a check is running", async () => {
-    useUpdatesStore.setState({
-      rows: [row(VG, true), row(HYPR, true)],
-      checking: true,
-    });
-    const host = await openTab([VG, HYPR]);
-
-    expect(buttons(host).filter((one) => one.textContent === "Update")).toEqual(
-      [],
-    );
-    expect(host.textContent).not.toContain(UPDATE_ALL_LABEL);
-  });
-
-  // Every card still draws while the rows are held: the package is
-  // installed in those places whatever the update read is doing.
-  it("still draws the cards while the rows are held", async () => {
-    useUpdatesStore.setState({ rows: [row(VG, true)], checking: true });
-    const host = await openTab([VG, HYPR]);
-
-    expect(host.textContent).toContain("vg");
-    expect(host.textContent).toContain("hyprtrade");
-    expect(
-      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
-    ).toHaveLength(2);
-  });
-
-  it("offers no Update all while nothing is waiting", async () => {
-    useUpdatesStore.setState({ rows: [row(VG, false), row(HYPR, false)] });
-    const host = await openTab([VG, HYPR]);
-
-    expect(host.textContent).not.toContain(UPDATE_ALL_LABEL);
-  });
 });
 
 // Core stamps a new install date whenever the source hash moves, and that
@@ -369,135 +320,6 @@ describe("the date a place shows after an update lands", () => {
 
     expect(vi.mocked(commands.packageMeta).mock.calls).toHaveLength(reads);
     expect(host.textContent).toContain("Installed 3d ago");
-  });
-});
-
-// `removeItem` removes what the manifest declares and what the lock owns,
-// and deliberately cannot delete a file kendex only observed. A Remove on
-// one of those advertises an action it cannot perform.
-describe("a place kendex does not own", () => {
-  it("draws its card without Remove", async () => {
-    joinSays(ownedBy([VG, OURS]));
-    const host = await openTab([VG, HYPR]);
-
-    expect(host.textContent).toContain("hyprtrade");
-    expect(
-      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
-    ).toHaveLength(1);
-    await click(host, REMOVE_LABEL);
-    expect(removeItem).toHaveBeenCalledWith(VG, "skill", "gh");
-  });
-
-  it("keeps Remove on the place it does own", async () => {
-    joinSays(ownedBy([VG, OURS], [HYPR, OURS]));
-    const host = await openTab([VG, HYPR]);
-
-    expect(
-      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
-    ).toHaveLength(2);
-  });
-
-  // A copy the scan only observed says so in the join; content the tool
-  // ships carries no row at all. Neither is kendex's to remove.
-  it("offers no Remove over a copy it only observed", async () => {
-    joinSays(
-      ownedBy([VG, { origin: "unmanaged" }], [HYPR, { origin: "unmanaged" }]),
-    );
-    const host = await openTab([VG, HYPR]);
-
-    expect(
-      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
-    ).toEqual([]);
-  });
-
-  it("offers no Remove over content the tool ships", async () => {
-    joinSays([]);
-    const host = await openTab([VG, HYPR]);
-
-    expect(host.textContent).toContain("vg");
-    expect(
-      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
-    ).toEqual([]);
-  });
-
-  // Held to the same judge as the cards: with nothing here kendex owns,
-  // the link has no removal to ask for.
-  it("drops Remove all when it owns none of the places", async () => {
-    joinSays([]);
-    const host = await openTab([VG, HYPR]);
-
-    expect(host.textContent).not.toContain(REMOVE_ALL_LABEL);
-  });
-
-  it("keeps Remove all while it owns one of them", async () => {
-    joinSays(ownedBy([VG, OURS]));
-    const host = await openTab([VG, HYPR]);
-
-    expect(host.textContent).toContain(REMOVE_ALL_LABEL);
-  });
-
-  // A place holds one copy per harness and the join answers per harness.
-  // Removing takes the declaration it finds and leaves the other copy, so
-  // a place is only ours when every one of its copies is.
-  it("offers no Remove where one of a place's harnesses is not ours", async () => {
-    scanFound(install(VG, "claude"), install(VG, "codex"));
-    joinSays(ownedBy([VG, OURS]));
-    const host = await openTab([VG]);
-
-    expect(
-      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
-    ).toEqual([]);
-  });
-
-  it("keeps Remove where every one of a place's harnesses is ours", async () => {
-    scanFound(install(VG, "claude"), install(VG, "codex"));
-    joinSays([
-      ...ownedBy([VG, OURS]),
-      { scope: VG, kind: "skill", name: "gh", harness: "codex", origin: OURS },
-    ]);
-    const host = await openTab([VG]);
-
-    expect(
-      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
-    ).toHaveLength(1);
-  });
-
-  // The store keeps its older rows when the read fails, and those say
-  // nothing about who owns these copies now. A destructive control drawn
-  // from them is the fail-open case: it stays closed instead.
-  it("offers no Remove when the ownership read fails", async () => {
-    useProvenanceStore.setState({
-      rows: ownedBy([VG, OURS], [HYPR, OURS]),
-      loaded: true,
-    });
-    vi.mocked(commands.libraryProvenance).mockResolvedValue({
-      status: "error",
-      error: "the join did not read",
-    });
-    const host = await openTab([VG, HYPR]);
-
-    // The cards still draw: the package is installed there either way.
-    expect(host.textContent).toContain("vg");
-    expect(host.textContent).toContain("hyprtrade");
-    expect(
-      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
-    ).toEqual([]);
-    expect(host.textContent).not.toContain(REMOVE_ALL_LABEL);
-  });
-
-  it("offers no Remove when the ownership read never answers", async () => {
-    useProvenanceStore.setState({
-      rows: ownedBy([VG, OURS], [HYPR, OURS]),
-      loaded: true,
-    });
-    vi.mocked(commands.libraryProvenance).mockRejectedValue(
-      new Error("the channel is gone"),
-    );
-    const host = await openTab([VG, HYPR]);
-
-    expect(
-      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
-    ).toEqual([]);
   });
 });
 
@@ -575,5 +397,30 @@ describe("removing a package from one place", () => {
     await click(host, REMOVE_ALL_LABEL);
     expect(onDelete).toHaveBeenCalledTimes(1);
     expect(removeItem).not.toHaveBeenCalled();
+  });
+
+  // The store keeps its older rows when the ownership read fails, and
+  // those say nothing about who owns these copies now. Remove is the
+  // destructive control, so one drawn from them is the fail-open case: the
+  // tab holds it closed. A rejection and an error answer are one thing
+  // here — neither joined — so one case covers both.
+  it("offers nothing to remove when the ownership read did not answer", async () => {
+    useProvenanceStore.setState({
+      rows: ownedBy([VG, OURS], [HYPR, OURS]),
+      loaded: true,
+    });
+    vi.mocked(commands.libraryProvenance).mockResolvedValue({
+      status: "error",
+      error: "the join did not read",
+    });
+    const host = await openTab([VG, HYPR]);
+
+    // The cards still draw: the package is installed there either way.
+    expect(host.textContent).toContain("vg");
+    expect(host.textContent).toContain("hyprtrade");
+    expect(
+      buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
+    ).toEqual([]);
+    expect(host.textContent).not.toContain(REMOVE_ALL_LABEL);
   });
 });

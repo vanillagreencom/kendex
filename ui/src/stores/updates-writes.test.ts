@@ -6,8 +6,8 @@ import { commands, type UpdateRow } from "@/bindings";
 import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { READ_LANDED } from "@/lib/read-state";
-import { startBulk } from "@/lib/update-outcome";
 import { useUpdatesStore } from "./updates";
+import { noDispositions } from "./updates-apply";
 import {
   writeDiscardEdits,
   writeFork,
@@ -182,7 +182,7 @@ describe("what a write says about the repository it changed", () => {
       data: { view: { ...VIEW, undone: [RAN] }, packages: [] },
     });
 
-    await writeRows([row()], () => {}, startBulk(0));
+    await writeRows([row()], () => {}, noDispositions());
 
     expect(toast.message).toHaveBeenCalledWith(RAN);
   });

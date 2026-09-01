@@ -10,7 +10,6 @@ import { harnessName } from "@/lib/labels";
 //   - Never claim a state the app has not checked.
 export const morePlacesLabel = (count: number): string =>
   `+${count} more place${count === 1 ? "" : "s"}`;
-export const AFFECTS_LABEL = "Affects";
 
 // What "managing" an item buys you, said once here so "Start managing"
 // doesn't need to explain itself on every row, and used as the subtitle of
@@ -34,7 +33,6 @@ export const PLACE_UNCHECKED_TITLE = "Couldn't check this place";
 export const ALL_MANAGED_TITLE = "Everything is managed";
 export const ALL_MANAGED_BODY =
   "kendex looks after everything it can see here.";
-export const SEE_IN_LIBRARY_LABEL = "See them in the Library";
 // Where a harness keeps its files — only worth setting for one that was
 // moved somewhere other than its usual place.
 // Content a harness ships with itself. It is named, never nagged about: the
@@ -64,18 +62,6 @@ export const ADD_PROJECT_HELP =
 export const SCAN_FOLDER_HELP =
   "Look inside a folder for repositories, then add the ones you want.";
 export const NO_PROJECTS_FOUND = "Nothing that looks like a project in there.";
-
-// "Add from a catalog". A catalog is a git repo of shareable skills and
-// agents; a bundle is a named set inside one. Both are said in terms of what
-// they get you rather than what they are.
-export const BUNDLES_HELP = "Ready-made sets — install everything in one go.";
-export const CATALOGS_HELP =
-  "Where your installable skills and agents come from.";
-export const ADD_CATALOG_LABEL = "Add a catalog";
-export const CHECK_UPDATES_LABEL = "Check for updates";
-export const NO_CATALOGS_TITLE = "Nothing to install from yet";
-export const NO_CATALOGS_YET =
-  "A catalog is a git repository of skills and agents. Add one and everything it offers becomes installable here.";
 
 // The one toggle on an item. It was a button reading "Turn off", which said
 // what the click does but never what the state is or what turning it off
@@ -122,7 +108,6 @@ export const TRY_AGAIN_LABEL = "Try again";
 export const PACKAGE_FILES_TITLE = "Files";
 export const PACKAGE_VERSION_TITLE = "Version";
 export const README_TAG = "readme";
-export const SHOWN_BY_DEFAULT_NOTE = "Shown when the package opens";
 export const UPDATE_LABEL = "Update";
 export const PREVIEW_CHANGES_LABEL = "Preview changes";
 export const SWITCH_VERSION_LABEL = "Switch to this version";
@@ -136,12 +121,6 @@ export const BACK_TO_FILES_LABEL = "Back to files";
 export const DIFF_TRUNCATED_NOTE =
   "This comparison is long; only the first part is shown.";
 export const VERSION_ERROR_TITLE = "Couldn't switch versions";
-// A switch the plan would not write anywhere: the manifest took the new
-// hold, the copy on disk is the one it always was. Both halves are said,
-// because either on its own is the wrong story — and what follows this
-// names the tool whose copy stopped it.
-export const notSwitchedToastLead = (name: string, version: string): string =>
-  `${name} is set to ${version}, but nothing was written`;
 
 // Updates page.
 export const UPDATES_EMPTY = "Everything is up to date";
@@ -164,7 +143,6 @@ export const PINNED_UPDATE_TAG = "Held";
 export const EDITED_UPDATE_TAG = "Edited by you";
 export const UPDATE_ERROR_TITLE = "Couldn't update";
 export const updatedToastLabel = (name: string): string => `Updated ${name}`;
-export const UPDATED_ALL_TOAST = "Everything is up to date";
 
 // Fork: what happens when the app finds files you edited by hand.
 export const FORKED_BADGE_LABEL = "Forked";
@@ -200,10 +178,6 @@ export const FORKED_ATTENTION_DETAIL =
   "Your changes are safe — nothing will overwrite them. Decide whether to keep each as your own copy.";
 
 export const FOLLOW_SOURCE_TOAST = "Now following its source";
-// The manifest follows again and the copy on disk did not move with it —
-// true of the switch, silent about the files, so both are said.
-export const FOLLOW_SOURCE_STALLED_TOAST =
-  "Now following its source, but nothing was written";
 
 // The app's own out-of-date notice, in the sidebar. It names both versions
 // and offers the one action the install channel allows: a replacement where

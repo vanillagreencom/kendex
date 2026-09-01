@@ -2,7 +2,7 @@ import { ZOOM } from "@/bindings";
 
 // Plain-shape event so this stays testable without a DOM: a real
 // KeyboardEvent structurally satisfies it at the call site.
-export interface ZoomShortcutEvent {
+interface ZoomShortcutEvent {
   key: string;
   ctrlKey: boolean;
   metaKey: boolean;
@@ -55,7 +55,7 @@ export const ZOOM_SETTLE_MS = 300;
  * feels live, and the size is written once the steps stop — one settle for
  * every input, so no path rewrites the settings file per press.
  */
-export interface ZoomControls {
+interface ZoomControls {
   /** Whether the press was a zoom press, so the caller can keep it from
    *  the page. */
   onKeyDown: (event: ZoomShortcutEvent) => boolean;

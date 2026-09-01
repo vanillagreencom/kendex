@@ -18,8 +18,7 @@ import { groupItems, groupScopes, installationAt } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
-import { sameScope } from "@/lib/scope";
-import { pageUpdateWithheld } from "@/lib/update-groups";
+import { packageUpdateNote } from "@/lib/updates-read-state";
 import {
   canUpdatePackage,
   installedRow,
@@ -86,22 +85,10 @@ export function PackagePage() {
     view,
     diffHarness(view, installationAt(group, ref?.scope)?.harness ?? null),
   );
-  // Why this place has no Update, or null when nothing withholds one —
-  // the read behind the rows and then the row itself, in one reading off
-  // the live store. A string, so this selector answers the same value on
-  // every render that changes nothing.
-  const withheld = useUpdatesStore((s) =>
-    pageUpdateWithheld(
-      s.rows.find(
-        (row) =>
-          ref != null &&
-          row.kind === ref.kind &&
-          row.name === ref.name &&
-          sameScope(row.scope, ref.scope),
-      ) ?? null,
-      s,
-    ),
-  );
+  // Why this place has no Update, or null when nothing withholds one. A
+  // string, so this selector answers the same value on every render that
+  // changes nothing.
+  const withheld = useUpdatesStore((s) => packageUpdateNote(s, ref));
 
   const mark = usePackageMark(group);
   // The package can still be installed elsewhere while this place has no

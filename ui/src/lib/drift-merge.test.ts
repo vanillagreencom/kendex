@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DriftRow } from "@/bindings";
-import {
-  abbreviateHome,
-  mergeDriftRows,
-  mergedDetail,
-  summarizePaths,
-} from "./drift-merge";
+import { abbreviateHome, mergeDriftRows, summarizePaths } from "./drift-merge";
 
 const GLOBAL = { scope: "global" } as const;
 
@@ -52,24 +47,6 @@ describe("mergeDriftRows", () => {
       "claude",
       "pi",
     ]);
-  });
-});
-
-describe("mergedDetail", () => {
-  it("collapses identical details to one", () => {
-    expect(mergedDetail(["not installed yet", "not installed yet"])).toBe(
-      "not installed yet",
-    );
-  });
-
-  it("keeps genuinely different details, joined", () => {
-    expect(mergedDetail(["a foreign symlink", "target already occupied"])).toBe(
-      "a foreign symlink · target already occupied",
-    );
-  });
-
-  it("returns null when every detail is empty", () => {
-    expect(mergedDetail([null, null])).toBeNull();
   });
 });
 

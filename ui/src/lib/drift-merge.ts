@@ -29,14 +29,6 @@ export function mergeDriftRows(rows: DriftRow[]): MergedDriftRow[] {
   return [...groups.values()];
 }
 
-// The detail text a merged row shows: the same message repeated per
-// harness collapses to one, but genuinely different messages per harness
-// stay distinct instead of one hiding the other.
-export function mergedDetail(details: (string | null)[]): string | null {
-  const unique = [...new Set(details.filter((d): d is string => !!d))];
-  return unique.length === 0 ? null : unique.join(" · ");
-}
-
 // Every position one row is about. `detail` is the row's identity and the
 // plan refuses at the first position it reads, so a tree read through a
 // harness-native link names its second position separately — and an offer
@@ -52,7 +44,7 @@ export function abbreviateHome(path: string): string {
   return path.replace(/^\/(?:home|Users)\/[^/]+/, "~");
 }
 
-export interface PathSummary {
+interface PathSummary {
   text: string;
   title: string;
   /** How many distinct places this row is about — several tools reading

@@ -90,7 +90,7 @@ export function sharedCustomization(draft: Draft | null): SharedCustomization {
   };
 }
 
-export interface CustomizedItem {
+interface CustomizedItem {
   kind: ItemKind;
   name: string;
   customization: ItemCustomization;

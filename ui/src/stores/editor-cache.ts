@@ -32,7 +32,7 @@ export const openInventory = (state: {
  *  `null` is what makes an unread place unread rather than stale, and
  *  having one writer is what stops the next cache from needing its own
  *  invalidation point. */
-export const recorded = <T>(
+const recorded = <T>(
   cache: Record<string, T>,
   scope: Scope,
   value: T | null,
@@ -80,9 +80,7 @@ export const readError = (
 /** Each named scope's saved manifest, keyed by scope. A read that fails is
  *  left out rather than recorded as an empty manifest: a place nobody could
  *  read is not a place holding nothing, and the marks tell them apart. */
-export const manifestsOf = async (
-  scopes: Scope[],
-): Promise<Record<string, Draft>> => {
+const manifestsOf = async (scopes: Scope[]): Promise<Record<string, Draft>> => {
   const loaded = await Promise.all(
     scopes.map((scope) => commands.getManifest(scope)),
   );
@@ -101,7 +99,7 @@ export const manifestsOf = async (
  *  for, and the settings half of a mark tells that from a place holding
  *  nothing. Global answers `applies: false` rather than failing, so it is
  *  recorded like any other. */
-export const settingsOf = async (
+const settingsOf = async (
   scopes: Scope[],
 ): Promise<Record<string, ScopeSettings>> => {
   const loaded = await Promise.all(
@@ -129,7 +127,7 @@ export const opening = {
 };
 
 /** The scope-keyed caches the marks are drawn from. */
-export interface PlaceCaches {
+interface PlaceCaches {
   saved: Record<string, Draft>;
   inventories: Record<string, EditorInventory>;
   savedSettings: Record<string, ScopeSettings>;

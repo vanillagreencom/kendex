@@ -1,20 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { DriftRow } from "@/bindings";
 import {
   breadcrumbLabel,
   describesItself,
-  driftDetail,
   HARNESS_NAMES,
   harnessName,
   hookDisplayName,
   kindLabel,
   packageDisplayName,
-  SEVERITY_BADGES,
-  STATE_BADGES,
-  STATE_LABELS,
   scopeName,
   scopePath,
-  skipReasonShort,
 } from "./labels";
 
 describe("labels", () => {
@@ -36,31 +30,11 @@ describe("labels", () => {
   });
 
   it("keeps human copy free of internal jargon", () => {
-    const copy = [
-      ...Object.values(STATE_LABELS),
-      ...Object.values(HARNESS_NAMES),
-    ]
-      .join(" ")
-      .toLowerCase();
+    const copy = Object.values(HARNESS_NAMES).join(" ").toLowerCase();
     for (const banned of ["drift", "unmanaged", "orphan", "harness", "scope"]) {
       expect(copy).not.toContain(banned);
     }
     expect(harnessName("claude")).toBe("Claude Code");
-  });
-
-  it("maps drift states to the badge tone that matches their urgency", () => {
-    expect(STATE_BADGES.conflict).toBe("warning");
-    expect(STATE_BADGES.stale).toBe("info");
-    expect(STATE_BADGES.missing).toBe("info");
-    expect(STATE_BADGES.orphaned).toBe("outline");
-    expect(STATE_BADGES.unmanaged).toBe("secondary");
-  });
-
-  it("maps severity to the badge tone that matches how serious it is", () => {
-    expect(SEVERITY_BADGES.critical).toBe("critical");
-    expect(SEVERITY_BADGES.high).toBe("warning");
-    expect(SEVERITY_BADGES.medium).toBe("info");
-    expect(SEVERITY_BADGES.low).toBe("secondary");
   });
 
   it("shows a hook's trailing name and falls back to the whole id", () => {
@@ -69,43 +43,6 @@ describe("labels", () => {
     );
     expect(hookDisplayName("PreToolUse:*:claude-hook")).toBe("claude-hook");
     expect(hookDisplayName("guard")).toBe("guard");
-  });
-
-  it("drops drift detail that only restates the state pill", () => {
-    const row = (over: Partial<DriftRow>): DriftRow => ({
-      kind: "skill",
-      name: "x",
-      harness: "claude",
-      scope: { scope: "global" },
-      state: "stale",
-      detail: "",
-      ...over,
-    });
-    expect(
-      driftDetail(
-        row({ state: "stale", detail: "newer content is available" }),
-      ),
-    ).toBeNull();
-    expect(
-      driftDetail(row({ state: "missing", detail: "not installed yet" })),
-    ).toBeNull();
-    expect(driftDetail(row({ detail: "" }))).toBeNull();
-    expect(
-      driftDetail(
-        row({ state: "conflict", detail: "both a symlink and a real file" }),
-      ),
-    ).toBe("both a symlink and a real file");
-  });
-
-  it("shortens a known skip reason and falls back for unknown ones", () => {
-    expect(
-      skipReasonShort(
-        "the plugin's own files are not readable here — a declared plugin is one switch in a settings file until it is installed",
-      ),
-    ).toBe("not installed yet");
-    expect(skipReasonShort("some new engine sentence")).toBe(
-      "nothing here could be read",
-    );
   });
 });
 

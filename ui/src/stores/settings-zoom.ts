@@ -1,7 +1,7 @@
 import { type AppSettings, commands, ZOOM } from "@/bindings";
 import { useProblemsStore } from "./problems";
 
-export interface ZoomFields {
+interface ZoomFields {
   settings: AppSettings | null;
   zoom: number | null;
 }
@@ -24,16 +24,16 @@ export interface ZoomSlice {
   onScreen: () => number;
   /** Resize the window to follow the input. Nothing is written. */
   setZoom: (percent: number) => Promise<void>;
-  /** The commit boundary: wait for every resize still out, then remember
-   *  the size the window says it is at. Never the size on screen, which a
-   *  press moves ahead of the window and the window may yet refuse. */
+  /** The commit: remember the size the window says it is at. Never the size
+   *  on screen, which a press moves ahead of the window and the window may
+   *  yet refuse. */
   saveZoom: () => Promise<void>;
 }
 
 /**
  * Zoom is two moves, not one. The window follows every step of a held key
  * or a repeatedly clicked button so the control feels live, and the size is
- * written once, when the input settles — a save per step rewrites the whole
+ * written once, when the input settles — a save per step rewrites the
  * settings file dozens of times for one gesture.
  *
  * Neither action ever rejects. Both talk to the window over an IPC bridge
@@ -45,18 +45,6 @@ export function zoomActions(
   set: (fields: Partial<ZoomFields>) => void,
   get: () => ZoomFields,
 ): ZoomSlice {
-  // At most one save in flight. Two overlapping writes of one file race each
-  // other, and their replies can land in the wrong order and put back a size
-  // the person has already moved past.
-  let saving: Promise<void> | null = null;
-  let again = false;
-  // Every resize still out, as one promise. Not a queue — the window takes
-  // requests one at a time on its own main thread and nothing here has to
-  // order them — but the commit has to wait for them: the display moves
-  // ahead of the window on every press, and committing that is committing a
-  // size the window may be about to refuse.
-  let resizes: Promise<unknown> = Promise.resolve();
-
   function report(title: string, message: string, retry: () => void) {
     useProblemsStore.getState().showError({
       title,
@@ -105,9 +93,7 @@ export function zoomActions(
     // The size shows at once and the window is asked afterwards, so a held
     // key redraws at every step instead of once the last reply lands.
     set({ zoom: percent });
-    const run = ask(percent);
-    resizes = Promise.all([resizes, run]);
-    return run;
+    return ask(percent);
   }
 
   async function ask(percent: number): Promise<void> {
@@ -132,22 +118,13 @@ export function zoomActions(
     await saveZoom();
   }
 
-  async function write() {
+  /** Remember the size the window is at. `save_zoom` writes that field and
+   *  no other, under core's cross-process settings lock, so two of these
+   *  landing at once cannot carry a stale copy of the rest of the file over
+   *  each other and nothing here has to hold them apart. */
+  async function saveZoom() {
     try {
       if (!get().settings) return;
-      // Every resize has to have been answered first. Awaiting hands
-      // control back, which is exactly when a new press can join, so the
-      // identity check asks again until nothing new arrived while we
-      // waited. It terminates because every caller comes through a settle
-      // timer that has already outlasted the input stream; wire `saveZoom`
-      // to something that fires mid-gesture and this becomes an unbounded
-      // wait holding the one-save-at-a-time slot.
-      let awaited: Promise<unknown>;
-      do {
-        awaited = resizes;
-        await awaited;
-      } while (resizes !== awaited);
-
       // The size the window is at, asked of the window. The display is
       // where a press put it, and a press the window refused while even the
       // rollback's read failed leaves it ahead of the window — written,
@@ -179,28 +156,6 @@ export function zoomActions(
       report("Couldn't save the zoom", response.error, () => void saveZoom());
     } catch (error: unknown) {
       report("Couldn't save the zoom", String(error), () => void saveZoom());
-    }
-  }
-
-  async function saveZoom() {
-    if (saving) {
-      // One more write follows the one running, and it waits for every
-      // resize still out and then asks the window, the way any other does
-      // — which covers this ask and any made meanwhile.
-      again = true;
-      return saving;
-    }
-    saving = (async () => {
-      await write();
-      while (again) {
-        again = false;
-        await write();
-      }
-    })();
-    try {
-      await saving;
-    } finally {
-      saving = null;
     }
   }
 

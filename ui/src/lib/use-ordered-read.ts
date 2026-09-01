@@ -6,7 +6,7 @@ import { settled } from "@/lib/settled";
  *  every re-read after the address changes: what is on screen belonged to
  *  the address before it, and drawing it under the new one would name the
  *  wrong package. */
-export type OrderedRead<T> =
+type OrderedRead<T> =
   | { status: "loading" }
   | { status: "ok"; data: T }
   | { status: "error"; error: string };

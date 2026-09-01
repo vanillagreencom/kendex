@@ -174,9 +174,10 @@ export function PlaceCells({
                     size="sm"
                     variant="outline"
                     disabled={busy || held || !canUpdatePlace(row)}
-                    // The row's own reasons rank as `pageUpdateWithheld`
-                    // states; `held` is this surface's alone, because
-                    // only its actions send a value read off the row.
+                    // The row's own reasons come from `updateWithheld`,
+                    // the reading every surface shares; `held` is this
+                    // surface's alone, because only its actions send a
+                    // value read off the row.
                     title={
                       withheld ?? (held ? UPDATE_NEEDS_CHECK_NOTE : undefined)
                     }

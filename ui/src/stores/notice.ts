@@ -5,7 +5,7 @@ import { settled } from "@/lib/settled";
 
 /** The two versions the card names. Null until a check has found this
  *  build behind a release, and null again once this version is hidden. */
-export interface AppUpdateNotice {
+interface AppUpdateNotice {
   /** What is running now. */
   current: string;
   /** The release it is behind. */

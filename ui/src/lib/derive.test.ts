@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ObservedItem } from "@/bindings";
 import {
-  bundleSummary,
   countByKind,
   filterItems,
   groupItems,
@@ -201,23 +200,6 @@ describe("recentItems", () => {
       item({ name: "c", modifiedAt: 3 }),
     ]);
     expect(recentItems(groups, 2)).toHaveLength(2);
-  });
-});
-
-describe("bundleSummary", () => {
-  it("lists what a bundle carries", () => {
-    expect(bundleSummary(["skill dev", "agent writer"])).toBe(
-      "skill dev, agent writer",
-    );
-  });
-
-  it("counts the rest once the list would run long", () => {
-    const members = ["a", "b", "c", "d", "e", "f"];
-    expect(bundleSummary(members)).toBe("a, b, c, d, and 2 more");
-  });
-
-  it("says so when a bundle carries nothing", () => {
-    expect(bundleSummary([])).toBe("Carries nothing yet");
   });
 });
 

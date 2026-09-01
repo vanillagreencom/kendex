@@ -47,13 +47,12 @@ export const KEEP_FILES_CONFIRM_LABEL = "Keep them";
 // kendex cannot see will break, and there is no way to list them.
 export const keepSharedBody = (target: string, tools: string[]): string =>
   `${tools.join(" and ")} read this skill from ${target}. kendex moves the folder's content into its own keeping — the folder goes to the trash, where you can get it back — and points them at kendex's copy, so they stay in sync. Anything else pointing at the old folder stops working.`;
-export const replaceFilesConfirmTitle = (name: string): string =>
-  `Replace ${name}?`;
+const replaceFilesConfirmTitle = (name: string): string => `Replace ${name}?`;
 // The places themselves are listed under this, one per line, so the
 // sentence agrees with a list rather than trying to hold it. A summary
 // spliced in here would truncate, and the confirm is the last thing read
 // before the files move.
-export const replaceFilesConfirmBody = (count: number): string => {
+const replaceFilesConfirmBody = (count: number): string => {
   const [subject, verb, whose] =
     count > 1 ? ["These", "move", "their"] : ["This", "moves", "its"];
   return `${subject} ${verb} to the trash, and kendex installs what kendex.toml asks for in ${whose} place.`;

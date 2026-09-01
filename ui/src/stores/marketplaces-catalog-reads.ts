@@ -19,7 +19,7 @@ import {
 } from "./marketplaces-shared";
 
 /** The slice of the store these reads write. */
-export interface ReadCaches {
+interface ReadCaches {
   packages: Record<string, AvailablePackage[]>;
   summaries: Record<string, CatalogSummary>;
   about: Record<string, AboutView>;
@@ -27,7 +27,7 @@ export interface ReadCaches {
   readErrors: Record<string, string>;
 }
 
-export type SetReads = (fn: (state: ReadCaches) => Partial<ReadCaches>) => void;
+type SetReads = (fn: (state: ReadCaches) => Partial<ReadCaches>) => void;
 
 export function catalogReads(set: SetReads) {
   return {

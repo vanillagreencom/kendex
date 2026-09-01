@@ -1,20 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AppSettings } from "@/bindings";
 import { commands, ZOOM } from "@/bindings";
+import { useProblemsStore } from "./problems";
 import { useSettingsStore } from "./settings";
 import { zoom as controls, currentZoom } from "./zoom";
-import {
-  deferred,
-  dialog,
-  failed,
-  freshZoomStore,
-  ok,
-  settings,
-  stored,
-  tick,
-  windowAt,
-  windowTakes,
-  zoom,
-} from "./zoom-fixture";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -33,6 +22,78 @@ vi.mock("@/bindings", () => ({
 }));
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+
+const settings: AppSettings = {
+  schema: 1,
+  appearance: "system",
+  "harness-roots": {},
+  projects: [],
+  zoom: 100,
+};
+
+const ok = <T>(data: T) => ({ status: "ok" as const, data });
+const failed = (error: string) => ({ status: "error" as const, error });
+
+/** Let everything already queued run before carrying on. */
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** A promise whose settling the test decides. */
+function deferred<T>() {
+  let settle: (value: T) => void = () => {};
+  const promise = new Promise<T>((resolve) => {
+    settle = resolve;
+  });
+  return { promise, settle };
+}
+
+/** What the app is showing, which a press moves ahead of the window. */
+const zoom = () => currentZoom();
+/** What a save would carry: the size the shared settings object holds. */
+const stored = () => useSettingsStore.getState().settings?.zoom;
+const dialog = () => useProblemsStore.getState().dialog;
+
+/** The size the stand-in webview is at. It keeps its own, the way the real
+ *  one does: the zoom outlives the page, so a reload has to read it back. */
+let webviewAt = settings.zoom ?? 100;
+
+/** Put the stand-in webview at a size, as a launch or an accepted resize
+ *  would. A test that seeds the store away from full size moves the window
+ *  with it — the store's copy is what is being drawn, and the window is
+ *  what a refusal reads the real size back from. */
+function windowAt(percent: number) {
+  webviewAt = percent;
+}
+
+/** A window that takes every size it is asked for, and remembers it. */
+function windowTakes() {
+  vi.mocked(commands.windowSetZoom).mockImplementation(async (percent) => {
+    webviewAt = percent;
+    return ok(null);
+  });
+}
+
+/** A store at 100%, a closed dialog, and a window that takes every size —
+ *  including at launch, so the store opens where the stored size is. */
+function freshZoomStore() {
+  webviewAt = settings.zoom ?? 100;
+  useSettingsStore.setState({ settings, zoom: webviewAt, capabilities: [] });
+  useProblemsStore.setState({
+    dialog: { open: false, title: "", steps: [], actions: [] },
+  });
+  vi.clearAllMocks();
+  windowTakes();
+  vi.mocked(commands.windowZoomState).mockImplementation(async () => ({
+    percent: webviewAt,
+    launchRefused: false,
+  }));
+  vi.mocked(commands.updateSettings).mockImplementation(async (next, base) =>
+    ok({ settings: next, base }),
+  );
+  vi.mocked(commands.saveZoom).mockImplementation(async (percent) =>
+    ok(percent),
+  );
+  expect(zoom()).toBe(100);
+}
 
 describe("zoom, on screen", () => {
   beforeEach(freshZoomStore);
@@ -213,6 +274,24 @@ describe("zoom, on screen", () => {
     // The window never left 100, so 100 is what the file gets.
     expect(zoom()).toBe(100);
     expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(100);
+  });
+
+  /// The window is the authority on the size to store. A press moves the
+  /// display ahead of it, and one the window refused while even the
+  /// rollback's read failed leaves it ahead for good — written, that size
+  /// outlives the session and asks for the same refusal at every launch.
+  /// A run that cannot read the window has nothing to write and says so.
+  it("writes nothing when the window cannot say what size it is at", async () => {
+    await useSettingsStore.getState().setZoom(150);
+    vi.mocked(commands.windowZoomState).mockRejectedValue(
+      new Error("no bridge"),
+    );
+
+    await useSettingsStore.getState().saveZoom();
+
+    expect(commands.saveZoom).not.toHaveBeenCalled();
+    expect(dialog().open).toBe(true);
+    expect(dialog().title).toBe("Couldn't save the zoom");
   });
 
   it("stores the size an accepted retry manages to show", async () => {

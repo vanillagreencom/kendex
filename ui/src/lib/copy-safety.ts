@@ -143,7 +143,7 @@ export const staleSafetyNote = (
         now,
       )}.`;
 /** The same thing in a tooltip, where the score follows it on one line. */
-export const staleSafetyLead = (
+const staleSafetyLead = (
   checkedAt: number | null,
   now: number = Date.now(),
 ): string =>

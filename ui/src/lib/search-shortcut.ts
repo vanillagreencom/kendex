@@ -1,6 +1,6 @@
 // Plain-shape target so this stays testable without a DOM: real
 // EventTarget elements structurally satisfy it at the call site.
-export interface ShortcutTarget {
+interface ShortcutTarget {
   tagName?: string;
   isContentEditable?: boolean;
 }

@@ -24,7 +24,7 @@ export function scopeMatches(
   );
 }
 
-export interface ItemFilter {
+interface ItemFilter {
   scope: ScopeSelection;
   kind?: ItemKind;
   harness?: string;
@@ -169,7 +169,7 @@ export function countByKind(items: ObservedItem[]): Map<ItemKind, number> {
   return counts;
 }
 
-export function projectScopes(result: ScanResult): string[] {
+function projectScopes(result: ScanResult): string[] {
   const roots = new Set<string>();
   for (const item of result.items) {
     if (item.scope.scope === "project") roots.add(item.scope.root);
@@ -204,14 +204,6 @@ export function recentItems(groups: ItemGroup[], limit: number): RecentGroup[] {
     .filter((g): g is RecentGroup => g.modifiedAt != null)
     .sort((a, b) => b.modifiedAt - a.modifiedAt)
     .slice(0, limit);
-}
-
-/** What a bundle carries, short enough to sit under its name. */
-export function bundleSummary(members: string[]): string {
-  if (members.length === 0) return "Carries nothing yet";
-  const shown = members.slice(0, 4).join(", ");
-  const rest = members.length - 4;
-  return rest > 0 ? `${shown}, and ${rest} more` : shown;
 }
 
 /** How an installed package is doing, in one word. A broken link outranks

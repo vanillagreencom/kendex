@@ -6,17 +6,25 @@
 // applies once however many rows it has. Kept beside the store the way its
 // read landing and edit flows are, so the store body stays the state
 // lifecycle.
+import { toast } from "sonner";
 import {
   commands,
+  type DriftRow_Serialize,
   type PackageUpdate_Serialize,
   type Scope,
   type UpdateRow,
   type UpdateTarget,
 } from "@/bindings";
-import { unansweredPackageError } from "@/lib/copy-updates";
+import {
+  ALREADY_CURRENT_TOAST,
+  heldBackToastLabel,
+  removedNotReplacedToastLabel,
+  unansweredPackageError,
+  updatedCountToastLabel,
+} from "@/lib/copy-updates";
+import { harnessName } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
 import { sayUndone } from "@/lib/undone";
-import { type BulkOutcome, outcomeOf } from "@/lib/update-outcome";
 
 type Report = (error: string) => void;
 
@@ -27,6 +35,80 @@ type Report = (error: string) => void;
 export type ApplyOutcome =
   | { ok: false }
   | { ok: true; update: PackageUpdate_Serialize };
+
+/** The three lists an apply answers with about one package: what it took
+ *  to the trash, what it refused to write over, and where it wrote. A run
+ *  over several places is their concatenation, so the single-package
+ *  surface and the bulk one read one shape and say one thing. */
+export type Dispositions = Pick<
+  PackageUpdate_Serialize,
+  "removed" | "heldBack" | "moved"
+>;
+
+/** A fresh record for a run to gather its places' answers into. The caller
+ *  holds it from before the first apply until after the last, so a place
+ *  that rejects at the transport layer cannot take what earlier places
+ *  already committed with it. */
+export const noDispositions = (): Dispositions => ({
+  removed: [],
+  heldBack: [],
+  moved: [],
+});
+
+/** The tools named by a set of drift rows, each once, in the order they
+ *  came back. */
+const toolsOf = (rows: DriftRow_Serialize[]): string[] => [
+  ...new Set(rows.map((row) => harnessName(row.harness))),
+];
+
+/** How many distinct packages a list of renderings names: one package
+ *  written — or taken to the trash — in three tools is one package, not
+ *  three. */
+export const packagesIn = (rows: DriftRow_Serialize[]): number =>
+  new Set(rows.map((row) => `${row.kind}:${row.name}`)).size;
+
+/** What a run over several places claims, or null where it claims nothing.
+ *
+ *  A run that wrote no package is one of two runs, and they are not alike.
+ *  Every apply can have failed, in which case its errors are already on
+ *  screen and a line beside them would be the only untrue thing there. Or
+ *  every apply committed and the plan had nothing to write: core's
+ *  `moving` reports only the renderings it found missing or stale, so a
+ *  package another window, another lane or the CLI brought current between
+ *  the check and the click answers with three empty lists. That run did
+ *  what it was asked, and the single-package surface says "Updated <name>"
+ *  over the very same answer, so this one speaks too. */
+export const bulkLine = (moved: number, failed: boolean): string | null => {
+  if (moved > 0) return updatedCountToastLabel(moved);
+  return failed ? null : ALREADY_CURRENT_TOAST;
+};
+
+/** Say what an apply did, off its three lists and nothing else. A copy
+ *  taken to the trash outranks the rest — it is the one outcome that took
+ *  something away — then a copy the plan left exactly as it is, then
+ *  `done`, the surface's own word for having written the package.
+ *
+ *  `done` is null only where the surface has nothing to claim because it
+ *  could not act: a run whose every apply failed, whose errors are already
+ *  on screen. A run that committed always passes a line, even one that
+ *  wrote nothing — an apply answers with three empty lists for a package
+ *  something else brought current, and silence over that reads as a click
+ *  that missed. */
+export const sayApply = (done: string | null, what: Dispositions): void => {
+  const removed = toolsOf(what.removed);
+  if (removed.length > 0) {
+    toast.error(
+      removedNotReplacedToastLabel(packagesIn(what.removed), removed),
+    );
+    return;
+  }
+  const held = toolsOf(what.heldBack);
+  if (held.length > 0) {
+    toast.info(heldBackToastLabel(held));
+    return;
+  }
+  if (done !== null) toast.success(done);
+};
 
 /** Bring one place current. Held packages move by moving the hold;
  *  following ones come current through the single-package apply. Either
@@ -85,8 +167,8 @@ const targetOf = (row: UpdateRow): UpdateTarget => ({
 });
 
 /** Bring every place in `rows` current, one apply per place covering all
- *  of that place's rows, writing each answer into the caller's `outcome`
- *  as it comes.
+ *  of that place's rows, gathering each answer into the caller's `into` as
+ *  it comes.
  *
  *  Nothing is returned, on purpose: a returned record is one an assignment
  *  can lose, and a place that rejects at the transport layer would take
@@ -94,12 +176,13 @@ const targetOf = (row: UpdateRow): UpdateTarget => ({
  *  record from before the first apply until after the last, and a throw
  *  leaves it holding everything said up to that point.
  *
- *  Deciding here what the answers mean is how this path fell behind the
- *  per-row one twice: it reads `outcomeOf` instead. */
+ *  The answers are gathered, never re-read here: what a run did is the
+ *  same three lists one apply answers with, so [`sayApply`] says it for
+ *  both surfaces. */
 export const applyRows = async (
   rows: UpdateRow[],
   report: Report,
-  outcome: BulkOutcome,
+  into: Dispositions,
 ): Promise<void> => {
   for (const place of byPlace(rows)) {
     const response = await commands.packageUpdateMany(
@@ -107,10 +190,10 @@ export const applyRows = async (
       place.rows.map(targetOf),
     );
     // One plan, one apply: a place that fails takes all of its own rows
-    // with it and none of any other place's.
+    // with it and none of any other place's. Its error is already on
+    // screen through `report`.
     if (response.status === "error") {
       report(response.error);
-      outcome.ok = false;
       continue;
     }
     sayUndone(response.data.view.undone);
@@ -120,19 +203,15 @@ export const applyRows = async (
     for (const row of place.rows) {
       const one = answered.get(targetKey(row));
       // The apply committed; what it did to this package is what did not
-      // come back. Counted as neither moved nor held, and said out loud,
-      // because a silent drop makes the run's own count read low.
+      // come back. Said out loud, because a silent drop makes the run's
+      // own account read short.
       if (!one) {
         report(unansweredPackageError(row.name));
-        outcome.ok = false;
         continue;
       }
-      // Read, never re-derived: the same answer the per-row report shows,
-      // so a disposition added later reaches this count too.
-      const what = outcomeOf(one);
-      if (what.moved) outcome.moved.push(row);
-      if (what.held.length > 0) outcome.held += 1;
-      if (what.removed.length > 0) outcome.removed += 1;
+      into.removed.push(...one.removed);
+      into.heldBack.push(...one.heldBack);
+      into.moved.push(...one.moved);
     }
   }
 };

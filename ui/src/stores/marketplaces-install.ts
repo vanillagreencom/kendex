@@ -28,7 +28,7 @@ import { useProblemsStore } from "./problems";
  * sent only when it was actually chosen; a `null` leaves the scope's own
  * install defaults to decide, which the engine brings up to date against
  * this machine as it plans. */
-export interface InstallRequest {
+interface InstallRequest {
   scope: Scope;
   source: string;
   items: InstallItem[];
@@ -44,7 +44,7 @@ export interface InstallRequest {
  * the scope they would change, and the packages still to be asked about,
  * first in line first. Each one is asked on its own and answered on its
  * own, and the answer is spent there — nothing stores it. */
-export interface PendingEffects {
+interface PendingEffects {
   scope: Scope;
   queue: Disclosure[];
 }

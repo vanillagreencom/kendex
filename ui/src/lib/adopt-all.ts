@@ -56,7 +56,7 @@ export function sharedLinkOf(group: MergedDriftRow): SharedLink | null {
 }
 
 /** Start managing a page of items, in the order they are read. */
-export type Adopt = (
+type Adopt = (
   kind: DriftRow["kind"],
   name: string,
   harnesses: DriftRow["harness"][],

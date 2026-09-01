@@ -17,8 +17,12 @@ import {
   type UpdateRow,
 } from "@/bindings";
 import { saying } from "@/lib/undone";
-import type { BulkOutcome } from "@/lib/update-outcome";
-import { type ApplyOutcome, applyRow, applyRows } from "./updates-apply";
+import {
+  type ApplyOutcome,
+  applyRow,
+  applyRows,
+  type Dispositions,
+} from "./updates-apply";
 
 /** Await a write and say whatever account its answer carries. */
 const announcing = async <T>(work: Promise<T>): Promise<T> =>
@@ -36,8 +40,8 @@ export const writeRow = (
 export const writeRows = (
   rows: UpdateRow[],
   report: Report,
-  outcome: BulkOutcome,
-): Promise<void> => announcing(applyRows(rows, report, outcome));
+  into: Dispositions,
+): Promise<void> => announcing(applyRows(rows, report, into));
 
 /** Mute or unmute a package's update notices. Answers with the overview it
  *  rebuilt after the write. */

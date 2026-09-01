@@ -103,7 +103,7 @@ const answer = (parts: {
   }) as never;
 
 const HELD_IN_CLAUDE =
-  "the copy in Claude Code needs attention on the package page";
+  "The copy in Claude Code was left as it is — settle it on the package page";
 
 describe("packageVersionActions", () => {
   beforeEach(() => {
@@ -133,9 +133,7 @@ describe("packageVersionActions", () => {
     actions(false).updateToLatest(version("b".repeat(40)));
     await vi.waitFor(() => expect(toast.info).toHaveBeenCalled());
     expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.info).toHaveBeenCalledWith(
-      `gh was not updated — ${HELD_IN_CLAUDE}`,
-    );
+    expect(toast.info).toHaveBeenCalledWith(HELD_IN_CLAUDE);
   });
 
   // A refused write is not a write that changed nothing. `package_set_rev`
@@ -203,20 +201,20 @@ describe("packageVersionActions", () => {
     actions(false).switchTo(version("c".repeat(40)));
     await vi.waitFor(() => expect(toast.info).toHaveBeenCalled());
     expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.info).toHaveBeenCalledWith(
-      `gh is set to v2, but nothing was written — ${HELD_IN_CLAUDE}`,
-    );
+    expect(toast.info).toHaveBeenCalledWith(HELD_IN_CLAUDE);
   });
 
+  // The partial case: written in one tool, refused in another. The refusal
+  // is the half somebody has to act on, so it is the half that is said —
+  // a success over it would leave the held copy unmentioned.
   it("names the tool a switch could not reach when it wrote the others", async () => {
     vi.mocked(commands.packageSetRev).mockResolvedValue(
       answer({ heldBack: [conflict("claude")], moved: [stale("codex")] }),
     );
     actions(false).switchTo(version("c".repeat(40)));
-    await vi.waitFor(() => expect(toast.success).toHaveBeenCalled());
-    expect(toast.success).toHaveBeenCalledWith(
-      `Updated gh to v2 — ${HELD_IN_CLAUDE}`,
-    );
+    await vi.waitFor(() => expect(toast.info).toHaveBeenCalled());
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith(HELD_IN_CLAUDE);
   });
 
   it("moves a held package's hold instead of applying it", async () => {
@@ -242,9 +240,7 @@ describe("packageVersionActions", () => {
     actions(true).updateToLatest(version("c".repeat(40)));
     await vi.waitFor(() => expect(toast.info).toHaveBeenCalled());
     expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.info).toHaveBeenCalledWith(
-      `gh is set to v2, but nothing was written — ${HELD_IN_CLAUDE}`,
-    );
+    expect(toast.info).toHaveBeenCalledWith(HELD_IN_CLAUDE);
   });
 
   it("says Follow source landed when the plan wrote the package", async () => {
@@ -268,9 +264,7 @@ describe("packageVersionActions", () => {
     actions(true).follow();
     await vi.waitFor(() => expect(toast.info).toHaveBeenCalled());
     expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.info).toHaveBeenCalledWith(
-      `Now following its source, but nothing was written — ${HELD_IN_CLAUDE}`,
-    );
+    expect(toast.info).toHaveBeenCalledWith(HELD_IN_CLAUDE);
   });
 
   it("says a copy that went to the trash was not replaced", async () => {
@@ -281,7 +275,7 @@ describe("packageVersionActions", () => {
     await vi.waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
-      "gh could not be installed — the copy in Claude Code went to the trash and nothing replaced it",
+      "The copy in Claude Code went to the trash and nothing replaced it",
     );
   });
 });

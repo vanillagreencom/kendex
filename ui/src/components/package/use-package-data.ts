@@ -10,19 +10,12 @@ import {
   type VersionRow,
 } from "@/bindings";
 import {
-  FOLLOW_SOURCE_STALLED_TOAST,
   FOLLOW_SOURCE_TOAST,
-  notSwitchedToastLead,
   updatedToastLabel,
   VERSION_ERROR_TITLE,
 } from "@/lib/copy";
 import { sameScope } from "@/lib/scope";
 import { settled } from "@/lib/settled";
-import {
-  type OutcomeLines,
-  showUpdateOutcome,
-  updateLines,
-} from "@/lib/update-outcome";
 import { versionRowLabel } from "@/lib/versions";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
@@ -30,6 +23,7 @@ import type { PackageRef } from "@/stores/nav";
 import { useProblemsStore } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
 import { holdingBusy, useUpdatesStore } from "@/stores/updates";
+import { sayApply } from "@/stores/updates-apply";
 import { writeRev, writeUpdate } from "@/stores/updates-writes";
 
 export type PackageView =
@@ -147,10 +141,11 @@ export function packageVersionActions(
   };
   // Every one of these applies a plan that can refuse a rendering, so
   // none of them toasts off the click: the command's own report says what
-  // reached the files, and `lines` is only how this surface words it.
-  // This page has no edited-row filter, and a refusal is broader than an
-  // edit anyway — files kendex never put there, a provenance clash — so
-  // the held answer arrives here whatever the page believes about edits.
+  // reached the files, and `done` is only this surface's word for having
+  // written the package. This page has no edited-row filter, and a refusal
+  // is broader than an edit anyway — files kendex never put there, a
+  // provenance clash — so the held answer arrives here whatever the page
+  // believes about edits.
   // Under the updates store's `busy` as well as the page's own spinner:
   // these commit like any update does, and the Updates page's check refuses
   // on that flag alone. Without it a check runs beside this write and lands
@@ -160,7 +155,7 @@ export function packageVersionActions(
       | { status: "ok"; data: PackageUpdate_Serialize }
       | { status: "error"; error: string }
     >,
-    lines: OutcomeLines,
+    done: string,
   ) => {
     setBusy(true);
     return holdingBusy(async () => {
@@ -178,18 +173,16 @@ export function packageVersionActions(
         afterChange();
         return;
       }
-      showUpdateOutcome(displayName, response.data, lines);
+      sayApply(done, response.data);
       afterChange();
     });
   };
 
-  const switchTo = (row: VersionRow) => {
-    const version = versionRowLabel(row);
-    return run(writeRev(ref.scope, ref.kind, ref.name, row.id), {
-      moved: updatedToastLabel(`${displayName} to ${version}`),
-      stalled: notSwitchedToastLead(displayName, version),
-    });
-  };
+  const switchTo = (row: VersionRow) =>
+    run(
+      writeRev(ref.scope, ref.kind, ref.name, row.id),
+      updatedToastLabel(`${displayName} to ${versionRowLabel(row)}`),
+    );
 
   // A held package moves its hold to the latest; a follower is brought
   // current by the single-package apply — Update never silently pins a
@@ -199,14 +192,11 @@ export function packageVersionActions(
       ? switchTo(latest)
       : run(
           writeUpdate(ref.scope, ref.kind, ref.name),
-          updateLines(displayName),
+          updatedToastLabel(displayName),
         );
 
   const follow = () =>
-    run(writeRev(ref.scope, ref.kind, ref.name, null), {
-      moved: FOLLOW_SOURCE_TOAST,
-      stalled: FOLLOW_SOURCE_STALLED_TOAST,
-    });
+    run(writeRev(ref.scope, ref.kind, ref.name, null), FOLLOW_SOURCE_TOAST);
 
   return { switchTo, updateToLatest, follow };
 }

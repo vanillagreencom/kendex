@@ -1,14 +1,6 @@
 // The product vocabulary, in one place: internal ids stay technical,
 // everything a person reads goes through these maps.
-import type {
-  DriftRow,
-  DriftState,
-  HarnessId,
-  ItemKind,
-  Scope,
-  Severity,
-  Tag,
-} from "@/bindings";
+import type { HarnessId, ItemKind, Scope, Severity, Tag } from "@/bindings";
 import type { Page } from "@/stores/nav";
 
 export const HARNESS_NAMES: Record<HarnessId, string> = {
@@ -68,18 +60,6 @@ export const TAG_LABELS: Record<Tag, string> = {
   integration: "Integration",
   automation: "Automation",
 };
-export const ALL_TAGS_FILTER_LABEL = "All tags";
-
-// What a pending change would do, from the reader's side. "Orphaned" is the
-// planner's word for an installed thing nothing declares any more; what a
-// person needs to know is that nothing asks for it.
-export const STATE_LABELS: Record<DriftState, string> = {
-  missing: "will be installed",
-  stale: "will be updated",
-  orphaned: "nothing asks for it",
-  unmanaged: "not managed yet",
-  conflict: "needs a decision",
-};
 
 // How serious a safety finding is, said without security jargon.
 export const SEVERITY_LABELS: Record<Severity, string> = {
@@ -101,32 +81,6 @@ export const SEVERITY_DOT_TONE: Record<
   low: "muted",
 };
 
-export type BadgeVariant =
-  | "default"
-  | "secondary"
-  | "destructive"
-  | "outline"
-  | "good"
-  | "warning"
-  | "critical"
-  | "info";
-
-export const STATE_BADGES: Record<DriftState, BadgeVariant> = {
-  missing: "info",
-  stale: "info",
-  orphaned: "outline",
-  unmanaged: "secondary",
-  conflict: "warning",
-};
-
-// How serious a safety finding reads at a glance.
-export const SEVERITY_BADGES: Record<Severity, BadgeVariant> = {
-  critical: "critical",
-  high: "warning",
-  medium: "info",
-  low: "secondary",
-};
-
 // "Personal" (Claude Code convention) lives in the home folder and applies everywhere; project items travel with the repo.
 export function scopeName(scope: Scope): string {
   if (scope.scope === "global") return "Personal";
@@ -143,36 +97,13 @@ export function hookDisplayName(id: string): string {
   return parts[parts.length - 1] || id;
 }
 
-// Detail text that only restates the state pill next to it is dropped so
-// the row reads once instead of twice.
-const REDUNDANT_DRIFT_DETAILS: Partial<Record<DriftState, string>> = {
-  missing: "not installed yet",
-  stale: "newer content is available",
-};
-
-export function driftDetail(row: DriftRow): string | null {
-  if (!row.detail) return null;
-  return REDUNDANT_DRIFT_DETAILS[row.state] === row.detail ? null : row.detail;
-}
-
-// The engine's skip reason reads long repeated across many rows, so the
-// clean-items summary uses this shortened paraphrase instead.
-const SKIP_REASON_SHORT: Record<string, string> = {
-  "the plugin's own files are not readable here — a declared plugin is one switch in a settings file until it is installed":
-    "not installed yet",
-};
-
 /** The engine writes its findings as sentence fragments; anywhere one
  *  stands on its own, it starts a sentence. */
 export function sentence(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-export function skipReasonShort(reason: string): string {
-  return SKIP_REASON_SHORT[reason] ?? "nothing here could be read";
-}
-
-export const PAGE_LABELS: Record<Page, string> = {
+const PAGE_LABELS: Record<Page, string> = {
   home: "Home",
   library: "My Library",
   marketplaces: "Marketplaces",
