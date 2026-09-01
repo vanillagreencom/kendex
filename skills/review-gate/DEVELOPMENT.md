@@ -103,8 +103,9 @@ per-repo values: a copy that differs is a copy someone edited.
 
 What it therefore never answers is what the TEMPLATE says. Both sides of the
 diff come from that one file, so an edit re-copied into every consumer is
-invisible here by construction. That question belongs to
-`tests/review-writer-template.test.sh` § The workflow template, upstream.
+invisible here by construction. That question belongs upstream, to the
+`[template]` block of `tests/review-writer-template.test.sh` (§ The workflow
+template below).
 
 What equality cannot express is handled in one of two ways, and the
 difference matters to anyone reading a clean run.
@@ -170,12 +171,32 @@ whether an adopted copy is still a copy; both sides of that diff come from
 this template, so editing the template and re-copying leaves it empty however
 broken the contract now is. The suite's `[template]` block therefore runs
 against the shipped template ALONE — equality already carries the template
-into every copy — and holds the classes equality cannot reach: the two job
-`if:` expressions byte-exact, the relay's isolation (no checkout, no
-`concurrency:`, no `issues: write`), the one `actions: write` and where it
-sits, `persist-credentials: false` counted against the checkouts, the bare
-default-branch ref with its guard ahead of the checkout and a nonzero exit,
-the `check_run` breaker's list against the job names, and the relay's timeout
-against its own retry budget. Its `relay:` battery then EXECUTES the relay
-step against a gh stub, over both copies. Both run here, upstream, on every
-change.
+into every copy — and holds the classes equality cannot reach: the relay's
+and the write job's `if:` expressions byte-exact; the load-bearing triggers
+(`workflow_dispatch`, the cron floor, no status state filter); the relay's
+isolation (no checkout, no `concurrency:`, no `issues: write`); the one
+`actions: write` and that it sits on the relay; the write job's single-writer
+group and its `cancel-in-progress: false`; `persist-credentials: false`
+counted against the checkouts; the two checkout `ref:` lines bare, with each
+guard ahead of its checkout and exiting nonzero; the relay's `DISPATCH_REF`,
+`WORKFLOW_REF` and `EVENT_NAME` bindings; its failure surface (a bounded
+dispatch attempt, no `mktemp`, both CR normalizers); the fork read-only flag
+and the VST-36 escalation arm; the `check_run` breaker's list against the job
+names; and the relay's timeout against its own retry budget.
+
+That set is CLOSED, and the block's own ledger comment is what closes it:
+every property the workflow rests on is either checked there or named in the
+ledger with the instrument that does cover it. Three sit in the ledger today,
+and the `relay:` battery — which EXECUTES the relay step against a gh stub,
+over both copies — is what covers the first two. Both run here, upstream, on
+every change.
+
+The battery covers BEHAVIOR, never a binding's presence: `_relay_once`
+supplies `DISPATCH_REF`, `WORKFLOW_REF` and `EVENT_NAME` as literals, so it
+proves the step degrades safely when one is missing and proves nothing about
+whether the file still carries it. That is why those three are `[template]`
+checks rather than ledger rows.
+
+Every pattern in the block is anchored to column and indentation. An
+unanchored substring counts a commented-out line, so commenting a setting out
+would leave its presence check green on a file that no longer carries it.
