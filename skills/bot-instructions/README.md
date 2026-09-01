@@ -82,12 +82,17 @@ bot output has to do about it.
 | [schemas/renders.md](schemas/renders.md) | Per-surface render rules, ordering and escaping |
 | [schemas/validators.md](schemas/validators.md) | Each validator's silent failure and what it rejects |
 | [references/limits.md](references/limits.md) | Vendor caps, enums and read semantics, each with its source |
-| [references/checklist.md](references/checklist.md) | The per-repo settings no file can configure |
+| [references/checklist.md](references/checklist.md) | How to add a repo, and the per-repo settings no file can configure |
 
 ## Adding a repo
 
 Write `bot-instructions.toml` at the repo root, moving each existing bot file's
-repo-specific claims into it and letting doctrine carry the rest. Run `adopt`
-and read the list of files it is taking over against the TOML. Render, read the
-diff, then work the settings checklist. A bot whose install or enablement step
-is skipped reviews nothing while every file in the repo looks correct.
+repo-specific claims into it and letting doctrine carry the rest. Add the
+`## Code Review Rules` heading to `AGENTS.md` by hand if `codex` is on, since
+the generator never adds it. Run `adopt`, which takes that region and every
+existing bot file over, and read what it names against the TOML. Render, read
+the diff, then work the settings. A bot whose install or enablement step is
+skipped reviews nothing while every file in the repo looks correct.
+
+The six steps in full, and the settings that follow them:
+[references/checklist.md](references/checklist.md).

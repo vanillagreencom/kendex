@@ -1,5 +1,38 @@
 # Per-repo settings checklist
 
+## Adding a repo
+
+1. Write `bot-instructions.toml` at the repo root per
+   [schemas/repo-toml.md](schemas/repo-toml.md). An existing hand-written bot
+   file is the source for its `[[surface]]` blocks and exclusions: read it,
+   move its repo-specific claims into the TOML, and let doctrine carry the
+   rest.
+2. If `[bots] codex` is true, add a `## Code Review Rules` heading to
+   `AGENTS.md` by hand. The generator never adds it, and `adopt` in the next
+   step is what takes the region it opens.
+3. Run `adopt`, which names every existing file and region it is taking over,
+   and every repo-root or `.github/` markdown file those files point at. That
+   second list is where a repo-wide hand-written reviewer file shows up — one
+   that restates doctrine and carries an accepted-trade-off list, reached only
+   because `AGENTS.md` and the Copilot file name it. Fold what it holds into
+   `[doctrine.append]` and `[[surface]]`; what will not fold stays hand-written
+   and is a policy path. Read both lists against the TOML: a claim in one of
+   those files that the TOML does not carry is about to be deleted, or to go on
+   steering reviews from outside the package.
+4. If `[bots] coderabbit` is true, put CodeRabbit's published schema at
+   `.bot-instructions/coderabbit-schema.json`. No verb writes it and
+   `coderabbit-schema` fails without it, deliberately: a validator that skipped
+   on a missing schema would be silent for the life of the repo, which is the
+   failure it exists to catch.
+5. Run `render`, then read the diff. Doctrine text appearing for the first time
+   is expected; a repo-specific claim disappearing means it never made it into
+   the TOML.
+6. Work the settings below. Every bot has at least one setting no file can
+   express, and a bot whose install or enablement step is skipped reviews
+   nothing while every file in the repo looks correct.
+
+## The settings
+
 Every bot here has at least one setting that lives in a web UI and cannot be
 expressed in any file the repo contains. Skip one and the repo looks fully
 configured while a bot reviews nothing, or reviews with the wrong scope, and no

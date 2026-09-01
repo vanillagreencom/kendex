@@ -119,9 +119,13 @@ set while `copilot`, `coderabbit`, `macroscope` and `qodo_best_practices` are
 all false: surface text has no route to any other bot, so those surfaces are
 instructions the author wrote and nothing will ever read.
 
-A flag combination that renders nothing readable is the same defect as a flag
-that renders a file reaching nothing. Both fail here rather than rendering
-clean.
+Each of those is a flag combination where something enabled reaches nothing —
+a file with no reader, a surface with no route, a bot missing the surface its
+doctrine goes through. That is the shape these clauses catch, and it is
+narrower than "renders nothing readable": **every flag false is a legitimate
+state and passes.** `repo-toml.md` § `[bots]` says why, and `render` reports the
+no-op rather than exiting quietly, since a silent nothing is the failure mode
+this package exists to remove.
 
 ## `doctrine-routing`
 
@@ -198,8 +202,9 @@ instead of quietly widening the gap.
 true, on both verbs. Never a skipped validator: no verb writes that file, so
 every repo starts without one, and a validator that skipped on its absence
 would be silent for the life of a repo that never vendored it — which is the
-failure this validator exists to catch, one level up. SKILL.md § Adding a repo
-carries the step that puts the first copy there, and the absent file is one of
+failure this validator exists to catch, one level up. `references/checklist.md`
+§ Adding a repo carries the step that puts the first copy there, and the absent
+file is one of
 this validator's controls.
 
 **Rejects, also.** A schema keyword the validator does not implement. A
@@ -351,7 +356,11 @@ is the absence of a comment it was expecting.
 
 **Rejects.** In a generated correctness file for a `[[surface]]`: a frontmatter
 key other than `include` or `exclude`, a value that is not a YAML array of
-strings, and an `include` that is empty **or absent**. Absent is the one that
+strings, an `include` that is empty **or absent**, and a body carrying no
+instruction text below the marker. That last one is what makes SKILL.md's
+promise that surface text reaches Macroscope true rather than assumed: without
+it a render could emit frontmatter and a marker, satisfy every other clause
+here, and tell Macroscope nothing. Absent is the one that
 matters: omitted frontmatter applies repo-wide, so a renderer bug dropping
 `include` silently widens a path-scoped surface to the whole repository with
 every validator green.

@@ -124,7 +124,9 @@ The generator offers three verbs.
   carry this package's marker, and it reads that marker on the file it has
   opened to replace rather than on some prior pass over the repo, so nothing
   can slip into the gap; `adopt` takes such a file over, printing what it
-  replaced so the diff shows the content that has to survive in the TOML.
+  replaced so the diff shows the content that has to survive in the TOML. It
+  takes a region over the same way, which is how a hand-added `AGENTS.md`
+  heading becomes managed.
 
 There is no install-time placement step, no overwrite prompt, and no merge of
 hand edits back into doctrine. A generated file is either byte-identical to its
@@ -141,7 +143,9 @@ generator owns exactly the slice from the `## Code Review Rules` heading to the
 next heading at that level or above, and never the rest, and it opens that slice
 with the marker so the region is as identifiable as a whole file. It never
 creates `AGENTS.md` and never adds the heading: a repo without that section is
-an error telling the author to add the heading and render again.
+an error telling the author to add the heading, `adopt`, then render. The
+`adopt` step is not optional there — a hand-added heading is an unmarked region
+at a generated path, which is exactly what `render` refuses.
 
 Codex also reads the nearest nested `AGENTS.md` covering each changed file. The
 generator writes only the root section, so a nested `AGENTS.md` carrying a
@@ -285,8 +289,8 @@ line points here rather than repeating it, so the two cannot drift.
   as a generated one, and nothing else here judges it. The last two this package
   never writes at all, which makes them unmanaged surfaces rather than
   unmanaged files.
-- Any repo-wide reviewer file the repo keeps by hand. § Adding a repo says what
-  becomes of one.
+- Any repo-wide reviewer file the repo keeps by hand.
+  `references/checklist.md` § Adding a repo says what becomes of one.
 
 Two asymmetries are worth knowing. Macroscope reads the default branch for a
 fork pull request, so a fork cannot weaken its own review the way a branch
@@ -402,28 +406,8 @@ recommend parsing them.
 
 ## Adding a repo
 
-1. Write `bot-instructions.toml` at the repo root per
-   [schemas/repo-toml.md](schemas/repo-toml.md). An existing hand-written bot
-   file is the source for its `[[surface]]` blocks and exclusions: read it,
-   move its repo-specific claims into the TOML, and let doctrine carry the
-   rest.
-2. Run `adopt`, which names every existing file it is taking over, and every
-   repo-root or `.github/` markdown file those files point at. That second list
-   is where a repo-wide hand-written reviewer file shows up — the kind that
-   restates doctrine and carries an accepted-trade-off list, reached only
-   because `AGENTS.md` and the Copilot file name it. Fold what it holds into
-   `[doctrine.append]` and `[[surface]]`; what will not fold stays hand-written
-   and is a policy path. Read both lists against the TOML: a claim in one of
-   those files that the TOML does not carry is about to be deleted, or to go on
-   steering reviews from outside the package.
-3. If `[bots] coderabbit` is true, put CodeRabbit's published schema at
-   `.bot-instructions/coderabbit-schema.json`. No verb writes it and
-   `coderabbit-schema` fails without it, deliberately: a validator that skipped
-   on a missing schema would be silent for the life of the repo, which is the
-   failure it exists to catch.
-4. Run `render`, then read the diff. Doctrine text appearing for the first time
-   is expected; a repo-specific claim disappearing means it never made it into
-   the TOML.
-5. Work [references/checklist.md](references/checklist.md). Every bot has at
-   least one setting no file can express, and a bot whose install or enablement
-   step is skipped reviews nothing while every file below looks correct.
+The procedure is [references/checklist.md](references/checklist.md) § Adding a
+repo, beside the settings work it runs into. It is six steps, and the two worth
+knowing before you start are that a repo with `[bots] codex` adds the
+`## Code Review Rules` heading by hand before `adopt`, and that `adopt` is what
+makes both that region and any existing bot file managed.

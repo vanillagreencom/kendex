@@ -215,8 +215,17 @@ whose heading carries trailing whitespace gets an error naming the byte rather
 than a render its own guard rejects.
 
 **Missing section.** An error. The generator never creates `AGENTS.md` and
-never adds the heading. Guidance for the repo: add the heading by hand, then
-render.
+never adds the heading.
+
+**The bootstrap is add-the-heading, then `adopt`, then `render`.** A hand-added
+heading leaves an unmarked region at a generated path, and `render` refuses to
+replace one of those — the rule that stops it destroying hand-written bot
+files. `adopt` is the verb that makes an unmanaged thing managed, and a region
+is no different from a file in that respect, so it takes the region over and
+names it in what it prints. No bootstrap exemption: an exemption would need a
+boundary between a region `render` may write unmarked and a hand-written one it
+must refuse, and every boundary anyone can state there reopens the overwrite the
+marker gate exists to prevent.
 
 **The splice happens at write time.** The build phase produces the region's
 body; the write re-reads `AGENTS.md`, locates the owned region in those bytes,
@@ -543,11 +552,14 @@ eight: `.macroscope/` is Macroscope's only instruction surface, it reads no
 `AGENTS.md`, and a block left out here reaches it nowhere. Its name is reserved,
 as are `correctness` and the two `.macroscope/` root names.
 
-**`.macroscope/correctness/<name>.md`.** One per `[[surface]]`, frontmatter
+**`.macroscope/correctness/<name>.md`.** One per `[[surface]]`: frontmatter
 `include` from `globs` and `exclude` from `exclude_globs`, both as YAML string
-arrays. Macroscope evaluates `exclude` after `include`, which matches the
-TOML's meaning directly, so this is the one surface where the subtraction needs
-no restatement in prose.
+arrays, then the marker, then the surface's `instructions` as the body. The body
+is the point of the file — a marker and frontmatter with no guidance under them
+is a correctness file that tells Macroscope nothing, which is what
+`macroscope-render` rejects. Macroscope evaluates `exclude` after `include`,
+which matches the TOML's meaning directly, so this is the one surface where the
+subtraction needs no restatement in prose.
 
 **Not written.** `.macroscope/check-run-agents/`,
 `.macroscope/approvability.md`, and `.macroscope/correctness/correctness.md`.

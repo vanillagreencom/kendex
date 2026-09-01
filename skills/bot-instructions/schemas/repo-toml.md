@@ -159,7 +159,19 @@ reach nothing.
 | `qodo_review_md` | `REVIEW.md`. Inert until the portal's "REVIEW.md instructions" toggle is on, which is why it is a flag someone sets after doing the checklist line rather than something the generator infers |
 | `macroscope` | the `.macroscope/` tree |
 
-Three flag combinations are errors, all enforced by `toml-schema`:
+**Every flag false is not an error.** A TOML that enables nothing renders
+nothing, and that is a state worth holding: it is how a repo commits its
+`bot-instructions.toml` at step 1 of `references/checklist.md` § Adding a repo,
+before its settings work has enabled anything, and how a fleet stages a rollout
+one bot at a time. The default being `false` is what makes that the safe
+direction — a minimal TOML
+writes no file the repo did not ask for. `render` says it wrote nothing rather
+than exiting quietly, so an operator who expected files learns the flags are
+off; rendering nothing in silence would be the thing this package exists to
+prevent.
+
+What is an error is a flag combination where something enabled reaches nothing.
+Three of those, all enforced by `toml-schema`:
 
 - `qodo_best_practices` or `qodo_review_md` true with `qodo` false.
 - `copilot` or `coderabbit` true with `codex` false. Both read the `AGENTS.md`
