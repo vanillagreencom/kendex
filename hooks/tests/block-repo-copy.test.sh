@@ -33,10 +33,11 @@ assert_contains() {
 }
 
 # The command reaches the hook JSON-encoded, exactly as the harness sends it.
+# jq does the encoding rather than sed: a Bash tool call is routinely several
+# lines, and a raw newline inside a JSON string is not JSON, so a sed-built
+# fixture could not express the multi-line rows at all.
 json_for() {
-  local c
-  c=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')
-  printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$c"
+  jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}'
 }
 
 run_hook() { # command -> rc, stderr in $err
@@ -86,6 +87,11 @@ run_hook "cp $REPO/target/debug/kendex /tmp/kendex"; assert_eq "$rc" 0 'one file
 run_hook "git clone --depth 1 https://github.com/o/r.git /tmp/r"; assert_eq "$rc" 0 'a clone URL merely ending in .git is not a .git component'
 run_hook "cp -r /home/agent/dl/mytarget /tmp/x"; assert_eq "$rc" 0 'a word merely ending in target is not the build tree'
 run_hook "rsync -a build-target/ /tmp/out";    assert_eq "$rc" 0 'a hyphenated name ending in target is not it either'
+# The marker standing as the FIRST operand, whose left edge is the one
+# separator after the verb. The clone URL and build-target rows above are the
+# passing partners: the same words, one character later, are not the marker.
+run_hook "cp .git /tmp/x";                     assert_eq "$rc" 2 'a marker as the first operand is still the marker'
+run_hook "git clone .git /tmp/scratch";        assert_eq "$rc" 2 'a local clone of the repository into scratch is refused'
 
 echo "=== block-repo-copy: the destination half of the predicate ==="
 run_hook "cp -r $REPO/.git /var/tmp/copy";   assert_eq "$rc" 2 '/var/tmp is a scratch destination'
@@ -99,6 +105,18 @@ run_hook "cp -r $REPO/.git \"/tmp/x\"";      assert_eq "$rc" 2 'a quoted destina
 run_hook "cp -r $REPO/.git /srv/archive/keepme"; assert_eq "$rc" 0 'a repository copied outside scratch is allowed'
 run_hook "cp -r $REPO/.git /home/agent/tmp/x";   assert_eq "$rc" 0 'a temp root spelled inside a longer path is not the temp root'
 run_hook "cp -r $REPO/.git /tmpfoo/x";           assert_eq "$rc" 0 'nor is one a longer first component merely starts with'
+
+echo "=== block-repo-copy: one copy, not three commands ==="
+# A `;`, an `&` and a newline end a command, so unrelated commands standing
+# beside each other do not add up to one copy. Each pair differs only in
+# whether the three parts stand within one command. The pipe is the one
+# separator the scan crosses, and the create-to-extract row above is why.
+run_hook "$(printf 'cp README.md /home/me/out\necho target\necho /tmp')"
+assert_eq "$rc" 0 'a verb, a marker and a temp path on three lines are three commands'
+run_hook "$(printf 'ls /home/me\ncp -r %s/.git /tmp/x' "$REPO")"
+assert_eq "$rc" 2 'and a copy standing whole on the second line is refused'
+run_hook "cp -r $REPO/.git /srv/keep; ls /tmp"; assert_eq "$rc" 0 'a semicolon ends the copy before the temp path'
+run_hook "cp -r $REPO/.git /tmp/keep; ls /srv"; assert_eq "$rc" 2 'and a copy whole before the semicolon is refused'
 
 echo "=== block-repo-copy: commands that are not copies at all ==="
 run_hook "git status --short";               assert_eq "$rc" 0 'a non-copy command passes'

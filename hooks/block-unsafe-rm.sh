@@ -32,13 +32,19 @@ if ! COMMAND=$(printf '%s' "$INPUT" \
   exit 2
 fi
 
-# The whole rule, built from named parts so each one is readable on its own:
+# The whole rule, built from named parts so each one is readable on its own.
+# ENDERS is the one definition of where a command stops, and every other part
+# is built from it, so no two of them can answer "how far does this rm reach?"
+# differently:
 #
-#   POSITION  `rm` in command position — the start of the command, a newline,
-#             one of the characters that end a command, or a `then`/`do`/`else`
-#             keyword. A word before it that is none of those makes it another
-#             command's argument, so `git rm -r --cached $X` is git's and not
-#             this hook's. The newline is in the class because bash's `=~` runs
+#   ENDERS    the characters that END one command: `;`, `&`, `|` and a newline.
+#             The newline is one of them because a newline both starts a
+#             command and ends the one before it.
+#   POSITION  `rm` in command position — the start of the command, one of
+#             ENDERS, a brace or parenthesis, or a `then`/`do`/`else` keyword.
+#             A word before it that is none of those makes it another command's
+#             argument, so `git rm -r --cached $X` is git's and not this
+#             hook's. The newline earns its place here because bash's `=~` runs
 #             without REG_NEWLINE, so `^` anchors the whole command and nothing
 #             else would reach line two of a multi-line call.
 #   RECURSE   a flag word that means recursion: a single-dash cluster carrying
@@ -54,10 +60,19 @@ fi
 #             A leading double quote is peeled, since quoting does not stop an
 #             empty expansion; a single-quoted run is a literal the shell never
 #             expands and is not a variable root.
+#   GAP       the whitespace standing between two words of ONE command. It is
+#             horizontal whitespace and nothing else, because the only
+#             whitespace character in ENDERS is the newline: a gap that crossed
+#             one would read the next command's words as this rm's operands.
+#   SPACE     whitespace INCLUDING that newline, spelled apart from GAP so the
+#             two places it belongs are the two places it stands: around the
+#             POSITION keywords, where a newline is the separator that puts the
+#             rm in command position, and after a trailing RECURSE, where a
+#             newline ends the flag word rather than reaching past it.
 #   SKIP      the words the scan crosses to get from one part to the next,
-#             built from CROSSABLE: any character but `; & | < >`. The
-#             separators would end this rm, and a redirection target is not an
-#             operand at all, so `rm -rf /var/tmp/x > $LOG` is not a
+#             built from GAP and CROSSABLE — any character but ENDERS, `<` and
+#             `>`. An ender would end this rm, and a redirection target is not
+#             an operand at all, so `rm -rf /var/tmp/x > $LOG` is not a
 #             variable-rooted rm. Crossing ordinary words is what reaches a
 #             LATER operand and a flag written after the operand, both of which
 #             GNU rm accepts.
@@ -71,13 +86,20 @@ fi
 # lexical-scanner class, and a finding of that shape against this file is
 # declined, not patched. The harness prompt still stops every one of them; what
 # it costs is the stall this hook exists to spare.
-NL=$'\n'
-POSITION='(^|['"$NL"';&|(){}]|[[:space:]](then|do|else)[[:space:]])[[:space:]]*rm'
-RECURSE='(-[^-[:space:]]*[rR][^[:space:]]*|--recursive)'
+ENDERS=';&|'$'\n'
+# BLANK and SPACE_ANY are the class names as they are spelled INSIDE a bracket
+# expression, so the same two definitions serve a class of their own and a
+# member of a larger one.
+BLANK='[:blank:]'
+SPACE_ANY='[:space:]'
+GAP="[${BLANK}]"
+SPACE="[${SPACE_ANY}]"
+POSITION="(^|[${ENDERS}(){}]|${SPACE}(then|do|else)${SPACE})${SPACE}*rm"
+RECURSE="(-[^-${SPACE_ANY}]*[rR][^${SPACE_ANY}]*|--recursive)"
 ROOT='"*\$([A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*([^:A-Za-z0-9_]|:[^?]))'
-CROSSABLE='[^;&|<>[:space:]]'
-SKIP="([[:space:]]+${CROSSABLE}+)*"
-UNSAFE_RE="${POSITION}${SKIP}[[:space:]]+(${RECURSE}${SKIP}[[:space:]]+${ROOT}|${ROOT}${CROSSABLE}*${SKIP}[[:space:]]+${RECURSE}([[:space:]]|\$))"
+CROSSABLE="[^${ENDERS}<>${SPACE_ANY}]"
+SKIP="(${GAP}+${CROSSABLE}+)*"
+UNSAFE_RE="${POSITION}${SKIP}${GAP}+(${RECURSE}${SKIP}${GAP}+${ROOT}|${ROOT}${CROSSABLE}*${SKIP}${GAP}+${RECURSE}(${SPACE}|\$))"
 
 if [[ ! $COMMAND =~ $UNSAFE_RE ]]; then
   exit 0

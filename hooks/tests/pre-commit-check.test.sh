@@ -146,9 +146,12 @@ echo "a git word with a later commit word is the commit"
 
 both 'git commit -m test' 0 2 "a plain commit"
 both 'cargo fmt\ngit commit -m x' 0 2 "a commit on the next line"
-# The three characters the git word's prefix strip drops through. A path and a
-# `$(` are separated by the substitution above; a backtick is not, so the strip
-# is the only thing that makes it a git word.
+# The two characters of the git word's prefix strip that still decide a row: a
+# path and a backtick, neither of which the substitution above separates. It
+# does separate a `$(`, so a command substitution already arrives as a `git`
+# word and asks the strip for nothing — the `$` and `(` in the strip class are
+# what keeps these rows green in a build where that substitution is not there,
+# and they stay for that reason rather than because a row needs them.
 both '/usr/bin/git commit -m x' 0 2 "an absolute git path"
 both 'x=$(git commit -m x)' 0 2 "a commit inside a command substitution"
 both '`git commit '"$NV"' -m x`' 2 2 "a backtick-enclosed commit"

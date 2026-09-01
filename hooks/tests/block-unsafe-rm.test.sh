@@ -72,6 +72,7 @@ run_hook 'rm -rf $X > /var/tmp/log';  assert_eq "$rc" 2 'a redirection after the
 # GNU rm accepts both shapes.
 run_hook 'rm -rf /literal/path "$DIR/sub"'; assert_eq "$rc" 2 'a variable root in a LATER operand is refused'
 run_hook 'rm $DIR/sub -rf';           assert_eq "$rc" 2 'a recursion flag standing after the operand is refused'
+run_hook 'rm build -rf $X';           assert_eq "$rc" 2 'a literal operand before the flag does not hide a later variable root'
 
 echo "=== block-unsafe-rm: the operand half of the predicate ==="
 # Same verb, same flags, an operand that cannot collapse to /: the operand is
@@ -115,6 +116,13 @@ run_hook "$(printf 'rm\t-rf\t%s' '$X')";        assert_eq "$rc" 2 'tabs separate
 # start of the WHOLE command, so the newline has to be a separator of its own.
 run_hook "$(printf 'cd /x\nrm -rf "%s/x"' '$D')"; assert_eq "$rc" 2 'an rm on the second line is in command position'
 run_hook "$(printf 'cd /x\nrm -rf /var/tmp/x')"; assert_eq "$rc" 0 'and a literal path on the second line still passes'
+# A newline also ENDS the command before it, and so does a `;` — the words of
+# the next command are not this rm's operands. Each pair differs only in
+# whether that next command is itself a variable-rooted rm.
+run_hook "$(printf 'rm -rf /var/tmp/x\ncat %s' '$F')";    assert_eq "$rc" 0 'a later line is a command of its own, not an operand of this rm'
+run_hook "$(printf 'rm -rf /var/tmp/x\nrm -rf %s' '$F')"; assert_eq "$rc" 2 'and a variable-rooted rm on that later line is still refused'
+run_hook 'rm -rf /var/tmp/x; echo $HOME';                 assert_eq "$rc" 0 'a semicolon ends it the same way'
+run_hook 'rm -rf /var/tmp/x; rm -rf $HOME';               assert_eq "$rc" 2 'and the rm after it is judged on its own operands'
 # A word that is none of those in front of rm makes it another command's
 # argument, which this hook does not judge.
 run_hook 'git rm -r --cached $X';     assert_eq "$rc" 0 'git rm is not rm'

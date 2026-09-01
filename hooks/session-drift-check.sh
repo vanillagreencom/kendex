@@ -36,11 +36,7 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "kendex drift check skipped: jq is not on PATH to read the session payload"
   exit 0
 fi
-# The null test is spelled out rather than written `// ""`, which reads `false`
-# as absent: the other three hooks of this package read their payload that way
-# and all four should answer a key the same.
-if ! SOURCE=$(printf '%s' "$INPUT" \
-  | jq -r 'if .source == null then "" else .source end' 2>/dev/null); then
+if ! SOURCE=$(printf '%s' "$INPUT" | jq -r '.source // ""' 2>/dev/null); then
   echo "kendex drift check skipped: the session payload is not valid JSON"
   exit 0
 fi
