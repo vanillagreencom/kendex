@@ -538,9 +538,9 @@ catches a retirement that skipped the render, not the ordinary route. The
 generator reports rather than deletes because removing a file is a decision the
 commit's author makes, and sometimes the fix is not a deletion at all: another
 check in the repo may require the file, in which case what that check reads
-moves first. kendex is the worked example — its `tools/guard` fails when
-`.github/copilot-instructions.md` is absent, so retiring `[bots] copilot` there
-is move the pointer, delete the file, then render.
+moves first: retiring `[bots] copilot` in a repo whose own gate reads
+`.github/copilot-instructions.md` is move the pointer, delete the file, then
+render.
 
 **De-orphaning the `AGENTS.md` region** is not a deletion of the file. The
 heading is the repo's and has to survive; what goes is the marker and the body

@@ -41,8 +41,8 @@ never a machine-local `.agents` symlink.
 ## Requirements
 
 `git`, `awk`, and the usual POSIX userland; Bash 3.2 compatible.
-`shellcheck`, `jq`, `taplo` and `python3` (with PyYAML) are each optional and
-each enable one lane; a lane whose tool is missing skips silently.
+`shellcheck`, `jq`, `taplo` and `python3` are each optional and each enable
+one lane; a lane whose tool is missing skips silently.
 
 Lane table, scope rules, and the subtrees each lane skips:
 [SKILL.md](SKILL.md).

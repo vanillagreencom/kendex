@@ -756,5 +756,44 @@ case "$OUT" in
   *) ok "control: a scanned path is never named as unmeasured" ;;
 esac
 
+echo "=== the shared readers fail closed, once, for every lane that uses them ==="
+
+# gg_grep_guard and gg_read_blob are the family's index readers: every lane
+# collects through them, so an incomplete scan is refused HERE, once.
+REAL_GIT="$(command -v git)"
+git_failing_on() { # ARG — run the lane under a git that exits 128 for ARG
+  local dir="$TMP/git-shim-$1"; mkdir -p "$dir"
+  printf '#!/usr/bin/env bash\ncase " $* " in *" %s "*) echo "git %s: simulated failure" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$1" "$1" "$REAL_GIT" >"$dir/git"
+  chmod +x "$dir/git"; RC=0
+  OUT="$(cd "$R" && PATH="$dir:$PATH" "$SCRIPTS/todo-ban" 2>&1)" || RC=$?
+}
+refused() { # LABEL NEEDLE — exit 2 carrying NEEDLE, and never a clean verdict
+  [ "$RC" -eq 2 ] && case "$OUT" in *"$2"*) true ;; *) false ;; esac \
+    && ok "$1" || bad "$1" "rc=$RC out=$OUT"
+  case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany $1" "$OUT" ;; *) ok "and no OK verdict accompanies it" ;; esac
+}
+
+new_repo readers
+printf '// %s: stranded work\n' "$MARKER" >"$R/a.rs"
+git -C "$R" add -A
+run_check todo-ban
+[ "$RC" -eq 1 ] && ok "control: the staged marker trips with the real git" \
+  || bad "control: the staged marker trips" "rc=$RC out=$OUT"
+git_failing_on grep
+refused "a git grep execution failure is a collection error, never OK" "git grep failed scanning tracked files"
+git_failing_on cat-file
+refused "a blob read that cannot run is exit 2, never a path skipped" "refusing to skip an unread work marker"
+# git spends no error status on a staged blob it cannot read: the `error:`
+# line on stderr is all that separates a partial scan from a clean one.
+OID="$(git -C "$R" rev-parse :a.rs)"
+[ -f "$R/.git/objects/${OID:0:2}/${OID:2}" ] || bad "fixture: the staged blob is a loose object" "$OID"
+rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
+run_check todo-ban
+refused "a vanished staged blob is exit 2 carrying git's own error line" "unable to read"
+printf '// %s: readable\n' "$MARKER" >"$R/b.rs"
+git -C "$R" add b.rs
+run_check todo-ban
+refused "a scan matching one file it read and one it could not is exit 2, never a violation" "unable to read"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

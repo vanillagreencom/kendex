@@ -41,7 +41,6 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   printf '#!/usr/bin/env bash\nset -euo pipefail\necho hook\n' >"$R/hooks/real.sh"
   # Pre-existing violations, committed: untouched lines must stay invisible.
   printf '# Legacy\n\nSee `docs/gone.md` for background.\n' >"$R/docs/legacy.md"
-  printf '# History\n\nClamped in review (qodo PR #431).\n' >"$R/docs/history.md"
   printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d)"\n' >"$R/scripts/old.sh"
   printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho old\n' >"$R/scripts/pointer.sh"
   printf 'CREATE TABLE t (id INTEGER);\n' >"$R/store/migrations/V1__init.sql"
@@ -111,7 +110,7 @@ DOC='docs/gone.md'
 echo "$MSG" "$DOC"
 EOF
 # Test-named source files plant fixture paths on purpose.
-printf '// fixture cite: docs/gone.md\nconst s = "Hardened per codex review.";\n' >"$R/scripts/widget.test.ts"
+printf '// fixture cite: docs/gone.md\nconst s = "a fixture path";\n' >"$R/scripts/widget.test.ts"
 # Data files cite paths as values and generated example comments.
 printf '# rust = "Read docs/gone.md before coding."\n# Read docs/gone.md.\nkey = 1\n' >"$R/data/example.toml"
 {
@@ -130,22 +129,7 @@ printf '# rust = "Read docs/gone.md before coding."\n# Read docs/gone.md.\nkey =
   printf 'TODO hygiene is preflight job now, so reviewers stop chasing it.\n'
   printf 'Scaffolding placeholders are not work items either: description: TODO - describe this agent.\n'
   printf 'Nor is a bare - TODO bullet, nor TODOS as a heading word.\n'
-  # Naming a bot is not crediting one: reviewer docs, gate config naming the
-  # bot account, and a product name sharing the word are all prose about
-  # behavior, not provenance.
-  printf 'Copilot and Codex are the flat-rate reviewers now; qodo was dropped.\n'
-  printf 'The merge gate waits for the copilot review to land, then queues.\n'
-  printf 'Reviewer gate: Copilot (copilot-pull-request-reviewer) auto-reviews every PR.\n'
-  printf 'Auth is Codex OAuth (Codex OAuth, no openai key).\n'
-  printf 'Rules live in .github/copilot-instructions.md, per copilot instructions convention.\n'
-  printf 'The option landed upstream (codex-cli PR #123), not here.\n'
-  printf 'The gate records one status per Codex review before it queues anything.\n'
-  printf 'See the open-codex review of #12 for the upstream fix.\n'
 } >"$R/README.md"
-# The changelog is the sanctioned home for rationale, and a test tree sets
-# its own rules — an attribution in either is nobody's finding.
-printf '# Changelog\n\n- clamp tightened; drops the flaky retry (qodo PR #431)\n' >"$R/CHANGELOG.md"
-printf '# Notes\n\nReworked (Copilot review of #212).\n' >"$R/tests/notes.md"
 # A doc outside the root speaks about another subtree, not about our files.
 printf '# Notes\n\nThe installer writes `hooks/kendex-autorepair` into the consumer.\n' >"$R/docs/notes.md"
 printf '{\n  "ok": true\n}\n' >"$R/data/ok.json"
@@ -191,11 +175,10 @@ EOF
 printf '{\n  // a comment: this dialect is real and jq is right to reject it\n  "strict": true\n}\n' >"$R/tsconfig.json"
 git -C "$R" add -A
 run_pf
-clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, wired suites, trapped scratch dirs, captured statuses, the same shapes named in a comment or a string, bot mentions, exempt changelogs, or JSON-with-comments"
+clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, wired suites, trapped scratch dirs, captured statuses, the same shapes named in a comment or a string, or JSON-with-comments"
 
 echo "=== control: the same fixture still fails on a real defect ==="
 printf 'And a citation that is dead: `docs/gone.md`.\n' >>"$R/README.md"
-printf 'Hardened per qodo review.\n' >>"$R/README.md"
 printf '# and a source line whose citation is dead: docs/gone.md\n' >>"$R/scripts/cites.sh"
 printf '# and a line-qualified local citation is still judged: docs/gone.md:42\n' >>"$R/scripts/cites.sh"
 printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/notrap.sh"
@@ -203,10 +186,9 @@ printf '#!/usr/bin/env bash\nset -euo pipefail\necho x\ngit rev-parse --git-dir 
 printf '#!/usr/bin/env bash\nset -euo pipefail\necho orphan\n' >"$R/tests/orphan.test.sh"
 git -C "$R" add -A
 run_pf
-fires "the benign fixture is not clean because nothing ran" "README.md:24: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+fires "the benign fixture is not clean because nothing ran" "README.md:16: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 fires "the benign source file is not clean because nothing ran" "scripts/cites.sh:12: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 fires "a line-suffixed local citation is not mistaken for a repo qualifier" "scripts/cites.sh:13: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
-fires "the same benign bot mentions do not shield a real credit beside them" "README.md:25: [reviewer-attribution]"
 fires "the trapped scratch dir beside it does not shield an untrapped one" "scripts/notrap.sh:3: [mktemp-trap]"
 fires "the captured status beside it does not shield a swallowed one" "scripts/swallow.sh:4: [fail-open] git || true swallows exit 2"
 fires "the wired suites beside it, and the workflow path filter globbing everything, do not wire an unwired one" "tests/orphan.test.sh:0: [unwired-suite]"
@@ -504,20 +486,17 @@ fires "the benign temp-path fixture was not clean because nothing ran" "src/crea
 
 echo "=== violations on lines this diff did not touch stay invisible ==="
 seed untouched
-printf '# History\n\nClamped in review (qodo PR #431).\n\nMore history.\n' >"$R/docs/history.md"
 printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d)"\necho "$TMP"\n' >"$R/scripts/old.sh"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho old\necho more\n' >"$R/scripts/pointer.sh"
 git -C "$R" add -A
 run_pf
-clean "appending to files whose older lines violate three lanes reports nothing"
+clean "appending to files whose older lines violate two lanes reports nothing"
 
 echo "=== control: touching those same lines makes them this diff's problem ==="
-printf '# History\n\nReworked in review (qodo PR #431).\n\nMore history.\n' >"$R/docs/history.md"
 printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d -t x)"\necho "$TMP"\n' >"$R/scripts/old.sh"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background, still.\necho old\necho more\n' >"$R/scripts/pointer.sh"
 git -C "$R" add -A
 run_pf
-fires "the reworded attribution line fires" "docs/history.md:3: [reviewer-attribution]"
 fires "the reworked mktemp line fires" "scripts/old.sh:3: [fail-open] unchecked mktemp"
 fires "the reworked dead-citation line fires" "scripts/pointer.sh:3: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 
@@ -642,12 +621,10 @@ printf '#!/usr/bin/env bash\nif [ 1 -eq 1 ]\necho broken\n' >"$R/.agents/skills/
 printf '#!/usr/bin/env bash\nset -euo pipefail\nexit 300\n' >"$R/.agents/skills/foo/scripts/exitcode"
 printf 'import os\nos.makedirs("%s/vendored-leak")\n' /tmp >"$R/.agents/skills/foo/scripts/leak.py"
 printf '{\n  "a":\n}\n' >"$R/.agents/skills/foo/data.json"
-printf '# Notes\n\nHardened per qodo review.\n' >"$R/.agents/skills/foo/NOTES.md"
 run_pf
 fires "a vendored script bash cannot parse still fails" ".agents/skills/foo/scripts/broken:4: [shell-syntax]"
 fires "a vendored creation at a literal temp path still fails" ".agents/skills/foo/scripts/leak.py:2: [hardcoded-temp-path]"
 fires "vendored malformed JSON still fails" ".agents/skills/foo/data.json:3: [data-syntax]"
-fires "a vendored reviewer credit still fails" ".agents/skills/foo/NOTES.md:3: [reviewer-attribution]"
 if command -v shellcheck >/dev/null 2>&1; then
   fires "a vendored shellcheck error still fails" ".agents/skills/foo/scripts/exitcode:3: [shellcheck-errors] SC2242"
 else

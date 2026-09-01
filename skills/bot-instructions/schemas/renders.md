@@ -281,9 +281,9 @@ body and touches nothing else in the file.
 
 The two ends use different predicates, deliberately. The **opening** matches
 `^## Code Review Rules$` exactly — no trailing whitespace, no CR, no leading
-BOM — because kendex's `tools/guard` slices this section the same way, and a
-heading a looser generator accepted would be one that repo's guard reports as
-missing. Exactly one such heading must exist: zero is an error, and two is an
+BOM — so the heading this generator writes is the heading a repo's own
+line-anchored reader finds, rather than one accepted here and missed there.
+Exactly one such heading must exist: zero is an error, and two is an
 error rather than a guess about which one to replace. The **terminator** is
 `scripts/lib/markdown.py`'s heading predicate at level 1 or 2, which every site
 in this package reads.
@@ -293,13 +293,13 @@ and both halves carry weight in opposite directions. Missing a following
 section whose `#` sits after one to three spaces would let the splice swallow
 that section and everything below it — markdown reads it as a heading, so the
 repo owns it. Ending the region at a `##note` line, which is a heading to no
-reader, put repo-authored text OUTSIDE the region while `tools/guard`'s own
-`^##? ` still read it as inside § Code Review Rules and every bot still
+reader, put repo-authored text OUTSIDE the region while a repo's own `^##? `
+reader still read it as inside § Code Review Rules and every bot still
 received it. The input refusals read the same predicate, so the two agree.
 
 Where the opening predicates differ, the stricter one is the contract: a repo
 whose heading carries trailing whitespace gets an error naming the byte rather
-than a render its own guard rejects.
+than a render whose own region cannot be found again.
 
 **Missing section.** An error. The generator never creates `AGENTS.md` and
 never adds the heading.
@@ -370,9 +370,8 @@ Read by Copilot code review, repo-wide, from the pull request's head branch.
    column of the routing table carries, in its order, as `##` subsections.
 4. `## Reply contract`, one sentence pointing at `AGENTS.md` § Code Review
    Rules, spelled with that exact file name and section name, emitted on one
-   line and never wrapped. kendex's `tools/guard` matches
-   `AGENTS\.md.*§ Code Review Rules` against a single line of this file, so a
-   wrap splits the pointer in two and reds that guard.
+   line and never wrapped: a reader looking for the file name and the section
+   name together reads one line, and a wrap splits the pointer in two.
 5. `## Path rules`, one sentence naming `.github/instructions/` as where
    per-path rules live, emitted only when at least one `[[surface]]` exists.
 

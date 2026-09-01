@@ -112,7 +112,7 @@ skills/orch/tests/merge_queue_watch.sh	816
 skills/orch/tests/oversee_watch_lanes.sh	815
 skills/orch/tests/queue_wait.sh	896
 skills/orch/tests/worktree-cwd-precondition-lint.test.sh	940
-skills/preflight/scripts/preflight	1289
+skills/preflight/scripts/preflight	1065
 skills/review-gate/scripts/pr-watch.sh	871
 skills/review-gate/scripts/review-predicate-selftest.sh	2477
 skills/review-gate/scripts/review-predicate.sh	1567
@@ -130,5 +130,4 @@ skills/size-ratchet/scripts/size-ratchet	2064
 skills/worktree/scripts/worktree	4961
 skills/worktree/scripts/worktree-session-guard	1197
 skills/worktree/tests/worktree_session_guard.sh	1282
-tools/tests/guard.test.sh	810
 ui/src/stores/settings.ts	311

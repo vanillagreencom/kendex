@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Pins for scripts/suppression-ban: every blanket lane fires with its legal
 # per-line counterpart proven to pass, the bare-allow ratchet fails in all
-# directions (new, grow, loose, stale), --update tightens only, baseline
-# hygiene is enforced, and a broken scan is a collection error — never a
-# pass.
+# directions (new, grow, loose, stale), --update tightens only, and baseline
+# hygiene is enforced. The shared index readers this check collects through
+# fail closed once, in index-reads.test.sh.
 #
 # Suppression pragmas appear verbatim in fixtures below: the check is
 # pathspec-scoped to language extensions, so this .sh file is never
@@ -330,27 +330,6 @@ run_sb
 [ "$RC" -eq 0 ] && ok "well-formed sorted baseline passes (control for the hygiene gates)" \
   || bad "well-formed baseline passes" "rc=$RC out=$OUT"
 
-echo "=== fail-closed: a broken scan terminates, never passes ==="
-REAL_GIT="$(command -v git)"
-GIT_SHIM="$TMP/git-shim"
-mkdir -p "$GIT_SHIM"
-cat >"$GIT_SHIM/git" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-  if [ "\$a" = "grep" ]; then
-    echo "git grep: simulated execution failure" >&2
-    exit 128
-  fi
-done
-exec "$REAL_GIT" "\$@"
-EOF
-chmod +x "$GIT_SHIM/git"
-OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" "$SB" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"git grep failed"*) true ;; *) false ;; esac \
-  && ok "a git grep execution failure is a collection error: exit 2" \
-  || bad "a git grep execution failure is a collection error" "rc=$RC out=$OUT"
-case "$OUT" in *"suppression-ban: OK"*) bad "no OK verdict may accompany a broken scan" "$OUT" ;; *) ok "no OK verdict accompanies the broken scan" ;; esac
-
 echo "=== a carrier the sniff skips is named, and qualifies the verdict ==="
 new_repo unmeasured
 printf 'fn main() {}\n' >"$R/ok.rs"
@@ -414,55 +393,6 @@ NAMED="$(printf '%s\n' "$OUT" | grep -c "not measured: blob\.rs — binary conte
 esac \
   && ok "a two-lane skip prints one not-measured line and counts one path" \
   || bad "two-lane skip is deduplicated by path" "rc=$RC named=$NAMED out=$OUT"
-
-echo "=== fail-closed: an unreadable staged blob is a collection error ==="
-new_repo unreadable
-printf '#[allow(dead_code)]\nfn f() {}\n' >"$R/bare.rs"
-git -C "$R" add -A
-run_sb
-[ "$RC" -eq 1 ] && ok "control: the staged bare allow trips while its blob is readable" \
-  || bad "control: readable blob trips" "rc=$RC out=$OUT"
-OID="$(git -C "$R" rev-parse :bare.rs)"
-[ -f "$R/.git/objects/${OID:0:2}/${OID:2}" ] || bad "fixture: the staged blob is not a loose object at the expected path" "$OID"
-rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
-run_sb
-[ "$RC" -eq 2 ] && case "$OUT" in *"error: "*"unable to read"*) true ;; *) false ;; esac \
-  && ok "a vanished staged blob is exit 2 carrying git's own error line" \
-  || bad "vanished blob is exit 2 with git's error line" "rc=$RC out=$OUT"
-case "$OUT" in *"suppression-ban: OK"*) bad "no OK verdict may accompany an unread blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread blob" ;; esac
-
-# The per-carrier count is gate 2's own call, made after the shared listing
-# has already named the carrier; a shim erroring ONLY that call proves its
-# own guard (a real unreadable .rs blob is caught earlier, by the gate-1 lane
-# scan above). The fixture carries a baselined bare allow, so the count call
-# runs and the shim-free control is clean.
-new_repo countfail
-mkdir -p "$R/tools"
-printf 'fn main() {}\n' >"$R/ok.rs"
-printf '#[allow(dead_code)]\nfn b() {}\n' >"$R/bare.rs"
-printf 'bare.rs\t1\n' >"$R/tools/suppression-baseline.tsv"
-git -C "$R" add -A
-run_sb
-[ "$RC" -eq 0 ] && ok "shim-free control: the countfail fixture passes with the real git" \
-  || bad "shim-free countfail control passes" "rc=$RC out=$OUT"
-COUNT_SHIM="$TMP/git-shim-count"
-mkdir -p "$COUNT_SHIM"
-cat >"$COUNT_SHIM/git" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-  if [ "\$a" = "-acE" ]; then
-    echo "error: 'phantom.rs': unable to read 0000000000000000000000000000000000000000" >&2
-    exit 1
-  fi
-done
-exec "$REAL_GIT" "\$@"
-EOF
-chmod +x "$COUNT_SHIM/git"
-OUT="$(cd "$R" && PATH="$COUNT_SHIM:$PATH" "$SB" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"unable to read"*) true ;; *) false ;; esac \
-  && ok "an error-carrying no-match count is exit 2, never a clean zero" \
-  || bad "error-carrying count is exit 2" "rc=$RC out=$OUT"
-case "$OUT" in *"suppression-ban: OK"*) bad "no OK verdict may accompany a broken count" "$OUT" ;; *) ok "no OK verdict accompanies the broken count" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

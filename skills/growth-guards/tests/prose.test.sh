@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Pins for scripts/prose: a history reference in agent-loaded markdown fails,
 # the same reference outside the configured paths does not, the path list is
-# replaceable and validated, word matching is case-insensitive and
-# whole-word, and a broken scan is a collection error — never a pass. Every
-# green assertion is paired with a control that proves it can fail.
+# replaceable and validated, and word matching is case-insensitive and
+# whole-word. Every green assertion is paired with a control that proves it
+# can fail. The shared index readers this check collects through fail closed
+# once, in index-reads.test.sh.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -307,33 +308,6 @@ run_prose
 [ "$RC" -eq 1 ] && case "$OUT" in *"skills/growth-guards/SKILL.md"*) false ;; *"workflows/ship.md:1:"*) true ;; *) false ;; esac \
   && ok "control: a planted reference fails while the shipped SKILL.md stays unnamed" \
   || bad "control: planted reference fails, SKILL.md unnamed" "rc=$RC out=$OUT"
-
-echo "=== fail-closed: a broken scan terminates, never passes ==="
-new_repo grepfail
-put SKILL.md 'clean'
-run_prose
-[ "$RC" -eq 0 ] && ok "shim-free control: the fixture passes with the real git" \
-  || bad "shim-free control passes" "rc=$RC out=$OUT"
-
-REAL_GIT="$(command -v git)"
-GIT_SHIM="$TMP/git-shim"
-mkdir -p "$GIT_SHIM"
-cat >"$GIT_SHIM/git" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-  if [ "\$a" = "grep" ]; then
-    echo "git grep: simulated execution failure" >&2
-    exit 128
-  fi
-done
-exec "$REAL_GIT" "\$@"
-EOF
-chmod +x "$GIT_SHIM/git"
-OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" "$PROSE" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"git grep failed scanning tracked files"*) true ;; *) false ;; esac \
-  && ok "a git grep execution failure is a collection error: exit 2, never OK" \
-  || bad "a git grep execution failure is a collection error" "rc=$RC out=$OUT"
-case "$OUT" in *"prose: OK"*) bad "no OK verdict may accompany a broken scan" "$OUT" ;; *) ok "no OK verdict accompanies the broken scan" ;; esac
 
 echo "=== the shared glob loader refuses a caller running without set -f ==="
 COMMON="$SKILL_DIR/scripts/lib/common.sh"

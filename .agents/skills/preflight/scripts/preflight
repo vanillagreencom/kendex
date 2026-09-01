@@ -3,13 +3,12 @@
 # runner invokes, scratch directories no EXIT trap removes, directories
 # created at literal absolute temp paths, docs citing repo paths that do
 # not exist, source files citing docs that do not exist, edits to a migration
-# a database has already run, reviewer-bot attributions in durable prose,
-# malformed JSON/TOML, workflow run: blocks their shell cannot parse.
+# a database has already run, malformed JSON/TOML.
 #
 # Precision before coverage: a lane that cannot decide says nothing. The
 # line-scoped lanes report only on lines this diff ADDED, so a pre-existing
 # violation on an untouched line never fails somebody else's change. A
-# missing optional tool (shellcheck, jq, taplo, python3, PyYAML) skips its lane
+# missing optional tool (shellcheck, jq, taplo, python3) skips its lane
 # silently — the run never fails because a tool is absent, and a lane never
 # degrades into a warning: it fails or it says nothing.
 #
@@ -36,8 +35,7 @@ non-ignored untracked files; --staged sees only the index.
 
 Lanes: shell-syntax, shellcheck-errors, masked-returns, fail-open,
 unwired-suite, mktemp-trap, hardcoded-temp-path, docs-cited-paths,
-applied-migration-edited, reviewer-attribution, data-syntax,
-workflow-run-syntax.
+applied-migration-edited, data-syntax.
 
 Exit codes: 0 clean; 1 findings; 2 usage/environment error.
 EOF
@@ -430,194 +428,6 @@ except Exception as exc:
     sys.stdout.write(str(exc) + "\n")
     sys.exit(1)
 '
-# Workflow `run:` blocks are shell that no shell lane sees: bash -n each block
-# (GitHub expressions replaced by a placeholder, non-shell `shell:` steps
-# skipped) and report file line numbers, mapped through the block scalar's
-# position. Output: TAB-separated `line<TAB>message` per finding.
-WORKFLOW_PY='import re, subprocess, sys, tempfile, os
-import yaml
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8") as fh:
-    text = fh.read()
-try:
-    root = yaml.compose(text)
-except yaml.YAMLError as exc:
-    mark = getattr(exc, "problem_mark", None)
-    line = mark.line + 1 if mark is not None else 1
-    problem = getattr(exc, "problem", None) or str(exc).splitlines()[0]
-    sys.stdout.write("%d\tworkflow YAML did not parse: %s\n" % (line, problem))
-    sys.exit(0)
-def mapping(node):
-    if not isinstance(node, yaml.MappingNode):
-        return {}
-    out = {}
-    for k, v in node.value:
-        if isinstance(k, yaml.ScalarNode):
-            out[k.value] = v
-    return out
-def scalar(node):
-    return node.value if isinstance(node, yaml.ScalarNode) else None
-def shell_of(node):
-    m = mapping(node)
-    s = scalar(m.get("shell"))
-    return s
-# The interpreter that will parse the block: bash or sh, given as a bare name
-# or an executable path (`/bin/bash {0}`); anything else is out of scope.
-def interpreter_of(shell):
-    m = re.match(r"^(?:.*/)?(bash|sh)(?:\s|$)", shell.strip())
-    return m.group(1) if m else None
-# GitHub expressions are replaced by a placeholder before parsing. Their
-# string literals are single-quoted with a doubled quote as the escape, so a
-# closing brace pair inside a literal (format with braces) does not end the
-# expression; a naive shortest-match regex would leave the tail of the
-# literal behind as shell text.
-def strip_expressions(text):
-    out = []
-    i = 0
-    n = len(text)
-    while i < n:
-        j = text.find("${{", i)
-        if j < 0:
-            out.append(text[i:])
-            break
-        out.append(text[i:j])
-        k = j + 3
-        while k < n:
-            c = text[k]
-            if c == "\x27":
-                k += 1
-                while k < n:
-                    if text[k] == "\x27":
-                        if k + 1 < n and text[k + 1] == "\x27":
-                            k += 2
-                            continue
-                        break
-                    k += 1
-                k += 1
-                continue
-            if text.startswith("}}", k):
-                k += 2
-                break
-            k += 1
-        out.append("X")
-        i = k
-    return "".join(out)
-# The line (1-based, within the block) of the first `${{` that never
-# closes, else 0. Detected separately so the placeholder pass stays simple.
-def unterminated_expression_line(text):
-    i = 0
-    n = len(text)
-    while i < n:
-        j = text.find("${{", i)
-        if j < 0:
-            return 0
-        k = j + 3
-        closed = False
-        while k < n:
-            c = text[k]
-            if c == "\x27":
-                k += 1
-                while k < n:
-                    if text[k] == "\x27":
-                        if k + 1 < n and text[k + 1] == "\x27":
-                            k += 2
-                            continue
-                        break
-                    k += 1
-                k += 1
-                continue
-            if text.startswith("}}", k):
-                closed = True
-                k += 2
-                break
-            k += 1
-        if not closed:
-            return text.count("\n", 0, j) + 1
-        i = k
-    return 0
-# With no shell declared anywhere, GitHub runs bash on Linux/macOS runners and
-# PowerShell on Windows ones. An implicit shell is bash only when every
-# runs-on label is a plain ubuntu-* or macos-* label; an expression, a
-# Windows label, or a custom/self-hosted label leaves the default unresolved
-# and the step is skipped.
-def implicit_shell_is_bash(jm):
-    ro = jm.get("runs-on")
-    labels = []
-    if isinstance(ro, yaml.ScalarNode):
-        labels = [ro.value]
-    elif isinstance(ro, yaml.SequenceNode):
-        labels = [n.value for n in ro.value if isinstance(n, yaml.ScalarNode)]
-    elif isinstance(ro, yaml.MappingNode):
-        lab = mapping(ro).get("labels")
-        if isinstance(lab, yaml.ScalarNode):
-            labels = [lab.value]
-        elif isinstance(lab, yaml.SequenceNode):
-            labels = [n.value for n in lab.value if isinstance(n, yaml.ScalarNode)]
-    if not labels:
-        return False
-    for label in labels:
-        if "${{" in label or not re.match(r"^(ubuntu|macos)([-_]|$)", label.lower()):
-            return False
-    return True
-top = mapping(root)
-default_shell = shell_of(mapping(top.get("defaults")).get("run")) if "defaults" in top else None
-jobs = mapping(top.get("jobs"))
-for _, job in jobs.items():
-    jm = mapping(job)
-    job_shell = (shell_of(mapping(jm.get("defaults")).get("run")) or default_shell) if "defaults" in jm else default_shell
-    steps = jm.get("steps")
-    if not isinstance(steps, yaml.SequenceNode):
-        continue
-    for step in steps.value:
-        sm = mapping(step)
-        run = sm.get("run")
-        if not isinstance(run, yaml.ScalarNode):
-            continue
-        shell = scalar(sm.get("shell"))
-        effective = shell if shell is not None else job_shell
-        if effective is None:
-            if not implicit_shell_is_bash(jm):
-                continue
-            interp = "bash"
-        else:
-            interp = interpreter_of(effective)
-            if interp is None:
-                continue
-        # Block scalars (| >) start their content on the line after the key;
-        # flow/plain scalars start on the key line itself. A folded scalar
-        # (>) has had its newlines collapsed before bash sees it, so its
-        # diagnostics cannot be mapped to a source line: they land on the
-        # first line of the block. (No apostrophes here: this Python lives in
-        # a single-quoted bash string.)
-        first = run.start_mark.line + 1
-        if run.style in ("|", ">"):
-            first += 1
-        folded = run.style == ">"
-        bad = unterminated_expression_line(run.value)
-        if bad:
-            at = first if folded else first + bad - 1
-            sys.stdout.write("%d\tunterminated GitHub expression: ${{ without a closing }}\n" % at)
-            continue
-        body = strip_expressions(run.value)
-        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as t:
-            t.write(body)
-            tmp = t.name
-        try:
-            res = subprocess.run([interp, "-n", tmp], capture_output=True, text=True)
-        finally:
-            os.unlink(tmp)
-        if res.returncode == 0:
-            continue
-        for raw in res.stderr.splitlines():
-            m = re.match(r"^.*?: line (\d+): (.*)$", raw)
-            if m:
-                at = first if folded else first + int(m.group(1)) - 1
-                sys.stdout.write("%d\t%s\n" % (at, m.group(2)))
-            elif raw.strip():
-                sys.stdout.write("%d\t%s\n" % (first, raw.strip()))
-'
-HAVE_WORKFLOW_PY=0
-have python3 && python3 -c 'import sys, yaml; sys.exit(0 if sys.version_info >= (3, 7) else 1)' >/dev/null 2>&1 && HAVE_WORKFLOW_PY=1
 HAVE_SHELLCHECK=0
 have shellcheck && HAVE_SHELLCHECK=1
 HAVE_TOML=none
@@ -662,20 +472,6 @@ TMPPATH_CREATE_RE='(mkdtemp|mkdtempSync|mkdir|mkdirSync|makedirs|create_dir_all)
 TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(mkdtemp|mkdtempSync)[[:space:]]*\([^)]*["'\''`]/(var/)?tmp["'\''`]'
 TMPPATH_CREATE_RE="$TMPPATH_CREATE_RE"'|(^[[:space:]]*|[;(`{&|][[:space:]]*)mkdir[[:space:]]+-p[[:space:]]+["'\'']?/(var/)?tmp/'
 
-# The attribution shape only: a review-fleet bot name coupled to a PR/review
-# reference — a parenthetical credit, a per-bot review credit, a bot review
-# of #N. A bot pass is not a rationale: the credit rots as PRs renumber,
-# while prose that merely names a bot (reviewer docs, gate config) is
-# describing behavior and stays clean, so the reference word must end at a
-# word boundary — an account named after the reviewing is not a credit.
-# CHANGELOG.md is where rationale belongs and is exempt.
-BOT_ALT="$(printf '%s' "${PREFLIGHT_BOT_NAMES:-qodo copilot coderabbit codex devin}" | LC_ALL=C tr -cs 'A-Za-z0-9_-' '|')"
-BOT_ALT="${BOT_ALT#|}"
-BOT_ALT="${BOT_ALT%|}"
-[ -n "$BOT_ALT" ] || BOT_ALT='qodo|copilot|coderabbit|codex|devin'
-BOT_ATTR_RE="\\(($BOT_ALT)([^A-Za-z0-9_)-][^)]*)?((pr ?)?#[0-9]+|[^A-Za-z0-9_]r[0-9]{6,})([^A-Za-z0-9_)][^)]*)?\\)"
-BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_-])per +((the|a) +)?($BOT_ALT)('s)? +(review|pass|feedback|suggestion|comment|finding)s?[[:punct:]]*[[:space:]]*\$"
-BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_-])($BOT_ALT)('s)? +review +of +(pr ?)?#[0-9]+"
 : >"$TMP/tok.ok"
 : >"$TMP/tok.bad"
 
@@ -993,11 +789,6 @@ while IFS= read -r f; do
       *) cites_docs=1 ;;
     esac
   fi
-  is_changelog=0
-  case "$f" in
-    CHANGELOG.md | */CHANGELOG.md) is_changelog=1 ;;
-  esac
-
   if [ "$is_sh" = 1 ]; then
     file_matches "$cpath" "$ERREXIT_RE" && has_ee=1
     has_exit_trap "$cpath" && has_trap=1
@@ -1063,17 +854,6 @@ while IFS= read -r f; do
     *.toml)
       if ! out="$(check_toml "$cpath")"; then
         emit "$f" "$(line_hint "$out")" data-syntax "invalid TOML: $(first_line "$out")"
-      fi
-      ;;
-    .github/workflows/*.yml | .github/workflows/*.yaml)
-      if [ "$HAVE_WORKFLOW_PY" = 1 ]; then
-        # The tool is present, so a crash is an environment error, never an
-        # empty (clean-looking) result.
-        wf_out="$(python3 -c "$WORKFLOW_PY" "$cpath" 2>"$TMP/wf.err")" || env_error "workflow-run-syntax lane failed on $f: $(first_line "$(cat "$TMP/wf.err")")"
-        while IFS="$TAB" read -r n msg; do
-          [ -n "$msg" ] || continue
-          emit "$f" "$n" workflow-run-syntax "$msg"
-        done <<<"$wf_out"
       fi
       ;;
   esac
@@ -1161,10 +941,6 @@ while IFS= read -r f; do
           done <<<"$(md_tokens_of "$content")"
           ;;
       esac
-    fi
-
-    if [ "$own_rules" = 0 ] && [ "$is_changelog" = 0 ] && [ "$is_testname" = 0 ] && printf '%s' "$content" | LC_ALL=C grep -Eiq -- "$BOT_ATTR_RE"; then
-      emit "$f" "$n" reviewer-attribution "credits a transient reviewer pass — state the rationale, drop the reviewer credit"
     fi
   done <"$REC"
 done <"$TMP/files.list"

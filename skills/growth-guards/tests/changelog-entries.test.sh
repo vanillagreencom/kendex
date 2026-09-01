@@ -5,9 +5,10 @@
 # other tracked path in the fragment tree is refused, and the collated record
 # gains no line under [Unreleased] that HEAD does not carry. Its --collate
 # write path is pinned next door in changelog-collate.test.sh.
-# The configured globs decide what is read, content comes from the index, and
-# a scan that could not complete is exit 2. Every green assertion is paired
-# with a control that proves it can fail.
+# The configured globs decide what is read and content comes from the index;
+# the shared readers that content arrives through fail closed once, in
+# index-reads.test.sh. Every green assertion is paired with a control that
+# proves it can fail.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -697,41 +698,6 @@ run_ce_env "$(printf 'GROWTH_GUARDS_CHANGELOG_PATHS=no\033match.md')"
 printf '%s' "$OUT" | LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" \
   && bad "no control byte from the pattern may reach the output" "$OUT" \
   || ok "no control byte from the pattern reaches the output"
-
-echo "=== fail-closed: an unread blob and an unmerged index are exit 2 ==="
-new_repo unreadable
-printf -- '- %s\n' "$(rep x 250)" | frag fixed long.md
-run_ce
-[ "$RC" -eq 1 ] && ok "control: the staged entry fails while its blob is readable" \
-  || bad "control: readable blob fails" "rc=$RC out=$OUT"
-OID="$(git -C "$R" rev-parse :changelog.d/fixed/long.md)"
-[ -f "$R/.git/objects/${OID:0:2}/${OID:2}" ] || bad "fixture: the staged blob is not a loose object at the expected path" "$OID"
-rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
-run_ce
-[ "$RC" -eq 2 ] && case "$OUT" in *"refusing to skip an unread changelog"*) true ;; *) false ;; esac \
-  && ok "a vanished staged blob is exit 2, naming what it refuses to skip" \
-  || bad "a vanished staged blob is exit 2" "rc=$RC out=$OUT"
-case "$OUT" in *"changelog-entries: OK"*) bad "no OK verdict may accompany an unread blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread blob" ;; esac
-
-new_repo unmerged
-printf 'line1\nbase\nline3\n' >"$R/f.txt"
-printf -- '- A short entry.\n' | frag fixed a.md
-git -C "$R" commit -qm base
-git -C "$R" checkout -q -b other
-printf 'line1\ntheirs\nline3\n' >"$R/f.txt"
-git -C "$R" commit -qam other
-git -C "$R" checkout -q main
-printf 'line1\nours\nline3\n' >"$R/f.txt"
-git -C "$R" commit -qam ours
-git -C "$R" merge other >/dev/null 2>&1 || true
-[ "$(git -C "$R" ls-files -u | wc -l)" -eq 3 ] \
-  && ok "the fixture really is mid-merge (three index stages)" \
-  || bad "the fixture really is mid-merge (three index stages)" "stages=$(git -C "$R" ls-files -u | wc -l)"
-run_ce
-[ "$RC" -eq 2 ] && case "$OUT" in *"unmerged path"*"finish or abort the merge"*) true ;; *) false ;; esac \
-  && ok "an unmerged index is exit 2 naming the remedy" \
-  || bad "an unmerged index is exit 2 naming the remedy" "rc=$RC out=$OUT"
-case "$OUT" in *"changelog-entries: OK"*) bad "no OK verdict may accompany an unmerged index" "$OUT" ;; *) ok "no OK verdict accompanies the unmerged index" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

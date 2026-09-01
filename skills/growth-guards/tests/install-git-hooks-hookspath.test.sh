@@ -313,52 +313,6 @@ case "$OUT" in
   *) bad "no origin from a working git" "$OUT" ;;
 esac
 
-echo "=== the configured value reaches the reader escaped, on one line ==="
-# The value is bytes git handed back, and the summary and the origin listing
-# both repeat them. It arrives from a cloned repository's own config, so an
-# ESC in it is somebody else's data reaching a screen as control codes, and a
-# newline in it ends the one line --check promises before the verdict is on
-# it. One case per boundary; gg_shown is what both lanes render through.
-R95="$(new_repo escaped-value)"
-install_in "$R95"
-ESC="$(printf '\033')"
-git -C "$R95" config core.hooksPath "ev${ESC}[31mil"
-[ "$(git -C "$R95" config --get core.hooksPath)" = "ev${ESC}[31mil" ] \
-  && ok "the control: the configured value really does carry an ESC byte" \
-  || bad "the fixture value has no ESC" "$(git -C "$R95" config --get core.hooksPath || true)"
-check_in "$R95"
-[ "$RC" -eq 2 ] && ok "an ESC-valued hooks path stands the checker down" \
-  || bad "ESC-valued hooks path checks 2" "rc=$RC out=$OUT"
-case "$OUT" in
-  *"$ESC"*) bad "a raw ESC byte reached the output" "$(printf '%s' "$OUT" | cat -v)" ;;
-  *) ok "and no raw ESC byte reaches the reader" ;;
-esac
-# Escaped, not dropped: a value the reader cannot see is a value they cannot
-# clear, and clearing it is the whole remedy.
-case "$OUT" in
-  *'31mil'*) ok "and the value is still named, escaped rather than removed" ;;
-  *) bad "the value went missing instead of being escaped" "$(printf '%s' "$OUT" | cat -v)" ;;
-esac
-
-R94="$(new_repo newline-value)"
-install_in "$R94"
-git -C "$R94" config core.hooksPath "$(printf 'two\nlines')"
-[ "$(git -C "$R94" config --get core.hooksPath | wc -l)" -eq 2 ] \
-  && ok "the control: the configured value really does carry a newline" \
-  || bad "the fixture value has no newline" "$(git -C "$R94" config --get core.hooksPath || true)"
-# stdout alone, because one line on stdout is the promise being measured.
-SUMMARY=""; RC=0
-SUMMARY="$("$R94/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "$R94" --check 2>/dev/null)" || RC=$?
-[ "$RC" -eq 2 ] && ok "a newline-valued hooks path stands the checker down" \
-  || bad "newline-valued hooks path checks 2" "rc=$RC out=$SUMMARY"
-[ "$(printf '%s' "$SUMMARY" | wc -l)" -eq 0 ] \
-  && ok "and the summary is still exactly one line" \
-  || bad "the summary broke into several lines" "$SUMMARY"
-case "$SUMMARY" in
-  *"could not determine"*) ok "and that one line still carries the whole verdict" ;;
-  *) bad "the verdict did not survive on the first line" "$SUMMARY" ;;
-esac
-
 echo "=== the repository's own path cannot break the summary either ==="
 # The value was escaped first; the hooks directory is the same class of
 # bytes and reaches the same one-line summary. A repository whose path

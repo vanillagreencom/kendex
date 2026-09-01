@@ -2,8 +2,10 @@
 # Pins for scripts/todo-ban: both marker shapes fire, prose that quotes or
 # names a marker word does not, excludes need reasons, --staged judges the
 # lines the commit ADDS while the default scope judges the whole index, and
-# a broken scan is a collection error — never a pass. Every green assertion
-# is paired with a control that proves it can fail.
+# the staged lane's own collection steps are collection errors — never a
+# pass. Every green assertion is paired with a control that proves it can
+# fail. The shared index readers this check collects through fail closed
+# once, in index-reads.test.sh.
 #
 # Marker words are assembled from split tokens throughout so this test
 # file never contains a marker shape itself — the kendex repo runs
@@ -180,50 +182,6 @@ run_tb
 [ "$RC" -eq 0 ] \
   && ok "must-fail control: the crossing shorthand silences the first-party tree too" \
   || bad "the crossing shorthand did not cross" "rc=$RC out=$OUT"
-
-echo "=== fail-closed: a broken scan terminates, never passes ==="
-new_repo grepfail
-printf 'clean file\n' >"$R/ok.txt"
-git -C "$R" add -A
-run_tb
-[ "$RC" -eq 0 ] && ok "shim-free control: the fixture passes with the real git" \
-  || bad "shim-free control passes" "rc=$RC out=$OUT"
-
-REAL_GIT="$(command -v git)"
-GIT_SHIM="$TMP/git-shim"
-mkdir -p "$GIT_SHIM"
-cat >"$GIT_SHIM/git" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-  if [ "\$a" = "grep" ]; then
-    echo "git grep: simulated execution failure" >&2
-    exit 128
-  fi
-done
-exec "$REAL_GIT" "\$@"
-EOF
-chmod +x "$GIT_SHIM/git"
-OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" "$TB" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"git grep failed scanning tracked files"*) true ;; *) false ;; esac \
-  && ok "a git grep execution failure is a collection error: exit 2, never OK" \
-  || bad "a git grep execution failure is a collection error" "rc=$RC out=$OUT"
-case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken scan" "$OUT" ;; *) ok "no OK verdict accompanies the broken scan" ;; esac
-
-echo "=== fail-closed: an unreadable staged blob is a collection error ==="
-new_repo unreadable
-printf '// %s: stranded work\n' "$TD" >"$R/a.rs"
-git -C "$R" add -A
-run_tb
-[ "$RC" -eq 1 ] && ok "control: the staged marker trips while its blob is readable" \
-  || bad "control: readable blob trips" "rc=$RC out=$OUT"
-OID="$(git -C "$R" rev-parse :a.rs)"
-[ -f "$R/.git/objects/${OID:0:2}/${OID:2}" ] || bad "fixture: the staged blob is not a loose object at the expected path" "$OID"
-rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
-run_tb
-[ "$RC" -eq 2 ] && case "$OUT" in *"error: "*"unable to read"*) true ;; *) false ;; esac \
-  && ok "a vanished staged blob is exit 2 carrying git's own error line" \
-  || bad "vanished blob is exit 2 with git's error line" "rc=$RC out=$OUT"
-case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany an unread blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread blob" ;; esac
 
 echo "=== a URL is not a comment leader ==="
 new_repo url
@@ -521,6 +479,7 @@ run_tb --staged
 
 # One shim per collection step, so each error path is proven on its own: the
 # change-set collection, then the per-file read of the added lines.
+REAL_GIT="$(command -v git)"
 make_diff_shim() { # DIR MATCH — a git whose `diff` fails when MATCH is in argv
   mkdir -p "$1"
   cat >"$1/git" <<EOF
@@ -594,132 +553,6 @@ OUT="$(cd "$R" && PATH="$AWK_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
   || bad "a failed hunk parser is exit 2" "rc=$RC out=$OUT"
 case "$OUT" in *"work marker:"*) bad "a scan that never ran may not produce a violation" "$OUT" ;; *) ok "and no violation verdict comes with it" ;; esac
 case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken parse" "$OUT" ;; *) ok "no OK verdict accompanies the broken parse" ;; esac
-
-echo "=== fail-closed: the staged pre-filter is guarded like the index scan ==="
-# The staged lane runs a git grep of its own — the carriers pre-filter — and
-# it is the lane's newest fail-open path: an empty carriers list filters
-# every staged path out and the lane prints OK at exit 0. Both arms the
-# index lane already has are repeated here in --staged form, each over a
-# fixture that stages a marker so neither can be clean by construction.
-new_repo stagedgrepfail
-printf 'fn main() {}\n' >"$R/ok.rs"
-git -C "$R" add -A
-git -C "$R" commit -qm seed
-printf '// %s: staged for the pre-filter to find\n' "$HK" >>"$R/ok.rs"
-git -C "$R" add ok.rs
-run_tb --staged
-[ "$RC" -eq 1 ] && ok "shim-free control: the staged marker fires with the real git" \
-  || bad "shim-free control fires" "rc=$RC out=$OUT"
-
-OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] \
-  && case "$OUT" in *"git grep failed listing the staged files that carry a work marker"*) true ;; *) false ;; esac \
-  && ok "a git grep execution failure in the staged pre-filter is exit 2, never OK" \
-  || bad "a broken staged pre-filter is exit 2" "rc=$RC out=$OUT"
-case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken staged pre-filter" "$OUT" ;; *) ok "no OK verdict accompanies the broken staged pre-filter" ;; esac
-
-# The other arm: the scan runs and reports on stderr instead. git spends no
-# error status on a blob it cannot read, so the `error:` line is the only
-# thing separating that from a clean scan.
-new_repo stagedunreadable
-printf 'fn main() {}\n' >"$R/ok.rs"
-git -C "$R" add -A
-git -C "$R" commit -qm seed
-printf '// %s: staged over a blob about to vanish\n' "$TD" >>"$R/ok.rs"
-git -C "$R" add ok.rs
-run_tb --staged
-[ "$RC" -eq 1 ] && ok "control: the staged marker trips while its blob is readable" \
-  || bad "control: readable staged blob trips" "rc=$RC out=$OUT"
-OID="$(git -C "$R" rev-parse :ok.rs)"
-[ -f "$R/.git/objects/${OID:0:2}/${OID:2}" ] \
-  || bad "fixture: the staged blob is not a loose object at the expected path" "$OID"
-rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
-run_tb --staged
-[ "$RC" -eq 2 ] && case "$OUT" in *"error: "*"unable to read"*) true ;; *) false ;; esac \
-  && ok "a vanished staged blob is exit 2 carrying git's own error line" \
-  || bad "a vanished staged blob is exit 2 with git's error line" "rc=$RC out=$OUT"
-case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany an unread staged blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread staged blob" ;; esac
-
-# The content sniff reads the blob itself, so it answers for its own
-# failure: a cat-file that cannot run is a collection error, never a file
-# skipped as unscannable and folded into a clean verdict.
-new_repo sniffail
-printf 'fn main() {}\n' >"$R/ok.rs"
-git -C "$R" add -A
-git -C "$R" commit -qm seed
-printf '// %s: staged for the sniff to read\n' "$TD" >>"$R/ok.rs"
-git -C "$R" add ok.rs
-CATFILE_SHIM="$TMP/catfile-shim"
-mkdir -p "$CATFILE_SHIM"
-cat >"$CATFILE_SHIM/git" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-  if [ "\$a" = "cat-file" ]; then
-    echo "git cat-file: simulated execution failure" >&2
-    exit 128
-  fi
-done
-exec "$REAL_GIT" "\$@"
-EOF
-chmod +x "$CATFILE_SHIM/git"
-OUT="$(cd "$R" && PATH="$CATFILE_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"cannot read blob"*"refusing to skip an unread work marker"*) true ;; *) false ;; esac \
-  && ok "a content sniff that cannot read the blob is exit 2, never OK" \
-  || bad "a broken content sniff is exit 2" "rc=$RC out=$OUT"
-case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken content sniff" "$OUT" ;; *) ok "no OK verdict accompanies the broken content sniff" ;; esac
-
-# The sniff's two byte counts are effectful calls, and a count that fails
-# silently must not be allowed to decide the verdict. Each arm below breaks
-# exactly one of them, so each pins its own guard: with the first count
-# broken the second still succeeds, and with the second broken the first
-# still succeeds. Both must terminate the run rather than fold the file
-# into a clean pass.
-new_repo sniffcount
-printf 'fn main() {}\n' >"$R/ok.rs"
-git -C "$R" add -A
-git -C "$R" commit -qm seed
-printf '// %s: staged for the counts to read\n' "$TD" >>"$R/ok.rs"
-git -C "$R" add ok.rs
-run_tb --staged
-[ "$RC" -eq 1 ] && ok "shim-free control: the staged marker fires with the real counts" \
-  || bad "shim-free control fires with the real counts" "rc=$RC out=$OUT"
-
-# The first count only: the shim fails once per run, so the size of the
-# block fails while the NUL-free count that follows it succeeds.
-COUNT_SHIM="$TMP/count-shim"
-mkdir -p "$COUNT_SHIM"
-cat >"$COUNT_SHIM/wc" <<EOF
-#!/usr/bin/env bash
-if [ ! -e "$TMP/wc-fired" ]; then
-  : >"$TMP/wc-fired"
-  echo "wc: simulated execution failure" >&2
-  exit 1
-fi
-exec "$(command -v wc)" "\$@"
-EOF
-chmod +x "$COUNT_SHIM/wc"
-rm -f "$TMP/wc-fired"
-OUT="$(cd "$R" && PATH="$COUNT_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"could not sample ok.rs to classify its content"*) true ;; *) false ;; esac \
-  && ok "a first block that cannot be sized is exit 2, never OK" \
-  || bad "an unsized first block is exit 2" "rc=$RC out=$OUT"
-case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany an unsized first block" "$OUT" ;; *) ok "no OK verdict accompanies the unsized first block" ;; esac
-
-# The second count only: the NUL strip fails inside a pipeline, which is
-# the dangerous direction — a zero there reads as "every byte was a NUL".
-TR_SHIM="$TMP/tr-shim"
-mkdir -p "$TR_SHIM"
-cat >"$TR_SHIM/tr" <<'EOF'
-#!/usr/bin/env bash
-echo "tr: simulated execution failure" >&2
-exit 1
-EOF
-chmod +x "$TR_SHIM/tr"
-OUT="$(cd "$R" && PATH="$TR_SHIM:$PATH" "$TB" --staged 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"could not sample ok.rs to classify its content"*) true ;; *) false ;; esac \
-  && ok "a NUL-free count that cannot run is exit 2, never OK" \
-  || bad "a broken NUL-free count is exit 2" "rc=$RC out=$OUT"
-case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany a broken NUL-free count" "$OUT" ;; *) ok "no OK verdict accompanies the broken NUL-free count" ;; esac
 
 echo "=== the carriers pre-filter is chunked, and every chunk survives ==="
 # The chunk size is 256, so a change set larger than that is the only shape

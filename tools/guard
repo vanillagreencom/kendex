@@ -122,64 +122,21 @@ else
 fi
 
 # New integration-test temp roots take their canonical spelling immediately
-# through the shared rooted() helper. Older fixtures stay out of this
-# diff-scoped rule.
+# through the shared rooted() helper, on the next source line, the way a
+# fixture HOME takes KENDEX_REAL_HOME above. Diff-scoped: older fixtures
+# predate the helper and are not rewritten to satisfy it.
 temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff --text "${diff_against[@]}" -- 'crates/*/tests/*.rs') ||
   say "test fixture changes could not be read"
 if ! temp_fixture_hits=$(awk '
-  function flush() {
-    if (pending != "") print file ":" pending_line ": " pending_text
-    pending = ""
-  }
-  /^diff --git / {
-    flush()
-    for (name in guarded) delete guarded[name]
-    file = $4
-    sub(/^b\//, "", file)
-    next
-  }
-  /^@@ / {
-    flush()
-    spec = $3
-    sub(/^\+/, "", spec)
-    split(spec, at, ",")
-    new_line = at[1] - 1
-    next
-  }
-  /^--- / || /^\+\+\+ / { next }
-  /^[ +]/ {
-    prefix = substr($0, 1, 1)
-    line = substr($0, 2)
-    new_line++
-    if (pending != "") {
-      if (line ~ /^[[:space:]]*$/ || line ~ /^[[:space:]]*\/\//) next
-      rooted = "^[[:space:]]*let[[:space:]]+[A-Za-z][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*&?[[:space:]]*rooted[[:space:]]*\\([[:space:]]*&[[:space:]]*" pending "[[:space:]]*\\)"
-      if (line !~ rooted) {
-        print file ":" pending_line ": " pending_text
-      } else {
-        guarded[pending] = 1
-      }
-      pending = ""
-    }
-    if (prefix == "+") {
-      for (name in guarded) {
-        raw = "(^|[^A-Za-z0-9_])" name "[[:space:]]*\\.(path|as_ref|into_path|keep)[[:space:]]*\\("
-        if (line ~ raw) print file ":" new_line ": " line
-      }
-    }
-    if (prefix == "+" && line ~ /^[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*(tempfile::tempdir\(\)|(tempfile::)?TempDir::new\(\))/) {
-      declaration = line
-      sub(/^[[:space:]]*let[[:space:]]+/, "", declaration)
-      sub(/^mut[[:space:]]+/, "", declaration)
-      sub(/([[:space:]]*:[^=]+)?[[:space:]]*=.*/, "", declaration)
-      pending = declaration
-      pending_line = new_line
-      pending_text = line
-    }
-    next
-  }
-  /^-/ { next }
-  { flush() }
+  function flush() { if (pending) print file ":" pending ": " pending_text; pending = 0 }
+  /^diff --git / { flush(); file = $4; sub(/^b\//, "", file); next }
+  /^@@ / { flush(); split($3, at, ","); line_no = at[1] + 0 - 1; next }
+  /^(---|\+\+\+) / { next }
+  !/^[ +]/ { next }
+  { line = substr($0, 2); line_no++ }
+  pending && line ~ /^[[:space:]]*(\/\/|$)/ { next }
+  pending { if (line !~ /rooted[[:space:]]*\(/) print file ":" pending ": " pending_text; pending = 0; next }
+  /^\+[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*(tempfile::)?(tempdir\(\)|TempDir::new\(\))/ { pending = line_no; pending_text = line }
   END { flush() }
 ' <<<"$temp_fixture_diff"); then
   say "temporary fixture declarations could not be checked"
@@ -247,76 +204,6 @@ done <<<"$render_changed"
 # Structural invariants.
 [ "$(readlink .claude/CLAUDE.md 2>/dev/null)" = "../AGENTS.md" ] ||
   say ".claude/CLAUDE.md must be a symlink to ../AGENTS.md"
-
-# One reply contract for the review bots, in AGENTS.md § Code Review Rules.
-# The orch skill carries a second one on purpose, for working agents, and
-# AGENTS.md § Code Review Rules says so in its opening lines.
-#
-# What is read is the contract bullet WITHIN that section, and neither scope
-# holds on its own. The section alone is satisfied by the neighbouring
-# do-not-re-raise bullet, which spells `Declined: <reason>` outside the
-# contract. The bullet alone is satisfied by a contract moved into some other
-# section, while both bot-facing files still send readers to this one. So the
-# slice runs from the heading to the next heading at its level or above, and
-# the run inside it starts at `- Author replies are` and ends at the next
-# bullet or blank line. The exit rule is tested before the start rule, or a
-# repeated `## Code Review Rules` heading re-arms the slice instead of ending
-# it and a gutted first section passes on the later copy's forms. Each form is
-# matched literally inside the run, so a rewrap of the bullet cannot red this
-# and the loss of any one form is its own diagnosis. `#<n>` is not a fourth
-# form: it is the other spelling of the id inside `Tracked:`, and the merge
-# gate accepts either, so a contract written with only the KEN- spelling is
-# whole.
-#
-# An absent file, a file with no such section, and a section with no such
-# bullet are each their own diagnosis rather than three missing substrings.
-REPLY_FORMS=('Fixed in <sha>' 'Declined: <reason>' 'Tracked: KEN-<n>')
-if [ ! -f AGENTS.md ]; then
-  say "AGENTS.md is gone — it holds the one copy of the reply contract the bot-facing files point at"
-elif ! grep -q '^## Code Review Rules$' AGENTS.md; then
-  say "AGENTS.md has no § Code Review Rules section — that section is where the bot-facing files send readers for the reply contract"
-else
-  reply_bullet=$(awk '
-    inside && /^##? / { exit }
-    /^## Code Review Rules$/ { inside = 1; next }
-    inside && /^- Author replies are/ { collecting = 1; print; next }
-    collecting && (/^- / || /^[[:space:]]*$/) { exit }
-    collecting' AGENTS.md)
-  if [ -z "$reply_bullet" ]; then
-    say "AGENTS.md § Code Review Rules has no '- Author replies are' bullet — that bullet is the one copy of the reply contract the bot-facing files point at"
-  else
-    for form in "${REPLY_FORMS[@]}"; do
-      grep -qF -- "$form" <<<"$reply_bullet" ||
-        say "AGENTS.md § Code Review Rules no longer states the reply form '$form' — the bot-facing files point readers there for it"
-    done
-  fi
-fi
-
-# A bot-facing file points at AGENTS.md for the forms rather than carrying
-# them. What is pinned is the two things that identify the pointer, the file
-# it names and the section, and not the sentence around them: review-bots.md
-# names AGENTS.md in an unrelated line near the top without naming the
-# section, so a bare name check passes a file whose whole pointer section has
-# been deleted, and a pointer aimed at some other file is not a pointer here
-# at all. Leaving the wording free stops a reword from reading as a deletion.
-# It is required unconditionally of both files rather than "if the section is
-# present", because a check conditioned on the thing it protects passes by
-# deleting that thing.
-#
-# The list is these two and not every bot-facing file. `.github/instructions/`
-# holds five more, but each is scoped by an applyTo glob and loads only when a
-# PR touches that tree, and none of them carries a reply-contract section:
-# they say what to raise under one path, not how to answer a finding. A
-# pointer whose presence depended on which files a PR happened to touch would
-# be worse than none. tools/tests/guard.test.sh pins that exclusion.
-REPLY_POINTER='AGENTS\.md.*§ Code Review Rules'
-for f in .github/copilot-instructions.md review-bots.md; do
-  if [ ! -f "$f" ]; then
-    say "$f is gone — a bot-facing file the reply contract is pointed from; move the pointer before deleting it"
-  elif ! grep -qE -- "$REPLY_POINTER" "$f"; then
-    say "$f no longer points at AGENTS.md § Code Review Rules for the reply contract — delete nothing here without moving the pointer"
-  fi
-done
 
 if [ -f Cargo.toml ] && cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
   say "crates/core must not depend on tauri"

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Pins for scripts/conflict-markers: each of the open/base/close trio at
 # column 0 fires, indented/quoted/glued occurrences and the seven-equals
-# separator do not, excludes need reasons, the check's own source never
-# trips it, and a broken scan is a collection error — never a pass. Every
-# green assertion is paired with a control that proves it can fail.
+# separator do not, excludes need reasons, and the check's own source never
+# trips it. Every green assertion is paired with a control that proves it can
+# fail. The shared index readers this check collects through fail closed once,
+# in index-reads.test.sh.
 #
 # Marker runs are assembled with printf throughout so this test file never
 # contains a marker shape itself — the kendex repo runs conflict-markers
@@ -202,60 +203,6 @@ case "$OUT" in
   *"not measured"*) bad "nothing goes unmeasured once the carrier is text" "$OUT" ;;
   *) ok "and no unmeasured qualifier accompanies a fully read scan" ;;
 esac
-
-echo "=== fail-closed: a broken scan terminates, never passes ==="
-new_repo grepfail
-printf 'clean file\n' >"$R/ok.txt"
-git -C "$R" add -A
-run_cm
-[ "$RC" -eq 0 ] && ok "shim-free control: the fixture passes with the real git" \
-  || bad "shim-free control passes" "rc=$RC out=$OUT"
-
-REAL_GIT="$(command -v git)"
-GIT_SHIM="$TMP/git-shim"
-mkdir -p "$GIT_SHIM"
-cat >"$GIT_SHIM/git" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-  if [ "\$a" = "grep" ]; then
-    echo "git grep: simulated execution failure" >&2
-    exit 128
-  fi
-done
-exec "$REAL_GIT" "\$@"
-EOF
-chmod +x "$GIT_SHIM/git"
-OUT="$(cd "$R" && PATH="$GIT_SHIM:$PATH" "$CM" 2>&1)" && RC=0 || RC=$?
-[ "$RC" -eq 2 ] && case "$OUT" in *"git grep failed scanning tracked files"*) true ;; *) false ;; esac \
-  && ok "a git grep execution failure is a collection error: exit 2, never OK" \
-  || bad "a git grep execution failure is a collection error" "rc=$RC out=$OUT"
-case "$OUT" in *"conflict-markers: OK"*) bad "no OK verdict may accompany a broken scan" "$OUT" ;; *) ok "no OK verdict accompanies the broken scan" ;; esac
-
-echo "=== fail-closed: an unreadable staged blob is a collection error ==="
-new_repo unreadable
-printf '%s HEAD\n' "$OPEN" >"$R/marker.txt"
-git -C "$R" add -A
-run_cm
-[ "$RC" -eq 1 ] && ok "control: the staged marker trips while its blob is readable" \
-  || bad "control: readable blob trips" "rc=$RC out=$OUT"
-OID="$(git -C "$R" rev-parse :marker.txt)"
-[ -f "$R/.git/objects/${OID:0:2}/${OID:2}" ] || bad "fixture: the staged blob is not a loose object at the expected path" "$OID"
-rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
-run_cm
-[ "$RC" -eq 2 ] && case "$OUT" in *"error: "*"unable to read"*) true ;; *) false ;; esac \
-  && ok "a vanished staged blob is exit 2 carrying git's own error line" \
-  || bad "vanished blob is exit 2 with git's error line" "rc=$RC out=$OUT"
-case "$OUT" in *"conflict-markers: OK"*) bad "no OK verdict may accompany an unread blob" "$OUT" ;; *) ok "no OK verdict accompanies the unread blob" ;; esac
-
-# Status 0 + stderr error: a second, readable file matches while the first
-# stays unread — a partial scan must not fold as an ordinary violation.
-printf '%s theirs\n' "$CLOSE" >"$R/readable.txt"
-git -C "$R" add readable.txt
-run_cm
-[ "$RC" -eq 2 ] && case "$OUT" in *"unable to read"*) true ;; *) false ;; esac \
-  && ok "a scan that matches one file but cannot read another is exit 2, never a violation verdict" \
-  || bad "match + unreadable blob is exit 2, not 1" "rc=$RC out=$OUT"
-case "$OUT" in *"conflict marker(s) — excludes"*) bad "no violation summary may accompany a partial scan" "$OUT" ;; *) ok "no violation summary accompanies the partial scan" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
