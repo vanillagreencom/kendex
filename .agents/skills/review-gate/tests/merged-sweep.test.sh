@@ -44,6 +44,7 @@
 #   ms35.  drafted pre-merge, published later-> a finding, not createdAt
 #   ms36.  a decline with no reason        -> answers nothing, both arms
 #   ms37.  a time equal to mergedAt         -> fail closed, neither side
+#   ms38.  a 2nd finding in a seen thread    -> reports; the key is the comment
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -342,8 +343,7 @@ assert_eq "$SPLIT_RC" "2" "ms17: graphql errors beside the data exit 2"
 assert_contains "$SPLIT_ERR" "::error::" "ms17: the diagnostic is on STDERR"
 assert_eq "$SPLIT_OUT" "" "ms17: and stdout is empty — exit 2 never looks like findings"
 
-# The container arm is reached by a well-formed envelope with no errors key,
-# so it shares no coverage with the arm above.
+# The container arm needs a well-formed envelope with no errors key, so it shares no coverage with the arm above.
 fresh_state
 printf '%s\n' '{"data":{"search":null}}' > "$TMP_ROOT/fixture.json"
 run_split
@@ -445,8 +445,7 @@ else
 fi
 chmod 755 "$TMP_ROOT/ro"
 
-# ms22d: an explicitly empty state dir is a config error, not a disable —
-# --no-state is how a caller runs without state.
+# ms22d: an explicitly empty state dir is a config error, not a disable — --no-state is how a caller runs without state.
 run_split REVIEW_GATE_MERGED_SWEEP_STATE_DIR=""
 assert_eq "$SPLIT_RC" "2" "ms22d: an explicitly empty state directory is a config error"
 assert_contains "$SPLIT_ERR" "explicitly empty" "ms22d: and says so"
@@ -793,6 +792,7 @@ assert_contains "$SPLIT_OUT" "2 review(s) and 1 review thread(s)" "ms35: the rev
 
 assert_decline_reason_arms
 assert_merge_tie_arms
+assert_thread_key_arms
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

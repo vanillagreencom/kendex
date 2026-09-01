@@ -87,11 +87,18 @@ review() { # id, createdAt, state, body, login, [typename], [submittedAt|none]
     '{id:$id, createdAt:$at, state:$st, body:$body, author:{login:$login, __typename:$tn}}
      | if $sub == "none" then . else .submittedAt = (if $sub == "" then $at else $sub end) end'
 }
-comment() { # createdAt, body, login, [typename], [publishedAt|none]
+# The id defaults to one derived from the timestamp and body, so two
+# distinct comments are distinctly keyed and a re-run over the same fixture
+# is not: the shape the thread arm keys its finding on. The body is base64d
+# because a key carrying a SPACE would be split into two by the caller that
+# reads the keys column, and no GitHub node id contains one. "none" omits
+# the field and drives the thread-id fallback.
+comment() { # createdAt, body, login, [typename], [publishedAt|none], [id|none]
   jq -n --arg at "$1" --arg body "$2" --arg login "$3" --arg tn "${4:-User}" \
-    --arg pub "${5:-}" \
+    --arg pub "${5:-}" --arg id "${6:-}" \
     '{createdAt:$at, body:$body, author:{login:$login, __typename:$tn}}
-     | if $pub == "none" then . else .publishedAt = (if $pub == "" then $at else $pub end) end'
+     | if $pub == "none" then . else .publishedAt = (if $pub == "" then $at else $pub end) end
+     | if $id == "none" then . else .id = (if $id == "" then "C_\($at)_\($body | @base64)" else $id end) end'
 }
 thread() { # id, comments-totalCount, comment-json...
   local id="$1" total="$2"; shift 2
@@ -157,6 +164,7 @@ assert_sent_query() { # name, expected --window seconds
   assert_contains "$doc" 'repository(owner:$owner, name:$name)' "$name: beside the probe that proves the repository itself was read"
   assert_contains "$doc" "id createdAt submittedAt state" "$name: reviews carry submittedAt, the only field separating a draft from a submission"
   assert_contains "$doc" "createdAt publishedAt body" "$name: and comments carry publishedAt, which is null while their review is pending"
+  assert_contains "$doc" "id createdAt publishedAt body" "$name: thread comments carry their own id, which the thread finding is keyed on"
   sent="$(sed -n 's/.*merged:>=\([0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\).*/\1/p' <<<"$q")"
   if [ -z "$sent" ]; then
     FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        no merged:>= with a full YYYY-MM-DDTHH:MM:SSZ in: %s\n' "$name" "$q"
@@ -283,4 +291,25 @@ assert_merge_tie_arms() {
   assert_eq "$SPLIT_RC" "1" "ms37: one second past the merge is an ordinary finding"
   assert_contains "$SPLIT_OUT" "1 review(s) and 0 review thread(s)" "ms37: counted, not failed closed"
   assert_not_contains "$SPLIT_OUT" "same second as the merge" "ms37: the tie line belongs to the tie alone"
+}
+
+# The thread finding is keyed on the COMMENT that produced it (ms38), never
+# on the thread. A thread id is stable for its whole life and a thread takes
+# more than one finding, so keying the container makes the second one
+# unreportable by construction. Three passes over ONE state file: report,
+# dedupe, then report again once a new comment lands in the same thread.
+assert_thread_key_arms() {
+  local first later
+  first="$(comment "$AFTER_MERGE" "P1: this leaks" codex Bot)"
+  later="$(comment "$LATER" "P2: and this one double-frees" codex Bot)"
+  fresh_state
+  fixture "$(envelope "$(pr 17 "$MERGED_AT" dev '[]' '[]' "[$(thread THR_k 1 "$first")]")")"
+  run_split
+  assert_eq "$SPLIT_RC" "1" "ms38: the first finding in a thread reports"
+  run_split
+  assert_eq "$SPLIT_RC" "0" "ms38: an unchanged second pass stays silent"
+  fixture "$(envelope "$(pr 17 "$MERGED_AT" dev '[]' '[]' "[$(thread THR_k 2 "$first" "$later")]")")"
+  run_split
+  assert_eq "$SPLIT_RC" "1" "ms38: a SECOND finding in the same thread reports — the key is the comment, not the container"
+  assert_contains "$SPLIT_OUT" "0 review(s) and 1 review thread(s)" "ms38: still counted as one thread finding"
 }

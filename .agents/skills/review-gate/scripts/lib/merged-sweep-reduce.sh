@@ -135,17 +135,28 @@ else
     # comment is missing or is not an answer. Judged on the comment, not on
     # the thread opening: a reviewer re-raising on a line it already
     # commented on lands in a PRE-merge thread.
+    # The KEY is that comment, never the thread. A thread id is stable for
+    # the life of the thread and a thread takes more than one finding, so
+    # keying the container makes the second and every later finding in it
+    # unreportable by construction — the next pass recomputes the same key,
+    # finds it in the seen set and says nothing. Keying the comment makes a
+    # new finding a new key while a re-run over unchanged data still dedupes.
     | ([ ($pr.reviewThreads.nodes // [])[]
          | . as $t
          | ([ ($t.comments.nodes // [])[] | select(at != null) | select(at > $merged) ]) as $post
-         | ([ $post[] | select(is_reply | not) | at ] | max // null) as $finding_at
-         | select($finding_at != null)
+         | ([ $post[] | select(is_reply | not) ] | max_by(at)) as $finding
+         | select($finding != null)
+         | ($finding | at) as $finding_at
          # STRICTLY after the finding: a reply in the same second as the
          # finding cannot be proved to answer it, so it does not and the
          # thread surfaces. This boundary already fails closed.
          | ([ $post[] | select(is_reply) | select(at > $finding_at) ] | last) as $standing
          | select(($standing == null) or (($standing.body // "") | answered | not))
-         | $t.id ]) as $late_threads
+         # The thread id is the fallback, not the key: a comment the response
+         # returned without the id the query asked for keeps the coarser
+         # dedupe rather than emitting an empty key that collides with every
+         # other empty one.
+         | ($finding.id // $t.id) ]) as $late_threads
     # Fail closed wherever the read cannot prove itself: reviews come back
     # in CREATION order (measured 2026-09-01: first:N returns the OLDEST N)
     # while `at` places them by SUBMISSION, so this bound catches a page

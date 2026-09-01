@@ -301,7 +301,7 @@ query='query($owner:String!,$name:String!,$q:String!,$limit:Int!){
             id
             comments(last:30){
               totalCount
-              nodes{ createdAt publishedAt body author{login __typename} }
+              nodes{ id createdAt publishedAt body author{login __typename} }
             }
           }
         }
