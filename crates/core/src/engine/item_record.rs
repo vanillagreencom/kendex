@@ -33,27 +33,23 @@ use super::desired::{Artifact, Desired};
 /// entry is looked up by, and one carried more than once is one nothing
 /// here can tell apart.
 ///
-/// An answer short of certainty retires nothing. The pass registers under
-/// the identity it renders and leaves the person's entries to them. Holding
-/// on an entry the record cannot account for would sit in conflict on every
-/// refresh with nothing able to settle it.
+/// An answer short of certainty retires nothing. Shared settings documents
+/// register under the identity this pass renders and leave the person's
+/// entries to them. Pi's registry is kendex's whole file, so a recorded
+/// command moved or duplicated there conflicts before another entry is
+/// written beside it.
 ///
 /// Nothing is retired where the record names what this pass names anyway,
 /// so a settled installation plans nothing. The edit goes to the file
 /// this pass registers in; one written into a file kendex no longer
 /// registers in — the old layout of a pi hook, say — is nothing this edit
 /// would find, and belongs to whatever is retiring that file.
-pub(super) enum Previous {
-    /// Nothing of this installation's is registered anywhere but where
-    /// this pass is about to write.
-    Settled,
-    /// The entry to take out first, named exactly.
-    Retire(PathBuf, ConfigEdit),
-}
-
-pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> Previous {
+pub(super) fn retire_previous(
+    item: &Desired,
+    existing: Option<&LockEntry>,
+) -> std::result::Result<Option<(PathBuf, ConfigEdit)>, String> {
     let Some(named) = named(item) else {
-        return Previous::Settled;
+        return Ok(None);
     };
     // Nothing kendex has installed here has nothing kendex left behind.
     // A hook going in for the first time has no past of its own, so
@@ -62,7 +58,7 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
     // own words, and they may already have registered it — is theirs,
     // and looking for it would only find something to take.
     let Some(entry) = existing else {
-        return Previous::Settled;
+        return Ok(None);
     };
     // The record names an entry. Whether it is still there is the
     // document's to say, not the record's: trusting the record here is how
@@ -72,7 +68,7 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
     // the person's own registration of the same command as kendex's
     // leftovers — so it settles and earns the record this pass.
     let Some(recorded) = &entry.registration else {
-        return Previous::Settled;
+        return Ok(None);
     };
     let previous = match found(
         &named,
@@ -80,8 +76,10 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
         recorded.matcher.as_deref(),
         &recorded.command,
     ) {
-        Found::One(previous) => previous,
-        Found::None => return Previous::Settled,
+        Ok(Some(previous)) => previous,
+        Ok(None) => return Ok(None),
+        Err(why) if item.harness == crate::model::HarnessId::Pi => return Err(why),
+        Err(_) => return Ok(None),
     };
     if previous.event == named.event
         && previous.command == named.command
@@ -89,7 +87,7 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
             .matcher
             .is_none_or(|named| previous.matcher == crate::configedit::spelled(Some(named)))
     {
-        return Previous::Settled;
+        return Ok(None);
     }
     let event = Some(previous.event);
     let matcher = Some(previous.matcher);
@@ -106,7 +104,7 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
             command,
         },
     };
-    Previous::Retire(named.path.clone(), removal)
+    Ok(Some((named.path.clone(), removal)))
 }
 
 /// One registration, as something that knows all three of its parts.
@@ -116,28 +114,27 @@ struct Recorded {
     command: String,
 }
 
-/// What the document says about the entry kendex left.
-enum Found {
-    One(Recorded),
-    None,
-}
-
 /// The entry kendex left, read out of the document this pass registers
 /// in, by everything the record kept to look it up by: the command, the
 /// event, and the matcher.
 ///
-/// Exactly one answering is the answer. Anything else is nothing this
-/// record can retire.
-fn found(named: &Named, event: &str, matcher: Option<&str>, command: &str) -> Found {
+/// Exactly one answering is the entry to retire. No command is no entry;
+/// a moved or duplicated command is an identity this record cannot settle.
+fn found(
+    named: &Named,
+    event: &str,
+    matcher: Option<&str>,
+    command: &str,
+) -> std::result::Result<Option<Recorded>, String> {
     let Ok(Some(text)) = crate::fs::read_if_exists(named.path) else {
-        return Found::None;
+        return Ok(None);
     };
     let read = match named.copilot {
         true => crate::scan::copilot::registrations_text(&text),
         false => crate::scan::hooks::registrations_text(&text),
     };
     let Ok(entries) = read else {
-        return Found::None;
+        return Ok(None);
     };
     let mut answering = entries.iter().filter(|entry| {
         entry.command == command
@@ -145,16 +142,25 @@ fn found(named: &Named, event: &str, matcher: Option<&str>, command: &str) -> Fo
             && matcher.is_none_or(|matcher| entry.matcher == matcher)
     });
     let Some(only) = answering.next() else {
-        return Found::None;
+        return match entries.iter().any(|entry| entry.command == command) {
+            true => Err(format!(
+                "{} no longer runs {command} where kendex left it, and what runs it now is not kendex's to take — move it back, or take it out, and the next refresh settles this",
+                named.path.display()
+            )),
+            false => Ok(None),
+        };
     };
     if answering.next().is_some() {
-        return Found::None;
+        return Err(format!(
+            "{} runs {command} more than once and the record does not say which entry is kendex's — take the ones you did not put there out, and the next refresh settles the rest",
+            named.path.display()
+        ));
     }
-    Found::One(Recorded {
+    Ok(Some(Recorded {
         event: only.event.clone(),
         matcher: only.matcher.clone(),
         command: only.command.clone(),
-    })
+    }))
 }
 
 /// The identity one edit names, and where it names it.
