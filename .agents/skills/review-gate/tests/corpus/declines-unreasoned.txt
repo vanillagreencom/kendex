@@ -186,9 +186,15 @@ Declined: frozen at a1fa74dca; lifecycle [104/104] and the full tools/guard pass
 Declined: frozen at a1fa74dca; lifecycle — 104/104 and the full tools/guard pass at this head.
 # A name spelled with a dot, a hyphen or an underscore. The punctuation pass
 # holds those three inside a token, so the strip's non-space run is the whole
-# name rather than its last fragment. Normalize them to spaces ahead of the
-# strip and "merge-queue 12/12" leaves "merge" standing. None of these names
-# starts with a word either list carries: "pr-merge" above reds even under
+# name UNLESS a segment of that name is a word either list carries: both
+# lists run ahead of the strip, so a listed segment is deleted out of the
+# middle first and the strip is left taking only the tail. None of the names
+# here has one, which is why each is caught; "guard_all_paths 3/3" does, and
+# it is pinned in declines-known-limit.txt.
+#
+# Normalize the three separators to spaces ahead of the strip and
+# "merge-queue 12/12" leaves "merge" standing. None of these names starts
+# with a word either list carries either: "pr-merge" above reds even under
 # the broken spelling, because "pr" is filler and the residue is empty, so it
 # cannot tell the two programs apart.
 Declined: frozen at a1fa74dca; merge-queue 12/12 and the full tools/guard pass at this head.
