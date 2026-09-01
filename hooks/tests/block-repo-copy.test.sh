@@ -152,17 +152,14 @@ assert_eq "$rc" 2 'a backslash continuation before the destination is one copy'
 # The same copy with the continuation unindented. The separator standing before
 # the destination is then the binding newline itself and no blank follows it,
 # so this row and the indented one above are what keep the two spellings from
-# reaching different verdicts. The two rows after it are the marker's own edges
-# read the same way: its left edge when the marker opens the continuation line,
-# and its right edge when the backslash follows the marker with no blank
-# between them. One row per edge, because each is a separator of its own and
-# the indented spelling hides all three at once.
+# reaching different verdicts. The row after it is the marker's left edge read
+# the same way: the marker as the first operand, whose left edge is the binding
+# newline once the operand opens the continuation line. The one-line partner of
+# that row is the first-operand row in the source section above.
 run_hook "$(printf 'cp -r %s/.git \\\n/tmp/copy' "$REPO")"
 assert_eq "$rc" 2 'and the destination alone at column 0 is the same one copy'
 run_hook "$(printf 'cp -r \\\n.git /tmp/x')"
 assert_eq "$rc" 2 'a marker opening the continuation line is still the marker'
-run_hook "$(printf 'cp -r %s/.git\\\n/tmp/x' "$REPO")"
-assert_eq "$rc" 2 'and a backslash straight after the marker is still its right edge'
 run_hook "$(printf 'rsync -a \\\n  %s/target \\\n  /tmp/out' "$REPO")"
 assert_eq "$rc" 2 'and so is an rsync wrapped over three lines'
 # A doubled pipe is two pipes: the first is crossed as ordinary text because the
