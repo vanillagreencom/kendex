@@ -56,9 +56,26 @@ Declined: lint already rejects that shape, so the branch you name never compiles
 Declined: the build script strips the flag before the parser reads it, so the checks you name never see it.
 Declined: CI never reaches that path — the workflow filter excludes the directory you name.
 
-# --- a suite name BESIDE a mechanism --------------------------------------
-# Paired with the must-catch section that added it. Stripping suite names is
-# subtraction like every other pass: the count and the suite go, and what the
-# reply says about the finding stays. If this ever reduces to empty, the
-# strip has stopped being subtraction and is banning the word.
+# --- a count BESIDE a mechanism -------------------------------------------
+# Paired with the must-catch section that added the count strip. The count
+# takes the token in front of it and nothing else, so what the reply says
+# about the finding stays. Every line here carries a count AND a mechanism,
+# and each names things this repo also names files after — path, file, check,
+# hook, lock, install, parser, manifest, package, render, settings, env,
+# guard, docs. That is the point: a SET of names eats all of them, and each
+# of these lines went red under one. If any of them reduces to empty again,
+# the strip has stopped being positional and is banning words.
 Declined: lifecycle 104/104; the waiter re-reads the artifact after arm, see :212
+Declined: 3/3 - the hook install path already checks the lock file.
+Declined: 4/4 runs; the render check blocks that commit.
+Declined: 2/2 - the manifest parser refuses an empty package name.
+Declined: 12/12 - the settings resolver reads env first.
+Declined: lifecycle 104/104 -- the hook reads the config from the env, not the file.
+# The counted twin of the "guard refuses this path" line above. Prefixing a
+# count is what made that reply red under the derived-set rule, so the pair
+# pins that a count changes which tokens strip, never which words are banned.
+Declined: 7/7; the guard refuses this path already, filed KEN-881 for the docs.
+# Paired with `run` joining the passing-checks vocabulary: "the tools/guard
+# run" is a test count in other clothes, but the word inside a mechanism is
+# untouched.
+Declined: the loader refuses that shape before the branch you name can run.

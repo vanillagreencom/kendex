@@ -139,14 +139,13 @@ Declined: validation passes
 Declined: coverage is fine
 Declined: everything passes
 
-# --- a count and the suite it belongs to ----------------------------------
+# --- a count and the name in front of it ----------------------------------
 # From #1851. A suite name is a name, and the word list stopped at names
-# until the subtraction started reading them off the tree: where the reply
-# offers a count, every basename under a tests/ directory strips too, and
-# "tools" and "guard" ride with them. So these reduce to nothing, where the
-# words alone left "lifecycle" or "merge" standing and the reply cleared the
-# gate.
+# until two positional strips ran ahead of it: a count takes the token in
+# front of it, and a slash-joined token is a path. "lifecycle 104/104" and
+# "tools/guard" both go, where the words alone left "lifecycle" or "merge"
+# standing and the reply cleared the gate. Nothing here is a list of names —
+# see the reasoned file for what a count no longer eats.
 Declined: frozen at a1fa74dca; lifecycle 104/104 and the tools/guard run at this head.
 Declined: frozen at a1fa74dca; pr-merge 103/103 and the full tools/guard pass at this head.
 Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard pass at this head.
-Declined: frozen at a1fa74dca; cleanup controls pass within lifecycle 104/104 and the full tools/guard passes.

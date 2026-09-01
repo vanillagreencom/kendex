@@ -27,16 +27,8 @@ PASS=0 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok    $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        got: $2"; }
 
-prog_raw="$(sed -n "/^t_threads_page_jq='/,/^  end'/p" "$PRED" | sed "s/^t_threads_page_jq='//; s/^  end'\$/  end/")"
-[ -n "$prog_raw" ] || { echo "FAIL: could not extract t_threads_page_jq"; exit 1; }
-
-# The suite-name half of the subtraction is derived from the tree, not written
-# down, so the derivation is RUN from the script rather than restated here: it
-# reaches this suite the way the jq does, and a rename in tests/ moves both.
-script_dir="$(cd "$(dirname "$PRED")" && pwd)"
-eval "$(sed -n '/^suite_tokens=/,/grep -Ex/p' "$PRED")"
-[ -n "${suite_tokens:-}" ] || { echo "FAIL: the suite-name derivation produced nothing"; exit 1; }
-prog="${prog_raw//__SUITE_TOKENS__/$suite_tokens}"
+prog="$(sed -n "/^t_threads_page_jq='/,/^  end'/p" "$PRED" | sed "s/^t_threads_page_jq='//; s/^  end'\$/  end/")"
+[ -n "$prog" ] || { echo "FAIL: could not extract t_threads_page_jq"; exit 1; }
 
 page() { # page THREAD_JSON… -> "unresolved untracked unreasoned hasNext cursor"
   jq -r "$prog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"
@@ -189,8 +181,7 @@ echo "--- must-fail probe: the term, reverted ---"
 # the term switched off. The content-free decline must stop being counted and
 # the real reason must stay uncounted: a probe where both fixtures moved would
 # prove the fixtures, not the term.
-REVERTED="$(sed 's/^      else . end;$/      else . end | "x";/' <<<"$prog_raw")"
-REVERTED="${REVERTED//__SUITE_TOKENS__/$suite_tokens}"
+REVERTED="$(sed 's/^    | gsub("\^ +| +\$"; "");$/    | gsub("^ +| +$"; "") | "x";/' <<<"$prog")"
 if [ "$REVERTED" = "$prog" ]; then
   bad "probe planted nothing" "the reason_left tail did not match"
 else
@@ -275,18 +266,17 @@ else
 fi
 
 echo
-echo "--- must-fail probe: the suite-name strip, removed ---"
-# Same jq with the derived-name subtraction dropped, which is the state the
-# term shipped in. The four #1851 replies must stop being counted here — the
-# residue goes back to "lifecycle", "merge", "tools guard" — while the reply
-# naming a mechanism BESIDE a suite name stays uncounted in both states. A
-# probe where both moved would prove the fixtures, not the strip.
-NOSUITE="$(sed 's/^      then \[splits.*__SUITE_TOKENS__.*$/      then ./' <<<"$prog_raw")"
-NOSUITE="${NOSUITE//__SUITE_TOKENS__/$suite_tokens}"
-if [ "$NOSUITE" = "$prog" ]; then
-  bad "probe planted nothing" "the suite-name subtraction did not match"
+echo "--- must-fail probe: both name strips, removed ---"
+# Same jq with the count phrase and the path left standing, which is the
+# state the term shipped in. Every #1851 reply must stop being counted here —
+# "lifecycle", "merge", "tools guard" survive again — while every counted
+# reply that names a mechanism stays uncounted in both states. A probe where
+# both halves moved would prove the fixtures, not the strips.
+NONAME="$(sed '/^    | gsub("..S+..s+\[0-9\]+..s\*\/..s\*\[0-9\]+|/d; /^    | gsub("\[a-z0-9\]\[a-z0-9._+-\]\*(\//d' <<<"$prog")"
+if [ "$NONAME" = "$prog" ]; then
+  bad "probe planted nothing" "the name strips did not match"
 else
-  cprog="$NOSUITE"
+  cprog="$NONAME"
   cpage() { jq -r "$cprog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"; }
 
   n=0
@@ -296,46 +286,49 @@ else
     counted "$out" && ok "live: counted — $line" || bad "live: counted — $line" "$out"
     out=$(cpage "$(thread true "$(human "$line")")")
     not_counted "$out" && ok "removed: clears the gate again — $line" || bad "removed: clears the gate again — $line" "$out"
-  done < <(section 'a count and the suite it belongs to' "$CORPUS/declines-unreasoned.txt")
+  done < <(section 'a count and the name in front of it' "$CORPUS/declines-unreasoned.txt")
   [ "$n" -gt 0 ] || bad "the #1851 section read nothing" "declines-unreasoned.txt"
 
   n=0
   while IFS= read -r line; do
     n=$((n + 1))
     out=$(page "$(thread true "$(human "$line")")")
-    not_counted "$out" && ok "live: a mechanism beside a suite name passes" || bad "live: a mechanism beside a suite name passes" "$out"
+    not_counted "$out" && ok "live: a count beside a mechanism passes — $line" || bad "live: a count beside a mechanism passes — $line" "$out"
     out=$(cpage "$(thread true "$(human "$line")")")
-    not_counted "$out" && ok "removed: it passes in both states — the strip is subtraction" || bad "removed: it passes in both states — the strip is subtraction" "$out"
-  done < <(section 'a suite name BESIDE a mechanism' "$CORPUS/declines-reasoned.txt")
+    not_counted "$out" && ok "removed: it passes in both states — $line" || bad "removed: it passes in both states — $line" "$out"
+  done < <(section 'a count BESIDE a mechanism' "$CORPUS/declines-reasoned.txt")
   [ "$n" -gt 0 ] || bad "the paired-mechanism section read nothing" "declines-reasoned.txt"
 fi
 
 echo
-echo "--- must-fail probe: the count gate on the suite-name strip, removed ---"
-# The strip is scoped to a reply that offers a COUNT, because that is what
-# makes a suite name an appeal to a passing run rather than ordinary prose.
-# Removing the scope applies it to every decline, and this reply — no count,
-# a real mechanism, but every word of it also a file name somewhere under
-# tests/ — is counted. So the scope is load-bearing, not decoration.
-UNGATED="$(sed 's/^    | if ($orig | test(.*$/    | if true/' <<<"$prog_raw")"
-UNGATED="${UNGATED//__SUITE_TOKENS__/$suite_tokens}"
-if [ "$UNGATED" = "$prog" ]; then
-  bad "probe planted nothing" "the count gate did not match"
-else
-  gprog="$UNGATED"
-  gpage() { jq -r "$gprog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"; }
+echo "--- must-fail probe: each name strip alone ---"
+# The two strips divide the #1851 replies between them, so each is proven on
+# the reply only it reaches. "pr-merge 103/103" needs the count strip: nothing
+# else takes a name the vocabulary has never heard of. "workflow 16/16" does
+# not — the word list already carries `workflows?` — so that one is the path
+# strip's, and it is what proves `tools/guard` goes whole.
+probe_alone() { # probe_alone LABEL SED_EXPR REPLY
+  local label="$1" expr="$2" reply="$3" variant out
+  variant="$(sed "$expr" <<<"$prog")"
+  if [ "$variant" = "$prog" ]; then
+    bad "probe planted nothing" "$label"
+    return
+  fi
+  out=$(page "$(thread true "$(human "$reply")")")
+  counted "$out" && ok "live: counted — $label" || bad "live: counted — $label" "$out"
+  out=$(jq -r "$variant" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$(thread true "$(human "$reply")")]}}}}}")
+  not_counted "$out" && ok "removed: clears the gate again — $label" || bad "removed: clears the gate again — $label" "$out"
+}
 
-  g='Declined: the guard refuses this path already, filed KEN-881 for the docs.'
-  out=$(page "$(thread true "$(human "$g")")")
-  not_counted "$out" && ok "live: a countless reason keeps its names" || bad "live: a countless reason keeps its names" "$out"
-  out=$(gpage "$(thread true "$(human "$g")")")
-  counted "$out" && ok "ungated: the strip eats it — the scope is this gate's" || bad "ungated: the strip eats it — the scope is this gate's" "$out"
+probe_alone "the count strip" '/^    | gsub("..S+..s+\[0-9\]+..s\*\/..s\*\[0-9\]+|/d' \
+  'Declined: frozen at a1fa74dca; pr-merge 103/103 and the full tools/guard pass at this head.'
+probe_alone "the path strip" '/^    | gsub("\[a-z0-9\]\[a-z0-9._+-\]\*(\//d' \
+  'Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard pass at this head.'
 
-  c='Declined: frozen at a1fa74dca; lifecycle 104/104 and the tools/guard run at this head.'
-  out=$(gpage "$(thread true "$(human "$c")")")
-  counted "$out" && ok "ungated: the counted reply is caught in both states" || bad "ungated: the counted reply is caught in both states" "$out"
-fi
-
+# A path INSIDE a mechanism is untouched by the path strip: it takes the name
+# and leaves the sentence, the same way the count strip takes one token.
+check clean "a path inside a mechanism still passes" \
+  'Declined: crates/core/src/lock.rs refuses that shape before the branch you name runs.'
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ] || exit 1

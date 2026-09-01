@@ -1,12 +1,12 @@
 # Replies the subtraction does NOT catch, pinned so the boundary is read
 # rather than rediscovered.
 #
-# The subtraction reaches names as well as words: a reply that offers a count
-# also loses every basename under a tests/ directory in this checkout, so
-# "lifecycle 104/104 and the full tools/guard pass" reduces to nothing. What
-# it cannot reach is a name the tree does not carry — a control's own label,
-# which lives inside a suite rather than in a path — and a label written out
-# as a sentence.
+# Two positional strips reach names: a count takes the token in front of it,
+# and a slash-joined token is a path. Neither reaches a name standing
+# somewhere else in the sentence, and nothing else does either — a SET of
+# names would, and it cannot be had: a repo names its files after the words
+# it writes reasons in, so "the guard refuses this path" is three file names
+# and a stated mechanism at once. Position is the only separator there is.
 #
 # Widening past this needs a rule about what prose counts as a mechanism.
 # That is ruled out of scope: do not attempt it, and do not move these lines
@@ -16,10 +16,14 @@
 #
 # Lines starting with # are comments. Blank lines are skipped.
 
-# Control labels, not paths: "waiter", "arm" and "launcher" name assertions
-# inside merge_queue_watch.sh, and no derivation over file names reaches
-# them. The suite names beside them (missing, post, controls, lifecycle) all
-# strip; these three are what keeps the residue non-empty.
+# The name is the subject of a pass-verb, not the token in front of the
+# count: the count belongs to "lifecycle", which strips, while "cleanup
+# controls" sits a clause away. Reaching it means deciding that the subject
+# of "pass" is a name, which is the prose rule above.
+Declined: frozen at a1fa74dca; cleanup controls pass within lifecycle 104/104 and the full tools/guard passes.
+# Control labels, not paths and not beside the count: "waiter", "arm" and
+# "launcher" name assertions inside merge_queue_watch.sh. The count's own
+# name (lifecycle) strips; these do not.
 Declined: frozen at a1fa74dca; the missing-waiter and post-arm launcher controls pass within lifecycle 104/104.
 # The same boundary from the other side: a label written out as a sentence is
 # prose, and prose is where the vocabulary stops. "flagged separately" is
