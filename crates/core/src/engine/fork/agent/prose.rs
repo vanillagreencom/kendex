@@ -92,12 +92,15 @@ pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> Result<String, Str
 /// harness's own name for a tool; matched by text, each of those puts a
 /// line into the source that nobody wrote.
 ///
-/// `Err` where the rendering and the published prose do not hold the same
-/// number of lines. `rewrite_prose` says each line in the harness's words
-/// and gives back one line per line, so a disagreement is that invariant
-/// gone and every pair after the slip would carry a neighbour's words. The
-/// fork refuses rather than write them, the way an unreadable wrapper
-/// does.
+/// `Err` on either of the two things the pairing needs. The rendering and
+/// the published prose have to hold the same number of lines:
+/// `rewrite_prose` says each line in the harness's words and gives back
+/// one line per line, so a disagreement is that invariant gone and every
+/// pair after the slip would carry a neighbour's words. And the two have
+/// to be small enough to line up against each other at all, because
+/// [`aligned`] holds a cell for every pair of lines and the bodies the
+/// catalog door admits reach far past what that affords. Either one is a
+/// refusal rather than a guess, the way an unreadable wrapper is.
 fn as_authored<'a>(
     kept: &[&'a str],
     rendered: &[&'a str],
@@ -111,6 +114,14 @@ fn as_authored<'a>(
             authored.len()
         ));
     }
+    let cells = (kept.len() + 1).saturating_mul(rendered.len() + 1);
+    if cells > CELLS {
+        return Err(format!(
+            "lining its {} rendered lines up against the {} kept would take {cells} cells, past the {CELLS} this pairing holds",
+            rendered.len(),
+            kept.len()
+        ));
+    }
     let mut words = kept.to_vec();
     for (at, stands_for) in aligned(kept, rendered) {
         words[at] = authored[stands_for];
@@ -118,18 +129,32 @@ fn as_authored<'a>(
     Ok(words)
 }
 
+/// The most cells [`aligned`] will hold, which is what bounds the body it
+/// will line up. A rendering the catalog door admits runs to a hundred
+/// thousand lines and more, and a cell for every pair of lines is a table
+/// no allocator serves — an abort where this module refuses. The largest
+/// agent rendering in circulation is under two hundred lines, so this
+/// stands orders of magnitude above any body and still inside what one
+/// machine can hold.
+const CELLS: usize = 4_000_000;
+
 /// Each kept line paired with the rendered line it stands for, as
-/// `(kept, rendered)` indices in order. The pairing is the longest run of
-/// lines the two hold in common without reordering either, so a line the
-/// person edited, added or deleted drops out of it and every line around
-/// it still pairs where it stands. A cell per kept line per rendered line
-/// is the cost, which an agent's body affords.
+/// `(kept, rendered)` indices in order. The pairing is the longest
+/// subsequence of lines the two hold in common without reordering either,
+/// so a line the person edited, added, deleted or moved drops out of it
+/// and every line around it still pairs where it stands. A cell per kept
+/// line per rendered line is the cost, which [`CELLS`] bounds.
 ///
 /// The walk back is from the end, so where the rendering says two lines
 /// alike the later one is paired. Nothing in the text can tell those two
-/// apart — the person deleted one of them and the survivor reads the same
-/// either way — and taking the later one is what leaves a deletion above
-/// it attributed to the copy that went.
+/// apart — whichever the person deleted, the survivor reads the same — and
+/// the choice is only ever right for one of the two deletions. Taking the
+/// later one reads the survivor as the copy that stood below the deletion.
+///
+/// That tie-break is why the alignment is written out here rather than
+/// asked of `similar`, which this crate already diffs lines with:
+/// `TextDiff` yields these same pairs, and every algorithm it offers picks
+/// the other copy.
 fn aligned(kept: &[&str], rendered: &[&str]) -> Vec<(usize, usize)> {
     let width = rendered.len() + 1;
     let mut common = vec![0u32; (kept.len() + 1) * width];
@@ -287,8 +312,21 @@ mod tests {
         );
     }
 
-    /// The same length is the whole of the condition: a pairing that holds
-    /// says the publisher's words back.
+    /// The pairing holds a cell for every pair of lines, so a body far
+    /// past any real agent's is refused before the table is asked for
+    /// rather than aborting the process the allocator cannot serve.
+    #[test]
+    fn a_body_too_large_to_line_up_is_refused_before_the_table() {
+        let many = vec!["Use the read_file tool."; 2_001];
+        let problem = as_authored(&many, &many, &many).unwrap_err();
+        assert_eq!(
+            problem,
+            "lining its 2001 rendered lines up against the 2001 kept would take 4008004 cells, past the 4000000 this pairing holds"
+        );
+    }
+
+    /// Both conditions met is the whole of it: a pairing that holds says
+    /// the publisher's words back.
     #[test]
     fn a_rendering_the_prose_matches_says_the_published_words_back() {
         let said = as_authored(

@@ -283,8 +283,9 @@ fn an_edit_at_the_front_still_says_the_lines_after_it_back() {
 
 /// A paragraph deleted from between two the rendering says alike. Nothing
 /// in the text tells the survivor from the one that went, so the pairing
-/// takes the later of the two and the reference the person kept comes back
-/// as the publisher wrote it.
+/// takes the later of the two, which reads the survivor as the copy that
+/// stood below the deletion. That is right for this deletion and wrong for
+/// the other one, and no reading of the text can be right for both.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn deleting_one_of_two_paragraphs_a_harness_renders_alike_keeps_the_survivor() {

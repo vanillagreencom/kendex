@@ -245,7 +245,8 @@ fn a_hook_matcher_is_restated_alternative_by_alternative() {
 /// line for every line it was handed. The fork's capture pairs a rendering
 /// with the prose it was published as by position, so a rewrite that
 /// wrapped, split or joined a line would leave the two holding different
-/// numbers of lines and every fork off that harness would refuse.
+/// numbers of lines, and every fork off that harness of a body carrying
+/// such a line would refuse.
 #[test]
 fn every_harness_gives_back_one_line_for_every_line() {
     let body = concat!(
