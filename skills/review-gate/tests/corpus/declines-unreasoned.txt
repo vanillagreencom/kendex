@@ -141,11 +141,57 @@ Declined: everything passes
 
 # --- a count and the name in front of it ----------------------------------
 # From #1851. A suite name is a name, and the word list stopped at names
-# until two positional strips ran ahead of it: a count takes the token in
-# front of it, and a slash-joined token is a path. "lifecycle 104/104" and
-# "tools/guard" both go, where the words alone left "lifecycle" or "merge"
-# standing and the reply cleared the gate. Nothing here is a list of names —
-# see the reasoned file for what a count no longer eats.
+# until two positional strips joined it, both riding after it: a count takes
+# the non-space run immediately in front of it, and a slash-joined token is a
+# path. "lifecycle 104/104" and "tools/guard" both go, where the words alone
+# left "lifecycle" or "merge" standing and the reply cleared the gate.
+# Nothing here is a list of names — see the reasoned file for what a count no
+# longer eats.
 Declined: frozen at a1fa74dca; lifecycle 104/104 and the tools/guard run at this head.
 Declined: frozen at a1fa74dca; pr-merge 103/103 and the full tools/guard pass at this head.
 Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard pass at this head.
+# The same reply with the count's own verb between the name and the count.
+# The label pass runs FIRST, so `passes` is gone before the strip looks and
+# the strip still takes the name. If this ever diverges from the line above
+# it, the order of reason_left has been changed and the strip is spending
+# itself on a word the vocabulary would have deleted anyway.
+Declined: frozen at a1fa74dca; lifecycle passes 104/104 and the tools/guard run at this head.
+# Spaces around the slash. The count regex allows them; nothing else in this
+# file reaches that, so a tightening to a bare slash reds here.
+Declined: frozen at a1fa74dca; lifecycle 104 / 104 and the full tools/guard pass at this head.
+# Punctuation between the name and the count. The strip reads a run of
+# non-space, so these would leave "lifecycle" standing if punctuation were
+# normalized after the strips instead of before them. Three spellings,
+# because bracket, paren and dash attach to the word differently.
+Declined: frozen at a1fa74dca; lifecycle (104/104) and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; lifecycle [104/104] and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; lifecycle — 104/104 and the full tools/guard pass at this head.
+
+# --- a label phrase, then a count -----------------------------------------
+# ORDER, not vocabulary. The label pass consumes a multi-word entry whole,
+# and both positional strips run after it — so a strip can never eat the tail
+# of a phrase and leave its head standing. Move either strip back in front of
+# the label pass and every line here clears the gate: "out of scope 3/3"
+# leaves "out", "works as intended 12/12" leaves "works".
+#
+# One line per multi-word entry in the label list whose FIRST word is in
+# neither that list nor the filler list — the entries a broken order strands.
+# Derive that set from reason_left rather than trusting this comment; if the
+# lists change, this section is what has to grow with them.
+Declined: out of scope 3/3
+Declined: pre-existing 7/7
+Declined: by design 4/4
+Declined: nothing to do 2/2
+Declined: works as intended 12/12
+Declined: false positive 5/5
+Declined: won't fix 3/3
+# The same fault through the path strip rather than the count strip.
+Declined: out of scope 104/104 and the full tools/guard pass
+
+# --- a label phrase the path strip reaches first --------------------------
+# `n a` is the seventh derived entry and it belongs above by the derivation,
+# but it cannot sit there: the reply people actually write is "n/a", which
+# the path strip empties whatever the order is. So it is a must-catch like
+# the rest and the ordering probe cannot use it. Its own section is how the
+# probe leaves it alone without a skip list.
+Declined: n/a 9/9

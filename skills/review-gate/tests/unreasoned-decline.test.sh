@@ -30,9 +30,12 @@ bad() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        got: $2"; }
 prog="$(sed -n "/^t_threads_page_jq='/,/^  end'/p" "$PRED" | sed "s/^t_threads_page_jq='//; s/^  end'\$/  end/")"
 [ -n "$prog" ] || { echo "FAIL: could not extract t_threads_page_jq"; exit 1; }
 
-page() { # page THREAD_JSON… -> "unresolved untracked unreasoned hasNext cursor"
-  jq -r "$prog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"
+# ONE spelling of the page envelope. Every probe below runs a variant of the
+# program over the same shape, so the shape is written here and nowhere else.
+page_with() { # page_with PROGRAM THREAD_JSON… -> "unresolved untracked unreasoned hasNext cursor"
+  jq -r "$1" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$2]}}}}}"
 }
+page() { page_with "$prog" "$1"; }
 thread() { # thread ISRESOLVED COMMENT_JSON… (comma-joined)
   printf '{"isResolved":%s,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[%s]}}' "$1" "$2"
 }
@@ -186,7 +189,7 @@ if [ "$REVERTED" = "$prog" ]; then
   bad "probe planted nothing" "the reason_left tail did not match"
 else
   rprog="$REVERTED"
-  rpage() { jq -r "$rprog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"; }
+  rpage() { page_with "$rprog" "$1"; }
 
   out=$(page "$(thread true "$(human 'Declined: frozen at a1fa74dca; 104/104 pass')")")
   counted "$out" && ok "live: the content-free decline is counted" || bad "live: the content-free decline is counted" "$out"
@@ -209,7 +212,7 @@ if [ "$NARROW" = "$prog" ]; then
   bad "probe planted nothing" "the wide decline form did not match"
 else
   nprog="$NARROW"
-  npage() { jq -r "$nprog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"; }
+  npage() { page_with "$nprog" "$1"; }
 
   out=$(page "$(thread true "$(human 'Declined, out of scope.')")")
   counted "$out" && ok "live: the no-colon decline is counted" || bad "live: the no-colon decline is counted" "$out"
@@ -233,7 +236,7 @@ if [ "$UNFROZEN" = "$prog" ]; then
   bad "probe planted nothing" "the freeze vocabulary did not match"
 else
   uprog="$UNFROZEN"
-  upage() { jq -r "$uprog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"; }
+  upage() { page_with "$uprog" "$1"; }
 
   out=$(upage "$(thread true "$(human "Declined under this PR's freeze, flagged separately")")")
   not_counted "$out" && ok "removed: the motivating reply clears the gate again" || bad "removed: the motivating reply clears the gate again" "$out"
@@ -253,7 +256,7 @@ if [ "$UNSTRIPPED" = "$prog" ]; then
   bad "probe planted nothing" "the tracker-id strip did not match"
 else
   sprog="$UNSTRIPPED"
-  spage() { jq -r "$sprog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"; }
+  spage() { page_with "$sprog" "$1"; }
 
   out=$(spage "$(thread true "$(human 'Declined: KEN-881')")")
   not_counted "$out" && ok "removed: the bare tracker id reads as a reason again" || bad "removed: the bare tracker id reads as a reason again" "$out"
@@ -272,12 +275,12 @@ echo "--- must-fail probe: both name strips, removed ---"
 # "lifecycle", "merge", "tools guard" survive again — while every counted
 # reply that names a mechanism stays uncounted in both states. A probe where
 # both halves moved would prove the fixtures, not the strips.
-NONAME="$(sed '/^    | gsub("..S+..s+\[0-9\]+..s\*\/..s\*\[0-9\]+|/d; /^    | gsub("\[a-z0-9\]\[a-z0-9._+-\]\*(\//d' <<<"$prog")"
+NONAME="$(sed '/^    | gsub("..S+..s+\[0-9\]+..s\*\/..s\*\[0-9\]+"/d; /^    | gsub("\[a-z0-9\]+(\//d' <<<"$prog")"
 if [ "$NONAME" = "$prog" ]; then
   bad "probe planted nothing" "the name strips did not match"
 else
   cprog="$NONAME"
-  cpage() { jq -r "$cprog" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$1]}}}}}"; }
+  cpage() { page_with "$cprog" "$1"; }
 
   n=0
   while IFS= read -r line; do
@@ -316,14 +319,68 @@ probe_alone() { # probe_alone LABEL SED_EXPR REPLY
   fi
   out=$(page "$(thread true "$(human "$reply")")")
   counted "$out" && ok "live: counted — $label" || bad "live: counted — $label" "$out"
-  out=$(jq -r "$variant" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$(thread true "$(human "$reply")")]}}}}}")
+  out=$(page_with "$variant" "$(thread true "$(human "$reply")")")
   not_counted "$out" && ok "removed: clears the gate again — $label" || bad "removed: clears the gate again — $label" "$out"
 }
 
-probe_alone "the count strip" '/^    | gsub("..S+..s+\[0-9\]+..s\*\/..s\*\[0-9\]+|/d' \
+probe_alone "the count strip" '/^    | gsub("..S+..s+\[0-9\]+..s\*\/..s\*\[0-9\]+"/d' \
   'Declined: frozen at a1fa74dca; pr-merge 103/103 and the full tools/guard pass at this head.'
-probe_alone "the path strip" '/^    | gsub("\[a-z0-9\]\[a-z0-9._+-\]\*(\//d' \
+probe_alone "the path strip" '/^    | gsub("\[a-z0-9\]+(\//d' \
   'Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard pass at this head.'
+
+echo
+echo "--- must-fail probe: the strips moved back in front of the label pass ---"
+# The order is the rule. A strip eats a whole token, so in front of the label
+# pass it eats the TAIL of a multi-word entry and strands the head: "out of
+# scope 3/3" leaves "out", and the reply clears a gate it used to red. That
+# shipped once. Every line of the label-phrase section must flip here, and
+# the counted mechanisms must stay uncounted, or the probe is proving the
+# fixtures rather than the order.
+# The label line is moved DOWN past both strips, which is the same
+# misordering as moving the strips up and is one pass. Matched by literal
+# text rather than a regex over a regex.
+MISORDERED="$(awk '
+  index($0, "gsub(\"\\\\b(frozen") { lbl = $0; next }
+  index($0, "(/[a-z0-9]+)+")           { print; print lbl; next }
+  { print }' <<<"$prog")"
+if [ "$MISORDERED" = "$prog" ]; then
+  bad "probe planted nothing" "the label pass and the strips did not match"
+else
+  n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    out=$(page "$(thread true "$(human "$line")")")
+    counted "$out" && ok "live: counted — $line" || bad "live: counted — $line" "$out"
+    out=$(page_with "$MISORDERED" "$(thread true "$(human "$line")")")
+    not_counted "$out" && ok "misordered: clears the gate again — $line" || bad "misordered: clears the gate again — $line" "$out"
+  done < <(section 'a label phrase, then a count' "$CORPUS/declines-unreasoned.txt")
+  [ "$n" -gt 0 ] || bad "the label-phrase section read nothing" "declines-unreasoned.txt"
+
+  n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    out=$(page_with "$MISORDERED" "$(thread true "$(human "$line")")")
+    not_counted "$out" && ok "misordered: the mechanism still passes — $line" || bad "misordered: the mechanism still passes — $line" "$out"
+  done < <(section 'a count BESIDE a mechanism' "$CORPUS/declines-reasoned.txt")
+  [ "$n" -gt 0 ] || bad "the paired-mechanism section read nothing" "declines-reasoned.txt"
+fi
+
+echo
+echo "--- must-fail probe: the whitespace around the count's slash ---"
+# `\s*` on either side of the slash is the only thing that reads "104 / 104"
+# as a count. Tightened to a bare slash the name in front of it survives, so
+# the fixture that spells the count with spaces flips: a character-level edit
+# has to change a VERDICT here, not just stop matching the probe's own text.
+SPACED="$(sed 's/..s\*\/..s\*/\//' <<<"$prog")"
+if [ "$SPACED" = "$prog" ]; then
+  bad "probe planted nothing" "the count slash did not match"
+else
+  t='Declined: frozen at a1fa74dca; lifecycle 104 / 104 and the full tools/guard pass at this head.'
+  out=$(page "$(thread true "$(human "$t")")")
+  counted "$out" && ok "live: a count spelled with spaces is a count" || bad "live: a count spelled with spaces is a count" "$out"
+  out=$(page_with "$SPACED" "$(thread true "$(human "$t")")")
+  not_counted "$out" && ok "tightened: the name survives — the spaces are this regex's" || bad "tightened: the name survives — the spaces are this regex's" "$out"
+fi
 
 # A path INSIDE a mechanism is untouched by the path strip: it takes the name
 # and leaves the sentence, the same way the count strip takes one token.

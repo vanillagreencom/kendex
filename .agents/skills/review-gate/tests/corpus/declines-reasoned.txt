@@ -58,13 +58,17 @@ Declined: CI never reaches that path — the workflow filter excludes the direct
 
 # --- a count BESIDE a mechanism -------------------------------------------
 # Paired with the must-catch section that added the count strip. The count
-# takes the token in front of it and nothing else, so what the reply says
-# about the finding stays. Every line here carries a count AND a mechanism,
-# and each names things this repo also names files after — path, file, check,
+# takes the run in front of it and nothing else, so what the reply says about
+# the finding stays. Every line here carries a count AND a mechanism, and
+# each names things this repo also names files after — path, file, check,
 # hook, lock, install, parser, manifest, package, render, settings, env,
-# guard, docs. That is the point: a SET of names eats all of them, and each
-# of these lines went red under one. If any of them reduces to empty again,
-# the strip has stopped being positional and is banning words.
+# guard, docs. That is the point: a SET of names eats a mechanism written in
+# them, and the six below went red under one. If any line here reduces to
+# empty again, the strip has stopped being positional and is banning words.
+#
+# The first line is not one of the six: it survived the set as well, because
+# its residue happened to be words no file is named after. It stays as the
+# control for a count whose name DOES strip while the sentence lives.
 Declined: lifecycle 104/104; the waiter re-reads the artifact after arm, see :212
 Declined: 3/3 - the hook install path already checks the lock file.
 Declined: 4/4 runs; the render check blocks that commit.
@@ -75,7 +79,10 @@ Declined: lifecycle 104/104 -- the hook reads the config from the env, not the f
 # count is what made that reply red under the derived-set rule, so the pair
 # pins that a count changes which tokens strip, never which words are banned.
 Declined: 7/7; the guard refuses this path already, filed KEN-881 for the docs.
-# Paired with `run` joining the passing-checks vocabulary: "the tools/guard
-# run" is a test count in other clothes, but the word inside a mechanism is
-# untouched.
+
+# --- the passing-checks words, inside a mechanism --------------------------
+# No count here, and none wanted: `run` joined the label vocabulary because
+# "the tools/guard run" is a test count in other clothes, and this is the
+# control that the word inside a mechanism is untouched. Its own section, so
+# the count claim above holds of every line it covers.
 Declined: the loader refuses that shape before the branch you name can run.

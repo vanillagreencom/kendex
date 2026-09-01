@@ -73,15 +73,18 @@ track-word. `untracked-claim` is that reply claiming tracking and naming no
 issue. `unreasoned-decline` is that reply declining and naming no mechanism:
 the reason is empty, or is nothing but non-reason tokens and filler. The
 tokens are the labels and the freeze procedure that answer a finding without
-disproving it, plus bare shas, numbers and tracker ids. Two NAME strips run
-first, both positional and neither a list: a count takes the token in front
-of it (`lifecycle 104/104` is one phrase) and a slash-joined token is a path
-(`tools/guard` goes whole). A token INSIDE a real reason is untouched,
-because the test is subtraction: only a reply that was nothing else reduces
-to empty. It ends at a name standing anywhere else in the sentence — the
-subject of a pass-verb, a control's own label — or a label spelled out as a
-sentence. No SET of names is read: a repo names its files after the words it
-writes reasons in, so a set of them bans ordinary prose.
+disproving it, plus bare shas, numbers and tracker ids. Two NAME strips ride
+after the labels, both positional and neither a list: a count takes the
+non-space run immediately in front of it (`lifecycle 104/104` is one phrase,
+punctuation between the two already being whitespace) and a slash-joined
+token is a path (`tools/guard` goes whole, `tools/guard.sh` leaves `sh`). A
+token INSIDE a real reason is untouched, because the test is subtraction:
+only a reply that was nothing else reduces to empty. It ends at a name
+standing anywhere else — after the count, the subject of a pass-verb, a
+control's own label — at a count not spelled N/N, and at a label spelled out
+as a sentence. No SET of names is
+read: a repo names its files after the words it writes reasons in, so a set
+of them bans ordinary prose.
 
 THE CORPUS IS THE CONTRACT, NOT THIS LIST. tests/corpus/ holds what the gate
 must catch, what it must pass, and that KNOWN LIMIT. Add a label by writing
@@ -1393,15 +1396,29 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # `Declined: KEN-881` would read as a stated reason of "ken". The shape is
 # the untracked-claim term's, so the two cannot disagree about what an id is.
 #
-# Two NAME strips run before the word lists, and both are positional rather
-# than a vocabulary — no set of names is read or listed anywhere. A count
-# takes the token in front of it, because that token is what was counted:
-# "lifecycle 104/104" is one phrase and neither half says anything about the
-# finding. A slash-joined token is a path, and a path is a name: "tools/guard"
-# goes whole. Position is the only thing that separates a suite name from
-# prose — both are ordinary English, so any set of names is a word ban on
-# whatever the repo happens to name its files after, and "the guard refuses
-# this path" is a real reason written in three of them.
+# Two NAME strips ride between the label pass and the filler pass, and both
+# are positional rather than a vocabulary — no set of names is read or listed
+# anywhere. A count takes the non-space run immediately in front of it,
+# because that run is what was counted: "lifecycle 104/104" is one phrase and
+# neither half says anything about the finding. A slash-joined token is a
+# path, and a path is a name: "tools/guard" goes whole. The path is spelled
+# in letters and digits, because punctuation is already whitespace by then.
+#
+# THE LABEL PASS RUNS FIRST, and that is load-bearing. A strip eats a whole
+# token, so in front of the label pass it eats the TAIL of a multi-word entry
+# and strands the head: "out of scope 3/3" leaves "out", and a decline this
+# term exists to red walks through the gate by appending a count. Every entry
+# that fault reaches is pinned in tests/corpus/declines-unreasoned.txt.
+#
+# Position is the only thing that separates a suite name from prose — both
+# are ordinary English, so any SET of names is a word ban on whatever the
+# repo happens to name its files after, and "the guard refuses this path" is
+# a real reason written in three of them. What position does not reach is
+# pinned in tests/corpus/declines-known-limit.txt: a name standing after the
+# count, a count not spelled N/N, a word left between the name and the count
+# by the filler pass, which runs after these strips rather than before, and a
+# path segment whose dot or hyphen the punctuation pass turned into a space
+# before the path strip could read it.
 t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
   def declined: test("^\\s*declined\\b"; "i");
   def tracking: test("(?i)\\btrack(ed|ing|s)?\\b");
@@ -1412,10 +1429,11 @@ t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decli
     sub("(?i)^\\s*declined\\b"; "")
     | gsub("[A-Z][A-Z0-9]+-[0-9]+|#[0-9]+"; " ")
     | ascii_downcase
-    | gsub("\\S+\\s+[0-9]+\\s*/\\s*[0-9]+|[0-9]+\\s*/\\s*[0-9]+"; " ")
-    | gsub("[a-z0-9][a-z0-9._+-]*(/[a-z0-9][a-z0-9._+-]*)+"; " ")
-    | gsub("[^\\p{L}\\p{N}]+"; " ")
+    | gsub("[^\\p{L}\\p{N}/]+"; " ")
     | gsub("\\b(frozen|freezes?|freezing|cap|capped|round [0-9]+|round|rounds|tests?|suites?|pass|passes|passed|passing|green|count|checks?|checking|ci|runs?|builds?|building|built|compiles?|compiled|pipelines?|lints?|linter|linting|workflows?|jobs?|typechecks?|validation|coverage|everything|fine|clean|out of scope|scope|pre existing|preexisting|existing|flagged separately|flagged|separately|as discussed|discussed|noted|won ?t ?fix|false positives?|by design|design|not applicable|n a|actionable|no change|nothing to do|later|known|intentional|deliberate|works as intended|as intended|intended|owners?|instruction(s|ed)?|previous|pushe[sd]?|push|last|head|disposition(ed|s)?|findings?|fix(es|ed)?|track(s|ed|ing|er)?|filed|filing|logged)\\b"; " ")
+    | gsub("\\S+\\s+[0-9]+\\s*/\\s*[0-9]+"; " ")
+    | gsub("[a-z0-9]+(/[a-z0-9]+)+"; " ")
+    | gsub("/"; " ")
     | gsub("\\b[0-9a-f]{7,40}\\b"; " ")
     | gsub("\\b[0-9]+\\b"; " ")
     | gsub("\\b(a|an|the|this|that|these|those|it|its|is|are|was|were|be|been|for|in|on|at|to|of|and|or|but|so|we|i|you|your|pr|prs|here|now|all|full|whole|entire|complete|still|already|yes|no|not|do|does|did|has|have|had|under|per|within|as|after|rather|than|see|every|set|s|t)\\b"; " ")
