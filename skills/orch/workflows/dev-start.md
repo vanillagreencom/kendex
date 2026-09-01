@@ -179,6 +179,8 @@ Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-c
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.qa_labels = [QA_LABELS_ARRAY] | .sub_issues = [SUB_ISSUE_IDS_ARRAY]'
 ```
 
+Before the first push, map each Done-when item to the files that serve it in the PR body; a hunk that maps to nothing is cut, not reviewed.
+
 ## 4. Return
 
 **Managed**: return to the parent workflow's next section. **Standalone**: session complete.
