@@ -523,7 +523,7 @@ echo "--- every pass of reason_left is measured by a fixture ---"
 # that are load-bearing have named probes above.
 #
 # The whole corpus goes through in ONE jq call per variant, compared as a
-# single aggregate over all three files rather than reply by reply. What the
+# single aggregate over the corpus rather than reply by reply. What the
 # aggregate proves is one-directional and that is all this needs: if it moves,
 # some reply's verdict moved, and a reply whose verdict moves is exactly the
 # fixture being looked for. Deletion is NOT monotone — a gsub also inserts the
@@ -552,19 +552,22 @@ done
 #
 # The scan ends at the first line ending in `;`, so a `;` written mid-body
 # would shorten the sweep — silently, if the only guard were that it found
-# something. It therefore asserts what it captured: the body must run to the
-# LAST such line in reason_left, and the count must match the `| gsub` lines
-# the definition actually holds, plus its first line.
+# something. What it captured is therefore checked against a second reading
+# of the same definition: the `gsub` passes among the captured lines must be
+# every `gsub` pass reason_left holds. Both sides are derived from the
+# program, so neither an end anchor nor a written-down count can go stale
+# and leave a short sweep looking complete.
 # Bash 3.2: no mapfile. The line numbers are a space-separated list.
 reason_left_body() { awk '/^  def reason_left:/ { f = 1; next } f && /;$/ { print NR; f = 0; next } f { print NR }' <<<"$prog"; }
+at_lines() { local n; for n in $1; do sed -n "${n}p" <<<"$prog"; done; }
 PASS_LINES="$(reason_left_body)"
-declared=$(awk '/^  def reason_left:/ { f = 1; next } /^  if / { f = 0 } f' <<<"$prog" | grep -c .)
-captured=$(printf '%s\n' $PASS_LINES | grep -c .)
+held=$(awk '/^  def reason_left:/ { f = 1; next } /^  if / { f = 0 } f' <<<"$prog" | grep -c 'gsub(')
+swept=$(at_lines "$PASS_LINES" | grep -c 'gsub(')
 if [ -z "$PASS_LINES" ]; then
   bad "the pass sweep read no lines" "reason_left"
-elif [ "$captured" != "$declared" ]; then
+elif [ "$swept" != "$held" ]; then
   bad "the pass sweep stopped short of reason_left's end" \
-      "captured $captured line(s) of $declared — a semicolon inside the body ends the scan early"
+      "it sweeps $swept gsub pass(es) of the $held reason_left holds — a semicolon inside the body ends the scan early"
 fi
 
 baseline=$(page_with "$prog" "$CORPUS_NODES")
