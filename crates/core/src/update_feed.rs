@@ -20,7 +20,7 @@ pub const MAX_FEED_BYTES: usize = 64 * 1024;
 /// base64 shape `crates/app/tauri.conf.json` pins for the app's own
 /// updater. `crates/app/tests/tauri_config.rs` holds the two to one string,
 /// so the CLI and the app cannot end up trusting different keys.
-pub const UPDATER_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJENUIwQjkxMUFGNTJFOTIKUldTU0x2VWFrUXRidmJFQnhKSi9iU3pwTVVJVlhrY3JHbVoyV1BjVmJSdDYzZ2VjVnZzSjlEMDkK";
+pub const UPDATER_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM5MjJDODkxNzhCN0M2Q0MKUldUTXhyZDRrY2dpeVlJNDJ6VFlmbEFwQ0g5ZlRzOWp0TWNZSFZlSnJDSWtUWGZuZHE3K0ZxSG8K";
 const MAX_VERSION_BYTES: usize = 128;
 const MAX_ASSETS: usize = 32;
 const MAX_URL_BYTES: usize = 2 * 1024;
