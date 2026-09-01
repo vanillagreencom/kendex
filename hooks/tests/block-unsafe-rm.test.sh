@@ -96,13 +96,20 @@ run_hook 'rm --verbose "$X/f"';       assert_eq "$rc" 0 'a long flag merely hold
 run_hook 'rm --interactive $X';       assert_eq "$rc" 0 'nor is --interactive'
 
 echo "=== block-unsafe-rm: the command-position half of the predicate ==="
+# One row per member of the separator class, each reaching the match ONLY
+# through that member: a class is only a class where deleting any one of its
+# characters reds something.
 run_hook 'mkdir -p x && rm -rf $X/y';           assert_eq "$rc" 2 'an rm after && is in command position'
+run_hook 'true; rm -rf $X';                     assert_eq "$rc" 2 'a semicolon separates commands'
+run_hook 'true | rm -rf $X';                    assert_eq "$rc" 2 'a pipe separates commands'
 run_hook '(rm -rf $X)';                         assert_eq "$rc" 2 'a subshell-wrapped rm is still refused'
 run_hook 'cd y && { rm -rf $X/z; }';            assert_eq "$rc" 2 'a group-wrapped rm inside a chain is refused'
+run_hook '{ true; } rm -rf $X';                 assert_eq "$rc" 2 'a closing brace ends the command before it'
 run_hook 'true & rm -rf "$X/sub"';              assert_eq "$rc" 2 'a lone ampersand separates commands too'
 run_hook 'case x in x) rm -rf "$X/sub";; esac'; assert_eq "$rc" 2 'a case-arm body does not hide the rm'
 run_hook 'if true; then rm -rf "$X/sub"; fi';   assert_eq "$rc" 2 'a then-prefixed rm is refused'
 run_hook 'while x; do rm -rf $Y; done';         assert_eq "$rc" 2 'a do-prefixed rm inside a loop is refused'
+run_hook 'if a; then b; else rm -rf $X; fi';    assert_eq "$rc" 2 'an else-prefixed rm is refused'
 run_hook "$(printf 'rm\t-rf\t%s' '$X')";        assert_eq "$rc" 2 'tabs separate the words as spaces do'
 # A Bash tool call is routinely several lines, and bash's =~ anchors ^ at the
 # start of the WHOLE command, so the newline has to be a separator of its own.
@@ -133,6 +140,12 @@ run_payload '{"tool_name":"Bash","tool_input":{}}'
 assert_eq "$rc" 0 'a payload naming no command passes'
 run_payload '{"tool_input":{"command":""}}'
 assert_eq "$rc" 0 'an empty command is read, not a read failure'
+# The harness sends the command under tool_input; a payload naming it at the
+# top level is read the same way, and that fallback is a branch of its own.
+run_payload '{"command":"rm -rf $X"}'
+assert_eq "$rc" 2 'a top-level command field is read like a nested one'
+run_payload '{"command":false}'
+assert_eq "$rc" 2 'and a top-level false is refused, not read as an absent one'
 
 NOJQ_BIN="$TMP_ROOT/nojq"
 mkdir -p "$NOJQ_BIN"

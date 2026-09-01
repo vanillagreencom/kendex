@@ -68,6 +68,10 @@ run_hook "rsync -a $REPO/target /tmp/copy";            assert_eq "$rc" 2 'rsync 
 run_hook "git clone $REPO/.git /tmp/copy";             assert_eq "$rc" 2 'a local git clone into /tmp is refused'
 run_hook "tar -cf - $REPO/target | tar -xf - -C /tmp"; assert_eq "$rc" 2 'a tar create-to-extract pipe into /tmp is refused'
 run_hook "mkdir -p /tmp/x && cp -a $REPO/.git /tmp/x"; assert_eq "$rc" 2 'the copy is found in a chained command'
+# The verb is a word, not a substring: a path in front of it is a prefix the
+# class allows, a letter is not.
+run_hook "/usr/bin/cp -r $REPO/.git /tmp/x";           assert_eq "$rc" 2 'an absolute path in front of the verb is still the verb'
+run_hook "scp -r $REPO/.git /tmp/x";                   assert_eq "$rc" 0 'a word merely ending in the verb is not the verb'
 
 echo "=== block-repo-copy: the source half of the predicate ==="
 run_hook "cp -r $REPO/target/ /tmp/copy";      assert_eq "$rc" 2 'a trailing slash does not hide the component'
@@ -88,10 +92,13 @@ run_hook "cp -r $REPO/.git /var/tmp/copy";   assert_eq "$rc" 2 '/var/tmp is a sc
 run_hook 'cp -r '"$REPO"'/.git $TMPDIR/keep';   assert_eq "$rc" 2 'an unexpanded $TMPDIR destination is a scratch destination'
 run_hook 'cp -r '"$REPO"'/.git ${TMPDIR}/keep'; assert_eq "$rc" 2 'the braced form of the same variable is too'
 run_hook "cp -r $REPO/.git /tmp";            assert_eq "$rc" 2 'the temp root itself is a scratch destination'
+run_hook "cp -r $REPO/.git \"/tmp/x\"";      assert_eq "$rc" 2 'a quoted destination is still the destination'
 # Same verb, same source, a destination outside every temp root: the
-# destination half is what decides.
+# destination half is what decides, and its trailing boundary is what keeps
+# the root a component rather than a prefix.
 run_hook "cp -r $REPO/.git /srv/archive/keepme"; assert_eq "$rc" 0 'a repository copied outside scratch is allowed'
 run_hook "cp -r $REPO/.git /home/agent/tmp/x";   assert_eq "$rc" 0 'a temp root spelled inside a longer path is not the temp root'
+run_hook "cp -r $REPO/.git /tmpfoo/x";           assert_eq "$rc" 0 'nor is one a longer first component merely starts with'
 
 echo "=== block-repo-copy: commands that are not copies at all ==="
 run_hook "git status --short";               assert_eq "$rc" 0 'a non-copy command passes'
@@ -119,6 +126,10 @@ run_payload '{"tool_name":"Bash","tool_input":{}}'
 assert_eq "$rc" 0 'a payload naming no command passes'
 run_payload '{"tool_input":{"command":""}}'
 assert_eq "$rc" 0 'an empty command is read, not a read failure'
+# The harness sends the command under tool_input; a payload naming it at the
+# top level is read the same way, and that fallback is a branch of its own.
+run_payload "{\"command\":\"cp -r $REPO/.git /tmp/copy\"}"
+assert_eq "$rc" 2 'a top-level command field is read like a nested one'
 
 NOJQ_BIN="$TMP_ROOT/nojq"
 mkdir -p "$NOJQ_BIN"

@@ -126,19 +126,32 @@ mkdir -p "$TMP_ROOT/custom-hooks"
 cp "$ARMED_BY_PATH/.git/hooks/pre-commit" "$ARMED_BY_PATH/.git/hooks/commit-msg" "$TMP_ROOT/custom-hooks/"
 git -C "$ARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/custom-hooks"
 NOT_A_REPO="$TMP_ROOT/plain"; mkdir -p "$NOT_A_REPO"
-# Everything the hook needs except jq, so the missing-tool lane is measured
-# rather than asserted from an unreachable interpreter.
+# Everything the hook needs except one tool, so each missing-tool lane is
+# measured rather than asserted from an unreachable interpreter. Dropping cat
+# is not the same failure as dropping jq: without the guard the hook dies at
+# `INPUT=$(cat)` with 127, and a PreToolUse status that is not 2 is a
+# non-blocking error the harness runs the command past.
 NO_JQ_BIN="$TMP_ROOT/no-jq-bin"
 mkdir -p "$NO_JQ_BIN"
 for tool in git grep bash cat env printf; do
   target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$NO_JQ_BIN/$tool"
 done
+NO_CAT_BIN="$TMP_ROOT/no-cat-bin"
+mkdir -p "$NO_CAT_BIN"
+for tool in git grep jq bash env printf; do
+  target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$NO_CAT_BIN/$tool"
+done
 
 echo "a git word with a later commit word is the commit"
 
 both 'git commit -m test' 0 2 "a plain commit"
+both 'cargo fmt\ngit commit -m x' 0 2 "a commit on the next line"
+# The three characters the git word's prefix strip drops through. A path and a
+# `$(` are separated by the substitution above; a backtick is not, so the strip
+# is the only thing that makes it a git word.
 both '/usr/bin/git commit -m x' 0 2 "an absolute git path"
 both 'x=$(git commit -m x)' 0 2 "a commit inside a command substitution"
+both '`git commit '"$NV"' -m x`' 2 2 "a backtick-enclosed commit"
 both 'git status' 0 0 "no commit word"
 both 'git log --grep=commit' 0 0 "commit inside a longer word"
 both 'echo commit && git status' 0 0 "a commit word before the git word"
@@ -152,15 +165,22 @@ both 'git commit -n -m x' 2 2 "the short flag"
 # The two sides of the value-taking-letter rule: a cluster reads left to right,
 # so -nm is the flag and -mnote is a message.
 both 'git commit -nm msg' 2 2 "n before the value-taking letter"
+both 'git commit -anm x' 2 2 "a cluster holding n behind another letter"
+both 'git commit -mfixc '"$NV" 2 2 "a value-taking letter does not swallow the flag behind it"
 both 'git commit -am x' 0 2 "a cluster without n still defers"
 both 'git commit -mnote' 0 2 "an attached message containing n"
+# Every value-taking letter, not just m: -Cnew reuses another commit's message,
+# so the n after it is that message's and not the flag.
+both 'git commit -Cnew' 0 2 "a value-taking letter other than m swallows its value"
 # A core.hooksPath key removes the judge this hook defers to, so it is read off
 # the word whatever option carries it. These are the forms the word test
 # catches, and the must-fail material for the two lines that catch them.
 both 'git -c core.hooksPath=/dev/null commit -m x' 2 2 "a -c key and its value"
 both 'git -ccore.hooksPath=/dev/null commit -m x' 2 2 "an attached -c key"
+both 'git -c core.hookspath=/dev/null commit -m x' 2 2 "the key in another case"
 both 'git --config-env=core.hooksPath=HP commit -m x' 2 2 "a --config-env key"
 both 'git config --local core.hooksPath /dev/null && git commit -m x' 2 2 "a config write"
+both 'sudo -u dev git config core.hooksPath /dev/null && git commit -m x' 2 2 "a wrapped config write"
 both 'GIT_CONFIG_KEY_0=Core.HooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x' 2 2 "an environment key"
 both 'GIT_CONFIG_COUNT=1 git commit -m x' 2 2 "the environment count alone"
 both 'git commit -c HEAD --reset-author' 0 2 "-c reusing a message is not a key"
@@ -222,6 +242,16 @@ assert_eq "$rc" "2" "a command string that never ends is refused"
 run_hook "$UNARMED" "$(payload 'git commit -m x')" PATH="$NO_JQ_BIN"
 assert_eq "$rc" "2" "a PATH without jq refuses rather than skipping the guard"
 assert_contains "$err" "jq, cat and grep are required" "and says which tools are missing"
+
+run_hook "$UNARMED" "$(payload 'git commit -m x')" PATH="$NO_CAT_BIN"
+assert_eq "$rc" "2" "a PATH without cat refuses rather than dying unread"
+assert_contains "$err" "jq, cat and grep are required" "and says which tools are missing"
+
+# The harness sends the command under tool_input; a payload naming it at the
+# top level is read the same way, and that fallback is a line of its own.
+run_hook "$UNARMED" '{"command":"git commit -m x"}'
+assert_eq "$rc" "2" "a top-level command field is read like a nested one"
+assert_contains "$err" "not armed by kendex" "and reaches the ordinary refusal"
 
 run_hook "$UNARMED" '{"note":"about to commit with git"}'
 assert_eq "$rc" "0" "a payload with no command field is left alone"
