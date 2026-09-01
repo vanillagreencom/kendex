@@ -33,9 +33,10 @@ if ! COMMAND=$(printf '%s' "$INPUT" \
 fi
 
 # The whole rule, built from named parts so each one is readable on its own.
-# ENDERS is the one definition of where a command stops, and every other part
-# is built from it, so no two of them can answer "how far does this rm reach?"
-# differently:
+# ENDERS says where one command ends and the next begins: POSITION reads it to
+# find where an rm may START, and GAP and SKIP exclude it so a scan never
+# REACHES out of the command it began in. Both questions are answered from the
+# one set, so the two answers cannot drift apart:
 #
 #   ENDERS    the characters that END one command: `;`, `&`, `|` and a newline.
 #             The newline is one of them because a newline both starts a
@@ -46,7 +47,10 @@ fi
 #             argument, so `git rm -r --cached $X` is git's and not this
 #             hook's. The newline earns its place here because bash's `=~` runs
 #             without REG_NEWLINE, so `^` anchors the whole command and nothing
-#             else would reach line two of a multi-line call.
+#             else would reach line two of a multi-line call. KEYWORD_EDGE is
+#             what stands to the left of the keyword: whitespace or an ENDERS
+#             member, because bash accepts `;then` and `;do` with no space at
+#             all and the keyword itself hides the `;` from the arm above.
 #   RECURSE   a flag word that means recursion: a single-dash cluster carrying
 #             `r` or `R`, or `--recursive` spelled out. A long flag merely
 #             holding an r (`--verbose`, `--interactive`, `--preserve-root`) is
@@ -65,17 +69,17 @@ fi
 #             whitespace character in ENDERS is the newline: a gap that crossed
 #             one would read the next command's words as this rm's operands.
 #   SPACE     whitespace INCLUDING that newline, spelled apart from GAP so the
-#             two places it belongs are the two places it stands: around the
-#             POSITION keywords, where a newline is the separator that puts the
-#             rm in command position, and after a trailing RECURSE, where a
-#             newline ends the flag word rather than reaching past it.
-#   SKIP      the words the scan crosses to get from one part to the next,
-#             built from GAP and CROSSABLE — any character but ENDERS, `<` and
-#             `>`. An ender would end this rm, and a redirection target is not
-#             an operand at all, so `rm -rf /var/tmp/x > $LOG` is not a
-#             variable-rooted rm. Crossing ordinary words is what reaches a
-#             LATER operand and a flag written after the operand, both of which
-#             GNU rm accepts.
+#             two places it belongs are the two places it stands: after a
+#             POSITION keyword, and after a trailing RECURSE, where a newline
+#             ends the flag word rather than reaching past it.
+#   SKIP      the words the scan crosses to get from one part to the next: GAP
+#             then a run of CROSSABLE, repeated. CROSSABLE is any character but
+#             ENDERS, `<`, `>` and whitespace, so it is a word BODY and GAP is
+#             the one thing between two words. An ender would end this rm, and
+#             a redirection target is not an operand at all, so
+#             `rm -rf /var/tmp/x > $LOG` is not a variable-rooted rm. Crossing
+#             ordinary words is what reaches a LATER operand and a flag written
+#             after the operand, both of which GNU rm accepts.
 #
 # Both orders are spelled out rather than folded together: the flag before the
 # operand, and the operand before the flag.
@@ -97,7 +101,8 @@ BLANK='[:blank:]'
 SPACE_ANY='[:space:]'
 GAP="[${BLANK}]"
 SPACE="[${SPACE_ANY}]"
-POSITION="(^|[${ENDERS}(){}]|${SPACE}(then|do|else)${SPACE})${SPACE}*rm"
+KEYWORD_EDGE="[${ENDERS}${SPACE_ANY}]"
+POSITION="(^|[${ENDERS}(){}]|${KEYWORD_EDGE}(then|do|else)${SPACE})${SPACE}*rm"
 RECURSE="(-[^-${SPACE_ANY}]*[rR][^${SPACE_ANY}]*|--recursive)"
 ROOT='"*\$([A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*([^:A-Za-z0-9_]|:[^?]))'
 CROSSABLE="[^${ENDERS}<>${SPACE_ANY}]"

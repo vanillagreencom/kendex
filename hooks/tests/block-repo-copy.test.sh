@@ -68,6 +68,11 @@ run_hook "cp -r $REPO/.git /tmp/copy";                 assert_eq "$rc" 2 'cp of 
 run_hook "rsync -a $REPO/target /tmp/copy";            assert_eq "$rc" 2 'rsync of a build tree into /tmp is refused'
 run_hook "git clone $REPO/.git /tmp/copy";             assert_eq "$rc" 2 'a local git clone into /tmp is refused'
 run_hook "tar -cf - $REPO/target | tar -xf - -C /tmp"; assert_eq "$rc" 2 'a tar create-to-extract pipe into /tmp is refused'
+# The same pipe as it is normally written once it is long: the newline after
+# the `|` does not end the command, so the destination on the far side is
+# still this copy's.
+run_hook "$(printf 'tar -cf - %s/target |\n  tar -xf - -C /tmp' "$REPO")"
+assert_eq "$rc" 2 'and wrapping that pipe after the | is still one copy'
 run_hook "mkdir -p /tmp/x && cp -a $REPO/.git /tmp/x"; assert_eq "$rc" 2 'the copy is found in a chained command'
 # The verb is a word, not a substring: a path in front of it is a prefix the
 # class allows, a letter is not.
@@ -98,6 +103,10 @@ run_hook "cp -r $REPO/.git /var/tmp/copy";   assert_eq "$rc" 2 '/var/tmp is a sc
 run_hook 'cp -r '"$REPO"'/.git $TMPDIR/keep';   assert_eq "$rc" 2 'an unexpanded $TMPDIR destination is a scratch destination'
 run_hook 'cp -r '"$REPO"'/.git ${TMPDIR}/keep'; assert_eq "$rc" 2 'the braced form of the same variable is too'
 run_hook "cp -r $REPO/.git /tmp";            assert_eq "$rc" 2 'the temp root itself is a scratch destination'
+# The one place a newline is still whitespace: it ends the destination word.
+# Every other run in the pattern refuses to cross one.
+run_hook "$(printf 'cp -r %s/.git /tmp\necho done' "$REPO")"
+assert_eq "$rc" 2 'a newline ends the destination word rather than reaching past it'
 run_hook "cp -r $REPO/.git \"/tmp/x\"";      assert_eq "$rc" 2 'a quoted destination is still the destination'
 # Same verb, same source, a destination outside every temp root: the
 # destination half is what decides, and its trailing boundary is what keeps
@@ -107,16 +116,36 @@ run_hook "cp -r $REPO/.git /home/agent/tmp/x";   assert_eq "$rc" 0 'a temp root 
 run_hook "cp -r $REPO/.git /tmpfoo/x";           assert_eq "$rc" 0 'nor is one a longer first component merely starts with'
 
 echo "=== block-repo-copy: one copy, not three commands ==="
-# A `;`, an `&` and a newline end a command, so unrelated commands standing
-# beside each other do not add up to one copy. Each pair differs only in
-# whether the three parts stand within one command. The pipe is the one
-# separator the scan crosses, and the create-to-extract row above is why.
+# A `;`, an `&` and a BARE newline end a command, so unrelated commands
+# standing beside each other do not add up to one copy. Each pair differs only
+# in whether the three parts stand within one command. A newline a backslash
+# escapes, and a newline after a pipe, are the two that do not end one: they
+# bind their two lines into a single copy, and the two rows below the pairs are
+# theirs.
 run_hook "$(printf 'cp README.md /home/me/out\necho target\necho /tmp')"
 assert_eq "$rc" 0 'a verb, a marker and a temp path on three lines are three commands'
 run_hook "$(printf 'ls /home/me\ncp -r %s/.git /tmp/x' "$REPO")"
 assert_eq "$rc" 2 'and a copy standing whole on the second line is refused'
 run_hook "cp -r $REPO/.git /srv/keep; ls /tmp"; assert_eq "$rc" 0 'a semicolon ends the copy before the temp path'
 run_hook "cp -r $REPO/.git /tmp/keep; ls /srv"; assert_eq "$rc" 2 'and a copy whole before the semicolon is refused'
+# The rows above reach their verdict at the marker's right edge, which admits
+# no newline, so neither the newline nor the `&` is what decided them. These
+# three put a BLANK after the marker word so the scan gets past that edge and
+# the separator itself is the only thing left to decide; the one-line row is
+# the refusing partner for both, being the same words with the separator
+# spelled as a space.
+run_hook "$(printf 'cp README.md /home/me/out\necho target x\necho /tmp')"
+assert_eq "$rc" 0 'a newline between the parts still ends the command before it'
+run_hook 'cp README.md /home/me/out & echo target x & echo /tmp'
+assert_eq "$rc" 0 'an ampersand ends it the same way'
+run_hook 'cp README.md /home/me/out echo target x echo /tmp'
+assert_eq "$rc" 2 'and the same words within one command are one copy'
+# The two newlines that bind rather than end. Each has the multi-line pair
+# above as its partner: the same wrapping, one character earlier.
+run_hook "$(printf 'cp -r %s/.git \\\n  /tmp/copy' "$REPO")"
+assert_eq "$rc" 2 'a backslash continuation before the destination is one copy'
+run_hook "$(printf 'rsync -a \\\n  %s/target \\\n  /tmp/out' "$REPO")"
+assert_eq "$rc" 2 'and so is an rsync wrapped over three lines'
 
 echo "=== block-repo-copy: commands that are not copies at all ==="
 run_hook "git status --short";               assert_eq "$rc" 0 'a non-copy command passes'
@@ -195,6 +224,12 @@ run_hook "tar -czf /tmp/repo.tgz $REPO/.git"
 assert_eq "$rc" 0 'a tar naming its destination before its source is not seen'
 run_hook "echo \"cp -r $REPO/.git /tmp/copy\" >>notes.md"
 assert_eq "$rc" 2 'a copy spelled inside a quoted string is refused as the copy it is not'
+# The run between the marker and the destination crosses everything that is
+# not an ender, the pipe being only the one deliberately left out of ENDERS. A
+# redirection standing between them is crossed too, so a temp path that is a
+# log rather than the copy's destination is read as the destination.
+run_hook "cp -r $REPO/target /srv/keep > /tmp/copy.log"
+assert_eq "$rc" 2 'a temp path reached across a redirection is read as the destination'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -72,6 +72,9 @@ run_hook 'rm -rf $X > /var/tmp/log';  assert_eq "$rc" 2 'a redirection after the
 # GNU rm accepts both shapes.
 run_hook 'rm -rf /literal/path "$DIR/sub"'; assert_eq "$rc" 2 'a variable root in a LATER operand is refused'
 run_hook 'rm $DIR/sub -rf';           assert_eq "$rc" 2 'a recursion flag standing after the operand is refused'
+# The trailing flag ends at the end of the command or at whitespace, and a
+# newline is the whitespace it ends at when the call carries a second line.
+run_hook "$(printf 'rm %s/sub -rf\necho done' '$DIR')"; assert_eq "$rc" 2 'a newline ends that trailing flag as the end of the command does'
 run_hook 'rm build -rf $X';           assert_eq "$rc" 2 'a literal operand before the flag does not hide a later variable root'
 
 echo "=== block-unsafe-rm: the operand half of the predicate ==="
@@ -111,6 +114,11 @@ run_hook 'case x in x) rm -rf "$X/sub";; esac'; assert_eq "$rc" 2 'a case-arm bo
 run_hook 'if true; then rm -rf "$X/sub"; fi';   assert_eq "$rc" 2 'a then-prefixed rm is refused'
 run_hook 'while x; do rm -rf $Y; done';         assert_eq "$rc" 2 'a do-prefixed rm inside a loop is refused'
 run_hook 'if a; then b; else rm -rf $X; fi';    assert_eq "$rc" 2 'an else-prefixed rm is refused'
+# Bash wants no space in front of the keyword, and the keyword then stands
+# between the `;` and the rm where the separator arm above cannot see it, so
+# the keyword's own left edge has to admit an ender as well as whitespace.
+run_hook 'if [ -d "$D" ];then rm -rf $D;fi';    assert_eq "$rc" 2 'a semicolon-abutted then is still command position'
+run_hook 'for f in *;do rm -rf $D;done';        assert_eq "$rc" 2 'and so is a semicolon-abutted do'
 run_hook "$(printf 'rm\t-rf\t%s' '$X')";        assert_eq "$rc" 2 'tabs separate the words as spaces do'
 # A Bash tool call is routinely several lines, and bash's =~ anchors ^ at the
 # start of the WHOLE command, so the newline has to be a separator of its own.
@@ -123,6 +131,11 @@ run_hook "$(printf 'rm -rf /var/tmp/x\ncat %s' '$F')";    assert_eq "$rc" 0 'a l
 run_hook "$(printf 'rm -rf /var/tmp/x\nrm -rf %s' '$F')"; assert_eq "$rc" 2 'and a variable-rooted rm on that later line is still refused'
 run_hook 'rm -rf /var/tmp/x; echo $HOME';                 assert_eq "$rc" 0 'a semicolon ends it the same way'
 run_hook 'rm -rf /var/tmp/x; rm -rf $HOME';               assert_eq "$rc" 2 'and the rm after it is judged on its own operands'
+# The `&` and the `|` carry both halves of the same role. The rows above put
+# an rm on their far side, which is the STARTING half; these put a plain word
+# there, which only an ender keeps out of this rm's operands.
+run_hook 'rm -rf /var/tmp/x & cat $F';                    assert_eq "$rc" 0 'an ampersand ends it too'
+run_hook 'rm -rf /var/tmp/x | cat $F';                    assert_eq "$rc" 0 'and so does a pipe'
 # A word that is none of those in front of rm makes it another command's
 # argument, which this hook does not judge.
 run_hook 'git rm -r --cached $X';     assert_eq "$rc" 0 'git rm is not rm'

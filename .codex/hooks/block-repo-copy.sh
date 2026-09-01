@@ -32,17 +32,24 @@ fi
 
 # The whole rule, in the order the words stand: a copy verb, then a word whose
 # last path component is `.git` or `target`, then a destination under a temp
-# root. ENDERS is the one definition of where a command stops, and every part
-# below is built from it, so no two of them can answer "how far does this copy
-# reach?" differently:
+# root. ENDERS says where one command ends and the next begins. How far a scan
+# may REACH once inside one is the separate question RUN and GAP answer, and
+# both are derived from ENDERS, so the two answers cannot drift apart:
 #
 #   ENDERS    the characters that END one command here: `;`, `&` and a
 #             newline. The pipe is deliberately NOT one of them, because
 #             `tar -cf - SRC | tar -xf - -C DEST` is one copy written across a
 #             pipe and the scan has to reach the destination on its far side.
-#   CROSSABLE any character but ENDERS — what the scan crosses to get from one
-#             part to the next. Three unrelated commands on three lines are
-#             three commands, not one copy.
+#   CROSSABLE any character but ENDERS — the ordinary text a scan crosses to
+#             get from one part of the copy to the next.
+#   JOIN      the two newlines that do NOT end a command: one a backslash
+#             escapes, and one standing after a pipe. Each binds the words on
+#             either side of it into ONE command, so a copy wrapped over two
+#             lines — how a long tar or rsync is normally written — is one copy
+#             still.
+#   RUN       CROSSABLE or JOIN, repeated: everything one command may hold
+#             between two of its own words. A BARE newline is in neither half,
+#             so three unrelated commands on three lines are three commands.
 #   GAP       the whitespace standing between two words of ONE command:
 #             horizontal whitespace and nothing else, since the only
 #             whitespace character in ENDERS is the newline. END_EDGE is the
@@ -51,15 +58,14 @@ fi
 #
 # Both edges of the marker component are tested and both carry a case: the
 # `/?` and quote-or-GAP after it are what keep it last, so `target/debug/kendex`
-# — one binary out of a build tree — is not a tree copy; the optional
-# `CROSSABLE*` run ending in a slash, quote or GAP before it is what makes it a
-# component of its own, so a `…/bar.git` clone URL and a `build-target`
-# directory are not the marker. That run is OPTIONAL because the one mandatory
-# GAP after the verb is itself the left edge when the marker is the first
-# operand, as in `git clone .git /tmp/scratch`; requiring a second separator
-# there would let a whole local clone through. The `CROSSABLE*` run before the
-# destination is what keeps the destination a word of its own, so `/home/tmp/x`
-# is not `/tmp`.
+# — one binary out of a build tree — is not a tree copy; the optional RUN
+# ending in a slash, quote or GAP before it is what makes it a component of its
+# own, so a `…/bar.git` clone URL and a `build-target` directory are not the
+# marker. That run is OPTIONAL because the one mandatory GAP after the verb is
+# itself the left edge when the marker is the first operand, as in
+# `git clone .git /tmp/scratch`; requiring a second separator there would let a
+# whole local clone through. The RUN before the destination is what keeps the
+# destination a word of its own, so `/home/tmp/x` is not `/tmp`.
 #
 # The shell tokenizer this replaced resolved every operand and stat-ed it for
 # marker directories, to catch a source spelled as a working-tree path or
@@ -77,6 +83,11 @@ CROSSABLE="[^${ENDERS}]"
 BLANK='[:blank:]'
 SPACE_ANY='[:space:]'
 GAP="[${BLANK}]"
+# The backslash is doubled twice over: once for the double quotes, once for the
+# regex, so this alternative is a literal backslash or a literal pipe followed
+# by the newline it binds.
+JOIN="(\\\\|\\|[${BLANK}]*)"$'\n'
+RUN="(${CROSSABLE}|${JOIN})*"
 QUOTES="\"'"
 QUOTE="[${QUOTES}]"
 VERB="(cp|rsync|tar|git${GAP}+clone)"
@@ -85,7 +96,7 @@ RIGHT_EDGE="[${QUOTES}${BLANK}]"
 END_EDGE="[${QUOTES}${SPACE_ANY}]"
 MARKER='(\.git|target)'
 DEST='(/tmp|/var/tmp|\$\{TMPDIR\}|\$TMPDIR)'
-BLOCK_RE="(^|[^[:alnum:]_.-])${VERB}${GAP}(${CROSSABLE}*${LEFT_EDGE})?${MARKER}/?${RIGHT_EDGE}(${CROSSABLE}*${GAP})?${QUOTE}?${DEST}(/|${END_EDGE}|\$)"
+BLOCK_RE="(^|[^[:alnum:]_.-])${VERB}${GAP}(${RUN}${LEFT_EDGE})?${MARKER}/?${RIGHT_EDGE}(${RUN}${GAP})?${QUOTE}?${DEST}(/|${END_EDGE}|\$)"
 
 if [[ ! $COMMAND =~ $BLOCK_RE ]]; then
   exit 0
