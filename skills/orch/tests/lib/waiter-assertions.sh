@@ -1,13 +1,10 @@
 # shellcheck shell=bash
 #
-# The assertion vocabulary of the waiter suites — approval_wait.sh, ci_wait.sh,
-# queue_wait.sh, queue_wait_confirmation.sh, queue_wait_conflicting.sh: the
-# pass/fail counters, the stderr dump a failure prints, and the comparisons
-# those suites assert with. `dump_stderr` and `assert_eq` stood in all five
-# byte for byte and `assert_contains` in four, so a failure's shape depended on
-# which copy a suite happened to hold. `pass`, `assert_le` and
-# `assert_not_contains` had one caller each and are here for the same reason:
-# the next suite that wants one reaches for it rather than deriving it again.
+# The shared assertion vocabulary of the orch waiter suites: the pass/fail
+# counters, the stderr dump a failure prints, and the comparisons those suites
+# assert with. Each of these stood in the suites as its own copy, so a failure's
+# shape depended on which copy a suite happened to hold; here a suite reaches
+# for the one it needs rather than deriving it again.
 #
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps
 # this file out of the run. Sourcing sets PASS and FAIL to 0 and defines the

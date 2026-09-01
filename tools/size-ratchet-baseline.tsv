@@ -105,10 +105,10 @@ skills/orch/scripts/queue-wait	1067
 skills/orch/scripts/review-artifact-check	413
 skills/orch/scripts/workflow-state	701
 skills/orch/scripts/worktree-push	421
-skills/orch/tests/approval_wait.sh	1560
+skills/orch/tests/approval_wait.sh	1557
 skills/orch/tests/lanes.sh	890
 skills/orch/tests/oversee_watch_lanes.sh	815
-skills/orch/tests/queue_wait.sh	897
+skills/orch/tests/queue_wait.sh	896
 skills/orch/tests/worktree-cwd-precondition-lint.test.sh	940
 skills/preflight/scripts/preflight	1289
 skills/review-gate/scripts/pr-watch.sh	871

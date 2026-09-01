@@ -174,7 +174,6 @@ run_queue_wait() {
     shift
   done
   shift || true
-  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env STUB_SEQ_DIR="$SEQ_DIR" \

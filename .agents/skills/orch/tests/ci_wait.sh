@@ -287,28 +287,24 @@ virtual_clock_install "$TMP_ROOT/bin" "$TMP_ROOT/clock"
 # Run ci-wait via the .agents symlink, exactly how it's invoked in
 # production. `env "$@"` injects test-controlled env tokens / stub flags.
 run_wait() {
-  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env "$@" .agents/skills/orch/scripts/ci-wait 1 1 30)
 }
 
 run_wait_short() {
-  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env "$@" .agents/skills/orch/scripts/ci-wait 1 1 5)
 }
 
 run_wait_json() {
-  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env "$@" .agents/skills/orch/scripts/ci-wait 1 1 30 --json)
 }
 
 run_wait_json_short() {
-  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env "$@" .agents/skills/orch/scripts/ci-wait 1 1 5 --json)

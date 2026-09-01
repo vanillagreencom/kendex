@@ -422,10 +422,7 @@ chmod +x "$TMP_ROOT/bin/gh"
 # Virtual clock, on the same PATH as the gh stub: `date +%s` reads a file the
 # `sleep` stub advances, so the poll budgets below are spent in arithmetic
 # rather than in real seconds. Rationale and the per-case escape hatch back to
-# real time: lib/virtual-clock.sh. The clock is seeded once and runs forward
-# across the whole suite rather than being reset per case — approval-wait takes
-# its own START_TIME and nudge clock at the top of each run, so every budget
-# here is measured from that run's start and no case reads an absolute time.
+# real time: lib/virtual-clock.sh.
 # shellcheck source=lib/virtual-clock.sh
 source "$TEST_DIR/lib/virtual-clock.sh"
 virtual_clock_install "$TMP_ROOT/bin" "$TMP_ROOT/clock"
