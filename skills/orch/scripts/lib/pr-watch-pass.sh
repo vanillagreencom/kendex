@@ -12,26 +12,24 @@ PW_RC=0
 PW_OUT=""
 PW_ERR=""
 PW_PASSES=0
-# One entry per --repo, in REPOS order: the `<pr>\t<kind>` keys present on the
-# previous pass (the rising-edge baseline), the file holding them, and whether
-# that file already existed. Indexed arrays, never associative ones: bash 3.2
-# has no associative arrays and orch's scripts run on it.
+# One entry per --repo, in REPOS order: the `<pr>\t<kind>` keys the last
+# COMPLETE pass saw, and whether this run started with a baseline file for that
+# repo. Indexed arrays, never associative ones: bash 3.2 has no associative
+# arrays and orch's scripts run on it.
 PW_SEEN=()
-PW_STATE_FILE=()
 PW_HAD_STATE=()
 
 # The overseer exits this watch on every event and re-runs it, so the baseline
 # outlives the process: one file per repo, keyed on that repo and the --since
 # value every run of that fleet passes. Loaded as pass 1's baseline, rewritten
-# after every pass.
+# after every complete pass.
 pw_slug() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'; }
+pw_state_file() { printf '%s/%s__%s' "$PW_STATE_DIR" "$(pw_slug "$1")" "$(pw_slug "${SINCE:-none}")"; }
 
 pw_save_state() {
-  local file="$1" tmp
-  [[ -n "$file" ]] || return 0
-  tmp="$file.$$.tmp"
+  local file="$1" tmp="$1.$$.tmp"
   { printf '%s' "$2" > "$tmp" && mv -f "$tmp" "$file"; } \
-    || die "could not write the pr-watch state file $file (set OVERSEE_WATCH_STATE_DIR)"
+    || { rm -f "$tmp"; die "could not write the pr-watch state file $file (set OVERSEE_WATCH_STATE_DIR)"; }
 }
 
 # The repo a reducer line came from, ahead of the line's own tab-separated
@@ -42,23 +40,19 @@ pw_prefix() { awk -v repo="$1" '{ print repo "\t" $0 }' <<<"$2"; }
 # One baseline file per repo, loaded before the first pass.
 pw_init_state() {
   [[ -n "$PR_WATCH" ]] || return 0
-  local repo state_file seen
+  local i state_file
   mkdir -p "$PW_STATE_DIR" \
     || die "could not create the pr-watch state directory $PW_STATE_DIR (set OVERSEE_WATCH_STATE_DIR)"
   [[ -w "$PW_STATE_DIR" ]] \
     || die "the pr-watch state directory $PW_STATE_DIR is not writable (set OVERSEE_WATCH_STATE_DIR)"
-  for repo in "${REPOS[@]}"; do
-    state_file="$PW_STATE_DIR/$(pw_slug "$repo")__$(pw_slug "${SINCE:-none}")"
-    PW_STATE_FILE+=("$state_file")
-    if [[ -f "$state_file" ]]; then
-      seen="$(cat "$state_file" 2>/dev/null)" \
-        || die "cannot read the pr-watch state file: $state_file (set OVERSEE_WATCH_STATE_DIR)"
-      PW_SEEN+=("$seen")
-      PW_HAD_STATE+=(1)
-    else
-      PW_SEEN+=("")
-      PW_HAD_STATE+=(0)
-    fi
+  for i in "${!REPOS[@]}"; do
+    state_file="$(pw_state_file "${REPOS[$i]}")"
+    PW_SEEN[$i]=""
+    PW_HAD_STATE[$i]=0
+    [[ -f "$state_file" ]] || continue
+    PW_SEEN[$i]="$(cat "$state_file" 2>/dev/null)" \
+      || die "cannot read the pr-watch state file: $state_file (set OVERSEE_WATCH_STATE_DIR)"
+    PW_HAD_STATE[$i]=1
   done
 }
 
@@ -73,28 +67,26 @@ pr_watch_context() {
 # when nothing needs the overseer.
 check_pr_watch() {
   [[ -n "$PR_WATCH" ]] || return 0
-  local errf="$WORK_DIR/pr-watch.err" repo out err rc keys new_keys key
-  local i=0 event=0
-  PW_RC=0
-  PW_OUT=""
-  PW_ERR=""
+  local errf="$WORK_DIR/pr-watch.err" i repo out err rc keys new_keys key
+  local rc_max=0 out_all="" err_all="" event=0
+  # This pass's keys per repo. The reduction touches no baseline: a die below
+  # would otherwise leave a repo's rising edge recorded as seen with no event
+  # printed, and that line is then never news again.
+  local pass_keys=()
   PW_PASSES=$((PW_PASSES + 1))
   # Every repo is reduced on every pass, even once one of them has news: the
   # context each event carries is the whole fleet's state, and a repo skipped
   # here would carry a stale baseline into the next pass.
-  for repo in "${REPOS[@]}"; do
+  for i in "${!REPOS[@]}"; do
+    repo="${REPOS[$i]}"
     rc=0
     out="$(GH_REPO="$repo" "$PR_WATCH" 2>"$errf")" || rc=$?
     err="$(cat "$errf")"
-    [[ "$rc" -le "$PW_RC" ]] || PW_RC="$rc"
-    [[ -z "$out" ]] || PW_OUT+="$(pw_prefix "$repo" "$out")"$'\n'
-    [[ -z "$err" ]] || PW_ERR+="$(pw_prefix "$repo" "$err")"$'\n'
-    if [[ "$rc" -eq 0 ]]; then
-      PW_SEEN[$i]=""
-      pw_save_state "${PW_STATE_FILE[$i]}" ""
-      i=$((i + 1))
-      continue
-    fi
+    [[ "$rc" -le "$rc_max" ]] || rc_max="$rc"
+    [[ -z "$out" ]] || out_all+="$(pw_prefix "$repo" "$out")"$'\n'
+    [[ -z "$err" ]] || err_all+="$(pw_prefix "$repo" "$err")"$'\n'
+    pass_keys[$i]=""
+    [[ "$rc" -ne 0 ]] || continue
     # Non-zero with no per-PR lines is pr-watch's GLOBAL failure shape
     # (pr-watch.sh --help): it reports on stderr only, and nothing here can be
     # trusted.
@@ -105,22 +97,26 @@ check_pr_watch() {
       [[ -n "$key" ]] || continue
       grep -qxF -- "$key" <<<"${PW_SEEN[$i]}" || new_keys+="$key"$'\n'
     done <<<"$keys"
+    pass_keys[$i]="$keys"
+    [[ -n "$new_keys" ]] || continue
     # Rising edge against this repo's previous pass only: a line that clears
     # and later recurs is news again. Pass 1 compares against the persisted
-    # baseline.
-    PW_SEEN[$i]="$keys"
-    pw_save_state "${PW_STATE_FILE[$i]}" "$keys"
-    if [[ -n "$new_keys" ]]; then
-      if [[ "$PW_PASSES" -eq 1 && "${PW_HAD_STATE[$i]}" -eq 0 ]]; then
-        echo "oversee-watch: pr-watch attention present at start for $repo (rc=$rc, $(grep -c . <<<"$new_keys") line(s)) — the fleet's baseline, reported with the next event; only NEW lines become events" >&2
-      else
-        event=1
-      fi
+    # baseline; a repo this run named for the first time has none, so its
+    # standing attention is that repo's baseline rather than an event.
+    if [[ "$PW_PASSES" -eq 1 && "${PW_HAD_STATE[$i]}" -eq 0 ]]; then
+      echo "oversee-watch: pr-watch attention present at start for $repo (rc=$rc, $(grep -c . <<<"$new_keys") line(s)) — the fleet's baseline, reported with the next event; only NEW lines become events" >&2
+    else
+      event=1
     fi
-    i=$((i + 1))
   done
-  PW_OUT="${PW_OUT%$'\n'}"
-  PW_ERR="${PW_ERR%$'\n'}"
+  # The whole pass reduced without dying, so the baselines advance together.
+  for i in "${!REPOS[@]}"; do
+    PW_SEEN[$i]="${pass_keys[$i]}"
+    pw_save_state "$(pw_state_file "${REPOS[$i]}")" "${pass_keys[$i]}"
+  done
+  PW_RC="$rc_max"
+  PW_OUT="${out_all%$'\n'}"
+  PW_ERR="${err_all%$'\n'}"
   [[ "$event" -eq 1 ]] || return 0
   echo "EVENT pr-watch rc=$PW_RC"
   [[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"

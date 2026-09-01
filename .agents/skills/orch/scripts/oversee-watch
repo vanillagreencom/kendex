@@ -17,7 +17,7 @@
 #                 the latest output of each — each line prefixed with its
 #                 repo — is appended to every event.
 #   2. merged     an --item's PR (head branch = the item id, lowercased, in
-#                 this repo — never a fork's same-named branch; one --head
+#                 the first --repo — never a fork's same-named branch; one --head
 #                 query per item — no listing window to miss) merged at or
 #                 after --since
 #   3. window-gone a listed tmux lane window no longer exists
@@ -100,8 +100,8 @@ Events, checked in this order every pass:
                              0 clear)
   EVENT merged <PR> <branch> an --item's PR merged at or after --since (one
                              line per PR; the item's head branch is its id,
-                             lowercased, in this repo — a fork's PR on the
-                             same branch name is not the item's)
+                             lowercased, in the first --repo — a fork's PR on
+                             the same branch name is not the item's)
   EVENT merge-verdict <item> <watch-id>  wake its lane to consume the lifecycle
   EVENT window-gone <lane>   a listed tmux window no longer exists
   EVENT lane-exited <lane>   the window is alive but the pane's current
@@ -157,12 +157,14 @@ Options:
   --item ISSUE_ID     a live item (issue-N or PROJ-123); repeatable. `merged`
                       fires only for these items' PRs; none given → the
                       merged check is skipped with a stderr note
-  --repo OWNER/REPO   repository; repeatable (default: gh repo view). The
-                      review-gate reducer runs over every one, each with its
-                      own persisted baseline, and prefixes every line it
-                      reports with the repo it came from. `merged` and the
-                      heartbeat's open-PR list read the FIRST --repo. Naming
-                      one repository twice is a usage error
+  --repo OWNER/REPO   repository; repeatable, lowercased to one spelling
+                      (default: gh repo view). The review-gate reducer runs
+                      over every one, each with its own persisted baseline,
+                      and prefixes every line it reports with the repo it came
+                      from. `merged` and the heartbeat's open-PR list read the
+                      FIRST --repo, so name the repo holding the fleet's items
+                      first; past one repo a stderr note at start says so.
+                      Naming one repository twice is a usage error
   LANE_WINDOW...      tmux window names to watch; requires $TMUX
 
 Exit codes:
@@ -295,16 +297,20 @@ if [[ ${#LANES[@]} -gt 0 && -z "${TMUX:-}" ]]; then
   die "lane windows given (${LANES[*]}) but not inside tmux; drop the lanes or run from the tmux session that owns them"
 fi
 
-# One --repo per repository. A repeat would reduce it twice into one state
-# file and report it twice in the context; GitHub reads a repo path
-# case-insensitively, so the comparison does too.
+# One canonical spelling per repository, settled once, here: GitHub reads a
+# repo path case-insensitively, so lowercasing each entry in place leaves the
+# duplicate check below, the reducer's state-file name, the repo it prefixes
+# its lines with and the GH_REPO it exports all naming one string. A repeat
+# would reduce that repository twice into one state file and report it twice
+# in the context, so it is a usage error, named as the caller spelled it.
 repos_seen=""
-for repo in ${REPOS[@]+"${REPOS[@]}"}; do
-  repo="$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')"
-  if grep -qxF -- "$repo" <<<"$repos_seen"; then
-    die "--repo '$repo' given twice; name each repository once"
+for repo_i in ${REPOS[@]+"${!REPOS[@]}"}; do
+  repo_raw="${REPOS[$repo_i]}"
+  REPOS[$repo_i]="$(printf '%s' "$repo_raw" | tr '[:upper:]' '[:lower:]')"
+  if grep -qxF -- "${REPOS[$repo_i]}" <<<"$repos_seen"; then
+    die "--repo '$repo_raw' given twice; name each repository once"
   fi
-  repos_seen+="$repo"$'\n'
+  repos_seen+="${REPOS[$repo_i]}"$'\n'
 done
 
 # ISO8601 (UTC, Z suffix) → epoch, GNU date first, then BSD/macOS. -u is
@@ -355,8 +361,7 @@ fi
 # list are per-item and per-fleet queries against the first, the repo the
 # overseer's own items live in.
 REPO="${REPOS[0]}"
-# GitHub logins are case-insensitive and --repo's casing is the caller's.
-REPO_OWNER="$(printf '%s' "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')"
+REPO_OWNER="${REPO%%/*}"
 
 if [[ -x "$PR_WATCH" ]]; then
   :
@@ -366,6 +371,9 @@ else
 fi
 if [[ -z "$ITEM_BRANCHES" ]]; then
   echo "oversee-watch: no --item given; skipping the merged check (pr-watch/window/question checks still run)" >&2
+fi
+if [[ ${#REPOS[@]} -gt 1 ]]; then
+  echo "oversee-watch: the reducer covers ${REPOS[*]}; the merged check and the heartbeat's open-PR list read $REPO only" >&2
 fi
 
 pw_init_state
