@@ -363,6 +363,20 @@ if workflow_commands_detach "$TMP_ROOT/no-command-workflow.md"; then
   fail "the workflow wiring check accepted prose with no launch command"
 fi
 ok "the workflow wiring check rejects a missing launch command"
+# Decoy: both spellings' tokens present on unrelated lines, no exit code
+# routed. It passed the file-global forms this suite shipped before, so it is
+# the case that keeps the identifiers from floating free of their sentence.
+cat > "$TMP_ROOT/free-floating-tokens.md" <<'EOF'
+Continue until terminal before reading the artifact.
+Options and sidecar files are in `second-opinion --help`.
+EOF
+if grep -Eq "$RESUME_FORM" "$TMP_ROOT/free-floating-tokens.md"; then
+  fail "the resume row accepted a free-floating second-opinion --help mention"
+fi
+if grep -Eq "$TERMINAL_FORM" "$TMP_ROOT/free-floating-tokens.md"; then
+  fail "the terminal row accepted a free-floating until-terminal mention"
+fi
+ok "both wait-contract rows reject tokens that float free of the contract sentence"
 # Control: each row must red on a real workflow that keeps every surrounding
 # word and loses only its exit-code routing. Prose carrying neither form would
 # prove just that the assertion runs; one file per spelling is staged so both
