@@ -310,49 +310,68 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().reading).toBe(false);
   });
 
+  /** Park a command, handing back the resolver. */
+  const park = <T>() => {
+    let land!: (value: T) => void;
+    const promise = new Promise<T>((resolve) => {
+      land = resolve;
+    });
+    return { promise, land: (value: T) => land(value) };
+  };
+
   // A check ranks by when it lands, because it reads the standing after
   // fetching every mirror and so saw more than any read still out. That
   // holds only while nothing else commits meanwhile: `updates_refresh`
   // builds its report once, and a commit landing after that read is not in
   // it. Claiming to be newest would put the rows back as they were before
   // the commit — and `read` would say `landed` over them, which is what
-  // re-opens every action on rows nobody confirmed.
-  it("does not let a check overwrite a commit that landed while it ran", async () => {
-    let landCheck!: (
-      value: Awaited<ReturnType<typeof commands.updatesRefresh>>,
-    ) => void;
-    vi.mocked(commands.updatesRefresh).mockReturnValue(
-      new Promise((resolve) => {
-        landCheck = resolve;
-      }),
-    );
-    useUpdatesStore.setState({ rows: [row({})], read: READ_LANDED });
-    const checking = useUpdatesStore.getState().check();
-
-    // A mute commits and reads the standing back for itself while the
-    // fetch is still out.
+  // re-opens every action on rows nobody confirmed. So the two never run
+  // together, and one case holds both directions: neither flag closes the
+  // window on its own.
+  it("refuses a check while a write is out, and a write while a check is out", async () => {
     const muted = [row({ ignored: true })];
-    vi.mocked(commands.updateSetIgnored).mockResolvedValue({
-      status: "ok",
-      data: { rows: muted, warnings: [], lastFetched: null },
-    });
-    // The mute reads the standing back rather than trusting its own
-    // report, so this is what it lands.
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: { rows: muted, warnings: [], lastFetched: null },
     });
-    await useUpdatesStore.getState().setIgnored(row({}), true);
+
+    // A mute out, so `busy` is up: the check refuses rather than fetching a
+    // report this commit would be missing from.
+    const mute = park<Awaited<ReturnType<typeof commands.updateSetIgnored>>>();
+    vi.mocked(commands.updateSetIgnored).mockReturnValue(mute.promise);
+    const muting = useUpdatesStore.getState().setIgnored(row({}), true);
+
+    await useUpdatesStore.getState().check();
+    expect(commands.updatesRefresh).not.toHaveBeenCalled();
+
+    mute.land({
+      status: "ok",
+      data: { rows: muted, warnings: [], lastFetched: null },
+    });
+    await muting;
     expect(useUpdatesStore.getState().rows).toEqual(muted);
 
-    // The check answers with the standing as it was before that commit.
-    landCheck({
+    // The other way round: a check out, so `checking` is up, and the mute
+    // refuses rather than committing behind a report already built.
+    const fetch = park<Awaited<ReturnType<typeof commands.updatesRefresh>>>();
+    vi.mocked(commands.updatesRefresh).mockReturnValue(fetch.promise);
+    const checking = useUpdatesStore.getState().check();
+    vi.mocked(commands.updateSetIgnored).mockClear();
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+
+    await useUpdatesStore.getState().setIgnored(row({}), false);
+    expect(commands.updateSetIgnored).not.toHaveBeenCalled();
+    expect(useProblemsStore.getState().dialog.message).toBe(
+      UPDATE_NEEDS_CHECK_NOTE,
+    );
+
+    fetch.land({
       status: "ok",
       data: { rows: [row({})], warnings: [], lastFetched: null },
     });
     await checking;
-
-    expect(useUpdatesStore.getState().rows).toEqual(muted);
   });
 
   // The control: with nothing committing meanwhile, a check still outranks

@@ -115,7 +115,7 @@ export function UpdatesPage() {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={checking}
+                disabled={checking || busy}
                 onClick={() => void check()}
               >
                 <RefreshCw

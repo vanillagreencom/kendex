@@ -30,6 +30,7 @@ const stub = vi.hoisted(() => ({
     error: string | null;
   },
   lastFetched: null as number | null,
+  busy: false,
 }));
 
 vi.mock("@/stores/updates", async (importOriginal) => {
@@ -39,7 +40,7 @@ vi.mock("@/stores/updates", async (importOriginal) => {
       ...mod.useUpdatesStore.getState(),
       rows: stub.rows as UpdateRow[],
       warnings: [],
-      busy: false,
+      busy: stub.busy,
       checking: false,
       read: stub.read,
       pendingFollows: [],
@@ -55,6 +56,7 @@ beforeEach(() => {
   stub.rows = [];
   stub.read = { status: "landed", error: null };
   stub.lastFetched = null;
+  stub.busy = false;
 });
 
 /** Unix seconds `ago` seconds before now — the shape the overview reports,
@@ -110,6 +112,17 @@ describe("the Updates page across its read states", () => {
     const html = renderToStaticMarkup(<UpdatesPage />);
     expect(html).toContain(UPDATES_UNCONFIRMED_TITLE);
     expect(html).toContain(CHECK_FOR_UPDATES_LABEL);
+  });
+
+  // Check and the writes that commit exclude each other in the store, so
+  // the button that starts one says so while the other is out rather than
+  // taking a click the store then refuses.
+  it("holds Check while a write is out", () => {
+    stub.rows = [updateRow("gh", null)];
+    stub.busy = true;
+    expect(renderToStaticMarkup(<UpdatesPage />)).toMatch(
+      new RegExp(`<button[^>]*disabled=""[^>]*>.*${CHECK_FOR_UPDATES_LABEL}<`),
+    );
   });
 
   it("offers no header check button on a clean page with nothing visible", () => {
