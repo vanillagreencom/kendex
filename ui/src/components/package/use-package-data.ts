@@ -235,11 +235,14 @@ export function useManifestBusy(switching: boolean, scopes: Scope[]): boolean {
   return auditBusy || switching || updatesBusy || settling || saving;
 }
 
-/** The gate for this page's three version-changing controls alone —
- *  Update, switch version, and Follow source. They commit through
- *  `holdingBusy`, so a check must not run beside them; every other control
- *  this page holds writes through the audit or editor store, takes no part
- *  in that exclusion, and would only lose a save to a mirror fetch. */
+/** The gate for the three version-changing controls this page keeps on
+ *  screen through a check — Update, switch version, and Follow source.
+ *  They commit through `holdingBusy`, so a check must not run beside them.
+ *  The Projects tab's Update and Update all commit the same way and need
+ *  no gate here: `place.updatable` reads `rowUnsettled`, which carries
+ *  `checking`, so neither is rendered while a check is out. Save, Delete
+ *  and the enable/disable toggle write through the audit or editor store
+ *  and take no part — gating them on a mirror fetch would cost a save. */
 export function useVersionsBusy(manifestBusy: boolean): boolean {
   const checking = useUpdatesStore((s) => s.checking);
   return manifestBusy || checking;

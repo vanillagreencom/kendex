@@ -53,7 +53,8 @@ interface UpdatesState {
    *  commit-applying action captured is about to be replaced. */
   reading: boolean;
   /** Follow switches already moved on screen whose write has not answered.
-   *  Their scopes hold; every other row stays live. */
+   *  A flip's scope is what decides which rows the landing behind it may
+   *  not be acted on from. */
   pendingFollows: PendingFollow[];
   /** How the last read of the standing went. A failure keeps the rows it
    *  had and says why: the package page gates the Update button on this,

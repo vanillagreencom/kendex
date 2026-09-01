@@ -123,9 +123,10 @@ describe("package page edited notice", () => {
   });
 
   // Keeping the files as a fork copies what is on disk and reads nothing
-  // off the row, so a failed or running check does not bar it — that state
-  // is where the way out is most wanted. What bars it is that it commits,
-  // which is the pair the store refuses it on.
+  // off the row, so what the row's own standing says about it decides
+  // nothing: a flip settling in its scope leaves it live, and so does a
+  // check that failed. What bars it is that it commits — `running()`, a
+  // check out or a write out, which is the pair varied here.
   it("holds Keep as my own for the work already running, and nothing else", () => {
     const rows = [
       edited({ editedHarnesses: ["claude"], forkableHarness: "claude" }),

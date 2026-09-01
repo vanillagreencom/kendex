@@ -24,15 +24,15 @@ interface PageState {
 export const unsettled = (state: PageState): boolean =>
   state.read.status !== "landed" || state.checking || state.reading;
 
-/** Whether a write is already running in this row's own place. The apply
- *  behind a Follow source flip moves what is installed in that scope and
- *  nowhere else, so a second write there would contend for the same
- *  writer lock while every other row stays live.
+/** Whether a Follow source flip is settling in this row's own place. The
+ *  apply behind it moves what is installed in that scope and nowhere
+ *  else, so a second write there would contend for that scope's writer
+ *  lock.
  *
  *  Asked on its own by a surface that wants this and not the rest of
  *  [`unsettled`]: the page's Update carries no argument read off the row,
- *  so a read in flight cannot stale it — only a write in the same place
- *  bars it. */
+ *  so a read in flight cannot stale it — a flip in the same place is what
+ *  still speaks against it. */
 export const settlingIn = (
   state: { pendingFollows: { scope: Scope }[] },
   row: { scope: Scope },

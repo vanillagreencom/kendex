@@ -59,9 +59,11 @@ const render = (switching: boolean, scopes: Scope[] = [GLOBAL]) =>
 
 // A check builds its report once, so a commit the version controls make
 // while it is out would be missing from it and the landing would put the
-// rows back. Every other control this page holds writes through the audit
-// or editor store and takes no part in that: gating them on a mirror fetch
-// would only cost a save.
+// rows back. This gate is for the three that stay on screen through a
+// check; the Projects tab's Update controls commit the same way but are
+// not rendered while one is out. Save, Delete and the toggle write through
+// the audit or editor store and take no part in that: gating them on a
+// mirror fetch would only cost a save.
 describe("useVersionsBusy", () => {
   it("adds a running check, and nothing else does", () => {
     stub.checking = true;
