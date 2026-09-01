@@ -35,11 +35,11 @@ pub(super) struct Wrapper {
     /// section the publisher never brought.
     pub published: String,
     /// The same prose as the catalog holds it, which stands line for line
-    /// against `published` once its trailing whitespace is off: the
-    /// renderer hands the rewrite `trim_end` of this text, and the rewrite
-    /// says each line in the harness's words without ever adding or
-    /// dropping one. The pair is what gives a captured line back the words
-    /// it was written in.
+    /// against `published` once its trailing whitespace is off: every
+    /// agent renderer writes `trim_end` of this text, and where one says it
+    /// in the harness's words first, the rewrite gives back one line per
+    /// line. The pair is what gives a captured line back the words it was
+    /// written in.
     pub authored: String,
 }
 

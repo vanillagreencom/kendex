@@ -7,6 +7,7 @@ mod access;
 mod agent_capture;
 mod agent_settings;
 mod agent_tables;
+mod agent_words;
 mod agent_wrapper;
 mod available;
 mod beside;
@@ -523,9 +524,17 @@ fn captured(w: &World, name: &str) -> PathBuf {
 /// installed agent does, leaving every generated line alone.
 #[allow(clippy::unwrap_used)]
 fn edit_body(path: &std::path::Path) {
+    edit_line(path, "Upstream body.", "My body.");
+}
+
+/// One line of the rendering replaced where it stands. The line a test
+/// edits is what decides which lines the capture can still attribute, so
+/// a test that only ever edits the last one proves nothing about the rest.
+#[allow(clippy::unwrap_used)]
+fn edit_line(path: &std::path::Path, from: &str, to: &str) {
     let text = fs::read_to_string(path).unwrap();
-    assert!(text.contains("Upstream body."), "{text}");
-    fs::write(path, text.replace("Upstream body.", "My body.")).unwrap();
+    assert!(text.contains(from), "{from} is not in {text}");
+    fs::write(path, text.replace(from, to)).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]

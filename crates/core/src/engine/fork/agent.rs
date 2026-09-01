@@ -93,7 +93,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
             problem,
         }
     })?;
-    let bytes = source_form(&published, &edited_text, name, read.as_ref())?;
+    let bytes = source_form(&published, &edited_text, name, harness, read.as_ref())?;
     let captured = parse_source_agent(&String::from_utf8_lossy(&bytes))
         .map_err(|problem| unreadable(name, &decl.source, problem))?;
     let refused = |problem: String| CoreError::ForkWidensAccess {
@@ -226,6 +226,7 @@ fn source_form(
     published: &[u8],
     edited: &str,
     name: &str,
+    harness: HarnessId,
     wrapper: Option<&Wrapper>,
 ) -> Result<Vec<u8>> {
     let refused = |problem: String| CoreError::ForkNameUnusable {
@@ -238,7 +239,12 @@ fn source_form(
     let body = crate::frontmatter::split(edited)
         .map(|(_, body)| body)
         .unwrap_or(edited);
-    Ok(format!("---\n{frontmatter}---\n\n{}", prose(body, wrapper)).into_bytes())
+    let prose = prose(body, wrapper).map_err(|problem| CoreError::ForkWrapperUnreadable {
+        name: crate::names::shown(name),
+        harness: harness.display_name().to_owned(),
+        problem,
+    })?;
+    Ok(format!("---\n{frontmatter}---\n\n{prose}").into_bytes())
 }
 
 /// What the project and the catalog put around one agent's prose.

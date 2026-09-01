@@ -244,8 +244,8 @@ fn a_hook_matcher_is_restated_alternative_by_alternative() {
 /// The rewrite says each line in the harness's words and gives back one
 /// line for every line it was handed. The fork's capture pairs a rendering
 /// with the prose it was published as by position, so a rewrite that
-/// wrapped, split or joined a line would hand every captured line its
-/// neighbour's words.
+/// wrapped, split or joined a line would leave the two holding different
+/// numbers of lines and every fork off that harness would refuse.
 #[test]
 fn every_harness_gives_back_one_line_for_every_line() {
     let body = concat!(
@@ -261,14 +261,9 @@ fn every_harness_gives_back_one_line_for_every_line() {
         "\n",
         "Use the WebFetch tool last.\n",
     );
-    for harness in [
-        HarnessId::Codex,
-        HarnessId::Copilot,
-        HarnessId::Cursor,
-        HarnessId::Gemini,
-        HarnessId::Opencode,
-        HarnessId::Pi,
-    ] {
+    // Claude hands the body straight back, so the count holds for it
+    // trivially and a harness added to ALL is covered the day it lands.
+    for harness in HarnessId::ALL {
         let (text, _) = rewrite_prose(body, harness);
         assert_eq!(
             text.lines().count(),

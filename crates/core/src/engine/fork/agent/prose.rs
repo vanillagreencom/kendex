@@ -1,8 +1,9 @@
-//! Taking the generated wrapper off an edited body, and giving the prose
-//! left inside it back the words it was written in. A rendering on disk is
-//! the person's prose inside everything the renderer wrote around it and
-//! said in that harness's own vocabulary; a fork keeps the prose alone, in
-//! the words the catalog published it in. Whatever the next render writes
+//! Taking the generated wrapper off an edited body, and giving every line
+//! the person left alone back the words it was written in. A rendering on
+//! disk is the person's prose inside everything the renderer wrote around
+//! it and said in that harness's own vocabulary; a fork keeps the prose
+//! alone, and keeps it in the words the catalog published it in wherever
+//! it can still tell which line is which. Whatever the next render writes
 //! again out of the manifest this fork carries would otherwise stand
 //! twice, and whatever it said in one harness's words would be what every
 //! other harness renders.
@@ -31,19 +32,23 @@ use super::wrapper::Wrapper;
 /// so the count does: the wrapper may take a section only where the body
 /// holds more copies of it than the publisher brought.
 ///
-/// What is left is then said back in the words the catalog published it
-/// in, because the rendering said those lines in this harness's vocabulary
-/// and the fork's source is what every harness renders from next.
-pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
+/// Every line of what is left that the rendering still accounts for is
+/// then said back in the words the catalog published it in, because the
+/// rendering said those lines in this harness's vocabulary and the fork's
+/// source is what every harness renders from next. `Err` is a pairing that
+/// cannot be trusted, which is a refusal for the same reason an unreadable
+/// wrapper is.
+pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> Result<String, String> {
     let lines: Vec<&str> = body.lines().collect();
     let kept: Vec<&str> = match wrapper {
         Some(wrapper) => {
-            let publisher: Vec<&str> = wrapper.published.lines().collect();
-            let front = &lines[taken(&lines, &publisher, &said(&wrapper.before, false))..];
+            let rendered: Vec<&str> = wrapper.published.lines().collect();
+            let authored: Vec<&str> = wrapper.authored.trim_end().lines().collect();
+            let front = &lines[taken(&lines, &rendered, &said(&wrapper.before, false))..];
             let body_back: Vec<&str> = front.iter().rev().copied().collect();
-            let publisher_back: Vec<&str> = publisher.iter().rev().copied().collect();
-            let back = taken(&body_back, &publisher_back, &said(&wrapper.after, true));
-            as_published(&front[..front.len() - back], wrapper)
+            let rendered_back: Vec<&str> = rendered.iter().rev().copied().collect();
+            let back = taken(&body_back, &rendered_back, &said(&wrapper.after, true));
+            as_authored(&front[..front.len() - back], &rendered, &authored)?
         }
         // Nothing was subtracted, so the banner the renderer wrote is
         // still standing in the body — the one line the next render is
@@ -64,62 +69,95 @@ pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
     // Only the blank separators go. A first line indented into a code
     // block is the person's own content, and trimming it would render
     // their block as ordinary prose.
-    format!("{}\n", out.trim_start_matches('\n').trim_end())
+    Ok(format!("{}\n", out.trim_start_matches('\n').trim_end()))
 }
 
-/// The kept lines, each one standing at the publisher's own position
-/// given back the words the catalog published it in. Every harness but
-/// Claude says a body's tool references in its own vocabulary, so a line
-/// read off the rendering is the publisher's line said in that harness's
-/// words, and the fork's source is what every harness renders from next.
+/// The kept lines, each one the rendering still accounts for given back
+/// the words the catalog published it in. Every harness but Claude says a
+/// body's tool references in its own vocabulary, so a line read off the
+/// rendering is the publisher's line said in that harness's words, and the
+/// fork's source is what every harness renders from next.
 ///
-/// Which lines are the publisher's is asked of position, never of text. A
-/// line is theirs where it stands where the rendering stands it: the run
-/// at the front that matches the rendering line for line, and the run at
-/// the back that does the same. Between the two is where the person
-/// worked, and those lines stay exactly as they wrote them, harness words
-/// and all — this reads what the renderer wrote, and their line is not
-/// something it wrote.
+/// Which line is which is asked of the body's whole order, never of one
+/// line's text: [`aligned`] pairs each kept line with the rendered line it
+/// stands for, and a pair takes the authored line at that position. A kept
+/// line no pair reaches is one the alignment cannot place — a line the
+/// person wrote, or one it cannot tell from theirs — and it stays exactly
+/// as they wrote it, harness words and all. This reads back what the
+/// renderer wrote, and their line is not something it wrote.
 ///
 /// Text alone cannot answer it. Two published lines may render as one and
 /// the same line, a fenced sample keeps every byte while the prose above
-/// it is reworded into the same words, and a person may type the
+/// it is reworded into those same words, and a person may type the
 /// harness's own name for a tool; matched by text, each of those puts a
 /// line into the source that nobody wrote.
 ///
-/// The pairing itself is positional: `rewrite_prose` says each line in the
-/// harness's words and emits one line per line, and every agent renderer
-/// hands it `trim_end` of the body. Where the two counts disagree the
-/// pairing has slipped and every line past the slip would be swapped for
-/// its neighbour's, so nothing is said back at all. It is written as a
-/// refusal rather than a `debug_assert` for the reason `wrapper` gives for
-/// its own: an invariant held fail-closed, pinned red by the vocab suite's
-/// line-count test rather than by a case reaching it here.
-fn as_published<'a>(kept: &[&'a str], wrapper: &'a Wrapper) -> Vec<&'a str> {
-    let rendered: Vec<&str> = wrapper.published.lines().collect();
-    let published: Vec<&str> = wrapper.authored.trim_end().lines().collect();
-    if rendered.len() != published.len() {
-        return kept.to_vec();
+/// `Err` where the rendering and the published prose do not hold the same
+/// number of lines. `rewrite_prose` says each line in the harness's words
+/// and gives back one line per line, so a disagreement is that invariant
+/// gone and every pair after the slip would carry a neighbour's words. The
+/// fork refuses rather than write them, the way an unreadable wrapper
+/// does.
+fn as_authored<'a>(
+    kept: &[&'a str],
+    rendered: &[&'a str],
+    authored: &[&'a str],
+) -> Result<Vec<&'a str>, String> {
+    if rendered.len() != authored.len() {
+        return Err(format!(
+            "it renders {} line{} of prose the catalog publishes as {}",
+            rendered.len(),
+            if rendered.len() == 1 { "" } else { "s" },
+            authored.len()
+        ));
     }
-    let front = kept
-        .iter()
-        .zip(&rendered)
-        .take_while(|(kept, rendered)| kept == rendered)
-        .count();
-    let back = kept[front..]
-        .iter()
-        .rev()
-        .zip(rendered[front..].iter().rev())
-        .take_while(|(kept, rendered)| kept == rendered)
-        .count();
     let mut words = kept.to_vec();
-    for (at, line) in words.iter_mut().take(front).enumerate() {
-        *line = published[at];
+    for (at, stands_for) in aligned(kept, rendered) {
+        words[at] = authored[stands_for];
     }
-    for (from_the_end, line) in words.iter_mut().rev().take(back).enumerate() {
-        *line = published[published.len() - 1 - from_the_end];
+    Ok(words)
+}
+
+/// Each kept line paired with the rendered line it stands for, as
+/// `(kept, rendered)` indices in order. The pairing is the longest run of
+/// lines the two hold in common without reordering either, so a line the
+/// person edited, added or deleted drops out of it and every line around
+/// it still pairs where it stands. A cell per kept line per rendered line
+/// is the cost, which an agent's body affords.
+///
+/// The walk back is from the end, so where the rendering says two lines
+/// alike the later one is paired. Nothing in the text can tell those two
+/// apart — the person deleted one of them and the survivor reads the same
+/// either way — and taking the later one is what leaves a deletion above
+/// it attributed to the copy that went.
+fn aligned(kept: &[&str], rendered: &[&str]) -> Vec<(usize, usize)> {
+    let width = rendered.len() + 1;
+    let mut common = vec![0u32; (kept.len() + 1) * width];
+    for at in 1..=kept.len() {
+        for stands_for in 1..=rendered.len() {
+            common[at * width + stands_for] = match kept[at - 1] == rendered[stands_for - 1] {
+                true => common[(at - 1) * width + stands_for - 1] + 1,
+                false => {
+                    common[(at - 1) * width + stands_for].max(common[at * width + stands_for - 1])
+                }
+            };
+        }
     }
-    words
+    let (mut at, mut stands_for) = (kept.len(), rendered.len());
+    let mut pairs = Vec::new();
+    while at > 0 && stands_for > 0 {
+        if kept[at - 1] == rendered[stands_for - 1] {
+            pairs.push((at - 1, stands_for - 1));
+            at -= 1;
+            stands_for -= 1;
+        } else if common[(at - 1) * width + stands_for] >= common[at * width + stands_for - 1] {
+            at -= 1;
+        } else {
+            stands_for -= 1;
+        }
+    }
+    pairs.reverse();
+    pairs
 }
 
 /// One line a section is identified by. `inside` is a line standing
@@ -225,4 +263,40 @@ fn held(body: &[&str], section: &[Line]) -> Option<usize> {
         .take_while(|line| line.trim().is_empty())
         .count();
     Some(through + trailing)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pairing is positional, so the rendering and the prose it
+    /// publishes have to hold one line for one line. Where they do not,
+    /// every pair after the slip would carry a neighbour's words, and the
+    /// capture says so rather than writing them.
+    #[test]
+    fn a_rendering_longer_than_the_prose_it_publishes_is_refused() {
+        let problem = as_authored(
+            &["Use the read_file tool."],
+            &["Use the read_file tool.", "And again."],
+            &["Use the Read tool."],
+        )
+        .unwrap_err();
+        assert_eq!(
+            problem,
+            "it renders 2 lines of prose the catalog publishes as 1"
+        );
+    }
+
+    /// The same length is the whole of the condition: a pairing that holds
+    /// says the publisher's words back.
+    #[test]
+    fn a_rendering_the_prose_matches_says_the_published_words_back() {
+        let said = as_authored(
+            &["Use the read_file tool.", "My body."],
+            &["Use the read_file tool.", "Upstream body."],
+            &["Use the Read tool.", "Upstream body."],
+        )
+        .unwrap();
+        assert_eq!(said, vec!["Use the Read tool.", "My body."]);
+    }
 }
