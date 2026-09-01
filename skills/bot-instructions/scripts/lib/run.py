@@ -13,7 +13,8 @@ import contextlib
 import tomllib
 
 from .constants import CODERABBIT_SCHEMA_PATH, MARKER_TOKEN, TOML_PATH
-from .errors import Finding, InputError, ManifestError, ValidationFailed
+from .errors import (Finding, InputError, ManifestError, SourceUnavailable,
+                     ValidationFailed)
 from . import config as config_mod
 from . import model as model_mod
 from . import render as render_mod
@@ -40,6 +41,12 @@ def _as_finding(validator, path, other=None, other_path=None):
     """Attribute an input failure to the validator whose clause it is."""
     try:
         yield
+    except SourceUnavailable:
+        # A source that could not answer is nobody's clause. Attributing it to
+        # the validator that happened to need it first reports a defect in the
+        # repo's TOML for a git that would not run, and sends the reader to
+        # the wrong file.
+        raise
     except ManifestError as exc:
         raise ValidationFailed([Finding(other or validator, str(exc), other_path or path)]) from exc
     except InputError as exc:
@@ -122,25 +129,33 @@ def _exclusions_from(reader):
     out of the comparison: dropping it would let a malformed surface agree
     with every other by having no entries, which is the silent failure this
     package exists to remove. `unreadable` is a sentinel no glob can equal.
+
+    **Absent and empty are different answers.** `None` is the surface not
+    being rendered at all — a bot whose `[bots]` flag is false has no
+    exclusion mechanism to compare. Empty bytes are a surface that IS
+    rendered and carries no entries, and testing the text for truth collapsed
+    the two: a serializer emitting an empty `.macroscope/ignore.md` dropped it
+    from the comparison, `_cross_surface` agreed across the surfaces that
+    survived, and `validate()` returned no findings at all.
     """
     from . import yamlread
 
     out = {}
     text = reader(".coderabbit.yaml")
-    if text:
+    if text is not None:
         try:
             entries = yamlread.loads(text)["reviews"]["path_filters"]
             out[".coderabbit.yaml"] = [e[1:] for e in entries if e.startswith("!")]
         except Exception as exc:
             out[".coderabbit.yaml"] = [f"<unreadable: {exc}>"]
     text = reader(".pr_agent.toml")
-    if text:
+    if text is not None:
         try:
             out[".pr_agent.toml"] = list(tomllib.loads(text).get("ignore", {}).get("glob", []))
         except (tomllib.TOMLDecodeError, AttributeError, TypeError) as exc:
             out[".pr_agent.toml"] = [f"<unreadable: {exc}>"]
     text = reader(".macroscope/ignore.md")
-    if text:
+    if text is not None:
         out[".macroscope/ignore.md"] = [
             ln for ln in text.split("\n") if ln.strip() and not ln.lstrip().startswith("<!--")
         ]

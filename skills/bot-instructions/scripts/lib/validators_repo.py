@@ -11,7 +11,7 @@ holding it, so that clause runs on both verbs against whichever tree the verb
 produced.
 """
 
-import subprocess
+import tomllib
 
 from .constants import EXCLUSION_PROSE_COLUMNS
 from .errors import Finding, ManifestError
@@ -142,9 +142,14 @@ def exclusion_consistency(ctx, out):
     """The exclusion lists name the skills that existed when someone last wrote
     them, so a newly rendered tree is reviewed as if it were this repo's code."""
     v = "exclusion-consistency"
-    if not ctx.config.exclusions["derive_render"]:
-        return
-    _derived_set(v, ctx, ctx.exclusion_sources(), out)
+    # The flag gates the derived-set clause and nothing else: it says where
+    # the exclusions come from, not whether they are checked. The other three
+    # judge hand-written `[[exclusions.path]]` entries just as well, and
+    # `derive_render` defaults to false, so gating them on it left every repo
+    # on the default with `_prose_destinations` — the only enforcer of
+    # SKILL.md § Every rendered config excludes the render trees — never run.
+    if ctx.config.exclusions["derive_render"]:
+        _derived_set(v, ctx, ctx.exclusion_sources(), out)
     _cross_surface(v, ctx, ctx.scratch_exclusions(), out)
     _prose_destinations(v, ctx, out)
     _dead_globs(v, ctx, out)
@@ -185,11 +190,8 @@ def _prose_destinations(v, ctx, out):
     wanted = ctx.model.exclusion_globs
     if not wanted:
         return
-    carriers = {
-        "AGENTS.md": ctx.build.region_body,
-        "pr_agent issues": ctx.build.files.get(".pr_agent.toml"),
-        "pr_agent extra": ctx.build.files.get(".pr_agent.toml"),
-    }
+    carriers = {"AGENTS.md": ctx.build.region_body}
+    carriers.update(_qodo_guidance(v, ctx, out))
     for column in EXCLUSION_PROSE_COLUMNS:
         text = carriers.get(column)
         if text is None:
@@ -200,8 +202,41 @@ def _prose_destinations(v, ctx, out):
                                       f"exclusion paths and {glob!r} is not in it"))
 
 
+def _qodo_guidance(v, ctx, out):
+    """The two Qodo destinations, read as the keys the review agent reads.
+
+    Asking whether a glob appears anywhere in `.pr_agent.toml` is satisfied by
+    `[ignore] glob`, which lists every exclusion and is an unrelated
+    mechanism: it filters what Qodo analyzes for `/improve`, not what the
+    review agent reads, which is why the prose exists as well. A render that
+    dropped the paths from both guidance keys passed this clause on the
+    strength of the list beside them.
+    """
+    text = ctx.build.files.get(".pr_agent.toml")
+    if text is None:
+        return {}
+    try:
+        doc = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        # Unreadable is not "carries the paths": `qodo-parity` names the same
+        # failure, and a clause that cannot read its destination says so.
+        out.append(Finding(v, f".pr_agent.toml is not valid TOML ({exc}), so whether the "
+                              "guidance keys carry the exclusion paths cannot be read"))
+        return {}
+    return {
+        "pr_agent issues": doc.get("review_agent", {}).get("issues_user_guidelines", ""),
+        "pr_agent extra": doc.get("pr_reviewer", {}).get("extra_instructions", ""),
+    }
+
+
 def _dead_globs(v, ctx, out):
     """A glob matching no tracked path silences nothing and reads clean."""
+    if not ctx.model.exclusions:
+        # No exclusion is declared, so none can be dead. The unreachability
+        # finding below exists to stop this clause reporting each exclusion as
+        # dead for a reason that is not the author's; with nothing to report
+        # it would be a finding about an empty set.
+        return
     tracked = ctx.tracked_paths()
     if not tracked:
         out.append(Finding(v, "the repo tracks no files, so the dead-exclusion verdict is "
@@ -212,12 +247,3 @@ def _dead_globs(v, ctx, out):
             out.append(Finding(v, f"exclusion {entry['glob']!r} matches no tracked path, so "
                                   "it silences nothing — a typo or a wrong anchor is dead "
                                   "config that reads as an exclusion"))
-
-
-def tracked(root):
-    raw = subprocess.run(
-        ["git", "-C", root, "ls-files", "-z"], capture_output=True, check=False
-    )
-    if raw.returncode != 0:
-        return []
-    return [p for p in raw.stdout.decode("utf-8", "replace").split("\0") if p]

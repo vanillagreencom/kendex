@@ -10,11 +10,20 @@ for `AGENTS.md`, the doctrine root three of the five bots read.
 **The marker gate is narrowed, not closed.** A rename replaces a path, not the
 descriptor the marker was read from, so no single file is both marker-checked
 and replaced. What this does: opens the target no-follow at replacement time,
-reads the marker from that descriptor, records the file's identity, and
-re-checks that identity immediately before the rename. The residual window is
-from that last check to the rename. The lock closes the concurrent-render
-case; an editor or a formatter landing in that window is not closed by
-anything portable, and the spec says so rather than claiming it is.
+reads the marker AND the bytes from that descriptor, records the file's
+identity, hands those bytes to a read-modify-write caller, and re-checks that
+identity immediately before the rename. The residual window is from that last
+check to the rename. The lock closes the concurrent-render case; an editor or
+a formatter landing in that window is not closed by anything portable, and the
+spec says so rather than claiming it is.
+
+**One open decides and replaces.** The bound above holds only because the
+content a caller transforms is the content the gate measured. Deriving new
+bytes from an earlier, separate read reopens the window to the whole span
+between the two opens, and silently: the gate's baseline is then the file as
+edited, the recheck agrees with itself, and the rename installs bytes computed
+from the copy taken before the edit. `transform=` is how a caller stays inside
+the bound; `replace(..., data)` is for bytes that do not depend on the file.
 """
 
 import errno
@@ -35,16 +44,23 @@ def _identity(st):
 
 
 def _gate(dir_fd, leaf, rel, require_marker):
-    """Read the marker off the file opened for the replacement.
+    """Read the marker, and the bytes, off the file opened for the replacement.
 
-    Returns the identity to re-check before the rename, or None when the path
-    is absent — a path this package is creating has nothing to protect.
+    Returns `(identity, existing text)` — the identity to re-check before the
+    rename, and the content the caller derives its new bytes from. Both come
+    from this one descriptor: a read-modify-write whose new bytes were
+    computed from an earlier, separate open would install them over whatever
+    landed in between, and the gate would see nothing wrong because its own
+    baseline was already the post-edit file.
+
+    `(None, None)` when the path is absent — a path this package is creating
+    has nothing to protect.
     """
     try:
         fd = os.open(leaf, os.O_RDONLY | _NOFOLLOW, dir_fd=dir_fd)
     except OSError as exc:
         if exc.errno == errno.ENOENT:
-            return None
+            return None, None
         if exc.errno in (errno.ELOOP, errno.EMLINK):
             raise ContainmentError(f"{rel}: is a symlink and is never replaced") from exc
         raise RenderError(f"{rel}: cannot open to check the marker ({exc.strerror})") from exc
@@ -60,20 +76,33 @@ def _gate(dir_fd, leaf, rel, require_marker):
                 "to take it over. A marker further down the file is quoted content, not "
                 "ownership"
             )
-        return _identity(st)
+        return _identity(st), existing
     finally:
         os.close(fd)
 
 
-def replace(root_fd, rel, data, require_marker=True):
-    """Replace `rel` with `data`, atomically, behind the marker gate."""
-    if isinstance(data, str):
-        data = data.encode("utf-8")
+def replace(root_fd, rel, data=None, require_marker=True, transform=None):
+    """Replace `rel` with `data`, atomically, behind the marker gate.
+
+    `transform` is the read-modify-write form, and the only one a caller
+    deriving new bytes from the current file may use: it is handed the
+    existing text — the bytes `_gate` read off the descriptor whose identity
+    the recheck compares, or None when the path is absent — and returns the
+    bytes to write, or None to leave the file alone. Any ownership decision
+    that content settles belongs inside it, so the decision and the
+    replacement come from one open. Returns True when a write happened.
+    """
     parts = _components(rel)
     dir_fd, leaf = _walk_to_parent(root_fd, parts, create=True)
     tmp = f".{leaf}.bot-instructions-tmp.{os.getpid()}"
     try:
-        before = _gate(dir_fd, leaf, rel, require_marker)
+        before, existing = _gate(dir_fd, leaf, rel, require_marker)
+        if transform is not None:
+            data = transform(existing)
+            if data is None:
+                return False
+        if isinstance(data, str):
+            data = data.encode("utf-8")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=dir_fd)
         try:
             os.write(fd, data)
@@ -87,6 +116,7 @@ def replace(root_fd, rel, data, require_marker=True):
             _unlink_quiet(dir_fd, tmp)
             raise
         _fsync_dir(dir_fd)
+        return True
     finally:
         os.close(dir_fd)
 

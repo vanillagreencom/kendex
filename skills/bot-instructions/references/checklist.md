@@ -276,9 +276,11 @@ which ones this repo does not actually have.
 ## Excluding the render trees
 
 - [ ] The exclusion set actually covers this repo's render trees. `render` fails
-      when it does not, but only where `[exclusions] derive_render` is on, so a
-      repo deriving nothing checks this by reading the rendered `path_filters`
-      against `.agents/`.
+      when a destination the routing table marks as carrying the paths does not
+      carry them, on every repo; what `[exclusions] derive_render` decides is
+      whether the set is derived from the install manifest or written by hand,
+      so a repo deriving nothing still has to name its render trees in
+      `[[exclusions.path]]` for that check to have anything to enforce.
 - [ ] Enforcement for Codex, Copilot and Qodo comes from the merge gate, not
       from here. Those three receive the paths as an instruction and may comment
       on them anyway; a gate that passes a render-only diff needs no bot to

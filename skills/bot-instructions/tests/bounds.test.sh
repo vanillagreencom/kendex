@@ -116,7 +116,7 @@ cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
 # One unit inside and one crossing, measured rather than assumed.
 cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
 lines_toml 100000
-"$BI" render --repo "$repo" --spec "$SPEC" >/dev/null 2>&1
+bi_must render --repo "$repo" --spec "$SPEC"
 actual="$(python3 -c 'import sys;print(len(open(sys.argv[1]).read().split(chr(10))))' "$repo/best_practices.md")"
 cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
 lines_toml "$((actual + 1))"

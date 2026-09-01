@@ -81,8 +81,19 @@ marker from that descriptor, record the file's identity, and re-check that
 identity immediately before the rename, refusing when it moved. The residual
 window is from that last check to the rename. The lock closes the concurrent-
 render case; an editor or a formatter landing in that window is closed by
-nothing portable, and this says so rather than claiming otherwise. The
-`AGENTS.md` splice is the same window with more at stake, and the same bound.
+nothing portable, and this says so rather than claiming otherwise.
+
+**One open decides and replaces, and that is what makes the bound the bound.**
+A generated file's bytes do not depend on the file, so its replacement has
+nothing to read. `AGENTS.md` is a read-modify-write — the splice, and `adopt`
+taking a region or a file over — and there the new bytes are computed from the
+content the gate itself read off the descriptor it measured. Computing them
+from an earlier, separate read would widen the window to the whole span
+between the two opens and hide it: a write landing there is already in the
+gate's baseline, the recheck agrees with itself, and the rename installs bytes
+derived from the copy taken before it. So the splice's bound is the one above,
+and it is that bound because the ownership check, the region, and the bytes
+spliced all come from one open.
 
 **Write phase.** The generator builds and validates a complete scratch tree,
 writes a manifest of every path it is about to replace, then replaces them.

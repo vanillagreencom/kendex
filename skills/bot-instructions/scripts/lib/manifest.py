@@ -11,10 +11,14 @@ comparing empty against empty.
 holds two kinds of thing: subdirectories kendex owns whole, and root-level
 files kendex merges its own entries into while the repo owns the rest —
 `.claude/settings.json`, `.codex/config.toml`, `.pi/settings.json`. So the
-derivation takes **each immediate subdirectory** of a declared render root and
-never a file at its root. A glob one shape too wide would silence review on a
-settings file this repo owns and can fix, which is the opposite of what the
-derivation is for. `skills/review-gate/references/vendored-paths.md` § The
+derivation takes **each immediate subdirectory** of a declared render root that
+holds a tracked path, and never a file at its root. A glob one shape too wide
+would silence review on a settings file this repo owns and can fix, which is
+the opposite of what the derivation is for; one naming a tree with nothing
+tracked under it excludes nothing, and `exclusion-consistency`'s
+dead-exclusion clause rejects it with no edit an author could make to clear
+it. `tree.subdirs` answers that question from the index alone, identically in
+both modes. `skills/review-gate/references/vendored-paths.md` § The
 harness-render variant draws the same line for the review gate's own set and
 names the merged paths.
 """
@@ -108,35 +112,11 @@ def derive(tree, resolved):
                 "Add its row rather than deriving a root that may hold repo-owned files"
             )
         root, subtrees = row
-        for sub in subtrees if subtrees is not None else tree.subdirs(root):
+        # Only subtrees that exist: `.github` holds whichever of the copilot
+        # row's three a repo actually installed, and deriving the other two
+        # would name globs matching no tracked path, which `_dead_globs`
+        # rejects as dead config no `bot-instructions.toml` edit can clear.
+        present = tree.subdirs(root)
+        for sub in present if subtrees is None else [s for s in subtrees if s in present]:
             trees.add(f"{root}/{sub}/**")
     return [{"glob": g, "reason": DERIVED_REASON, "derived": True} for g in sorted(trees)]
-
-
-def _subdirs(root_fd, rel):
-    """Immediate subdirectories of a render root. A root file is never one."""
-    import os
-    import stat
-
-    from .fsutil import _components, _walk_to_parent, _Missing
-
-    try:
-        dir_fd, leaf = _walk_to_parent(root_fd, _components(rel))
-    except _Missing:
-        return []
-    try:
-        try:
-            here = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
-        except OSError:
-            return []
-        try:
-            out = []
-            for name in sorted(os.listdir(here)):
-                st = os.stat(name, dir_fd=here, follow_symlinks=False)
-                if stat.S_ISDIR(st.st_mode):
-                    out.append(name)
-            return out
-        finally:
-            os.close(here)
-    finally:
-        os.close(dir_fd)

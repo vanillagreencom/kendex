@@ -22,6 +22,23 @@ class InputError(BotInstructionsError):
     """A read input is missing, unparseable, or refused."""
 
 
+class SourceUnavailable(InputError):
+    """An input this run needs could not be read, and the reason is not absence.
+
+    The whole package turns on one rule: **a source that cannot answer raises;
+    only a definite empty answer returns empty.** A reader that answers
+    "nothing found" when it means "I could not tell" makes every validator
+    above it report a clean pass on a repo nobody checked, which is the silent
+    failure this package exists to remove — one level down, in its own code.
+
+    Names the failing command and what it said, because "git failed" without
+    git's own diagnostic sends a reader to the wrong file.
+    """
+
+    def __init__(self, what, detail):
+        super().__init__(f"{what}: {detail}")
+
+
 class ManifestError(InputError):
     """The resolved install manifest is missing, unparseable, or declares no
     install. Its own type, so the run can attribute it to

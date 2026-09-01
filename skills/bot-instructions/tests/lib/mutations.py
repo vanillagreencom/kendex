@@ -96,12 +96,13 @@ def control(repo, want, label, module, name, replacement, also=()):
         report(False, label, f"expected exactly {expected}; fired: {fired or 'nothing'}")
 
 
-def main(repo):
+def main(repo, no_derive):
     _coderabbit(repo)
     _copilot(repo)
     _qodo(repo)
     _macroscope(repo)
     _exclusions(repo)
+    _unconditional(no_derive)
     print(f"mutations.py: {PASS} passed, {FAIL} failed")
     return 1 if FAIL else 0
 
@@ -212,9 +213,13 @@ def _qodo(repo):
     control(repo, "qodo-parity",
             "a block present in extra_instructions and dropped from the [review_agent] keys",
             render_qodo, "_guidance", drop_from_review_agent)
+    # Emptying the section drops the exclusion paths the routing table marks
+    # `pr_agent extra` as carrying, which is a second clause genuinely
+    # breached rather than a confound.
     control(repo, "qodo-parity",
             "a review-role pr_commands verb whose section carries no guidance",
-            render_qodo, "_guidance", empty_extra)
+            render_qodo, "_guidance", empty_extra,
+            also=("exclusion-consistency",))
 
 
 def _macroscope(repo):
@@ -302,6 +307,66 @@ def _exclusions(repo):
             "a render that drops the paths from the one surface Codex reads",
             render_markdown, "agents_region_body", strip_paths)
 
+    guidance = render_qodo._guidance
+
+    def strip_from(column_name):
+        # Asking whether a glob appears anywhere in `.pr_agent.toml` is
+        # answered by `[ignore] glob` beside the guidance, so a render that
+        # dropped the paths from the guidance keys themselves passed. These
+        # two are the destinations that could not red.
+        def replacement(m, column, with_summary=True):
+            text = guidance(m, column, with_summary)
+            if column == column_name:
+                for entry in m.exclusion_globs:
+                    text = text.replace(entry, "")
+            return text
+        return replacement
+
+    control(repo, "exclusion-consistency",
+            "a render that drops the paths from [review_agent] issues_user_guidelines",
+            render_qodo, "_guidance", strip_from("pr_agent issues"))
+    control(repo, "exclusion-consistency",
+            "a render that drops the paths from [pr_reviewer] extra_instructions",
+            render_qodo, "_guidance", strip_from("pr_agent extra"))
+
+    control(repo, "exclusion-consistency",
+            "a rendered exclusion surface emitted empty, which is an empty list "
+            "and not an absent mechanism",
+            render_markdown, "macroscope_ignore", lambda m: "")
+
+
+def _unconditional(repo):
+    """The clauses `[exclusions] derive_render` does not gate, with it false.
+
+    `derive_render` defaults to false and `tests/fixtures/canonical.toml` was
+    the sole place it was ever set, so every clause below ran only on the
+    fixture that turned the flag on — while the flag gated all four. Each
+    control here is the same mutation as its counterpart above against a
+    repo on the default, where `[[exclusions.path]]` is the whole set.
+    """
+    ignore = render_markdown.macroscope_ignore
+
+    def drop_first_surface(m):
+        text = ignore(m)
+        first = m.exclusion_globs[0]
+        return "\n".join(ln for ln in text.split("\n") if ln != first)
+
+    control(repo, "exclusion-consistency",
+            "with derive_render false: an entry excluded on one surface and not another",
+            render_markdown, "macroscope_ignore", drop_first_surface)
+
+    region = render_markdown.agents_region_body
+
+    def strip_paths(m):
+        text = region(m)
+        for entry in m.exclusion_globs:
+            text = text.replace(entry, "")
+        return text
+
+    control(repo, "exclusion-consistency",
+            "with derive_render false: a render that drops the paths from AGENTS.md",
+            render_markdown, "agents_region_body", strip_paths)
+
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1]))
+    sys.exit(main(sys.argv[1], sys.argv[2]))

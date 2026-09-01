@@ -24,11 +24,19 @@ repo="$(bi_rendered_repo excl-in-place)" || exit 1
 mkdir -p "$repo/.agents/skills/ours"
 printf 'x\n' > "$repo/.agents/skills/ours/SKILL.md"
 printf '\n[skills.ours]\nsource = "in-place"\nenabled = true\n' >> "$repo/kendex.toml"
-"$BI" render --repo "$repo" >/dev/null 2>&1
-if grep -q 'skills/ours' "$repo/.macroscope/ignore.md"; then
-  bad 'an in-place skill stays in review scope'
-else
-  ok 'an in-place skill stays in review scope'
+if bi_must render --repo "$repo"; then
+  # The positive half first: a render that wrote nothing would leave the
+  # previous ignore.md, which never held this skill either, so the negative
+  # assertion below would pass on a run that never happened.
+  if grep -q 'skills/dev' "$repo/.macroscope/ignore.md"; then
+    if grep -q 'skills/ours' "$repo/.macroscope/ignore.md"; then
+      bad 'an in-place skill stays in review scope'
+    else
+      ok 'an in-place skill stays in review scope'
+    fi
+  else
+    bad 'an in-place skill stays in review scope' 'the render did not rewrite ignore.md'
+  fi
 fi
 
 # --- the dead-exclusion clause ----------------------------------------------
@@ -72,7 +80,7 @@ open(os.path.join(repo, "kendex.toml"), "w").write(
 open(os.path.join(repo, "kendex-local.toml"), "w").write(
     'schema = 6\n\n[install]\nharnesses = ["claude"]\n\n[skills.dev]\nsource = "."\nenabled = true\n')
 PY
-"$BI" render --repo "$repo" >/dev/null 2>&1
+bi_must render --repo "$repo"
 if grep -q '.agents/skills/dev/\*\*' "$repo/.macroscope/ignore.md" \
    && grep -q 'kendex-local.toml' "$repo/.macroscope/ignore.md"; then
   ok 'a source-catalog repo derives from kendex-local.toml, and the marker names it'
@@ -100,5 +108,78 @@ expect_red exclusion-consistency 'an unparseable resolved manifest' check --repo
 
 rm -f "$repo/kendex.toml"
 expect_red exclusion-consistency 'an absent resolved manifest' check --repo "$repo"
+
+# --- the clauses `derive_render` does not gate -------------------------------
+# The flag says where the exclusions come from, not whether they are checked,
+# and it defaults to false. Gating every clause on it left a repo using only
+# hand-written entries with none of them: the dead-exclusion clause below and
+# the two the renderer-regression suite covers on the same fixture.
+repo="$(bi_new_repo excl-no-derive)"
+sed 's/^derive_render = true$/derive_render = false/' \
+  "$BI_FIXTURES/canonical.toml" > "$repo/bot-instructions.toml"
+bi_must adopt --repo "$repo" || exit 1
+bi_must render --repo "$repo" || exit 1
+bi_commit "$repo"
+printf '\n[[exclusions.path]]\nglob = "app/[slug]/**"\nreason = "a route that does not exist here"\n' \
+  >> "$repo/bot-instructions.toml"
+expect_red exclusion-consistency \
+  'with derive_render false: an exclusion glob matching no tracked path' \
+  render --dry-run --repo "$repo"
+
+# --- what the derivation asks, and of which tree -----------------------------
+# A harness root's untracked subdirectory is not a render this repo publishes:
+# deriving it names a glob matching no tracked path, which the dead-exclusion
+# clause then rejects with no TOML edit that could clear it. `--staged` reads
+# the same question off the same index, so the two modes cannot disagree.
+repo="$(bi_rendered_repo excl-untracked-subdir)" || exit 1
+mkdir -p "$repo/.claude/todos"
+printf '{}\n' > "$repo/.claude/todos/t.json"
+expect_green 'an untracked subdirectory of a harness root is not derived' \
+  check --repo "$repo"
+expect_green 'and --staged derives the same set' check --staged --repo "$repo"
+
+# The copilot row names three subtrees because `.github` also holds files the
+# repo owns. An install that produced one of them derives that one.
+repo="$(bi_new_repo excl-copilot)"
+mkdir -p "$repo/.github/skills/x"
+printf 'x\n' > "$repo/.github/skills/x/SKILL.md"
+printf 'schema = 6\n\n[install]\nharnesses = ["copilot"]\n' > "$repo/kendex.toml"
+git -C "$repo" add -A >/dev/null 2>&1
+bi_must adopt --repo "$repo" || exit 1
+bi_must render --repo "$repo" || exit 1
+if grep -q '.github/skills/\*\*' "$repo/.macroscope/ignore.md" \
+   && ! grep -q '.github/agents' "$repo/.macroscope/ignore.md"; then
+  ok 'a copilot install derives the subtrees it produced and not the others'
+else
+  bad 'a copilot install derives the subtrees it produced and not the others' \
+      "$(grep github "$repo/.macroscope/ignore.md" | tr '\n' ' ')"
+fi
+
+# A render root reached through a symlink used to derive nothing, and because
+# both sides of the comparison came through the same walk they agreed on
+# empty and the run reported a clean pass. The index still carries the tree.
+repo="$(bi_rendered_repo excl-symlinked-root)" || exit 1
+mv "$repo/.claude" "$repo/claude-real"
+ln -s claude-real "$repo/.claude"
+bi_must render --repo "$repo" || exit 1
+if grep -q '.claude/agents/\*\*' "$repo/.macroscope/ignore.md"; then
+  ok 'a harness root reached through a symlink does not lose its derived tree'
+else
+  bad 'a harness root reached through a symlink does not lose its derived tree' \
+      "$(head -3 "$repo/.macroscope/ignore.md" | tr '\n' ' ')"
+fi
+
+# --- git as an input that can fail -------------------------------------------
+# `git ls-files` returning nothing because git could not run is not a repo
+# that tracks nothing: the nested-AGENTS.md clause reads that list, and an
+# empty one silently costs it its entire input.
+repo="$(bi_rendered_repo excl-nogit)" || exit 1
+mkdir -p "$repo/sub"
+printf '# x\n\n## Code Review Rules\n\ny\n' > "$repo/sub/AGENTS.md"
+git -C "$repo" add -A >/dev/null 2>&1
+expect_red agents-section 'a nested AGENTS.md, with git answering' check --repo "$repo"
+rm -rf -- "${repo:?}/.git"
+expect_message 'git ls-files' 'and the same tree with git unable to answer' \
+  check --repo "$repo"
 
 bi_summary

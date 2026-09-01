@@ -16,10 +16,11 @@ expect_green "and checks clean" check --repo "$repo"
 # Reproducible from its inputs: no timestamps and no input hashes, so an
 # unrelated re-render is not a diff.
 before="$(cat "$repo/.coderabbit.yaml" "$repo/.pr_agent.toml" "$repo/AGENTS.md")"
-"$BI" render --repo "$repo" >/dev/null 2>&1
-after="$(cat "$repo/.coderabbit.yaml" "$repo/.pr_agent.toml" "$repo/AGENTS.md")"
-[ "$before" = "$after" ] && ok "a second render writes the same bytes" \
-  || bad "a second render writes the same bytes"
+if bi_must render --repo "$repo"; then
+  after="$(cat "$repo/.coderabbit.yaml" "$repo/.pr_agent.toml" "$repo/AGENTS.md")"
+  [ "$before" = "$after" ] && ok "a second render writes the same bytes" \
+    || bad "a second render writes the same bytes"
+fi
 
 for path in .coderabbit.yaml .pr_agent.toml best_practices.md REVIEW.md \
             .github/copilot-instructions.md .github/instructions/tests.instructions.md \
@@ -73,10 +74,92 @@ ln -s "$repo" "$repo_link"
 expect_green "--repo through a symlink to the repository resolves" check --repo "$repo_link"
 
 # A second concurrent render refuses: two renders interleaving their writes
-# produce a tree neither validated.
+# produce a tree neither validated. The lock serialises the WRITER SET, so
+# `adopt` — which writes every generated path plus the AGENTS.md region, with
+# the marker gate off — refuses on the same lock.
 mkdir -p "$repo/.bot-instructions"
 : > "$repo/.bot-instructions/render.lock"
 expect_message "another render holds" "a second concurrent render refuses" render --repo "$repo"
+expect_message "another render holds" "and so does a concurrent adopt" adopt --repo "$repo"
 rm -f "$repo/.bot-instructions/render.lock"
+
+# The AGENTS.md splice is a read-modify-write, and its bound is the one
+# `renders.md` § The window is narrowed states only while the bytes it splices
+# are the bytes the gate measured. Two halves, and the first is what a second
+# open would break: an edit landing immediately BEFORE the gate is inside the
+# gate's own baseline, so nothing refuses it and the run must carry it through
+# — a splice fed from an earlier read reports success and drops it. An edit
+# landing after the gate is the residual window the spec documents, and must
+# refuse. Run in-process against the real verb, because a shell cannot land a
+# write inside another process's write phase on demand.
+window="$(bi_rendered_repo write-window)" || exit 1
+if python3 - "$BI_ROOT/skills/bot-instructions" "$window" <<'PROBE'; then
+import os, sys
+PKG, repo = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import render, run, tree, verbs, writer
+
+EDIT = "\nan editor landed here\n"
+agents = os.path.join(repo, "AGENTS.md")
+
+def ctx():
+    return run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
+                       ("SKILL.md", "schemas/renders.md"), "render")
+
+def edit():
+    with open(agents, "a") as fh:
+        fh.write(EDIT)
+
+def render_with(mod, name, hook):
+    original = getattr(mod, name)
+    setattr(mod, name, lambda *a, **kw: hook(original, *a, **kw))
+    try:
+        verbs.render_verb(ctx(), repo)
+        return None
+    except Exception as exc:
+        return str(exc)
+    finally:
+        setattr(mod, name, original)
+
+# A: the edit is already in the bytes the gate reads, so nothing can refuse
+# it and the run has to carry it through. A splice fed from an earlier,
+# separate read computes its bytes from the copy taken before the edit, agrees
+# with itself at the recheck, and drops the edit reporting success.
+once = []
+def before_gate(original, dir_fd, leaf, rel, require_marker):
+    if rel == "AGENTS.md" and not once:
+        once.append(True)
+        edit()
+    return original(dir_fd, leaf, rel, require_marker)
+
+failed = render_with(writer, "_gate", before_gate)
+if not once:
+    sys.exit("the write phase never gated AGENTS.md, so this probe proved nothing")
+if failed is not None:
+    sys.exit(f"the render refused an edit its own gate read: {failed}")
+if EDIT not in open(agents).read():
+    sys.exit("the render reported success and dropped an edit its gate had read")
+
+# B: the edit lands after the gate — the residual window, which refuses.
+def after_gate(original, existing, body):
+    edit()
+    return original(existing, body)
+
+failed = render_with(render, "splice", after_gate)
+if failed is None:
+    sys.exit("an edit inside the gate-to-rename window was not refused")
+if "changed between the marker check and the write" not in failed:
+    sys.exit(f"refused for the wrong reason: {failed}")
+if open(agents).read().count(EDIT) != 2:
+    sys.exit("the refused render replaced AGENTS.md anyway")
+
+# C: nothing injected, so the render must still write.
+if render_with(render, "splice", lambda o, *a: o(*a)) is not None:
+    sys.exit("the control render failed")
+PROBE
+  ok "an edit the gate read is carried through, and one after it refuses"
+else
+  bad "an edit the gate read is carried through, and one after it refuses"
+fi
 
 bi_summary

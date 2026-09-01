@@ -91,8 +91,14 @@ fi
 repo="$(bi_new_repo adopt-untouched)"
 mkdir -p "$repo/.github/instructions"
 printf 'the repo wrote this\n' > "$repo/.github/instructions/ours.instructions.md"
-"$BI" adopt --repo "$repo" >/dev/null 2>&1
-if grep -q 'the repo wrote this' "$repo/.github/instructions/ours.instructions.md"; then
+bi_run adopt --repo "$repo"
+if [ "$bi_status" -ne 0 ]; then
+  bad 'a file under a name no surface produces is left alone' "adopt exited $bi_status"
+elif ! printf '%s\n' "$bi_out" | grep -q 'adopted AGENTS.md'; then
+  # The positive half: adopt has to have taken SOMETHING over, or leaving one
+  # file alone says nothing about whether it looked.
+  bad 'a file under a name no surface produces is left alone' 'adopt took nothing over'
+elif grep -q 'the repo wrote this' "$repo/.github/instructions/ours.instructions.md"; then
   ok 'a file under a name no surface produces is left alone'
 else
   bad 'a file under a name no surface produces is left alone'

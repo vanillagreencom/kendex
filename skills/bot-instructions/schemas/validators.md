@@ -302,7 +302,14 @@ rendered `.agents/skills/<name>`, no tree declared `in-place`, plus the
 per-harness render directories the install declares. The comparison is over the
 derived part alone, because the rendered set also holds every
 `[[exclusions.path]]` entry and whole-set equality would fail on the first
-hand-written exclusion. Runs only when `[exclusions] derive_render` is true.
+hand-written exclusion. The derived set is every immediate subdirectory of a
+declared render root **holding a tracked path**, read from the index in both
+modes so a worktree render and a `--staged` check of it cannot disagree: a
+subtree with nothing tracked under it excludes nothing, and the dead-exclusion
+clause below would reject a derived entry no author could delete. This clause
+alone runs only when `[exclusions] derive_render` is true — the flag says
+where the exclusions come from, not whether they are checked, and the three
+clauses below judge a hand-written set just as well.
 
 **Rejects, also.** A resolved manifest that declares no install. Reading the
 wrong file and finding nothing to exclude is indistinguishable from a repo with
@@ -313,11 +320,13 @@ published catalog and `kendex-local.toml` carries the install — the shape that
 would otherwise derive nothing and pass.
 
 **Rejects, also.** An exclusion entry present in one rendered surface and
-absent from another, where both surfaces have an exclusion mechanism. This one
-compares the render against itself, so it reads the emitted bytes on both
-verbs; the derived-set clause above compares against an independent fresh
-derivation, so it has a question to answer at render time too — § Where these
-run carries the split.
+absent from another, where both surfaces have an exclusion mechanism. A
+surface rendered empty is an empty list and not an absent mechanism: reading
+it as absent would drop it from the comparison, and the surfaces that survived
+would agree. This one compares the render against itself, so it reads the
+emitted bytes on both verbs; the derived-set clause above compares against an
+independent fresh derivation, so it has a question to answer at render time
+too — § Where these run carries the split.
 
 **Rejects, also.** An exclusion glob matching no tracked path. A dead
 exclusion silences nothing and reads clean, which is how a typo or a wrong
@@ -326,13 +335,20 @@ config that looks like an exclusion. This repo already implements the check for
 its own settings in `skills/review-gate/scripts/validate.sh`, including the
 guard this borrows: in a repo tracking no files every glob matches nothing for
 a reason that is not the author's, so the clause says the verdict is
-unreachable rather than reporting each exclusion as dead.
+unreachable rather than reporting each exclusion as dead. A repo declaring no
+exclusion at all is the other side of that: nothing can be dead, so the clause
+is silent rather than reporting an unreachable verdict about an empty set.
 
 **Rejects, also.** A non-empty exclusion set that a destination the routing
 table marks as carrying the paths does not carry: `AGENTS.md`, `pr_agent
-issues`, `pr_agent extra`. That is what holds the requirement in SKILL.md
-§ Every rendered config excludes the render trees — without it a render could
-drop the paths from the one surface Codex reads and violate nothing checkable.
+issues`, `pr_agent extra`. Each is read as the value the bot reads — the
+region body, `[review_agent] issues_user_guidelines`, `[pr_reviewer]
+extra_instructions` — never as the whole rendered file, because `.pr_agent.toml`
+also carries `[ignore] glob` listing every exclusion, and asking whether a
+path appears anywhere in that file is answered by the unrelated mechanism
+beside the guidance. That is what holds the requirement in SKILL.md § Every
+rendered config excludes the render trees — without it a render could drop the
+paths from the one surface Codex reads and violate nothing checkable.
 
 **What it does not establish.** That the bots exclude the same files. Codex has
 no exclusion mechanism at all, Copilot's lives in a settings page no repo file

@@ -271,8 +271,13 @@ enforcer and nothing here carries a second copy of either number.
 repo's install manifest and adds every rendered harness tree to the exclusion
 set. What it derives is exactly two things: each `.agents/skills/<name>` whose
 entry does not declare `source = "in-place"`, and each **immediate
-subdirectory** of each per-harness render root the repo's install declares. A
-skill declared `in-place` is this repo's own file and stays in review scope.
+subdirectory holding a tracked path** of each per-harness render root the
+repo's install declares. A skill declared `in-place` is this repo's own file
+and stays in review scope. The tracked-path condition is what keeps a
+derivation and the dead-exclusion clause from contradicting each other: a
+subtree the install has not produced, or one git ignores, excludes nothing,
+and deriving it would name a glob that clause rejects with no edit an author
+could make to clear it.
 
 **A harness root is never derived whole**, and the subdirectory rule is why. A
 harness root holds two kinds of thing: subdirectories the harness install owns

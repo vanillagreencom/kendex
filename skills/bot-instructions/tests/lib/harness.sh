@@ -88,10 +88,28 @@ EOF
 bi_rendered_repo() {
   local repo
   repo="$(bi_new_repo "$1")"
-  "$BI" adopt --repo "$repo" >/dev/null 2>&1
-  "$BI" render --repo "$repo" >/dev/null 2>&1 || { printf 'FIXTURE RENDER FAILED\n' >&2; "$BI" render --repo "$repo" >&2; return 1; }
+  bi_must adopt --repo "$repo" || return 1
+  bi_must render --repo "$repo" || return 1
   bi_commit "$repo"
   printf '%s\n' "$repo"
+}
+
+# A setup run whose failure is a SUITE failure, not a silent precondition.
+#
+# Every assertion that follows a setup verb is only meaningful if that verb
+# ran: a render that wrote nothing leaves whatever the fixture already had,
+# and a negative assertion ("this file does not contain X") is satisfied by a
+# file the run never touched. Discarding the exit status there makes a failed
+# setup indistinguishable from the property under test.
+bi_must() {
+  local out status
+  out="$("$BI" "$@" 2>&1)"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    bad "setup: $* exited $status" "$(printf '%s' "$out" | head -3 | tr '\n' ' ')"
+    return 1
+  fi
+  return 0
 }
 
 # A commit, so a suite can put a fixture back with `git reset --hard`.
@@ -184,7 +202,7 @@ bi_vendored_repo() {
   mkdir -p "$repo/$BI_VENDORED_SPEC/schemas"
   cp "$BI_ROOT/skills/bot-instructions/SKILL.md" "$repo/$BI_VENDORED_SPEC/SKILL.md"
   cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$repo/$BI_VENDORED_SPEC/schemas/renders.md"
-  "$BI" render --repo "$repo" --spec "$repo/$BI_VENDORED_SPEC" >/dev/null 2>&1
+  bi_must render --repo "$repo" --spec "$repo/$BI_VENDORED_SPEC" || return 1
   bi_commit "$repo"
   printf '%s\n' "$repo"
 }
