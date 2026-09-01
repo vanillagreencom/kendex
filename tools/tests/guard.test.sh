@@ -699,6 +699,29 @@ run_guard
 git -C "$R" reset -q HEAD -- skills/other
 rm -rf "$R/skills/other"
 
+# A rendered skill whose name carries a regex metacharacter: the prefix test
+# reads the name literally, or a bracket makes the match fail as not rendered.
+mkdir -p "$R/skills/demo[1/scripts" "$R/.agents/skills/demo[1/scripts"
+printf '#!/usr/bin/env bash\necho bracket\n' >"$R/skills/demo[1/scripts/b.sh"
+cp "$R/skills/demo[1/scripts/b.sh" "$R/.agents/skills/demo[1/scripts/b.sh"
+git -C "$R" add -A skills .agents
+git -C "$R" commit -q -m "chore: a skill with a bracket in its name"
+printf 'echo more\n' >>"$R/skills/demo[1/scripts/b.sh"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo[1/scripts/b.sh -> .agents/skills/demo[1/scripts/b.sh"* ]] \
+  && ok "a source-only edit in a skill named with a bracket reds, naming the render" \
+  || bad "a source-only edit in a skill named with a bracket reds, naming the render" "rc=$RC out=$OUT"
+if mutant_guard 's|^  case "\$NL\$render_tracked\$NL" in \*"\$NL\$1/"\*) return 0 ;; esac$|  grep -q -- "^$1/" <<<"$render_tracked" \&\& return 0|'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the name read as a pattern the bracket edit passes" \
+    || bad "control: with the name read as a pattern the bracket edit passes" "rc=$RC out=$OUT"
+else
+  bad "control: the literal prefix test could not be turned back into a pattern in a guard copy"
+fi
+git -C "$R" checkout -q -- skills .agents
+git -C "$R" reset -q --hard HEAD~1
+
 AGENT_RENDERS=(.claude/agents/demo.md .codex/agents/demo.toml .pi/agents/demo.md)
 for r in "${AGENT_RENDERS[@]}"; do
   git -C "$R" checkout -q -- agents .claude/agents .codex .pi

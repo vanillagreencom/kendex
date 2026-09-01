@@ -211,8 +211,11 @@ render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${di
 render_tracked=$(git -c core.quotePath=false ls-files -- .agents/skills .claude/agents .codex/agents .pi/agents) ||
   { render_tracked=""; say "the tracked render set could not be read"; }
 render_hits=""
-renders_under() { # DIR — anything is tracked under DIR
-  grep -q -- "^$1/" <<<"$render_tracked"
+NL='
+'
+renders_under() { # DIR — anything is tracked under DIR, DIR read literally
+  case "$NL$render_tracked$NL" in *"$NL$1/"*) return 0 ;; esac
+  return 1
 }
 require_render() { # SOURCE RENDER — RENDER changes with SOURCE and outlives it
   { grep -Fxq -- "$2" <<<"$render_changed" && { [ ! -e "$1" ] || [ -e "$2" ]; }; } ||
