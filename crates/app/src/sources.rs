@@ -10,10 +10,15 @@ use crate::scopes::{all as all_scopes, env};
 #[tauri::command(async)]
 #[specta::specta]
 pub fn sources_overview() -> Result<Vec<SourceRow>, String> {
-    let env = env()?;
+    list_all_sources(&env()?)
+}
+
+/// The same listing against the environment it is given, for a caller that
+/// already holds one.
+fn list_all_sources(env: &Env) -> Result<Vec<SourceRow>, String> {
     let mut rows = Vec::new();
-    for scope in all_scopes(&env)? {
-        rows.extend(source_ops::list_sources(&env, &scope).map_err(|e| e.to_string())?);
+    for scope in all_scopes(env)? {
+        rows.extend(source_ops::list_sources(env, &scope).map_err(|e| e.to_string())?);
     }
     Ok(rows)
 }
@@ -43,10 +48,10 @@ fn run_and_list(
     report: kendex_core::engine::EngineReport,
 ) -> Result<SourcesAfter, String> {
     let undone = crate::repo_effects::write(env, &report)?;
-    Ok(SourcesAfter {
-        sources: sources_overview()?,
-        undone,
-    })
+    // Everything past the write is enrichment, and the account rides on
+    // its failure rather than through it.
+    let sources = crate::repo_effects::after_writing(&undone, list_all_sources(env))?;
+    Ok(SourcesAfter { sources, undone })
 }
 
 #[tauri::command(async)]
@@ -137,10 +142,16 @@ pub fn install_bundle(
     // not the same as taking nothing away: a refused rendering removes the
     // package it refused, and nothing here is written to depend otherwise.
     let undone = crate::repo_effects::write(env, &report)?;
-    let repo_effects = kendex_core::repo_effects::offers_for(env, scope, &report.repo_effects)
-        .map_err(|e| e.to_string())?;
+    // Both reads are enrichment past the write, so both carry the account
+    // on their failure rather than through it.
+    let repo_effects = crate::repo_effects::after_writing(
+        &undone,
+        kendex_core::repo_effects::offers_for(env, scope, &report.repo_effects)
+            .map_err(|e| e.to_string()),
+    )?;
+    let bundles = crate::repo_effects::after_writing(&undone, list_all_bundles(env))?;
     Ok(BundleInstalled {
-        bundles: list_all_bundles(env)?,
+        bundles,
         repo_effects,
         undone,
     })

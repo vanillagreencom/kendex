@@ -344,7 +344,19 @@ fn passes(args: &str, name: &str) -> bool {
     })
 }
 
-/// Every call under `root` that writes a plan it took off a report.
+/// Every problem under `root`: a call that writes a plan it took off a
+/// report, and any file the scan could not read.
+///
+/// A file it cannot read is a problem, never a clean one. Reading it as an
+/// empty string made an unreadable or non-UTF-8 file scan as blank source,
+/// which retired this rule for that file and said nothing — and this scan
+/// is the only guard eight of the ten rerouted paths have.
+///
+/// Every path is rendered through `paths::slashed`, the same call `exempt`
+/// reads through. Once one side of a comparison is a value from there the
+/// other has to be too, or the two agree only where the platform's own
+/// separator already matches — which is a class of failure only Windows CI
+/// sees, one run per push.
 #[allow(clippy::unwrap_used)]
 fn offenders(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
@@ -353,7 +365,16 @@ fn offenders(root: &Path) -> Vec<String> {
     files.sort();
     let mut found = Vec::new();
     for path in files.iter().filter(|path| !exempt(path, root)) {
-        let text = code_only(&std::fs::read_to_string(path).unwrap_or_default());
+        let shown = kendex_core::paths::slashed(path);
+        let text = match std::fs::read_to_string(path) {
+            Ok(source) => code_only(&source),
+            Err(error) => {
+                found.push(format!(
+                    "{shown}: unread, so the rule went unchecked here: {error}"
+                ));
+                continue;
+            }
+        };
         for (start, body) in functions(&text) {
             let locals = plan_locals(body);
             for (at, args) in calls(body) {
@@ -361,11 +382,7 @@ fn offenders(root: &Path) -> Vec<String> {
                     continue;
                 }
                 let line = text[..start + at].lines().count();
-                found.push(format!(
-                    "{}:{line}: apply::execute({})",
-                    path.display(),
-                    args.trim()
-                ));
+                found.push(format!("{shown}:{line}: apply::execute({})", args.trim()));
             }
         }
     }
@@ -377,8 +394,11 @@ fn no_command_executes_a_report_s_plan_itself() {
     let found = offenders(&src());
     assert!(
         found.is_empty(),
-        "these write a report's plan without running the leaving packages' \
-         uninstallers — call repo_effects::execute instead:\n{}",
+        "the one-executor rule is not held. Each line is either a call that \
+         writes a report's plan without running the leaving packages' \
+         uninstallers — call repo_effects::execute instead — or a file the \
+         scan could not read, which is not the same as a file with nothing \
+         in it:\n{}",
         found.join("\n")
     );
 }
@@ -448,10 +468,15 @@ fn the_scan_names_every_shape_of_a_report_s_plan_and_spares_a_bare_one() {
     );
 
     let found = offenders(&root);
+    // Spelled through the same call the hits are, and anchored at the
+    // path rather than matched anywhere in the line. A literal built with
+    // `/` never matches a hit Windows rendered with `\`, and the
+    // single-segment cases hid it by having no separator to disagree
+    // about — so both sides go through `slashed` over the same root.
     let named = |file: &str, line: usize| {
-        let want = format!("{file}:{line}:");
+        let want = format!("{}:{line}:", kendex_core::paths::slashed(&root.join(file)));
         assert!(
-            found.iter().any(|hit| hit.contains(&want)),
+            found.iter().any(|hit| hit.starts_with(&want)),
             "{want} went uncaught:\n{}",
             found.join("\n")
         );
@@ -461,6 +486,15 @@ fn the_scan_names_every_shape_of_a_report_s_plan_and_spares_a_bare_one() {
     named("audit.rs", 3);
     named("app_update/tests.rs", 2);
     assert_eq!(found.len(), 4, "{found:#?}");
+    // The hits are spelled the way `slashed` spells them, not the way the
+    // platform does. This assertion is vacuous on Unix, where the two
+    // agree, and is the whole guard on Windows, where `display()` writes
+    // `\` and an expectation spelled with `/` then matches nothing. It is
+    // here because that class costs one CI run per push to find.
+    assert!(
+        found.iter().all(|hit| !hit.contains('\\')),
+        "a hit was rendered with the platform separator rather than slashed: {found:#?}"
+    );
 }
 
 /// Nothing that is not code condemns a file, in any of the three ways it
@@ -551,12 +585,42 @@ fn a_statement_is_read_to_its_own_end() {
     .unwrap();
 
     let found = offenders(&root);
-    for want in ["audit.rs:3", "sources.rs:2"] {
+    // Single-segment names, and spelled through `slashed` anyway: this is
+    // where the next multi-segment expectation gets added.
+    for (file, line) in [("audit.rs", 3), ("sources.rs", 2)] {
+        let want = format!("{}:{line}:", kendex_core::paths::slashed(&root.join(file)));
         assert!(
-            found.iter().any(|hit| hit.contains(want)),
+            found.iter().any(|hit| hit.starts_with(&want)),
             "{want} went uncaught:\n{}",
             found.join("\n")
         );
     }
     assert_eq!(found.len(), 2, "{found:#?}");
+}
+
+/// A file the scan cannot read is a problem, not a clean file.
+///
+/// Reading it as an empty string made it scan as blank source, so the rule
+/// went unenforced for that file and nothing said so. This scan is the
+/// only guard eight of the ten rerouted paths have, so a silent read
+/// failure retires the rule for whichever file failed — which is guard
+/// code failing in the one direction that matters.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_file_the_scan_cannot_read_is_named_rather_than_passed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    // Not UTF-8, so `read_to_string` refuses it whatever its permissions,
+    // which is a state every platform reaches the same way.
+    std::fs::write(root.join("packages.rs"), [0x66, 0x6e, 0x20, 0xff, 0xfe]).unwrap();
+
+    let found = offenders(&root);
+
+    let want = kendex_core::paths::slashed(&root.join("packages.rs"));
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert!(
+        found[0].starts_with(&format!("{want}: unread")),
+        "{found:#?}"
+    );
+    assert!(found[0].contains("went unchecked"), "{found:#?}");
 }

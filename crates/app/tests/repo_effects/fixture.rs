@@ -186,6 +186,10 @@ pub fn install_skills(f: &Fixture, names: &[&str], bundle: Option<&str>) -> Inst
     .unwrap_or_else(|error| panic!("install {names:?} {bundle:?}: {error}"))
 }
 
+#[allow(
+    dead_code,
+    reason = "the shared fixture serves two suites and each uses the part it needs"
+)]
 pub fn companion<'a>(
     offer: &'a kendex_core::repo_effects::Disclosure,
     name: &str,

@@ -181,16 +181,26 @@ pub fn install(
     let undone = crate::repo_effects::write(env, &report)?;
     // After the write, because the script an effect runs is the one this
     // install just put on disk.
-    let repo_effects = kendex_core::repo_effects::offers_for(env, &target, &report.repo_effects)
-        .map_err(|e| e.to_string())?;
-    let packages = browse::packages(
-        env,
-        &Catalog::Subscription {
-            scope: target,
-            source,
-        },
-    )
-    .map_err(|e| e.to_string())?;
+    // Both reads are enrichment past the write, so both carry the account
+    // on their failure rather than through it: the uninstallers have run
+    // and the plan is committed, and a listing error over a repository
+    // that was just disarmed is this issue's own failure mode.
+    let repo_effects = crate::repo_effects::after_writing(
+        &undone,
+        kendex_core::repo_effects::offers_for(env, &target, &report.repo_effects)
+            .map_err(|e| e.to_string()),
+    )?;
+    let packages = crate::repo_effects::after_writing(
+        &undone,
+        browse::packages(
+            env,
+            &Catalog::Subscription {
+                scope: target,
+                source,
+            },
+        )
+        .map_err(|e| e.to_string()),
+    )?;
     Ok(Installed {
         packages,
         repo_effects,

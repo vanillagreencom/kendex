@@ -479,3 +479,67 @@ fn a_chatty_package_cannot_bury_a_neighbour_s_stand_down() {
     );
     assert!(said.contains("more lines from that package"), "{said}");
 }
+
+/// A project registered beside the fixture's own, carrying a manifest that
+/// will not parse — so the whole-machine listing every source action ends
+/// with fails, after the write.
+#[allow(clippy::unwrap_used)]
+fn a_second_project_that_cannot_be_listed(f: &Fixture) {
+    let broken = f.env.home.join("dev/broken");
+    fs::create_dir_all(&broken).unwrap();
+    fs::write(broken.join("kendex.toml"), "schema = 6\n[sources.x\n").unwrap();
+    let settings = f.env.settings_file();
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        format!(
+            "schema = 1\nprojects = [{}, {}]\n",
+            toml::Value::from(kendex_core::paths::slashed(&f.project)),
+            toml::Value::from(kendex_core::paths::slashed(&broken)),
+        ),
+    )
+    .unwrap();
+}
+
+/// A read that fails after the write still says what the write ran.
+///
+/// By the time a source action reads back what stands, the uninstallers
+/// have run and the plan is committed. A `?` on that read used to discard
+/// the account with the answer it was riding on, leaving the person a
+/// listing error over a repository that had just been disarmed — this
+/// issue's own failure mode, reached through the error path.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_listing_that_fails_after_the_write_still_says_what_ran() {
+    let f = fixture();
+    arm(&f);
+    // The package stops rendering, so the plan drops its lock entry and
+    // runs its uninstaller whatever the verb was asked to do.
+    fs::write(
+        f.env
+            .home
+            .join("catalog/skills/growth-guards/SKILL.md.disabled"),
+        "---\nname: growth-guards\ndescription: gates the commits\n---\n",
+    )
+    .unwrap();
+    a_second_project_that_cannot_be_listed(&f);
+
+    let refused = kendex_app::sources::install_bundle(
+        &f.env,
+        &f.scope,
+        "cat".to_owned(),
+        "guards".to_owned(),
+        false,
+    )
+    .unwrap_err();
+
+    assert!(
+        !f.project.join(".git/hooks/kendex-guards").exists(),
+        "the fixture did not actually remove the package"
+    );
+    assert!(
+        refused.contains("growth-guards: running scripts/install-git-hooks --uninstall"),
+        "the account was dropped with the failed listing: {refused}"
+    );
+    assert!(refused.contains("invalid TOML"), "{refused}");
+}

@@ -248,6 +248,27 @@ pub fn write(env: &Env, report: &EngineReport) -> Result<Vec<String>, String> {
     execute(env, report).map_err(|error| error.to_string())
 }
 
+/// Fold the account into whatever an enrichment read failed with.
+///
+/// Once `execute` has returned, the uninstallers have run and the plan is
+/// committed. Everything a command does after that — reading back the
+/// sources, the sets, the packages — is enrichment, and a `?` on one of
+/// those discards the account with the answer it was riding on. The person
+/// is then shown a listing error over a repository that was disarmed a
+/// moment earlier, which is this issue's own failure mode reached through
+/// the error path instead of the happy one.
+///
+/// Carried on the error rather than dropped, and never at the cost of the
+/// error itself: an irreversible side effect is not made reversible by
+/// swallowing what came after it. The lines go first because they are what
+/// changed on disk; the failure follows, saying what could not be read.
+pub fn after_writing<T>(undone: &[String], read: Result<T, String>) -> Result<T, String> {
+    read.map_err(|error| match undone.is_empty() {
+        true => error,
+        false => format!("{}\n{error}", undone.join("\n")),
+    })
+}
+
 /// The same write for a caller whose plan must take nothing away, and
 /// which has nowhere to say what a removal ran.
 ///
@@ -273,4 +294,43 @@ pub fn write_nothing_leaving(env: &Env, report: &EngineReport) -> Result<(), Str
         ));
     }
     write(env, report).map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::after_writing;
+
+    /// The shape every post-write read shares: the account rides on the
+    /// failure, and the failure is not swallowed to carry it.
+    #[test]
+    fn a_read_that_fails_after_the_write_carries_the_account_and_the_error() {
+        let undone = ["guards: running scripts/arm --uninstall".to_owned()];
+        let refused: Result<(), String> = Err("the source list could not be read".to_owned());
+
+        let Err(message) = after_writing(&undone, refused) else {
+            panic!("a failed read must stay a failure");
+        };
+
+        assert_eq!(
+            message,
+            "guards: running scripts/arm --uninstall\nthe source list could not be read"
+        );
+    }
+
+    /// Nothing left the scope, so there is nothing to add to the failure.
+    #[test]
+    fn a_read_that_fails_after_a_write_that_removed_nothing_says_only_why() {
+        let refused: Result<(), String> = Err("the source list could not be read".to_owned());
+        let Err(message) = after_writing(&[], refused) else {
+            panic!("a failed read must stay a failure");
+        };
+        assert_eq!(message, "the source list could not be read");
+    }
+
+    /// A read that worked is handed straight back.
+    #[test]
+    fn a_read_that_worked_is_untouched() {
+        let undone = ["guards: running scripts/arm --uninstall".to_owned()];
+        assert_eq!(after_writing(&undone, Ok::<u8, String>(7)), Ok(7));
+    }
 }
