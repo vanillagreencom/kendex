@@ -55,3 +55,10 @@ Declined under this PR's freeze. Real, and it costs a diagnostic rather than a v
 Declined: lint already rejects that shape, so the branch you name never compiles.
 Declined: the build script strips the flag before the parser reads it, so the checks you name never see it.
 Declined: CI never reaches that path — the workflow filter excludes the directory you name.
+
+# --- a suite name BESIDE a mechanism --------------------------------------
+# Paired with the must-catch section that added it. Stripping suite names is
+# subtraction like every other pass: the count and the suite go, and what the
+# reply says about the finding stays. If this ever reduces to empty, the
+# strip has stopped being subtraction and is banning the word.
+Declined: lifecycle 104/104; the waiter re-reads the artifact after arm, see :212

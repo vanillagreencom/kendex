@@ -36,7 +36,7 @@ the gate; and merge-group statuses never read the mode, posting green as
 | `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
 | `changes-requested` | `failure` | A reviewer objects. Red means objection — never a build failure. |
 | `untracked-claim` | `failure` | A thread's disposition reply claims tracking and names no issue. |
-| `unreasoned-decline` | `failure` | A thread's disposition reply declines and its reason strips to nothing against the predicate's label vocabulary: an empty reason, or only labels such as `frozen`, `out of scope`, `pre-existing`, a bare test count. Read by shape, so a decline written without the colon counts too; a label beside a real reason is fine. The vocabulary's reach, and the label shapes past it, are pinned in `tests/corpus/declines-known-limit.txt`. |
+| `unreasoned-decline` | `failure` | A thread's disposition reply declines and its reason strips to nothing against the predicate's label vocabulary: an empty reason, or only labels such as `frozen`, `out of scope`, `pre-existing`, a bare test count. A reply offering a count also loses this checkout's own suite names, read off the tree, so `lifecycle 104/104 and the full tools/guard pass` strips to nothing too. Read by shape, so a decline written without the colon counts too; a label beside a real reason is fine. The reach, and the shapes past it, are pinned in `tests/corpus/declines-known-limit.txt`. |
 | (exit 2, no verdict) | *unchanged* | A read failed or config is invalid. Take NO action; retry next pass. |
 
 **Reading the gate's own pending text.** `no review evidence at <sha> yet` is

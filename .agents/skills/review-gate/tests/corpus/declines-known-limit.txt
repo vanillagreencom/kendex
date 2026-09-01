@@ -1,9 +1,12 @@
 # Replies the subtraction does NOT catch, pinned so the boundary is read
 # rather than rediscovered.
 #
-# The subtraction is vocabulary, so it ends where the residue stops being
-# words and becomes NAMES. "lifecycle 104/104 and the full tools/guard pass"
-# leaves the suite's own name behind, and no word list reaches an identifier.
+# The subtraction reaches names as well as words: a reply that offers a count
+# also loses every basename under a tests/ directory in this checkout, so
+# "lifecycle 104/104 and the full tools/guard pass" reduces to nothing. What
+# it cannot reach is a name the tree does not carry — a control's own label,
+# which lives inside a suite rather than in a path — and a label written out
+# as a sentence.
 #
 # Widening past this needs a rule about what prose counts as a mechanism.
 # That is ruled out of scope: do not attempt it, and do not move these lines
@@ -13,10 +16,10 @@
 #
 # Lines starting with # are comments. Blank lines are skipped.
 
-Declined: frozen at a1fa74dca; lifecycle 104/104 and the tools/guard run at this head.
-Declined: frozen at a1fa74dca; pr-merge 103/103 and the full tools/guard pass at this head.
-Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard pass at this head.
-Declined: frozen at a1fa74dca; cleanup controls pass within lifecycle 104/104 and the full tools/guard passes.
+# Control labels, not paths: "waiter", "arm" and "launcher" name assertions
+# inside merge_queue_watch.sh, and no derivation over file names reaches
+# them. The suite names beside them (missing, post, controls, lifecycle) all
+# strip; these three are what keeps the residue non-empty.
 Declined: frozen at a1fa74dca; the missing-waiter and post-arm launcher controls pass within lifecycle 104/104.
 # The same boundary from the other side: a label written out as a sentence is
 # prose, and prose is where the vocabulary stops. "flagged separately" is

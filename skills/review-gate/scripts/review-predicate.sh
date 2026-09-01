@@ -73,11 +73,13 @@ track-word. `untracked-claim` is that reply claiming tracking and naming no
 issue. `unreasoned-decline` is that reply declining and naming no mechanism:
 the reason is empty, or is nothing but non-reason tokens and filler. The
 tokens are the labels and the freeze procedure that answer a finding without
-disproving it, plus bare shas, numbers and tracker ids. A token INSIDE a real
-reason is untouched, because the test is subtraction: only a reply that was
-nothing else reduces to empty. Being vocabulary, it ends where the residue
-becomes NAMES — the suite a bare count belongs to, or a label spelled as a
-sentence.
+disproving it, plus bare shas, numbers and tracker ids. A reply that offers
+a COUNT also loses the names this checkout's suites go by, read off the tree
+rather than listed here, so a count and the suite it belongs to strip
+together. A token INSIDE a real reason is untouched, because the test is
+subtraction: only a reply that was nothing else reduces to empty. It ends
+where the residue is a name the tree does not carry — a control's own label,
+say — or a label spelled out as a sentence.
 
 THE CORPUS IS THE CONTRACT, NOT THIS LIST. tests/corpus/ holds what the gate
 must catch, what it must pass, and that KNOWN LIMIT. Add a label by writing
@@ -1388,6 +1390,29 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # punctuation normalization would otherwise leave the letters behind, and
 # `Declined: KEN-881` would read as a stated reason of "ken". The shape is
 # the untracked-claim term's, so the two cannot disagree about what an id is.
+#
+# The last subtraction is NAMES rather than vocabulary, and it is read off
+# the tree instead of written here: basenames under every tests/ directory
+# the checkout carries — the source tree and any vendored .agents/ copy —
+# extension dropped and split the way file names join words. `tools` and
+# `guard` ride with them because the repo's own guard is named like a suite.
+# So "lifecycle 104/104 and the full tools/guard pass" leaves nothing, while
+# a name this repo does not use survives as residue. Nothing is hand-listed:
+# the set is whatever the suites are called on the head under evaluation.
+# That head is the PR's own tree, and the direction is safe: a name added
+# there can only strip more, which reds this gate, never opens it.
+#
+# It runs only on a reply that offers a COUNT (`104/104`), which is what
+# makes a suite name an appeal to a passing run instead of ordinary prose.
+# Unscoped it would be a word ban, not a subtraction: a repo names files
+# after the things it talks about, so "the guard refuses this path" is three
+# file names and a real reason at once. The count is the difference.
+suite_tokens="$(git -C "$script_dir" ls-files -- ':(top)*/tests/*' ':(top)tests/*' 2>/dev/null \
+  | sed 's#.*/##; s#\..*$##' | tr 'A-Z' 'a-z' | tr '_' '\n' | tr '-' '\n' \
+  | grep -Ex '[a-z0-9]{2,}' | sort -u | tr '\n' ' ')"
+# An unreadable tree is not a silent narrowing: the term still runs on the
+# words alone, and the log says which half of it was not available.
+[ -n "$suite_tokens" ] || echo "::warning::review-predicate: no suite names readable from the tree; unreasoned-decline reads its word list without them" >&2
 t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
   def declined: test("^\\s*declined\\b"; "i");
   def tracking: test("(?i)\\btrack(ed|ing|s)?\\b");
@@ -1395,7 +1420,8 @@ t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decli
   def standing: [replies[] | select(disposition or tracking)] | last // empty;
   def standing_decline: [replies[] | select(disposition or declined or tracking)] | last // empty;
   def reason_left:
-    sub("(?i)^\\s*declined\\b"; "")
+    . as $orig
+    | sub("(?i)^\\s*declined\\b"; "")
     | gsub("[A-Z][A-Z0-9]+-[0-9]+|#[0-9]+"; " ")
     | ascii_downcase
     | gsub("[^\\p{L}\\p{N}]+"; " ")
@@ -1403,7 +1429,10 @@ t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decli
     | gsub("\\b[0-9a-f]{7,40}\\b"; " ")
     | gsub("\\b[0-9]+\\b"; " ")
     | gsub("\\b(a|an|the|this|that|these|those|it|its|is|are|was|were|be|been|for|in|on|at|to|of|and|or|but|so|we|i|you|your|pr|prs|here|now|all|full|whole|entire|complete|still|already|yes|no|not|do|does|did|has|have|had|under|per|within|as|after|rather|than|see|every|set|s|t)\\b"; " ")
-    | gsub("^ +| +$"; "");
+    | gsub("^ +| +$"; "")
+    | if ($orig | test("[0-9]+ */ *[0-9]+"))
+      then [splits(" +")] - ("tools guard __SUITE_TOKENS__" | [splits(" +")]) | join(" ")
+      else . end;
   if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean")
     or ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
   then "malformed"
@@ -1421,6 +1450,7 @@ t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decli
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | tostring)
     + " " + (.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // "END")
   end'
+t_threads_page_jq="${t_threads_page_jq//__SUITE_TOKENS__/$suite_tokens}"
 t_cursor=""
 t_pages=0
 while :; do
