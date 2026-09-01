@@ -48,9 +48,13 @@ set -euo pipefail
 #                 owns no status values of its own: a probe may exit anything.
 #   GG_PTY_OUT    the session's own output (gg_pty_capture)
 #
-# A non-zero return means the call never started, and GG_PTY_ERR then names
-# why. No spawner is one such cause, and it is a red rather than a skip: a
-# case that cannot reach the terminal branch is not covering it.
+# A non-zero return means the call never started. No spawner is one such
+# cause, and it is a red rather than a skip: a case that cannot reach the
+# terminal branch is not covering it.
+#
+# GG_PTY_ERR is separate from that return. It carries a cause wherever this
+# file has one to give: every non-zero return, and the `leaked` state, which
+# returns 0. It is empty otherwise.
 #
 # What a case may assert:
 #
@@ -86,6 +90,10 @@ GG_PTY_STATE=""
 GG_PTY_ERR=""
 GG_PTY_CAPPED=0
 GG_PTY_REAPED=""
+GG_PTY_SETTLED=""
+# The cause recorded beside a `none` memo, so a second call answers with the
+# reason the first one found rather than with the fact that it failed.
+GG_PTY_FORM_ERR=""
 
 # `script` is the one pty spawner both platforms ship, under two incompatible
 # grammars: util-linux takes the command as an argument to -e -c, BSD (macOS)
@@ -170,45 +178,100 @@ gg_pty_bounded() { # CAP_SECONDS FORM SH_COMMAND SID_FILE OUT_FILE
   wait "$pid" 2>/dev/null || true
 }
 
+# What every caller of gg_pty_bounded owes the moment it returns, in one
+# place because two callers each remembering it is how gg_pty_form ended up
+# reading none of it: the reap's verdict is read HERE, before the next spawn
+# clears GG_PTY_REAPED, and the scratch tree is removed HERE or not at all.
+# No caller reads GG_PTY_CAPPED or GG_PTY_REAPED, and none removes a tree.
+#
+# Sets GG_PTY_SETTLED to:
+#   ran     the spawner returned on its own; the tree is removed
+#   capped  the cap fired and the reap took the session; the tree is removed
+#   leaked  the cap fired and the reap did not finish; the tree is KEPT and
+#           GG_PTY_ERR names which way and where it was left
+gg_pty_settle() { # WHAT SCRATCH_DIR
+  local what="$1" dir="$2"
+  if [ "$GG_PTY_CAPPED" != 1 ]; then
+    GG_PTY_SETTLED=ran
+  elif [ "$GG_PTY_REAPED" = yes ]; then
+    GG_PTY_SETTLED=capped
+  else
+    GG_PTY_SETTLED=leaked
+    case "$GG_PTY_REAPED" in
+      no-group) GG_PTY_ERR="$what: the session never recorded its process group, so only the spawner's was killed" ;;
+      *) GG_PTY_ERR="$what: the session's process group was still alive 5s after SIGKILL" ;;
+    esac
+  fi
+  # A tree a live session may hold fds in is left where it is, and the caller
+  # is told. Removing it is what turns an incomplete reap into an orphan
+  # running inside a deleted directory.
+  if [ "$GG_PTY_SETTLED" = leaked ]; then
+    GG_PTY_ERR="$GG_PTY_ERR; the scratch directory is left in place at $dir"
+  else
+    rm -rf -- "${dir:?}"
+  fi
+}
+
 # Which grammar this host answers, decided by RUNNING each one and asking the
 # session whether its own fds are a terminal — never by parsing a version
 # banner. A spawner that is present but cannot open a pty (a container with no
 # devpts) fails the same probe, which is the answer that matters.
 gg_pty_form() {
-  local dir form cmd
-  [ -z "$GG_PTY_FORM" ] || { [ "$GG_PTY_FORM" != none ]; return; }
-  # 2>&1 rather than 2>/dev/null: on failure mktemp's own words ARE the cause,
-  # and they land in $dir, which the branch below reads and then clears. On
-  # success mktemp writes the path and nothing else.
-  #
-  # No memo is recorded here. `none` is reserved for "both grammars ran and
-  # neither opened a pty"; latching it for a scratch-root fault would answer
-  # the same wrong cause for the rest of the run, with TMPDIR long fixed.
-  dir="$(mktemp -d "$TMPDIR/gg-ptyform.XXXXXX" 2>&1)" || {
-    GG_PTY_ERR="could not create a scratch directory under TMPDIR ($TMPDIR): $dir"
-    return 1
-  }
-  {
-    printf '%s\n' 'ps -o pgid= -p $$ >"$2" 2>/dev/null || true'
-    printf '%s\n' '[ -t 0 ] && [ -t 1 ] && [ -t 2 ] && : >"$1"'
-  } >"$dir/probe.sh"
+  local dir form cmd marked
+  if [ -n "$GG_PTY_FORM" ]; then
+    # A recorded `none` answers with the cause it was recorded with, not with
+    # the bare fact that it failed: every call after the first would otherwise
+    # hand the caller a state where the first one had a reason.
+    [ "$GG_PTY_FORM" != none ] || GG_PTY_ERR="$GG_PTY_FORM_ERR"
+    [ "$GG_PTY_FORM" != none ]
+    return
+  fi
   for form in util-linux bsd; do
-    rm -f -- "$dir/mark" "$dir/sid"
+    # One scratch tree per arm, so gg_pty_settle can own each outright: an arm
+    # whose session outlived the reap keeps its own tree while a clean arm's
+    # goes, and no arm deletes a tree the next one needs.
+    #
+    # 2>&1 rather than 2>/dev/null: on failure mktemp's own words ARE the
+    # cause, and they land in $dir, which the branch below reads. On success
+    # mktemp writes the path and nothing else.
+    #
+    # No memo is recorded for a scratch fault. `none` is reserved for "both
+    # grammars ran and neither opened a pty"; latching it here would answer
+    # the same wrong cause for the rest of the run, with TMPDIR long fixed.
+    dir="$(mktemp -d "$TMPDIR/gg-ptyform.XXXXXX" 2>&1)" || {
+      GG_PTY_ERR="could not create a scratch directory under TMPDIR ($TMPDIR): $dir"
+      return 1
+    }
+    {
+      printf '%s\n' 'ps -o pgid= -p $$ >"$2" 2>/dev/null || true'
+      printf '%s\n' '[ -t 0 ] && [ -t 1 ] && [ -t 2 ] && : >"$1"'
+    } >"$dir/probe.sh"
     # %q at every spawn site: $dir descends from TMPDIR, which the caller owns,
     # and an unquoted path with a space or a metacharacter lands in an `sh -c`
     # string as syntax rather than as a path.
     printf -v cmd '/bin/sh %q %q %q' "$dir/probe.sh" "$dir/mark" "$dir/sid"
     gg_pty_bounded 5 "$form" "$cmd" "$dir/sid" /dev/null
-    if [ -f "$dir/mark" ]; then
+    # Read before settling, because settling may remove the tree it is in.
+    marked=no
+    [ ! -f "$dir/mark" ] || marked=yes
+    gg_pty_settle "the $form spawner probe" "$dir"
+    if [ "$marked" = yes ]; then
       GG_PTY_FORM="$form"
-      rm -rf -- "${dir:?}"
       return 0
     fi
+    # A grammar that had to be KILLED at the cap did not answer, and `none`
+    # is a report that both answered. Stop here with the cause instead: a
+    # later call, on a host whose spawner has stopped blocking, probes again.
+    if [ "$GG_PTY_SETTLED" != ran ]; then
+      [ "$GG_PTY_SETTLED" = leaked ] \
+        || GG_PTY_ERR="the $form spawner probe was still running at its cap and was killed; it opened no pseudo-terminal"
+      return 1
+    fi
   done
-  rm -rf -- "${dir:?}"
   # Both grammars ran and neither opened a pty. That, and only that, is none.
   GG_PTY_FORM=none
   GG_PTY_ERR="no pty spawner on this host: neither script grammar opened a pseudo-terminal"
+  GG_PTY_FORM_ERR="$GG_PTY_ERR"
   return 1
 }
 
@@ -231,10 +294,13 @@ gg_pty_run() { # CAP_SECONDS SCRIPT_FILE
   GG_PTY_OUT=""
   GG_PTY_STATE=""
   GG_PTY_ERR=""
-  # gg_pty_form names its own cause, and the specific one survives: a sealed
-  # TMPDIR reported as a missing spawner sends an operator after devpts.
+  # gg_pty_form names its own cause on every failing path, memo included, so
+  # the specific one survives: a sealed TMPDIR reported as a missing spawner
+  # sends an operator after devpts. The line below therefore stands in for
+  # nothing — it declares a gg_pty_form that returned without a cause, which
+  # is a defect in this file rather than a state a host can be in.
   gg_pty_form || {
-    [ -n "$GG_PTY_ERR" ] || GG_PTY_ERR="the pty spawner could not be resolved"
+    [ -n "$GG_PTY_ERR" ] || GG_PTY_ERR="gg_pty_form returned non-zero and named no cause"
     return 1
   }
   # Named apart from the spawner, because a caller told "no spawner" over a
@@ -266,32 +332,26 @@ gg_pty_run() { # CAP_SECONDS SCRIPT_FILE
   } >"$dir/session.sh"
   printf -v cmd '/bin/sh %q' "$dir/session.sh"
   gg_pty_bounded "$cap" "$GG_PTY_FORM" "$cmd" "$dir/sid" "$dir/out"
+  # Everything the session left behind is read BEFORE settling, which may
+  # remove the tree it is in.
   gg_pty_capture "$dir/out"
-  if [ "$GG_PTY_CAPPED" = 1 ] && [ "$GG_PTY_REAPED" != yes ]; then
-    # The cap fired and the reap did not finish. `capped` would say the
-    # session is gone, which is the one thing this branch cannot claim.
-    GG_PTY_STATE=leaked
-    case "$GG_PTY_REAPED" in
-      no-group) GG_PTY_ERR="the session never recorded its process group, so only the spawner's was killed" ;;
-      *) GG_PTY_ERR="the session's process group was still alive 5s after SIGKILL" ;;
-    esac
-  elif [ "$GG_PTY_CAPPED" = 1 ]; then
-    GG_PTY_STATE=capped
-  elif [ -f "$dir/rc" ]; then
-    GG_PTY_STATE=ok
-    GG_PTY_RC="$(cat "$dir/rc")"
-  else
-    # No status file: the session never reached its own last line. GG_PTY_RC
-    # stays empty rather than standing in for one, so nothing here can be
-    # mistaken for something the probe returned.
-    GG_PTY_STATE=gone
-  fi
-  # A tree a live session may hold fds in is left where it is, and the caller
-  # is told. Removing it is what turns an incomplete reap into an orphan
-  # running inside a deleted directory.
-  if [ "$GG_PTY_STATE" = leaked ]; then
-    GG_PTY_ERR="$GG_PTY_ERR; the scratch directory is left in place at $dir"
-  else
-    rm -rf -- "${dir:?}"
-  fi
+  [ ! -f "$dir/rc" ] || GG_PTY_RC="$(cat "$dir/rc")"
+  gg_pty_settle "the session" "$dir"
+  case "$GG_PTY_SETTLED" in
+    leaked) GG_PTY_STATE=leaked ;;
+    capped) GG_PTY_STATE=capped ;;
+    *)
+      if [ -n "$GG_PTY_RC" ]; then
+        GG_PTY_STATE=ok
+      else
+        # No status file: the session never reached its own last line.
+        # GG_PTY_RC stays empty rather than standing in for one, so nothing
+        # here can be mistaken for something the probe returned.
+        GG_PTY_STATE=gone
+      fi
+      ;;
+  esac
+  # A capped or leaked session never ran its last line, so a status found in
+  # its tree is not one it chose to return.
+  [ "$GG_PTY_STATE" = ok ] || GG_PTY_RC=""
 }

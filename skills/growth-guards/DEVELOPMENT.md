@@ -71,9 +71,11 @@ waits for a person.
 
 `gg_pty_run CAP SCRIPT_FILE`, in `tests/lib/pty.bash`, runs a bash script file
 with fds 0, 1 and 2 on a pseudo-terminal. `GG_PTY_STATE` says what became of
-the session (`ok`, `capped`, `gone`), `GG_PTY_RC` carries the session's own
-exit status and only in `ok`, `GG_PTY_OUT` its output, and a non-zero return
-means the call never started with `GG_PTY_ERR` naming why.
+the session and `GG_PTY_RC` carries its own exit status, in that state alone;
+the states and what each means are tabulated in the `pty.bash` header, which
+is the only place they are enumerated. `GG_PTY_ERR` carries a cause wherever
+the helper has one — a call that never started, and a capped session whose
+process group outlived the reap, which returns 0.
 
 `terminal-paths.test.sh` is where such a case goes and where the probe's own
 rules are pinned; its `pty_call` is the wrapper shape a new one copies. The
