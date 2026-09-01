@@ -46,7 +46,15 @@ mkdir -p "$R/tools"
 # The REACHED marker is the separate positive half: it carries no status, and
 # it is the evidence that the call under test was entered.
 pty_call() { # COMMON SRC SNIPPET
-  local common="$1" src="$2" snippet="$3" case_file="$ROOT/pty-case.sh"
+  # The case file goes BESIDE the source, not in $ROOT: gg_pty_run writes it
+  # into the session as `bash %q`, so siting it under a hostile SRC is what
+  # drives that line's quoting too. Everything else about it is unchanged —
+  # $ROOT/tty.tsv puts it back where it always was.
+  # Two statements, not one `local`: a builtin's arguments are all expanded
+  # before any of its assignments take effect, so case_file cannot read src
+  # on the same line.
+  local common="$1" src="$2" snippet="$3" case_file
+  case_file="${src%/*}/pty-case.sh"
   {
     printf 'set -euo pipefail\n'
     printf 'cd %q\n' "$R"
@@ -297,15 +305,20 @@ GG_PTY_FORM_ERR="$gg_form_memo_err"
   && ok "control: and the call after the memo answers with that cause, not a placeholder" \
   || bad "control: and the call after the memo answers with that cause, not a placeholder" "first=$memo_first second=$memo_second"
 
-# Every path this suite hands to a shell — the spawn strings pty.bash builds
-# at BOTH its sites, and the case body pty_call writes — goes through %q. The
-# proof is a scratch root whose NAME is a space and a command substitution:
-# unquoted at any one of the three, the substitution runs.
+# Every path this suite hands to a shell goes through %q, and this case drives
+# them under a scratch root whose NAME is a space and a command substitution:
+# unquoted at any one, the substitution runs. It reaches gg_pty_form's spawn
+# string, gg_pty_run's spawn string, the `bash %q` line gg_pty_run writes into
+# the session, pty_call's SRC, and pty_call's source line.
 #
 # The form memo is cleared for the call, so gg_pty_form re-resolves under the
 # hostile TMPDIR and its spawn site executes there too. Without that it
 # returns at its memo line and the case reaches gg_pty_run's site alone,
 # which is how a %q dropped from gg_pty_form's went unnoticed.
+#
+# The one written path no case drives under such a name is pty_call's `cd`,
+# which is the fixture repository this suite makes for itself rather than
+# anything a caller supplies.
 hostile="$ROOT/a q\$(touch $ROOT/PWNED)x dir"
 mkdir -p "$hostile"
 printf 'FROM A HOSTILE PATH\n' >"$hostile/src.tsv"
@@ -314,7 +327,8 @@ if premise_denies_write "$R/tools/dest.tsv" "control: a path that is a space and
   reset_dest ORIGINAL
   gg_form_memo="$GG_PTY_FORM"
   GG_PTY_FORM=""
-  TMPDIR="$hostile" pty_call "$COMMON" "$hostile/src.tsv" 'gg_tmpdir; gg_install_file "$SRC" tools/dest.tsv "the fixture"'
+  cp -R "$LIB" "$hostile/lib"
+  TMPDIR="$hostile" pty_call "$hostile/lib/common.sh" "$hostile/src.tsv" 'gg_tmpdir; gg_install_file "$SRC" tools/dest.tsv "the fixture"'
   hostile_form="$GG_PTY_FORM"
   GG_PTY_FORM="$gg_form_memo"
   [ "$STATE" = ok ] && [ "$RC" -eq 0 ] && [ "$(cat "$R/tools/dest.tsv")" = "FROM A HOSTILE PATH" ] \
