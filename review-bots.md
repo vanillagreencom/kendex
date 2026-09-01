@@ -35,9 +35,10 @@ These are known, deliberate trade-offs. Raising them again is noise:
   upstream in `skills/review-gate/tests/review-writer-template.test.sh`: the
   `[template]` block derives it from the shipped template alone, and the
   `relay:` battery executes the relay step against a gh stub. That block is
-  closed over one named set — read its preamble, which says what the set is
-  and which classes sit outside it — so a gap worth naming is a property
-  inside that set which is neither checked nor in its ledger.
+  closed over one named set: its preamble names the set and points at
+  `skills/review-gate/DEVELOPMENT.md` § The workflow template for the classes
+  outside it. A gap worth naming is a property inside that set which is
+  neither checked nor in the block's ledger.
 
 - **No test-coverage asks for instruction markdown or for `tools/guard`
   rules in a change that adds no guard test lane.** What a test must cover is

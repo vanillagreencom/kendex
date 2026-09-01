@@ -8,8 +8,9 @@
 #               templates/review-gate-writer.yml ALONE. What it covers is
 #               enumerated once, in DEVELOPMENT.md § The workflow template —
 #               repeating that list here would be a second copy to drift.
-#               What it does NOT cover, and what does, is the ledger in the
-#               block's own preamble below.
+#               What it does NOT cover is in two places: the ledger below
+#               for the IN-SET exclusions and what covers each, and that
+#               same section for the classes outside the set altogether.
 #   relay:*     the relay step's SCRIPT, extracted from the YAML and EXECUTED
 #               against a gh stub — not a pin, the real shell (VST-210). Run
 #               against both copies.
@@ -115,36 +116,32 @@ fi
 # --------------------------------------------- the template's own contract ---
 
 # Derivations over the SHIPPED TEMPLATE, and only it. `validate-workflow.sh`
-# answers whether an adopted COPY is still a copy; it derives nothing, by
-# design, so it cannot judge what the template says — edit the template,
-# re-copy, and its diff is empty on a broken contract. These run here,
-# upstream, where a template edit originates, and once rather than per copy:
+# answers whether an adopted COPY is still a copy; it derives nothing, so it
+# cannot judge what the template says — edit the template, re-copy, and its
+# diff is empty on a broken contract. These run once rather than per copy:
 # equality already carries the template into every copy.
 #
-# WHAT THE SET IS CLOSED OVER — the properties the `pin_workflows` block this
-# replaced used to prove, and NOT every property the workflow rests on. The
-# scope, and the two classes deliberately outside it, are stated once in
-# DEVELOPMENT.md § The workflow template; read it before calling something
-# here a gap.
+# WHAT THE SET IS. Every property is a check below or a ledger row below,
+# and DEVELOPMENT.md § The workflow template writes that list out. It is NOT
+# every property the workflow rests on — the same section names the two
+# classes deliberately outside it. Read it before calling something a gap.
 #
 # LEDGER — inside the set, deliberately NOT checked here, because something
 # else reds when the property goes:
 #   * the relay step's converge-leg refusal (`workflow_dispatch|schedule)`)
-#     — the relay battery below EXECUTES the step on both converge legs, so
-#     removing the guard turns each of those into a dispatch the case did
-#     not expect.
+#     — the battery below EXECUTES the step on both converge legs, so
+#     removing the guard turns each into a dispatch the case did not expect.
 #   * every status-escaping grep in the relay tolerates a no-match — the two
 #     header readers carry `|| true`, and the battery runs the step under
-#     `-eo pipefail` asserting THE RELAY NEVER REDS, so dropping either
-#     guard reds the retry and status-parsing cases (the counts are not
-#     stated: they move whenever a relay case is added).
+#     `-eo pipefail` asserting THE RELAY NEVER REDS, so dropping either guard
+#     reds the retry and status-parsing cases. No count: it moves with the
+#     battery.
 #   * the WRITE job holds no `actions: write` — subsumed by the exactly-one
 #     grant check below, which counts the whole file and requires the one
 #     grant to sit on the relay.
-# What the battery does NOT cover is a binding's PRESENCE: `_relay_once`
-# supplies DISPATCH_REF, WORKFLOW_REF and EVENT_NAME as literals, so it
-# proves the step degrades safely when one is missing and proves nothing
-# about whether the file still carries it. Those are checked here.
+# No fourth row for DISPATCH_REF, WORKFLOW_REF or EVENT_NAME: `_relay_once`
+# supplies all three as literals, so the battery proves the step degrades
+# safely without one and nothing about whether the file still carries it.
 
 if [[ -f "$TEMPLATE" ]]; then
   echo "=== the template's own contract ==="
@@ -154,11 +151,10 @@ if [[ -f "$TEMPLATE" ]]; then
   relay_block="$(sed -n '/^  request-converge:/,/^  write:/p' "$TEMPLATE")"
   whole="$(cat "$TEMPLATE")"
 
-  # ONE technique for the whole block: drop full-line comments, then match
-  # WITHOUT tying the pattern to one YAML spelling. Both halves are load
-  # bearing, and each closes a hole the other opens — DEVELOPMENT.md
-  # § The workflow template says which. A column anchor appears below only
-  # where the indentation IS the property.
+  # Every presence and count read drops full-line comments first, through
+  # `live`. DEVELOPMENT.md § The workflow template states the rest of the
+  # technique — which patterns avoid a spelling, which are byte-exact on
+  # purpose, and what none of them reach.
   live() { grep -v '^[[:space:]]*#' <<<"$1"; }
   # A match is the failure — and so is a grep READ error, which never passes.
   # An EXTRA match reds, which is the fail-closed direction for an absence.
@@ -213,14 +209,18 @@ if [[ -f "$TEMPLATE" ]]; then
     absent "$relay_block" '^    concurrency:' "the relay holds NO concurrency group, so it can never be evicted onto a PR as a cancelled check"
     # Dispatch is its whole scope; sustained failure surfaces as gate
     # staleness (cron floor + pr-watch --heal), never as an incident here.
-    absent "$relay_block" '^      issues: write$' "the relay holds NO issues:write — the no-escalation decision stands"
+    # No `$` on the three permission patterns: YAML permits a trailing
+    # `# comment` after a scalar, which an end-anchored pattern misses. No
+    # key extends these two, so the indentation anchor alone ties them to a
+    # job-level `permissions:` entry.
+    absent "$relay_block" '^      issues: write' "the relay holds NO issues:write — the no-escalation decision stands"
 
     # --- permissions -----------------------------------------------------
     # ONE grant in the whole file, and it is the relay's dispatch scope: the
     # writer never re-runs CI, so a second grant anywhere — the write job
     # included — is the decision reversed.
-    count_is "$whole" '^      actions: write$' "1" "exactly ONE actions:write in the workflow (the writer never re-runs CI)"
-    count_is "$relay_block" '^      actions: write$' "1" "and it is the RELAY's dispatch scope, not the write job's"
+    count_is "$whole" '^      actions: write' "1" "exactly ONE actions:write in the workflow (the writer never re-runs CI)"
+    count_is "$relay_block" '^      actions: write' "1" "and it is the RELAY's dispatch scope, not the write job's"
 
     # --- the single-writer contract --------------------------------------
     # Two writer runs must not interleave, and a pending one must never be
@@ -305,7 +305,7 @@ if [[ -f "$TEMPLATE" ]]; then
     # under this file's pipefail rather than fail the check.
     tmo="$(grep -oE '^    timeout-minutes: [0-9]+' <<<"$relay_block" | head -n 1 | awk '{print $2}' || true)"
     cap_s="$(grep -oE '^          cap=[0-9]+' <<<"$relay_block" | head -n 1 | cut -d= -f2 || true)"
-    attempt_s="$(grep -oE 'timeout [0-9]+ gh api' <<<"$relay_block" | head -n 1 | awk '{print $2}' || true)"
+    attempt_s="$(grep -oE 'timeout [0-9]+ gh api' <<<"$(live "$relay_block")" | head -n 1 | awk '{print $2}' || true)"
     jitter_s="$(grep -oE '^          jitter_max=[0-9]+' <<<"$relay_block" | head -n 1 | cut -d= -f2 || true)"
     if [[ -z "$tmo" || -z "$cap_s" || -z "$attempt_s" || -z "$jitter_s" ]]; then
       FAIL=$((FAIL + 1)); printf '  FAIL  [template] the relay budget is unpinned — timeout-minutes=%s cap=%s per-attempt=%s jitter_max=%s\n' "$tmo" "$cap_s" "$attempt_s" "$jitter_s"

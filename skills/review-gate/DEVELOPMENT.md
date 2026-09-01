@@ -184,17 +184,20 @@ dispatch attempt, no `mktemp`, both CR normalizers); the fork read-only flag
 and the VST-36 escalation arm; the `check_run` breaker's list against the job
 names; and the relay's timeout against its own retry budget.
 
-That list is closed over ONE set, named exactly so nobody reads it wider:
-the properties the `pin_workflows` block this suite replaced used to prove.
-Each is checked there or carries a row in the block's own ledger comment
-naming the instrument that reds instead; three sit in the ledger today, and
-the `relay:` battery — which EXECUTES the relay step against a gh stub, over
-both copies — covers the first two. Both run here, upstream, on every change.
+THE ENUMERATION ABOVE IS THE SET. It is closed in the sense that every
+property in it is either a check in the `[template]` block or a row in that
+block's ledger comment naming the instrument that reds instead; three sit in
+the ledger today, and the `relay:` battery — which EXECUTES the relay step
+against a gh stub, over both copies — covers the first two. Both run here,
+upstream, on every change. Read the list, not a claim about it: a property
+that is not on it is not covered by this block, whatever the closure sounds
+like it promises.
 
 It is NOT a claim about every property the workflow rests on. Two classes sit
-outside it and always did, the earlier block having asserted neither: the
-jobs' `permissions:` SCOPES — that `statuses: write` is still write, that
-`contents:` and `pull-requests:` are still read — and the trigger set beyond
+outside the list and always did, unasserted by the block this replaced as
+well: the jobs' `permissions:` SCOPES — that `statuses: write` is still
+write, that `contents:` and `pull-requests:` are still read — and the
+trigger set beyond
 the three above, `merge_group:` and the activity types included. Downgrading
 `statuses: write` or deleting `merge_group:` passes every instrument in the
 skill. Widening the block is how they get covered; reading the closure wider
@@ -206,14 +209,25 @@ proves the step degrades safely when one is missing and proves nothing about
 whether the file still carries it. That is why those three are `[template]`
 checks rather than ledger rows.
 
-One matching technique runs the whole block: full-line comments are stripped
-before every match, and no pattern is tied to one YAML spelling. Both halves
-carry weight. Stripping comments is what stops a commented-out setting from
-satisfying a presence or count check — and, in an absence check, what stops a
-comment that merely names an expression from reddening. Not tying to a
-spelling is what stops a step written `- name:` first, with its `uses:` on
-the following line, from slipping past a pattern written for the `- uses:`
-form. A column anchor appears only where the indentation IS the property, a
-job-level `permissions:` key being a different thing from a workflow-level
-one. An absence check reds on an extra match, which is the fail-closed
-direction.
+Every presence and count read strips full-line comments first, through a
+`live` helper. That is what stops a commented-out setting from satisfying a
+presence or count check — and, in an absence check, what stops a comment that
+merely names an expression from reddening. An absence check reds on an extra
+match, which is the fail-closed direction.
+
+A pattern avoids a spelling only where an equivalent rewrite is expected. The
+checkout patterns are the case: a step written `- name:` first, with its
+`uses:` on the following line, is the same step, so they match `uses:
+actions/checkout` rather than the `- uses:` form. Where the spelling IS the
+property the pin is deliberately byte-exact instead — the relay's and the
+write job's `if:` expressions, the bare default-branch ref, the escalation
+arm — where an edit is a change, not a restatement. A column anchor appears
+where the indentation is the property, a job-level `permissions:` key being a
+different thing from a workflow-level one; those patterns carry no end
+anchor, because YAML permits a trailing `# comment` after a scalar and an
+end-anchored pattern would miss it.
+
+The limit, stated so it is not discovered: a pattern written for an unquoted
+value does not match a quoted one, so `uses: "actions/checkout@<sha>"` is
+outside what this block reaches. That was true of the block it replaced too;
+nothing here narrowed it.
