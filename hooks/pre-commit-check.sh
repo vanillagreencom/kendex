@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command carrying a word that would skip it is refused: the no-verify flag, a short-option cluster holding that letter, or a word carrying a core.hooksPath key (an attached -c value, the value after a bare -c, a --config-env, a git config argument, a GIT_CONFIG_* assignment). Git would skip the commit-msg hook too, and nothing here can check the message. A commit is a `git` word with a later `commit` word, both read as whitespace-separated words of the command with bash's metacharacters (`| & ; ( ) < >`) turned into spaces, which is where bash would have separated words of its own; a leading path, backtick or `$(` comes off the git word, and nothing comes off the commit word. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Reads no shell. One rewrite runs before the words are read: bash's seven remaining metacharacters (`| & ; ( ) < >`) become spaces, because a metacharacter left attached hides a word bash would have separated, and `true;git commit -m x` then ran unchecked where nothing was armed. Space, tab and newline are the other two of the nine and are IFS. Nothing is deleted, so a quote character, a backslash, a line continuation and the braces of a brace expansion all stay in the word. A bypass is seen only where a whitespace-separated word of the command already spells it, so anything the shell would join, unquote or expand into the word is not seen, and for those forms nothing checks the commit at all: `g''it commit --no-verify`, `git commit "--no-verify"`, `g\it commit --no-verify`, `git commit --no-{verify,x}`, a flag reached through a variable, and a key reached through an `include.path`. The reading costs the other way too. A plain `commit` word after a plain `git` word is a commit wherever it stands, a message, a heredoc body and a comment tail included, so a read-only command spelling both out is refused where nothing is armed; a quoted `commit` is spared, because the quote is still in the word. Git's own armed hooks are the control, and this hook only decides whether to defer to them.
+# safety: Reads no shell. One rewrite runs before the words are read: bash's seven remaining metacharacters (`| & ; ( ) < >`) become spaces, because a metacharacter left attached hides a word bash would have separated, and `true;git commit -m x` then ran unchecked where nothing was armed. Space, tab and newline are the other two of the nine and are IFS. Nothing is deleted, so a quote character, a backslash, a line continuation and the braces of a brace expansion all stay in the word. A bypass is seen only where a whitespace-separated word of the command already spells it, so anything the shell would join, unquote or expand into the word is not seen, and for those forms nothing checks the commit at all: `g''it commit --no-verify`, `git commit "--no-verify"`, `g\it commit --no-verify`, `git commit --no-{verify,x}`, a flag reached through a variable, and a key reached through an `include.path`. The reading costs the other way too. A `commit` word the split leaves standing beside a `git` word is a commit wherever it stands, a message, a heredoc body and a comment tail included, so a read-only command spelling both out is refused where nothing is armed. Quoting does not change that on its own, because the substitution runs before any word is looked at: which quoted forms survive is pinned in the suite rather than stated here. Git's own armed hooks are the control, and this hook only decides whether to defer to them.
 # timeout: 60
 # ---
 
@@ -63,10 +63,12 @@ COMMAND=${COMMAND//\)/ }
 # where a whitespace-separated word already spells it, so anything the shell
 # would join, unquote or expand into the word is not seen, and for those forms
 # nothing checks the commit at all. The reading costs the other way too: a
-# plain `commit` word after a plain `git` word is a commit wherever it stands,
-# a message, a heredoc body and a comment tail included, while a quoted
-# `commit` is spared because the quote is still in the word. Git's armed hooks
-# are the judge; this hook only decides whether to defer to them.
+# `commit` word the split leaves standing beside a `git` word is a commit
+# wherever it stands, a message, a heredoc body and a comment tail included.
+# Quoting does not change that on its own, since the substitution above runs
+# before any word is looked at; which quoted forms survive it is pinned in the
+# suite. Git's armed hooks are the judge; this hook only decides whether to
+# defer to them.
 set -f
 IFS=$' \t\n\r'
 # shellcheck disable=SC2206

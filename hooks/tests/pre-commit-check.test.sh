@@ -9,11 +9,11 @@
 # Nothing is deleted. A bypass is therefore seen only where a whitespace-
 # separated word of the command already spells it, so anything the shell would
 # join, unquote or expand into the word is not seen, and for those forms
-# nothing checks the commit at all. The reading costs the other way: a plain
-# `commit` word after a plain `git` word is a commit wherever it stands, a
-# message, a heredoc body and a comment tail included, while a quoted `commit`
-# is spared because the quote is still in the word. Both directions are pinned
-# below.
+# nothing checks the commit at all. The reading costs the other way: a `commit`
+# word the split leaves standing beside a `git` word is a commit wherever it
+# stands, a message, a heredoc body and a comment tail included. Both
+# directions are pinned below, examples included, because a claim about which
+# forms fall on which side belongs in a row that reds and not in a comment.
 #
 # HOOK_UNDER_TEST runs this suite against another hook file, which is how the
 # must-fail control checks that these assertions can go red.
@@ -306,6 +306,16 @@ both '(git commit -m x)' 0 2 "a subshell with no bypass"
 both 'git commit -m x&' 0 2 "a backgrounded commit with no bypass"
 both 'echo commit;git status' 0 0 "a commit word before the git word, across a separator"
 
+# A row for every substitution the rows above leave undecided, because a class
+# is only a class where each member is measured: delete one line of the seven
+# and something here must go red. The rows above answer `>`, `;`, `&` and `|`;
+# these two are what `<` and `)` decide on their own. `(` is the member with no
+# measured fail-open of its own, since a `(` in front of the git word already
+# comes off in the word loop, so what it decides sits on the over-refusal side
+# and its rows are in the trade section with the rest of that cost.
+both 'git commit</dev/null -m x' 0 2 "a redirection-in glued to the subcommand"
+both '(git commit)' 0 2 "a subshell whose closing paren ends the commit word"
+
 echo
 echo "the split is not pathname expansion"
 
@@ -325,17 +335,26 @@ echo
 echo "the trade: text that reads as a bypass is refused"
 
 # The hook reads no shell, so a flag spelled inside a message, a heredoc body or
-# a comment tail is a word like any other, and so is a plainly written `commit`
-# after a plainly written `git`. Pinned so the refusal stays a stated limit
-# rather than a surprise, and so nobody grows a tokenizer back to fix it. The
-# last row is the residual cost the metacharacter split leaves standing: the
-# same command with the word quoted passes, up in the first section, and the
-# quote characters are the whole of the difference.
+# a comment tail is a word like any other, and so is a `commit` word the split
+# leaves standing beside a `git` word. Pinned so the refusal stays a stated
+# limit rather than a surprise, and so nobody grows a tokenizer back to fix it.
+#
+# Quoting spares nothing by itself. The metacharacters are substituted before
+# any word is looked at, so one standing inside the quotes splits the quote off
+# the word it was protecting. The quoted `commit` up in the first section
+# survives only because no metacharacter stands in it, and the quoted rows
+# below are ordinary read-only commands where one does. They are the measured
+# cost of the split rather than an exception to a rule about quotes, which is
+# why they are rows and not a sentence.
 both 'git commit -m \"explain why '"$NV"' is banned\"' 2 2 "the flag inside a quoted message"
 both 'git commit -m \"prose mentioning -n inside\"' 2 2 "-n inside a quoted message"
 both 'git commit -m x  # never '"$NV" 2 2 "the flag in a comment tail"
 both 'cat <<EOF > n.md\nrun cat -n on the file\nEOF\ngit commit -m note' 2 2 "-n in a heredoc body"
 both 'git log | grep commit' 0 2 "an unquoted commit word in an ordinary grep"
+both 'git log --oneline \"(commit)\"' 0 2 "a commit word inside quoted parentheses"
+both "git log --oneline | grep 'fix(commit)'" 0 2 "a conventional-commit scope grep"
+both 'git log --grep=\"<commit>\"' 0 2 "a commit placeholder in angle brackets"
+both 'echo \"usage: git cherry-pick <commit>\"' 0 2 "a usage line naming a commit placeholder"
 
 echo
 echo "the forms this hook does not see: nothing checks those commits"
