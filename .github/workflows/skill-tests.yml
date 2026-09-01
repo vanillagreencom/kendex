@@ -5,14 +5,17 @@ name: Skill Tests
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
 #
-# THE FAST/FULL SPLIT: the node and review-gate shards and the Linux cargo job
-# skip on PR pushes — a PR bills few heavy runner-minutes through every round
-# of bot review, while the pending "Review gate" status is what actually blocks
-# merge. The full battery runs once per merged result: in the merge queue
-# before the merge, and again on the push to main as the post-merge record.
-# The shell shard and the cross-platform cargo lanes are the exceptions; each
-# says why. The review gate never conditions CI (it answers review-only; see
-# the review-gate skill) — no gate job here reads the predicate.
+# THE FULL BATTERY RUNS ON EVERY EVENT: every shard and every cargo lane runs
+# on pull_request as well as in the merge queue and on the push to main, so a
+# green PR has already proven what the queue re-proves and an ejection —
+# dequeue, fix, requeue, pay the merge latency again — is rare instead of
+# routine. Runner minutes are free on this public repo and time to merge is
+# the metric. Three things stay event-scoped, each saying why below: the
+# AGGREGATOR, which is the ruleset's required context; the preflight job,
+# which needs a PR base to diff against; and the `rest` shard's size-ratchet
+# step, which preflight already covers on pull_request. The review gate never
+# conditions CI (it answers review-only; see the review-gate skill) — no gate
+# job here reads the predicate.
 #
 # Heavy jobs run on Blacksmith when the org's CI_RUNNER_* variables are set,
 # falling back to GitHub-hosted so the workflow runs anywhere.
@@ -33,21 +36,18 @@ permissions:
   contents: read
 
 jobs:
-  # SHARDED: three shards bound wall time at the slowest shard and give
-  # suite growth per-shard headroom instead of a shared cliff. The
-  # ruleset's required context is the AGGREGATOR below — shard names are
-  # not required contexts, so shards can be rebalanced or added without
-  # touching repo settings.
+  # SHARDED: five shards bound wall time at the slowest shard and give suite
+  # growth per-shard headroom instead of a shared cliff. `orch` and `rest`
+  # were one `shell` shard whose halves ran serially and bounded every queue
+  # run; `pi-claude-bridge` was the node shard's hottest step. The ruleset's
+  # required context is the AGGREGATOR below — shard names are not, so shards
+  # can be rebalanced or added without touching repo settings.
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }})
-    # A pull request narrows the shard LIST, never the job's `if`: `matrix` is no
-    # context a job condition may read, and GitHub answers one that does with
-    # "Unrecognized named-value", invalidating the file. `strategy` reads
-    # `github`; shell runs on PRs so a hang in it is red there.
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ github.event_name == 'pull_request' && fromJSON('["shell"]') || fromJSON('["review-gate","shell","node"]') }}
+        shard: [review-gate, orch, rest, node, pi-claude-bridge]
     runs-on: ${{ vars.CI_RUNNER_4V || 'ubuntu-latest' }}
     timeout-minutes: 25
     steps:
@@ -61,7 +61,7 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           case "$SHARD" in
-            review-gate|shell|node) ;;
+            review-gate|orch|rest|node|pi-claude-bridge) ;;
             *) echo "unknown shard '$SHARD' — no steps would run"; exit 1 ;;
           esac
 
@@ -85,9 +85,14 @@ jobs:
           fi
           exit "$fail"
 
-      # ---- shard: shell — lints, orch, every other shell suite ----------
+      # ---- shard: orch — the orch battery alone --------------------------
+      - name: orch suite (run-all)
+        if: matrix.shard == 'orch'
+        run: bash skills/orch/tests/run-all.sh
+
+      # ---- shard: rest — the lints and every shell suite but orch's ------
       - name: executable bits on skill tests and scripts
-        if: matrix.shard == 'shell'
+        if: matrix.shard == 'rest'
         run: |
           set -u
           fail=0
@@ -104,10 +109,9 @@ jobs:
           exit "$fail"
 
       # The queue-side half of the size gate: without this a merge group never
-      # re-checks the baseline against what it is about to merge. Skipped on
-      # pull_request, where the preflight job runs the same command already.
+      # re-checks the baseline. Skipped on pull_request; preflight runs it there.
       - name: size-ratchet (tighten-only file-size gate)
-        if: matrix.shard == 'shell' && github.event_name != 'pull_request'
+        if: matrix.shard == 'rest' && github.event_name != 'pull_request'
         run: skills/size-ratchet/scripts/size-ratchet
 
       # The queue-side half of the work-marker gate: the preflight job runs
@@ -115,7 +119,7 @@ jobs:
       # index it is about to merge. The commit lane judges only what a commit
       # adds; this scan takes the rest, in every blob git reads as text.
       - name: todo-ban (index-wide work-marker scan)
-        if: matrix.shard == 'shell'
+        if: matrix.shard == 'rest'
         run: skills/growth-guards/scripts/todo-ban
 
       # Every skill must route problem reports through `kendex report`. The
@@ -123,7 +127,7 @@ jobs:
       # carrying only a `bugs:` URL sends agents to hand-file in this repo
       # regardless of who owns the asset.
       - name: skills point reports at `kendex report`
-        if: matrix.shard == 'shell'
+        if: matrix.shard == 'rest'
         run: |
           set -u
           fail=0
@@ -138,18 +142,14 @@ jobs:
       # One scan for Bash 4+ syntax over the roster `tools/bash32-lint --list`
       # prints. bash32-lint.test.sh proves its teeth.
       - name: bash32-lint (Bash 3.2 portability across the skill tree)
-        if: matrix.shard == 'shell'
+        if: matrix.shard == 'rest'
         run: tools/bash32-lint
-
-      - name: orch suite (run-all)
-        if: matrix.shard == 'shell'
-        run: bash skills/orch/tests/run-all.sh
 
       # A failure is announced twice: inline where it happened, and in a
       # FAILED SUITES block at the end — the tail of a red job must name the
       # culprits instead of showing only the later suites passing.
       - name: all other skill suites
-        if: matrix.shard == 'shell'
+        if: matrix.shard == 'rest'
         run: |
           set -u
           fail=0
@@ -172,7 +172,7 @@ jobs:
           exit "$fail"
 
       - name: tools and hook suites
-        if: matrix.shard == 'shell'
+        if: matrix.shard == 'rest'
         run: |
           set -u
           fail=0
@@ -190,8 +190,10 @@ jobs:
           fi
           exit "$fail"
 
+      # ---- shard: node — every pi package but the bridge -----------------
+      # setup-node also serves the `pi-claude-bridge` shard's two steps below.
       - uses: actions/setup-node@v4
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' || matrix.shard == 'pi-claude-bridge'
         with:
           node-version: 22.19.0
 
@@ -354,6 +356,8 @@ jobs:
         working-directory: pi-extensions/pi-task-panel
         run: npm test
 
+      # ---- shard: pi-claude-bridge — the node shard's hottest step, split
+      # off so its build-plus-suite overlaps the rest instead of extending it.
       # The one package whose CI entry point is `test:ci` rather than `test`:
       # its `test` script also runs integration suites that need API keys and
       # a live provider, which a runner has neither of. `test:ci` is the
@@ -367,7 +371,7 @@ jobs:
       # the bundle assertion below only proves the artifact came from the
       # committed lockfile if the install itself was lockfile-strict.
       - name: pi-claude-bridge unit suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'pi-claude-bridge'
         working-directory: pi-extensions/pi-claude-bridge
         run: |
           npm ci --no-audit --no-fund
@@ -376,15 +380,16 @@ jobs:
       # bundle/index.js is the artifact Pi loads and npm publishes. A clean
       # lockfile build must reproduce the committed bytes exactly.
       - name: pi-claude-bridge bundle matches a clean lockfile build
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'pi-claude-bridge'
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
 
-  # AGGREGATOR — this job's name is the ruleset's required context. On PR
-  # heads the expression is false and the job reports `skipped`. In a merge
+  # AGGREGATOR — this job's name is the ruleset's required context, so the
+  # `(shell + node)` in it is frozen history: renaming it to match today's
+  # shards leaves the ruleset waiting on a context nothing creates. On PR
+  # heads the expression is false and the job reports `skipped`; in a merge
   # group or a main-push run it runs after every shard and fails unless ALL
-  # shards succeeded —
-  # `always()` is required in the expression because skipped/failed needs
+  # shards succeeded. `always()` is required because skipped/failed needs
   # would otherwise skip this job too, and a skipped required context on a
   # merge group would satisfy the ruleset without any suite having run (the
   # fail-open this line exists to close).
@@ -422,12 +427,12 @@ jobs:
         run: skills/review-gate/scripts/validate.sh
 
   preflight:
-    # Dogfoods the preflight skill on this repo's own PR diffs. PR-time on
-    # purpose despite the fast/full split: the whole run is seconds of
-    # diff-scoped checks, and its findings (fail-open bash, dead doc
-    # citations, broken JSON/TOML) are exactly the classes that otherwise
-    # surface as bot-review round-trips. Not a required context; merge-group
-    # correctness is owned by the sharded suites.
+    # Dogfoods the preflight skill on this repo's own PR diffs. PR-only
+    # because it is diff-scoped and a merge group has no PR base to diff
+    # against; its findings (fail-open bash, dead doc citations, broken
+    # JSON/TOML) are the classes that otherwise surface as bot-review
+    # round-trips. Not a required context; merge-group correctness is owned
+    # by the sharded suites.
     name: Preflight (diff-scoped deterministic checks)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -452,9 +457,6 @@ jobs:
 
   cargo-tests:
     name: Cargo (workspace tests)
-    # Same split as skill-suites above: the merge group proves the merge,
-    # the main push records the merged result.
-    if: github.event_name == 'merge_group' || github.event_name == 'push'
     # GitHub-hosted deliberately: the full workspace build (Tauri app
     # included) does not fit the org's current Blacksmith size. Route it
     # back when the org variables point at a machine that fits it.
@@ -479,10 +481,8 @@ jobs:
           CARGO_INCREMENTAL: '0'
         run: cargo test --workspace --locked
 
-  # The app ships on macOS. This required context tests the full workspace on
-  # every pull-request SHA and stays outside the fast/full split. tools/guard
-  # checks the core and CLI Apple targets at commit time; this runner executes
-  # the tests on the platform.
+  # The app ships on macOS. tools/guard checks the core and CLI Apple targets
+  # at commit time; this runner executes the tests on the platform.
   cargo-tests-macos:
     name: macOS cargo (workspace tests)
     runs-on: macos-latest

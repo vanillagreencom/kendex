@@ -113,7 +113,7 @@
 #
 # The shape that run showed: doubling the rules costs roughly four times the
 # time, while every orch lint suite together still finishes in a few seconds,
-# well inside the shell shard's timeout — `timeout-minutes` on the
+# well inside the orch shard's timeout — `timeout-minutes` on the
 # skill-suites-shard job in `.github/workflows/skill-tests.yml`, which is where
 # to read it rather than here. What the law means for an author is that a suite
 # growing past roughly thirty rules is paying a superlinear price and is better
@@ -124,7 +124,7 @@
 # commands above are what measure what that is worth on a given machine. What
 # was measured and declined is a different set — per-path memoization of the
 # reader, a pre-stripped control scratch, and a file-grouped loop, each at 20
-# percent or worse against the shell shard's budget, which is what the redesign
+# percent or worse against the orch shard's budget, which is what the redesign
 # they pointed at was declined against.
 
 MD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
