@@ -1,5 +1,16 @@
 # Per-repo settings checklist
 
+## Before the first pass
+
+- [ ] `python3 --version` is 3.11 or newer where the verbs run — locally and on
+      whatever runs this repo's guards. The generator needs `tomllib` and
+      nothing else, and it refuses to start on an older one rather than
+      half-parsing a TOML.
+- [ ] `check` is wired into whatever runs this repo's other guards, with
+      `--staged` in the commit lane so it judges one coherent staged state.
+      This package ships no hook of its own: a repo that already has a commit
+      chain does not need a second one.
+
 ## Adding a repo
 
 Two passes. The order is not a preference — three rules fix it, and a sequence
@@ -215,11 +226,13 @@ can still change what the file means.
 
 ## Glob dialect
 
-- [ ] An exclusion took effect on Copilot, on Qodo and on Macroscope. The
-      dialect claims five engines read its patterns alike, and only two can be
-      tested from a repo: CodeRabbit's minimatch and real `git sparse-checkout`.
-      The `applyTo`, `[ignore]` and `include` matchers are unpublished, so this
-      line is the only confirmation those three ever get.
+- [ ] An exclusion took effect on Copilot, on Qodo, on Macroscope, and through
+      CodeRabbit's minimatch. The dialect claims five engines read its patterns
+      alike, and one can be tested from a repo carrying no third-party runtime:
+      git's wildmatch, which is `git sparse-checkout`'s and which the vector
+      harness measures. The `applyTo`, `[ignore]` and `include` matchers are
+      unpublished and minimatch needs a Node runtime this package does not
+      depend on, so this line is the only confirmation those four ever get.
 
 ## If the repo has its own guard over these files
 
@@ -236,6 +249,29 @@ can still change what the file means.
       then the deletion. kendex's guard fails when
       `.github/copilot-instructions.md` is absent, so `[bots] copilot = false`
       there means moving what that guard reads before removing the file.
+
+## The exclusion classes a repo starts from
+
+Three classes are worth an exclusion in most repos. Only the first is derived;
+the other two are `[[exclusions.path]]` entries a repo writes, because their
+paths differ per repo and because **an exclusion with no stated reason is
+indistinguishable from a mistake at the next read** — a shipped default nobody
+wrote a reason for is that mistake with nothing to catch it.
+
+- **Render trees.** `[exclusions] derive_render = true`. Derived from the
+  manifest kendex resolves, so it follows a refresh instead of falling behind
+  it, and it carries the one fixed reason `repo-toml.md` § `[exclusions]`
+  states.
+- **Vendored trees this repo pins byte-for-byte.** One entry per tree. The
+  reason names the upstream and says the fix lands there.
+- **Lock files.** `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml` and the
+  rest, wherever they sit. The reason is that a package manager writes them,
+  so a finding on one is a finding about a dependency change rather than about
+  the file. Exclude the file, not the manifest beside it.
+
+Copy the second and third as entries rather than expecting the generator to
+know them, and let `exclusion-consistency`'s dead-exclusion clause tell you
+which ones this repo does not actually have.
 
 ## Excluding the render trees
 

@@ -3,9 +3,8 @@
 Standardized instruction files for the GitHub review bots, generated from one
 doctrine source plus a per-repo TOML rather than hand-written five times.
 
-**This is the specification, not working software.** The package ships no
-`scripts/` directory and none of the verbs below exist yet; everything here is
-the contract the generator will be built against.
+`scripts/bot-instructions` is the generator. It needs Python 3.11 or newer for
+`tomllib` and nothing else.
 
 Five bots read four incompatible surfaces. Codex reads `AGENTS.md` § Code
 Review Rules and nothing else. Copilot code review reads
@@ -36,7 +35,7 @@ every bot that has an exclusion mechanism. Doctrine is written once, in this
 package, for every repo, and one table in `schemas/renders.md` says which block
 lands in which file, in what order, and why each omission is deliberate.
 
-## Three verbs, once there is a generator
+## Three verbs
 
 `render` builds and validates in a scratch tree, then writes — and the checks
 that judge repository state rather than emitted bytes read the repo before the

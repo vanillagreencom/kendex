@@ -28,3 +28,7 @@ docs/*-local.md
 # kendex: this machine's install ledger — the .agents trees and the
 # links into them are committed, so a clone works without kendex.
 /.kendex-lock.json
+
+# Python bytecode caches, written beside any script this repo runs with python3
+__pycache__/
+*.pyc

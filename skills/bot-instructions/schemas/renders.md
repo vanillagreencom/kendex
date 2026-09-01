@@ -19,17 +19,37 @@ the slice; `[doctrine.append]` adds its text as a final paragraph. The
 **Marker.** Every file the generator owns whole, and the one region it owns
 inside `AGENTS.md`, carries a marker: the file's **first comment**, preceded
 only by a prologue the format requires. There are exactly two such prologues,
-and no output has any other: YAML frontmatter in a `.instructions.md` file,
+and no output has any other: YAML frontmatter in a markdown output that carries
+it — a `.instructions.md` file and a `.macroscope/correctness/<surface>.md` —
 which is frontmatter only at byte 0, and the `yaml-language-server` schema line
-at the top of `.coderabbit.yaml`. Ownership is decided by the marker being
-present, never by its offset, so `render`, `adopt` and `orphan` all ask the same
-question of every output.
+at the top of `.coderabbit.yaml`.
+
+**Ownership is the marker at that canonical position**, never the marker
+anywhere in the file. A hand-written file at a generated path that quotes or
+preserves the marker further down would otherwise read as managed, and `render`
+would overwrite bytes `adopt` never took over. `render`, `adopt` and `orphan`
+all ask that one question of every output.
 
 The marker is a comment in that file's syntax naming this package, the spec
 copy's version, and the paths this render read — SKILL.md § The render inputs
-is the set, and each is named by the path actually read. The comment ends with
-the sentence `Edit bot-instructions.toml or the spec copy, then re-render.` A
-markdown output uses an HTML comment; YAML and TOML use `#`.
+is the set. A repo input is named by the repo-relative path actually read; the
+spec copy's two files are named by their names within the spec copy, because an
+absolute path would make a render depend on where a checkout sits and the
+version already says which copy it was. The comment ends with the sentence
+`Edit bot-instructions.toml or the spec copy, then re-render.` A markdown
+output uses an HTML comment on **one line** — `.macroscope/ignore.md` reads
+every non-blank line as a pattern unless the whole line is a comment, so a
+marker wrapped across two lines would put its second line into that file as a
+pattern. YAML and TOML use `#`.
+
+**The version and every recorded path are refused, not escaped, outside a safe
+class.** The marker is the one place the generator writes bytes it did not
+author, and no structured-file validator need be in a render to catch a comment
+that closed early: with only `codex` enabled there is none. A version outside
+`[A-Za-z0-9.+-]`, or a path outside `[A-Za-z0-9._/-]`, fails naming it. That is
+the whole of what this package validates about its own installed spec copy —
+shape where the bytes reach an output's syntax, trust everywhere else, the same
+trust the doctrine text landing in those outputs already has.
 
 The version is the spec copy's, not the running copy's, since `--spec` can point
 them at different copies and the stamp has to name the doctrine the file
@@ -39,16 +59,30 @@ re-renders every file, and the diff says which doctrine the repo moved to. The
 marker is also how `render`, `adopt` and the `orphan` validator tell a
 generated file from a hand-written one.
 
-**The marker gate is read on the file opened for the replacement**, never on an
-earlier read of the repo. A path whose marker is absent at that moment fails
-naming the path rather than being replaced — the same form § `AGENTS.md` uses
-for a region that moved between the build and the write, and for the same
-reason. The gate is what stops a render from destroying hand-written bot files,
-so proving it against a copy read before the write phase leaves the whole write
-phase as a window: a hand edit, a marker deletion, or another run landing in it
-would have the render overwrite exactly the content the gate exists to protect,
+**The marker gate is read at the moment of the replacement**, never on an
+earlier read of the repo. A path whose marker is absent then fails naming the
+path rather than being replaced — the same form § `AGENTS.md` uses for a region
+that moved between the build and the write, and for the same reason. The gate
+is what stops a render from destroying hand-written bot files, so proving it
+against a copy read before the write phase would leave the whole write phase as
+a window: a hand edit, a marker deletion, or another run landing in it would
+have the render overwrite exactly the content the gate exists to protect,
 silently. `orphan` keeps its pre-write read of the repo, because it reports and
 writes nothing.
+
+**The window is narrowed, not closed, and atomicity is why.** A rename replaces
+a path, not the descriptor whose marker was read, so no single file is both
+marker-checked and replaced. Where the two properties conflict, atomicity wins:
+the replacement below stays a rename, because the alternative — writing in
+place on the marker-checked descriptor — leaves a truncated file on an
+interrupt, in the one output whose non-owned bytes belong to the repo. What the
+gate does instead is open the target no-follow at replacement time, read the
+marker from that descriptor, record the file's identity, and re-check that
+identity immediately before the rename, refusing when it moved. The residual
+window is from that last check to the rename. The lock closes the concurrent-
+render case; an editor or a formatter landing in that window is closed by
+nothing portable, and this says so rather than claiming otherwise. The
+`AGENTS.md` splice is the same window with more at stake, and the same bound.
 
 **Write phase.** The generator builds and validates a complete scratch tree,
 writes a manifest of every path it is about to replace, then replaces them.
@@ -68,10 +102,17 @@ cut off, and that file is the doctrine root three of the five bots read. This
 repo's own convention is the mechanism: write a temp file and rename it over the
 target, one temp name per write.
 
-The rest of the write path — how the lock is acquired and released, where the
-scratch tree lives and how it is made unique per run, where the manifest lives
-and when it is removed — is the generator's to define. This spec states the
-properties a caller can rely on; KEN-1006 owns the mechanics that hold them.
+The rest of the write path: the lock is `.bot-instructions/render.lock`, created
+exclusively and removed when the render ends, and a second render refuses
+naming it rather than waiting — a wait would be a queue nobody asked for, and a
+lock the run breaks on its own would be no lock. The manifest is
+`.bot-instructions/render-manifest.json`, written before the first replacement
+and removed after the last, so a run finding one says it is finishing an earlier
+set. **The scratch tree is in memory, never on disk**: the build holds each
+output's bytes and the byte validators read them there. That removes the
+"where does it live, and how is it unique per run" question rather than
+answering it — a validator failure leaves the repo untouched with nothing to
+clean up, and two runs cannot collide over a scratch path.
 
 `AGENTS.md` is outside that scheme, because it is the one output whose
 non-owned bytes belong to the repo. Carrying a build-phase copy of the whole
@@ -357,23 +398,35 @@ enumerable to sit in the policy set at all. A change to it is a policy change:
 loosened, the validator goes green on a file CodeRabbit discards whole, and
 stays green afterwards.
 
-**Keys.** Every top-level property the vendored schema defines, in this order:
-`language`, `tone_instructions`, `early_access`, `enable_free_tier`,
-`inheritance`, `reviews`, `chat`, `knowledge_base`, `code_generation`,
-`issue_enrichment`.
+**Keys.** The render **walks the vendored schema** and emits every property it
+defines a default for, at every depth, taking the value from the posture below
+where this package has an opinion and from the schema's own default everywhere
+else. Full state means every such key, or the ones left out keep resolving down
+the ladder this package does not control, and the file's claim about itself
+stops being true. A property the vendor defines no default for is not written:
+such a key has no "unset resolves down the ladder" semantics to state, and
+writing one would assert a value the vendor never chose.
 
-The last two are here for the same reason as the rest. Full state means every
-key, or the ones left out keep resolving down the ladder this package does not
-control, and the file's claim about itself stops being true.
-`code_generation` is written with its docstring and unit-test generation off,
-matching the `finishing_touches` posture that never lets a bot push code;
-`issue_enrichment` is written off, since this package configures review and not
-issue triage.
+Walking rather than transcribing is what makes that true at every depth, and it
+is what keeps a moving schema from going stale in a hand-kept list: the nested
+option a vendor adds arrives at its own default and shows in the diff, instead
+of leaving a top-level property present while a setting one level down silently
+resumes resolving. `coderabbit-schema`'s completeness clause holds the other
+direction — a render that drops one.
 
-The list is transcribed from a schema that moves, which is the shape that goes
-stale, so `coderabbit-schema` also fails when the render omits a top-level
-property the vendored schema defines. The next schema refresh then reports the
-gap instead of silently widening it.
+The top-level **order** is fixed here rather than taken from the schema, so a
+schema reordering is not a whole-file diff: `language`, `tone_instructions`,
+`early_access`, `enable_free_tier`, `inheritance`, `reviews`, `chat`,
+`knowledge_base`, `code_generation`, `issue_enrichment`. A vendored copy that
+defines fewer top-level properties than that order names is too old or too
+trimmed to render full state against, and the render fails naming the one it
+lacks.
+
+The last two are here for the same reason as the rest. `code_generation` gets
+no path instructions: the vendored schema gives it no enable switch, so what
+keeps a bot from pushing code is `reviews.finishing_touches`, whose docstring
+and unit-test entries are off. `issue_enrichment` is written off, since this
+package configures review and not issue triage.
 
 `inheritance` is written `false` explicitly. It decides whether an unset key
 takes a parent level's value instead of resolving down the ladder, which is the
@@ -381,8 +434,10 @@ one key that changes what "full state" means, so a full-state render states it
 rather than relying on its default.
 
 `tone_instructions` is `[tone] coderabbit` with newlines collapsed to single
-spaces, emitted as a folded scalar, and hard-capped at 250 characters. The
-shipped default when `[tone]` is absent:
+spaces, emitted as a folded scalar. Its 250-character cap is the vendored
+schema's own `maxLength` and `coderabbit-schema` is its single enforcer, so the
+render carries no second copy of the number and no fixture can red two owners
+of one bound. The shipped default when `[tone]` is absent:
 
 > Terse and technical. Give the defect, its triggering input, and the
 > consequence. No praise, diff restatement, or summary. One finding per thread.
@@ -434,6 +489,11 @@ repo string containing a line that would terminate the block is refused, and so
 is one carrying a control character, by the same refusal `.pr_agent.toml` relies
 on: a block scalar cannot carry one either, and one predicate covers both
 targets because the values reaching them are the same set.
+
+The one exception is the **empty string**, which a block scalar cannot carry at
+all. It is emitted `""`. That is a property of the form rather than a choice,
+and nothing the rule protects is lost: an empty string has no bytes to escape.
+It arises only from the schema's own defaults, never from repo text.
 
 ## `.pr_agent.toml`
 
@@ -513,11 +573,11 @@ file has no column in the routing table.
 orphan, so retiring the last surface says so rather than leaving a
 marker-only file that looks like current guidance.
 
-**Budget.** 800 lines for this file. Qodo gives that number as writing guidance
-and states no length at which it rejects or truncates, so the budget is this
-package's own, taken from that guidance the way `[budgets] copilot_chars` is
-taken from a two-page reading; `references/limits.md` marks it a recommendation
-and carries the page. Organization and mapped-repository best-practices files
+**Budget.** `[budgets] qodo_best_practices_lines`, default 800. Qodo gives that
+number as writing guidance and states no length at which it rejects or
+truncates, so the budget is this package's own, taken from that guidance the
+way `[budgets] copilot_chars` is taken from a two-page reading;
+`references/limits.md` marks it a recommendation and carries the page. Organization and mapped-repository best-practices files
 layer above this one and the generator cannot see them, so nothing here bounds
 the total.
 

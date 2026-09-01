@@ -1,0 +1,307 @@
+"""Renderer-regression controls.
+
+Several rejection clauses exist to catch a **renderer** regression rather than
+a bad input: `path_filters` losing its `!`, an ordinary surface gaining an
+`excludeAgent`, a Macroscope `include` going missing, a serializer dropping
+one derived tree from every destination. No `bot-instructions.toml` can
+produce those, so a control for them has to break the renderer.
+
+This does it in-process, against the real modules and a real repository: one
+render function is replaced, the same `validate()` runs, and the assertion is
+on the validator's own identity. There is no fault-injection seam in the
+shipped code — a production switch that makes the generator misbehave is one
+more thing that can be left on.
+
+Run by `renderer-regressions.test.sh`, which supplies a rendered fixture repo.
+"""
+
+import contextlib
+import sys
+import os
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PACKAGE = os.path.dirname(os.path.dirname(HERE))
+sys.path.insert(0, os.path.join(PACKAGE, "scripts"))
+
+from lib import (  # noqa: E402
+    model as model_mod,
+    render_coderabbit,
+    render_markdown,
+    render_qodo,
+    run,
+    tree,
+)
+
+PASS = 0
+FAIL = 0
+
+
+def report(ok_, label, detail=""):
+    global PASS, FAIL
+    if ok_:
+        PASS += 1
+        print(f"  ok   {label}")
+    else:
+        FAIL += 1
+        print(f"  FAIL {label}")
+        if detail:
+            print(f"       {detail}")
+
+
+@contextlib.contextmanager
+def patched(module, name, replacement):
+    original = getattr(module, name)
+    setattr(module, name, replacement)
+    try:
+        yield
+    finally:
+        setattr(module, name, original)
+
+
+def findings(repo, verb="check"):
+    ctx = run.Context(
+        repo,
+        tree.Worktree(repo),
+        tree.Worktree(PACKAGE),
+        ("SKILL.md", "schemas/renders.md"),
+        verb,
+    )
+    return run.validate(ctx)
+
+
+def control(repo, want, label, module, name, replacement, also=()):
+    """One red control: the named validator reds, and the set is exactly known.
+
+    A fixture that also trips an unrelated validator reds for the wrong reason
+    and reads as coverage, so the assertion is an exact set match. Where one
+    mutation genuinely breaches two clauses — dropping the `!` from a
+    `path_filters` entry also empties the exclusion list that surface carries
+    — `also` names the second, and a run whose set stops matching fails.
+
+    Every control runs the `render` verb: `drift` is skipped there by design,
+    and a renderer regression would otherwise red it on every fixture, which
+    is the confound the isolation rule exists to prevent.
+    """
+    with patched(module, name, replacement):
+        try:
+            found = findings(repo, "render")
+        except Exception as exc:  # a render that cannot produce bytes at all
+            report(False, label, f"the render raised before any validator ran: {exc}")
+            return
+    fired = sorted({f.validator for f in found})
+    expected = sorted({want} | set(also))
+    if fired == expected:
+        report(True, label)
+    else:
+        report(False, label, f"expected exactly {expected}; fired: {fired or 'nothing'}")
+
+
+def main(repo):
+    _coderabbit(repo)
+    _copilot(repo)
+    _qodo(repo)
+    _macroscope(repo)
+    _exclusions(repo)
+    print(f"mutations.py: {PASS} passed, {FAIL} failed")
+    return 1 if FAIL else 0
+
+
+def _coderabbit(repo):
+    control(repo, "coderabbit-filters",
+            "a path_filters entry that lost its `!` turns the list into an allowlist",
+            render_coderabbit, "path_filters",
+            lambda m: [e["glob"] for e in m.exclusions],
+            also=("exclusion-consistency",))
+    control(repo, "coderabbit-filters",
+            "a path_filters entry outside the dialect matches nothing in sparse-checkout",
+            render_coderabbit, "path_filters",
+            lambda m: ["!{a,b}/**"] + ["!" + e["glob"] for e in m.exclusions],
+            also=("exclusion-consistency",))
+
+    original = render_coderabbit.full_state
+
+    def drop_nested(schema, chosen, path=""):
+        built = original(schema, chosen, path)
+        # A nested option dropped under an existing object: the top-level
+        # property is still present, so a root-only completeness clause passes
+        # and the setting silently resumes resolving down the ladder.
+        if path == "" and "knowledge_base" in built:
+            built["knowledge_base"].pop("opt_out", None)
+        return built
+
+    def drop_root(schema, chosen, path=""):
+        built = original(schema, chosen, path)
+        if path == "":
+            built.pop("issue_enrichment", None)
+        return built
+
+    control(repo, "coderabbit-schema",
+            "a nested option the vendored schema defines, dropped under an existing object",
+            render_coderabbit, "full_state", drop_nested)
+    control(repo, "coderabbit-schema",
+            "a top-level property the vendored schema defines, dropped by the render",
+            render_coderabbit, "full_state", drop_root)
+
+
+def _copilot(repo):
+    original = render_markdown.instructions_file
+
+    def without_exclude_agent(m, surface):
+        return original(m, dict(surface, reviewer_only=False))
+
+    def wrong_exclude_agent(m, surface):
+        return original(m, surface).replace('"cloud-agent"', '"code-review"')
+
+    def exclude_agent_on_ordinary(m, surface):
+        # The `docs` surface is not reviewer_only, so the render emits no key
+        # there; a regression that emits `code-review` would hide the
+        # surface's path rules from code review with the file parsing.
+        return original(m, dict(surface, reviewer_only=surface["name"] == "docs"))
+
+    def no_apply_to(m, surface):
+        return original(m, surface).replace('applyTo: "src/tests/**"\n', "")
+
+    def empty_apply_to(m, surface):
+        return original(m, surface).replace('applyTo: "src/tests/**"', 'applyTo: "  "')
+
+    def array_apply_to(m, surface):
+        return original(m, surface).replace(
+            'applyTo: "src/tests/**"', "applyTo:\n  - \"src/tests/**\"")
+
+    control(repo, "copilot-frontmatter",
+            "a reviewer_only surface rendered with no excludeAgent",
+            render_markdown, "instructions_file", without_exclude_agent)
+    control(repo, "copilot-frontmatter",
+            "a reviewer_only surface rendered with excludeAgent code-review",
+            render_markdown, "instructions_file", wrong_exclude_agent)
+    control(repo, "copilot-frontmatter",
+            "an ordinary surface rendered with an excludeAgent at all",
+            render_markdown, "instructions_file", exclude_agent_on_ordinary)
+    control(repo, "copilot-frontmatter",
+            "a generated .instructions.md with no applyTo matches nothing",
+            render_markdown, "instructions_file", no_apply_to)
+    control(repo, "copilot-frontmatter",
+            "an applyTo that is whitespace",
+            render_markdown, "instructions_file", empty_apply_to)
+    control(repo, "copilot-frontmatter",
+            "an applyTo emitted as a YAML array rather than one string",
+            render_markdown, "instructions_file", array_apply_to)
+
+
+def _qodo(repo):
+    original = render_qodo._guidance
+
+    def drop_from_extra(m, column, with_summary=True):
+        text = original(m, column, with_summary)
+        if column == "pr_agent extra":
+            text = text.replace(m.block("trust-model"), "")
+        return text
+
+    def drop_from_review_agent(m, column, with_summary=True):
+        text = original(m, column, with_summary)
+        if column == "pr_agent compliance":
+            text = text.replace(m.block("trust-model"), "")
+        return text
+
+    def empty_extra(m, column, with_summary=True):
+        return "" if column == "pr_agent extra" else original(m, column, with_summary)
+
+    control(repo, "qodo-parity",
+            "a block present in the [review_agent] keys and dropped from extra_instructions",
+            render_qodo, "_guidance", drop_from_extra)
+    control(repo, "qodo-parity",
+            "a block present in extra_instructions and dropped from the [review_agent] keys",
+            render_qodo, "_guidance", drop_from_review_agent)
+    control(repo, "qodo-parity",
+            "a review-role pr_commands verb whose section carries no guidance",
+            render_qodo, "_guidance", empty_extra)
+
+
+def _macroscope(repo):
+    original = render_markdown.macroscope_surface
+
+    def no_frontmatter(m, surface):
+        return original(m, surface).split("---\n", 2)[-1]
+
+    def extra_key(m, surface):
+        return original(m, surface).replace("include:", "waitsFor:\n  - \"x\"\ninclude:")
+
+    def not_an_array(m, surface):
+        return original(m, surface).replace('include:\n  - "src/tests/**"', 'include: |2-\n  x')
+
+    def empty_body(m, surface):
+        text = original(m, surface)
+        return text[: text.index("-->") + 4] + "\n"
+
+    control(repo, "macroscope-render",
+            "a correctness file whose frontmatter went missing applies repo-wide",
+            render_markdown, "macroscope_surface", no_frontmatter)
+    control(repo, "macroscope-render",
+            "a frontmatter key other than include or exclude",
+            render_markdown, "macroscope_surface", extra_key)
+    control(repo, "macroscope-render",
+            "an include that is not a YAML array of strings",
+            render_markdown, "macroscope_surface", not_an_array)
+    control(repo, "macroscope-render",
+            "a correctness file with no instruction text below the marker",
+            render_markdown, "macroscope_surface", empty_body)
+
+    ignore = render_markdown.macroscope_ignore
+
+    def stray_line(m):
+        return ignore(m) + "\nnot a glob because it has spaces\n"
+
+    def unclosed_comment(m):
+        return ignore(m).replace("<!-- fixtures", "<!-- fixtures\ncontinued")
+
+    control(repo, "macroscope-render",
+            "an ignore.md line that is neither a glob nor a single-line comment",
+            render_markdown, "macroscope_ignore", stray_line,
+            also=("exclusion-consistency",))
+    control(repo, "macroscope-render",
+            "an ignore.md comment that does not close on its own line",
+            render_markdown, "macroscope_ignore", unclosed_comment,
+            also=("exclusion-consistency",))
+
+
+def _exclusions(repo):
+    original = model_mod.build
+
+    def drop_one_everywhere(tree_, config, doctrine, spec_paths):
+        m = original(tree_, config, doctrine, spec_paths)
+        # A serialization or routing bug drops the same derived tree from
+        # every destination while the independent derivation still holds it.
+        # The cross-surface clause agrees with itself here; only the
+        # comparison against a fresh derivation sees it.
+        m.exclusions = [e for e in m.exclusions if e["glob"] != ".claude/agents/**"]
+        return m
+
+    control(repo, "exclusion-consistency",
+            "a serializer that drops one derived tree from every destination, on render",
+            model_mod, "build", drop_one_everywhere)
+
+    ignore = render_markdown.macroscope_ignore
+
+    def drop_one_surface(m):
+        text = ignore(m)
+        return "\n".join(ln for ln in text.split("\n") if ln != ".claude/agents/**")
+
+    control(repo, "exclusion-consistency",
+            "an entry excluded on one rendered surface and not on another",
+            render_markdown, "macroscope_ignore", drop_one_surface)
+
+    region = render_markdown.agents_region_body
+
+    def strip_paths(m):
+        text = region(m)
+        for entry in m.exclusion_globs:
+            text = text.replace(entry, "")
+        return text
+
+    control(repo, "exclusion-consistency",
+            "a render that drops the paths from the one surface Codex reads",
+            render_markdown, "agents_region_body", strip_paths)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1]))

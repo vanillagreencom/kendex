@@ -1,0 +1,46 @@
+schema = 1
+
+[repo]
+name = "fixture"
+summary = """
+fixture is a small repository the bot-instructions suites render end to end. It
+has one skill render tree, one harness render tree, and one test directory.
+"""
+tracker = "FIX"
+
+[bots]
+codex = true
+copilot = true
+coderabbit = true
+qodo = true
+qodo_best_practices = true
+qodo_review_md = true
+macroscope = true
+
+[cadence]
+qodo_commands = ["/agentic_review", "/review"]
+
+[exclusions]
+derive_render = true
+
+[[exclusions.path]]
+glob = "src/tests/**"
+reason = "fixtures, not this repo's behavior"
+
+[[surface]]
+name = "tests"
+globs = ["src/tests/**"]
+reviewer_only = true
+instructions = """
+A scratch directory the test removes in its own EXIT trap is cleaned up. Do not
+report it as a leak.
+"""
+
+[[surface]]
+name = "docs"
+globs = ["docs/**", "README.md"]
+exclude_globs = ["docs/generated/**"]
+instructions = """
+Prose here is written for operators, not for maintainers. A sentence that
+reads as informal is deliberate.
+"""

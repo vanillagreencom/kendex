@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# `drift` under `--staged`: one pair per render input.
+#
+# `--staged` reads the index for **every** render input, not only the outputs.
+# Outputs-only would be wrong in both directions in the pre-commit lane this
+# mode exists for: a commit staging a TOML change with its re-rendered outputs
+# would red, because the outputs came from the index while the render was
+# built from a worktree TOML that may have moved on; and an unstaged doctrine
+# edit would silently decide what the staged outputs were compared against,
+# passing or failing on bytes nobody is committing.
+#
+# So each input gets a pair: a staged, consistent set with a divergent
+# worktree copy of that input, asserted green, and a staged copy its staged
+# outputs are stale against, asserted red. Plus one for absence, asserted on
+# the absence rather than on the worktree copy.
+#
+# The input set is SKILL.md § The render inputs, read from that list rather
+# than from a copy here. A TOML-only pair is what a generator reading the
+# index for the TOML and the worktree for everything else passes, with the
+# failure the mode exists to close shipping intact.
+
+. "$(dirname "$0")/lib/harness.sh"
+
+repo="$(bi_vendored_repo staged)" || exit 1
+SPEC="$repo/$BI_VENDORED_SPEC"
+
+reset() {
+  git -C "$repo" reset -q --hard HEAD >/dev/null 2>&1
+  git -C "$repo" clean -qfd >/dev/null 2>&1
+}
+
+# One pair. `$1` names the input; `$2` is a shell snippet that makes the input
+# one that the committed outputs are stale against.
+pair() {
+  local label mutate
+  label="$1"
+  mutate="$2"
+  reset
+  eval "$mutate"
+  expect_green "$label: a worktree copy the index does not carry is ignored" \
+    check --staged --repo "$repo" --spec "$SPEC"
+  git -C "$repo" add -A >/dev/null 2>&1
+  expect_red drift "$label: staged, with outputs stale against it" \
+    check --staged --repo "$repo" --spec "$SPEC"
+  reset
+}
+
+pair 'bot-instructions.toml' \
+  'printf "\n[[exclusions.path]]\nglob = \"src/main.rs\"\nreason = \"generated entry point\"\n" >> "$repo/bot-instructions.toml"'
+
+pair 'the spec copy doctrine source' \
+  'python3 -c "
+import sys
+p = sys.argv[1]
+s = open(p).read().replace(\"### declined\n\", \"### declined\n\nOne more sentence for this block.\n\", 1)
+open(p, \"w\").write(s)
+" "$SPEC/SKILL.md"'
+
+pair 'the spec copy routing table' \
+  'python3 -c "
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace(\"| \`scope\` | 1 | 1 |\", \"| \`scope\` | 1 | 2 |\", 1)
+s = s.replace(\"| \`rounds\` | 2 | 2 |\", \"| \`rounds\` | 2 | 1 |\", 1)
+open(p, \"w\").write(s)
+" "$SPEC/schemas/renders.md"'
+
+pair 'the vendored CodeRabbit schema' \
+  'python3 -c "
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d[\"properties\"][\"language\"][\"default\"] = \"en-GB\"
+json.dump(d, open(p, \"w\"), indent=2)
+" "$repo/.bot-instructions/coderabbit-schema.json"'
+
+pair 'the resolved install manifest' \
+  'mkdir -p "$repo/.agents/skills/newly-rendered"
+   printf "x\n" > "$repo/.agents/skills/newly-rendered/SKILL.md"
+   printf "\n[skills.newly-rendered]\nsource = \".\"\nenabled = true\n" >> "$repo/kendex.toml"'
+
+pair 'the existing AGENTS.md' \
+  'python3 -c "
+import sys
+p = sys.argv[1]
+s = open(p).read().replace(\"- Raise a defect\", \"- Raise a DEFECT\", 1)
+open(p, \"w\").write(s)
+" "$repo/AGENTS.md"'
+
+# Absence. A file absent from the index is that absence, not its worktree
+# copy: the vendored schema is still on disk here, and the staged read has to
+# fail on it being gone from the index.
+reset
+git -C "$repo" rm --cached -q .bot-instructions/coderabbit-schema.json
+expect_red coderabbit-schema 'an input staged as absent, asserted on the absence' \
+  check --staged --repo "$repo" --spec "$SPEC"
+expect_green 'and the worktree copy still satisfies a worktree check' \
+  check --repo "$repo" --spec "$SPEC"
+reset
+
+# A staged doctrine source with an unstaged routing table is its own case,
+# since `doctrine-routing` compares the two: naming the spec copy as one file
+# would let the pair arrive from two different states.
+reset
+python3 - "$SPEC/SKILL.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read().replace("\n## Adding a repo\n", "\n### unrouted\n\nA block.\n\n## Adding a repo\n", 1)
+open(p, "w").write(s)
+PY
+git -C "$repo" add -A >/dev/null 2>&1
+expect_red doctrine-routing 'a staged doctrine source against an unstaged routing table' \
+  check --staged --repo "$repo" --spec "$SPEC"
+reset
+
+bi_summary

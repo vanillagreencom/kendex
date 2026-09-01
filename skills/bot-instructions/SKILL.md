@@ -1,15 +1,15 @@
 ---
 name: bot-instructions
-description: "Load to read the bot-instructions specification: the shared review doctrine, the per-repo TOML schema, the per-surface render rules, and the validators. The generator these describe is not built yet."
-summary: "Specification for a package that renders every GitHub review bot's native instruction file from one doctrine source plus a per-repo TOML: AGENTS.md § Code Review Rules for Codex, Copilot repo-wide and path-scoped instructions, a full-state .coderabbit.yaml, .pr_agent.toml with best_practices.md, and a .macroscope tree, with validators for the surfaces that fail silently. The generator is not built yet."
+description: "Load to render, check or adopt a repo's GitHub review-bot instruction files from the shared doctrine plus its bot-instructions.toml, or to read the doctrine, the TOML schema, the render rules and the validators."
+summary: "Renders every GitHub review bot's native instruction file from one doctrine source plus a per-repo TOML: AGENTS.md § Code Review Rules for Codex, Copilot repo-wide and path-scoped instructions, a full-state .coderabbit.yaml, .pr_agent.toml with best_practices.md, and a .macroscope tree, with thirteen validators for the surfaces that fail silently."
 license: MIT
-user-invocable: false
+user-invocable: true
 metadata:
   author: vanillagreen
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "0.1.0"
+  version: "1.0.0"
 tags: [review]
 ---
 
@@ -17,12 +17,17 @@ tags: [review]
 
 > **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
 
-> **This package is a specification, not working software.** There is no
-> `scripts/` directory and none of the verbs below exist yet. Every command,
-> validator and render rule here is the contract the generator will be built
-> against. Until it lands, loading this skill tells you what the files should
-> say; it does not give you anything to run, which is why the package is not
-> user-invocable.
+```bash
+.agents/skills/bot-instructions/scripts/bot-instructions render   # write every enabled surface
+.agents/skills/bot-instructions/scripts/bot-instructions check    # re-render and compare
+.agents/skills/bot-instructions/scripts/bot-instructions adopt    # take hand-written files over
+```
+
+Flags: `--repo`, `--spec`, `--staged`, `--dry-run`; `bot-instructions --help`.
+The generator needs Python 3.11 or newer for `tomllib` and nothing else — no
+third-party runtime, because every repo that vendors this has to be able to
+render and check with what it already has. This package's own suites are
+`tests/*.test.sh`, which this repo's CI picks up with every other skill's.
 
 Five review bots read four incompatible instruction files, and no two of them
 agree on where guidance goes. Written by hand, one repo's doctrine drifts from
@@ -121,12 +126,15 @@ The generator offers three verbs.
   finding naming the path and the differing region.
 - `adopt` is the one-time verb for a repo that already has hand-written bot
   files. `render` refuses to replace a file at a generated path that does not
-  carry this package's marker, and it reads that marker on the file it has
-  opened to replace rather than on some prior pass over the repo, so nothing
-  can slip into the gap; `adopt` takes such a file over, printing what it
-  replaced so the diff shows the content that has to survive in the TOML. It
-  takes a region over the same way, which is how a hand-added `AGENTS.md`
-  heading becomes managed.
+  carry this package's marker at its canonical position, and it reads that
+  marker at the moment of the replacement rather than on some prior pass over
+  the repo, which narrows the window to marker-read-until-rename rather than
+  closing it — `schemas/renders.md` § Common rules states what remains and
+  why; `adopt` takes such a file over, keeping its bytes and printing what it
+  took so the diff shows the content that has to survive in the TOML. It takes
+  a region over the same way, which is how a hand-added `AGENTS.md` heading
+  becomes managed, and it names every repo-root or `.github/` markdown file
+  the adopted content points at.
 
 There is no install-time placement step, no overwrite prompt, and no merge of
 hand edits back into doctrine. A generated file is either byte-identical to its
@@ -183,11 +191,13 @@ at the open. Two halves, and both are needed:
   which is what makes it checkable at all — re-deriving a path from a descriptor
   needs a different mechanism on each platform this repo targets.
 - **Every open, not every write.** `render` writes, but `check` mostly reads:
-  `drift` opens each path the TOML produces, `orphan` walks
-  `.github/instructions/**` and `.macroscope/correctness/**` testing each file
-  for the marker, `agents-section` walks the repo for nested `AGENTS.md`, and
-  `adopt` opens the markdown files the ones it takes over point at. Those sets
-  are named by the tree under judgment. A symlink at any of those paths is
+  `drift` opens each path the TOML produces, `orphan` walks the four
+  `.github/instructions/` and `.macroscope/` trees testing each file for the
+  marker, and `agents-section` reads the repo's tracked nested `AGENTS.md`
+  files. Those sets are named by the tree under judgment. `adopt` opens no
+  file it merely names: it reports the markdown files an adopted one points
+  at rather than reading them, so nothing about their contents can reach a
+  report. A symlink at any of those paths is
   followed by a trusted reader, and its bytes are quoted into a `check` finding
   in a CI log — a disclosure route no write-side rule covers, because nothing is
   written.

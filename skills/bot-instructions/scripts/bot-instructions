@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# bot-instructions: render every review bot's instruction file from one
+# doctrine source plus a per-repo TOML.
+#
+# The generator is Python because its inputs are TOML, YAML and JSON Schema and
+# a shell implementation of those three would be the silent-failure generator
+# this package exists to remove. It needs the stdlib alone — 3.11 or newer, for
+# `tomllib` — because every repo that vendors this has to be able to render and
+# check with what it already has.
+set -euo pipefail
+
+here="$(cd -- "$(dirname -- "$0")" && pwd -P)"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "bot-instructions: python3 is not on PATH" >&2
+  exit 2
+fi
+
+# Refuse rather than half-parse: an older interpreter has no `tomllib`, and
+# failing on the version says which requirement is unmet instead of failing on
+# an import three frames in.
+if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+  echo "bot-instructions: needs Python 3.11 or newer (tomllib); found $(python3 -V 2>&1)" >&2
+  exit 2
+fi
+
+exec python3 "$here/lib/main.py" "$@"

@@ -248,20 +248,49 @@ about what one character is. Absent, the shipped default is used; see
 
 ### `[budgets]`
 
-`copilot_chars`, integer, default `6000`. The rendered
-`.github/copilot-instructions.md` may not exceed it. GitHub documents no
-numeric cap for that file and asks for "no longer than 2 pages", so this is the
-package's reading of two pages rather than a vendor limit. Raise it in a repo
-whose surfaces genuinely need more, and say why in a comment.
+| Key | Type | Default | Bounds |
+|-----|------|---------|--------|
+| `copilot_chars` | integer | `6000` | the rendered `.github/copilot-instructions.md`, in characters |
+| `qodo_best_practices_lines` | integer | `800` | the rendered `best_practices.md`, in lines |
+
+Both are package budgets rather than vendor caps, and they are the same kind of
+thing: GitHub documents no numeric cap and asks for "no longer than 2 pages",
+Qodo recommends keeping a best-practices file under about 800 lines and states
+no length at which it rejects or truncates one. `references/limits.md` carries
+each recommendation and marks the budget built on it. Raise one in a repo whose
+surfaces genuinely need more, and say why in a comment.
+
+The vendor caps this package can reach — `tone_instructions` at 250 characters
+and a `path_instructions` entry at 20,000 — take no key. They are the vendored
+CodeRabbit schema's own `maxLength`, so `coderabbit-schema` is their single
+enforcer and nothing here carries a second copy of either number.
 
 ### `[exclusions]`
 
 `derive_render`, bool, default `false`. When true, the generator reads the
 repo's install manifest and adds every rendered harness tree to the exclusion
 set. What it derives is exactly two things: each `.agents/skills/<name>` whose
-entry does not declare `source = "in-place"`, and each per-harness render
-directory the repo's install declares. A skill declared `in-place` is this
-repo's own file and stays in review scope.
+entry does not declare `source = "in-place"`, and each **immediate
+subdirectory** of each per-harness render root the repo's install declares. A
+skill declared `in-place` is this repo's own file and stays in review scope.
+
+**A harness root is never derived whole**, and the subdirectory rule is why. A
+harness root holds two kinds of thing: subdirectories the harness install owns
+whole, and root-level files it merges its own entries into while the repo owns
+the rest — `.claude/settings.json`, `.codex/config.toml`, `.pi/settings.json`,
+and the repo's own memory file beside them. Excluding the root would silence
+bot review on files this repo actually owns and can fix, which is the opposite
+of what the derivation is for: it exists to keep vendored render output out of
+review, not to hide hand-maintained config.
+`skills/review-gate/references/vendored-paths.md` § The harness-render variant
+draws the same line for the review gate's own set and names the merged paths.
+
+One harness root is the repo's own directory rather than the harness's:
+Copilot's is `.github`, where the install owns `agents`, `hooks` and `skills`
+and the repo owns everything else. That row names its subtrees instead of
+taking the root. A harness the generator has no row for is an error rather than
+a guessed root, because guessing wrong there is the silenced-settings-file
+failure above.
 
 **The manifest is the one kendex resolves, never a hardcoded filename.** That
 is `kendex.toml`, except in a repo whose `kendex.toml` declares
@@ -318,7 +347,7 @@ A path set plus what a reviewer needs to know about it. Zero or more.
 |-----|------|----------|---------|
 | `name` | string | yes | Lowercase, `[a-z0-9-]`, non-empty, unique. Becomes the generated filenames |
 | `globs` | array of string | yes | Non-empty. Paths this surface covers |
-| `exclude_globs` | array of string | no | Subtracted from `globs`, and real subtraction only on Macroscope |
+| `exclude_globs` | array of string | no | Subtracted from `globs`, and real subtraction only on Macroscope. Kept rather than cut: it is the only path-scoped subtraction any of the five bots offers a repo file, and losing it would leave narrowing `globs` as the only tool. Everywhere else it renders as prose asking a bot to disregard rules it has already loaded, which SKILL.md says plainly rather than dressing up |
 | `reviewer_only` | bool | no, default `false` | Renders `excludeAgent: "cloud-agent"` into the Copilot file, keeping reviewer doctrine away from the working agent. `copilot-frontmatter` requires exactly that key and value when this is true, since the other permitted value hides the file from the reviewer instead |
 | `instructions` | string | yes | What a reviewer gets wrong here, and what is true instead |
 
@@ -329,8 +358,10 @@ would silently lose a file to write order.
 Macroscope's governing file, carrying `waitsFor`, `requires` and their two
 timeouts for the whole correctness run, and `macroscope-render` permits no
 frontmatter key but `include` and `exclude`, so an `adopt` over it would drop a
-repo's check prerequisites for good. A `name` colliding with another
-surface, or producing a path another output already claims, is an error.
+repo's check prerequisites for good. A `name` colliding with another surface is
+an error. There is no separate check for a path collision, because the name
+**is** the generated filename: uniqueness plus the reserved set decides it, and
+a second check could never red.
 
 `instructions` is under the heading, frontmatter and marker refusals below.
 Each restructures at least one output: a heading ends the `AGENTS.md` owned
@@ -339,23 +370,30 @@ owns.
 
 ## The content refusals
 
-One row per input string, one column per refusal class. Everything that judges
-these — `toml-schema`, `agents-section`, and the Escaping paragraphs in
-`renders.md` — cites this table rather than restating it, so a predicate written
-here is the only predicate.
+One row per input string, one column per refusal class, and an **Enforced**
+column saying which side reads that row's value. Everything that judges these —
+`toml-schema` and the Escaping paragraphs in `renders.md` — cites this table
+rather than restating it, so a predicate written here is the only predicate,
+and one place in the implementation encodes every cell.
 
-| Input string | heading | frontmatter | marker | comment-close | toml-delimiter | control | character class |
-|--------------|---------|-------------|--------|---------------|----------------|---------|-----------------|
-| `[repo] name` | – | – | – | – | – | – | single line, `[A-Za-z0-9._-]` |
-| `[repo] tracker` | – | – | – | – | – | – | single line, `[A-Za-z0-9._-]` |
-| `[repo] summary` | yes | yes | yes | – | yes | yes | – |
-| `[[surface]] instructions` | yes | yes | yes | – | – | yes | – |
-| `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | yes | – | yes | yes | – |
-| doctrine block text | yes | yes | yes | – | yes | yes | – |
-| `[[exclusions.path]] reason` | – | – | yes | yes | – | yes | single line |
-| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | – | – | non-empty, the glob dialect above, and its path-shape rule |
-| `[tone] coderabbit` | – | – | – | – | – | yes | ASCII only |
-| `[cadence] qodo_commands` entries | – | – | – | – | – | – | a verb from the set above, no whitespace, no `--` |
+The Enforced column exists because one row is not in `bot-instructions.toml` at
+all. Doctrine block text lives in the spec copy, so `toml-schema` never sees it
+and cannot be the clause's owner; the render-side check is. Without the column
+a reader counting `toml-schema`'s clauses off this table would count three that
+nothing there implements.
+
+| Input string | heading | frontmatter | marker | comment-close | toml-delimiter | control | character class | Enforced |
+|--------------|---------|-------------|--------|---------------|----------------|---------|-----------------|----------|
+| `[repo] name` | – | – | – | – | – | – | single line, `[A-Za-z0-9._-]` | `toml-schema` |
+| `[repo] tracker` | – | – | – | – | – | – | single line, `[A-Za-z0-9._-]` | `toml-schema` |
+| `[repo] summary` | yes | yes | yes | – | yes | yes | – | `toml-schema` |
+| `[[surface]] instructions` | yes | yes | yes | – | – | yes | – | `toml-schema` |
+| `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | yes | – | yes | yes | – | `toml-schema` |
+| doctrine block text | yes | yes | yes | – | yes | yes | – | render-side |
+| `[[exclusions.path]] reason` | – | – | yes | yes | – | yes | single line | `toml-schema` |
+| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | – | – | non-empty, the glob dialect above, and its path-shape rule | `toml-schema` |
+| `[tone] coderabbit` | – | – | – | – | – | yes | ASCII only | `toml-schema` |
+| `[cadence] qodo_commands` entries | – | – | – | – | – | – | a verb from the set above, no whitespace, no `--` | `toml-schema` |
 
 The predicates, written once:
 
@@ -409,17 +447,25 @@ backslash in a TOML basic string — and rewrites nothing else. An escape for on
 of these would mean the generator silently altering an author's words to make
 them fit a file, which is worse than telling the author the words do not fit.
 
-**Render-side second checks.** `renders.md` re-checks the heading class when it
-assembles the `AGENTS.md` region and the Copilot file, because doctrine text
-does not come through this file at all and so is not covered by any input
-refusal. It does not re-check frontmatter or marker there, and that is a
-decision rather than an omission: neither can reach those two outputs from
-doctrine without also reaching a `.instructions.md` file, where the frontmatter
-the generator emits is fixed and the marker is written by the generator itself.
+**Render-side second checks.** The `doctrine block text` row is enforced where
+that value is read — when the generator parses the `## Doctrine` section — and it
+carries **every** class the row marks, not the heading class alone. Doctrine
+text does not come through this file, so no input refusal covers it, and each
+of the three markdown classes is reachable on its own route: a heading line
+ends the `AGENTS.md` owned region at the next render; a line that is exactly
+`---` renders into `.github/copilot-instructions.md`, where blocks are `##`
+subsections with paragraphs preserved and markdown reads `---` under a text
+line as a setext heading underline, forging a section in the one file whose
+Escaping paragraph exists so a repo string cannot forge one; and the marker
+text would forge ownership of a file the repo wrote. Doctrine text reaches no
+`.instructions.md` file on any route — the routing table gives it eight
+destinations and that is not one of them — so nothing about the generator
+emitting that file's frontmatter itself covers any of the three.
 
-Every row is one clause with one control, and § Controls' count is checkable
-against this table. `toml-schema` carries no list of its own: it names this
-table and adds the one clause that is a path shape rather than a content
+Every marked cell is one clause with one control, and § Controls' count is
+checkable against this table read with its Enforced column. `toml-schema`
+carries no list of its own: it names this table, takes the rows Enforced marks
+as its, and adds the one clause that is a path shape rather than a content
 refusal.
 
 Two surfaces may match the same file. Macroscope stacks both, CodeRabbit may
@@ -437,8 +483,9 @@ be true of any repo is doctrine, and belongs in a doctrine block.
 Both are tables keyed by doctrine block id. `append` adds a paragraph to a
 block for this repo; `replace` substitutes the block's whole text. An unknown
 block id is an error, so a doctrine rename cannot leave a repo silently
-carrying an override that reaches nothing. Both are subject to the same
-leading-`#`, `---` and marker refusals as `instructions`.
+carrying an override that reaches nothing. Their values carry the refusals
+their own row in § The content refusals marks, which is a wider set than
+`instructions` has and is stated only there.
 
 Prefer `append`. A `replace` means this repo disagrees with doctrine, which is
 worth arguing at the doctrine source rather than in one repo's TOML. A

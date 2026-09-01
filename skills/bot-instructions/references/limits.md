@@ -99,9 +99,15 @@ the coding agent in prose. A change to that value belongs to a re-read of the
 cited page, not to a recollection.
 
 That AGENTS.md row is worth reading twice. Copilot code review does read it,
-which is a reason to keep reviewer-only doctrine out of `AGENTS.md` and in a
-file carrying `excludeAgent`, rather than a reason to consolidate everything
-into one file.
+which is what makes `AGENTS.md` the doctrine root — and it is also why
+**reviewer-only text belongs in a `[[surface]]` carrying `reviewer_only`**,
+never in a doctrine block. `excludeAgent` is frontmatter on a
+`.instructions.md` file, so it cannot protect `AGENTS.md`, and the render puts
+all eight doctrine blocks there deliberately: they are the review contract this
+repo's working agents are held to as well, and Codex reads no second surface.
+What a working agent must not read is repo-specific reviewer guidance, and that
+is exactly the material `reviewer_only` routes into a file `excludeAgent` can
+protect.
 
 **Read semantics.** "When reviewing a pull request, Copilot reads repository
 custom instructions, agent instructions, and agent skills from the head branch
@@ -144,7 +150,8 @@ Merge, which is why the render writes both.
 
 | What | Value | Kind | Line |
 |------|-------|------|------|
-| `best_practices.md` per file | "Keep files relatively short (under ~800 lines)" | recommendation, held unchanged as the package budget `qodo-best-practices` fails over | Review, and the same words on the Merge page at `/v1/features/best-practices` |
+| `best_practices.md` per file | "Keep files relatively short (under ~800 lines)" | recommendation | Review, and the same words on the Merge page at `/v1/features/best-practices` |
+| `[budgets] qodo_best_practices_lines` | 800 lines, this package's reading of that recommendation, and the default a repo may raise | package budget | — |
 | Automatic `best_practices.md` loading | a Qodo Merge (commercial) feature, absent from open-source PR-Agent | — | Merge |
 
 **The 800 is a recommendation, and the budget built on it is this package's.**
