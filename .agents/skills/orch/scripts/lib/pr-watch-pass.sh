@@ -104,7 +104,7 @@ check_pr_watch() {
   for i in "${!REPOS[@]}"; do
     repo="${REPOS[$i]}"
     rc=0
-    out="$(GH_REPO="$repo" "$PR_WATCH" 2>"$errf")" || rc=$?
+    out="$(GH_REPO="$repo" "$PR_WATCH" --heal 2>"$errf")" || rc=$?
     err="$(cat "$errf")"
     [[ "$rc" -le "$rc_max" ]] || rc_max="$rc"
     [[ -z "$out" ]] || out_all+="$(pw_prefix "$repo" "$out")"$'\n'
@@ -115,7 +115,13 @@ check_pr_watch() {
     # (pr-watch.sh --help): it reports on stderr only, and nothing here can be
     # trusted.
     [[ -n "$out" ]] || die "pr-watch failed for $repo (rc=$rc) with no per-PR lines: ${err:-<no stderr>}"
-    keys="$(awk -F'\t' 'NF >= 3 { print $1 "\t" $3 }' <<<"$out")"
+    # heal-dispatched is the reducer reporting its OWN bounded writer dispatch,
+    # not attention on the PR it is attributed to. Keyed like the rest it would
+    # wake the overseer for a line whose handler is "nothing to do", and its
+    # attribution moves to whichever gate-stale PR comes first, so one dispatch
+    # mints a new key every time the leading PR converges. It stays in $out,
+    # where every event carries it as context.
+    keys="$(awk -F'\t' 'NF >= 3 && $3 != "heal-dispatched" { print $1 "\t" $3 }' <<<"$out")"
     new_keys=""
     while IFS= read -r key; do
       [[ -n "$key" ]] || continue

@@ -44,9 +44,18 @@ one detached generation and exits after that generation publishes a result; it
 is not a shared watcher. For many PRs across a long horizon, the review-gate skill (optional
 dependency) ships `scripts/pr-watch.sh`, a needs-attention reducer — contract
 in `pr-watch.sh --help`, wrap-in-anything loop in review-gate's adoption guide.
-Orch consumes it through `oversee-watch` (`--help`) when the script is installed.
+Orch consumes it through `oversee-watch` (`--help`) when the script is
+installed, and passes `--heal`, so a `gate-stale` line dispatches the writer
+workflow itself rather than the overseer by hand. That is a repository WRITE,
+and it holds only while its preconditions do: the resolved credential carries
+`actions:write`, and a workflow named by `PR_WATCH_WRITER_WORKFLOW` (default
+`Review gate writer`) exists in every repo the reducer covers. Where either is missing the reducer
+emits `gate-stale` plus an `error` naming the failed dispatch and no
+`heal-dispatched`, and the hand dispatch is the remedy until the precondition
+is fixed.
 The fallback without it is per-PR `approval-wait`/`queue-wait`, which cannot
 detect `gate-stale`: the waiters never read `REVIEW_GATE_CONTEXT` or verify
 writer convergence, so a PR that reads reviewed-and-clean but sits unmerged
 warrants a manual gate-status check
-(`gh api repos/<owner>/<repo>/commits/<head>/statuses`) and a writer dispatch.
+(`gh api repos/<owner>/<repo>/commits/<head>/statuses`) and a writer dispatch —
+the hand-run equivalent of `pr-watch.sh --heal`.

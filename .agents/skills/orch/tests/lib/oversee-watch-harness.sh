@@ -210,13 +210,17 @@ EOF
 # on stdout, the same ladder for prwatch.err on stderr and prwatch.rc as the
 # exit status. <SLUG> is GH_REPO with everything outside [A-Za-z0-9._-]
 # replaced by `_`, so a multi-repo case answers each repo separately while a
-# single-repo case reads the same as a global call count.
+# single-repo case reads the same as a global call count. Its argv lands in
+# prwatch.args (the last call) and prwatch.args.all (one `<repo> <TAB> <argv>`
+# line per call), so a case can assert what every repo's pass was invoked with.
 cat > "$TMP_ROOT/bin/pr-watch-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 repo="${GH_REPO:-<unset>}"
 slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
 printf '%s\n' "$repo" > "$STUB_DIR/prwatch.repo"
 printf '%s\n' "$repo" >> "$STUB_DIR/prwatch.repos"
+printf '%s\n' "$*" > "$STUB_DIR/prwatch.args"
+printf '%s\t%s\n' "$repo" "$*" >> "$STUB_DIR/prwatch.args.all"
 n=0; [[ -f "$STUB_DIR/prwatch.calls.$slug" ]] && n="$(cat "$STUB_DIR/prwatch.calls.$slug")"
 n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/prwatch.calls.$slug"
 pick() {

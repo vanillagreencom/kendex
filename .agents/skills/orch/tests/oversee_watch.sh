@@ -12,7 +12,11 @@
 #       baseline persists, so a line appearing between two runs is the next
 #       run's first-pass event and a standing line is not; a NEW `<pr> <kind>`
 #       line mid-run is the event; a head-only change is not; GH_REPO reaches
-#       pr-watch; rc≠0 with no lines is a global failure (exit 2); attention
+#       pr-watch and its argv is exactly --heal, for every repo; a
+#       heal-dispatched line is never a key — alone, re-attributed to another
+#       PR, or alone on a repo that is not the first reduced — while the
+#       gate-stale beside it still fires and is the only key baselined;
+#       rc≠0 with no lines is a global failure (exit 2); attention
 #       at start does not starve a lane's question; the state file is
 #       rewritten after every pass, and an uncreatable state dir or an
 #       unreadable state file exits 2 naming the path; the reducer runs for
@@ -57,6 +61,12 @@ assert_contains "$out" "threads-open" "pr-watch lines follow the context header"
 assert_contains "$(cat "$err")" "pr-watch attention present at start" "baseline is noted once on stderr"
 assert_eq "$(grep -c 'attention present at start' "$err")" "1" "baseline note printed once, not per pass"
 assert_eq "$(cat "$STUB_DIR/prwatch.repo")" "owner/repo" "GH_REPO is exported to pr-watch" "$err"
+# --heal is what makes gate-stale self-healing instead of overseer hand-work:
+# without it the writer only converges on the cron floor. Matched WHOLE, not as
+# a substring: pr-watch.sh rejects an unknown flag with exit 2, so a near miss
+# like --healing-only dies on every pass while a substring assertion stays
+# green.
+assert_eq "$(cat "$STUB_DIR/prwatch.args")" "--heal" "pr-watch is invoked with --heal" "$err"
 
 # 1b. a NEW <pr> <kind> line mid-run is the event
 new_case prwatch_new
@@ -87,6 +97,52 @@ printf '1' > "$STUB_DIR/prwatch.rc"
 err="$TMP_ROOT/e1d"
 out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "a new kind on a baselined PR is the event" "$err"
+
+# 1d'. heal-dispatched is the reducer's own note, never a key of its own: alone
+# it is not an event, and the once-per-invocation dispatch re-attributing to a
+# different PR mints nothing either.
+new_case prwatch_heal_alone
+printf '0' > "$STUB_DIR/prwatch.rc.1"
+printf '12\taaaa0000\theal-dispatched\twriter workflow dispatched\n' > "$STUB_DIR/prwatch.out.2"
+printf '1' > "$STUB_DIR/prwatch.rc.2"
+err="$TMP_ROOT/e1d2"
+out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a lone heal-dispatched line is not an event" "$err"
+assert_contains "$out" "heal-dispatched" "the heal-dispatched line still rides along as context" "$err"
+
+new_case prwatch_heal_reattributed
+printf '12\taaaa0000\tgate-stale\tpredicate disagrees\n12\taaaa0000\theal-dispatched\twriter workflow dispatched\n' > "$STUB_DIR/prwatch.out.1"
+printf '12\taaaa0000\tgate-stale\tpredicate disagrees\n34\tcccc0000\theal-dispatched\twriter workflow dispatched\n' > "$STUB_DIR/prwatch.out.2"
+printf '1' > "$STUB_DIR/prwatch.rc"
+err="$TMP_ROOT/e1d3"
+out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "the one dispatch moving to another PR is not an event" "$err"
+
+# 1d''. the gate-stale beside it is still the event it always was, and the
+# baseline the pass commits holds the gate-stale key alone.
+new_case prwatch_heal_with_stale
+printf '0' > "$STUB_DIR/prwatch.rc.1"
+printf '12\taaaa0000\tgate-stale\tpredicate disagrees\n12\taaaa0000\theal-dispatched\twriter workflow dispatched\n' > "$STUB_DIR/prwatch.out.2"
+printf '1' > "$STUB_DIR/prwatch.rc.2"
+err="$TMP_ROOT/e1d4"
+out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "gate-stale beside a heal-dispatched line is still the event" "$err"
+assert_contains "$out" "heal-dispatched" "the event carries the heal-dispatched companion" "$err"
+assert_eq "$(cat "$STATE_DIR/owner_repo__none")" "$(printf '12\tgate-stale')" \
+  "the committed baseline holds the gate-stale key alone" "$err"
+
+# 1d'''. the reduction is per repo, so the exclusion has to hold on a repo that
+# is not the first one reduced.
+new_case prwatch_heal_alone_second_repo
+printf '0' > "$STUB_DIR/prwatch.rc.owner_repo"
+printf '0' > "$STUB_DIR/prwatch.rc.other_repo.1"
+printf '7\tbbbb0000\theal-dispatched\twriter workflow dispatched\n' > "$STUB_DIR/prwatch.out.other_repo.2"
+printf '1' > "$STUB_DIR/prwatch.rc.other_repo.2"
+err="$TMP_ROOT/e1d5"
+out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a lone heal-dispatched line on the second repo is not an event" "$err"
+assert_eq "$(sort -u "$STUB_DIR/prwatch.args.all" | cut -f2 | sort -u)" "--heal" \
+  "every repo's pass is invoked with --heal" "$err"
 
 # 1e'. a line that clears and later recurs is a rising edge again
 new_case prwatch_recur

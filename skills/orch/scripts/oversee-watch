@@ -13,9 +13,13 @@
 #                 (the fleet's first run) → attention present at start is a
 #                 baseline (noted once on stderr), never a preempting event,
 #                 so a PR that sits at threads-open for an hour cannot starve
-#                 the lane checks. Every repo is reduced on every pass, and
-#                 the latest output of each — each line prefixed with its
-#                 repo — is appended to every event.
+#                 the lane checks. The reducer runs with --heal for every
+#                 repo, so a gate-stale line dispatches the review gate writer
+#                 itself; the heal-dispatched line that reports that dispatch
+#                 is the tool's own note, not per-PR attention, and is never a
+#                 key. Every repo is reduced on every pass, and the latest
+#                 output of each — each line prefixed with its repo — is
+#                 appended to every event.
 #   2. merged     an --item's PR (head branch = the item id, lowercased, in
 #                 the first --repo — never a fork's same-named branch; one --head
 #                 query per item — no listing window to miss) merged at or
@@ -61,9 +65,16 @@
 #      would have consumed is printed and before any baseline moves, so this
 #      status can follow an EVENT line on stdout: the next run repeats it
 #
+# The pr-watch step WRITES to the repository: --heal dispatches the writer
+# workflow on a gate-stale line, so the resolved credential needs actions:write
+# and the PR_WATCH_WRITER_WORKFLOW workflow must exist in every --repo, or that
+# repo's gate-stale yields a `writer dispatch failed` error line and no heal.
+#
 # Environment:
 #   OVERSEE_WATCH_PR_WATCH   path to the pr-watch reducer (default:
 #                            $PROJECT_ROOT/.agents/skills/review-gate/scripts/pr-watch.sh)
+#   PR_WATCH_WRITER_WORKFLOW the workflow --heal dispatches, read by pr-watch.sh
+#                            (default: "Review gate writer")
 #   OVERSEE_WATCH_STATE_DIR  directory holding the persisted pr-watch baselines,
 #                            one file per repo, rewritten after every pass,
 #                            and open-terminal's lane claims under claims/
@@ -98,6 +109,9 @@ Events, checked in this order every pass:
                              baseline (one stderr note per repo), so it can
                              never preempt the checks below; skipped with a
                              stderr note when pr-watch.sh is not installed.
+                             Run with --heal in every repo, so gate-stale
+                             self-heals; the heal-dispatched line reporting
+                             that dispatch is never itself an event.
                              rc is the highest status the reducer returned
                              across the repos (2 read failure, 1 attention,
                              0 clear)
@@ -179,9 +193,18 @@ Exit codes:
      have consumed is printed and before any baseline moves, so this status
      can follow an EVENT line: no baseline advanced, the next run repeats it
 
+The pr-watch step WRITES to the repository: `--heal` dispatches the writer
+workflow on a gate-stale line, so the resolved credential needs actions:write
+and the workflow named by PR_WATCH_WRITER_WORKFLOW must exist in every --repo.
+Without either, that repo's gate-stale yields an `error` line reading `writer
+dispatch failed` instead of a heal. Whichever credential the auth ladder
+resolves needs that scope, the project GH_BOT_TOKEN it falls back to last too.
+
 Environment:
   OVERSEE_WATCH_PR_WATCH   path to pr-watch.sh (default: the review-gate
                            skill's install under .agents/skills)
+  PR_WATCH_WRITER_WORKFLOW the workflow `--heal` dispatches (read by
+                           pr-watch.sh; default "Review gate writer")
   OVERSEE_WATCH_STATE_DIR  directory holding the persisted pr-watch baselines,
                            one file per repo + --since, rewritten after every
                            pass, and open-terminal's lane claims
