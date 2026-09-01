@@ -2596,7 +2596,7 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
       # The retry is a second full CLI run under the same killer exposure, so a
       # signal death here is the same kill, reported the same way.
       if RETRY_SIGNAL=$(signal_name "$RETRY_EXIT"); then
-        echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2
+        [[ -z "$RAW_PRESERVED_PATH" ]] || echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2
         preserve_cli_failure_and_fail \
           "was killed by $RETRY_SIGNAL (exit $RETRY_EXIT) during the recovery retry" \
           "$RETRY_RESULT" "$EXIT_CLI_KILLED"
