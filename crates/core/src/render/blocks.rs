@@ -1,6 +1,5 @@
-//! Where a document's blocks are, so the fork walk reads a block's
-//! whitespace as content, and how far a run of backticks reaches, so a
-//! switch quoted by a code span is told from one standing in the open.
+//! How far a run of backticks reaches, so a switch quoted by a code span
+//! is told from one standing in the open.
 //!
 //! Both answers are markdown's own, read off `pulldown-cmark`'s events.
 //! A span's reach is settled by every construct in the language at once —
@@ -17,7 +16,7 @@
 
 use std::ops::Range;
 
-use pulldown_cmark::{Event, Options, Parser, Tag};
+use pulldown_cmark::{Event, Options, Parser};
 
 /// The markdown this reading is of: CommonMark, plus tables. A table's
 /// header and delimiter rows open a block together, and each cell is a
@@ -41,29 +40,6 @@ use pulldown_cmark::{Event, Options, Parser, Tag};
 /// the reading it buys does not quiet a switch. Strikethrough, task lists
 /// and math each fail the first test and change no boundary anyway.
 const EXTENSIONS: Options = Options::ENABLE_TABLES;
-
-/// Which lines of `text` stand inside a code block: between a fence's
-/// markers, or under the first line of a run indented four columns. A
-/// block's own first line is not inside it — what stands above that line
-/// is prose, and the blank between them separates the two.
-///
-/// Inside a block a blank line is a line of the block's own text; outside
-/// one it separates paragraphs and carries nothing a reader would miss.
-/// That is the whole of what the caller asks: a line carrying anything at
-/// all is kept either way.
-pub fn inside_a_block(text: &str) -> Vec<bool> {
-    let lines = line_spans(text);
-    let mut inside = vec![false; lines.len()];
-    for block in code_blocks(text) {
-        // The first line the block touches is the one it opened on — a
-        // fence's markers, or the first indented line — and the caller
-        // reads that line as prose.
-        for at in reached(&lines, &block).skip(1) {
-            inside[at] = true;
-        }
-    }
-    inside
-}
 
 /// The code spans of each line of `text`, as byte ranges local to its own
 /// line. A run of backticks may close on a later line, so the lines are
@@ -89,17 +65,6 @@ pub fn code_spans_by_line(text: &str) -> Vec<Vec<(usize, usize)>> {
         }
     }
     spans
-}
-
-/// Every code block in `text`, as a byte range of `text`. Fenced and
-/// indented alike: both are code, and the caller's question is about the
-/// whitespace inside them rather than about how they were opened.
-fn code_blocks(text: &str) -> Vec<Range<usize>> {
-    Parser::new_ext(text, EXTENSIONS)
-        .into_offset_iter()
-        .filter(|(event, _)| matches!(event, Event::Start(Tag::CodeBlock(_))))
-        .map(|(_, range)| range)
-        .collect()
 }
 
 /// Which lines a byte range reaches, as an index range into `lines`.
@@ -155,7 +120,7 @@ fn line_spans(text: &str) -> Vec<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{code_spans_by_line, inside_a_block, line_spans};
+    use super::{code_spans_by_line, line_spans};
 
     /// The two readings are handed to callers that zip them against
     /// `str::lines`, so a range list one line short or one line long
@@ -179,7 +144,6 @@ mod tests {
             for (line, (start, end)) in lines.iter().zip(&spans) {
                 assert_eq!(&text[*start..*end], *line, "{text:?}");
             }
-            assert_eq!(inside_a_block(text).len(), lines.len(), "{text:?}");
             assert_eq!(code_spans_by_line(text).len(), lines.len(), "{text:?}");
         }
     }
@@ -214,22 +178,6 @@ mod tests {
                 assert_eq!(got, want, "{range:?}");
             }
         }
-    }
-
-    /// A blank line between two indented chunks is the block's own text
-    /// and the one trailing it is not, which is the whole of what the
-    /// fork walk asks this function. The line the block opens on is
-    /// prose, and so is the paragraph above it.
-    #[test]
-    fn a_blank_line_is_inside_the_block_that_holds_it() {
-        assert_eq!(
-            inside_a_block("para\n\n    one\n\n    two\n\nafter\n"),
-            vec![false, false, false, true, true, false, false]
-        );
-        assert_eq!(
-            inside_a_block("```sh\n\ngit commit\n```\n"),
-            vec![false, true, true, true]
-        );
     }
 
     /// A span crossing a newline is quoted on both lines, each range

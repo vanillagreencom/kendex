@@ -261,17 +261,6 @@ pub enum CoreError {
     #[error("keeping '{name}' as your own cannot carry {problem} — nothing was written")]
     ForkWidensAccess { name: String, problem: String },
 
-    /// A fork refused before writing anything: the capture could not pair
-    /// this agent's rendering against the prose the catalog publishes,
-    /// which is what tells the person's own words from the generated ones
-    /// and says each line back in the words it was written in.
-    #[error("keeping '{name}' as your own cannot read its {harness} rendering: {problem}")]
-    ForkWrapperUnreadable {
-        name: String,
-        harness: String,
-        problem: String,
-    },
-
     /// Adoption refused before writing anything: a name kendex would not
     /// install, or a hook entry doing something a declaration has no field
     /// for, is refused rather than followed or quietly reshaped.

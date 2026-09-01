@@ -7,10 +7,8 @@ pub mod skill;
 pub mod validate;
 pub mod vocab;
 
-/// Where a document's code is: which lines stand inside a block, which is
-/// what tells whitespace that is a block's own content from whitespace
-/// that separates prose, and where the code spans of each line are.
-pub(crate) use blocks::{code_spans_by_line, inside_a_block};
+/// The code spans of each line in a rendered document.
+pub(crate) use blocks::code_spans_by_line;
 
 /// One thing the user should hear about a rendering, with the fix when
 /// there is one — every render lint travels through this shape.
