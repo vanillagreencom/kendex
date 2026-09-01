@@ -62,11 +62,16 @@ that. Markdown is measured in bytes and code in lines. Flags and exit codes:
 
 ## Trusted HEAD baseline
 
-Every mode resolves `SIZE_RATCHET_BASELINE` from HEAD's settings with the same
-settings parser used for the candidate. The rows at that HEAD-selected path
-are the only reference, even when the candidate uses another path or that
-target already held dormant rows. No rows at the HEAD-selected path means a
-true bootstrap.
+Every mode uses one reference. `--baseline` or a process
+`SIZE_RATCHET_BASELINE` applies directly; otherwise the settings parser reads
+the implicit root and nested sources, tracked `.env.local`, or an explicit
+repo-relative source from HEAD. HEAD symlinks are followed only while their
+targets stay in the repository. An absolute, escaping, or candidate-only
+explicit source contributes nothing to the historical lookup; if it assigns
+this key, the run refuses because that value has no historical form. The same
+rule applies to an untracked `.env.local`. The rows at the selected HEAD path are
+the only reference, even when the candidate uses another path or its target
+already held dormant rows. No rows there means a true bootstrap.
 
 For a candidate row in the same unit, the reference number is its ceiling. A
 larger open row or a first row beside an existing reference set needs
@@ -97,9 +102,10 @@ itself is stale because the baseline is outside the measured set.
 `size-ratchet --seed` writes every tracked, non-excluded file over its
 deciding threshold at its current size, `LC_ALL=C` sorted. It refuses a
 selected baseline that already has rows or does not parse. The baseline and
-exclusion list must be different plain files inside the repository. Either
-policy path being a symlink refuses, as does a parent resolving outside the
-repository. Seed uses
+exclusion list must be different plain leaf paths. Either leaf being a symlink
+refuses. The baseline's physical parent must stay in the repository; the
+exclusion parent is read-only. Their future physical destinations must differ,
+including through in-repository parent symlinks. Seed uses
 the [trusted HEAD baseline](#trusted-head-baseline) like every other mode: a
 true first seed succeeds without `RATCHET_RAISE=1`, while seed after a repoint
 is judged against the prior active rows. The seeded file lands uncommitted, so

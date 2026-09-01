@@ -64,20 +64,20 @@ still governs unless the rewrite lands.
 
 ## Trusted reference snapshot
 
-`resolve_head_baseline_file` materializes HEAD's settings sources under the
-scratch directory and calls `sr_setting`, the same parser the candidate uses.
-It then reads the baseline at that resolved HEAD path. `rows_raised` consumes
-only those rows; the candidate path never selects a second reference. The
-behavioral rule is [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
+`resolve_head_baseline_file` sets the settings library's HEAD mode and calls
+`sr_setting`. `sr_settings_source` owns source names, precedence, historical
+materialization, and tracked-symlink traversal. The main script handles only
+the flag and process-key overrides, then reads the baseline at the returned
+path. `rows_raised` consumes only those rows. The behavioral rule is
+[README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
 
 ## The tighten-only rewrite
 
 `--update` and `--staged` run the same rewrite: rows lowered to the measured
 size, rows re-measured where their unit changed, rows removed for files now
 at/under their threshold or out of the counted set. It never adds a row or
-raises a same-unit number. `--staged` runs it so a commit that SHRINKS a limited file passes on
-the first attempt instead of failing, waiting for a `--update`, and being
-made again; it then stages the result.
+raises a same-unit number. `--staged` runs it so a commit that shrinks a
+limited file passes on the first attempt; it then stages the result.
 
 That rewrite reads the WORKTREE copy of the baseline, which is what gets
 staged — rebuilding from the index copy would delete a developer's unstaged
@@ -110,12 +110,11 @@ over the same measured files.
 `--seed` collects by the same pass the gate itself trusts (index blobs,
 symlink skipping, tab/newline refusal), `LC_ALL=C` sorted, each row in its
 class's unit. It refuses when the selected baseline already has rows or does
-not parse. The baseline and exclusion list must resolve to different files.
-The destination must be a plain file whose physical parent remains inside the
-repository before and after missing directories are created. Seed uses the
-trusted reference snapshot like every other mode; only a seed with no prior
-active rows is bootstrap. The seeded file lands uncommitted, so every offender
-enters the record in review.
+not parse. Both policy leaves must be plain, and their future physical paths
+must differ. Only the baseline parent is containment-checked because seed does
+not write the exclusion path. Seed uses the trusted reference snapshot like
+every other mode; only a seed with no prior active rows is bootstrap. The
+seeded file lands uncommitted, so every offender enters the record in review.
 
 In a sparse checkout that omits the baseline file, checks still run against
 the index copy, but `--update` refuses (it will not rewrite a file the

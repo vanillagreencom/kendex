@@ -750,8 +750,19 @@ tighten_baseline() { # LABEL
 if [ "$MODE" = "update" ]; then
   tighten_baseline "--update"
 fi
+seed_future_path() { # PATH
+  local path="$1" parent="." probe physical suffix
+  case "$path" in */*) parent="${path%/*}" ;; esac
+  probe="$parent"
+  while [ ! -d "$probe" ]; do
+    case "$probe" in */*) probe="${probe%/*}" ;; *) probe=. ;; esac
+  done
+  physical="$(cd -P -- "$probe" && pwd -P)" || return 1
+  if [ "$probe" = "." ]; then suffix="$path"; else suffix="${path#"$probe"/}"; fi
+  printf '%s/%s' "${physical%/}" "$suffix"
+}
 seed_destination_prepare() {
-  local base_parent="." probe parent_phys repo_phys
+  local base_parent="." probe parent_phys repo_phys baseline_future excludes_future
   [ "$BASELINE_FILE" != "$EXCLUDES_FILE" ] || config_error "--seed refuses: the baseline and exclusion list resolve to the same path ($BASELINE_FILE)"
   [ ! -L "$BASELINE_FILE" ] || config_error "--seed refuses: the baseline path is a symlink ($BASELINE_FILE)"
   [ ! -L "$EXCLUDES_FILE" ] || config_error "--seed refuses: the exclusion-list path is a symlink ($EXCLUDES_FILE)"
@@ -760,6 +771,9 @@ seed_destination_prepare() {
   if [ -e "$BASELINE_FILE" ] && [ -e "$EXCLUDES_FILE" ] && [ "$BASELINE_FILE" -ef "$EXCLUDES_FILE" ]; then
     config_error "--seed refuses: the baseline and exclusion list are aliases of the same file"
   fi
+  baseline_future="$(seed_future_path "$BASELINE_FILE")" || collection_error "could not resolve the future baseline destination"
+  excludes_future="$(seed_future_path "$EXCLUDES_FILE")" || collection_error "could not resolve the future exclusion-list destination"
+  [ "$baseline_future" != "$excludes_future" ] || config_error "--seed refuses: the baseline and exclusion list resolve to the same future file ($baseline_future)"
   case "$BASELINE_FILE" in
     */*) base_parent="${BASELINE_FILE%/*}" ;;
   esac
@@ -813,57 +827,23 @@ fi
 RAISE_OK="${RATCHET_RAISE:-}"
 HEAD_BASELINE=""
 HEAD_BASELINE_FILE=""
-head_settings_file() { # PATH ALLOW-UNTRACKED
-  local path="$1" allow="$2" dest="$TMP/head-settings/$1" parent="$TMP/head-settings"
-  read_head_file_mode "$path"
-  case "$HEAD_FILE_MODE" in
-    100*) ;;
-    "")
-      [ "$allow" = "1" ] || return 0
-      read_index_file_mode "$path"
-      [ -z "$INDEX_FILE_MODE" ] && [ -f "$path" ] || return 0
-      ;;
-    *) collection_error "HEAD carries settings source $path as mode $HEAD_FILE_MODE, not a regular file" ;;
-  esac
-  case "$dest" in */*) parent="${dest%/*}" ;; esac
-  mkdir -p -- "$parent" || collection_error "could not prepare the HEAD settings snapshot"
-  if [ -n "$HEAD_FILE_MODE" ]; then
-    git show "HEAD:$path" >"$dest" || collection_error "could not read HEAD settings source $path"
-  else
-    cp -- "$path" "$dest" || collection_error "could not copy untracked settings source $path"
-  fi
-}
 resolve_head_baseline_file() {
-  local explicit="${SIZE_RATCHET_SETTINGS_FILE:-}" norm="" raw=""
-  norm="$explicit"
+  local raw="" status=0
   HEAD_BASELINE_FILE="$BASELINE_FILE"
   read_head_file_mode "$BASELINE_FILE"
   [ "$HEAD_EXISTS" = "1" ] || return 0
+  if [ "$BASELINE_SET" = "1" ] || [ -n "${SIZE_RATCHET_BASELINE+x}" ]; then return 0; fi
   mkdir -p -- "$TMP/head-settings" || collection_error "could not prepare the HEAD settings snapshot"
-  if [ -n "$explicit" ] && [ "$explicit" != "/dev/null" ]; then
-    case "$explicit" in
-      /*) norm="$explicit" ;;
-      *)
-        norm="$(sr_settings_normalize_path "$explicit")"
-        case "$norm" in "" | ".." | ../*) HEAD_BASELINE_FILE="$BASELINE_FILE"; return 0 ;; esac
-        head_settings_file "$norm" 1
-        ;;
-    esac
-  else
-    head_settings_file .kendex/settings.toml 0
-    head_settings_file kendex.settings.toml 0
-  fi
-  head_settings_file .env.local 1
-  raw="$(
-    cd "$TMP/head-settings" || exit 1
-    unset SR_SETTINGS_FROM_INDEX SR_SETTINGS_INDEX_DIR
-    if [ -n "$explicit" ]; then SIZE_RATCHET_SETTINGS_FILE="$norm"; export SIZE_RATCHET_SETTINGS_FILE; else unset SIZE_RATCHET_SETTINGS_FILE; fi
-    sr_setting SIZE_RATCHET_BASELINE tools/size-ratchet-baseline.tsv
-  )" || collection_error "could not resolve SIZE_RATCHET_BASELINE from HEAD settings"
+  SR_SETTINGS_FROM_HEAD=1
+  SR_SETTINGS_HEAD_DIR="$TMP/head-settings"
+  raw="$(sr_setting SIZE_RATCHET_BASELINE tools/size-ratchet-baseline.tsv)" || status=$?
+  unset SR_SETTINGS_FROM_HEAD SR_SETTINGS_HEAD_DIR
+  [ "$status" -eq 0 ] || collection_error "could not resolve SIZE_RATCHET_BASELINE from HEAD settings"
   case "$raw" in /*) config_error "HEAD baseline path must be repo-root-relative, got absolute: $raw" ;; esac
   HEAD_BASELINE_FILE="$(normalize_rel_path "$raw")" || config_error "HEAD baseline path escapes the repository or normalizes empty"
 }
 read_head_baseline() {
+  local head_rows="" status=0
   HEAD_BASELINE=""
   resolve_head_baseline_file
   read_head_file_mode "$HEAD_BASELINE_FILE"
@@ -874,7 +854,9 @@ read_head_baseline() {
   esac
   git show "HEAD:$HEAD_BASELINE_FILE" >"$TMP/baseline.head" || collection_error "could not read active baseline $HEAD_BASELINE_FILE from HEAD"
   validate_baseline_rows fatal "$TMP/baseline.head" "$HEAD_BASELINE_FILE (HEAD copy)"
-  [ "$(count_nonempty_lines "$TMP/baseline.head")" -gt 0 ] || return 0
+  head_rows="$(count_nonempty_lines "$TMP/baseline.head")" || status=$?
+  [ "$status" -eq 0 ] || collection_error "could not count active HEAD baseline rows in $HEAD_BASELINE_FILE"
+  [ "$head_rows" -gt 0 ] || return 0
   HEAD_BASELINE="$TMP/baseline.head"
 }
 rows_raised() { # CURRENT-BASELINE — violations on stdout
@@ -943,8 +925,10 @@ if [ "$MODE" = "check" ] && [ "$STAGED" -eq 1 ] && [ "$VIOLATIONS" -gt 0 ] \
   fi
 fi
 report "$TMP/violations.tsv" || collection_error "could not read the violations scratch file to report them"
+REFERENCE_NOTE=""
+if [ -n "$HEAD_BASELINE" ] && [ "$HEAD_BASELINE_FILE" != "$BASELINE_FILE" ]; then REFERENCE_NOTE=", reference $HEAD_BASELINE_FILE"; fi
 if [ "$VIOLATIONS" -gt 0 ]; then
-  echo "size-ratchet: $VIOLATIONS violation(s) — threshold $THRESHOLD$CLASSES_NOTE, baseline $BASELINE_FILE"
+  echo "size-ratchet: $VIOLATIONS violation(s) — threshold $THRESHOLD$CLASSES_NOTE, baseline $BASELINE_FILE$REFERENCE_NOTE"
   exit 1
 fi
-echo "size-ratchet: OK — $checked tracked file(s) checked, threshold $THRESHOLD$CLASSES_NOTE"
+echo "size-ratchet: OK — $checked tracked file(s) checked, threshold $THRESHOLD$CLASSES_NOTE$REFERENCE_NOTE"

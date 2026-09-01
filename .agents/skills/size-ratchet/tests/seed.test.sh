@@ -108,9 +108,15 @@ while IFS='|' read -r label shape expect_rc; do
       ln -s "$TMP/$label-missing" "$R/tools/excludes"
       args=(--excludes tools/excludes)
       ;;
+    parent-alias)
+      mkdir -p "$R/shared"
+      ln -s shared "$R/a"
+      ln -s shared "$R/b"
+      args=(--baseline a/policy --excludes b/policy)
+      ;;
   esac
   git -C "$R" add -A
-  run_seed "${args[@]}"
+  run_seed ${args[@]+"${args[@]}"}
   if [ "$RC" -ne "$expect_rc" ]; then
     printf 'FAIL: %s rc=%s expected=%s\n%s\n' "$label" "$RC" "$expect_rc" "$OUT" >&2
     FAIL=$((FAIL + 1))
@@ -122,6 +128,9 @@ while IFS='|' read -r label shape expect_rc; do
   case "$shape" in
     parent-link) [ ! -e "$TMP/$label-outside/base.tsv" ] || { printf 'FAIL: %s wrote outside\n' "$label" >&2; FAIL=$((FAIL + 1)); } ;;
     baseline-link | excludes-link) [ ! -s "$TMP/$label-target" ] || { printf 'FAIL: %s changed its target\n' "$label" >&2; FAIL=$((FAIL + 1)); } ;;
+    baseline-dangling) [ -L "$R/tools/size-ratchet-baseline.tsv" ] && [ ! -e "$TMP/$label-missing" ] || { printf 'FAIL: %s changed its dangling link or target\n' "$label" >&2; FAIL=$((FAIL + 1)); } ;;
+    excludes-dangling) [ -L "$R/tools/excludes" ] && [ ! -e "$TMP/$label-missing" ] || { printf 'FAIL: %s changed its dangling link or target\n' "$label" >&2; FAIL=$((FAIL + 1)); } ;;
+    parent-alias) [ ! -e "$R/shared/policy" ] || { printf 'FAIL: %s wrote the aliased future destination\n' "$label" >&2; FAIL=$((FAIL + 1)); } ;;
   esac
 done <<'DESTINATIONS'
 missing-parent|missing-parent|0
@@ -130,6 +139,7 @@ baseline-link|baseline-link|2
 baseline-dangling|baseline-dangling|2
 excludes-link|excludes-link|2
 excludes-dangling|excludes-dangling|2
+parent-alias|parent-alias|2
 DESTINATIONS
 
 [ "$FAIL" -eq 0 ] || exit 1

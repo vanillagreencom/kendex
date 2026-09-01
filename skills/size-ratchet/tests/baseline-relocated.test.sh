@@ -23,51 +23,99 @@ mkfile() {
 
 run_check() {
   local mode="$1" declaration="$2" frozen="$3"
+  local envs=("RATCHET_RAISE=$declaration" "SIZE_RATCHET_FROZEN_CLASSES=$frozen") args=()
+  case "$SETTINGS_MODE" in
+    explicit) envs+=("SIZE_RATCHET_SETTINGS_FILE=$SETTINGS_FILE") ;;
+    envvar) envs+=("SIZE_RATCHET_BASELINE=tools/active.tsv") ;;
+    flag) args+=(--baseline tools/active.tsv) ;;
+  esac
+  [ -z "$mode" ] || args+=("$mode")
   RC=0
-  if [ -n "$mode" ]; then
-    OUT="$(cd "$R" && RATCHET_RAISE="$declaration" SIZE_RATCHET_FROZEN_CLASSES="$frozen" SIZE_RATCHET_SETTINGS_FILE="$SETTINGS_FILE" "$SR" "$mode" 2>&1)" || RC=$?
-  else
-    OUT="$(cd "$R" && RATCHET_RAISE="$declaration" SIZE_RATCHET_FROZEN_CLASSES="$frozen" SIZE_RATCHET_SETTINGS_FILE="$SETTINGS_FILE" "$SR" 2>&1)" || RC=$?
-  fi
+  OUT="$(cd "$R" && env "${envs[@]}" "$SR" ${args[@]+"${args[@]}"} 2>&1)" || RC=$?
 }
 
 FAIL=0
-while IFS='|' read -r label mode declaration frozen dormant source expect_rc expect_text; do
+while IFS='|' read -r label mode declaration frozen dormant source expect_rc expect_text expect_ref; do
   [ -n "$label" ] || continue
   new_repo "$label"
   if [ -n "$frozen" ]; then path=big.test.txt; else path=big.txt; fi
   mkfile "$path" 15
   printf '%s\t15\n' "$path" >"$R/tools/active.tsv"
   if [ "$dormant" = yes ]; then printf '%s\t20\n' "$path" >"$R/tools/target.tsv"; fi
+  SETTINGS_MODE=implicit
   case "$source" in
     nested) SETTINGS_FILE=.kendex/settings.toml ;;
-    explicit) SETTINGS_FILE=policy/settings.toml ;;
+    explicit) SETTINGS_FILE=policy/settings.toml; SETTINGS_MODE=explicit ;;
+    envlocal) SETTINGS_FILE=.env.local ;;
+    tracked-link)
+      SETTINGS_FILE=policy/settings.toml
+      mkdir -p "$R/policy"
+      ln -s policy/settings.toml "$R/kendex.settings.toml"
+      ;;
+    flag | envvar)
+      SETTINGS_FILE=kendex.settings.toml
+      SETTINGS_MODE="$source"
+      printf '%s\t30\n' "$path" >"$R/tools/other.tsv"
+      ;;
+    untracked-envlocal)
+      SETTINGS_FILE=kendex.settings.toml
+      printf '.env.local\n' >"$R/.gitignore"
+      ;;
     *) SETTINGS_FILE=kendex.settings.toml ;;
   esac
   case "$SETTINGS_FILE" in */*) mkdir -p "$R/${SETTINGS_FILE%/*}" ;; esac
-  printf '[env]\nSIZE_RATCHET_BASELINE = "tools/active.tsv"\n' >"$R/$SETTINGS_FILE"
+  if [ "$SETTINGS_FILE" = .env.local ]; then
+    printf 'SIZE_RATCHET_BASELINE=tools/active.tsv\n' >"$R/$SETTINGS_FILE"
+  elif [ "$source" = flag ] || [ "$source" = envvar ]; then
+    printf '[env]\nSIZE_RATCHET_BASELINE = "tools/other.tsv"\n' >"$R/$SETTINGS_FILE"
+  else
+    printf '[env]\nSIZE_RATCHET_BASELINE = "tools/active.tsv"\n' >"$R/$SETTINGS_FILE"
+  fi
   git -C "$R" add -A
   git -C "$R" commit -q -m active
   mkfile "$path" 20
-  if [ "$dormant" = no ]; then printf '%s\t20\n' "$path" >"$R/tools/target.tsv"; fi
-  printf '[env]\nSIZE_RATCHET_BASELINE = "tools/target.tsv"\n' >"$R/$SETTINGS_FILE"
+  if [ "$source" = flag ] || [ "$source" = envvar ]; then
+    printf '%s\t20\n' "$path" >"$R/tools/active.tsv"
+  else
+    if [ "$dormant" = no ]; then printf '%s\t20\n' "$path" >"$R/tools/target.tsv"; fi
+    if [ "$source" = untracked-envlocal ]; then
+      printf 'SIZE_RATCHET_BASELINE=tools/target.tsv\n' >"$R/.env.local"
+    elif [ "$SETTINGS_FILE" = .env.local ]; then
+      printf 'SIZE_RATCHET_BASELINE=tools/target.tsv\n' >"$R/$SETTINGS_FILE"
+    else
+      printf '[env]\nSIZE_RATCHET_BASELINE = "tools/target.tsv"\n' >"$R/$SETTINGS_FILE"
+    fi
+  fi
   git -C "$R" add -A
   run_check "$mode" "$declaration" "$frozen"
-  if [ "$RC" -ne "$expect_rc" ] || { [ -n "$expect_text" ] && ! printf '%s\n' "$OUT" | grep -Fq "$expect_text"; }; then
+  if [ "$RC" -ne "$expect_rc" ] || { [ -n "$expect_text" ] && ! printf '%s\n' "$OUT" | grep -Fq "$expect_text"; } \
+    || { [ -n "$expect_ref" ] && ! printf '%s\n' "$OUT" | grep -Fq "$expect_ref"; }; then
     printf 'FAIL: %s\nrc=%s expected=%s\n%s\n' "$label" "$RC" "$expect_rc" "$OUT" >&2
     FAIL=$((FAIL + 1))
   fi
 done <<'CASES'
-default-open-undeclared||0||no|root|1|baseline row raised: big.txt — row 15 -> 20 lines
-staged-open-undeclared|--staged|0||no|root|1|baseline row raised: big.txt — row 15 -> 20 lines
-default-open-declared||1||no|root|0|
-staged-open-declared|--staged|1||no|root|0|
-default-frozen-declared||1|*.test.*|no|root|1|frozen baseline row raised: big.test.txt — row 15 -> 20 lines
-staged-frozen-declared|--staged|1|*.test.*|no|root|1|frozen baseline row raised: big.test.txt — row 15 -> 20 lines
-default-dormant-target||0||yes|root|1|baseline row raised: big.txt — row 15 -> 20 lines
-staged-dormant-target|--staged|0||yes|root|1|baseline row raised: big.txt — row 15 -> 20 lines
-nested-head-settings||0||no|nested|1|baseline row raised: big.txt — row 15 -> 20 lines
-explicit-head-settings||0||no|explicit|1|baseline row raised: big.txt — row 15 -> 20 lines
+default-open-undeclared||0||no|root|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+staged-open-undeclared|--staged|0||no|root|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+default-open-declared||1||no|root|0||reference tools/active.tsv
+staged-open-declared|--staged|1||no|root|0||reference tools/active.tsv
+default-frozen-declared||1|*.test.*|no|root|1|frozen baseline row raised: big.test.txt — row 15 -> 20 lines|reference tools/active.tsv
+staged-frozen-declared|--staged|1|*.test.*|no|root|1|frozen baseline row raised: big.test.txt — row 15 -> 20 lines|reference tools/active.tsv
+default-dormant-target||0||yes|root|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+staged-dormant-target|--staged|0||yes|root|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+nested-default||0||no|nested|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+nested-staged|--staged|0||no|nested|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+envlocal-default||0||no|envlocal|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+envlocal-staged|--staged|0||no|envlocal|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+tracked-link-default||0||no|tracked-link|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+tracked-link-staged|--staged|0||no|tracked-link|2|tracked as a symlink|
+explicit-default||0||no|explicit|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+explicit-staged|--staged|0||no|explicit|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+flag-default||0||no|flag|1|baseline row raised: big.txt — row 15 -> 20 lines|
+flag-staged|--staged|0||no|flag|1|baseline row raised: big.txt — row 15 -> 20 lines|
+envvar-default||0||no|envvar|1|baseline row raised: big.txt — row 15 -> 20 lines|
+envvar-staged|--staged|0||no|envvar|1|baseline row raised: big.txt — row 15 -> 20 lines|
+untracked-envlocal-default||0||no|untracked-envlocal|2|no historical form|
+untracked-envlocal-staged|--staged|0||no|untracked-envlocal|2|no historical form|
 CASES
 
 while IFS='|' read -r label declaration frozen expect_rc expect_text; do
@@ -77,6 +125,7 @@ while IFS='|' read -r label declaration frozen expect_rc expect_text; do
   mkfile "$path" 15
   printf '%s\t15\n' "$path" >"$R/tools/active.tsv"
   SETTINGS_FILE=kendex.settings.toml
+  SETTINGS_MODE=implicit
   printf '[env]\nSIZE_RATCHET_BASELINE = "tools/active.tsv"\n' >"$R/$SETTINGS_FILE"
   git -C "$R" add -A
   git -C "$R" commit -q -m active
@@ -94,6 +143,33 @@ seed-repoint-open-undeclared|0||1|baseline row raised: big.txt — row 15 -> 20 
 seed-repoint-open-declared|1||0|
 seed-repoint-frozen-declared|1|*.test.*|1|frozen baseline row raised: big.test.txt — row 15 -> 20 lines
 SEED_CASES
+
+new_repo head-count-failure
+mkfile big.txt 15
+printf 'big.txt\t15\n' >"$R/tools/active.tsv"
+printf '[env]\nSIZE_RATCHET_BASELINE = "tools/active.tsv"\n' >"$R/kendex.settings.toml"
+git -C "$R" add -A
+git -C "$R" commit -q -m active
+GREP_SHIM="$TMP/grep-shim"
+mkdir -p "$GREP_SHIM"
+REAL_GREP="$(command -v grep)"
+cat >"$GREP_SHIM/grep" <<EOF
+#!/usr/bin/env bash
+count=0
+for arg in "\$@"; do
+  [ "\$arg" != -c ] || count=1
+  case "\$arg" in */baseline.head) [ "\$count" -eq 0 ] || { echo "grep: simulated HEAD count failure" >&2; exit 7; } ;; esac
+done
+exec "$REAL_GREP" "\$@"
+EOF
+chmod +x "$GREP_SHIM/grep"
+RC=0
+OUT="$(cd "$R" && PATH="$GREP_SHIM:$PATH" "$SR" 2>&1)" || RC=$?
+if [ "$RC" -ne 2 ] || ! printf '%s\n' "$OUT" | grep -Fq "could not count active HEAD baseline rows" \
+  || case "$OUT" in *"size-ratchet: OK"*) true ;; *) false ;; esac; then
+  printf 'FAIL: HEAD baseline count failure passed\nrc=%s\n%s\n' "$RC" "$OUT" >&2
+  FAIL=$((FAIL + 1))
+fi
 
 [ "$FAIL" -eq 0 ] || exit 1
 printf 'baseline-relocated.test.sh: PASS\n'

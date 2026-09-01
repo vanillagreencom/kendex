@@ -119,34 +119,85 @@ sr_settings_normalize_path() { # PATH — normalized path on stdout ("" when it 
   done
   printf '%s' "$out"
 }
-
-# In staged mode a TRACKED settings source is read from the INDEX: the commit
-# must satisfy its OWN configuration, and an unstaged threshold or path edit
-# must not authorize content the commit does not carry. An untracked source
-# (a personal .env.local) is the worktree copy, which is all there is.
-# SR_SETTINGS_INDEX_DIR holds the materialized copies; the caller owns it.
 sr_settings_source() { # FILE — the path to actually read; nonzero + ::error on failure
-  local file="$1" copy="" status=0 entry="" norm="" head_status=0 tree_status=0
+  local file="$1" copy="" status=0 entry="" norm="" head_status=0 tree_status=0 target="" base="" depth=0
+  if [ "${SR_SETTINGS_FROM_HEAD:-0}" = "1" ]; then
+    if [ -z "${SR_SETTINGS_HEAD_DIR:-}" ]; then
+      echo "::error::$file: SR_SETTINGS_HEAD_DIR is required for HEAD settings resolution" >&2
+      return 1
+    fi
+    case "$file" in
+      /*)
+        printf '%s' "$SR_SETTINGS_HEAD_DIR/settings.absent"
+        return 0
+        ;;
+    esac
+    norm="$(sr_settings_normalize_path "$file")"
+    case "$norm" in
+      "" | ".." | "../"*)
+        printf '%s' "$SR_SETTINGS_HEAD_DIR/settings.absent"
+        return 0
+        ;;
+    esac
+    file="$norm"
+    while :; do
+      status=0
+      entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || status=$?
+      if [ "$status" -ne 0 ]; then
+        echo "::error::$file: could not query HEAD while resolving a setting (git ls-tree exit $status)" >&2
+        return 1
+      fi
+      [ -n "$entry" ] || { printf '%s' "$SR_SETTINGS_HEAD_DIR/settings.absent"; return 0; }
+      case "${entry%% *}" in
+        100*) break ;;
+        120000)
+          target="$(git show "HEAD:$file" 2>/dev/null)" || {
+            echo "::error::$file: could not read its HEAD symlink target" >&2
+            return 1
+          }
+          case "$target" in
+            "" | /* | *$'\n'*)
+              echo "::error::$file: HEAD symlink target has no historical repository form" >&2
+              return 1
+              ;;
+          esac
+          case "$file" in */*) base="${file%/*}/" ;; *) base="" ;; esac
+          norm="$(sr_settings_normalize_path "$base$target")"
+          case "$norm" in
+            "" | ".." | "../"*)
+              echo "::error::$file: HEAD symlink target leaves the repository" >&2
+              return 1
+              ;;
+          esac
+          file="$norm"
+          depth=$((depth + 1))
+          [ "$depth" -lt 40 ] || { echo "::error::$1: HEAD settings symlink chain does not resolve" >&2; return 1; }
+          ;;
+        *)
+          echo "::error::$file: HEAD settings source is not a regular file or symlink" >&2
+          return 1
+          ;;
+      esac
+    done
+    copy="$SR_SETTINGS_HEAD_DIR/settings.$(printf '%s' "$file" | sed -e 's/%/%25/g' -e 's|/|%2F|g' -e 's/[.]/%2E/g')"
+    if [ ! -f "$copy" ] && ! git show "HEAD:$file" >"$copy" 2>/dev/null; then
+      rm -f -- "$copy"
+      echo "::error::$file: could not read its HEAD settings content" >&2
+      return 1
+    fi
+    printf '%s' "$copy"
+    return 0
+  fi
   if [ "${SR_SETTINGS_FROM_INDEX:-0}" != "1" ] || [ -z "${SR_SETTINGS_INDEX_DIR:-}" ]; then
     printf '%s' "$file"
     return 0
   fi
-  # An ABSOLUTE path is never an index entry, and git refuses such a pathspec
-  # with the same 128 an operational failure returns — so it is answered here,
-  # before the probes below: the worktree copy is all it ever has.
   case "$file" in
     /*)
       printf '%s' "$file"
       return 0
       ;;
   esac
-  # Everything else is judged by what it NORMALIZES to, not by whether it
-  # spells a `..`: `sub/../kendex.settings.toml` is the committed settings
-  # file, and treating any `..` as an escape read it from the worktree — the
-  # unstaged-edit bypass staged mode exists to close. Only a path that still
-  # leaves the repository once normalized (or cancels out to nothing) keeps
-  # the worktree copy, and it keeps the ORIGINAL spelling, which is what the
-  # caller's own file tests and diagnostics name.
   norm="$(sr_settings_normalize_path "$file")"
   case "$norm" in
     "" | ".." | "../"*)
@@ -155,28 +206,13 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
       ;;
   esac
   file="$norm"
-  # --error-unmatch reserves exit 1 for the one expected answer, "the index
-  # has no such path"; every other nonzero status is a FAILING git, not a
-  # measurement. Reading them alike let an operational failure pass for
-  # "untracked", which resolved the key from the worktree copy or the
-  # built-in default — a committed threshold silently swapped for a looser
-  # one, admitting staged content the commit does not authorize.
   git ls-files --error-unmatch -- ":(literal)$file" >/dev/null 2>&1 || status=$?
   case "$status" in
     0) ;;
     1)
-      # The HEAD probe is classified like the index probe above: cat-file -e
-      # exits 128 both for "no such path" and for an operational failure, so
-      # a bare probe read a broken git as "never tracked" and let a
-      # recreated worktree copy authorize staged content. An unborn HEAD
-      # carries nothing by definition (rev-parse reserves exit 1 for it).
       git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
       case "$head_status" in
         0)
-          # ls-tree, never cat-file -e: with rev:path syntax git answers
-          # "no such path in HEAD" with the same 128 an operational failure
-          # returns, so only ls-tree (exit 0, empty output for an absent
-          # path) can tell the two apart.
           entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || tree_status=$?
           if [ "$tree_status" -ne 0 ]; then
             echo "::error::$file: could not probe HEAD while resolving a setting (git ls-tree exit $tree_status); refusing to treat it as untracked" >&2
@@ -184,10 +220,6 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
           fi
           case "${entry:+tracked}" in
             tracked)
-              # Staged for deletion: the commit carries no such source, so it
-              # must govern as ABSENT rather than through a recreated worktree
-              # copy. A path that cannot exist is how the probes below read
-              # "not there".
               printf '%s' "$SR_SETTINGS_INDEX_DIR/settings.absent"
               return 0
               ;;
@@ -208,11 +240,6 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
       return 1
       ;;
   esac
-  # A symlink's index blob is its TARGET NAME, not settings content: parsing
-  # it would silently resolve every key to its built-in default. `ls-files -s`
-  # exits 0 whether or not the path matches, so a nonzero status here is a
-  # failing invocation and gets the same refusal — an unread mode would let
-  # the symlink shape through to exactly that silent resolution.
   status=0
   entry="$(git ls-files -s -- ":(literal)$file" 2>/dev/null)" || status=$?
   if [ "$status" -ne 0 ]; then
@@ -225,10 +252,6 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
       return 1
       ;;
   esac
-  # Percent-encode the path into the cache name: '/' and '.' both collapsing
-  # to '_' let distinct sources alias one another, and the first one
-  # materialized would then answer for the rest. '%' is escaped first, so the
-  # mapping is reversible and collision-free.
   copy="$SR_SETTINGS_INDEX_DIR/settings.$(printf '%s' "$file" | sed -e 's/%/%25/g' -e 's|/|%2F|g' -e 's/[.]/%2E/g')"
   if [ ! -f "$copy" ]; then
     if ! git show ":$file" >"$copy" 2>/dev/null; then
@@ -327,25 +350,13 @@ sr_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
 }
 
 sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
-               # a present-but-unparseable assignment (callers must propagate)
-  local name="$1" default="$2" line val file table status matches
-  # The name is interpolated into ERE patterns below; constrain it to the
-  # identifier shape every real key has, so a metacharacter can neither
-  # misgrep nor inject pattern syntax.
+  local name="$1" default="$2" line val file table status matches source_name
   case "$name" in
     "" | [0-9]* | *[!A-Za-z0-9_]*)
       echo "::error::sr_setting: invalid key name '$name' (shell identifier shape required: [A-Za-z_][A-Za-z0-9_]*)" >&2
       return 1
       ;;
   esac
-  # Every applicable TOML source is validated BEFORE any source answers:
-  # kendex-env validates before its parent-env skip, and a malformed
-  # committed file must fail identically whatever the session exports or
-  # .env.local says — an override must never let a broken file pass
-  # silently. The list is the same one extraction walks below: an explicit
-  # SIZE_RATCHET_SETTINGS_FILE consults only itself (set-but-EMPTY is
-  # unset: "" names no file), and /dev/null selects no sources at all, so
-  # nothing is checked for it.
   if [ "${SIZE_RATCHET_SETTINGS_FILE:-}" != "/dev/null" ]; then
     if [ -n "${SIZE_RATCHET_SETTINGS_FILE:-}" ]; then
       set -- "$SIZE_RATCHET_SETTINGS_FILE"
@@ -353,16 +364,25 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       set -- ".kendex/settings.toml" "kendex.settings.toml"
     fi
     for file in "$@"; do
+      source_name="$file"
       file="$(sr_settings_source "$file")" || return 1
+      if [ "${SR_SETTINGS_FROM_HEAD:-0}" = "1" ] && [ -n "${SIZE_RATCHET_SETTINGS_FILE:-}" ] \
+        && [ "${SIZE_RATCHET_SETTINGS_FILE:-}" != "/dev/null" ] && [ ! -f "$file" ] \
+        && { [ -e "$source_name" ] || [ -L "$source_name" ]; }; then
+        table="$(sr_env_table "$source_name")" || return 1
+        status=0
+        matches="$(printf '%s\n' "$table" | grep -E -- "^[[:space:]]*${name}[[:space:]]*=")" || status=$?
+        [ "$status" -le 1 ] || return 1
+        if [ "$status" -eq 0 ]; then
+          echo "::error::$source_name: $name has no historical form in HEAD" >&2
+          return 1
+        fi
+      fi
       sr_settings_usable "$file" || return 1
       if [ -f "$file" ]; then
         sr_env_table "$file" >/dev/null || return 1
       fi
     done
-    # The dotenv layer is probed for usability too: an exported key must
-    # not mask a broken .env.local (directory, dangling symlink, BOM,
-    # unreadable bytes) — every PRESENT source fails loud, the clause the
-    # generic loader honors before re-asserting process values.
     file="$(sr_settings_source ".env.local")" || return 1
     sr_settings_usable "$file" || return 1
     if [ -f "$file" ]; then
@@ -373,27 +393,26 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       fi
     fi
   fi
-  # Indirect expansion, not eval: a non-literal NAME must never become code.
-  # ${!name+x} tests set-ness of the variable NAMED by $name (Bash 3.2-safe).
   if [ -n "${!name+x}" ]; then
     printf '%s' "${!name}"
     return 0
   fi
-  # /dev/null is the force-defaults handle: it selects NO settings source at
-  # all, so the dotenv layer around the settings files is skipped with it.
-  # Skipping only the TOML layer left .env.local still deciding, so a caller
-  # asking for built-in defaults got whatever the repository's env file
-  # happened to say.
   if [ "${SIZE_RATCHET_SETTINGS_FILE:-}" = "/dev/null" ]; then
     printf '%s' "$default"
     return 0
   fi
-  # Env-file override (standard project layering: .env.local beats the
-  # committed settings) — LAST matching KEY= line wins (shell-sourcing
-  # semantics), optional surrounding quotes stripped. Parsed, never sourced.
   local local_env=""
   local_env="$(sr_settings_source ".env.local")" || return 1
   sr_settings_usable "$local_env" || return 1
+  if [ "${SR_SETTINGS_FROM_HEAD:-0}" = "1" ] && [ ! -f "$local_env" ] && [ -f .env.local ]; then
+    status=0
+    matches="$(sr_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" .env.local)" || status=$?
+    [ "$status" -le 1 ] || return 1
+    if [ "$status" -eq 0 ]; then
+      echo "::error::.env.local: $name has no historical form in HEAD" >&2
+      return 1
+    fi
+  fi
   if [ -f "$local_env" ]; then
     sr_bom_guard "$local_env" || return 1
     status=0
@@ -409,39 +428,20 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       return 0
     fi
   fi
-  # Nested project settings override the root file (the standard loader
-  # order); the positional list was built — and every present file already
-  # validated whole — before any source answered, above.
   for file in "$@"; do
   file="$(sr_settings_source "$file")" || return 1
   sr_settings_usable "$file" || return 1
   if [ -f "$file" ]; then
     table="$(sr_env_table "$file")" || return 1
-    # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
-    # assignment and must override the built-in default, exactly like a
-    # set-but-empty env var does above.
-    # Leading whitespace before a key is valid TOML, so matching is
-    # whitespace-tolerant everywhere (presence, ambiguity guard, extraction)
-    # — anchoring at column one made an indented duplicate bypass the
-    # fail-loud guard and an indented sole assignment collapse silently to
-    # the built-in default (kendex#1059).
     status=0
     matches="$(printf '%s\n' "$table" | grep -E -- "^[[:space:]]*${name}[[:space:]]*=")" || status=$?
     [ "$status" -le 1 ] || return 1
     if [ "$status" -eq 0 ]; then
-      # A re-assigned name is ambiguous — which value wins would be an
-      # accident of read order. Silently taking the first could read a stale
-      # value, so ambiguity is a configuration error.
       if [ "$(printf '%s\n' "$matches" | grep -c .)" -gt 1 ]; then
         echo "::error::$file: $name is assigned more than once in [env] (each key must be unique in the table)" >&2
         return 1
       fi
       line="$(printf '%s\n' "$matches" | head -n 1)"
-      # A PRESENT assignment this parser cannot read must fail LOUDLY, never
-      # collapse to empty. Only the contract shape is supported — the value
-      # is quote-free and backslash-free ([^"\]*), which makes the
-      # extraction exact even with a trailing TOML comment (accepted);
-      # anything else is a configuration error.
       if ! printf '%s\n' "$line" | grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"[^\"\\\\]*\"[[:space:]]*(#.*)?\$"; then
         echo "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\")" >&2
         return 1
