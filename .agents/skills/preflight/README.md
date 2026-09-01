@@ -4,9 +4,8 @@ A diff-scoped, fail-only checker for the escape classes worth catching
 mechanically: fail-open bash, new suites no runner invokes, scratch
 directories no EXIT trap removes, directories created at hardcoded absolute
 temp paths, docs citing repo paths that do not exist, source files citing
-docs that do not exist, edits to a migration a database has already run,
-reviewer-bot attributions in durable prose, data files no parser accepts,
-and workflow `run:` blocks their own shell cannot parse.
+docs that do not exist, edits to a migration a database has already run, and
+data files no parser accepts.
 
 Findings land only on lines a change ADDED, and there is no warnings tier: a
 lane that cannot decide stays quiet, so every finding is worth a hard failure.
@@ -41,8 +40,9 @@ never a machine-local `.agents` symlink.
 ## Requirements
 
 `git`, `awk`, and the usual POSIX userland; Bash 3.2 compatible.
-`shellcheck`, `jq`, `taplo` and `python3` are each optional and each enable
-one lane; a lane whose tool is missing skips silently.
+`shellcheck` is optional and enables the two shellcheck lanes. `data-syntax`
+reads JSON through `jq` and TOML through `taplo`, or `python3` where `taplo`
+is absent. A lane whose tool is missing skips silently.
 
 Lane table, scope rules, and the subtrees each lane skips:
 [SKILL.md](SKILL.md).

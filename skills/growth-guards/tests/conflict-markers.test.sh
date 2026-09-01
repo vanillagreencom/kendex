@@ -3,8 +3,8 @@
 # column 0 fires, indented/quoted/glued occurrences and the seven-equals
 # separator do not, excludes need reasons, and the check's own source never
 # trips it. Every green assertion is paired with a control that proves it can
-# fail. The shared index readers this check collects through fail closed once,
-# in index-reads.test.sh.
+# fail. The index readers this family of checks shares are pinned once, in
+# index-reads.test.sh.
 #
 # Marker runs are assembled with printf throughout so this test file never
 # contains a marker shape itself — the kendex repo runs conflict-markers

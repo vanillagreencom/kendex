@@ -343,10 +343,10 @@ heading, so nothing about the region's boundaries moves. This is the only place
 Codex can receive those paths, since it reads no second file.
 
 A repo whose guard pins the tracked reply form needs `[repo] tracker` set.
-kendex's does: it matches `Tracked: KEN-<n>` literally inside the `- Author
-replies are` bullet, and an absent tracker leaves the generic `<issue>`
-placeholder the render substitutes into, which that guard reads as the form
-being gone.
+Such a guard matches the repo's own `Tracked: <PREFIX>-<n>` shape literally
+inside the `- Author replies are` bullet, and an absent tracker leaves the
+generic `<issue>` placeholder the render substitutes into, which that guard
+reads as the form being gone.
 
 **Escaping.** Markdown, passed through. A line that markdown would read as a
 heading ends the owned region at the next render, so the generator refuses any

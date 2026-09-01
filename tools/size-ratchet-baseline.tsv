@@ -66,6 +66,7 @@ skills/github/scripts/lib/github-api.sh	943
 skills/github/scripts/lib/verify-lib.sh	415
 skills/growth-guards/scripts/install-git-hooks	535
 skills/growth-guards/scripts/lib/settings.sh	467
+skills/growth-guards/tests/index-reads.test.sh	866
 skills/iced-rs/examples/changelog/src/changelog.rs	418
 skills/iced-rs/examples/color_palette/src/main.rs	479
 skills/iced-rs/examples/custom_shader/src/scene/pipeline.rs	584

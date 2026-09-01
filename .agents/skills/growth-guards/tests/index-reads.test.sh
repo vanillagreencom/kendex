@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Pins for three libs the checks share: lib/common.sh's index reads,
+# Pins for the libs the checks share: lib/common.sh's index reads,
+# lib/configured-paths.sh's policy reads and content sniff,
 # lib/atomic-install.sh's policy writes, and the settings cache
 # lib/settings.sh materializes. A probe git could not answer never becomes an
 # answer, a configured path is matched literally, a --cached scan refuses an
@@ -609,9 +610,9 @@ echo "=== gg_grep_lane: content decides what is scanned, an attributes rule neve
 # no status and no stderr — a clean verdict over content never read. Each
 # lane is pinned end to end, each against a control proving the same fixture
 # fails without the row.
-run_check() { # SCRIPT — RC and OUT from a run inside $R
-  RC=0
-  OUT="$(cd "$R" && "$SCRIPTS/$1" 2>&1)" || RC=$?
+run_check() { # SCRIPT [ARG...] — RC and OUT from a run inside $R
+  local script="$1"; shift; RC=0
+  OUT="$(cd "$R" && "$SCRIPTS/$script" "$@" 2>&1)" || RC=$?
 }
 
 new_repo attrs-todo
@@ -758,19 +759,25 @@ esac
 
 echo "=== the shared readers fail closed, once, for every lane that uses them ==="
 
-# gg_grep_guard and gg_read_blob are the family's index readers: every lane
-# collects through them, so an incomplete scan is refused HERE, once.
+# gg_grep_guard, gg_read_blob and gg_blob_is_binary are the family's index
+# readers: every lane collects through them, so an incomplete scan is refused
+# HERE, once — including the call sites no default-lane run reaches, which
+# the arms below drive through the lane that owns them.
 REAL_GIT="$(command -v git)"
-git_failing_on() { # ARG — run the lane under a git that exits 128 for ARG
-  local dir="$TMP/git-shim-$1"; mkdir -p "$dir"
-  printf '#!/usr/bin/env bash\ncase " $* " in *" %s "*) echo "git %s: simulated failure" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$1" "$1" "$REAL_GIT" >"$dir/git"
+git_failing_on() { # ARG [LANE-ARG...] — todo-ban under a git that exits 128 for ARG
+  local a="$1" dir="$TMP/git-shim-$1"; shift; mkdir -p "$dir"
+  printf '#!/usr/bin/env bash\ncase " $* " in *" %s "*) echo "git %s: simulated failure" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$a" "$a" "$REAL_GIT" >"$dir/git"
   chmod +x "$dir/git"; RC=0
-  OUT="$(cd "$R" && PATH="$dir:$PATH" "$SCRIPTS/todo-ban" 2>&1)" || RC=$?
+  OUT="$(cd "$R" && PATH="$dir:$PATH" "$SCRIPTS/todo-ban" "$@" 2>&1)" || RC=$?
 }
-refused() { # LABEL NEEDLE — exit 2 carrying NEEDLE, and never a clean verdict
+under_shim() { # SHIM-DIR SCRIPT [ARG...] — run SCRIPT with SHIM-DIR first on PATH
+  local dir="$1"; shift; local script="$1"; shift; RC=0
+  OUT="$(cd "$R" && PATH="$dir:$PATH" "$SCRIPTS/$script" "$@" 2>&1)" || RC=$?
+}
+refused() { # LABEL NEEDLE [CHECK] — exit 2 carrying NEEDLE, and never a clean verdict
   [ "$RC" -eq 2 ] && case "$OUT" in *"$2"*) true ;; *) false ;; esac \
     && ok "$1" || bad "$1" "rc=$RC out=$OUT"
-  case "$OUT" in *"todo-ban: OK"*) bad "no OK verdict may accompany $1" "$OUT" ;; *) ok "and no OK verdict accompanies it" ;; esac
+  case "$OUT" in *"${3:-todo-ban}: OK"*) bad "no OK verdict may accompany $1" "$OUT" ;; *) ok "and no OK verdict accompanies it" ;; esac
 }
 
 new_repo readers
@@ -794,6 +801,66 @@ printf '// %s: readable\n' "$MARKER" >"$R/b.rs"
 git -C "$R" add b.rs
 run_check todo-ban
 refused "a scan matching one file it read and one it could not is exit 2, never a violation" "unable to read"
+
+# The --staged lane reaches the same readers through calls of its own that
+# the default lane never makes: the carriers pre-filter grep, and the
+# per-file content sniff that reads each staged blob. The fixture stages a
+# marker, so no arm below can be clean by construction.
+new_repo readers-staged
+printf 'fn main() {}\n' >"$R/ok.rs"
+git -C "$R" add -A
+git -C "$R" commit -qm seed
+printf '// %s: staged for the pre-filter to find\n' "$MARKER" >>"$R/ok.rs"
+git -C "$R" add ok.rs
+run_check todo-ban --staged
+[ "$RC" -eq 1 ] && ok "control: the staged marker fires with the real tools" \
+  || bad "control: the staged marker fires" "rc=$RC out=$OUT"
+git_failing_on grep --staged
+refused "a broken staged pre-filter is a collection error, never OK" "git grep failed listing the staged files that carry a work marker"
+git_failing_on cat-file --staged
+refused "a staged blob the sniff cannot read is exit 2, never a path skipped" "refusing to skip an unread work marker"
+
+# gg_blob_is_binary sizes the leading bytes twice, and neither count may
+# decide the verdict after failing: a silent zero out of the NUL strip reads
+# as "every byte was a NUL" and folds an unread blob into a clean pass. One
+# shim per count — the wc shim fails once, so the first count fails while
+# the second succeeds; the tr shim breaks only the strip inside the second.
+COUNT_SHIM="$TMP/count-shim"
+mkdir -p "$COUNT_SHIM"
+printf '#!/usr/bin/env bash\nif [ ! -e "%s" ]; then : >"%s"; echo "wc: simulated execution failure" >&2; exit 1; fi\nexec "%s" "$@"\n' \
+  "$TMP/wc-fired" "$TMP/wc-fired" "$(command -v wc)" >"$COUNT_SHIM/wc"
+chmod +x "$COUNT_SHIM/wc"
+rm -f "$TMP/wc-fired"
+under_shim "$COUNT_SHIM" todo-ban --staged
+refused "a first block that cannot be sized is exit 2, never OK" "could not sample ok.rs to classify its content"
+TR_SHIM="$TMP/tr-shim"
+mkdir -p "$TR_SHIM"
+printf '#!/usr/bin/env bash\necho "tr: simulated execution failure" >&2\nexit 1\n' >"$TR_SHIM/tr"
+chmod +x "$TR_SHIM/tr"
+under_shim "$TR_SHIM" todo-ban --staged
+refused "a NUL-free count that cannot run is exit 2, never OK" "could not sample ok.rs to classify its content"
+
+# suppression-ban's per-carrier count is its own call, made after the shared
+# listing has already named the carrier, and it is the one gg_grep_guard
+# site outside lib/. git spends no status on a blob it could not read there,
+# so the error line on stderr is all that separates a partial count from a
+# clean zero. The shim errors that call alone.
+new_repo readers-count
+mkdir -p "$R/tools"
+printf 'fn main() {}\n' >"$R/ok.rs"
+printf '#[allow(dead_code)]\nfn b() {}\n' >"$R/bare.rs"
+printf 'bare.rs\t1\n' >"$R/tools/suppression-baseline.tsv"
+git -C "$R" add -A
+run_check suppression-ban
+[ "$RC" -eq 0 ] && ok "control: the baselined bare allow passes with the real git" \
+  || bad "control: the baselined bare allow passes" "rc=$RC out=$OUT"
+SB_COUNT_SHIM="$TMP/git-shim-count"
+mkdir -p "$SB_COUNT_SHIM"
+printf '#!/usr/bin/env bash\ncase " $* " in *" -acE "*) echo "error: %s: unable to read %s" >&2; exit 1 ;; esac\nexec "%s" "$@"\n' \
+  "'phantom.rs'" "0000000000000000000000000000000000000000" "$REAL_GIT" >"$SB_COUNT_SHIM/git"
+chmod +x "$SB_COUNT_SHIM/git"
+under_shim "$SB_COUNT_SHIM" suppression-ban
+refused "an error-carrying no-match count is exit 2, never a clean zero" "unable to read" suppression-ban
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

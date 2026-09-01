@@ -122,9 +122,10 @@ else
 fi
 
 # New integration-test temp roots take their canonical spelling immediately
-# through the shared rooted() helper, on the next source line, the way a
-# fixture HOME takes KENDEX_REAL_HOME above. Diff-scoped: older fixtures
-# predate the helper and are not rewritten to satisfy it.
+# through the shared rooted() helper, on the next source line, and that call
+# must take the root just declared — the follow-line test is built from the
+# declared name, so rooting some other binding does not clear it. Diff-scoped:
+# older fixtures predate the helper and are not rewritten to satisfy it.
 temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff --text "${diff_against[@]}" -- 'crates/*/tests/*.rs') ||
   say "test fixture changes could not be read"
 if ! temp_fixture_hits=$(awk '
@@ -135,8 +136,16 @@ if ! temp_fixture_hits=$(awk '
   !/^[ +]/ { next }
   { line = substr($0, 2); line_no++ }
   pending && line ~ /^[[:space:]]*(\/\/|$)/ { next }
-  pending { if (line !~ /rooted[[:space:]]*\(/) print file ":" pending ": " pending_text; pending = 0; next }
-  /^\+[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*(tempfile::)?(tempdir\(\)|TempDir::new\(\))/ { pending = line_no; pending_text = line }
+  pending {
+    bind = "^[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*&?[[:space:]]*rooted[[:space:]]*\\([[:space:]]*&?[[:space:]]*" pending_name "[[:space:]]*\\)"
+    if (line !~ bind) print file ":" pending ": " pending_text
+    pending = 0
+  }
+  /^\+[[:space:]]*let[[:space:]]+(mut[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[^=]+)?[[:space:]]*=[[:space:]]*(tempfile::)?(tempdir\(\)|TempDir::new\(\))/ {
+    pending = line_no; pending_text = line; pending_name = line
+    sub(/^[[:space:]]*let[[:space:]]+/, "", pending_name); sub(/^mut[[:space:]]+/, "", pending_name)
+    sub(/[^A-Za-z0-9_].*$/, "", pending_name)
+  }
   END { flush() }
 ' <<<"$temp_fixture_diff"); then
   say "temporary fixture declarations could not be checked"
@@ -153,25 +162,32 @@ fi
 "$TOOLS_DIR/bash32-lint" || say "tools/bash32-lint refused the tree — a Bash 4+ construct, or a scan that could not run"
 
 # A render source lands its renders in the same change: skills/<x>/<p>
-# renders to .agents/skills/<x>/<p>, and an agent definition to one file per
-# harness. Presence, not byte equality — a render can carry an injected block
-# the source has no copy of, so bytes cannot be compared. Rendered is judged
-# at the tree: a skill with anything tracked under .agents/skills/<x> renders
+# renders to .agents/skills/<x>/<p>, an agent definition to one file per
+# harness, and a hook to whichever harness hook directories already carry it.
+# Presence, not byte equality — a render can carry an injected block the
+# source has no copy of, so bytes cannot be compared. Rendered is judged at
+# the tree: a skill with anything tracked under .agents/skills/<x> renders
 # every file, so a new source there owes a new render, and an agent owes a
-# file to each harness directory that tracks any. A skill with no tracked
-# render has nothing to land, and a render-only change is the sync direction
-# and passes. A deletion is in the changed set too, so the render must also
-# still exist wherever its source does. Path quoting is off on both reads:
-# a quoted path matches neither the case arms nor its own render.
+# file to each harness directory that tracks any. Hooks are judged per file
+# instead — the harness hook sets are deliberately not uniform, and
+# hooks/tests/* renders nowhere. A source with no tracked render has nothing
+# to land, and a render-only change is the sync direction and passes. A
+# deletion is in the changed set too, so the render must also still exist
+# wherever its source does. Path quoting is off on both reads: a quoted path
+# matches neither the case arms nor its own render.
 render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}") ||
   { render_changed=""; say "the changed-file set for the render rule could not be read"; }
-render_tracked=$(git -c core.quotePath=false ls-files -- .agents/skills .claude/agents .codex/agents .pi/agents) ||
+render_tracked=$(git -c core.quotePath=false ls-files -- .agents/skills .claude/agents .codex/agents .pi/agents .claude/hooks .codex/hooks .pi/kendex/hooks) ||
   { render_tracked=""; say "the tracked render set could not be read"; }
 render_hits=""
 NL='
 '
 renders_under() { # DIR — anything is tracked under DIR, DIR read literally
   case "$NL$render_tracked$NL" in *"$NL$1/"*) return 0 ;; esac
+  return 1
+}
+render_is_tracked() { # PATH — PATH itself is tracked, PATH read literally
+  case "$NL$render_tracked$NL" in *"$NL$1$NL"*) return 0 ;; esac
   return 1
 }
 require_render() { # SOURCE RENDER — RENDER changes with SOURCE and outlives it
@@ -193,6 +209,12 @@ while IFS= read -r f; do
     renders_under .claude/agents && require_render "$f" ".claude/agents/$n.md"
     renders_under .codex/agents && require_render "$f" ".codex/agents/$n.toml"
     renders_under .pi/agents && require_render "$f" ".pi/agents/$n.md"
+    ;;
+  hooks/*)
+    n="${f#hooks/}"
+    for d in .claude/hooks .codex/hooks .pi/kendex/hooks; do
+      render_is_tracked "$d/$n" && require_render "$f" "$d/$n"
+    done
     ;;
   esac
 done <<<"$render_changed"

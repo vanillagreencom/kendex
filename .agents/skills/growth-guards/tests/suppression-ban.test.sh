@@ -2,8 +2,9 @@
 # Pins for scripts/suppression-ban: every blanket lane fires with its legal
 # per-line counterpart proven to pass, the bare-allow ratchet fails in all
 # directions (new, grow, loose, stale), --update tightens only, and baseline
-# hygiene is enforced. The shared index readers this check collects through
-# fail closed once, in index-reads.test.sh.
+# hygiene is enforced. The index readers this family of checks shares — the
+# per-carrier count among them — are pinned once, in index-reads.test.sh,
+# which drives them through this check.
 #
 # Suppression pragmas appear verbatim in fixtures below: the check is
 # pathspec-scoped to language extensions, so this .sh file is never

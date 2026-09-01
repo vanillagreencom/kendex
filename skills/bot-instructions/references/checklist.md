@@ -246,9 +246,9 @@ can still change what the file means.
       Without it the render leaves the generic placeholder and the guard reads
       the form as gone.
 - [ ] Retiring a bot whose file another check requires is a pointer move first,
-      then the deletion. kendex's guard fails when
-      `.github/copilot-instructions.md` is absent, so `[bots] copilot = false`
-      there means moving what that guard reads before removing the file.
+      then the deletion. Where a repo's own gate reads
+      `.github/copilot-instructions.md`, `[bots] copilot = false` means moving
+      what that gate reads before removing the file.
 
 ## The exclusion classes a repo starts from
 

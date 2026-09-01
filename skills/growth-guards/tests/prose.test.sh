@@ -3,8 +3,8 @@
 # the same reference outside the configured paths does not, the path list is
 # replaceable and validated, and word matching is case-insensitive and
 # whole-word. Every green assertion is paired with a control that proves it
-# can fail. The shared index readers this check collects through fail closed
-# once, in index-reads.test.sh.
+# can fail. The index readers this family of checks shares are pinned once,
+# in index-reads.test.sh.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

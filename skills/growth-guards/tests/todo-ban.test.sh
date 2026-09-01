@@ -2,10 +2,11 @@
 # Pins for scripts/todo-ban: both marker shapes fire, prose that quotes or
 # names a marker word does not, excludes need reasons, --staged judges the
 # lines the commit ADDS while the default scope judges the whole index, and
-# the staged lane's own collection steps are collection errors — never a
-# pass. Every green assertion is paired with a control that proves it can
-# fail. The shared index readers this check collects through fail closed
-# once, in index-reads.test.sh.
+# the staged lane's change-set collection and hunk parse are collection
+# errors — never a pass. Every green assertion is paired with a control that
+# proves it can fail. The index readers this family of checks shares — the
+# staged lane's carriers pre-filter and content sniff among them — are
+# pinned once, in index-reads.test.sh, which drives them through this check.
 #
 # Marker words are assembled from split tokens throughout so this test
 # file never contains a marker shape itself — the kendex repo runs

@@ -314,10 +314,10 @@ case "$OUT" in
 esac
 
 echo "=== the repository's own path cannot break the summary either ==="
-# The value was escaped first; the hooks directory is the same class of
-# bytes and reaches the same one-line summary. A repository whose path
-# carries a newline ends that line early, and one carrying ESC hands the
-# terminal control codes — from the name of the directory being reported.
+# The repository path reaches the same one-line summary the configured
+# value does, and carries the same class of bytes: a path holding a newline
+# ends that line early, and one holding ESC hands the terminal control codes
+# — from the name of the directory being reported.
 # $'\n' rather than a capture: $(...) strips the newline, which would leave
 # this fixture testing an ordinary path — the very class being pinned.
 NL=$'\n'

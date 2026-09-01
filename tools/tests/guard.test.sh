@@ -73,6 +73,15 @@ printf '# demo agent\n' >"$R/agents/demo.md"
 printf '# demo agent render\n' >"$R/.claude/agents/demo.md"
 printf 'name = "demo"\n' >"$R/.codex/agents/demo.toml"
 printf '# demo agent render\n' >"$R/.pi/agents/demo.md"
+# One hook rendered to two of the three harness directories and not the
+# third, the way the real tree's hook sets differ, plus a hook test that
+# renders nowhere.
+mkdir -p "$R/hooks/tests" "$R/.claude/hooks" "$R/.codex/hooks" "$R/.pi/kendex/hooks"
+printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/demo.sh"
+printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/tests/demo.test.sh"
+cp "$R/hooks/demo.sh" "$R/.claude/hooks/demo.sh"
+cp "$R/hooks/demo.sh" "$R/.codex/hooks/demo.sh"
+printf '#!/usr/bin/env bash\necho other\n' >"$R/.pi/kendex/hooks/other.sh"
 git -C "$R" add -A
 git -C "$R" commit -q -m fixture
 
@@ -124,6 +133,21 @@ temp_case pass "comments and strings that mention tempfile constructors pass" \
   'fn prose() {' ' // let tmp = tempfile::tempdir().unwrap();' ' let shown = "tempfile::TempDir::new()";' ' drop(shown);' '}'
 temp_case refuse "a line-comment glob cannot hide a later unrooted fixture" \
   'fn fixture() {' ' // fixtures live under crates/*/tests' ' let _tmp = tempfile::tempdir().unwrap();' '}'
+temp_case refuse "rooting a different binding does not clear the declaration" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let home = rooted(&other);' ' drop(home);' '}'
+temp_case refuse "a string literal naming rooted does not clear the declaration" \
+  'fn fixture() {' ' let tmp = tempfile::tempdir().unwrap();' ' let shown = "rooted(&tmp)";' ' drop(shown);' '}'
+
+# A run of adjacent declarations is checked member by member: resolving one
+# must not consume the line that declares the next.
+printf '%s\n' 'fn fixture() {' ' let a = tempfile::tempdir().unwrap();' ' let b = tempfile::tempdir().unwrap();' ' let c = tempfile::tempdir().unwrap();' ' drop((a, b, c));' '}' >"$R/crates/core/tests/temp_path.rs"
+git -C "$R" add -A
+run_guard
+if [ "$RC" -ne 0 ] && [[ "$OUT" == *"temp_path.rs:2"* ]] && [[ "$OUT" == *"temp_path.rs:3"* ]] && [[ "$OUT" == *"temp_path.rs:4"* ]]; then
+  ok "every member of a run of unrooted declarations is named"
+else
+  bad "every member of a run of unrooted declarations is named" "rc=$RC out=$OUT"
+fi
 
 git -C "$R" config color.diff always
 temp_case refuse "colored diff output cannot hide an unrooted fixture" \
@@ -553,6 +577,39 @@ run_guard
   || bad "the new agent with its three renders staged beside it passes" "rc=$RC out=$OUT"
 git -C "$R" reset -q HEAD -- agents .claude/agents .codex .pi
 rm -f "$R/agents/fresh.md" "$R/.claude/agents/fresh.md" "$R/.codex/agents/fresh.toml" "$R/.pi/agents/fresh.md"
+
+# Hooks are judged per file: the two harness copies this hook already has
+# are owed, the third harness directory is not, and a hook test that renders
+# nowhere owes nothing.
+printf 'echo more\n' >>"$R/hooks/demo.sh"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"hooks/demo.sh -> .claude/hooks/demo.sh"* ]] \
+  && [[ "$OUT" == *"hooks/demo.sh -> .codex/hooks/demo.sh"* ]] \
+  && [[ "$OUT" != *"-> .pi/kendex/hooks/demo.sh"* ]] \
+  && ok "a hook edit reds, naming the two renders it has and not the third" \
+  || bad "a hook edit reds, naming the two renders it has and not the third" "rc=$RC out=$OUT"
+if mutant_guard '/^  hooks\/\*)$/,/^    ;;$/d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the hooks arm deleted the source-only hook edit passes" \
+    || bad "control: with the hooks arm deleted the source-only hook edit passes" "rc=$RC out=$OUT"
+else
+  bad "control: the hooks render arm could not be deleted from a guard copy"
+fi
+printf 'echo more\n' >>"$R/.claude/hooks/demo.sh"
+printf 'echo more\n' >>"$R/.codex/hooks/demo.sh"
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "a hook edit landing both tracked renders passes" \
+  || bad "a hook edit landing both tracked renders passes" "rc=$RC out=$OUT"
+git -C "$R" checkout -q -- hooks .claude/hooks .codex/hooks
+
+printf 'echo more\n' >>"$R/hooks/tests/demo.test.sh"
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "a hook test with no render anywhere passes" \
+  || bad "a hook test with no render anywhere passes" "rc=$RC out=$OUT"
+git -C "$R" checkout -q -- hooks
 
 # A harness directory that tracks nothing is owed nothing.
 git -C "$R" rm -q .pi/agents/demo.md

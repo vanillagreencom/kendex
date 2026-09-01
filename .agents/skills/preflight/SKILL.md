@@ -1,7 +1,7 @@
 ---
 name: preflight
 description: "Load to run, tune, or debug preflight."
-summary: "Diff-scoped deterministic pre-review checks: shell parse and shellcheck errors, fail-open bash, unwired test suites, untrapped scratch dirs, dead path citations, edited applied migrations, bot attributions, malformed JSON, TOML, and workflows."
+summary: "Diff-scoped deterministic pre-review checks: shell parse and shellcheck errors, fail-open bash, unwired test suites, untrapped scratch dirs, hardcoded temp paths, dead path citations, edited applied migrations, and malformed JSON or TOML."
 license: MIT
 user-invocable: true
 metadata:
