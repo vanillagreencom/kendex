@@ -365,7 +365,7 @@ echo "--- must-fail probe: the strips moved back in front of the label pass ---"
 # misordering as moving the strips up and is one pass. Matched by literal
 # text rather than a regex over a regex.
 MISORDERED="$(awk '
-  index($0, "(frozen|") { lbl = $0; next }
+  index($0, "\"frozen|") { lbl = $0; next }
   index($0, "(/[a-z0-9]")           { print; print lbl; next }
   { print }' <<<"$prog")"
 if ! planted "the label pass, moved" move "$MISORDERED"; then :
@@ -397,7 +397,7 @@ echo "--- must-fail probe: the filler pass moved back behind the strips ---"
 # is a separate probe rather than a second line in that one so a stranding is
 # attributable to the list it belongs to.
 MISFILLER="$(awk '
-  index($0, "(a|an|the|") { fil = $0; next }
+  index($0, "\"a|an|the|") { fil = $0; next }
   index($0, "(/[a-z0-9]")                { print; print fil; next }
   { print }' <<<"$prog")"
 if ! planted "the filler pass, moved" move "$MISFILLER"; then :
@@ -448,15 +448,16 @@ echo "--- the ordering section covers every entry the derivation names ---"
 # fact about its contents, not a property of it, and the day someone adds a
 # phrase there this reds instead of the suite staying green.
 alt_of() { # alt_of FIRST_ALTERNATIVE -> the alternation that opens with it
-  # Located by the alternation's OWN opening paren, then walked to its match
-  # at depth zero, so neither end reads the anchor around the group: the
-  # boundary the lists carry is a term this suite measures, not one it
-  # transcribes. A nested group like `instruction(s|ed)?` is counted through.
-  awk -v k="$1" '{ p = index($0, "(" k "|"); if (!p) next
-                   d = 0; out = ""
-                   for (i = p; i <= length($0); i++) { ch = substr($0, i, 1)
-                     if (ch == "(") { d++; if (d == 1) continue }
-                     else if (ch == ")") { d--; if (d == 0) { print out; exit } }
+  # Located by the jq string quote the list opens with, then read to the
+  # closing quote: the alternation IS the whole `word_strip` argument, and the
+  # boundary that argument is wrapped in lives in `word_strip` itself, so
+  # nothing here transcribes a term this suite is measuring. A nested group
+  # like `instruction(s|ed)?` is read through, quotes being the only
+  # delimiter the list cannot contain.
+  awk -v k="$1" '{ p = index($0, "\"" k "|"); if (!p) next
+                   out = ""
+                   for (i = p + 1; i <= length($0); i++) { ch = substr($0, i, 1)
+                     if (ch == "\"") { print out; exit }
                      out = out ch } }' <<<"$prog"
 }
 LABEL_ALT="$(alt_of frozen)"
