@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The kind checks compare `workflows/oversee.md`'s pr-watch handler list with
 # the kinds `review-gate/scripts/pr-watch.sh --help` documents, in both
-# directions. The flag checks read the `--heal` line of that same `--help` and
+# directions, and hold each kind to exactly one rule. The flag checks read the `--heal` line of that same `--help` and
 # the parser arm that accepts the flag. Both lists are read at run time and
 # neither is written down here.
 #
@@ -38,15 +38,17 @@ kinds() { # pr-watch
 
 # The kinds the document handles: the leading code spans of every `  - ` bullet
 # in the pr-watch handler list, one comma-separated run per bullet. Everything
-# past that run is condition and action text.
-handlers() { # doc
+# past that run is condition and action text. Emitted with duplicates intact —
+# the contract is one rule per kind, and a label leading two bullets is what
+# `sort -u` would hide.
+handler_labels() { # doc
   sed -n '/^- `pr-watch` →/,/^- [^ ]/p' "$1" \
     | sed -n 's/^  - //p' \
     | grep -oE '^`[a-z][a-z-]*`(, `[a-z][a-z-]*`)*' \
     | grep -o '`[a-z][a-z-]*`' \
-    | tr -d '`' \
-    | sort -u
+    | tr -d '`'
 }
+handlers() { handler_labels "$1" | sort -u; }
 
 # Reported as names, not counts.
 every_kind_handled() { # pr-watch doc
@@ -54,6 +56,16 @@ every_kind_handled() { # pr-watch doc
   missing="$(comm -23 <(kinds "$1") <(handlers "$2"))"
   [ -z "$missing" ] && return 0
   printf '        kinds with no handler bullet: %s\n' "$(tr '\n' ' ' <<<"$missing")"
+  return 1
+}
+# Coverage is a set question and cannot see multiplicity: two bullets sharing a
+# label leave the kind covered by whichever survives, so deleting the general
+# rule for it passes every set comparison. One rule per kind is checked here.
+one_rule_per_kind() { # doc
+  local dupes
+  dupes="$(handler_labels "$1" | sort | uniq -d)"
+  [ -z "$dupes" ] && return 0
+  printf '        labels leading more than one bullet: %s\n' "$(tr '\n' ' ' <<<"$dupes")"
   return 1
 }
 every_handler_real() { # pr-watch doc
@@ -95,6 +107,8 @@ for root in "${ROOTS[@]}"; do
     every_kind_handled "$pw" "$doc"
   check "$label: every handler bullet names a kind pr-watch --help documents" \
     every_handler_real "$pw" "$doc"
+  check "$label: every kind's rule is one bullet, not several" \
+    one_rule_per_kind "$doc"
   check "$label: pr-watch still documents the --heal flag oversee-watch passes" \
     heal_documented "$pw"
   check "$label: pr-watch still parses the --heal flag oversee-watch passes" \
@@ -131,6 +145,22 @@ NO_ERROR="$MD_TMP/oversee-no-error.md"
 grep -v '^  - `error` →' "$CTL_DOC" > "$NO_ERROR"
 check "control: deleting the standalone error handler reds the coverage direction" \
   reds every_kind_handled "$CTL_PW" "$NO_ERROR"
+
+# gate-stale is the kind whose rule was split across two bullets, where the set
+# comparisons went on passing with the general rule deleted.
+NO_STALE="$MD_TMP/oversee-no-gate-stale.md"
+grep -v '^  - `gate-stale`' "$CTL_DOC" > "$NO_STALE"
+check "control: deleting the gate-stale rule reds the coverage direction" \
+  reds every_kind_handled "$CTL_PW" "$NO_STALE"
+
+DUPED="$MD_TMP/oversee-duped.md"
+awk '{ print }
+  /^  - `gate-stale` →/ { print "  - `gate-stale` beside anything → a second rule for one kind" }' \
+  "$CTL_DOC" > "$DUPED"
+check "control: a label leading two bullets reds the one-rule direction" \
+  reds one_rule_per_kind "$DUPED"
+check "control: that same duplicate leaves the coverage direction green" \
+  every_kind_handled "$CTL_PW" "$DUPED"
 
 BOGUS="$MD_TMP/oversee-bogus.md"
 awk '{ print }
