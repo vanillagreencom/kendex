@@ -164,10 +164,19 @@ fn as_authored<'a>(
 /// rendering says it — a restoration lost, which is the cost of not
 /// writing a word the publisher used somewhere else onto a line the
 /// person kept.
+///
+/// Both counts are taken once, so this costs the two line counts rather
+/// than a scan of the rendering for every line it weighs. Against a body
+/// that pairs with almost none of a rendering the door admits, [`CELLS`]
+/// admits the table — and a scan for each colliding line is the work
+/// that ceiling exists to refuse, arriving after it has already said
+/// yes.
 fn ambiguous<'a>(kept: &[&str], rendered: &[&'a str], authored: &[&str]) -> HashSet<&'a str> {
     let mut published: HashMap<&str, &str> = HashMap::new();
+    let mut says: HashMap<&str, usize> = HashMap::new();
     let mut alike: HashSet<&'a str> = HashSet::new();
     for (line, published_as) in rendered.iter().zip(authored) {
+        *says.entry(line).or_default() += 1;
         if published
             .insert(line, published_as)
             .is_some_and(|first| first != *published_as)
@@ -175,8 +184,15 @@ fn ambiguous<'a>(kept: &[&str], rendered: &[&'a str], authored: &[&str]) -> Hash
             alike.insert(*line);
         }
     }
-    let held = |lines: &[&str], line: &str| lines.iter().filter(|held| **held == line).count();
-    alike.retain(|line| held(kept, line) != held(rendered, line));
+    if alike.is_empty() {
+        return alike;
+    }
+    let mut holds: HashMap<&str, usize> = HashMap::new();
+    for line in kept {
+        *holds.entry(*line).or_default() += 1;
+    }
+    let count = |counts: &HashMap<&str, usize>, line: &str| counts.get(line).copied().unwrap_or(0);
+    alike.retain(|line| count(&holds, line) != count(&says, line));
     alike
 }
 
@@ -373,6 +389,35 @@ mod tests {
         assert_eq!(
             problem,
             "lining its 2001 rendered lines up against the 2001 kept would take 4008004 cells, past the 4000000 this pairing holds"
+        );
+    }
+
+    /// The ceiling admits a body by the table [`aligned`] would hold, so
+    /// everything the pairing does before that table has to fit inside
+    /// the same bound. Two hundred thousand renderings the catalog
+    /// publishes two ways each is four hundred thousand lines, and
+    /// against a body that kept none of it that is four hundred thousand
+    /// cells — a tenth of the ceiling, admitted. Weighing it by scanning
+    /// the rendering once per colliding line is eighty billion
+    /// comparisons: this returns in under a second taking each count
+    /// once, and does not return at all in three minutes scanning, so a
+    /// scan reintroduced here stops the suite rather than slowing it.
+    #[test]
+    fn a_body_the_ceiling_admits_is_weighed_within_it() {
+        let lines: Vec<String> = (0..200_000).map(|at| format!("Line {at}.")).collect();
+        let mut rendered = Vec::new();
+        let mut authored = Vec::new();
+        for line in &lines {
+            // Each rendering stands for two published lines that differ,
+            // so every one of them is a collision the pass has to weigh.
+            rendered.push(line.as_str());
+            rendered.push(line.as_str());
+            authored.push(line.as_str());
+            authored.push("Published differently.");
+        }
+        assert_eq!(
+            as_authored(&[], &rendered, &authored).unwrap(),
+            Vec::<&str>::new()
         );
     }
 
