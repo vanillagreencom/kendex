@@ -3,7 +3,7 @@
 # every other suite headless, where `mv` never prompts and plain `mv` measures
 # exactly as `mv -f` does — which is how a prompting install shipped green.
 # Each case here runs under a pseudo-terminal; the rules a probe of such a
-# path must follow, and why, are in lib/pty.bash.
+# path must follow, what a call sets, and why, are in lib/pty.bash.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -150,17 +150,13 @@ if premise_denies_write "$R/tools/dest.tsv" "control: without the -f the same pr
   # `could not replace the fixture` alone is gg_collection_error's frame,
   # which it prints whether or not gg_install_why relayed anything — so the
   # match reaches for mv's prompt too, which is the half this case is named
-  # for. GNU mv exits 1 and gg_install_why folds that prompt in; BSD mv
-  # answers no with exit 0, so the helper reports nothing at all and this
-  # claim is only available on the util-linux path.
-  if [ "$GG_PTY_FORM" = util-linux ]; then
-    [ "$RC" -eq 2 ] && case "$OUT" in
-      *"could not replace the fixture"*"overriding mode"*) true ;;
-      *) false ;;
-    esac \
-      && ok "control: and the refusal carries mv's own prompt as its cause" \
-      || bad "control: and the refusal carries mv's own prompt as its cause" "rc=$RC out=$OUT"
-  fi
+  # for. GNU mv exits 1 and gg_install_why folds that prompt in.
+  [ "$STATE" = ok ] && [ "$RC" -eq 2 ] && case "$OUT" in
+    *"could not replace the fixture"*"overriding mode"*) true ;;
+    *) false ;;
+  esac \
+    && ok "control: and the refusal carries mv's own prompt as its cause" \
+    || bad "control: and the refusal carries mv's own prompt as its cause" "state=$STATE rc=$RC out=$OUT"
 fi
 
 echo "=== gg_pty_run: the probe rules the cases above depend on ==="
@@ -171,39 +167,39 @@ printf '[ -t 0 ] && [ -t 1 ] && [ -t 2 ] && echo ALL-THREE\n' >"$ROOT/tty-case.s
 gg_pty_run 20 "$ROOT/tty-case.sh" && [ "$GG_PTY_STATE" = ok ] && [ "$GG_PTY_RC" -eq 0 ] \
   && [ "$GG_PTY_OUT" = "ALL-THREE" ] \
   && ok "stdin, stdout and stderr are all on the pty" \
-  || bad "stdin, stdout and stderr are all on the pty" "state=$GG_PTY_STATE rc=$GG_PTY_RC out=$GG_PTY_OUT"
+  || bad "stdin, stdout and stderr are all on the pty" "state=$GG_PTY_STATE rc=$GG_PTY_RC out=$GG_PTY_OUT err=$GG_PTY_ERR"
 
 # A prompt inside the session is answered by EOF, because the SPAWNER reads
 # /dev/null. Without that redirect this read is the wedge, not a result.
 printf 'read -r answer </dev/tty && echo "READ $answer" || echo EOF-AT-THE-PROMPT\n' >"$ROOT/prompt-case.sh"
 gg_pty_run 20 "$ROOT/prompt-case.sh" && [ "$GG_PTY_OUT" = "EOF-AT-THE-PROMPT" ] \
   && ok "a read from the terminal gets EOF instead of waiting" \
-  || bad "a read from the terminal gets EOF instead of waiting" "state=$GG_PTY_STATE out=$GG_PTY_OUT"
+  || bad "a read from the terminal gets EOF instead of waiting" "state=$GG_PTY_STATE out=$GG_PTY_OUT err=$GG_PTY_ERR"
 
 # The cap, and what it must leave behind: nothing. The body ignores SIGHUP, so
 # the pty closing behind the killed spawner cannot stand in for the reap, and
 # it records the pid of the process that must be gone. Killing the spawner
-# alone leaves that pid alive, holding fds inside the scratch tree the helper
-# has already removed, while the caller is told the cap worked.
+# alone leaves that pid alive while the caller is told the cap worked.
 printf 'trap "" HUP\necho STARTED\nsleep 300 &\necho "$!" >%q\nwait\n' "$ROOT/orphan.pid" >"$ROOT/hang-case.sh"
 rm -f "$ROOT/orphan.pid"
 gg_pty_run 2 "$ROOT/hang-case.sh" && [ "$GG_PTY_STATE" = capped ] && [ -z "$GG_PTY_RC" ] \
   && [ "$GG_PTY_OUT" = "STARTED" ] \
   && ok "control: a session that never returns is capped, reported, and its output kept" \
-  || bad "control: a session that never returns is capped, reported, and its output kept" "state=$GG_PTY_STATE rc=$GG_PTY_RC out=$GG_PTY_OUT"
+  || bad "control: a session that never returns is capped, reported, and its output kept" "state=$GG_PTY_STATE rc=$GG_PTY_RC out=$GG_PTY_OUT err=$GG_PTY_ERR"
 orphan="$(cat "$ROOT/orphan.pid" 2>/dev/null || true)"
 [ -n "$orphan" ] \
   && ok "control: the capped session really did start the child the reap must take" \
   || bad "control: the capped session really did start the child the reap must take" "no pid recorded; state=$GG_PTY_STATE err=$GG_PTY_ERR out=$GG_PTY_OUT"
 [ -n "$orphan" ] && ! kill -0 "$orphan" 2>/dev/null \
   && ok "control: and the cap left no process of it behind" \
-  || bad "control: and the cap left no process of it behind" "pid $orphan is still running; state=$GG_PTY_STATE reaped=$GG_PTY_REAPED err=$GG_PTY_ERR"
+  || bad "control: and the cap left no process of it behind" "pid $orphan is still running; state=$GG_PTY_STATE err=$GG_PTY_ERR"
 
-# The status is the SESSION's own, not the spawner's: BSD `script` relays none.
+# The status is the SESSION's own, read from the file it wrote rather than
+# from the spawner, which reports on its own account.
 printf 'exit 7\n' >"$ROOT/status-case.sh"
 gg_pty_run 20 "$ROOT/status-case.sh" && [ "$GG_PTY_STATE" = ok ] && [ "$GG_PTY_RC" -eq 7 ] \
   && ok "control: a session's own exit status survives the spawner" \
-  || bad "control: a session's own exit status survives the spawner" "state=$GG_PTY_STATE rc=$GG_PTY_RC"
+  || bad "control: a session's own exit status survives the spawner" "state=$GG_PTY_STATE rc=$GG_PTY_RC err=$GG_PTY_ERR"
 
 # A session killed before its own last line is `gone`, and carries no status
 # at all: a value invented here would be indistinguishable from one a probe
@@ -211,67 +207,11 @@ gg_pty_run 20 "$ROOT/status-case.sh" && [ "$GG_PTY_STATE" = ok ] && [ "$GG_PTY_R
 printf 'echo ABOUT-TO-DIE\nkill -9 "$PPID"\nsleep 5\n' >"$ROOT/die-case.sh"
 gg_pty_run 20 "$ROOT/die-case.sh" && [ "$GG_PTY_STATE" = gone ] && [ -z "$GG_PTY_RC" ] \
   && ok "control: a session that dies before its last line reports no status" \
-  || bad "control: a session that dies before its last line reports no status" "state=$GG_PTY_STATE rc=$GG_PTY_RC out=$GG_PTY_OUT"
-
-# A reap that could not learn the session's group says so. gg_pty_bounded is
-# called directly with a session that writes no group file and a sid path that
-# does not exist, which is what a host whose ps answers no -o pgid= leaves
-# behind: only the spawner's group is taken, and reporting that as a clean cap
-# is the leak the reap exists to name.
-printf 'sleep 300\n' >"$ROOT/nosid-body.sh"
-{
-  printf 'echo GG-PTY-BEGIN\n'
-  printf 'bash %q\n' "$ROOT/nosid-body.sh"
-} >"$ROOT/nosid-session.sh"
-printf -v nosid_cmd '/bin/sh %q' "$ROOT/nosid-session.sh"
-gg_pty_bounded 2 "$GG_PTY_FORM" "$nosid_cmd" "$ROOT/absent-sid" "$ROOT/nosid.out"
-[ "$GG_PTY_CAPPED" = 1 ] && [ "$GG_PTY_REAPED" = no-group ] \
-  && ok "control: a reap with no group to take reports it rather than passing as a cap" \
-  || bad "control: a reap with no group to take reports it rather than passing as a cap" "capped=$GG_PTY_CAPPED reaped=$GG_PTY_REAPED"
-
-# The reap's other give-up: a group that outlives SIGKILL. `kill` is shadowed
-# by a shell function that answers the liveness probe yes, which is what an
-# unreapable group looks like from here — a group whose only member is an
-# unreaped zombie behaves the same way. The real kill still runs for every
-# other signal. This costs the reap's own 5s bound; it is the one path that
-# cannot be produced by any process a test may start, since nothing survives
-# SIGKILL to order.
-printf '%s\n' 999999 >"$ROOT/timeout-sid"
-kill() { if [ "$1" = "-0" ]; then return 0; fi; command kill "$@"; }
-gg_pty_reap "" "$ROOT/timeout-sid"
-unset -f kill
-[ "$GG_PTY_REAPED" = timeout ] \
-  && ok "control: a group still alive after SIGKILL is reported as a timeout" \
-  || bad "control: a group still alive after SIGKILL is reported as a timeout" "reaped=$GG_PTY_REAPED"
-
-# And gg_pty_run does not dress that up as a cap. `ps` is shadowed for this
-# call alone, which is the host whose ps has no -o pgid=: the session writes
-# no group, so only the spawner's is taken. The state says leaked, the cause
-# is named, and the scratch tree a live session may hold fds in is left where
-# it is rather than deleted out from under it.
-mkdir -p "$ROOT/nops"
-printf '#!/bin/sh\nexit 1\n' >"$ROOT/nops/ps"
-chmod +x "$ROOT/nops/ps"
-printf 'trap "" HUP\necho STARTED\nsleep 300 &\necho "$!" >%q\nwait\n' "$ROOT/leak.pid" >"$ROOT/leak-case.sh"
-rm -f "$ROOT/leak.pid"
-PATH="$ROOT/nops:$PATH" gg_pty_run 2 "$ROOT/leak-case.sh" \
-  || bad "control: a cap whose reap never learned the group is leaked, not capped" "gg_pty_run did not start: $GG_PTY_ERR"
-[ "$GG_PTY_STATE" = leaked ] && case "$GG_PTY_ERR" in
-  *"never recorded its process group"*) true ;;
-  *) false ;;
-esac \
-  && ok "control: a cap whose reap never learned the group is leaked, not capped" \
-  || bad "control: a cap whose reap never learned the group is leaked, not capped" "state=$GG_PTY_STATE err=$GG_PTY_ERR"
-leaked_dir="${GG_PTY_ERR##*left in place at }"
-[ -n "$leaked_dir" ] && [ -d "$leaked_dir" ] \
-  && ok "control: and its scratch directory is held back rather than removed" \
-  || bad "control: and its scratch directory is held back rather than removed" "dir=$leaked_dir err=$GG_PTY_ERR"
-leak_pid="$(cat "$ROOT/leak.pid" 2>/dev/null || true)"
-[ -n "$leak_pid" ] && kill -9 -- "-$leak_pid" 2>/dev/null || kill -9 "$leak_pid" 2>/dev/null || true
+  || bad "control: a session that dies before its last line reports no status" "state=$GG_PTY_STATE rc=$GG_PTY_RC out=$GG_PTY_OUT err=$GG_PTY_ERR"
 
 # A typescript with no marker is handed back whole. Emptying it here would
-# turn a spawner that died before the session's first line into a clean,
-# quiet, empty pass.
+# lose the spawner's own words, which are what gg_pty_run reports as the cause
+# when no session ran at all.
 printf 'NOTHING RAN\n' >"$ROOT/no-marker.txt"
 gg_pty_capture "$ROOT/no-marker.txt"
 [ "$GG_PTY_OUT" = "NOTHING RAN" ] \
@@ -279,42 +219,11 @@ gg_pty_capture "$ROOT/no-marker.txt"
   || bad "control: a capture with no marker keeps the whole typescript" "out=$GG_PTY_OUT"
 
 
-# A recorded `none` keeps its cause. `script` is shadowed by a stub that fails
-# both grammars, so gg_pty_form reaches none honestly; the second call answers
-# from the memo, and it must answer with the same reason rather than with the
-# bare fact that the spawner is unresolved.
-mkdir -p "$ROOT/nospawn"
-printf '#!/bin/sh\nexit 1\n' >"$ROOT/nospawn/script"
-chmod +x "$ROOT/nospawn/script"
-printf 'echo NEVER\n' >"$ROOT/never-memo.sh"
-gg_form_memo="$GG_PTY_FORM"
-gg_form_memo_err="$GG_PTY_FORM_ERR"
-GG_PTY_FORM=""
-GG_PTY_FORM_ERR=""
-PATH="$ROOT/nospawn:$PATH" gg_pty_run 20 "$ROOT/never-memo.sh" || true
-memo_first="$GG_PTY_ERR"
-memo_form="$GG_PTY_FORM"
-PATH="$ROOT/nospawn:$PATH" gg_pty_run 20 "$ROOT/never-memo.sh" || true
-memo_second="$GG_PTY_ERR"
-GG_PTY_FORM="$gg_form_memo"
-GG_PTY_FORM_ERR="$gg_form_memo_err"
-[ "$memo_form" = none ] && case "$memo_first" in *"no pty spawner"*) true ;; *) false ;; esac \
-  && ok "control: a spawner that answers nothing is recorded none, with its cause" \
-  || bad "control: a spawner that answers nothing is recorded none, with its cause" "form=$memo_form err=$memo_first"
-[ -n "$memo_second" ] && [ "$memo_second" = "$memo_first" ] \
-  && ok "control: and the call after the memo answers with that cause, not a placeholder" \
-  || bad "control: and the call after the memo answers with that cause, not a placeholder" "first=$memo_first second=$memo_second"
-
 # Every path this suite hands to a shell goes through %q, and this case drives
 # them under a scratch root whose NAME is a space and a command substitution:
-# unquoted at any one, the substitution runs. It reaches gg_pty_form's spawn
-# string, gg_pty_run's spawn string, the `bash %q` line gg_pty_run writes into
-# the session, pty_call's SRC, and pty_call's source line.
-#
-# The form memo is cleared for the call, so gg_pty_form re-resolves under the
-# hostile TMPDIR and its spawn site executes there too. Without that it
-# returns at its memo line and the case reaches gg_pty_run's site alone,
-# which is how a %q dropped from gg_pty_form's went unnoticed.
+# unquoted at any one, the substitution runs. It reaches gg_pty_run's spawn
+# string, the `bash %q` line gg_pty_run writes into the session, pty_call's
+# SRC, and pty_call's source line.
 #
 # The one written path no case drives under such a name is pty_call's `cd`,
 # which is the fixture repository this suite makes for itself rather than
@@ -325,29 +234,18 @@ printf 'FROM A HOSTILE PATH\n' >"$hostile/src.tsv"
 rm -f "$ROOT/PWNED"
 if premise_denies_write "$R/tools/dest.tsv" "control: a path that is a space and a command substitution stays a path"; then
   reset_dest ORIGINAL
-  gg_form_memo="$GG_PTY_FORM"
-  GG_PTY_FORM=""
   cp -R "$LIB" "$hostile/lib"
   TMPDIR="$hostile" pty_call "$hostile/lib/common.sh" "$hostile/src.tsv" 'gg_tmpdir; gg_install_file "$SRC" tools/dest.tsv "the fixture"'
-  hostile_form="$GG_PTY_FORM"
-  GG_PTY_FORM="$gg_form_memo"
   [ "$STATE" = ok ] && [ "$RC" -eq 0 ] && [ "$(cat "$R/tools/dest.tsv")" = "FROM A HOSTILE PATH" ] \
     && ok "control: a path that is a space and a command substitution stays a path" \
     || bad "control: a path that is a space and a command substitution stays a path" "state=$STATE rc=$RC out=$OUT content=$(cat "$R/tools/dest.tsv")"
-  # The memo really was re-resolved under that name, so the form probe's own
-  # spawn site ran there. Without this the case above passes over a memo hit.
-  [ -n "$hostile_form" ] && [ "$hostile_form" != none ] \
-    && ok "control: and the form probe itself re-resolved under that name" \
-    || bad "control: and the form probe itself re-resolved under that name" "form=$hostile_form err=$GG_PTY_ERR"
 fi
 [ ! -e "$ROOT/PWNED" ] \
   && ok "control: and nothing inside that name was executed" \
   || bad "control: and nothing inside that name was executed" "the substitution ran; $ROOT/PWNED exists"
 
-# A setup failure names its own cause. Everything above has resolved the
-# spawner already, so this reaches the scratch-directory branch rather than
-# the spawner one, and an operator told "no pty spawner" over an unwritable
-# TMPDIR goes looking at devpts for a problem that is not there.
+# A setup failure names its own cause. An operator told "no pty spawner" over
+# an unwritable TMPDIR goes looking at devpts for a problem that is not there.
 mkdir -p "$ROOT/sealed"
 chmod 500 "$ROOT/sealed"
 printf 'echo NEVER\n' >"$ROOT/never.sh"
@@ -362,90 +260,7 @@ if premise_denies_write "$ROOT/sealed" "control: an unwritable scratch root name
   fi
 fi
 
-# The same sealed root on the FIRST call, before any grammar is resolved.
-# That is gg_pty_form's own scratch failure, a third return site the case
-# above cannot reach: it runs after the memo is set, so it only ever reaches
-# gg_pty_run's. The memo is cleared and restored around it, because a form
-# recorded from a scratch fault would answer for the rest of the run.
-if premise_denies_write "$ROOT/sealed" "control: a sealed scratch root on the first call names the scratch root too"; then
-  gg_form_memo="$GG_PTY_FORM"
-  GG_PTY_FORM=""
-  if TMPDIR="$ROOT/sealed" gg_pty_run 20 "$ROOT/never.sh"; then
-    bad "control: a sealed scratch root on the first call names the scratch root too" "gg_pty_run returned 0; state=$GG_PTY_STATE err=$GG_PTY_ERR"
-  else
-    case "$GG_PTY_ERR" in
-      *"scratch directory"*) ok "control: a sealed scratch root on the first call names the scratch root too" ;;
-      *) bad "control: a sealed scratch root on the first call names the scratch root too" "err=$GG_PTY_ERR" ;;
-    esac
-  fi
-  # And no memo was recorded for it: a scratch fault is not the spawner's
-  # answer, so a later call with TMPDIR working probes again.
-  [ -z "$GG_PTY_FORM" ] \
-    && ok "control: and records no spawner verdict for a fault that is not the spawner's" \
-    || bad "control: and records no spawner verdict for a fault that is not the spawner's" "GG_PTY_FORM=$GG_PTY_FORM err=$GG_PTY_ERR"
-  GG_PTY_FORM="$gg_form_memo"
-fi
 chmod 700 "$ROOT/sealed"
-
-# The form probe runs under the same cap as every other spawn here. A `script`
-# that blocks allocating a pty rather than failing would otherwise wedge the
-# whole suite before a single case ran — the rule this file states, dropped by
-# the code that decides whether the file can run at all.
-#
-# What it must come back with is a REPORT, not a verdict: a grammar killed at
-# its cap did not answer, so `none` — which says both grammars ran and neither
-# opened a pty — is the one thing this run may not record. The probe prints
-# the memo, the cause, and whether the tree the blocked session was running in
-# is still there.
-#
-# The stub blocks on the util-linux grammar and fails fast on the BSD one, so
-# the probe costs one cap. The bound around it belongs to the CASE, not to the
-# helper: without it a helper that lost its cap would hang here instead of
-# reporting, which is the shape this whole suite exists to refuse.
-mkdir -p "$ROOT/stub"
-cat >"$ROOT/stub/script" <<'STUB'
-#!/bin/sh
-case "$1" in -qec) exec sleep 300 ;; esac
-exit 1
-STUB
-chmod +x "$ROOT/stub/script"
-set -m
-env PATH="$ROOT/stub:$PATH" bash -c '
-  . "$1"
-  . "$2"
-  gg_pty_form || true
-  printf "FORM=%s\n" "$GG_PTY_FORM"
-  printf "ERR=%s\n" "$GG_PTY_ERR"
-  kept="${GG_PTY_ERR##*left in place at }"
-  if [ "$kept" != "$GG_PTY_ERR" ] && [ -d "$kept" ]; then
-    printf "KEPT=yes\n"
-  else
-    printf "KEPT=no\n"
-  fi
-' _ "$TEST_DIR/lib/harness.bash" "$TEST_DIR/lib/pty.bash" >"$ROOT/form-probe.out" 2>&1 &
-probe_pid=$!
-set +m
-waited=0
-while kill -0 "$probe_pid" 2>/dev/null && [ "$waited" -lt 300 ]; do
-  sleep 0.1
-  waited=$((waited + 1))
-done
-if kill -0 "$probe_pid" 2>/dev/null; then
-  kill -9 -- "-$probe_pid" 2>/dev/null || kill -9 "$probe_pid" 2>/dev/null || true
-  wait "$probe_pid" 2>/dev/null || true
-  bad "control: a spawner that blocks is reported inside the cap, not resolved" "the probe was still running after 30s; out=$(cat "$ROOT/form-probe.out")"
-else
-  wait "$probe_pid" 2>/dev/null || true
-  probe_out="$(cat "$ROOT/form-probe.out")"
-  probe_form="$(sed -n 's/^FORM=//p' "$ROOT/form-probe.out")"
-  [ -z "$probe_form" ] && case "$probe_out" in *"ERR="*"spawner probe"*) true ;; *) false ;; esac \
-    && ok "control: a spawner that blocks is reported inside the cap, not resolved" \
-    || bad "control: a spawner that blocks is reported inside the cap, not resolved" "$probe_out"
-  case "$probe_out" in
-    *KEPT=yes*) ok "control: and the tree the blocked session was running in is held back" ;;
-    *) bad "control: and the tree the blocked session was running in is held back" "$probe_out" ;;
-  esac
-fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

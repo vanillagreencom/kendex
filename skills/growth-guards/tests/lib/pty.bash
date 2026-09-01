@@ -30,17 +30,14 @@ set -euo pipefail
 #   A time cap. The session is killed after CAP seconds and reported as
 #   GG_PTY_STATE=capped. A probe that HANGS yields no measurement at all, so
 #   a mutation run scores it as "not killed" and prints a silent miss instead
-#   of a wedge. gg_pty_reap takes the session's own process group, waits up
-#   to 5s for it, and says so when it could not finish — `capped` is a claim
-#   that the session is gone, and a reap that did not get there reports
-#   `leaked` rather than making it.
+#   of a wedge. The teardown kills the session's own process group, because
+#   `script` puts the session in a group of its own and killing the spawner
+#   alone leaves the stuck child behind.
 #
 # What a call sets:
 #
 #   GG_PTY_STATE  ok      the session ran to its own end; GG_PTY_RC is its status
-#                 capped  the cap fired and the session's group is gone
-#                 leaked  the cap fired and the reap did not finish; GG_PTY_ERR
-#                         says which way, and the scratch tree is left in place
+#                 capped  the cap fired and the session was killed
 #                 gone    the session died before its own last line
 #   GG_PTY_RC     the session's own exit status, and EMPTY in any other state,
 #                 so a caller reading it past a cap gets a loud comparison
@@ -48,22 +45,18 @@ set -euo pipefail
 #                 owns no status values of its own: a probe may exit anything.
 #   GG_PTY_OUT    the session's own output (gg_pty_capture)
 #
-# A non-zero return means the call never started. No spawner is one such
-# cause, and it is a red rather than a skip: a case that cannot reach the
-# terminal branch is not covering it.
-#
-# GG_PTY_ERR is separate from that return. It carries a cause wherever this
-# file has one to give: every non-zero return, and the `leaked` state, which
-# returns 0. It is empty otherwise.
+# A non-zero return means the call never started. GG_PTY_ERR then names why,
+# and no working `script` is one such cause — a RED rather than a skip, since
+# a case that cannot reach the terminal branch is not covering it. This file
+# spawns through util-linux `script -qec` alone, so a host whose `script` does
+# not answer that grammar is exactly such a host.
 #
 # What a case may assert:
 #
-#   The EFFECT the branch has, not the spawner's status. A `mv` answered no
-#   exits 1 on GNU, which gg_install_why folds into gg_install_file's own
-#   exit-2 diagnostic, and 0 on BSD, where the helper reports nothing at all.
-#   The destination's content is the claim both platforms carry, and
-#   GG_PTY_STATE=ok is the separate claim that the probe ran rather than
-#   wedged.
+#   The EFFECT the branch has, not the spawner's status. Whether the
+#   destination was replaced is what the branch does; a status is what one
+#   `mv` on one host chose to say about it. GG_PTY_STATE=ok is the separate
+#   claim that the probe ran rather than wedged.
 #
 #   Positive evidence that the code under test was entered, paired with every
 #   negative. An unreplaced destination is also what a session that never got
@@ -74,96 +67,56 @@ set -euo pipefail
 #   makes `mv` prompt, and at euid 0 mode 0444 is not enforced — so without
 #   that check a root run covers nothing and says nothing.
 #
-# The two platforms diverge under the helper too, which is why it normalizes
-# both: the status travels in a file because BSD `script` has no util-linux
-# -e, and the output starts at a marker because BSD echoes the end-of-file
-# this helper delivers into the typescript ahead of the session's first line.
-# The grammar itself is chosen by running each and asking the session whether
-# its own fds are a terminal, never by parsing a version banner.
+# The status travels in a file because a status read off the spawner would
+# mean something different per platform, and the output starts at a marker
+# because a terminal writes into the typescript on its own account.
 
-# Resolved once per suite by gg_pty_form: the spawner grammar that really
-# yields a tty here, or `none`.
-GG_PTY_FORM=""
 GG_PTY_RC=""
 GG_PTY_OUT=""
 GG_PTY_STATE=""
 GG_PTY_ERR=""
 GG_PTY_CAPPED=0
-GG_PTY_REAPED=""
-GG_PTY_SETTLED=""
-# The cause recorded beside a `none` memo, so a second call answers with the
-# reason the first one found rather than with the fact that it failed.
-GG_PTY_FORM_ERR=""
 
-# `script` is the one pty spawner both platforms ship, under two incompatible
-# grammars: util-linux takes the command as an argument to -e -c, BSD (macOS)
-# takes it after the typescript file and has no -e at all.
-gg_pty_spawn() { # FORM SH_COMMAND
-  case "$1" in
-    util-linux) script -qec "$2" /dev/null ;;
-    bsd) script -q /dev/null /bin/sh -c "$2" ;;
-  esac
-}
-
-# Kill the group the SESSION runs in, then the spawner's. Both `script`
-# grammars call setsid for the session, so it lives in a session and a process
-# group the spawner's group never names: killing the spawner alone leaves the
-# stuck child behind, and a body that ignores SIGHUP survives the pty closing
-# too. That orphan then outlives the scratch directory removed below, holding
-# fds inside a deleted tree while the caller is told the cap worked.
+# Kill the group the SESSION runs in, then the spawner's. `script` calls
+# setsid for the session, so it lives in a process group the spawner's group
+# never names: killing the spawner alone leaves the stuck child behind, and a
+# body that ignores SIGHUP survives the pty closing too.
 #
 # The session's group is read from the file its own first line wrote, because
 # nothing on this side can derive it: the spawner is between us and it.
-gg_pty_reap() { # SPAWNER_PID_OR_EMPTY SID_FILE — sets GG_PTY_REAPED
+gg_pty_reap() { # SPAWNER_PID SID_FILE
   local group="" waited=0
-  GG_PTY_REAPED=yes
   [ ! -f "$2" ] || group="$(tr -dc '0-9' <"$2" 2>/dev/null || true)"
-  if [ -n "$group" ]; then
-    # The session first, while the timeout that named it is one instant old:
-    # a pid read from a file is only as current as the process it came from.
-    kill -9 -- "-$group" 2>/dev/null || true
-  else
-    # No group to take: the session died before its first line, or this
-    # host's ps answers no -o pgid=. The spawner's goes below either way, but
-    # that is not the session's, and a reap that took only the spawner is the
-    # leak this function exists to report rather than the cap it looks like.
-    GG_PTY_REAPED=no-group
-  fi
+  # The session first, while the timeout that named it is one instant old: a
+  # pid read from a file is only as current as the process it came from.
+  [ -z "$group" ] || kill -9 -- "-$group" 2>/dev/null || true
   # The spawner by group where job control gave it one, by bare pid where it
   # did not — the fallback is what makes the caller's `set -m` an optimisation
   # rather than a requirement.
-  if [ -n "$1" ]; then
-    kill -9 -- "-$1" 2>/dev/null || kill -9 "$1" 2>/dev/null || true
-    wait "$1" 2>/dev/null || true
-  fi
-  # The reap waits up to 5s for the group to go. A group still there after
-  # that is REPORTED, not absorbed: the caller removes the scratch directory
-  # next, and a live session holding fds inside it is the leak. The bound
-  # stays — an unbounded wait is the wedge this file exists to refuse.
+  kill -9 -- "-$1" 2>/dev/null || kill -9 "$1" 2>/dev/null || true
+  wait "$1" 2>/dev/null || true
+  # Then wait for the group to go, up to 5s, before the caller removes the
+  # scratch directory the session was running in. The bound stays — an
+  # unbounded wait is the wedge this file exists to refuse.
   while [ -n "$group" ] && kill -0 -- "-$group" 2>/dev/null; do
-    if [ "$waited" -ge 50 ]; then
-      GG_PTY_REAPED=timeout
-      break
-    fi
+    [ "$waited" -lt 50 ] || break
     sleep 0.1
     waited=$((waited + 1))
   done
 }
 
-# One capped spawn, used by every probe here — gg_pty_form's own included,
-# since a spawner that blocks allocating a pty would otherwise wedge the suite
-# before a single case ran, which is the rule this file states and may not
-# drop for its own setup.
-gg_pty_bounded() { # CAP_SECONDS FORM SH_COMMAND SID_FILE OUT_FILE
-  local cap="$1" form="$2" cmd="$3" sidfile="$4" outfile="$5" pid ticks=0 limit
+# One capped spawn. util-linux `script -qec` is the only grammar here: the
+# command goes to -e -c, and the spawner's own stdin is /dev/null so a prompt
+# inside the session meets EOF instead of a person.
+gg_pty_bounded() { # CAP_SECONDS SH_COMMAND SID_FILE OUT_FILE
+  local cap="$1" cmd="$2" sidfile="$3" outfile="$4" pid ticks=0 limit
   GG_PTY_CAPPED=0
-  GG_PTY_REAPED=""
   limit=$((cap * 10))
   # Job control, which gives the spawner a process group of its own where the
   # platform provides one; gg_pty_reap falls back to the bare pid where it
   # does not. The session's group is a separate matter; see there.
   set -m
-  gg_pty_spawn "$form" "$cmd" >"$outfile" 2>&1 </dev/null &
+  script -qec "$cmd" /dev/null >"$outfile" 2>&1 </dev/null &
   pid=$!
   set +m
   while kill -0 "$pid" 2>/dev/null; do
@@ -176,103 +129,6 @@ gg_pty_bounded() { # CAP_SECONDS FORM SH_COMMAND SID_FILE OUT_FILE
     ticks=$((ticks + 1))
   done
   wait "$pid" 2>/dev/null || true
-}
-
-# What every caller of gg_pty_bounded owes the moment it returns, in one
-# place because two callers each remembering it is how gg_pty_form ended up
-# reading none of it: the reap's verdict is read HERE, before the next spawn
-# clears GG_PTY_REAPED, and the scratch tree is removed HERE or not at all.
-# No caller reads GG_PTY_CAPPED or GG_PTY_REAPED, and none removes a tree.
-#
-# Sets GG_PTY_SETTLED to:
-#   ran     the spawner returned on its own; the tree is removed
-#   capped  the cap fired and the reap took the session; the tree is removed
-#   leaked  the cap fired and the reap did not finish; the tree is KEPT and
-#           GG_PTY_ERR names which way and where it was left
-gg_pty_settle() { # WHAT SCRATCH_DIR
-  local what="$1" dir="$2"
-  if [ "$GG_PTY_CAPPED" != 1 ]; then
-    GG_PTY_SETTLED=ran
-  elif [ "$GG_PTY_REAPED" = yes ]; then
-    GG_PTY_SETTLED=capped
-  else
-    GG_PTY_SETTLED=leaked
-    case "$GG_PTY_REAPED" in
-      no-group) GG_PTY_ERR="$what: the session never recorded its process group, so only the spawner's was killed" ;;
-      *) GG_PTY_ERR="$what: the session's process group was still alive 5s after SIGKILL" ;;
-    esac
-  fi
-  # A tree a live session may hold fds in is left where it is, and the caller
-  # is told. Removing it is what turns an incomplete reap into an orphan
-  # running inside a deleted directory.
-  if [ "$GG_PTY_SETTLED" = leaked ]; then
-    GG_PTY_ERR="$GG_PTY_ERR; the scratch directory is left in place at $dir"
-  else
-    rm -rf -- "${dir:?}"
-  fi
-}
-
-# Which grammar this host answers, decided by RUNNING each one and asking the
-# session whether its own fds are a terminal — never by parsing a version
-# banner. A spawner that is present but cannot open a pty (a container with no
-# devpts) fails the same probe, which is the answer that matters.
-gg_pty_form() {
-  local dir form cmd marked
-  if [ -n "$GG_PTY_FORM" ]; then
-    # A recorded `none` answers with the cause it was recorded with, not with
-    # the bare fact that it failed: every call after the first would otherwise
-    # hand the caller a state where the first one had a reason.
-    [ "$GG_PTY_FORM" != none ] || GG_PTY_ERR="$GG_PTY_FORM_ERR"
-    [ "$GG_PTY_FORM" != none ]
-    return
-  fi
-  for form in util-linux bsd; do
-    # One scratch tree per arm, so gg_pty_settle can own each outright: an arm
-    # whose session outlived the reap keeps its own tree while a clean arm's
-    # goes, and no arm deletes a tree the next one needs.
-    #
-    # 2>&1 rather than 2>/dev/null: on failure mktemp's own words ARE the
-    # cause, and they land in $dir, which the branch below reads. On success
-    # mktemp writes the path and nothing else.
-    #
-    # No memo is recorded for a scratch fault. `none` is reserved for "both
-    # grammars ran and neither opened a pty"; latching it here would answer
-    # the same wrong cause for the rest of the run, with TMPDIR long fixed.
-    dir="$(mktemp -d "$TMPDIR/gg-ptyform.XXXXXX" 2>&1)" || {
-      GG_PTY_ERR="could not create a scratch directory under TMPDIR ($TMPDIR): $dir"
-      return 1
-    }
-    {
-      printf '%s\n' 'ps -o pgid= -p $$ >"$2" 2>/dev/null || true'
-      printf '%s\n' '[ -t 0 ] && [ -t 1 ] && [ -t 2 ] && : >"$1"'
-    } >"$dir/probe.sh"
-    # %q at every spawn site: $dir descends from TMPDIR, which the caller owns,
-    # and an unquoted path with a space or a metacharacter lands in an `sh -c`
-    # string as syntax rather than as a path.
-    printf -v cmd '/bin/sh %q %q %q' "$dir/probe.sh" "$dir/mark" "$dir/sid"
-    gg_pty_bounded 5 "$form" "$cmd" "$dir/sid" /dev/null
-    # Read before settling, because settling may remove the tree it is in.
-    marked=no
-    [ ! -f "$dir/mark" ] || marked=yes
-    gg_pty_settle "the $form spawner probe" "$dir"
-    if [ "$marked" = yes ]; then
-      GG_PTY_FORM="$form"
-      return 0
-    fi
-    # A grammar that had to be KILLED at the cap did not answer, and `none`
-    # is a report that both answered. Stop here with the cause instead: a
-    # later call, on a host whose spawner has stopped blocking, probes again.
-    if [ "$GG_PTY_SETTLED" != ran ]; then
-      [ "$GG_PTY_SETTLED" = leaked ] \
-        || GG_PTY_ERR="the $form spawner probe was still running at its cap and was killed; it opened no pseudo-terminal"
-      return 1
-    fi
-  done
-  # Both grammars ran and neither opened a pty. That, and only that, is none.
-  GG_PTY_FORM=none
-  GG_PTY_ERR="no pty spawner on this host: neither script grammar opened a pseudo-terminal"
-  GG_PTY_FORM_ERR="$GG_PTY_ERR"
-  return 1
 }
 
 # The session's own output: the typescript from the marker line on, with the
@@ -294,17 +150,11 @@ gg_pty_run() { # CAP_SECONDS SCRIPT_FILE
   GG_PTY_OUT=""
   GG_PTY_STATE=""
   GG_PTY_ERR=""
-  # gg_pty_form names its own cause on every failing path, memo included, so
-  # the specific one survives: a sealed TMPDIR reported as a missing spawner
-  # sends an operator after devpts. The line below therefore stands in for
-  # nothing — it declares a gg_pty_form that returned without a cause, which
-  # is a defect in this file rather than a state a host can be in.
-  gg_pty_form || {
-    [ -n "$GG_PTY_ERR" ] || GG_PTY_ERR="gg_pty_form returned non-zero and named no cause"
-    return 1
-  }
-  # Named apart from the spawner, because a caller told "no spawner" over a
-  # full or unwritable TMPDIR goes looking at devpts for a scratch problem.
+  # 2>&1 rather than 2>/dev/null: on failure mktemp's own words ARE the cause,
+  # and they land in $dir, which the branch below reads. On success mktemp
+  # writes the path and nothing else. Named apart from the spawner, because a
+  # caller told "no spawner" over a full or unwritable TMPDIR goes looking at
+  # devpts for a scratch problem.
   dir="$(mktemp -d "$TMPDIR/gg-pty.XXXXXX" 2>&1)" || {
     GG_PTY_ERR="could not create a scratch directory under TMPDIR ($TMPDIR): $dir"
     return 1
@@ -312,18 +162,18 @@ gg_pty_run() { # CAP_SECONDS SCRIPT_FILE
   # The session's own group, its output marker, and its status, in that order.
   #
   # The GROUP, first line, because gg_pty_reap cannot derive it from this side
-  # and `$$` is not it: util-linux `script` runs the command through $SHELL,
-  # which need not exec away.
+  # and `$$` is not it: `script` runs the command through $SHELL, which need
+  # not exec away.
   #
   # The MARKER is where the session's own output starts. What precedes it is
-  # the TERMINAL's, not the script's: BSD echoes the end-of-file character
-  # this helper delivers, and renders it as `^D` plus the backspaces that
-  # erase it, so a suite comparing output would be asserting about the pty on
-  # one platform and about nothing on the other.
+  # the TERMINAL's, not the script's, and it is also how this function knows a
+  # session ran at all.
   #
-  # The STATUS travels in a file, which doubles as the done marker: -e relays
-  # it on util-linux and BSD script has no equivalent, and a status read off
-  # the spawner would mean something different per platform.
+  # The STATUS travels in a file, which doubles as the done marker.
+  #
+  # %q at every path written into a shell: $dir descends from TMPDIR and $body
+  # from the caller, and an unquoted path with a space or a metacharacter
+  # lands in a shell script as syntax rather than as a path.
   {
     printf 'ps -o pgid= -p $$ >%q 2>/dev/null || true\n' "$dir/sid"
     printf 'echo GG-PTY-BEGIN\n'
@@ -331,27 +181,29 @@ gg_pty_run() { # CAP_SECONDS SCRIPT_FILE
     printf 'printf %%s\\\\n "$?" >%q\n' "$dir/rc"
   } >"$dir/session.sh"
   printf -v cmd '/bin/sh %q' "$dir/session.sh"
-  gg_pty_bounded "$cap" "$GG_PTY_FORM" "$cmd" "$dir/sid" "$dir/out"
-  # Everything the session left behind is read BEFORE settling, which may
-  # remove the tree it is in.
+  gg_pty_bounded "$cap" "$cmd" "$dir/sid" "$dir/out"
+  # No marker anywhere in the typescript means no session ran — the spawner
+  # is absent, or does not answer this grammar. Its own words are the cause,
+  # and they are the whole answer to "why did nothing happen here".
+  if ! grep -q GG-PTY-BEGIN "$dir/out" 2>/dev/null; then
+    GG_PTY_ERR="no working pty spawner: util-linux \`script -qec\` started no session. It said: $(tr -d '\r' <"$dir/out" 2>/dev/null || true)"
+    rm -rf -- "${dir:?}"
+    return 1
+  fi
   gg_pty_capture "$dir/out"
   [ ! -f "$dir/rc" ] || GG_PTY_RC="$(cat "$dir/rc")"
-  gg_pty_settle "the session" "$dir"
-  case "$GG_PTY_SETTLED" in
-    leaked) GG_PTY_STATE=leaked ;;
-    capped) GG_PTY_STATE=capped ;;
-    *)
-      if [ -n "$GG_PTY_RC" ]; then
-        GG_PTY_STATE=ok
-      else
-        # No status file: the session never reached its own last line.
-        # GG_PTY_RC stays empty rather than standing in for one, so nothing
-        # here can be mistaken for something the probe returned.
-        GG_PTY_STATE=gone
-      fi
-      ;;
-  esac
-  # A capped or leaked session never ran its last line, so a status found in
-  # its tree is not one it chose to return.
+  if [ "$GG_PTY_CAPPED" = 1 ]; then
+    GG_PTY_STATE=capped
+  elif [ -n "$GG_PTY_RC" ]; then
+    GG_PTY_STATE=ok
+  else
+    # No status file: the session never reached its own last line. GG_PTY_RC
+    # stays empty rather than standing in for one, so nothing here can be
+    # mistaken for something the probe returned.
+    GG_PTY_STATE=gone
+  fi
+  # A capped session never ran its last line, so a status found in its tree is
+  # not one it chose to return.
   [ "$GG_PTY_STATE" = ok ] || GG_PTY_RC=""
+  rm -rf -- "${dir:?}"
 }
