@@ -217,11 +217,13 @@ Declined: frozen at a1fa74dca; lifecycle was at 104/104 and tools/guard passes.
 #
 # One line per multi-word entry the misordering can strand. An entry strands
 # when its FIRST word is in neither list — nothing else deletes the head — AND
-# its LAST word is not in the FILLER list, because the filler pass sits ahead
-# of the strips in both orders, so an entry ending in a filler word is taken
-# apart before either strip can reach its tail. Spell each with spaces: a
-# separator inside the phrase makes it one non-space run, which the count
-# strip then eats whole in either order.
+# at least one word after the first is missing from the OTHER list, the one
+# still running ahead of the strips in that misordering, which for an entry
+# of the label list is the filler list. When that pass deletes EVERY word
+# after the head, the strip's reach walks leftward onto the head itself and
+# nothing is left standing. Spell each with spaces: a separator inside the
+# phrase makes it one non-space run, which the count strip then eats whole in
+# either order.
 #
 # Derive that set from reason_left rather than trusting this comment; if the
 # lists or the pass order change, this section is what has to grow with them.
@@ -236,9 +238,10 @@ Declined: out of scope 104/104 and the full tools/guard pass
 
 # --- a label phrase the derivation excludes -------------------------------
 # Must-catch, but not ordering fixtures, and here rather than above so the
-# probe does not read them as ones. "nothing to do" ends in a filler word and
-# "pre-existing" is one non-space run, so each is caught in both orders for
-# the reasons the section above states.
+# probe does not read them as ones. Every word after the head of "nothing to
+# do" is one the filler list carries, and "pre-existing" is one non-space
+# run, so each is caught in both orders for the reasons the section above
+# states.
 Declined: nothing to do 2/2
 Declined: pre-existing 7/7
 
@@ -255,7 +258,8 @@ Declined: nothing-to-do
 
 # --- a label phrase the path strip reaches first --------------------------
 # The derivation EXCLUDES `n a`, for the same reason it excludes `nothing to
-# do` one section up: its last word is `a`, which the filler list carries. It
+# do` one section up: every word after its head — here just `a` — is one the
+# filler list carries. It
 # is here rather than there because the reply people actually write is "n/a",
 # and the label list carries a slash spelling of the entry so the filler pass
 # cannot take the `a` out of it first — which makes it a must-catch whatever

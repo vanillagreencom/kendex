@@ -433,9 +433,13 @@ echo "--- the ordering section covers every entry the derivation names ---"
 #
 # The rule, and it is the file's rule rather than this script's: a multi-word
 # entry strands when its FIRST word is in neither list — nothing else deletes
-# the head — and its LAST word is not in the OTHER list, the one still
-# running ahead of the strips in that probe, which would otherwise take the
-# entry apart before either strip reached its tail.
+# the head — and at least one word after the first is missing from the OTHER
+# list, the one still running ahead of the strips in that probe. When that
+# pass deletes EVERY word after the head, the strip's reach walks leftward
+# until it consumes the head itself and nothing is stranded, which is why
+# `nothing to do` is excluded: both `to` and `do` are filler, so the strip
+# lands on `nothing`. Reading the last word alone would miss a three-word
+# entry with a mixed tail and demand no fixture for one that needs it.
 #
 # Nothing in that rule is about WHICH list an entry lives in. Both probes
 # exist because both lists must run ahead of the strips, so the derivation
@@ -469,7 +473,7 @@ else
 
   DERIVED=0
   derive_over() { # derive_over SOURCE_ALT TAIL_ALT LIST_NAME SECTION_HEADING
-    local src="$1" tail_alt="$2" name="$3" heading="$4" flat="" found=0 line entry w first last
+    local src="$1" tail_alt="$2" name="$3" heading="$4" flat="" found=0 line entry w first rest tw listed
     while IFS= read -r line; do
       flat="$flat
 $(flatten "$line")"
@@ -477,10 +481,15 @@ $(flatten "$line")"
     while IFS= read -r entry; do
       case "$entry" in *' '*) ;; *) continue ;; esac
       w="$(words_of "$entry")"
-      first="${w%% *}"; last="${w##* }"
+      first="${w%% *}"; rest="${w#* }"
       in_list "$first" "$LABEL_ALT" && continue
       in_list "$first" "$FILLER_ALT" && continue
-      in_list "$last" "$tail_alt" && continue
+      # Every word after the head, not just the last: the pass ahead of the
+      # strips has to delete the whole tail before the strip's reach can walk
+      # back onto the head.
+      listed=1
+      for tw in $rest; do in_list "$tw" "$tail_alt" || { listed=0; break; }; done
+      [ "$listed" = 1 ] && continue
       found=$((found + 1))
       if printf '%s' "$flat" | grep -qF " $w "; then
         ok "derived and covered — $name: $entry"
