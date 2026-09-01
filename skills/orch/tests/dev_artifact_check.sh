@@ -103,13 +103,11 @@ assert_eq "$(jq -r '.ok' <<<"$out")" "true" "valid implement receipt reports ok=
 assert_eq "$(jq -r '.path' <<<"$out")" "$artifact" "valid implement receipt reports its path"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "flagless implement receipt reports reason=valid"
 
-# A flagless round fix automatically requires authorization; this plain
-# non-repository fixture has none and cannot fall through to the item fallback.
+# Without --expect-items-from-round there is no delegated set to check against,
+# so a well-formed fix receipt falls back to the non-empty-items rule.
 printf '%s' "$valid_fix" > "$artifact"
-set +e
-"$CHECK" --worktree "$worktree" --issue "$issue" --round-id "$R" >/dev/null 2>&1
-assert_eq "$?" "2" "flagless fix receipt cannot bypass round authorization"
-set -e
+assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "valid" \
+  "flagless fix receipt falls back to the well-formed items rule"
 
 # --- round-id identity: a DIFFERENT requested round resolves a different path → missing ---
 assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id 9999-0)" "missing" "wrong round id resolves a different path → missing"
@@ -325,11 +323,8 @@ rr_head="$(git -C "$rr_wt" rev-parse HEAD)"
   --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items-from-round)" "valid" \
   "artifact covering the persisted round set → valid (writers round-trip)"
-rr_auth="$rr_wt/.git/kendex/dev-round-authorizations/issue-9-7-8.json"
-assert_eq "$(jq -r '.live' "$rr_auth")" "false" "acceptance retires the external authorization"
-assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8)" "valid" \
-  "flagless fix automatically resolves bound round authorization"
-assert_eq "$(jq -r '.live' "$rr_auth")" "false" "repeat acceptance keeps the authorization retired"
+assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items-from-round)" "valid" \
+  "the record is not consumed: a repeat check of the accepted round stays valid"
 # an artifact missing a delegated item must fail exactly as with explicit numbers
 "$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a >/dev/null
@@ -368,6 +363,9 @@ jq -n --arg base "$rr_head" '{schema_version:2,round_id:"15-15",issue:"issue-9",
   > "$rr_wt/tmp/dev-round-issue-9-15-15.json"
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 15-15 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--expect-items-from-round with an empty item text exits 2"
+ln -s "$rr_wt/tmp/dev-round-issue-9-7-8.json" "$rr_wt/tmp/dev-round-issue-9-17-17.json"
+"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 17-17 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "--expect-items-from-round with a symlinked round record exits 2"
 set -e
 # the count-vs-set hint diagnoses a TYPED --expect-items count; a set read from
 # the round record cannot be that misuse, so from-round must not emit the hint
@@ -383,8 +381,8 @@ assert_eq "$hint_round" "null" "--expect-items-from-round never emits the count-
 reason_round="$("$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --expect-items-from-round 2>/dev/null | jq -r '.reason' || true)"
 assert_eq "$reason_round" "incomplete" "from-round set mismatch still reports incomplete"
 set +e
-# The weaker item-list flag cannot accept a round-mode artifact that the bound
-# authorization path accepts.
+# The weaker item-list flag cannot accept a round-mode artifact that the
+# from-round path accepts.
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items 1,2 >/dev/null 2>&1
 assert_eq "$?" "2" "round mode rejects --expect-items authorization bypass"
 # --file mode has no worktree/issue/round to resolve a record from
@@ -437,17 +435,15 @@ assert_eq "$(jq -c '.files' <<<"$adds_out")" \
   '[".agents/skills/orch/scripts/installed-check","crates/new-parser/lib.rs","helpers/root-helper.ts","pkg/test_helpers/nested.ts","skills/orch/scripts/new-check","src/test_utils.rs","test/support/root-support.sh","tools/new\nline","tools/new-tool","ui/src/test/round-helper.ts"]' \
   "the refusal names every unlisted addition"
 
-allowed_adds="$TMP_ROOT/allowed-adds.json"
-printf '%s' '["crates/allowed/lib.rs","skills/orch/scripts/allowed-check","tools/allowed tool;still-data","ui/src/test/allowed-helper.ts"]' > "$allowed_adds"
 "$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 2-2 --item 1 "fix finding" "tools/guard on a staged render" \
-  --adds-file "$allowed_adds" >/dev/null
+  --adds "crates/allowed/lib.rs skills/orch/scripts/allowed-check tools/allowed;still-data ui/src/test/allowed-helper.ts" >/dev/null
 mkdir -p "$adds_wt/crates/allowed"
 printf 'crate\n' > "$adds_wt/crates/allowed/lib.rs"
 printf 'script\n' > "$adds_wt/skills/orch/scripts/allowed-check"
-printf 'tool\n' > "$adds_wt/tools/allowed tool;still-data"
+printf 'tool\n' > "$adds_wt/tools/allowed;still-data"
 printf 'helper\n' > "$adds_wt/ui/src/test/allowed-helper.ts"
 git -C "$adds_wt" add crates/allowed/lib.rs skills/orch/scripts/allowed-check \
-  "tools/allowed tool;still-data" ui/src/test/allowed-helper.ts
+  "tools/allowed;still-data" ui/src/test/allowed-helper.ts
 git -C "$adds_wt" commit -q -m allowed-additions
 allowed_head="$(git -C "$adds_wt" rev-parse HEAD)"
 "$WRITE" --worktree "$adds_wt" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$allowed_head" \
@@ -480,7 +476,7 @@ git -C "$diverge_wt" commit -q --allow-empty -m divergent
 diverge_head="$(git -C "$diverge_wt" rev-parse HEAD)"
 "$WRITE" --worktree "$diverge_wt" --kind fix --issue issue-826 --round-id 4-4 --branch divergent \
   --commit "$diverge_head" --validate pass --item 1 Applied done >/dev/null
-diverge_out="$("$CHECK" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4)"
+diverge_out="$("$CHECK" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round)"
 assert_eq "$(jq -r '.reason' <<<"$diverge_out")" "valid" \
   "direct snapshot comparison accepts histories with no merge base"
 git_shim_dir="$TMP_ROOT/git-shim"
@@ -496,7 +492,7 @@ chmod +x "$git_shim_dir/git"
 real_git="$(command -v git)"
 set +e
 comparison_out="$(REAL_GIT="$real_git" PATH="$git_shim_dir:$PATH" "$CHECK" \
-  --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 2>/dev/null)"
+  --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round 2>/dev/null)"
 comparison_rc=$?
 set -e
 assert_eq "$comparison_rc" "1" "a failed direct snapshot probe refuses acceptance"
@@ -508,7 +504,7 @@ sed -i.bak 's/emit false "$file" "comparison_failed"/emit false "$file" "unappro
 chmod +x "$routing_mutant"
 set +e
 routing_mutant_out="$(REAL_GIT="$real_git" PATH="$git_shim_dir:$PATH" "$routing_mutant" \
-  --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 2>/dev/null)"
+  --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round 2>/dev/null)"
 set -e
 if [[ "$(jq -r '.reason' <<<"$routing_mutant_out")" == "comparison_failed" ]]; then
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "routing control detects a comparison-failure misroute"
@@ -729,7 +725,8 @@ assert_file_contains "$dev_round_schema" "dev-round-write" "dev-round schema ref
 assert_file_contains "$dev_round_schema" "round_id" "dev-round schema documents round_id identity"
 assert_file_contains "$dev_round_schema" "base_sha" "dev-round schema documents the fix round base"
 assert_file_contains "$dev_round_schema" "adds" "dev-round schema documents allowed additions"
-assert_file_contains "$dev_round_schema" "git-common-dir" "dev-round schema documents external authorization storage"
+assert_file_contains "$dev_round_schema" "tmp/dev-round-" "dev-round schema documents where the record lives"
+assert_file_not_contains "$dev_round_schema" "git-common-dir" "dev-round schema keeps no external authorization store"
 assert_file_contains "$dev_round_schema" "never fall back" "dev-round schema forbids post-delegation recovery bypass"
 assert_file_contains "$dev_round_schema" "--expect-items-from-round" "dev-round schema documents the check-side reader"
 

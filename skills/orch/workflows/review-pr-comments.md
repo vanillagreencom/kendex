@@ -226,10 +226,10 @@ Persist this group's slice of the `fix set`: write `[WORKTREE_PATH]/tmp/dev-roun
 
 Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
 
-When the list is non-empty, write `[WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of exact repository-relative paths. Render the same array after `Adds:` in the delegation, preserving JSON string boundaries, including `Adds: ["tools/one path.sh"]` and `Adds: ["tools/one path.sh","skills/x/scripts/check;safe"]`. Pass only the data-file path to the writer:
+When the list is non-empty, pass those exact repository-relative paths to the writer as one whitespace-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. A path containing whitespace cannot be authorized.
 
 ```bash
-.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds-file [WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json]
+.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
 ```
 
 Exit 3 is the branch-size refusal. Stop before delegation, discard this fix set, and report the current and baseline counts with `Cut required`. After the branch is cut back to the Done-when, mint a fresh round. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
@@ -248,7 +248,7 @@ Worktree: [WORKTREE_PATH]
 Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
-[If the round may add files: "Adds: [REPO_RELATIVE_PATHS_JSON_ARRAY]"]
+[If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
 
 Review items:
 [For each item in the fix set:]

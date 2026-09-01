@@ -94,10 +94,10 @@ Cancel ends the workflow; a selection goes to § 2.
 
    Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
 
-   When the list is non-empty, write `[WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of exact repository-relative paths. Render the same array after `Adds:` in the delegation, preserving JSON string boundaries, including `Adds: ["tools/one path.sh"]` and `Adds: ["tools/one path.sh","skills/x/scripts/check;safe"]`. Pass only the data-file path to the writer:
+   When the list is non-empty, pass those exact repository-relative paths to the writer as one whitespace-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. A path containing whitespace cannot be authorized.
 
    ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds-file [WORKTREE_PATH]/tmp/dev-round-adds-[DEV_ROUND_ID].json]
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
    ```
 
    Exit 3 is the branch-size refusal. Stop before delegation, discard this item set, and report the current and baseline counts with `Cut required`. After the branch is cut back to the Done-when, mint a fresh round. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
@@ -118,7 +118,7 @@ Cancel ends the workflow; a selection goes to § 2.
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
    QA: [QA_AGENT]
-   [If the round may add files: "Adds: [REPO_RELATIVE_PATHS_JSON_ARRAY]"]
+   [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
 
    Decisions:
    [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
@@ -140,7 +140,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
    ```
 
-   `--expect-items-from-round` reads the step-4 record and its immutable authorization under the repository's git common directory. It requires an exact match and requires the artifact's `items[]` to cover that set, each item once with no unknowns or duplicates, valid decisions, and non-empty reasoning. Exit 2 means authorization cannot be established. Never recreate either record after delegation and never fall back to `--expect-items`; mint and delegate a fresh round.
+   `--expect-items-from-round` reads the step-4 record. It requires the artifact's `items[]` to cover that record's set, each item once with no unknowns or duplicates, valid decisions, and non-empty reasoning. Exit 2 means the expected set cannot be established. Never recreate the record after delegation and never fall back to `--expect-items`; mint and delegate a fresh round.
 
    **Check B**:
 
