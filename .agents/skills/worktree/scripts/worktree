@@ -139,9 +139,7 @@ original head, and target base. continue and skip re-check the remote before
 and after replay, finalize the exact rewritten-head lease when complete, and
 fail closed on missing, stale, or unrelated state. abort requires the same
 matching local state and clears only the pending authorization; remote
-movement does not block it. Paused states created by the pre-token tool
-remain recoverable when all legacy authorization and sequencer fields match
-exactly.
+movement does not block it.
 EOF
 }
 
@@ -186,9 +184,6 @@ Options:
                   refreshes setup. Requires the target's exact canonical path
                   to be registered to this repository's common Git directory;
                   incomplete directories are preserved and exit 75.
-  --recover-local Recreate a missing worktree for the exact local-only issue
-                  branch; preserves commits and does not rebase (full spec
-                  below)
   --restack       When reusing, stop in the conflict state for resolution
                   instead of aborting the rebase
   --replay        With --reuse/--restack: run the same restack as an ordered
@@ -219,34 +214,12 @@ Policy-blocked rebase (cherry-pick replay fallback):
   continue|skip|abort <ID>', and the tool refuses a dirty tree or a range
   containing a merge commit.
 
---recover-local full spec:
-  When a worktree is removed outside this tool after commits but before a
-  push, its normalized issue branch survives locally with no checkout; bare
-  'create <ID>' still exits 75 for it and points here. Recovery accepts only
-  the exact normalized issue branch (for example, CC-123 -> cc-123), records
-  its commit tip, recreates it at the currently configured WORKTREE_BASE_DIR
-  path, verifies the same branch and tip were checked out, and reapplies all
-  configured setup. It never rebases, resets, deletes, or rewrites the
-  surviving branch.
-  It fails closed if: the target path exists; any active, stale, or
-  incomplete worktree registration owns the branch; the branch is missing,
-  non-commit, the default branch, unrelated to origin/<default>, or has an
-  upstream; or any matching remote branch, open PR, or alternate bot-prefixed
-  candidate exists. Recovery requires every configured remote to be
-  reachable. Remote/PR discovery is repeated under the normal per-issue claim
-  lock before creation.
-  The exact local branch tip is snapshotted before any fetch-capable step.
-  Recovery refreshes only origin/<default> into its remote-tracking ref with
-  an explicit forced, no-tags/no-prune refspec constrained to
-  refs/remotes/origin/*; it does not honor a configured mirror-style fetch
-  refspec. The local branch must still equal the snapshot immediately before
-  creation. Inspect and reconcile any refusal instead of forcing recovery.
 EOF
 }
 
 print_remove_help() {
   cat <<'EOF'
-Usage: worktree remove [ID|/path] [--force]
+Usage: worktree remove [ID|/path]
 
 Remove a worktree and delete its local branch when it is safely merged.
 Accepts an issue ID (resolved under the configured worktree base dir, falling
@@ -273,15 +246,7 @@ Failure semantics:
 
 Session leases:
   remove releases its own lease before removing. A foreign lease is left
-  alone and refuses the removal, naming the owner. An issue-keyed lease
-  whose recorded claiming session (its session-leader pid, recorded at claim
-  and refresh) is still alive on this host and is not the removing session
-  or an ancestor of it is also refused.
-
-Options:
-  --force   Release an issue-keyed session lease even while the session that
-            claimed it is still running. Skips only that refusal; every other
-            safeguard is unchanged.
+  alone and refuses the removal, naming the owner.
 EOF
 }
 
@@ -403,7 +368,7 @@ Exit status:
   'Restored symlinks' and exit 0 only when every WORKTREE_SYMLINKS and
   WORKTREE_RELATIVE_SYMLINKS entry ended healthy — present, a symlink, and
   resolving to the target this command gives it. Anything else is named and
-  the exit is non-zero: a path the quarantine left in place, an entry with
+  the exit is non-zero: a materialized path left in place, an entry with
   no such path in the MAIN checkout (setup skips those outright), a link
   that never got created, or one pointing somewhere else. The errors that
   name fix-links as their remediation are re-triggered by exactly those
@@ -425,7 +390,7 @@ Symlink entries that shadow tracked content:
   every pass re-copies it when the content differs, so a change on main
   reaches the worktree on the next pass and an edit made to the worktree
   copy is overwritten. Every other untracked child goes through the
-  same quarantine as a top-level entry: a child that has materialized as a
+  same safety check as a top-level entry: a child that has materialized as a
   real file or directory holding data git does not track, or that differs
   from the index, is reported and left in place, never overwritten. A child
   nesting deeper than 8 levels is reported the same way. Either makes setup
@@ -1177,7 +1142,6 @@ ownership_heads_for_remote() {
 }
 
 discover_ownership_remote_heads() {
-  local strict_secondary="${1:-false}"
   local remotes=()
   local remote="" output="" have_origin=false i
   while IFS= read -r remote; do
@@ -1202,11 +1166,6 @@ discover_ownership_remote_heads() {
         [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
         return 1
       fi
-      if [[ "$strict_secondary" == true ]]; then
-        echo "Error: Could not query remote '$remote'; local-only branch recovery requires every configured remote to be authoritative." >&2
-        [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
-        return 1
-      fi
       # An unreachable secondary remote cannot receive another session's
       # pushes, so skipping it cannot hide active ownership; only origin is
       # authoritative for new-work claims.
@@ -1221,21 +1180,6 @@ discover_ownership_remote_heads() {
 # Explicit owner reuse still requires a fresh origin before rebasing.
 fetch_origin() {
   fetch_ownership_remote origin
-}
-
-# Recovery must refresh only the default branch's remote-tracking ref. An
-# ordinary `git fetch --prune origin` honors configured fetch refspecs, which
-# may target refs/heads/* in mirror-style repositories and delete or rewrite
-# the local-only branch we are trying to preserve. The explicit refspec
-# bypasses remote.origin.fetch; no-prune/no-tags constrain all other refs.
-fetch_recovery_default_branch() {
-  local output=""
-  if output="$(git_with_github_https_auth -C "$PROJECT_ROOT" fetch --no-tags --no-prune --no-recurse-submodules origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" 2>&1)"; then
-    return 0
-  fi
-  echo "Error: Could not safely refresh origin/$DEFAULT_BRANCH for local-only branch recovery." >&2
-  [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
-  return 1
 }
 
 worktree_path() {
@@ -1359,7 +1303,7 @@ is_copied_ignore_child() {
 # Drift policy: main owns the file. Every create/fix-links/auto-repair pass
 # re-copies when the content differs, so a change on main reaches the
 # worktrees next pass and an edit to the worktree copy is overwritten. The
-# copy is the tool's own artifact, not user data, so the quarantine's
+# copy is the tool's own artifact, not user data, so the
 # never-overwrite rule does not apply; a legacy symlink is replaced the same
 # way. It gets the info/exclude entry the symlink got: main's file is
 # untracked, so nothing else hides the copy when it does not ignore itself.
@@ -1462,11 +1406,9 @@ link_untracked_child() {
     copy_ignore_file_into_worktree "$wt" "$rel" || LUC_UNRESOLVED="$LUC_UNRESOLVED  - $rel (copy failed — see warning above)"$'\n'
   elif [[ -z "$exact" && -z "$descendants" ]]; then
     # Nothing tracked here: ordinary symlink treatment, own exclude entry.
-    # Quarantine-checked (#1317): this child may have materialized as a real
-    # file or directory holding untracked user data since the last repair,
-    # and symlink_into_worktree itself has no quarantine of its own — it
-    # would rm -rf/overwrite that data on the direct call this replaces.
-    quarantine_and_relink_path "$wt" "$rel" || LUC_UNRESOLVED="$LUC_UNRESOLVED  - $rel (linking failed or blocked — see warning above)"$'\n'
+    # This child may have materialized with untracked user data since the last
+    # repair, so apply the same content check as a top-level entry.
+    repair_materialized_path "$wt" "$rel" || LUC_UNRESOLVED="$LUC_UNRESOLVED  - $rel (linking failed or blocked — see warning above)"$'\n'
   elif [[ -n "$exact" ]]; then
     # A tracked leaf is git's — here, or on main and not yet merged here. A
     # symlink would collide with the checkout's copy or with that merge.
@@ -1779,7 +1721,7 @@ collect_unhealthy_child() {
 #
 # The repair path's return codes proved too weak to gate the success message:
 # an entry can be skipped before any repair is attempted (no such path in the
-# main checkout), and a quarantined entry is left materialized on purpose.
+# main checkout), and an unsafe materialized entry is left in place.
 # fix-links printed "Restored symlinks" and exited 0 through both, so the sync
 # error naming fix-links as its remediation kept firing and the operator looped
 # on it. Judging the RESULT covers whatever mechanism left a path unrestored,
@@ -2027,7 +1969,7 @@ install_worktree_autorepair_hooks() {
   return 0
 }
 
-# Entries inside a quarantined (moved-aside) materialized path that forbid an
+# Entries inside a materialized path that forbid an
 # automatic re-link. The tracked skeleton (e.g. a lone .cache/.gitkeep) is
 # exactly what a git operation re-materializes, so a copy holding ONLY tracked
 # files at their index content is safe to discard; anything beyond it is not:
@@ -2039,7 +1981,7 @@ install_worktree_autorepair_hooks() {
 #     compare sees them);
 #   - anything that could not be scanned or read — fail closed, never "empty".
 # Names print relative to the configured path; any output means blocked.
-worktree_quarantine_unsafe_entries() {
+worktree_unsafe_entries() {
   local wt="$1" path="$2" qdir="$3" rc=0 raw="" empties="" disk="" tracked=""
   local name="" meta="" mode="" oid="" actual=""
 
@@ -2173,87 +2115,33 @@ worktree_tracked_entry_mismatch() {
   esac
 }
 
-# Re-link a single WORKTREE_SYMLINKS-managed path, refusing to destroy any
-# materialized data that git does not track or that differs from its index
-# record. Shared by repair_worktree_links (top-level configured entries) and
-# link_untracked_children (untracked children inside a shadowed/tracked-
-# content parent, #1317): a materialized CHILD is exactly where a hook racing
-# a cache sync, or a rebase, could otherwise silently drop untracked user data
-# via symlink_into_worktree's unconditional rm -rf/mv — that function has no
-# quarantine of its own, by design, so every call site that might see
-# materialized data must quarantine-check before calling it.
-#
-# The materialized path is atomically renamed aside BEFORE inspection: a
-# writer racing the scan by path lands in a freshly-created directory (or
-# fails with ENOENT), never in the tree being judged, and a blocked copy is
-# renamed back intact. A writer holding an already-open fd into the old tree
-# can still lose post-scan writes — that residual window is unclosable
-# without never deleting at all; the by-path race (the incident class: a
-# cache sync creating files while the hook runs) is what the rename closes.
-#
-# Sets QUARANTINE_RELINK_CHANGED=true when this call actually restored the
-# link, so callers can distinguish "already healthy" from "just repaired" for
-# their own summary reporting. Returns 0 when the path is correctly linked
-# (or already was); 1 when blocked, with a warning already printed to stderr
-# explaining why and how to repair manually.
-QUARANTINE_RELINK_CHANGED=false
-quarantine_and_relink_path() {
-  local wt="$1" path="$2" src="$PROJECT_ROOT/$2" dst="$wt/$2" qdir="" extras="" extra_count=0
-  QUARANTINE_RELINK_CHANGED=false
+# Re-link a WORKTREE_SYMLINKS path only when its materialized copy contains no
+# untracked data or tracked data that differs from the index.
+REPAIR_LINK_CHANGED=false
+repair_materialized_path() {
+  local wt="$1" path="$2" src="$PROJECT_ROOT/$2" dst="$wt/$2" extras="" extra_count=0
+  REPAIR_LINK_CHANGED=false
 
-  if [[ -L "$dst" ]]; then
-    # Healthy steady state; also covers a link re-pointed at a moved main.
-    [[ "$(readlink "$dst" 2>/dev/null || true)" == "$src" ]] && return 0
-  elif [[ -e "$dst" ]]; then
-    qdir="$dst.kendex-repair.$$"
-    if ! mv "$dst" "$qdir" 2>/dev/null; then
-      echo "Warning: '$path' in $wt is materialized but could not be moved aside for inspection; leaving it untouched. Repair manually: cd '$PROJECT_ROOT' && $0 fix-links '$wt'" >&2
-      return 1
-    fi
-    extras="$(worktree_quarantine_unsafe_entries "$wt" "$path" "$qdir")"
+  if [[ -L "$dst" ]] && [[ "$(readlink "$dst" 2>/dev/null || true)" == "$src" ]]; then
+    return 0
+  fi
+  if [[ -e "$dst" && ! -L "$dst" ]]; then
+    extras="$(worktree_unsafe_entries "$wt" "$path" "$dst")"
     if [[ -n "$extras" ]]; then
-      if ! mv "$qdir" "$dst" 2>/dev/null; then
-        echo "CRITICAL: '$path' data is preserved at '$qdir' but could not be moved back to '$dst' — restore it manually before anything else." >&2
-      fi
       extra_count="$(printf '%s\n' "$extras" | grep -c .)"
       {
         echo "Warning: '$path' in $wt should be a symlink to '$src' but is a real path holding $extra_count entr(y/ies) git does not track or that differ from the index:"
         printf '%s\n' "$extras" | head -n 10 | sed 's/^/  - /'
-        if [[ "$extra_count" -gt 10 ]]; then
-          echo "  ... and $((extra_count - 10)) more"
-        fi
+        [[ "$extra_count" -le 10 ]] || echo "  ... and $((extra_count - 10)) more"
         echo "  Auto-repair refuses to destroy untracked data. Move it into '$src' (or delete it),"
         echo "  then restore the link from the main checkout:"
         echo "    cd '$PROJECT_ROOT' && $0 fix-links '$wt'"
       } >&2
       return 1
     fi
-    # An active by-path writer may have recreated the path while the old
-    # tree was inspected; linking now would delete that fresh data inside
-    # symlink_into_worktree. Leave the newcomer for the next hook firing.
-    # The quarantined copy is proven index-identical, so discarding it
-    # loses nothing git cannot restore.
-    if [[ -e "$dst" || -L "$dst" ]]; then
-      rm -rf "$qdir"
-      echo "Warning: '$path' in $wt reappeared while its materialized copy was being inspected (an active writer?); leaving the new path alone. The next git operation will re-attempt the repair." >&2
-      return 1
-    fi
-    # The quarantined copy is deleted only after the link is in place —
-    # a failed relink restores it instead of leaving the path absent.
-    if symlink_into_worktree "$path" "$wt"; then
-      rm -rf "$qdir"
-      QUARANTINE_RELINK_CHANGED=true
-      return 0
-    fi
-    if [[ ! -e "$dst" && ! -L "$dst" ]] && mv "$qdir" "$dst" 2>/dev/null; then
-      echo "Warning: relinking '$path' in $wt failed; the materialized copy was restored. Repair manually: cd '$PROJECT_ROOT' && $0 fix-links '$wt'" >&2
-    else
-      echo "CRITICAL: relinking '$path' in $wt failed and the copy could not be restored — its content is preserved at '$qdir'." >&2
-    fi
-    return 1
   fi
   if symlink_into_worktree "$path" "$wt"; then
-    QUARANTINE_RELINK_CHANGED=true
+    REPAIR_LINK_CHANGED=true
     return 0
   fi
   return 1
@@ -2270,7 +2158,7 @@ warn_missing_symlink_source() {
 }
 
 # Re-assert configured WORKTREE_SYMLINKS in one worktree. Cheap on the healthy
-# path (one readlink per entry); repair is quarantine_and_relink_path above.
+# path (one readlink per entry); repair is repair_materialized_path above.
 repair_worktree_links() {
   local wt="$1" path="" src="" repaired="" blocked=false
   validate_worktree_setup_config || return 1
@@ -2284,10 +2172,9 @@ repair_worktree_links() {
     # (VST-37): its healthy state is a real directory holding per-child links,
     # which symlink_into_worktree heals idempotently — stale assume-unchanged
     # bits cleared, missing tracked files restored, untracked children re-linked
-    # through the same quarantine as any other child, since
-    # link_untracked_children calls quarantine_and_relink_path too.
+    # through the same safety check as any other child.
     # Ask BOTH indexes (#964): checking only $wt here means a branch that
-    # predates a path becoming tracked on main takes the quarantine branch
+    # predates a path becoming tracked on main takes the repair branch
     # below instead, where a destination already healthy from an earlier run
     # returns success on sight without ever re-deciding the shape — so the
     # entry never converts to the per-child layout main's content now requires.
@@ -2297,8 +2184,8 @@ repair_worktree_links() {
       symlink_into_worktree "$path" "$wt" || blocked=true
       continue
     fi
-    if quarantine_and_relink_path "$wt" "$path"; then
-      [[ "$QUARANTINE_RELINK_CHANGED" == true ]] && repaired="$repaired $path"
+    if repair_materialized_path "$wt" "$path"; then
+      [[ "$REPAIR_LINK_CHANGED" == true ]] && repaired="$repaired $path"
     else
       blocked=true
     fi
@@ -2728,21 +2615,17 @@ validate_pending_restack_state() {
     restack_state_refusal "$wt" "missing its tool-created authorization"
     return 1
   fi
-  # Published restacks created before kendex#591 have the same exact fields but
-  # no pending marker. Unpublished restacks require the new marker because an
-  # empty expectedRemoteOid cannot otherwise be distinguished from no state.
-  if [[ -z "$stored_expected" && "$pending" != true ]]; then
+  if [[ "$pending" != true ]]; then
     restack_state_refusal "$wt" "missing its tool-created pending marker"
     return 1
   fi
-  if [[ -n "$state_token" ]]; then
-    marker_token="$(head -n 1 "$state_dir/kendex-restack-token" 2>/dev/null || true)"
-    if [[ "$marker_token" != "$state_token" ]]; then
-      restack_state_refusal "$wt" "missing its matching tool-created state token"
-      return 1
-    fi
-  elif [[ "$pending" == true ]]; then
+  if [[ -z "$state_token" ]]; then
     restack_state_refusal "$wt" "missing its tool-created state token"
+    return 1
+  fi
+  marker_token="$(head -n 1 "$state_dir/kendex-restack-token" 2>/dev/null || true)"
+  if [[ "$marker_token" != "$state_token" ]]; then
+    restack_state_refusal "$wt" "missing its matching tool-created state token"
     return 1
   fi
   if ! git -C "$wt" remote get-url "$stored_remote" >/dev/null 2>&1; then
@@ -3010,8 +2893,7 @@ build_candidate_branches() {
 }
 
 discover_candidate_ownership() {
-  local strict_secondary="${1:-false}"
-  discover_ownership_remote_heads "$strict_secondary" || return 1
+  discover_ownership_remote_heads || return 1
   CANDIDATE_OPEN_PR_BRANCHES=()
   CANDIDATE_OPEN_PR_DETAILS=()
 
@@ -3066,8 +2948,7 @@ scan_candidate_ownership() {
     # The main checkout is never issue work, so it must never be rendered as
     # a reusable worktree. It still blocks this id — git cannot check the
     # branch out a second time — but the remedy is to move that work off the
-    # main checkout, not --reuse and not --recover-local (which would refuse
-    # for the same reason) (#1034).
+    # main checkout, not --reuse (#1034).
     if [[ -n "$existing_wt" ]] && same_canonical_dir "$existing_wt" "$PROJECT_ROOT"; then
       echo "Active work already exists for '$issue'; refusing to create a duplicate worktree." >&2
       echo "  Branch: $branch" >&2
@@ -3098,105 +2979,6 @@ scan_candidate_ownership() {
     fi
   done
   return 0
-}
-
-refuse_local_branch_recovery() {
-  local issue="$1" branch="$2" reason="$3" details="${4:-}"
-  echo "Cannot recover local branch '$branch' for '$issue'." >&2
-  echo "  Reason: $reason${details:+ ($details)}" >&2
-  echo "No worktree was created and the local branch was not modified." >&2
-  return "$ACTIVE_WORK_EXIT"
-}
-
-# Validate the deliberately narrow recovery case from kendex#780: the exact
-# normalized issue branch survived locally, but its worktree was removed
-# before the branch was ever published. This is separate from new-work claim
-# discovery because that local ref is the one ownership signal recovery is
-# expected to consume. Every other ownership signal remains a refusal.
-validate_local_branch_recovery() {
-  local issue="$1" target="$2" expected_head="${3:-}" require_fresh_base="${4:-true}"
-  local branch="" existing_wt="" remote_ref=""
-  local pr_details="" upstream="" candidate="" candidate_wt="" current_head="" object_type=""
-  branch="$(issue_branch_name "$issue")"
-
-  if [[ "$branch" == "$DEFAULT_BRANCH" ]]; then
-    refuse_local_branch_recovery "$issue" "$branch" "the issue branch resolves to the default branch"
-    return "$ACTIVE_WORK_EXIT"
-  fi
-  if ! git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
-    echo "Error: --recover-local requires the exact local branch '$branch'." >&2
-    echo "No worktree was created." >&2
-    return 1
-  fi
-  object_type="$(git -C "$PROJECT_ROOT" cat-file -t "refs/heads/$branch" 2>/dev/null || true)"
-  if [[ "$object_type" != commit ]]; then
-    refuse_local_branch_recovery "$issue" "$branch" "the local ref does not name a commit"
-    return "$ACTIVE_WORK_EXIT"
-  fi
-  current_head="$(git -C "$PROJECT_ROOT" rev-parse "refs/heads/$branch")"
-  if [[ -n "$expected_head" && "$current_head" != "$expected_head" ]]; then
-    refuse_local_branch_recovery "$issue" "$branch" "the local branch tip changed during recovery" "expected $expected_head, found $current_head"
-    return "$ACTIVE_WORK_EXIT"
-  fi
-
-  existing_wt="$(worktree_for_branch "$branch" 2>/dev/null || true)"
-  if [[ -n "$existing_wt" ]]; then
-    if [[ -d "$existing_wt" ]] && is_registered_project_worktree "$existing_wt"; then
-      refuse_existing_worktree "$issue" "$existing_wt"
-      return "$ACTIVE_WORK_EXIT"
-    fi
-    refuse_local_branch_recovery "$issue" "$branch" "an incomplete or stale worktree registration still owns the branch" "$existing_wt"
-    return "$ACTIVE_WORK_EXIT"
-  fi
-
-  guard_new_target_path "$issue" "$target" || return "$ACTIVE_WORK_EXIT"
-
-  remote_ref="$(remote_ref_for_branch "$branch" 2>/dev/null || true)"
-  if [[ -n "$remote_ref" ]]; then
-    refuse_local_branch_recovery "$issue" "$branch" "a remote branch already exists" "$remote_ref"
-    return "$ACTIVE_WORK_EXIT"
-  fi
-  pr_details="$(candidate_open_pr_details "$branch" || true)"
-  if [[ -n "$pr_details" ]]; then
-    refuse_local_branch_recovery "$issue" "$branch" "an open pull request already exists" "${pr_details%%$'\t'*}"
-    return "$ACTIVE_WORK_EXIT"
-  fi
-  upstream="$(git -C "$PROJECT_ROOT" for-each-ref --format='%(upstream)' "refs/heads/$branch")"
-  if [[ -n "$upstream" ]]; then
-    refuse_local_branch_recovery "$issue" "$branch" "the branch has configured upstream history" "$upstream"
-    return "$ACTIVE_WORK_EXIT"
-  fi
-
-  # BOT_NAME/<issue> is another session-owner spelling used by create. Its
-  # presence alongside the exact issue branch makes ownership ambiguous.
-  for candidate in "${CANDIDATE_BRANCHES[@]}"; do
-    [[ "$candidate" == "$branch" ]] && continue
-    candidate_wt="$(worktree_for_branch "$candidate" 2>/dev/null || true)"
-    if [[ -n "$candidate_wt" ]]; then
-      refuse_local_branch_recovery "$issue" "$branch" "another candidate branch has a worktree" "$candidate at $candidate_wt"
-      return "$ACTIVE_WORK_EXIT"
-    fi
-    if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$candidate"; then
-      refuse_local_branch_recovery "$issue" "$branch" "another local candidate branch exists" "$candidate"
-      return "$ACTIVE_WORK_EXIT"
-    fi
-    remote_ref="$(remote_ref_for_branch "$candidate" 2>/dev/null || true)"
-    if [[ -n "$remote_ref" ]]; then
-      refuse_local_branch_recovery "$issue" "$branch" "another remote candidate branch exists" "$remote_ref"
-      return "$ACTIVE_WORK_EXIT"
-    fi
-    pr_details="$(candidate_open_pr_details "$candidate" || true)"
-    if [[ -n "$pr_details" ]]; then
-      refuse_local_branch_recovery "$issue" "$branch" "another candidate branch has an open pull request" "$candidate"
-      return "$ACTIVE_WORK_EXIT"
-    fi
-  done
-
-  if [[ "$require_fresh_base" == true ]] && \
-     ! git -C "$PROJECT_ROOT" merge-base "origin/$DEFAULT_BRANCH" "$branch" >/dev/null 2>&1; then
-    refuse_local_branch_recovery "$issue" "$branch" "the branch does not share history with origin/$DEFAULT_BRANCH"
-    return "$ACTIVE_WORK_EXIT"
-  fi
 }
 
 acquire_issue_claim_lock() {
@@ -3315,126 +3097,6 @@ probe_session_lease() {
   return "$rc"
 }
 
-# A single field of the guard's status JSON. Guard-written values only: pid is
-# numeric and host comes from a sanitized charset, so neither can contain the
-# quote or backslash a general JSON parser would have to handle.
-session_lease_field() {
-  local json="$1" key="$2" rest
-  rest="${json#*\"$key\":\"}"
-  [[ "$rest" != "$json" ]] || return 1
-  printf '%s' "${rest%%\"*}"
-}
-
-# The spelling this host is recorded under in a lease — the guard's own
-# sanitize_host, mirrored so the comparison cannot fail on the sanitization.
-session_guard_host() {
-  local host="${HOSTNAME:-}"
-  [[ -n "$host" ]] || host="$(uname -n 2>/dev/null || true)"
-  [[ -n "$host" ]] || host="unknown-host"
-  printf '%s' "${host//[^A-Za-z0-9._:@+-]/-}"
-}
-
-# This session's leader pid — the identity the guard records in a lease (its
-# session_leader_pid, mirrored). Falls back through the procps `sid` spelling
-# to $$; validation is strict rather than digit-stripping, because BSD ps
-# prints `sess` as a hex pointer that stripping would mangle into a
-# plausible-looking pid.
-session_leader_pid() {
-  local sid
-  sid="$(ps -o sess= -p $$ 2>/dev/null | tr -d '[:space:]' || true)"
-  if ! [[ "$sid" =~ ^[1-9][0-9]*$ ]]; then
-    sid="$(ps -o sid= -p $$ 2>/dev/null | tr -d '[:space:]' || true)"
-  fi
-  [[ "$sid" =~ ^[1-9][0-9]*$ ]] || sid=$$
-  printf '%s' "$sid"
-}
-
-# The guard's mkdir_lock_holder_gone, mirrored: ps(1) sees other users'
-# processes where `kill -0` gets EPERM and would call a live pid dead; with no
-# usable pid, or no ps at all, the pid is presumed alive.
-recorded_pid_gone() {
-  local pid="$1"
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-  command -v ps >/dev/null 2>&1 || return 1
-  ! ps -o pid= -p "$pid" >/dev/null 2>&1
-}
-
-# Whether PID is this process or one of its ancestors, walked up the PPID
-# chain via ps (portable where /proc is not). Bounded so a cyclic or lying ps
-# can never spin; past the bound the pid is treated as unrelated.
-pid_is_self_or_ancestor() {
-  local pid="$1" cur=$$ parent hops=0
-  while [[ "$hops" -lt 64 ]]; do
-    [[ "$cur" == "$pid" ]] && return 0
-    parent="$(ps -o ppid= -p "$cur" 2>/dev/null || true)"
-    parent="${parent//[^0-9]/}"
-    [[ -n "$parent" && "$parent" != "0" && "$parent" != "$cur" ]] || return 1
-    cur="$parent"
-    hops=$((hops + 1))
-  done
-  return 1
-}
-
-# An issue-derived identity proves the same ISSUE, not the same SESSION: any
-# session that names the issue passes the ownership probe (#907), so on that
-# identity alone `remove <ID>` would release a sibling session's live lease
-# and tear down the worktree it is still working in. The lease's recorded pid
-# — the claiming session's leader — decides: this session's own leader, a
-# provably dead pid, or an ancestor of this process proceeds; alive and
-# unrelated on this host refuses. A pid recorded on another host cannot be
-# probed from here, so it proceeds as before, exactly like a lease that
-# records no usable pid.
-issue_release_permits_removal() {
-  local wt="$1" owner="$2" status rc=0 err_file pid host
-  # The lease GENERATION this verdict was reached on, for the caller's
-  # compare-and-release; empty when the lease records none, which the caller
-  # refuses to release optimistically. The generation, not the pid: a pid is
-  # reused by the OS, so a claim taken by a new session after the recorded one
-  # exited can carry the same number and pass a pid compare.
-  LEASE_VERIFIED_GEN=""
-  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-lease-status.XXXXXX")"; then
-    echo "Error: could not create a scratch file to verify the session lease of $wt; refusing to remove it." >&2
-    return 1
-  fi
-  status="$("$SESSION_GUARD" status "$wt" --owner "$owner" --repo "$PROJECT_ROOT" 2>"$err_file")" || rc=$?
-  # The identity probe just succeeded, so an unreadable lease HERE is abnormal
-  # — and permitting on it would release on exactly the evidence gap this
-  # gate exists to close.
-  if [[ "$rc" -ne 0 ]]; then
-    echo "Error: could not re-read the session guard state of $wt (exit $rc); refusing to remove it." >&2
-    sed 's/^/  /' "$err_file" >&2
-    rm -f "$err_file"
-    return 1
-  fi
-  rm -f "$err_file"
-  pid="$(session_lease_field "$status" pid || true)"
-  host="$(session_lease_field "$status" host || true)"
-  # Captured before the permit-by-default exits below, so every path that
-  # permits a removal still binds the release to the lease it was read from.
-  LEASE_VERIFIED_GEN="$(session_lease_field "$status" generation || true)"
-  # pid 1 is init, never a claiming session; a lease recording it is corrupt,
-  # and the ancestor walk would call it everyone's ancestor.
-  [[ "$pid" =~ ^[1-9][0-9]*$ && "$pid" != "1" ]] || return 0
-  [[ "$host" == "$(session_guard_host)" ]] || return 0
-  # Equal-session short-circuit: covers a reparented (orphaned) shell of the
-  # claiming session that the PPID walk below can no longer reach.
-  [[ "$pid" == "$(session_leader_pid)" ]] && return 0
-  if command -v ps >/dev/null 2>&1; then
-    recorded_pid_gone "$pid" && return 0
-    pid_is_self_or_ancestor "$pid" && return 0
-    echo "Error: $wt is claimed by a live session (owner=$owner pid=$pid); refusing to remove it." >&2
-    echo "  Matching the issue ID does not prove the lease is this session's, and its claiming session is still running on this host." >&2
-  else
-    # Without ps the pid can be proved neither dead nor related; it is
-    # presumed alive (the guard's own conservatism), but the refusal must not
-    # claim more than was verified.
-    echo "Error: $wt is claimed under owner=$owner by session pid=$pid, whose liveness cannot be verified on this host (no ps(1)); refusing to remove it." >&2
-  fi
-  echo "  If that session is truly finished: $0 remove \"$owner\" --force" >&2
-  echo "  Or release its lease directly: $SESSION_GUARD release \"$wt\" --owner \"$owner\"" >&2
-  return 1
-}
-
 # Release this session's OWN lease on a worktree it is about to remove. Without
 # this a session that claimed its worktree cannot tear it down — the lease is a
 # native git lock, so `refuse_locked_worktree` and git itself both refuse. It
@@ -3448,7 +3110,7 @@ issue_release_permits_removal() {
 # and an unreadable state are all left exactly as they are and fall through to
 # the precheck, which names the owner and the way out.
 release_own_session_lease() {
-  local wt="$1" issue_owner="${2:-}" force="${3:-false}" env_owner owner="" candidate rc
+  local wt="$1" issue_owner="${2:-}" env_owner owner="" candidate rc
   session_guard_available || return 0
   env_owner="$(session_guard_owner)"
   if [[ "$env_owner" == "$issue_owner" ]]; then
@@ -3468,30 +3130,7 @@ release_own_session_lease() {
     esac
   done
   [[ -n "$owner" ]] || return 0
-  # An issue-shaped identity asserts only which ISSUE was named, so it takes
-  # the liveness gate — including when the session env happens to carry that
-  # same issue ID, because two sessions on one issue export the same value and
-  # the string match proves nothing the argument did not. Only an env-ladder
-  # identity DISTINCT from the issue is the session naming itself. `remove
-  # --force` skips exactly this refusal, nothing else.
-  local expect_gen_args=()
-  if [[ "$owner" == "$issue_owner" && "$force" != true ]]; then
-    issue_release_permits_removal "$wt" "$owner" || return 1
-    # Bind the release to the lease that verdict was reached on: a sibling that
-    # claims between the two guard calls mints a new generation, and the
-    # release refuses rather than unlocking a live claim (see --expect-gen).
-    # A lease recording no generation cannot be bound, so it is refused rather
-    # than released blind — the owning session records one on its next
-    # claim/refresh; a dead legacy lease takes `remove --force`.
-    if [[ -z "$LEASE_VERIFIED_GEN" ]]; then
-      echo "Error: the session lease on $wt records no generation token; refusing an unbound release." >&2
-      echo "  Retry after the owning session's next refresh records one, or use: remove --force" >&2
-      return 1
-    fi
-    expect_gen_args=(--expect-gen "$LEASE_VERIFIED_GEN")
-  fi
-  if ! "$SESSION_GUARD" release "$wt" --owner "$owner" --repo "$PROJECT_ROOT" \
-    "${expect_gen_args[@]+"${expect_gen_args[@]}"}" >/dev/null; then
+  if ! "$SESSION_GUARD" release "$wt" --owner "$owner" --repo "$PROJECT_ROOT" >/dev/null; then
     echo "Error: could not release this session's guard lease on $wt; refusing to remove it." >&2
     echo "  Release it, then retry: $SESSION_GUARD release \"$wt\" --owner \"$owner\"" >&2
     return 1
@@ -3540,15 +3179,8 @@ reuse_respects_session_lease() {
     echo "Coordinate with the owning session instead of reusing its worktree." >&2
     return 1
   fi
-  # A reuse is a REPLACEMENT session for the issue, not a heartbeat of the
-  # session that claimed the lease: `claim`'s same-owner branch mints a new
-  # generation, so a concurrent remove that decided against the previous
-  # session's lease refuses instead of unlocking this one. (`claim`, like
-  # `refresh`, REJECTS `--repo` — it applies only to release/status/list/
-  # sweep; a best-effort wrapper would swallow that failure, so do not add
-  # it.)
-  if ! "$SESSION_GUARD" claim "$wt" --owner "$owner" >/dev/null; then
-    echo "Error: could not take over the session guard lease on $wt." >&2
+  if ! "$SESSION_GUARD" refresh "$wt" --owner "$owner" >/dev/null; then
+    echo "Error: could not refresh the session guard lease on $wt." >&2
     return 1
   fi
   return 0
@@ -3695,10 +3327,6 @@ refuse_existing_branch() {
   echo "Inspect or monitor the existing work instead of spawning another implementer." >&2
   if [[ "$signal" == "open pull request" ]]; then
     echo "To inspect that PR in a worktree intentionally, pass --pr <number>." >&2
-  elif [[ "$signal" == "existing local branch" && "$branch" == "$(issue_branch_name "$issue")" ]]; then
-    echo "If this is an unpublished issue branch whose worktree was lost, recover it explicitly:" >&2
-    echo "  $0 create $issue --recover-local" >&2
-    echo "Recovery revalidates that the branch is local-only and unambiguously owned before recreating it." >&2
   else
     echo "To check out that branch intentionally, pass --base $branch." >&2
   fi
@@ -3879,14 +3507,12 @@ case "${1:-}" in
     REUSE=false
     RESTACK=false
     REPLAY=false
-    RECOVER_LOCAL=false
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --base) BASE="$2"; shift 2 ;;
         --from) FROM="$2"; shift 2 ;;
         --pr) PR="$2"; shift 2 ;;
         --reuse) REUSE=true; shift ;;
-        --recover-local) RECOVER_LOCAL=true; shift ;;
         --restack) RESTACK=true; shift ;;
         --replay) REPLAY=true; shift ;;
         # An unknown --flag must fail rather than be silently captured as a
@@ -3900,11 +3526,6 @@ case "${1:-}" in
         *) BRANCH="$1"; shift ;;
       esac
     done
-    if [[ "$RECOVER_LOCAL" == true ]] && \
-       [[ -n "$BASE" || -n "$FROM" || -n "$PR" || -n "$BRANCH" || "$REUSE" == true || "$RESTACK" == true || "$REPLAY" == true ]]; then
-      echo "Error: --recover-local cannot be combined with a branch name, --base, --from, --pr, --reuse, --restack, or --replay." >&2
-      exit 1
-    fi
     if [[ "$REPLAY" == true && "$REUSE" != true && "$RESTACK" != true ]]; then
       echo "Error: --replay selects the restack engine for --reuse/--restack; combine it with one of them." >&2
       exit 1
@@ -3930,56 +3551,6 @@ case "${1:-}" in
       esac
     fi
 
-    if [[ "$RECOVER_LOCAL" == true ]]; then
-      # Recovery always recreates at the currently configured path. It never
-      # silently revives or migrates a legacy/stale registration elsewhere.
-      WT_PATH="$(worktree_path "$ISSUE")"
-      validate_worktree_setup_config || exit 1
-      build_candidate_branches "$ISSUE" ""
-      RECOVERY_BRANCH="$(issue_branch_name "$ISSUE")"
-      if ! git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$RECOVERY_BRANCH"; then
-        echo "Error: --recover-local requires the exact local branch '$RECOVERY_BRANCH'." >&2
-        echo "No worktree was created." >&2
-        exit 1
-      fi
-      if [[ "$(git -C "$PROJECT_ROOT" cat-file -t "refs/heads/$RECOVERY_BRANCH" 2>/dev/null || true)" != commit ]]; then
-        refuse_local_branch_recovery "$ISSUE" "$RECOVERY_BRANCH" "the local ref does not name a commit" || exit $?
-      fi
-      # This snapshot precedes every fetch-capable operation. All later
-      # validation and the created checkout must retain this exact tip.
-      RECOVERY_HEAD="$(git -C "$PROJECT_ROOT" rev-parse "refs/heads/$RECOVERY_BRANCH")"
-
-      # Read-only ownership discovery before taking the claim lock gives fast,
-      # useful refusals. Repeat all checks under the same lock used by create,
-      # immediately before the only branch/worktree mutation.
-      discover_candidate_ownership true || exit 1
-      validate_local_branch_recovery "$ISSUE" "$WT_PATH" "$RECOVERY_HEAD" false || exit $?
-      acquire_issue_claim_lock "$ISSUE" || exit 1
-      fetch_recovery_default_branch || exit 1
-      discover_candidate_ownership true || exit 1
-      validate_local_branch_recovery "$ISSUE" "$WT_PATH" "$RECOVERY_HEAD" true || exit $?
-
-      mkdir -p "$TREES_DIR"
-      if ! git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$RECOVERY_BRANCH" >/dev/null 2>&1; then
-        echo "Error: Git could not recreate the worktree for local branch '$RECOVERY_BRANCH'." >&2
-        echo "The branch remains unchanged at $RECOVERY_HEAD." >&2
-        exit 1
-      fi
-      if [[ "$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)" != "$RECOVERY_BRANCH" ]] || \
-         [[ "$(git -C "$WT_PATH" rev-parse HEAD 2>/dev/null || true)" != "$RECOVERY_HEAD" ]]; then
-        echo "Error: Recreated worktree did not preserve the exact branch identity and tip $RECOVERY_HEAD." >&2
-        echo "The worktree was left in place for inspection: $WT_PATH" >&2
-        exit 1
-      fi
-      release_issue_claim_lock
-      if ! setup_app_worktree "$WT_PATH"; then
-        echo "Error: Local branch '$RECOVERY_BRANCH' was recovered with its commits intact, but configured worktree setup failed." >&2
-        echo "Fix the WORKTREE_* configuration, then run: $0 fix-links '$WT_PATH'" >&2
-        exit 1
-      fi
-      echo "$WT_PATH"
-      exit 0
-    fi
     # Prefer the configured target; fall back to the registered worktree for
     # the issue branch so trees created under an older base-dir convention are
     # still recognized as active work and reusable in place.
@@ -4336,12 +3907,10 @@ case "${1:-}" in
     ;;
 
   remove)
-    REMOVE_FORCE=false
     ARG=""
     shift || true
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --force) REMOVE_FORCE=true; shift ;;
         # Reject stray option-looking arguments before they are treated as an
         # identifier and turned into a trees/<id> path. Otherwise any typo'd
         # flag would compute trees/<flag> and falsely report a removal, risking
@@ -4400,7 +3969,7 @@ case "${1:-}" in
       # its lease IS a native git lock — so the release has to come before the
       # lock precheck below, not after it (#877). Only our own lease is
       # released; a foreign one falls through and the precheck names its owner.
-      if ! release_own_session_lease "$WT_PATH" "$REMOVE_ISSUE_OWNER" "$REMOVE_FORCE"; then
+      if ! release_own_session_lease "$WT_PATH" "$REMOVE_ISSUE_OWNER"; then
         exit 1
       fi
       # Diagnostic precheck: a locked worktree cannot be removed, and git's own

@@ -181,24 +181,6 @@ else
   printf '  FAIL  --reuse does not contain current origin/main\n'
 fi
 
-# A reuse over a live guard lease is a REPLACEMENT claim, not a heartbeat:
-# the generation rotates, so a remove that decided against the previous
-# session's lease refuses instead of unlocking the reusing session's claim.
-GUARD_BIN="$(dirname "$WORKTREE_SCRIPT")/worktree-session-guard"
-"$GUARD_BIN" claim "$WT" --owner issue-active >/dev/null
-REUSE_LOCK="$ROOT/main/.git/worktrees/issue-active/locked"
-reuse_gen_before="$(sed -n 's/.* gen=\([^ ]*\).*/\1/p' "$REUSE_LOCK")"
-(cd "$ROOT/main" && "$WORKTREE_SCRIPT" create issue-active --reuse >/dev/null)
-reuse_gen_after="$(sed -n 's/.* gen=\([^ ]*\).*/\1/p' "$REUSE_LOCK")"
-if [[ -n "$reuse_gen_after" && "$reuse_gen_after" != "$reuse_gen_before" ]]; then
-  PASS=$((PASS + 1))
-  printf '  ok    --reuse over a live lease mints a new generation\n'
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  --reuse over a live lease mints a new generation (before=%s after=%s)\n' "$reuse_gen_before" "$reuse_gen_after"
-fi
-"$GUARD_BIN" release "$WT" --owner issue-active --repo "$ROOT/main" >/dev/null
-
 # Removing the checkout does not make an open PR unowned. Bare create must
 # still stop before recreating it; --pr is the explicit inspection path.
 git -C "$ROOT/main" worktree remove "$WT"
@@ -516,8 +498,7 @@ assert_not_contains "$owned_err" "Worktree: $BASE1034_ROOT/main" "owned-issue re
 
 # A candidate branch checked out in the main checkout still blocks the id,
 # but the refusal must say so plainly: never render the main checkout as a
-# reusable worktree, never recommend --reuse into it, and never suggest
-# --recover-local (which would refuse for the same reason).
+# reusable worktree or recommend --reuse into it.
 MAINCO_ROOT="$TMP_ROOT/main-checkout-branch"
 make_repo "$MAINCO_ROOT"
 export GH_STATE="$MAINCO_ROOT/gh-state"
@@ -532,7 +513,6 @@ assert_contains "$mainco_err" "checked out in the main checkout" "main-checkout 
 assert_contains "$mainco_err" "Move that work off the main checkout" "main-checkout candidate refusal gives the actionable remedy"
 assert_not_contains "$mainco_err" "refusing implicit reuse" "main-checkout candidate is never rendered as a reusable worktree"
 assert_not_contains "$mainco_err" "--reuse" "main-checkout candidate never recommends --reuse"
-assert_not_contains "$mainco_err" "--recover-local" "main-checkout candidate never recommends --recover-local"
 export GH_STATE="$BASE1034_ROOT/gh-state"
 
 # A local branch literally named "origin/<default>" is a legal (if

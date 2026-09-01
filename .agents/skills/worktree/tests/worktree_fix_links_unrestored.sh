@@ -6,7 +6,7 @@
 #
 # Ways a path survives a pass unrestored, all silent before this:
 #   1. no such path in the MAIN checkout — setup skips the entry outright;
-#   2. a materialized child holding data git does not track — the quarantine
+#   2. a materialized child holding data git does not track — the safety check
 #      refuses to destroy it and leaves the real path in place;
 #   3. a WORKTREE_RELATIVE_SYMLINKS entry the pass could not create at all;
 #   4. a link that exists but resolves somewhere other than its configured
@@ -113,14 +113,14 @@ assert_contains "$OUT" "no such path in the main checkout" "explains why it was 
 assert_lacks "$OUT" "Restored symlinks" "no success message when an entry was skipped"
 write_base_env
 
-echo "=== a child left materialized by the quarantine is named ==="
+echo "=== a child left materialized by the safety check is named ==="
 # Replace the per-child link with a real directory holding a file git does not
-# track: the quarantine refuses to destroy it and leaves the path real.
+# track: the repair refuses to destroy it and leaves the path real.
 rm -f "$WT/harness/skills"
 mkdir -p "$WT/harness/skills"
 printf 'work in progress\n' >"$WT/harness/skills/untracked-work.txt"
 run_fix_links
-if [[ "$RC" != 0 ]]; then ok "nonzero exit for a quarantine-blocked child"; else bad "nonzero exit for a quarantine-blocked child" "rc=0: $OUT"; fi
+if [[ "$RC" != 0 ]]; then ok "nonzero exit for an unsafe materialized child"; else bad "nonzero exit for an unsafe materialized child" "rc=0: $OUT"; fi
 assert_contains "$OUT" "harness/skills" "names the blocked child"
 assert_lacks "$OUT" "Restored symlinks" "no success message while a path stays materialized"
 if [[ -f "$WT/harness/skills/untracked-work.txt" ]]; then ok "untracked data is left intact"; else bad "untracked data is left intact"; fi

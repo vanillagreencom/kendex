@@ -73,7 +73,7 @@ Before EVERY implementation delegation, including each group's delegation in bun
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
-`worktree-claim` exit 75 aborts the delegation: another session holds this worktree (stderr names the holder) — coordinate with that owner, never re-run to take the tree. Exit 1: stop and report it. Embed its printed token as `[WORKTREE_LEASE]` in the delegation's `Worktree Lease:` line, the round token as `[DEV_ROUND_ID]` in the `Round ID:` line, and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [SKILL.md § Round Closure](../SKILL.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
+`worktree-claim` exit 75 aborts the delegation: another session holds this worktree (stderr names the holder) — coordinate with that owner, never re-run to take the tree. Exit 1: stop and report it. Embed its printed owner as `[WORKTREE_LEASE]` in the delegation's `Worktree Lease:` line, the round token as `[DEV_ROUND_ID]` in the `Round ID:` line, and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [SKILL.md § Round Closure](../SKILL.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
 
 After each spawn, persist the session:
 

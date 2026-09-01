@@ -274,13 +274,24 @@ assert_contains "$restack_err" "restack abort" "--restack error documents the gu
 assert_not_contains "$restack_err" "rebase --continue" "--restack no longer prescribes a policy-rejected raw continue command"
 assert_not_contains "$restack_err" "rebase --abort" "--restack no longer prescribes a policy-rejected raw abort command"
 
-# Published paused states created before kendex#591 have the exact authorization
-# fields but no explicit pending marker. Keep that in-flight recovery working.
 RESTACK_STATE_DIR="$(rebase_state_dir "$RESTACK_WT")"
+assert_eq "$(cat "$RESTACK_STATE_DIR/kendex-restack-token")" "$(git -C "$RESTACK_WT" config --worktree --get kendex-restack.stateToken)" "published paused restack binds config to the Git sequencer state"
+
+# A state from before token binding is not authorized. Restore the current
+# markers after the refusal so the documented recovery path remains the control.
+restack_state_token="$(git -C "$RESTACK_WT" config --worktree --get kendex-restack.stateToken)"
 git -C "$RESTACK_WT" config --worktree --unset-all kendex-restack.pending
 git -C "$RESTACK_WT" config --worktree --unset-all kendex-restack.stateToken
 rm -f "$RESTACK_STATE_DIR/kendex-restack-token"
-assert_eq "$(git -C "$RESTACK_WT" config --worktree --get kendex-restack.pending 2>/dev/null || true)" "" "legacy paused restack fixture omits the new pending marker"
+set +e
+(cd "$RESTACK_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-restack >/dev/null 2>"$RESTACK_ROOT/pre-token.err")
+pre_token_code=$?
+set -e
+assert_eq "$pre_token_code" "1" "a paused restack without token binding is refused"
+assert_contains "$(cat "$RESTACK_ROOT/pre-token.err")" "pending marker" "the refusal names the missing authorization"
+git -C "$RESTACK_WT" config --worktree kendex-restack.pending true
+git -C "$RESTACK_WT" config --worktree kendex-restack.stateToken "$restack_state_token"
+printf '%s\n' "$restack_state_token" >"$RESTACK_STATE_DIR/kendex-restack-token"
 
 # The documented recovery path must actually work end to end.
 printf 'resolved\n' > "$RESTACK_WT/file.txt"
@@ -312,9 +323,8 @@ set -e
 assert_eq "$missing_state_code" "1" "guarded continue rejects missing rebase state"
 assert_contains "$(cat "$RESTACK_ROOT/missing-state.err")" "missing a paused rebase" "missing-state rejection is explicit"
 
-# Unpublished branches have no remote OID to use as a legacy state marker.
-# The explicit pending marker must still make their guarded recovery possible,
-# then disappear without manufacturing force-push authorization.
+# Unpublished branches have no remote OID. The pending marker and state token
+# bind their recovery, then disappear without force-push authorization.
 UNPUBLISHED_ROOT="$TMP_ROOT/unpublished"
 make_conflict_pair "$UNPUBLISHED_ROOT" issue-unpublished
 UNPUBLISHED_WT="$UNPUBLISHED_ROOT/trees/issue-unpublished"

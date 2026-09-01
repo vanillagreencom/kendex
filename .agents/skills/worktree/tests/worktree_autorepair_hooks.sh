@@ -73,7 +73,7 @@ git -C "$MAIN" push -q -u origin main
 
 # Two entries cover both provisioning modes: harness/ mixes ignored runtime
 # content with one tracked file (per-child links since VST-37), runtime/ is
-# untracked-only (plain parent symlink — the shape the quarantine machinery
+# untracked-only (plain parent symlink — the shape the safety check
 # still guards).
 mkdir -p "$MAIN/harness/skills" "$MAIN/runtime"
 printf 'harness/**\n!harness/tracked.md\nruntime/\n' >"$MAIN/.gitignore"
@@ -256,7 +256,7 @@ git -C "$DASH_MAIN" init -q -b main
 git -C "$DASH_MAIN" config user.email test@example.com
 git -C "$DASH_MAIN" config user.name Test
 git -C "$DASH_MAIN" config commit.gpgsign false
-# Untracked-only, so the entry keeps the parent-link shape whose quarantine
+# Untracked-only, so the entry keeps the parent-link shape whose safety check
 # scan the '-' guard protects.
 printf -- '-dash/\n' >"$DASH_MAIN/.gitignore"
 printf 'runtime\n' >"$DASH_MAIN/-dash/runtime.md"
@@ -300,8 +300,8 @@ if [[ "$empty_rc" -ne 0 ]]; then ok "blocked repair exits nonzero"; else bad "bl
 rm -rf "$WT/runtime"
 (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
 
-echo "=== a materialized PER-CHILD link is quarantined, not deleted (#1317) ==="
-# The child-link path never had its own quarantine: link_untracked_children
+echo "=== a materialized PER-CHILD link with untracked data is not deleted (#1317) ==="
+# The child-link path needs the same check as a top-level link: link_untracked_children
 # called symlink_into_worktree directly for each untracked child, and that
 # function's directory branch does an unconditional rm -rf on a materialized
 # destination. A rebase or checkout that leaves harness/skills materialized
@@ -329,9 +329,9 @@ if [[ "$child_rc" -ne 0 ]]; then ok "blocked child repair exits nonzero"; else b
 rm -rf "$WT/harness/skills"
 (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
 if [[ -L "$WT/harness/skills" && -f "$WT/harness/skills/installed.txt" ]]; then
-  ok "per-child link restored after quarantine test"
+  ok "per-child link restored after materialized-data test"
 else
-  bad "per-child link restored after quarantine test"
+  bad "per-child link restored after materialized-data test"
 fi
 
 echo "=== the per-child heal never reverts locally edited tracked files ==="

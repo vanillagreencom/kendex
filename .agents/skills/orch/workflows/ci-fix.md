@@ -62,7 +62,7 @@ Stamp the round as separate tool calls immediately before delegating, and arm th
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
-`worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
+`worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed owner is the delegation's `Worktree Lease:` line.
 
 Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
@@ -81,7 +81,7 @@ Worktree: [WORKTREE_PATH]
 Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Worktree Lease: [WORKTREE_LEASE]
 
-1. Verify possession before changing anything: `.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --expect-gen [WORKTREE_LEASE]`. Any non-zero exit ends the round here — change nothing and report its stderr verbatim.
+1. Refresh possession before changing anything: `.agents/skills/worktree/scripts/worktree-session-guard refresh [WORKTREE_PATH] --owner [ISSUE_ID]`. Any non-zero exit ends the round here — change nothing and report its stderr verbatim.
 2. Analyze the error; if it is a test failure in concurrent code, check for flaky-test patterns first.
 3. Fix the issue.
 4. Run the project's validation command.

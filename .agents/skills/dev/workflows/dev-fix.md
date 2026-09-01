@@ -9,7 +9,7 @@ The workflow for a dev agent receiving a review-fix delegation. Every path is wo
 Verify possession before reading or writing anything else. **Skip if** the delegation carries no `Worktree Lease:` line.
 
 ```bash
-.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ARTIFACT_KEY] --expect-gen [WORKTREE_LEASE]
+.agents/skills/worktree/scripts/worktree-session-guard refresh [WORKTREE_PATH] --owner [ARTIFACT_KEY]
 ```
 
 Any non-zero exit ends the round here: change nothing in the worktree and return the command's stderr verbatim.

@@ -1,74 +1,25 @@
 #!/usr/bin/env bash
-# worktree-claim — possession gate for an issue worktree, over the worktree
-# skill's session guard.
-#
-# The guard's lease is keyed to the owner string, which is the issue id, so two
-# sessions working the same issue match each other's lease and an owner
-# comparison alone cannot refuse a sibling writer. The lease's per-claim
-# generation token narrows that: a caller is bound to the token it took
-# possession under, and exits 75 once a different issue's lease, a lock taken
-# outside the guard, or a re-claim since that token was minted would make it a
-# second writer.
-#
-# What it does NOT do is identify the caller. Two orchestrators on one issue
-# share both the lease and the workflow state file that records the token, and
-# no per-session identity is available to tell them apart — a harness tool call
-# is its own session leader and exits with the call, so the pid the guard
-# records is never a live holder, and `refresh` rewrites it to whichever
-# process refreshed. A second orchestrator that reads the same stored token
-# therefore continues the round beside the first and neither is refused.
-# What is caught is a writer that takes the tree WITHOUT that token — a fresh
-# claim, a reused worktree, a different issue — since it mints a new generation
-# and the displaced session's next stamp exits 75. Refusing a second
-# implementer outright is `worktree create <ID>`, which surveys worktrees,
-# local and remote refs, and open PRs.
+# worktree-claim verifies that an issue owns a worktree session lease. It
+# claims an unleased tree and refreshes an existing lease for the same issue.
 #
 # Usage:
 #   worktree-claim --worktree PATH --issue ID [--state-dir DIR]
-#       Take possession and print the lease generation token. A token already
-#       recorded at `.worktree_gen` in ID's workflow state is continued —
-#       verified and refreshed rather than minted over — while a lease that
-#       no longer records it refuses, and a lease that is gone entirely is
-#       repossessed. A token minted here is recorded there. With no state file
-#       the call always mints, so nothing is bound across rounds.
 #
-#   worktree-claim --worktree PATH --issue ID --expect-gen TOKEN
-#       Verify TOKEN and refresh the heartbeat. Never mints, never writes
-#       workflow state. This is the form a delegated agent runs against the
-#       token its delegation carried.
-#
-# Stdout is the effective token, one line. The guard's own diagnostics reach
-# stderr unfiltered, so a refusal names the holder.
-#
-# Exit codes:
-#   0   possession held by ISSUE under the printed token
-#   1   usage or precondition failure, including a guard that cannot run
-#  75   refused; another holder owns the worktree
-
+# Stdout is the issue ID, one line. Exit 75 means another owner or a native
+# lock holds the worktree. Other failures exit 1.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARD="${WORKTREE_SESSION_GUARD:-$SCRIPT_DIR/../../worktree/scripts/worktree-session-guard}"
-WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
-
-EXIT_USAGE=1
 EXIT_OWNED=75
 
-# worktree-session-guard status exit codes.
-GUARD_NO_LEASE=3
-GUARD_UNMANAGED=4
-
-GEN_GRAMMAR='^[0-9]+-[0-9a-f]+$'
-
-# The leading comment block is the contract, printed by shape rather than by
-# line number so --help cannot drift as that block grows.
 usage() {
 	awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
 }
 
 fail() {
 	printf 'worktree-claim: %s\n' "$1" >&2
-	exit "$EXIT_USAGE"
+	exit 1
 }
 
 refuse() {
@@ -78,185 +29,35 @@ refuse() {
 
 worktree=''
 issue=''
-expect_gen=''
-state_dir=''
-
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-	--worktree)
-		[[ $# -ge 2 ]] || fail "--worktree requires a path"
-		worktree="$2"
-		shift 2
-		;;
-	--issue)
-		[[ $# -ge 2 ]] || fail "--issue requires an issue id"
-		issue="$2"
-		shift 2
-		;;
-	--expect-gen)
-		[[ $# -ge 2 ]] || fail "--expect-gen requires a lease generation token"
-		expect_gen="$2"
-		shift 2
-		;;
-	--state-dir)
-		[[ $# -ge 2 ]] || fail "--state-dir requires a path"
-		state_dir="$2"
-		shift 2
-		;;
-	-h | --help)
-		usage
-		exit 0
-		;;
+	--worktree) [[ $# -ge 2 ]] || fail '--worktree requires a path'; worktree="$2"; shift 2 ;;
+	--issue) [[ $# -ge 2 ]] || fail '--issue requires an issue id'; issue="$2"; shift 2 ;;
+	--state-dir) [[ $# -ge 2 ]] || fail '--state-dir requires a path'; shift 2 ;;
+	-h | --help) usage; exit 0 ;;
 	*) fail "unknown option: $1" ;;
 	esac
 done
 
-[[ -n "$worktree" ]] || fail "--worktree is required"
-[[ -n "$issue" ]] || fail "--issue is required"
-[[ -z "$expect_gen" || "$expect_gen" =~ $GEN_GRAMMAR ]] \
-	|| fail "--expect-gen takes a lease generation token, got: $expect_gen"
+[[ -n "$worktree" ]] || fail '--worktree is required'
+[[ -n "$issue" ]] || fail '--issue is required'
+[[ -x "$GUARD" ]] || fail "worktree-session-guard is not executable at $GUARD"
+worktree_abs="$(cd -P -- "$worktree" 2>/dev/null && pwd -P)" || fail "not a directory: $worktree"
 
-# A guard that cannot run leaves possession unproven, which is the one outcome
-# this gate exists to prevent — so it is a hard failure, never a pass-through.
-# jq reads every lease field this gate compares, so a missing jq is the same
-# unproven state; catching it here keeps the exit contract at 1, not 127.
-[[ -x "$GUARD" ]] \
-	|| fail "worktree-session-guard is not executable at $GUARD; possession cannot be verified"
-command -v jq >/dev/null 2>&1 \
-	|| fail "jq is required to read the guard's lease; possession cannot be verified"
+rc=0
+(cd "$worktree_abs" && "$GUARD" status "$worktree_abs" --owner "$issue" >/dev/null) || rc=$?
+case "$rc" in
+0) action=refresh ;;
+3) action=claim ;;
+4) refuse "$worktree_abs is locked outside the session guard" ;;
+75) refuse "$worktree_abs is claimed by another owner, not $issue" ;;
+*) fail "worktree-session-guard status failed on $worktree_abs (exit $rc)" ;;
+esac
 
-worktree_abs="$(cd -P -- "$worktree" 2>/dev/null && pwd -P)" \
-	|| fail "not a directory: $worktree"
-
-# `claim` and `refresh` reject --repo, so the guard derives the repository from
-# the working directory; run every guard call from inside the target worktree.
-guard_run() {
-	(cd "$worktree_abs" && "$GUARD" "$@" >/dev/null)
-}
-
-STATUS_JSON=''
-STATUS_RC=0
-guard_status() {
-	STATUS_RC=0
-	STATUS_JSON="$(cd "$worktree_abs" && "$GUARD" status "$worktree_abs" --owner "$issue")" \
-		|| STATUS_RC=$?
-}
-
-status_generation() {
-	printf '%s\n' "$STATUS_JSON" | jq -r '.generation // empty'
-}
-
-# Map a status exit code onto this gate's contract. Every state that is not
-# "a guard lease owned by ISSUE" refuses, so a caller branching on 75 covers
-# foreign owners, foreign locks, and a released lease alike.
-require_owned_status() {
-	local context="$1"
-	case "$STATUS_RC" in
-	0) return 0 ;;
-	"$GUARD_NO_LEASE")
-		refuse "$worktree_abs carries no session lease ($context); take possession before working here"
-		;;
-	"$GUARD_UNMANAGED")
-		refuse "$worktree_abs is locked outside the session guard ($context); resolve that lock before working here"
-		;;
-	"$EXIT_OWNED")
-		refuse "$worktree_abs is claimed by another owner, not $issue ($context)"
-		;;
-	*)
-		fail "worktree-session-guard status failed on $worktree_abs (exit $STATUS_RC)"
-		;;
-	esac
-}
-
-require_generation() {
-	local expected="$1" context="$2" recorded
-	recorded="$(status_generation)"
-	[[ "$recorded" == "$expected" ]] || refuse \
-		"$worktree_abs was re-claimed since it was checked (expected gen=$expected, lease records gen=${recorded:-none}); another session holds it ($context)"
-}
-
-# Verify TOKEN, refresh the heartbeat, then verify again. The second read is
-# what makes the refresh safe to report: a sibling that claimed between the
-# first read and the refresh keeps its own generation across that refresh, so
-# only re-reading proves the token this call returns is the one on the lease.
-verify_and_refresh() {
-	local expected="$1"
-
-	guard_status
-	require_owned_status "before refresh"
-	require_generation "$expected" "before refresh"
-
-	local rc=0
-	guard_run refresh "$worktree_abs" --owner "$issue" || rc=$?
-	case "$rc" in
-	0) ;;
-	"$EXIT_OWNED") refuse "$worktree_abs was taken by another holder while refreshing it" ;;
-	*) fail "worktree-session-guard refresh failed on $worktree_abs (exit $rc)" ;;
-	esac
-
-	guard_status
-	require_owned_status "after refresh"
-	require_generation "$expected" "after refresh"
-
-	printf '%s\n' "$expected"
-}
-
-take_possession() {
-	local rc=0 minted
-	guard_run claim "$worktree_abs" --owner "$issue" || rc=$?
-	case "$rc" in
-	0) ;;
-	"$EXIT_OWNED") refuse "$worktree_abs is held by another owner or by a lock outside the guard, not $issue" ;;
-	*) fail "worktree-session-guard claim failed on $worktree_abs (exit $rc)" ;;
-	esac
-
-	guard_status
-	require_owned_status "after claim"
-	minted="$(status_generation)"
-	[[ "$minted" =~ $GEN_GRAMMAR ]] \
-		|| fail "the session guard recorded no usable lease generation on $worktree_abs"
-	printf '%s\n' "$minted"
-}
-
-if [[ -n "$expect_gen" ]]; then
-	verify_and_refresh "$expect_gen"
-	exit 0
-fi
-
-state_flags=()
-[[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
-
-# workflow-state resolves a relative state dir against the working directory,
-# so both the path read and the write below run from the worktree — the same
-# tmp/ that holds the round's artifacts.
-state_file="$(cd "$worktree_abs" && "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} path "$issue")" \
-	|| fail "could not resolve the workflow state path for $issue"
-[[ "$state_file" == /* ]] || state_file="$worktree_abs/$state_file"
-
-stored_gen=''
-if [[ -f "$state_file" ]]; then
-	stored_gen="$(cd "$worktree_abs" \
-		&& "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.worktree_gen // empty')" \
-		|| fail "could not read .worktree_gen from $state_file"
-fi
-
-# A stored token is the lease this issue's rounds have been running under, so
-# continuing it verifies the lease still records it. No lease at all is nobody's
-# tree — a teardown or a stale sweep released it — and is repossessed rather
-# than wedging the round on a token whose lease is gone; a lock this gate cannot
-# own still refuses.
-if [[ "$stored_gen" =~ $GEN_GRAMMAR ]]; then
-	guard_status
-	if [[ "$STATUS_RC" != "$GUARD_NO_LEASE" ]]; then
-		verify_and_refresh "$stored_gen"
-		exit 0
-	fi
-fi
-
-minted="$(take_possession)"
-if [[ -f "$state_file" ]]; then
-	(cd "$worktree_abs" \
-		&& "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} set "$issue" worktree_gen "$minted") >/dev/null \
-		|| fail "could not record .worktree_gen in $state_file"
-fi
-printf '%s\n' "$minted"
+rc=0
+(cd "$worktree_abs" && "$GUARD" "$action" "$worktree_abs" --owner "$issue" >/dev/null) || rc=$?
+case "$rc" in
+0) printf '%s\n' "$issue" ;;
+75) refuse "$worktree_abs was taken by another holder while refreshing it" ;;
+*) fail "worktree-session-guard $action failed on $worktree_abs (exit $rc)" ;;
+esac

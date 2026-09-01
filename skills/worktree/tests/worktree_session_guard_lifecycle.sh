@@ -422,6 +422,22 @@ fi
 assert_eq "$after_claimed" "$before_claimed" \
   "reuse refreshes in place rather than re-claiming (lock never drops)"
 
+echo "=== list and sweep ==="
+
+list_out="$("$GUARD_SCRIPT" list --repo "$REUSE_ROOT/main")"
+assert_contains "$list_out" "\"path\":\"$REUSE_WT\"" "list includes the linked worktree"
+assert_contains "$list_out" '"owner":"ISSUE-R"' "list includes the lease owner"
+
+dry_sweep_out="$("$GUARD_SCRIPT" sweep --repo "$REUSE_ROOT/main" --ttl-minutes 0 --dry-run)"
+assert_contains "$dry_sweep_out" "would release $REUSE_WT" "sweep dry-run reports the stale lease"
+assert_eq "$(guard_status_code "$REUSE_WT" "$REUSE_ROOT/main" --owner ISSUE-R)" "0" \
+  "sweep dry-run leaves the lease in place"
+
+sweep_out="$("$GUARD_SCRIPT" sweep --repo "$REUSE_ROOT/main" --ttl-minutes 0)"
+assert_contains "$sweep_out" "released $REUSE_WT" "sweep releases the stale lease"
+assert_eq "$(guard_status_code "$REUSE_WT" "$REUSE_ROOT/main")" "3" \
+  "sweep leaves the worktree unlocked"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

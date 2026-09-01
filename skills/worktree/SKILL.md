@@ -4,7 +4,7 @@ description: "Load to create, list, remove, push, or repair a git worktree."
 summary: "Git worktree management: create, list, remove isolated working copies with env and config symlinks."
 license: MIT
 user-invocable: true
-argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--reuse|--restack|--recover-local] [--replay] | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
+argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--reuse|--restack] [--replay] | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
 metadata:
   author: vanillagreen
   source: kendex
@@ -28,7 +28,7 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 
 | Command | Description |
 |---------|-------------|
-| `create` | Claim a new issue worktree — a new-work claim, not a discovery command: existing ownership exits 75, and owned work is inspected or monitored, never given a second implementer. Reuse, conflict recovery, `--recover-local`: `create --help` |
+| `create` | Claim a new issue worktree — a new-work claim, not a discovery command: existing ownership exits 75, and owned work is inspected or monitored, never given a second implementer. Reuse and conflict recovery: `create --help` |
 | `restack` | Guardedly continue, skip, or abort a tool-created paused restack |
 | `list` | List all worktrees |
 | `remove` | Remove worktree, clean symlinks, prune branches |
@@ -64,7 +64,7 @@ No worktree command runs a package-manager install: installs run only in the mai
 
 ## System Dependencies
 
-`git`; authenticated `gh` for new-work PR ownership discovery and for proving a squash-merged branch merged in `cleanup` and `remove`; `flock` for repository-local per-issue claim serialization (the session guard prefers it and falls back to a `mkdir` mutex without it); Bash 3.2+ (macOS system bash is supported).
+`git`; authenticated `gh` for new-work PR ownership discovery and for proving a squash-merged branch merged in `cleanup` and `remove`; `flock` for repository-local per-issue claim serialization; Bash 3.2+ (macOS system bash is supported).
 
 ## Configuration
 

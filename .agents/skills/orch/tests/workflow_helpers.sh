@@ -176,9 +176,8 @@ for wf in dev-start dev-fix review-pr-comments ci-fix; do
     "$wf claims the worktree before delegating"
 done
 
-# The lease generation cannot separate two orchestrators that read the same
-# stored token, so the always-loaded docs must not promise that it refuses any
-# second writer — the script's own header carries the real limit.
+# The issue-keyed lease cannot separate two orchestrators on the same issue,
+# so the always-loaded docs must not promise that it refuses any second writer.
 for phrase in 'exit 75 refuses a second writer' 'rather than adding a second writer'; do
   if grep -Fq -- "$phrase" "$SKILL_DIR/SKILL.md"; then
     fail "SKILL.md promises more exclusion than worktree-claim delivers: $phrase"
@@ -193,25 +192,23 @@ done
 # not close that: it covers nothing a negation does not also satisfy. Both
 # rules are uncovered.
 
-# The delegated agent re-verifies the same lease, so a delegation that lands in
-# a tree another session has taken fails closed instead of clobbering it. The
-# orch side must therefore pass the token, and the dev side must check it.
+# The delegated agent refreshes the issue-keyed lease before touching the tree.
 for wf in dev-start dev-fix review-pr-comments ci-fix; do
   doc="$SKILL_DIR/workflows/$wf.md"
   assert_file_contains "$doc" 'Worktree Lease: [WORKTREE_LEASE]' \
-    "$wf carries the lease token into the delegation"
+    "$wf carries the lease owner into the delegation"
 done
 for wf in dev-implement dev-fix; do
   doc="$REPO_ROOT/skills/dev/workflows/$wf.md"
   assert_file_contains "$doc" \
-    'worktree-claim --worktree [WORKTREE_PATH] --issue [ARTIFACT_KEY] --expect-gen [WORKTREE_LEASE]' \
-    "dev $wf verifies the delegated lease before touching the worktree"
+    'worktree-session-guard refresh [WORKTREE_PATH] --owner [ARTIFACT_KEY]' \
+    "dev $wf refreshes the lease before touching the worktree"
 done
 # ci-fix delegates a free-form prompt rather than a dev workflow, so the
 # verification has to be a step of that prompt or its agent never runs one.
 assert_file_contains "$SKILL_DIR/workflows/ci-fix.md" \
-  'worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --expect-gen [WORKTREE_LEASE]' \
-  "ci-fix makes lease verification a step of its delegation"
+  'worktree-session-guard refresh [WORKTREE_PATH] --owner [ISSUE_ID]' \
+  "ci-fix makes lease refresh a step of its delegation"
 
 # The three artifact-accepting paths must actually run the round-scoped check;
 # accepting on git state alone would take an unfinished round as complete.
