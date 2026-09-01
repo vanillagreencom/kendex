@@ -70,29 +70,19 @@ pub fn apply(
 /// A copy taken under a new name declares that name.
 ///
 /// A skill's SKILL.md and an agent's own file carry the name its tool
-/// answers to, and the catalog check reads a skill tree's SKILL.md
-/// against the directory it sits in. Bytes copied verbatim under a
-/// different destination still spell the candidate's name, so the import
-/// authors breakage into the person's own marketplace and reports that it
-/// succeeded. What is written in is the destination's *leaf*: a nested
-/// destination puts the item in a directory, and the leaf is the name
-/// every loader and the check compare against.
+/// answers to, so bytes copied verbatim under a different destination
+/// still spell the candidate's name and the import calls that a success.
+/// What is written in is the destination's *leaf*: a nested destination
+/// puts the item in a directory, and the leaf is the whole of what a file
+/// inside the item can declare.
 ///
-/// Only where that leaf really changes. An import keeping the candidate's
-/// name copies its bytes untouched — a declaration that was already wrong
-/// at the origin is the check's to report, not this copy's to quietly
-/// repair, and a tree with no declaration at all stays a tree with none.
+/// Only where that leaf really changes. This is a copy and not a repair,
+/// so an import keeping the candidate's name copies its bytes untouched:
+/// a declaration that was already wrong at the origin travels as it is,
+/// and a tree with no declaration at all stays a tree with none.
 ///
 /// The other three kinds carry no name anything keys on, so they are
-/// copied unchanged whatever they are renamed to. A command is placed and
-/// listed by its filename (`desired_command::command_file`) and its own
-/// frontmatter declares no name; the two harnesses whose file is generated
-/// take the installed name from elsewhere — Codex writes it into the
-/// frontmatter it emits, Gemini from the `<name>.toml` it lands as. An MCP
-/// server registers under the item name. A hook's frontmatter does carry a
-/// `name:` line, which `hook::parse_hook` requires, but nothing that places
-/// or registers a hook reads it: `desired_kinds::restated_hook_artifact`
-/// works from the item name, and the catalog check never compares the two.
+/// copied unchanged whatever they are renamed to.
 fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelection) -> Result<()> {
     let wanted = crate::names::leaf(&selection.destination);
     if wanted == crate::names::leaf(&selection.name) {
@@ -125,7 +115,8 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
         // Named rather than fallen through to, because "nothing to
         // declare" and "a shape we did not expect" are different answers
         // and only one of them is safe to be silent about. Their bytes go
-        // unasked: no shape any of the three arrives in carries a name.
+        // unasked: no shape any of the three arrives in carries a name
+        // anything keys on.
         (ItemKind::Hook | ItemKind::Command | ItemKind::McpServer, _) => {}
         // Everything left is unconstructible today, and says so rather
         // than copying quietly: `origins::read_bytes` is the one place

@@ -64,7 +64,7 @@ fn file_item(dir: &Path, file: &str, text: &str) {
 
 /// A project with all three origins: a marketplace skill (path source with
 /// a licence), the person's own local-source content, and unmanaged
-/// content of the three kinds an unmanaged scan offers.
+/// content of three kinds.
 #[allow(clippy::unwrap_used)]
 fn seeded() -> (tempfile::TempDir, Env, Scope) {
     let tmp = tempfile::tempdir().unwrap();
@@ -87,8 +87,8 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
         "notes.md",
         "Body file. No frontmatter here.\n",
     );
-    // A tree no name can be written into, and the two non-skill kinds an
-    // unmanaged scan offers.
+    // A tree no name can be written into, and two kinds that are not
+    // skills.
     raw_skill(
         &project.join(".claude/skills"),
         "bare",
@@ -106,10 +106,9 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
     );
     let local = project.join(crate::source::LOCAL_SOURCE_DIR);
     skill(&local.join("skills"), "mine", "my own bytes");
-    // A hook and an MCP server reach the wizard as the person's own
-    // content: the unmanaged scan offers neither kind, but a lock entry
-    // pointing at the local source does, and that is an import candidate
-    // like any other.
+    // A hook and an MCP server reach the wizard through a lock entry
+    // pointing at the local source, which is an import candidate like any
+    // other.
     file_item(
         &local.join("hooks"),
         "watcher.sh",
@@ -539,11 +538,10 @@ fn checked(target: &Path) -> (usize, Vec<String>) {
     (check.tally().items, breakage)
 }
 
-/// A copy taken under a new name has to declare that name: every tool
-/// keys a skill on the directory it sits in and answers to what its
-/// SKILL.md says, so bytes copied verbatim under a renamed destination
-/// author breakage into the person's own marketplace while the import
-/// reports success.
+/// A copy taken under a new name has to declare that name: a skill copied
+/// verbatim under a renamed destination lands a SKILL.md calling it
+/// something else, which the catalog check reports as breakage — run here
+/// over what the import wrote, so this holds only as long as it does.
 ///
 /// Both shapes: the flat rename, and the nested destination it was
 /// reported against.
@@ -664,20 +662,115 @@ fn a_rename_no_declaration_can_carry_refuses_and_writes_nothing() {
     );
 }
 
+/// The refusal spells the names it quotes rather than replaying them. A
+/// candidate name is read off a directory on disk, so it can hold anything
+/// a filesystem accepts — an escape sequence included — and the inventory
+/// keeps illegal spellings on purpose, so the wizard can offer them under
+/// a legal destination. That offer is the path into this refusal, and a
+/// raw escape reaching a terminal is the terminal's to obey.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refusal_escapes_the_candidate_name_it_quotes() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    raw_skill(
+        &root.join(".claude/skills"),
+        "ba\u{1b}[31mre",
+        "No frontmatter at all.\n",
+    );
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-escaped");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let mut renamed = selection(find(&candidates, "ba\u{1b}[31mre"), false);
+    renamed.destination = "clothed".to_owned();
+
+    let message = apply(&env, &scopes, &target, &[renamed])
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("ba\\u{1b}[31mre"), "{message}");
+    assert!(!message.contains('\u{1b}'), "{message:?}");
+}
+
+/// A namespaced candidate landing under its own name is no rename. What a
+/// file inside an item declares is the leaf — it knows nothing of the
+/// namespace it is installed under — so `kit/gadget` copied to
+/// `kit/gadget` changes nothing, a declaration that was already wrong at
+/// the origin included: this is a copy, not a repair.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_namespaced_candidate_kept_under_its_own_name_is_no_rename() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    // A namespaced candidate comes off the scan as the directory it sits
+    // in plus its own stem, and the name its frontmatter gives is neither.
+    let declared = "---\nname: misdeclared\ndescription: about gadget\n---\nAgent body.\n";
+    file_item(&root.join(".claude/agents/kit"), "gadget.md", declared);
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-namespaced");
+    let candidates = inventory(&env, &scopes).unwrap();
+
+    apply(
+        &env,
+        &scopes,
+        &target,
+        &[selection(find(&candidates, "kit/gadget"), false)],
+    )
+    .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(target.join("agents/kit/gadget.md")).unwrap(),
+        declared,
+    );
+}
+
+/// Bytes that are not text carry no declaration either, and the refusal
+/// says so rather than landing a copy whose name line is a replacement
+/// character. A skill's tree is read as bytes, so nothing upstream has
+/// asked whether its declaration is text.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_rename_of_bytes_that_are_not_text_refuses() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    let dir = root.join(".claude/skills/binary");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("SKILL.md"), [0xff, 0xfe, b'\n']).unwrap();
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-binary");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let mut renamed = selection(find(&candidates, "binary"), false);
+    renamed.destination = "textual".to_owned();
+    // A selection that would have been written first, so the folder
+    // staying empty is the refusal beating the copy rather than there
+    // being nothing to copy.
+    let selections = [selection(find(&candidates, "mine"), false), renamed];
+
+    let message = apply(&env, &scopes, &target, &selections)
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("the file is not text"), "{message}");
+    assert!(
+        !target.join("skills").exists(),
+        "a refused apply writes nothing at all"
+    );
+}
+
 /// What every other kind does under a rename, as a fixture rather than a
 /// claim in a comment.
 ///
 /// An agent's own file carries the name its tool answers to, so a renamed
 /// agent declares its destination. The other three carry no name anything
-/// keys on and are copied byte for byte: a command is placed and listed by
-/// its filename and its own frontmatter declares no name, an MCP server
-/// registers under the item name, and a hook's `name:` line is read by
-/// nothing that places or registers it.
+/// keys on and are copied byte for byte.
 ///
-/// All three are real candidates. The unmanaged scan offers only skills,
-/// agents and commands, but a hook and an MCP server in the local source
-/// reach the wizard as the person's own content, which is how they are
-/// seeded here.
+/// All three are real candidates: a hook and an MCP server reach the
+/// wizard through a lock entry pointing at the local source, which is how
+/// they are seeded here.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_renamed_agent_declares_its_destination_and_the_name_less_kinds_are_copied_verbatim() {
