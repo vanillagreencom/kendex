@@ -15,7 +15,9 @@
 #       pr-watch and its argv is exactly --heal, for every repo; a
 #       heal-dispatched line is never a key — alone, re-attributed to another
 #       PR, or alone on a repo that is not the first reduced — while the
-#       gate-stale beside it still fires and is the only key baselined;
+#       gate-stale beside it still fires and is the only key baselined; an
+#       error key preempts a repo's opening pass while every other kind there
+#       still baselines silently;
 #       rc≠0 with no lines is a global failure (exit 2); attention
 #       at start does not starve a lane's question; the state file is
 #       rewritten after every pass, and an uncreatable state dir or an
@@ -143,6 +145,30 @@ out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a lone heal-dispatched line on the second repo is not an event" "$err"
 assert_eq "$(sort -u "$STUB_DIR/prwatch.args.all" | cut -f2 | sort -u)" "--heal" \
   "every repo's pass is invoked with --heal" "$err"
+
+# 1d''''. an error key preempts a repo's opening pass. Every other kind
+# standing at start is that repo's baseline, but a failed writer dispatch
+# baselined at start is never news again, and the overseer would hear nothing
+# until the heartbeat.
+new_case prwatch_error_first_pass
+printf '12\taaaa0000\tgate-stale\tpredicate disagrees\n12\taaaa0000\terror\twriter dispatch failed for '"'"'Review gate writer'"'"'\n' > "$STUB_DIR/prwatch.out"
+printf '1' > "$STUB_DIR/prwatch.rc"
+err="$TMP_ROOT/e1d6"
+out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "an error at start exits 0" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "an error line at start is the event, not the baseline" "$err"
+assert_contains "$out" "writer dispatch failed" "the event carries the failed dispatch" "$err"
+assert_eq "$(grep -c 'attention present at start' "$err")" "0" "the baseline note does not stand in for the error event"
+
+# The companion: without an error key the opening pass still baselines
+# silently, so the preemption above is scoped to error and nothing else.
+new_case prwatch_no_error_first_pass
+printf '12\taaaa0000\tgate-stale\tpredicate disagrees\n12\taaaa0000\theal-dispatched\twriter workflow dispatched\n' > "$STUB_DIR/prwatch.out"
+printf '1' > "$STUB_DIR/prwatch.rc"
+err="$TMP_ROOT/e1d7"
+out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a first pass with no error key still baselines" "$err"
+assert_eq "$(grep -c 'attention present at start' "$err")" "1" "the ordinary first-pass note still covers the non-error keys"
 
 # 1e'. a line that clears and later recurs is a rising edge again
 new_case prwatch_recur

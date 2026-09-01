@@ -11,9 +11,9 @@
 #                 --since under $OVERSEE_WATCH_STATE_DIR), so attention that
 #                 arrives between two runs is still an event. No state file
 #                 (the fleet's first run) → attention present at start is a
-#                 baseline (noted once on stderr), never a preempting event,
-#                 so a PR that sits at threads-open for an hour cannot starve
-#                 the lane checks. The reducer runs with --heal for every
+#                 baseline (one stderr note), not an event, so a PR sitting at
+#                 threads-open cannot starve the lane checks; an `error` line
+#                 preempts even there. The reducer runs with --heal for every
 #                 repo, so a gate-stale line dispatches the review gate writer
 #                 itself; the heal-dispatched line that reports that dispatch
 #                 is the tool's own note, not per-PR attention, and is never a
@@ -106,9 +106,9 @@ Events, checked in this order every pass:
                              that repo, so attention that arrived between two
                              runs is an event (its output follows). On the
                              fleet's first run, attention already present is a
-                             baseline (one stderr note per repo), so it can
-                             never preempt the checks below; skipped with a
-                             stderr note when pr-watch.sh is not installed.
+                             baseline (one stderr note per repo) that cannot
+                             preempt the checks below — an `error` line excepted;
+                             skipped with a note when pr-watch.sh is absent.
                              Run with --heal in every repo, so gate-stale
                              self-heals; the heal-dispatched line reporting
                              that dispatch is never itself an event.

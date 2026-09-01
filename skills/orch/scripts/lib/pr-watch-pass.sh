@@ -133,7 +133,16 @@ check_pr_watch() {
     # and later recurs is news again. Pass 1 compares against the persisted
     # baseline; a repo this run named for the first time has none, so its
     # standing attention is that repo's baseline rather than an event.
-    if [[ "$PW_PASSES" -eq 1 && "${PW_HAD_STATE[$i]}" -eq 0 ]]; then
+    # An `error` key preempts even a repo's opening pass. Every other kind
+    # standing at start is that repo's baseline, but an error is the reducer
+    # saying it could not answer for a PR — a failed writer dispatch among
+    # them — and the overseer has to act on it before another pass runs.
+    # Baselined instead, it is written as seen and never news again, so the
+    # first fleet run against a repo with a broken dispatch path would say
+    # nothing until the heartbeat.
+    if awk -F'\t' '$2 == "error" { found = 1 } END { exit !found }' <<<"$new_keys"; then
+      event=1
+    elif [[ "$PW_PASSES" -eq 1 && "${PW_HAD_STATE[$i]}" -eq 0 ]]; then
       echo "oversee-watch: pr-watch attention present at start for $repo (rc=$rc, $(grep -c . <<<"$new_keys") line(s)) — the fleet's baseline, reported with the next event; only NEW lines become events" >&2
     else
       event=1
