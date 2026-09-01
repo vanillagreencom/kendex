@@ -133,12 +133,13 @@ cat > "$BIN/setsid" <<'EOF'
 set -euo pipefail
 [[ ! -f "$WATCH_SETSID_FAIL" ]] || exit 41
 if [[ -f "$WATCH_SETSID_DELAY.enabled" ]]; then
-  # The outer `setsid -f` has already detached this delayed supervisor into its
-  # own session, so the gated shell runs it directly rather than exec-ing setsid
-  # a second time. Staying its parent lets the shell record the supervisor's
-  # exit status in `.exited`, the condition the case waits on instead of a
-  # fixed settle sleep. `shift` drops the caller's `-f`.
-  "$WATCH_REAL_SETSID" -f bash -c 'touch "$WATCH_SETSID_DELAY.entered"; while [[ ! -f "$WATCH_SETSID_DELAY.release" ]]; do sleep 0.05; done; shift; "$@"; printf "%s\n" "$?" > "$WATCH_SETSID_DELAY.exited"' bash "$@"
+  # The outer `setsid -f` already detached this delayed supervisor into its own
+  # session, so the gated shell runs it directly rather than exec-ing setsid
+  # again — staying its parent is what lets it record the supervisor's exit
+  # status in `.exited`, the condition the case waits on. The `shift` drops the
+  # caller's `-f`; the guard before it refuses any other first argument, so a
+  # changed call site fails loudly instead of running an argv short one word.
+  "$WATCH_REAL_SETSID" -f bash -c 'touch "$WATCH_SETSID_DELAY.entered"; while [[ ! -f "$WATCH_SETSID_DELAY.release" ]]; do sleep 0.05; done; [[ "${1:-}" == -f ]] || { echo "setsid delay stub: expected -f as the first argument, got: ${1:-}" >&2; exit 64; }; shift; "$@"; printf "%s\n" "$?" > "$WATCH_SETSID_DELAY.exited"' bash "$@"
   exit 0
 fi
 if [[ -f "$WATCH_SETUP_GATE.enabled" ]]; then touch "$WATCH_SETUP_GATE.entered"; while [[ ! -f "$WATCH_SETUP_GATE.release" ]]; do sleep 0.05; done; fi
@@ -533,10 +534,10 @@ if [[ -n "$REAL_SETSID" ]]; then
   printf 'malformed\n' > "$MODE"
   released_locks=$(shared_locks)
   touch "$WATCH_SETSID_DELAY.release"
-  # `.exited` says an attempt finished, but it would say that of a supervisor
-  # that never started, so the shared lock its currency check takes is asserted
-  # beside it — evidence the supervisor process itself produced — and its status
-  # separates this case's refusal from a gate shell that ran the wrong thing.
+  # `.exited` would also be written for a supervisor that never started, so the
+  # shared lock its currency check takes is asserted beside it — evidence the
+  # process itself produced — and its status separates this case's refusal from
+  # a gate shell that ran the wrong thing.
   wait_file "$WATCH_SETSID_DELAY.exited" || bad "released delayed supervisor never finished"
   [[ "$(shared_locks)" -gt "$released_locks" ]] \
     && ok "released delayed supervisor reached its currency check" \
