@@ -9,13 +9,14 @@ name: Skill Tests
 # and every cargo lane runs on pull_request as well as in the merge queue and
 # on the push to main, so a green PR has proven what the queue re-proves and
 # an ejection — dequeue, fix, requeue, pay the merge latency again — is rare
-# instead of routine. Whatever does NOT run everywhere carries its own `if:`
-# saying why. The review gate never conditions CI (it answers review-only;
-# see the review-gate skill) — no gate job here reads the predicate.
+# instead of routine. Whatever does NOT run on every event carries its own
+# `if:` saying why. The review gate never conditions CI (it answers
+# review-only; see the review-gate skill) — no gate job reads the predicate.
 #
-# Time to merge is the metric and hardware follows: the queue legs take the
-# org's paid Blacksmith runners, the pull_request legs free GitHub-hosted
-# ones, so PR and queue durations compare different machines.
+# Time to merge is the metric and hardware follows, for the shard job alone:
+# its merge_group and push legs take the org's paid Blacksmith runners and its
+# pull_request legs free GitHub-hosted ones, so shard durations do not compare
+# across events. Every other job here is GitHub-hosted whatever the event.
 #
 # Heavy jobs run on Blacksmith when the org's CI_RUNNER_* variables are set,
 # falling back to GitHub-hosted so the workflow runs anywhere.
@@ -90,7 +91,8 @@ jobs:
         if: matrix.shard == 'orch'
         run: bash skills/orch/tests/run-all.sh
 
-      # ---- shard: rest — the lints and every shell suite but orch's ------
+      # ---- shard: rest — the lints, and every shell suite no other shard
+      # runs: the loop below skips orch's and review-gate's ----------------
       - name: executable bits on skill tests and scripts
         if: matrix.shard == 'rest'
         run: |
@@ -108,18 +110,19 @@ jobs:
           done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -vE '/(scripts|tests)/lib/|/tests/controls/')
           exit "$fail"
 
-      # The queue-side half of the size gate: without this a merge group never
-      # re-checks the baseline. Skipped on pull_request; preflight runs it there.
+      # Tighten-only file-size gate against tools/size-ratchet-baseline.tsv
+      # + tools/size-ratchet-excludes; reads tracked files at HEAD only. Runs
+      # on every event because the preflight copy is NOT a required context:
+      # only this one can block a PR, and a guard that cannot block is advice.
       - name: size-ratchet (tighten-only file-size gate)
-        if: matrix.shard == 'rest' && github.event_name != 'pull_request'
+        if: matrix.shard == 'rest'
         run: skills/size-ratchet/scripts/size-ratchet
 
-      # The queue-side half of the work-marker gate, conditioned like the size
-      # gate above and for the same reason: preflight covers pull_request, and
-      # a merge group otherwise never scans the index it is about to merge. The
-      # commit lane judges what a commit adds; this scan takes the rest.
+      # Unconditioned for the same reason as the size gate above. The commit
+      # lane runs todo-ban --staged and judges only what a commit adds; this
+      # scan takes the rest, in every blob git reads as text.
       - name: todo-ban (index-wide work-marker scan)
-        if: matrix.shard == 'rest' && github.event_name != 'pull_request'
+        if: matrix.shard == 'rest'
         run: skills/growth-guards/scripts/todo-ban
 
       # Every skill must route problem reports through `kendex report`. The
@@ -190,7 +193,8 @@ jobs:
           fi
           exit "$fail"
 
-      # ---- shard: node — every pi package but the bridge -----------------
+      # ---- shard: node — every node and bun suite here but the bridge's,
+      # which the shard below runs -----------------------------------------
       # setup-node also serves the `pi-claude-bridge` shard's two steps below.
       - uses: actions/setup-node@v4
         if: matrix.shard == 'node' || matrix.shard == 'pi-claude-bridge'
@@ -446,13 +450,13 @@ jobs:
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: skills/preflight/scripts/preflight --base "origin/$BASE_REF"
-      # Tighten-only file-size gate against tools/size-ratchet-baseline.tsv
-      # + tools/size-ratchet-excludes; reads tracked files at HEAD only.
+      # Both carry `always()`: a finding above must not swallow their early
+      # answer. The `rest` shard runs both on every event and is what blocks.
       - name: size-ratchet (tighten-only file-size gate)
+        if: always()
         run: skills/size-ratchet/scripts/size-ratchet
-      # The commit lane runs todo-ban --staged and judges only what a commit
-      # adds; a marker already in a blob git reads as text is this scan's.
       - name: todo-ban (index-wide work-marker scan)
+        if: always()
         run: skills/growth-guards/scripts/todo-ban
 
   cargo-tests:
@@ -467,7 +471,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      # PR runs restore main's entry without saving their own: a ~795 MB key
+      # per push would evict the entries the queue and push runs restore from.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: System dependencies for the keychain store and the app shell
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
       # Full debuginfo across the Tauri workspace out-links the runner's

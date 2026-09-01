@@ -28,6 +28,14 @@ function shardConditions(workflow) {
 	return list.split(",").map((name) => `matrix.shard == '${name.trim()}'`);
 }
 
+// Every shard name a step condition mentions, in file order. A step's `if:`
+// may be compound (`matrix.shard == 'rest' && github.event_name != ...`), so
+// this reads the names out of conditions rather than comparing whole strings
+// the way the per-package check above can.
+function stepShardNames(workflow) {
+	return [...workflow.matchAll(/^ {8}if: .*?matrix\.shard == '([^']+)'/gm)].map((m) => m[1]);
+}
+
 // A package's CI entry point is `test:ci` when it declares one and `test`
 // otherwise. `test:ci` is how a package whose full `test` script cannot run on
 // a runner — pi-claude-bridge's needs API keys and a live provider — states the
@@ -197,4 +205,45 @@ test("a step conditioned on a shard the matrix does not run is reported, not acc
 	const typo = workflow.replaceAll("matrix.shard == 'pi-claude-bridge'", "matrix.shard == 'pi-claude-brige'");
 	assert.notEqual(typo, workflow, "the mutation matched nothing — this control no longer mutates the step it names");
 	assert.deepEqual(unrunPackages(typo), ["pi-claude-bridge: no step on a shard the matrix runs invokes `npm run test:ci`"]);
+});
+
+// The shard-name coupling, both directions. Neither is about Pi packages, but
+// this file already parses the workflow and runs on the `node` shard, so a
+// typo in another shard's conditions is caught from outside that shard.
+test("every step condition names a shard the matrix runs, and every shard is named", () => {
+	const workflow = readFileSync(workflowPath, "utf8");
+	const shards = shardConditions(workflow).map((condition) => condition.replace(/^matrix\.shard == '|'$/g, ""));
+	const named = stepShardNames(workflow);
+	// Floor both readers: one that matched nothing would satisfy both
+	// assertions below vacuously, which is the failure this case guards.
+	assert.ok(shards.length > 0, `no shard list read from ${workflowPath} — the matrix reader is broken`);
+	assert.ok(named.length > 0, `no shard-conditioned steps read from ${workflowPath} — the step reader is broken`);
+
+	// A step naming a shard the matrix dropped is skipped on every run, which
+	// looks identical to a step that runs and passes.
+	assert.deepEqual([...new Set(named)].filter((name) => !shards.includes(name)).sort(), []);
+	// A shard no step names runs checkout and the in-workflow name guard, then
+	// reports success having executed no suite — green and empty.
+	assert.deepEqual(shards.filter((name) => !named.includes(name)).sort(), []);
+});
+
+// Must-fail controls for the two directions above. Each mutates a copy of the
+// workflow and asserts the mutation bit, so a reader that stopped matching
+// cannot pass these by finding nothing.
+test("a step condition naming an unknown shard is reported", () => {
+	const workflow = readFileSync(workflowPath, "utf8");
+	const typo = workflow.replaceAll("matrix.shard == 'rest'", "matrix.shard == 'rst'");
+	assert.notEqual(typo, workflow, "the mutation matched no `rest` step condition");
+	const shards = shardConditions(typo).map((condition) => condition.replace(/^matrix\.shard == '|'$/g, ""));
+	assert.deepEqual([...new Set(stepShardNames(typo))].filter((name) => !shards.includes(name)), ["rst"]);
+});
+
+test("a matrix shard no step names is reported", () => {
+	const workflow = readFileSync(workflowPath, "utf8");
+	const list = workflow.match(/^ {8}shard: \[(.+)\]$/m)[0];
+	const ghost = workflow.replace(list, list.replace("]", ", ghost]"));
+	assert.notEqual(ghost, workflow, "the mutation matched no matrix list");
+	const shards = shardConditions(ghost).map((condition) => condition.replace(/^matrix\.shard == '|'$/g, ""));
+	const named = stepShardNames(ghost);
+	assert.deepEqual(shards.filter((name) => !named.includes(name)), ["ghost"]);
 });
