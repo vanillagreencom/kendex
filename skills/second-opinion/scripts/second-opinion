@@ -247,8 +247,8 @@ Exit codes:
      it died to a signal, named in the report and the <output>.failed.json
      record. The reviewer was taken away by something outside the run (a
      reaper, an operator), not refused: retry, and if it recurs find the
-     killer rather than the review's content. Any exit status above 128 is
-     read as a signal death
+     killer rather than the review's content. 128+N for a signal N the shell
+     can name is a kill; any other non-zero status is a plain failure (5)
   75 detached wait: completion is still recoverable — rerun the same command
   124 detached wait: the run reached its deadline without publishing a status
 HELP
@@ -318,26 +318,27 @@ DETACHED_WORKER=false
 # a code-4 as a real signal about the review. Only review/audit modes (the ones
 # with the no-verdict contract) use it; challenge/quick keep the generic 1.
 #
-# EXIT_CLI_KILLED (KEN-1061): the CLI, or a lane running it, died to a SIGNAL.
-# That is not the CLI refusing or failing on its own terms — something outside
-# the run (a reaper, a sweeper, an operator) took the reviewer away — and folded
-# into 5 it reads as a refused review, so a session cannot tell its reviewer was
-# killed until the pattern has cost several runs. Same no-verdict class, own
-# code, and every report of it names the signal. The shell cannot tell a child
-# that died to signal N from one that chose `exit $((128+N))`, so any exit
-# status above 128 is read as a kill; that trade misreports only a CLI that
+# EXIT_CLI_KILLED (KEN-1061): the CLI, or a lane running it, died to a SIGNAL —
+# something outside the run (a reaper, a sweeper, an operator) took the
+# reviewer away. Folded into 5 that reads as a refused review, so a session
+# cannot tell its reviewer was killed until the pattern has cost several runs.
+# Same no-verdict class, own code, and every report of it names the signal. The
+# shell cannot tell a child that died to signal N from one that chose
+# `exit $((128+N))`, so 128+N for a nameable signal N is read as a kill and any
+# other non-zero status stays a plain failure; that misreports only a CLI that
 # deliberately fakes a signal death.
 EXIT_NO_SCOPE=3
 EXIT_NO_REVIEW=4
 EXIT_CLI_FAILED=5
 EXIT_CLI_KILLED=6
 
-# The signal behind an exit status, as SIG<NAME> — empty return (1) when the
-# status is not a signal death. 128+N is the shell's encoding for a child
-# killed by signal N; `kill -l` maps the number back to its name portably.
+# The signal behind an exit status, as SIG<NAME>; returns 1 when the status is
+# not a signal death. 128+N is the shell's encoding for a child killed by
+# signal N; `kill -l` maps N back to a name and is the sole judge of which N
+# are signals (out-of-range N is rejected, an unnameable one prints nothing).
 signal_name() {
   local status="$1" name
-  [[ "$status" =~ ^[0-9]+$ ]] && [[ $status -gt 128 && $status -lt 192 ]] || return 1
+  [[ "$status" =~ ^[0-9]+$ ]] && [[ $status -gt 128 ]] || return 1
   name=$(kill -l "$((status - 128))" 2>/dev/null) || return 1
   [[ -n "$name" ]] || return 1
   printf 'SIG%s' "$name"
@@ -2056,20 +2057,17 @@ if $MULTI_LANE; then
       # (invalid JSON even after the retry exits 1) — only never-answered
       # classes (5, 6, 124, a signal) leave ANY_LANE_EXIT4 unset.
       #
-      # A signal death is a KILL, not a lane failing on its own terms: either
-      # the lane child itself died to a signal (rc above 128 from the wait), or
-      # its CLI did and the child classified it (EXIT_CLI_KILLED). Both are
-      # recorded as status "killed" so the union names which reviewer was taken
-      # away, and reported as kills on stderr.
+      # A signal death is a KILL, not a lane failing on its own terms: the lane
+      # child itself died to a signal (the wait reaped 128+N) or its CLI did and
+      # the child classified it (EXIT_CLI_KILLED). Both record status "killed"
+      # so the union names which reviewer was taken away.
       lane_status="failed"
-      if lane_signal=$(signal_name "$lane_rc"); then
+      if lane_signal=$(signal_name "$lane_rc") || [[ $lane_rc -eq "$EXIT_CLI_KILLED" ]]; then
         lane_status="killed"
         ANY_LANE_KILLED=true
-        echo "→ lane killed: $lane ($lane_signal, exit $lane_rc) — an external signal, not a review refusal" >&2
-      elif [[ $lane_rc -eq "$EXIT_CLI_KILLED" ]]; then
-        lane_status="killed"
-        ANY_LANE_KILLED=true
-        echo "→ lane killed: $lane (exit $lane_rc — its CLI died to a signal; the lane's own log above names it)" >&2
+        lane_kill_why="its CLI died to a signal; the lane's own log above names it"
+        [[ -z "$lane_signal" ]] || lane_kill_why="an external signal, not a review refusal"
+        echo "→ lane killed: $lane (${lane_signal:+$lane_signal, }exit $lane_rc) — $lane_kill_why" >&2
       else
         [[ $lane_rc -eq "$EXIT_NO_REVIEW" || $lane_rc -eq 1 ]] && ANY_LANE_EXIT4=true
         echo "→ lane failed: $lane (exit $lane_rc)" >&2
@@ -2083,9 +2081,8 @@ if $MULTI_LANE; then
   if [[ ${#LANE_WRAPS[@]} -eq 0 ]]; then
     jq -n --argjson lanes "$LANES_FAILED_JSON" \
       '{error: "every review lane failed — no external verdict", lanes: $lanes}' >&2
-    # 4 outranks 6 outranks 5: an unusable ANSWER is a real signal about the
-    # review, a kill says the reviewer was taken away, and only when neither
-    # holds is this a plain lane failure.
+    # 4 outranks 6 outranks 5: an unusable ANSWER is a signal about the review,
+    # a kill says the reviewer was taken away, else a plain lane failure.
     if $ANY_LANE_EXIT4; then exit "$EXIT_NO_REVIEW"
     elif $ANY_LANE_KILLED; then exit "$EXIT_CLI_KILLED"
     else exit "$EXIT_CLI_FAILED"; fi
@@ -2289,7 +2286,7 @@ preserve_cli_failure_and_fail() {
   exit "$exit_code"
 }
 
-# review/audit carry the no-verdict contract (exits 3/4/5); challenge/quick do not.
+# review/audit carry the no-verdict contract (the EXIT_* codes); challenge/quick do not.
 REVIEW_LIKE=false
 [[ "$MODE" == "review" || "$MODE" == "audit" ]] && REVIEW_LIKE=true
 
@@ -2299,20 +2296,15 @@ if [[ $EXIT_CODE -eq 124 ]]; then
   $REVIEW_LIKE && preserve_cli_failure_and_fail "timed out after ${TIMEOUT}s" "$RESULT"
   echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
   exit 1
-elif CLI_SIGNAL=$(signal_name "$EXIT_CODE"); then
-  # A signal death is a kill, not the CLI refusing: report it as one, under its
-  # own exit code, so the caller can tell its reviewer was taken away.
-  $REVIEW_LIKE && preserve_cli_failure_and_fail \
-    "was killed by $CLI_SIGNAL (exit $EXIT_CODE)" "$RESULT" "$EXIT_CLI_KILLED"
-  echo "{\"error\": \"$TARGET_CLI was killed by $CLI_SIGNAL (exit $EXIT_CODE)\", \"target\": \"$TARGET_CLI\"}" >&2
-  if [[ -s "$STDERR_TMP" ]]; then
-    echo "--- stderr ---" >&2
-    head -20 "$STDERR_TMP" >&2
-  fi
-  exit 1
 elif [[ $EXIT_CODE -ne 0 ]]; then
-  $REVIEW_LIKE && preserve_cli_failure_and_fail "exited with code $EXIT_CODE" "$RESULT"
-  echo "{\"error\": \"$TARGET_CLI exited with code $EXIT_CODE\", \"target\": \"$TARGET_CLI\"}" >&2
+  # Classify first, report once: a signal death is a kill, not a refusal, and
+  # takes its own exit code so the caller can tell its reviewer was taken away.
+  CLI_FAILURE="exited with code $EXIT_CODE"; CLI_FAILURE_EXIT=$EXIT_CLI_FAILED
+  if CLI_SIGNAL=$(signal_name "$EXIT_CODE"); then
+    CLI_FAILURE="was killed by $CLI_SIGNAL (exit $EXIT_CODE)"; CLI_FAILURE_EXIT=$EXIT_CLI_KILLED
+  fi
+  $REVIEW_LIKE && preserve_cli_failure_and_fail "$CLI_FAILURE" "$RESULT" "$CLI_FAILURE_EXIT"
+  echo "{\"error\": \"$TARGET_CLI $CLI_FAILURE\", \"target\": \"$TARGET_CLI\"}" >&2
   if [[ -s "$STDERR_TMP" ]]; then
     echo "--- stderr ---" >&2
     head -20 "$STDERR_TMP" >&2
@@ -2601,6 +2593,14 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
       echo "→ retry timed out after ${TIMEOUT}s" >&2
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
     elif [[ $RETRY_EXIT -ne 0 ]]; then
+      # The retry is a second full CLI run under the same killer exposure, so a
+      # signal death here is the same kill, reported the same way.
+      if RETRY_SIGNAL=$(signal_name "$RETRY_EXIT"); then
+        echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2
+        preserve_cli_failure_and_fail \
+          "was killed by $RETRY_SIGNAL (exit $RETRY_EXIT) during the recovery retry" \
+          "$RETRY_RESULT" "$EXIT_CLI_KILLED"
+      fi
       echo "→ retry exited with code $RETRY_EXIT" >&2
       preserve_raw_and_fail "$RESULT" "$RETRY_RESULT"
     elif [[ ${#RETRY_RESULT} -eq 0 ]]; then

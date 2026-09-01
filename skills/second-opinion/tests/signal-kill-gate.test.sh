@@ -4,16 +4,15 @@
 # An external killer — a reaper, a sweeper, an operator — taking the review CLI
 # used to fold into EXIT_CLI_FAILED (5), so a killed reviewer read exactly like
 # one that refused, and a caller burned more runs before noticing its reviewer
-# was being taken away. A child that died to a signal now exits EXIT_CLI_KILLED
-# (6) with the signal named in the report and the .failed.json record, and a
-# multi-lane run records the lane as status "killed" in qa_metadata.lanes —
-# whether the lane's CLI died to the signal (the lane child classifies it and
-# exits 6) or the lane child itself did (the parent's wait reaps 128+N).
+# was being taken away. A CLI that died to a signal — on the first run or on
+# the recovery retry — now exits EXIT_CLI_KILLED (6) with the signal named in
+# the report and the .failed.json record. Only 128+N for a signal N the shell
+# can name is a kill; any other non-zero status stays a plain failure (5).
 # challenge/quick stay outside the no-verdict contract: generic exit 1, with
-# the kill still named in the error.
+# the kill still named in the error. The multi-lane contract is
+# signal-kill-lanes.test.sh's.
 #
-# Drives the real script with fake target CLIs that die to real signals; the
-# multi-lane scenarios run a hermetic copy of the skill (kendex#580).
+# Drives the real script with fake target CLIs that die to real signals.
 
 set -euo pipefail
 
@@ -223,82 +222,109 @@ assert_eq "$rc4" "1" "a quick-mode kill keeps the generic exit 1"
 assert_file_contains "$s4_err" "was killed by SIGTERM" "the quick-mode error still names the kill"
 assert_file_absent "$s4_out.failed.json" "quick mode still writes no .failed.json"
 
-# --- Multi-lane: a hermetic copy of the skill (kendex#580) --------------------
-mkdir -p "$TMP_ROOT/proj/skills"
-git init -q "$TMP_ROOT/proj"
-cp -R "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/proj/skills/second-opinion"
-SO_MULTI="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion"
+# --- Scenario 5: the recovery retry is killed -> the same kill, exit 6 --------
+echo "=== scenario 5: a kill during the recovery retry exits 6 and names the retry ==="
+# Prose on the first call (no JSON, so the one-shot retry fires), then dies to
+# STUB_KILL_SIGNAL on the second: the retry is a second full CLI run under the
+# same killer exposure.
+cat > "$TMP_ROOT/bin/prose-then-kill" <<'SH'
+#!/usr/bin/env bash
+n=$(cat "$STUB_COUNTER" 2>/dev/null || echo 0)
+[[ -n "$n" ]] || n=0
+printf '%s' $((n + 1)) > "$STUB_COUNTER"
+cat > /dev/null
+if [[ $n -eq 0 ]]; then
+  echo "I already delivered the JSON above."
+  exit 0
+fi
+kill -s "${STUB_KILL_SIGNAL:-TERM}" $$
+SH
+chmod +x "$TMP_ROOT/bin/prose-then-kill"
+s5_out="$TMP_ROOT/out/review5.json"
+s5_err="$TMP_ROOT/s5.stderr"
+printf '0' > "$COUNTER"
+rc5=0
+set +e
+PATH="$TMP_ROOT/bin:$PATH" \
+  SECOND_OPINION_TARGET=claude \
+  SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/prose-then-kill" \
+  STUB_COUNTER="$COUNTER" STUB_KILL_SIGNAL=TERM \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s5_out" \
+    >/dev/null 2>"$s5_err"
+rc5=$?
+set -e
+assert_eq "$(cat "$COUNTER")" "2" "the recovery retry ran"
+assert_eq "$rc5" "6" "a kill during the retry exits EXIT_CLI_KILLED (6), not the generic 1"
+assert_file_absent "$s5_out" "a retry kill writes no --output artifact"
+assert_file_contains "$s5_out.failed.json" "killed by SIGTERM (exit 143) during the recovery retry" \
+  "the record names the signal and the retry"
+assert_file_exists "$s5_out.raw.txt" "the raw first response stays preserved"
 
-# run_multi <output> <codex-cmd> [extra env...]
-run_multi() {
-  local out="$1" codex_cmd="$2"
-  shift 2
+# --- Scenario 6: control — a retry that exits 1 keeps the generic exit 1 ------
+echo "=== scenario 6: control — a plain retry failure keeps exit 1 ==="
+cat > "$TMP_ROOT/bin/prose-then-fail" <<'SH'
+#!/usr/bin/env bash
+n=$(cat "$STUB_COUNTER" 2>/dev/null || echo 0)
+[[ -n "$n" ]] || n=0
+printf '%s' $((n + 1)) > "$STUB_COUNTER"
+cat > /dev/null
+[[ $n -eq 0 ]] || exit 1
+echo "I already delivered the JSON above."
+SH
+chmod +x "$TMP_ROOT/bin/prose-then-fail"
+s6_out="$TMP_ROOT/out/review6.json"
+s6_err="$TMP_ROOT/s6.stderr"
+printf '0' > "$COUNTER"
+rc6=0
+set +e
+PATH="$TMP_ROOT/bin:$PATH" \
+  SECOND_OPINION_TARGET=claude \
+  SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/prose-then-fail" \
+  STUB_COUNTER="$COUNTER" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s6_out" \
+    >/dev/null 2>"$s6_err"
+rc6=$?
+set -e
+assert_eq "$rc6" "1" "a retry that exits 1 keeps the generic exit 1"
+assert_file_contains "$s6_err" "Failed to extract JSON from claude response after retry" \
+  "a plain retry failure is reported as before"
+assert_file_absent "$s6_out.failed.json" "a plain retry failure writes no .failed.json"
+
+# --- Scenario 7: the edges of the kill band -----------------------------------
+echo "=== scenario 7: only a nameable 128+N is a kill; 255 and 160 stay plain failures ==="
+cat > "$TMP_ROOT/bin/exit-status" <<'SH'
+#!/usr/bin/env bash
+cat > /dev/null
+exit "$STUB_EXIT"
+SH
+chmod +x "$TMP_ROOT/bin/exit-status"
+# run_exit <status> <output> <stderr>
+run_exit() {
   local rc=0
   set +e
-  env SECOND_OPINION_MODELS="codex claude" SECOND_OPINION_COUNT=2 "$@" \
-    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-good" \
-    SECOND_OPINION_CODEX_CMD="$codex_cmd" \
-    "$SO_MULTI" review --range HEAD --cwd "$WORK" --output "$out" \
-    >/dev/null 2>"$TMP_ROOT/last.stderr"
+  PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/exit-status" STUB_EXIT="$1" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$2" >/dev/null 2>"$3"
   rc=$?
   set -e
   return "$rc"
 }
-
-# --- Scenario 5: a killed lane CLI -> lane exit 6, status "killed" ------------
-echo "=== scenario 5: a lane whose CLI died to a signal is recorded killed ==="
-out5="$TMP_ROOT/out/multi5.json"
-printf '0' > "$COUNTER"
-rc5=0
-STUB_COUNTER="$COUNTER" STUB_KILL_SIGNAL=TERM run_multi "$out5" "$TMP_ROOT/bin/kill-self" || rc5=$?
-assert_eq "$rc5" "0" "the surviving lane keeps the run at exit 0"
-assert_jq "$out5" '[.qa_metadata.lanes[] | select(.target == "codex")][0].status' "killed" \
-  "the killed lane is recorded killed, not failed"
-assert_jq "$out5" '[.qa_metadata.lanes[] | select(.target == "codex")][0].exit_code' "6" \
-  "the killed lane records EXIT_CLI_KILLED"
-assert_jq "$out5" '.qa_metadata.coverage' "degraded" "a killed lane still degrades coverage"
-assert_file_contains "$TMP_ROOT/last.stderr" "lane killed: codex" "stderr reports the lane as killed"
-assert_file_contains "$TMP_ROOT/last.stderr" "killed by SIGTERM" "the killing signal is named"
-
-# --- Scenario 6: the lane child itself is killed -> the wait reaps 128+N ------
-echo "=== scenario 6: a lane child that died to a signal is recorded killed ==="
-# The stub finds its own lane by the unique --output path in the lane child's
-# argv; nothing else on the host carries it. The sleep keeps the stub alive
-# past the kill so its own exit can never race the classification.
-out6="$TMP_ROOT/out/multi6.json"
-cat > "$TMP_ROOT/bin/kill-lane" <<SH
-#!/usr/bin/env bash
-cat > /dev/null
-pkill -TERM -f -- "--output=$out6.codex.json"
-sleep 2
-SH
-chmod +x "$TMP_ROOT/bin/kill-lane"
-rc6=0
-run_multi "$out6" "$TMP_ROOT/bin/kill-lane" || rc6=$?
-assert_eq "$rc6" "0" "the surviving lane keeps the run at exit 0"
-assert_jq "$out6" '[.qa_metadata.lanes[] | select(.target == "codex")][0].status' "killed" \
-  "a reaped signal death is recorded killed, not failed"
-assert_jq "$out6" '[.qa_metadata.lanes[] | select(.target == "codex")][0].exit_code' "143" \
-  "the reaped signal status is recorded"
-assert_file_contains "$TMP_ROOT/last.stderr" "lane killed: codex (SIGTERM, exit 143)" \
-  "the reap names the signal"
-
-# --- Scenario 7: every lane killed -> aggregate exit 6, distinct from 5 -------
-echo "=== scenario 7: every lane killed exits EXIT_CLI_KILLED (6) ==="
-out7="$TMP_ROOT/out/multi7.json"
-printf '0' > "$COUNTER"
-rc7=0
-set +e
-env SECOND_OPINION_MODELS="codex claude" SECOND_OPINION_COUNT=2 \
-  STUB_COUNTER="$COUNTER" STUB_KILL_SIGNAL=TERM \
-  SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/kill-self" \
-  SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/kill-self" \
-  "$SO_MULTI" review --range HEAD --cwd "$WORK" --output "$out7" \
-  >/dev/null 2>"$TMP_ROOT/last.stderr"
-rc7=$?
-set -e
-assert_eq "$rc7" "6" "every lane killed exits EXIT_CLI_KILLED (6), not 5"
-assert_file_absent "$out7" "no union artifact when every lane was killed"
+rc255=0
+run_exit 255 "$TMP_ROOT/out/e255.json" "$TMP_ROOT/e255.stderr" || rc255=$?
+assert_eq "$rc255" "5" "exit 255 (no signal 127) stays EXIT_CLI_FAILED (5)"
+assert_file_contains "$TMP_ROOT/e255.stderr" "exited with code 255" "exit 255 is reported as a plain exit"
+rc160=0
+run_exit 160 "$TMP_ROOT/out/e160.json" "$TMP_ROOT/e160.stderr" || rc160=$?
+assert_eq "$rc160" "5" "exit 160 (signal 32, which kill -l cannot name) stays 5"
+if [[ -n "$(kill -l 64 2>/dev/null)" ]]; then
+  rc192=0
+  run_exit 192 "$TMP_ROOT/out/e192.json" "$TMP_ROOT/e192.stderr" || rc192=$?
+  assert_eq "$rc192" "6" "exit 192 (signal 64, SIG$(kill -l 64)) is a kill"
+  assert_file_contains "$TMP_ROOT/e192.stderr" "was killed by SIG$(kill -l 64) (exit 192)" \
+    "the top of the band names its signal"
+else
+  echo "  skip  exit 192: this shell names no signal 64"
+fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

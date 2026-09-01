@@ -126,8 +126,9 @@ holding only whitespace, is the lane answering unusably (4). An absent or
 zero-byte artifact, or a lane that exited 0 leaving nothing, is the lane never
 answering (5).
 
-A lane that died to a signal — the lane child reaped with a status above 128,
-or its CLI killed and classified by the child (exit 6) — is a KILL, recorded as
+A lane that died to a signal — the lane child reaped with a status of 128+N
+where N is a signal the shell can name, or its CLI killed and classified by the
+child (exit 6) — is a KILL, recorded as
 `status: "killed"` and reported with the signal's name: the reviewer was taken
 away by something outside the run, not refused, and folding that into "failed"
 is how a recurring killer stays invisible.
