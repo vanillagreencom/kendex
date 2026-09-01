@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# A Rust file is test scope only when every declaration route is cfg(test)-gated.
+# Without a test path, name, or file-local marker, every declaration route
+# must be cfg(test)-gated for a Rust file to have test scope.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$TEST_DIR" rev-parse --show-toplevel)"
 SUMMARY="$TEST_DIR/../scripts/git-diff-summary"
+mkdir -p "$REPO_ROOT/tmp"
 SANDBOX="$(mktemp -d "$REPO_ROOT/tmp/git-diff-summary-cfg.XXXXXX")"
 PASS=0
 FAIL=0

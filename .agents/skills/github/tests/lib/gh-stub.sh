@@ -9,10 +9,10 @@
 # pile of STUB_* environment knobs that made a scenario something you read by
 # tracing which knob a case branch happened to consult.
 #
-# Here the shape is inverted: the stub has no knowledge of any suite. A test
-# STAGES an answer for a verb, and the stub serves it. Nothing is staged for
-# a verb, and the call is refused — a suite cannot pass on a call it never
-# meant the code to make.
+# Here the shape is inverted: the stub has no knowledge of any suite. Install
+# and reset seed the three identity probes documented below. A test STAGES
+# every other answer, and an unstaged call is refused, so a suite cannot pass
+# on a call it never meant the code to make.
 #
 # Usage, from a test:
 #
@@ -44,8 +44,8 @@
 #
 # A staged verb splits at its FIRST `-`, so a hyphenated word is always the
 # second one — `repo-set-default` is `repo set-default` — and a hyphenated
-# FIRST word cannot be staged at all. No gh command carries one, and such a
-# call is refused rather than answered by something staged for another.
+# FIRST word cannot be staged at all. Current suites do not stage top-level
+# commands of that shape; the helper refuses them.
 #
 # A VERB IS NOT ALWAYS ENOUGH. Two `api graphql` calls carrying different
 # queries are one verb, and answering both the same way would let a suite

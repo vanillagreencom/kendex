@@ -3,15 +3,17 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
+mkdir -p "$ROOT/tmp"
 TMP="$(mktemp -d "$ROOT/tmp/help-inert.XXXXXX")"
 FIXTURE="$TMP/repo"
 MARKER="$FIXTURE/env-loaded"
+CALLS="$TMP/dependency-calls"
 PASS=0
 FAIL=0
 
 trap 'rm -rf -- "$TMP"' EXIT
 
-mkdir -p "$FIXTURE/.agents/skills" "$FIXTURE/bin"
+mkdir -p "$FIXTURE/.agents/skills/control/scripts" "$FIXTURE/bin"
 cp -R "$ROOT/skills/decider" "$FIXTURE/.agents/skills/decider"
 cp -R "$ROOT/skills/github" "$FIXTURE/.agents/skills/github"
 cp -R "$ROOT/skills/linear" "$FIXTURE/.agents/skills/linear"
@@ -20,16 +22,34 @@ cp -R "$ROOT/skills/second-opinion" "$FIXTURE/.agents/skills/second-opinion"
 cp -R "$ROOT/skills/worktree" "$FIXTURE/.agents/skills/worktree"
 git -C "$FIXTURE" init -q
 printf 'touch "%s"\n' "$MARKER" >"$FIXTURE/.env.local"
-printf '#!/bin/sh\nexit 1\n' >"$FIXTURE/bin/blocked"
+printf '%s\n' \
+    '#!/bin/sh' \
+    'printf "%s %s\n" "$0" "$*" >>"${HELP_INERT_CALLS:?}"' \
+    'exit 1' >"$FIXTURE/bin/blocked"
+printf '%s\n' \
+    '#!/bin/sh' \
+    'gh auth status >/dev/null 2>&1 || true' \
+    'printf "dependency control\n"' \
+    >"$FIXTURE/.agents/skills/control/scripts/dependency-call"
+printf '%s\n' \
+    '#!/bin/sh' \
+    '. "$PWD/.env.local"' \
+    'printf "environment control\n"' \
+    >"$FIXTURE/.agents/skills/control/scripts/environment-load"
 cp "$FIXTURE/bin/blocked" "$FIXTURE/bin/gh"
 cp "$FIXTURE/bin/blocked" "$FIXTURE/bin/codex"
 cp "$FIXTURE/bin/blocked" "$FIXTURE/bin/curl"
-chmod +x "$FIXTURE/bin/blocked" "$FIXTURE/bin/gh" "$FIXTURE/bin/codex" "$FIXTURE/bin/curl"
+chmod +x "$FIXTURE/bin/blocked" "$FIXTURE/bin/gh" "$FIXTURE/bin/codex" \
+    "$FIXTURE/bin/curl" "$FIXTURE/.agents/skills/control/scripts/dependency-call" \
+    "$FIXTURE/.agents/skills/control/scripts/environment-load"
+export HELP_INERT_CALLS="$CALLS"
 
-# skill, script, expected output, arguments. A dash means no arguments.
-while IFS=$'\t' read -r skill script token args; do
+# skill, script, expected output, arguments, expected violation. A dash means no arguments.
+while IFS=$'\t' read -r skill script token args expected; do
     [ -n "$skill" ] || continue
+    expected="${expected:-clean}"
     rm -f "$MARKER"
+    : >"$CALLS"
     status=0
     if [ "$args" = - ]; then
         output="$(cd "$FIXTURE" && PATH="$FIXTURE/bin:$PATH" \
@@ -41,16 +61,28 @@ while IFS=$'\t' read -r skill script token args; do
             env -u GH_TOKEN -u GITHUB_TOKEN -u LINEAR_API_KEY \
             "$FIXTURE/.agents/skills/$skill/$script" $args 2>&1)" || status=$?
     fi
-    if [ "$status" -eq 0 ] && [[ "$output" == *"$token"* ]] && [ ! -e "$MARKER" ]; then
+    observed=""
+    if [ "$status" -ne 0 ] || [[ "$output" != *"$token"* ]]; then
+        observed="command"
+    fi
+    [ ! -e "$MARKER" ] || observed="${observed:+$observed,}environment"
+    [ ! -s "$CALLS" ] || observed="${observed:+$observed,}dependency"
+    observed="${observed:-clean}"
+    if [ "$observed" = "$expected" ]; then
         PASS=$((PASS + 1))
     else
         printf 'FAIL: %s %s %s\n' "$skill" "$script" "$args" >&2
-        printf '  status=%s marker=%s expected=%s\n' \
-            "$status" "$([ -e "$MARKER" ] && printf yes || printf no)" "$token" >&2
+        printf '  status=%s observed=%s expected=%s token=%s\n' \
+            "$status" "$observed" "$expected" "$token" >&2
+        if [ -s "$CALLS" ]; then
+            sed 's/^/  dependency: /' "$CALLS" >&2
+        fi
         printf '%s\n' "$output" | sed 's/^/  | /' >&2
         FAIL=$((FAIL + 1))
     fi
 done <<'ROWS'
+control	scripts/dependency-call	dependency control	--help	dependency
+control	scripts/environment-load	environment control	--help	environment
 decider	scripts/decisions	Decision Lookup Tool	-
 decider	scripts/decisions	Decision Lookup Tool	help
 decider	scripts/decisions	Decision Lookup Tool	--help

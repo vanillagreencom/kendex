@@ -26,8 +26,8 @@ assert_eq() {
   fi
 }
 
-# The shared `gh` fake. Only `api user` and `pr list` are staged, so a
-# command that reached for anything else is refused rather than answered.
+# The shared `gh` fake seeds its identity probes. This suite stages `pr list`,
+# so any other non-identity call is refused rather than answered.
 # The stub ships beside this test in both the source package and its render.
 # shellcheck source=lib/gh-stub.sh
 . "$TEST_DIR/lib/gh-stub.sh"

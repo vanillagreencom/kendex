@@ -92,7 +92,7 @@ main() {
     ')
 
     case "$format" in
-        safe)
+        safe|json)
             echo "$enriched"
             ;;
         table)

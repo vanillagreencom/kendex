@@ -30,11 +30,9 @@ SANDBOX="$TMP_ROOT/project"
 mkdir -p "$SANDBOX"
 git -C "$SANDBOX" init -q
 
-# The shared `gh` fake, staged with the auth probes the router may make at
-# startup and the one `pr view` the routed real-command check needs. Anything
-# else is refused: a hint test that let an unexpected call succeed would pass
-# on a router that reached the network. The stub ships beside this test in
-# both the source package and its render.
+# The shared `gh` fake seeds identity probes. This suite stages the `pr view`
+# call its routed-command check needs; any other non-identity call is refused.
+# The stub ships beside this test in both the source package and its render.
 BIN_DIR="$TMP_ROOT/bin"
 # shellcheck source=lib/gh-stub.sh
 . "$TEST_DIR/lib/gh-stub.sh"
@@ -118,6 +116,17 @@ ARGS=(pr-issue 42 --format=text)
 run_github
 assert_eq "$rc" "0" "pr-issue routes and exits 0"
 assert_contains "$out" "ABC-150" "pr-issue extracts the issue from the stubbed branch"
+
+ARGS=(pr-issue 42 --format=json)
+run_github
+assert_eq "$rc" "0" "pr-issue keeps --format=json"
+assert_contains "$out" '"issue": "ABC-150"' "pr-issue json format stays structured"
+
+gh_stub_answer pr-list '[]'
+ARGS=(pr-list-failing --format=json)
+run_github
+assert_eq "$rc" "0" "pr-list-failing keeps --format=json"
+assert_eq "$out" "[]" "pr-list-failing json format stays structured"
 
 # --- Deprecated JSON aliases are rejected ------------------------------------
 for alias_args in \

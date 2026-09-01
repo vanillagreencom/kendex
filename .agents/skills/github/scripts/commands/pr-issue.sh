@@ -61,7 +61,7 @@ main() {
     issue=$(echo "$branch" | grep -oEi "$pattern" | head -1 | tr '[:lower:]' '[:upper:]') || true
 
     case "$format" in
-        safe)
+        safe|json)
             jq -n --arg issue "$issue" --arg branch "$branch" '{issue: $issue, branch: $branch}'
             ;;
         text)
