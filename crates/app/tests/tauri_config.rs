@@ -2,6 +2,7 @@
 //! expects — load-bearing settings that never show up in a compile error
 //! when they go missing.
 
+use base64::Engine;
 use std::path::Path;
 
 #[allow(clippy::expect_used)]
@@ -26,12 +27,23 @@ fn the_window_opens_hidden_so_the_saved_zoom_lands_first() {
 /// The app's updater reads its key from this file at build time, so the
 /// copy core holds for `kendex update` can only be kept honest by an
 /// assertion. Two keys means one delivery path trusting what the other
-/// would turn away.
+/// would turn away — and two identical pins are still the wrong pin if
+/// nothing names the key, which is how a pin whose private half exists
+/// nowhere shipped. So the decoded minisign key file is held to the key id
+/// the release is signed with as well.
 #[test]
+#[allow(clippy::expect_used)]
 fn the_app_and_the_cli_pin_one_updater_key() {
     assert_eq!(
         config()["plugins"]["updater"]["pubkey"].as_str(),
         Some(kendex_core::update_feed::UPDATER_PUBLIC_KEY)
+    );
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(kendex_core::update_feed::UPDATER_PUBLIC_KEY)
+        .expect("the pinned key is base64");
+    assert!(
+        String::from_utf8_lossy(&decoded).contains("C922C89178B7C6CC"),
+        "the pin carries a key id the release signing key does not"
     );
 }
 

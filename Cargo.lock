@@ -2265,6 +2265,7 @@ dependencies = [
 name = "kendex-app"
 version = "5.0.1"
 dependencies = [
+ "base64 0.22.1",
  "ico",
  "kendex-core",
  "rustix",

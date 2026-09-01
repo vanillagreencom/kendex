@@ -38,6 +38,10 @@ tauri-plugin-opener = "2.5.4"
 tauri-plugin-updater = "2"
 
 [dev-dependencies]
+# Decodes the pinned updater key back to the minisign key file it is, so the
+# suite can hold the pin to the key id the release is signed with rather than
+# only to core's copy of the same string.
+base64.workspace = true
 # Reads the bundled icons back: asserting what they depict is the only way
 # to catch a stale or wrongly regenerated one. These are the two `tauri icon`
 # writes them with, so the suite reads a container the way its bundler does
