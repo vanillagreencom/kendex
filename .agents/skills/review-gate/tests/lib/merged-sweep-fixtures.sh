@@ -76,7 +76,9 @@ OLD_AFTER="$(iso -863000)"
 HEAD_A="0123456789abcdef0123456789abcdef01234567"
 HEAD_A8="01234567"
 
-# The last argument of each is the EFFECTIVE PUBLICATION time, which is
+# A typename of "null" builds a GHOST — the author key present and null,
+# the shape GitHub returns for a deleted account; pr() takes it as its
+# author too. The last argument of each is the EFFECTIVE PUBLICATION time, which is
 # what the reduction places either side of the merge. Left empty it equals
 # createdAt, the shape GitHub returns for anything already published; give
 # it a later value for work drafted before the merge and published after
@@ -84,7 +86,8 @@ HEAD_A8="01234567"
 review() { # id, createdAt, state, body, login, [typename], [submittedAt|none]
   jq -n --arg id "$1" --arg at "$2" --arg st "$3" --arg body "$4" \
     --arg login "$5" --arg tn "${6:-Bot}" --arg sub "${7:-}" \
-    '{id:$id, createdAt:$at, state:$st, body:$body, author:{login:$login, __typename:$tn}}
+    '{id:$id, createdAt:$at, state:$st, body:$body,
+       author:(if $tn == "null" then null else {login:$login, __typename:$tn} end)}
      | if $sub == "none" then . else .submittedAt = (if $sub == "" then $at else $sub end) end'
 }
 # The id defaults to one derived from the timestamp and body, so two
@@ -112,7 +115,8 @@ pr() { # number, mergedAt, author, reviews-json, comments-json, threads-json,
   jq -n --argjson n "$1" --arg merged "$2" --arg author "$3" --arg head "$HEAD_A" \
     --argjson rv "$4" --argjson cm "$5" --argjson th "$6" \
     --argjson rvt "${7:--1}" --argjson tht "${8:--1}" \
-    '{number:$n, mergedAt:$merged, headRefOid:$head, author:{login:$author},
+    '{number:$n, mergedAt:$merged, headRefOid:$head,
+      author:(if $author == "null" then null else {login:$author} end),
       reviews:{totalCount:(if $rvt < 0 then ($rv|length) else $rvt end), nodes:$rv},
       comments:{nodes:$cm},
       reviewThreads:{totalCount:(if $tht < 0 then ($th|length) else $tht end), nodes:$th}}'
@@ -358,4 +362,28 @@ assert_overflow_cause_arms() {
   assert_contains "$SPLIT_OUT" "will not parse" "ms40: with the more specific detail the new cause earns"
   assert_eq "$(grep ':overflow:' "$TMP_ROOT/state/acme_widgets")" "19:overflow:thread-comments+unparsable-time" \
     "ms40: and the key now names both causes"
+}
+
+# A ghost author is not proof of a self-review (ms41). Defaulting an absent
+# login to "" made an unidentifiable reviewer match an unidentifiable PR
+# author and the review was dropped as the author's own. Only that pair was
+# affected, so the controls pin both neighbours: a NAMED reviewer on a ghost
+# PR was always kept, and a real self-review is still excluded.
+assert_ghost_author_arms() {
+  fresh_state
+  fixture "$(envelope "$(pr 21 "$MERGED_AT" null \
+    "[$(review REV_g "$AFTER_MERGE" COMMENTED "P1: still leaks" ghost null)]" '[]' '[]')")"
+  run_split
+  assert_eq "$SPLIT_RC" "1" "ms41: a ghost review on a ghost-authored PR is a finding, not a self-review"
+  assert_contains "$SPLIT_OUT" "1 review(s) and 0 review thread(s)" "ms41: counted as one"
+  fresh_state
+  fixture "$(envelope "$(pr 21 "$MERGED_AT" null \
+    "[$(review REV_n "$AFTER_MERGE" COMMENTED "P1: still leaks" codex Bot)]" '[]' '[]')")"
+  run_split
+  assert_eq "$SPLIT_RC" "1" "ms41: a NAMED reviewer on a ghost-authored PR was never the dropped case"
+  fresh_state
+  fixture "$(envelope "$(pr 21 "$MERGED_AT" dev \
+    "[$(review REV_s "$AFTER_MERGE" COMMENTED "note to self" dev User)]" '[]' '[]')")"
+  run_split
+  assert_eq "$SPLIT_RC" "0" "ms41: a real self-review, both logins KNOWN and equal, is still excluded"
 }

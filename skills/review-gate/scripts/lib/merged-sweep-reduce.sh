@@ -120,13 +120,15 @@ else
          # adding a member. A deny-list would fail closed instead, but it
          # would first need a ruling on PENDING — reported, not changed here.
          | select($r.state == "CHANGES_REQUESTED" or $r.state == "COMMENTED")
-         # ASSUMES at most one of the two logins is missing. Two deleted
-         # accounts compare "" to "" and the review is dropped as a
-         # self-review; one deleted account still differs from a live login,
-         # so the finding survives. What would break it: a PR whose author
-         # AND reviewer are both deleted, which is why this is recorded
-         # rather than defended.
-         | select(($r.author.login // "") != ($pr.author.login // ""))
+         # A review belongs to the PR author only when that author is KNOWN
+         # and the logins match. Defaulting both sides to "" made two
+         # unidentifiable accounts compare EQUAL, so a ghost-authored review
+         # on a ghost-authored PR was dropped as a self-review — a finding
+         # discarded in silence. Measured: that pair was the only affected
+         # shape. A named reviewer on a ghost-authored PR was never dropped,
+         # because a real login differs from the "" default, so this is one
+         # lost review and never a whole silent PR.
+         | select(($pr.author.login == null) or ($r.author.login != $pr.author.login))
          | ([ $pr_replies[] | select(at > $rat) ] | last) as $standing
          | select(($standing == null) or (($standing.body // "") | answered | not))
          | $r.id ]) as $late_reviews

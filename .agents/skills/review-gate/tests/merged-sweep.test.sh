@@ -46,6 +46,7 @@
 #   ms37.  a time equal to mergedAt         -> fail closed, neither side
 #   ms38.  a 2nd finding in a seen thread    -> reports; the key is the comment
 #   ms40.  a 2nd overflow CAUSE on a PR       -> reports; the key names causes
+#   ms41.  a ghost author on both sides       -> a finding, not a self-review
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -783,6 +784,7 @@ assert_decline_reason_arms
 assert_merge_tie_arms
 assert_thread_key_arms
 assert_overflow_cause_arms
+assert_ghost_author_arms
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
