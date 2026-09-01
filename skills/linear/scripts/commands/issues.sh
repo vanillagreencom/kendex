@@ -462,7 +462,7 @@ list_issues() {
                 archivedAt
                 trashed
                 relations { nodes { id type relatedIssue { id identifier title state { name } } } }
-                inverseRelations { nodes { id type issue { id identifier title state { name } } } }
+                inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
             }
         }
     }'
@@ -645,7 +645,7 @@ bulk_get_issues() {
                 parent { id identifier title }
                 children { nodes { id identifier title state { name } } }
                 relations { nodes { id type relatedIssue { id identifier title state { name } } } }
-                inverseRelations { nodes { id type issue { id identifier title state { name } } } }
+                inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
             }
         }
     }'
@@ -869,7 +869,7 @@ get_issue() {
                 trashed
                 parent { id identifier title }
                 relations { nodes { id type relatedIssue { id identifier title state { name } } } }
-                inverseRelations { nodes { id type issue { id identifier title state { name } } } }
+                inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
                 children {
                     nodes {
                         id identifier title description
@@ -879,7 +879,7 @@ get_issue() {
                         priority estimate
                         parent { identifier }
                         relations { nodes { type relatedIssue { identifier } } }
-                        inverseRelations { nodes { type issue { identifier } } }
+                        inverseRelations { nodes { type issue { identifier state { type } } } }
                         children {
                             nodes {
                                 id identifier title description
@@ -889,7 +889,7 @@ get_issue() {
                                 priority estimate
                                 parent { identifier }
                                 relations { nodes { type relatedIssue { identifier } } }
-                                inverseRelations { nodes { type issue { identifier } } }
+                                inverseRelations { nodes { type issue { identifier state { type } } } }
                                 children {
                                     nodes {
                                         id identifier title description
@@ -899,7 +899,7 @@ get_issue() {
                                         priority estimate
                                         parent { identifier }
                                         relations { nodes { type relatedIssue { identifier } } }
-                                        inverseRelations { nodes { type issue { identifier } } }
+                                        inverseRelations { nodes { type issue { identifier state { type } } } }
                                     }
                                 }
                             }
@@ -935,7 +935,7 @@ get_issue() {
                 parent { id identifier title }
                 children { nodes { id identifier title state { name } } }
                 relations { nodes { id type relatedIssue { id identifier title state { name } } } }
-                inverseRelations { nodes { id type issue { id identifier title state { name } } } }
+                inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
             }
         }'
     fi
@@ -2179,7 +2179,7 @@ list_children() {
                         estimate
                         parent { identifier }
                         relations { nodes { type relatedIssue { identifier } } }
-                        inverseRelations { nodes { type issue { identifier } } }
+                        inverseRelations { nodes { type issue { identifier state { type } } } }
                         children {
                             nodes {
                                 id
@@ -2192,7 +2192,7 @@ list_children() {
                                 estimate
                                 parent { identifier }
                                 relations { nodes { type relatedIssue { identifier } } }
-                                inverseRelations { nodes { type issue { identifier } } }
+                                inverseRelations { nodes { type issue { identifier state { type } } } }
                                 children {
                                     nodes {
                                         id
@@ -2205,7 +2205,7 @@ list_children() {
                                         estimate
                                         parent { identifier }
                                         relations { nodes { type relatedIssue { identifier } } }
-                                        inverseRelations { nodes { type issue { identifier } } }
+                                        inverseRelations { nodes { type issue { identifier state { type } } } }
                                     }
                                 }
                             }
@@ -2319,7 +2319,7 @@ list_relations() {
                         id
                         identifier
                         title
-                        state { name }
+                        state { name type }
                     }
                 }
             }

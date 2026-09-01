@@ -91,10 +91,9 @@ outD="$(run_list --project "Alpha" --max --format=compact 2>/dev/null)"
 check "D: per-project call returns only that project's issues" "$outD" \
   '[.[].id] | sort == ["CC-1", "CC-2"]'
 check "D: per-project rows keep the compact field set" "$outD" \
-  '.[0] | keys | sort == ["agent", "blocked_by", "blocks", "estimate", "id", "labels", "parent_id", "priority", "project", "sort_order", "state", "state_type", "title"]'
+  '.[0] | keys | sort == ["agent", "blocked_by", "blocked_by_open", "blocks", "estimate", "id", "labels", "parent_id", "priority", "project", "sort_order", "state", "state_type", "title"]'
 
 per_project_keys="$(jq -c '[.[] | select(.id == "CC-1")][0] | keys | sort' <<<"$outD")"
 all_projects_keys="$(jq -c '[.[] | select(.id == "CC-1")][0] | keys | sort' <<<"$outA")"
 assert_eq "D: --all-projects rows keep the per-project row shape" \
   "$all_projects_keys" "$per_project_keys"
-

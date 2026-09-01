@@ -309,7 +309,8 @@ cache_get_children_recursive() {
                         depth: depth,
                         parent_id: ($c.parent.identifier // ""),
                         blocks: [($c.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-                        blocked_by: [($c.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier]
+                        blocked_by: [($c.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
+                        blocked_by_open: [($c.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier]
                     }
                 ) |
                 . + (map(.id) | map(. as $cid | $all | descendants($cid; depth + 1)) | flatten)

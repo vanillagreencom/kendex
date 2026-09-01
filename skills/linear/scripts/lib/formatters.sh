@@ -33,6 +33,7 @@ format_issues_list() {
         updated_at: (.updatedAt // ""),
         blocks: [(.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
         blocked_by: [(.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
+        blocked_by_open: [(.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier],
         related: [(.relations.nodes // [])[] | select(.type == "related") | .relatedIssue.identifier],
         url: (.url // "")
     }]'
@@ -67,6 +68,7 @@ format_issue_single() {
         updated_at: (.issue.updatedAt // ""),
         blocks: [(.issue.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
         blocked_by: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
+        blocked_by_open: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier],
         related: [(.issue.relations.nodes // [])[] | select(.type == "related") | .relatedIssue.identifier],
         url: (.issue.url // "")
     }'
@@ -97,7 +99,8 @@ format_issue_with_bundle() {
                 depth: depth,
                 parent_id: ($node.parent.identifier // ""),
                 blocks: [($node.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-                blocked_by: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier]
+                blocked_by: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
+                blocked_by_open: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier]
             }] + (($node.children.nodes // []) | map(flatten_children(depth + 1)) | flatten);
 
         # Flatten all children
@@ -127,6 +130,7 @@ format_issue_with_bundle() {
             updated_at: (.issue.updatedAt // ""),
             blocks: [(.issue.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
             blocked_by: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
+            blocked_by_open: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier],
             related: [(.issue.relations.nodes // [])[] | select(.type == "related") | .relatedIssue.identifier],
             url: (.issue.url // ""),
             children: $children,
@@ -155,6 +159,7 @@ format_issue_compact() {
         parent_id: (.issue.parent.identifier // ""),
         blocks: [(.issue.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
         blocked_by: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
+        blocked_by_open: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier],
         children: [(.issue.children.nodes // [])[] | {id: .identifier, title: .title, state: .state.name}]
     }'
 }
@@ -176,7 +181,8 @@ format_issue_with_bundle_compact() {
                 depth: depth,
                 parent_id: ($node.parent.identifier // ""),
                 blocks: [($node.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-                blocked_by: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier]
+                blocked_by: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
+                blocked_by_open: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier]
             }] + (($node.children.nodes // []) | map(flatten_children(depth + 1)) | flatten);
 
         ([.issue.children.nodes[] | flatten_children(0)] | flatten) as $children |
@@ -195,6 +201,7 @@ format_issue_with_bundle_compact() {
             parent_id: (.issue.parent.identifier // ""),
             blocks: [(.issue.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
             blocked_by: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
+            blocked_by_open: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier],
             children: $children,
             pending_count: ([$children[] | select(.state_type | IN("completed", "canceled") | not)] | length)
         }
@@ -217,7 +224,8 @@ format_issues_list_compact() {
         project: (.project.name // ""),
         parent_id: (.parent.identifier // ""),
         blocks: [(.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-        blocked_by: [(.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier]
+        blocked_by: [(.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
+        blocked_by_open: [(.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier]
     }]'
 }
 
@@ -440,6 +448,12 @@ format_relations_list() {
             title: .issue.title,
             state: .issue.state.name
         }],
+        blocked_by_open: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | {
+            relation_id: .id,
+            id: .issue.identifier,
+            title: .issue.title,
+            state: .issue.state.name
+        }],
         related: [(.issue.relations.nodes // [])[] | select(.type == "related") | {
             relation_id: .id,
             id: .relatedIssue.identifier,
@@ -493,7 +507,8 @@ format_children_recursive() {
                 depth: depth,
                 parent_id: ($node.parent.identifier // ""),
                 blocks: [($node.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-                blocked_by: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier]
+                blocked_by: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
+                blocked_by_open: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier]
             }] + (($node.children.nodes // []) | map(flatten_children(depth + 1)) | flatten);
 
         # Start from issue.children.nodes (depth 0 = direct children)
