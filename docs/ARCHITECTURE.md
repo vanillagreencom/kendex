@@ -402,17 +402,17 @@ lives in one capability table read by core and UI.
   and a measurement that fails is exit 2 rather than a silent pass. Which
   repository a commit targets is git's question, answered where the target
   has an armed hook: the `pre-commit-check` PreToolUse hook reads a commit out
-  of a command's words, split on whitespace once bash's seven other
+  of a command's words, split on whitespace once bash's non-whitespace
   metacharacters become spaces, defers where both git hooks of its own working
   directory carry the marker and run, and refuses the commit otherwise rather
   than running the repository's own scripts on its behalf: arming is the local
   act that asks for that, and a clone carries no hooks. Sidestepping an armed
   one is refused, whether by the no-verify flag, a cluster holding its letter,
   or a word carrying a `core.hooksPath` key: git skips commit-msg too,
-  unjudgeable here. It reads no shell and deletes no character, so a bypass is
-  seen only where a word already spells it: one written in a message, a heredoc
-  or a comment reads as the flag, while one the shell would join, unquote or
-  expand into the word is unseen and nothing checks that commit.
+  unjudgeable here. It reads no shell and deletes no character, so a word
+  counts only where the command spells it: a `git`, `commit` or bypass word in
+  a message, a heredoc or a comment counts like any other, while one the shell
+  would join, unquote or expand into the word is unseen and reaches git.
   It gates its working directory only, naming the one it judged where it cannot
   defer; an unreadable payload is a refusal, as is unarmed.
 - **kendex carries no migration machinery.** Breaking changes are a

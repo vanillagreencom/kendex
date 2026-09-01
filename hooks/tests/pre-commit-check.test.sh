@@ -4,16 +4,17 @@
 # `commit` word, whether the working directory's git hooks are armed, and
 # whether a word of that command is --no-verify or a short cluster holding -n.
 #
-# One rewrite runs first: bash's seven remaining metacharacters (| & ; ( ) < >)
-# become spaces, so a word bash would have separated is separated here too.
-# Nothing is deleted. A bypass is therefore seen only where a whitespace-
-# separated word of the command already spells it, so anything the shell would
-# join, unquote or expand into the word is not seen, and for those forms
-# nothing checks the commit at all. The reading costs the other way: a `commit`
-# word the split leaves standing beside a `git` word is a commit wherever it
-# stands, a message, a heredoc body and a comment tail included. Both
-# directions are pinned below, examples included, because a claim about which
-# forms fall on which side belongs in a row that reds and not in a comment.
+# One rewrite runs first: every metacharacter bash(1) lists that is not
+# whitespace (| & ; ( ) < >) becomes a space, so a word bash would have
+# separated is separated here too. Nothing is deleted. A word is therefore seen
+# only where the command already spells it, so a bypass the shell would join,
+# unquote or expand into the word is not seen here and reaches git. The reading
+# runs the other way too: a `git` word, a `commit` word and a bypass word the
+# split leaves standing each count wherever they stand, a message, a heredoc
+# body and a comment tail included. Both directions are pinned below, examples
+# included, because a claim about which form falls on which side belongs in a
+# row that reds and not in a comment; the two expectation columns are where the
+# armed and unarmed answers differ.
 #
 # HOOK_UNDER_TEST runs this suite against another hook file, which is how the
 # must-fail control checks that these assertions can go red.
@@ -141,6 +142,11 @@ both 'git -C /somewhere/else commit -m test' 0 2 "git and commit separated by op
 both 'cargo fmt\ngit commit -m x' 0 2 "a commit on the next line"
 both 'sudo git commit -m x' 0 2 "a wrapper in front of git"
 both '/usr/bin/git commit -m x' 0 2 "an absolute git path"
+# The allow side of the over-refusal shapes pinned further down. Without these
+# a change that refused every quoted message, or every command carrying a
+# redirection, would still show green on the allow side.
+both 'git commit -m \"a quoted message\"' 0 2 "a quoted message with no bypass"
+both 'git commit -m x >/dev/null' 0 2 "a redirection after a plain commit"
 both 'git status' 0 0 "no commit word"
 both 'git log --grep=commit' 0 0 "commit inside a longer word"
 both "git log | grep 'commit'" 0 0 "a quoted commit word in an ordinary grep"
@@ -357,18 +363,21 @@ both 'git log --grep=\"<commit>\"' 0 2 "a commit placeholder in angle brackets"
 both 'echo \"usage: git cherry-pick <commit>\"' 0 2 "a usage line naming a commit placeholder"
 
 echo
-echo "the forms this hook does not see: nothing checks those commits"
+echo "the forms this hook does not see"
 
 # Where the model stops. A bypass is seen only where a whitespace-separated
 # word already spells it, so anything the shell would join, unquote or expand
 # into the word is invisible here. Every form below reaches git as the bypass
 # it spells, as a flag word bash assembles or, in the last row, as a config key
-# git reads out of a file, so the armed hooks this design calls the judge are
-# switched off and nothing checks those commits. That is the stated limit and
-# not a gap to close: the character deletions that once reached the first three
-# groups refused read-only commands whose text held these words, and they are
-# the frozen lexical-scanner class. Pinned so the limit is what the suite
-# enforces, and every expectation here was measured by running the hook.
+# git reads out of a file, so where the hooks are armed they are switched off
+# and nothing checks that commit. The unarmed column is not the same answer and
+# is why it is a column: where the `git` and `commit` words are themselves in
+# the command the commit is still refused, and only the rows that hide one of
+# them go through in both. That is the stated limit and not a gap to close: the
+# character deletions that once reached the first three groups refused
+# read-only commands whose text held these words, and they are the frozen
+# lexical-scanner class. Pinned so the limit is what the suite enforces, and
+# every expectation here was measured by running the hook.
 
 # Quoting, which can hide the git word, the commit word or the flag.
 both 'g'"''"'it commit '"$NV"' -m x' 0 0 "quotes inside the git word"
