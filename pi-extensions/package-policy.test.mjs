@@ -66,6 +66,18 @@ function runShardGuard(workflow, shard) {
 	}
 }
 
+// Every job in this workflow names its runner outright, and the header comment
+// above the workflow states that as the rule. An expression there is how the
+// runner used to be picked — `vars.CI_RUNNER_*` with a fallback — and it let
+// one job run on different hardware per event, so shard durations did not
+// compare across events. The three families are the GitHub-hosted images, so a
+// vendor or self-hosted label reds here too rather than only an expression.
+function runnersNotNamedOutright(workflow) {
+	const labels = [...workflow.matchAll(/^ {4}runs-on: (.+)$/gm)].map((match) => match[1].trim());
+	assert.ok(labels.length > 0, `no "runs-on:" line in ${workflowPath} — the runner reader is broken`);
+	return labels.filter((label) => !/^(?:ubuntu|macos|windows)-[\w.-]+$/.test(label));
+}
+
 // A package's CI entry point is `test:ci` when it declares one and `test`
 // otherwise. `test:ci` is how a package whose full `test` script cannot run on
 // a runner — pi-claude-bridge's needs API keys and a live provider — states the
@@ -284,5 +296,28 @@ test("the workflow's shard guard reds on every direction of shard-name drift", (
 	for (const [drift, mutated] of cases) {
 		assert.notEqual(mutated, workflow, `the mutation for "${drift}" matched nothing`);
 		assert.notEqual(runShardGuard(mutated, "rest"), 0, `the guard stayed green when ${drift}`);
+	}
+});
+
+test("every skill-tests.yml job names a GitHub-hosted runner outright", () => {
+	const workflow = readFileSync(workflowPath, "utf8");
+	assert.deepEqual(runnersNotNamedOutright(workflow), [], "a job picks its runner from an expression or names a runner GitHub does not host");
+});
+
+// Must-fail control for the rule above, one case per way a job can stop naming
+// its runner outright. Each asserts its mutation landed, so a case that stopped
+// matching fails loud rather than proving nothing against an unmutated copy.
+test("a runs-on that is an expression or a foreign label is reported, not accepted", () => {
+	const workflow = readFileSync(workflowPath, "utf8");
+	assert.deepEqual(runnersNotNamedOutright(workflow), [], "precondition: the real workflow names every runner outright");
+	const cases = [
+		["the shard picks its runner from an org variable", "${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.CI_RUNNER_4V || 'ubuntu-latest' }}"],
+		["a job takes a vendor's runner", "blacksmith-4vcpu-ubuntu-2404"],
+		["a job takes a self-hosted label", "self-hosted"],
+	];
+	for (const [drift, value] of cases) {
+		const mutated = workflow.replace(/^ {4}runs-on: ubuntu-latest$/m, () => `    runs-on: ${value}`);
+		assert.notEqual(mutated, workflow, `the mutation for "${drift}" matched nothing`);
+		assert.deepEqual(runnersNotNamedOutright(mutated), [value], `the reader stayed green when ${drift}`);
 	}
 });
