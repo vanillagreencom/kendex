@@ -45,13 +45,15 @@ are a defect.
 
 - **Already fixed** → `source=<repo>@<commit7>` in the report marker is the
   commit the reporter installed from. In a fetched kendex checkout, close with
-  "fixed in <sha>" when `git merge-base --is-ancestor <commit7> <fix-sha>`
-  exits 0. `source=unlocked`, or a commit `git cat-file -e <commit7>^{commit}`
-  cannot find, dates nothing: triage on the symptom and never close on age.
-  `rendered=<hash7>` is what the apply wrote in the reporter's tree, injected
-  instructions included, so it cannot be recomputed from a commit — two
-  reports at one `source` with different `rendered` mean one install was
-  edited locally.
+  "fixed in <sha>" when `git merge-base --is-ancestor <commit7> <fix-sha>^`
+  exits 0 — against the fix's parent, so an install sitting ON the fix stays
+  open; that report is the one saying the fix did not work. `source=unlocked`,
+  or a commit `git cat-file -e <commit7>^{commit}` cannot find, dates nothing:
+  triage on the symptom and never close on age. `rendered=<hash7>` fingerprints
+  the bytes that reporter's apply wrote and cannot be recomputed here — the
+  consumer's injected instructions are inside it, so it differs per project and
+  per harness at one commit. It tells two installs apart, never an edited one;
+  a local edit is `kendex verify` in the reporter's tree.
 - **Duplicate** → close, name the canonical issue.
 - **Not a kendex asset** → ownership is the asset's SKILL.md frontmatter
   (`source: kendex`), never its install path. Close with the reason; repost

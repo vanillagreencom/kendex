@@ -125,39 +125,46 @@ fn a_dated_entry_claims_only_its_own_rendering() {
 /// The lock keys an installation per harness, so one name is several
 /// entries. Entries at two commits date nothing — a marker naming one
 /// of them would close a live report against an install it did not
-/// come from — while entries at one commit whose renderings differ
-/// still date it, because a rendering is per harness.
+/// come from. Agreement is over the whole recorded commit, so two
+/// commits that share the seven characters the marker quotes are still
+/// two commits.
 #[test]
-fn entries_that_disagree_date_nothing() {
-    assert_eq!(
-        provenance_of(&[
-            (
-                "claude",
-                dated(DEFAULT_UPSTREAM, "abc1234def", Some("9f8e7d6"))
-            ),
-            (
-                "codex",
-                dated(DEFAULT_UPSTREAM, "fed4321cba", Some("9f8e7d6"))
-            ),
-        ]),
-        None
-    );
-    assert_eq!(
-        provenance_of(&[
-            (
-                "claude",
-                dated(DEFAULT_UPSTREAM, "abc1234def", Some("9f8e7d6"))
-            ),
-            (
-                "codex",
-                dated(DEFAULT_UPSTREAM, "abc1234def", Some("1122334"))
-            ),
-        ]),
-        Some(Provenance {
-            source: format!("{DEFAULT_UPSTREAM}@abc1234"),
-            rendered: None,
-        })
-    );
+fn entries_at_two_commits_date_nothing() {
+    for (claude, codex) in [
+        ("abc1234def0000", "fed4321cba0000"),
+        ("abc1234def0000", "abc1234aaa0000"),
+    ] {
+        assert_eq!(
+            provenance_of(&[
+                ("claude", dated(DEFAULT_UPSTREAM, claude, Some("9f8e7d6"))),
+                ("codex", dated(DEFAULT_UPSTREAM, codex, Some("9f8e7d6"))),
+            ]),
+            None,
+            "{claude} beside {codex}"
+        );
+    }
+}
+
+/// A rendering is per harness and per project — the consumer's own
+/// injected instructions are inside what the apply wrote — so entries
+/// at one commit that render differently still date the report, and
+/// the marker claims no rendering. An entry that recorded none is one
+/// of those differences, not an abstention.
+#[test]
+fn renderings_the_entries_do_not_share_are_not_claimed() {
+    for (claude, codex) in [(Some("9f8e7d6"), Some("1122334")), (Some("9f8e7d6"), None)] {
+        assert_eq!(
+            provenance_of(&[
+                ("claude", dated(DEFAULT_UPSTREAM, "abc1234def", claude)),
+                ("codex", dated(DEFAULT_UPSTREAM, "abc1234def", codex)),
+            ]),
+            Some(Provenance {
+                source: format!("{DEFAULT_UPSTREAM}@abc1234"),
+                rendered: None,
+            }),
+            "{claude:?} beside {codex:?}"
+        );
+    }
 }
 
 /// `--asset` names no kind, so entries of every kind match it. A name
@@ -181,17 +188,35 @@ fn a_kindless_ambiguous_name_dates_nothing() {
 }
 
 /// The lock is a file anyone can edit and the marker lands in a public
-/// issue body, so only a value shaped like a hash reaches it: an empty
-/// commit claims a date it does not carry, and one holding `-->` ends
-/// the comment early. A rendering that fails the same check is absent
-/// rather than fatal.
+/// issue body, so only a value shaped like the hash it claims to be
+/// reaches it: an empty commit claims a date it does not carry, one
+/// shorter than the marker quotes would be read as a prefix of itself,
+/// and one holding `-->` ends the comment early. A rendering that fails
+/// the same check is absent rather than fatal.
 #[test]
 fn a_value_that_is_no_hash_never_reaches_the_marker() {
-    for commit in ["", "a--> hi", "abc1234\u{1b}[0m", "abc1234def56789 "] {
+    let garbage = [
+        "",
+        "abc123",
+        "a--> hi",
+        "abc1234\u{1b}[0m",
+        "abc1234def56789 ",
+    ];
+    for commit in garbage {
         assert_eq!(
             provenance_of(&[("skill", dated(DEFAULT_UPSTREAM, commit, Some("9f8e7d6")))]),
             None,
             "{commit:?}"
+        );
+        // Recorded and unusable is not the same as recorded nothing: it
+        // does not leave a sibling's commit standing as the only date.
+        assert_eq!(
+            provenance_of(&[
+                ("a-bad", dated(DEFAULT_UPSTREAM, commit, None)),
+                ("b-good", dated(DEFAULT_UPSTREAM, "abc1234def", None)),
+            ]),
+            None,
+            "{commit:?} beside a good commit"
         );
     }
     assert_eq!(

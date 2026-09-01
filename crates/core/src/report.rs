@@ -20,10 +20,11 @@ use crate::source_ref::{owner_repo, repo_identity};
 pub const DEFAULT_UPSTREAM: &str = crate::manifest::DEFAULT_SOURCE_REPO;
 
 /// What the lock recorded about where the reported asset came from, so a
-/// triager can date a report against the fix that already landed. Every
-/// half states what the matching entries agree on and nothing else: the
-/// lock keys an installation per harness, and one name at two commits or
-/// two renderings dates nothing.
+/// triager can date a report against the fix that already landed. The
+/// lock keys an installation per harness, and each half states what those
+/// entries agree on: one name at two commits dates nothing at all, while
+/// one name rendered two ways is still dated and simply claims no
+/// rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Provenance {
     /// `<repo>@<commit7>`, the repo spelled the way a lookup takes it.
@@ -46,9 +47,9 @@ pub struct Route {
     /// the matching lock entries agree on when the caller named none.
     pub kind: Option<ItemKind>,
     /// Where the matching entries agree the bytes came from. `None` when
-    /// nothing dated them, when they disagree, or when the kind itself is
-    /// unresolved: an installation nothing dated cannot be dated after the
-    /// fact, and a guess would be read as a date.
+    /// nothing dated them, when they name different commits, or when the
+    /// kind itself is unresolved: an installation nothing dated cannot be
+    /// dated after the fact, and a guess would be read as a date.
     pub provenance: Option<Provenance>,
 }
 
@@ -100,27 +101,42 @@ pub fn route(lock: &Lock, name: &str, kind: Option<ItemKind>, upstream: &str) ->
 /// matching entry has, or there is none — so it dates nothing either.
 fn provenance(matching: &[&LockEntry], kind: Option<ItemKind>) -> Option<Provenance> {
     kind?;
-    // A dated entry the marker cannot spell answers `None` rather than
-    // dropping out: it still says this name came from somewhere else, and
-    // dropping it would leave a sibling's commit standing as the only one.
-    let dated: Vec<(Option<String>, Option<String>)> = matching
+    // Whole values, agreed whole and cut short only on the way out: two
+    // commits sharing seven characters are two commits. A dated entry the
+    // marker cannot use — an unusable repo, a value that is no hash —
+    // answers `None` rather than dropping out, because dropping it would
+    // leave a sibling's commit standing as the only one. Only an entry
+    // that recorded nothing is silent, which is what the `?` is for.
+    let dated: Vec<Recorded> = matching
         .iter()
         .filter_map(|entry| {
-            let commit = short_hash(entry.source_commit.as_deref())?;
-            Some((
-                marker_repo(&entry.source_repo).map(|repo| format!("{repo}@{commit}")),
-                short_hash(entry.rendered_hash.as_deref()),
-            ))
+            let commit = entry.source_commit.as_deref()?;
+            Some(Recorded {
+                origin: marker_repo(&entry.source_repo).zip(hash_shaped(commit)),
+                rendered: entry.rendered_hash.as_deref().and_then(hash_shaped),
+            })
         })
         .collect();
+    let (repo, commit) = agreed(dated.iter().map(|entry| &entry.origin))?.clone()?;
     Some(Provenance {
-        source: agreed(dated.iter().map(|(source, _)| source))?.clone()?,
-        // Independently: renderings differ per harness at one commit, and
-        // a disagreement there is no reason to withhold the commit itself.
-        rendered: agreed(dated.iter().map(|(_, rendered)| rendered))
+        source: format!("{repo}@{}", short(&commit)),
+        // Independently: renderings differ per harness and per project at
+        // one commit, and a disagreement there is no reason to withhold
+        // the commit itself.
+        rendered: agreed(dated.iter().map(|entry| &entry.rendered))
             .cloned()
-            .flatten(),
+            .flatten()
+            .map(|rendered| short(&rendered)),
     })
+}
+
+/// One dated entry as the marker would carry it, whole. Either half is
+/// `None` where the entry recorded something the marker cannot use, which
+/// is a value the others have to agree with, not an absence.
+struct Recorded {
+    /// The repo it came from and the commit it came from, both usable.
+    origin: Option<(String, String)>,
+    rendered: Option<String>,
 }
 
 /// The one value every entry gives, or `None` when they disagree or there
@@ -130,15 +146,24 @@ fn agreed<T: PartialEq>(mut values: impl Iterator<Item = T>) -> Option<T> {
     values.all(|value| value == first).then_some(first)
 }
 
-/// A recorded hash as a marker carries it: seven characters, and only from
-/// a value shaped like a hash. The lock is a file anyone can edit and the
-/// marker lands in a public issue body, so nothing else travels — an empty
-/// value would claim a date it does not carry, and one holding `-->` would
-/// end the comment early and take the rest of the marker with it.
-fn short_hash(recorded: Option<&str>) -> Option<String> {
-    let value = recorded?;
-    (!value.is_empty() && value.chars().all(|c| c.is_ascii_hexdigit()))
-        .then(|| value.chars().take(7).collect())
+/// A recorded value, whole, when it is shaped like the hash it claims to
+/// be: hex, and no shorter than what the marker quotes nor longer than a
+/// sha256. The lock is a file anyone can edit and the marker lands in a
+/// public issue body, so nothing else travels — a value holding `-->`
+/// would end the comment early and take the rest of the marker with it,
+/// and one shorter than seven characters would be quoted whole while
+/// reading as a prefix.
+fn hash_shaped(recorded: &str) -> Option<String> {
+    let width = (SHORT..=64).contains(&recorded.chars().count());
+    (width && recorded.chars().all(|c| c.is_ascii_hexdigit())).then(|| recorded.to_owned())
+}
+
+/// How much of a hash the marker quotes.
+const SHORT: usize = 7;
+
+/// A hash as the marker carries it.
+fn short(hash: &str) -> String {
+    hash.chars().take(SHORT).collect()
 }
 
 /// The entry's repo as a marker can carry it: the filing target, and only
