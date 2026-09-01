@@ -1,9 +1,3 @@
-//! The manifest configuration an agent answers to, every table of it keyed
-//! by the installed name. A copy under a new name reads none of it unless
-//! it comes along, a rename leaves nothing behind keyed to a name no item
-//! answers to, and neither operation may take configuration off the agents
-//! it never mentioned.
-
 use std::fs;
 
 use kendex_core::error::CoreError;
@@ -11,10 +5,6 @@ use kendex_core::manifest::HookAgents;
 
 use super::*;
 
-/// Every manifest table an agent answers to is keyed by its installed
-/// name. A copy under a new name reads none of them unless they come with
-/// it, and the original — still declared from its source — has to keep
-/// its own.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_beside_carries_the_projects_denies_without_taking_them() {
@@ -54,12 +44,6 @@ fn forking_beside_carries_the_projects_denies_without_taking_them() {
     );
 }
 
-/// A carry holds a frontmatter record only for a harness the catalog
-/// configured this agent under. Where the catalog configured none and the
-/// project did, the whole carried record is the person's own edit, so
-/// writing it over the entry the rekey just copied takes the project's
-/// denies off the copy — the widening the fork exists to prevent, arriving
-/// through the table meant to carry it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_beside_keeps_a_deny_the_catalog_never_configured() {
@@ -114,9 +98,6 @@ fn forking_beside_keeps_a_deny_the_catalog_never_configured() {
     );
 }
 
-/// A rename is the same problem with the old name gone: the tables move
-/// rather than being copied, and nothing is left keyed to a name no item
-/// answers to.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn renaming_an_agent_fork_carries_its_denies_and_instructions() {
@@ -154,12 +135,6 @@ fn renaming_an_agent_fork_carries_its_denies_and_instructions() {
     );
 }
 
-/// The skill assignment is the one table an agent does not read by exact
-/// name: a `reviewer-` agent with no row of its own reads the base
-/// agent's. A rename that moves exact rows alone leaves that assignment
-/// behind, and the new name resolves nothing — so the skills the person
-/// took off the reviewer family come back on the renamed agent. Nothing
-/// else covers it: unlike a fork beside, a rename runs no carry.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn renaming_an_agent_carries_the_skill_assignment_it_read_through_the_base_row() {
@@ -249,11 +224,6 @@ fn renaming_an_agent_carries_the_skill_assignment_it_read_through_the_base_row()
     );
 }
 
-/// A hook scoped to one agent by name reaches the copy only if its
-/// selector says so, and after a rename it points at a name nothing
-/// answers to. Either way an agent-scoped PreToolUse restriction quietly
-/// stops applying, which is this issue's own defect in the one table the
-/// first round did not move.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_scoped_hook_reaches_the_copy_and_follows_a_rename() {
@@ -304,11 +274,6 @@ fn an_agent_scoped_hook_reaches_the_copy_and_follows_a_rename() {
     );
 }
 
-/// A role selector describes a population, not one agent. An agent that
-/// happens to be named for a role does not own the selector spelling it,
-/// and renaming that agent must not rewrite it: doing so takes the gate
-/// off every other agent holding the role, from an operation that never
-/// mentioned them.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone() {
@@ -370,10 +335,6 @@ fn renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone() {
     );
 }
 
-/// Forking a skill beside its source must not touch an agent's settings.
-/// The manifest keys agents and skills in separate tables but one shared
-/// namespace of names, so an unguarded rekey copies the settings of an
-/// agent that merely shares the skill's name.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_a_skill_beside_leaves_a_same_named_agents_settings_alone() {

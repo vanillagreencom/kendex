@@ -2,10 +2,24 @@
 
 use std::ops::Range;
 
-use pulldown_cmark::{Event, Options, Parser};
+use pulldown_cmark::{Event, Options, Parser, Tag};
 
 /// CommonMark plus tables, whose cells must bound spans.
 const EXTENSIONS: Options = Options::ENABLE_TABLES;
+
+pub fn inside_a_block(text: &str) -> Vec<bool> {
+    let lines = line_spans(text);
+    let mut inside = vec![false; lines.len()];
+    for (_, block) in Parser::new_ext(text, EXTENSIONS)
+        .into_offset_iter()
+        .filter(|(event, _)| matches!(event, Event::Start(Tag::CodeBlock(_))))
+    {
+        for at in reached(&lines, &block).skip(1) {
+            inside[at] = true;
+        }
+    }
+    inside
+}
 
 /// Code-span byte ranges local to each line.
 pub fn code_spans_by_line(text: &str) -> Vec<Vec<(usize, usize)>> {
@@ -53,7 +67,7 @@ fn line_spans(text: &str) -> Vec<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{code_spans_by_line, line_spans};
+    use super::{code_spans_by_line, inside_a_block, line_spans};
 
     /// Range count and contents match `str::lines`, including CRLF.
     #[test]
@@ -73,6 +87,7 @@ mod tests {
             for (line, (start, end)) in lines.iter().zip(&spans) {
                 assert_eq!(&text[*start..*end], *line, "{text:?}");
             }
+            assert_eq!(inside_a_block(text).len(), lines.len(), "{text:?}");
             assert_eq!(code_spans_by_line(text).len(), lines.len(), "{text:?}");
         }
     }
