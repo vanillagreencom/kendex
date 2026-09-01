@@ -47,13 +47,18 @@ then error("merged-PR listing carries no coverage metadata")
 else
   .data.search as $s
   # A page that did not reach the whole window says so and fails closed
-  # instead of reporting silence over the remainder. It carries NO key: a
+  # instead of reporting silence over the remainder. The two counts are the
+  # only datum offered: under sort:updated-desc the page holds the most
+  # recently UPDATED merged PRs, scattered across the window rather than a
+  # contiguous newest-merged block, so no timestamp here bounds the unread
+  # remainder and quoting one would send the operator to a window that is
+  # also truncated. It carries NO key: a
   # coverage shortfall is a standing property of the read that no reply
   # clears, so announce-once would leave the gap silent from the second
   # pass on — and a gap that WORSENS silent with it.
   | (if ($s.issueCount > ($s.nodes | length)) or $s.pageInfo.hasNextPage
      then [ [ "-", "--------", "sweep:window-truncated", "-",
-              "\($s.issueCount) merged PR(s) in the window, \($s.nodes | length) read at --limit \($limit) — the rest is UNSWEPT; \(if $limit < $limit_max then "raise --limit (max \($limit_max)) or narrow --window" else "narrow --window, since --limit is already at its \($limit_max) ceiling" end). Oldest merged PR read: \([$s.nodes[] | .mergedAt // empty] | min // "none")" ]
+              "\($s.issueCount) merged PR(s) in the window, \($s.nodes | length) read at --limit \($limit) — the rest is UNSWEPT; \(if $limit < $limit_max then "raise --limit (max \($limit_max)), or narrow --window, until those two counts meet" else "narrow --window until those two counts meet; --limit is already at its \($limit_max) ceiling" end)" ]
             | @tsv ]
      else [] end)
   + [ $s.nodes[]

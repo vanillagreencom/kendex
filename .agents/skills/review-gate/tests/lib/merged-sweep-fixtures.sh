@@ -1,11 +1,41 @@
 # shellcheck shell=bash
 # merged-sweep.test.sh's harness: one stubbed gh over one GraphQL fixture,
-# the builders that shape that fixture, and the runners. It lives here so the
-# suite file is arms alone — reading what a case asserts should not mean
-# scrolling the machinery that sets it up. The caller sets TMP_ROOT and SWEEP
-# before sourcing, and owns PASS/FAIL.
+# the builders that shape that fixture, the assertions and the runners. It
+# lives here so the suite file is arms alone — reading what a case asserts
+# should not mean scrolling the machinery that sets it up. The caller sets
+# TMP_ROOT and SWEEP before sourcing, and owns PASS/FAIL.
 #
 # shellcheck disable=SC2034 # every name here is read by the suite that sources it
+
+# The assertion primitives live here with the rest of the machinery, and
+# with the two composite assertions below that call them: PASS and FAIL are
+# the caller's, every one of these adds to exactly one of them.
+assert_eq() {
+  local got="$1" want="$2" name="$3"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
+  fi
+}
+
+assert_contains() {
+  local haystack="$1" needle="$2" name="$3"
+  if grep -qF -- "$needle" <<<"$haystack"; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
+  fi
+}
+
+assert_not_contains() {
+  local haystack="$1" needle="$2" name="$3"
+  if grep -qF -- "$needle" <<<"$haystack"; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        must not contain: %s\n        in: %s\n' "$name" "$needle" "$haystack"
+  else
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
+  fi
+}
 
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/cwd"
 
@@ -16,6 +46,7 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 set -u
 [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]] || { echo "unexpected gh call: $*" >&2; exit 1; }
 echo call >> "${STUB_CALL_LOG:-/dev/null}"
+printf '%s\n' "$@" >> "${STUB_ARGV_LOG:-/dev/null}"
 if [[ "${STUB_READ_FAIL:-}" == "yes" ]]; then echo "HTTP 502" >&2; exit 1; fi
 if [[ "${STUB_EMPTYBYTES:-}" == "yes" ]]; then exit 0; fi
 cat "${STUB_FIXTURE:?}"
@@ -97,6 +128,37 @@ assert_row() { # name, line, want-pr, want-sha, want-kind, want-detail-substring
   assert_eq "$f2" "$4" "$name: field 2 is the 8-char head sha"
   assert_eq "$f3" "$5" "$name: field 3 is the attention kind"
   assert_contains "$f4" "$6" "$name: field 4 is the detail"
+}
+
+# The REQUEST, not the response. The stub answers whatever it is handed,
+# so only the recorded argv can prove the sweep asked search for the right
+# set: issueCount bounds the window only while merged: does, and a
+# malformed qualifier degrades search to free text, where issueCount counts
+# the whole history and the coverage comparison means nothing.
+assert_sent_query() { # name, expected --window seconds
+  local name="$1" want_win="$2" q doc sent got want delta
+  q="$(grep -m1 '^q=' "$TMP_ROOT/argv.log")"
+  doc="$(cat "$TMP_ROOT/argv.log")"
+  assert_contains "$q" "repo:acme/widgets" "$name: scoped to GH_REPO"
+  assert_contains "$q" "is:pr" "$name: to pull requests"
+  assert_contains "$q" "is:merged" "$name: that are merged"
+  assert_contains "$q" "sort:updated-desc" "$name: newest-updated first, so a late review keeps its PR on the page"
+  assert_contains "$doc" "type:ISSUE" "$name: the document searches ISSUE, the type a PullRequest fragment matches"
+  assert_contains "$doc" 'first:$limit' "$name: and bounds the page by the limit variable"
+  sent="$(sed -n 's/.*merged:>=\([0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\).*/\1/p' <<<"$q")"
+  if [ -z "$sent" ]; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        no merged:>= with a full YYYY-MM-DDTHH:MM:SSZ in: %s\n' "$name" "$q"
+    return
+  fi
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "$name: merged:>= carries a full ISO-8601 Z timestamp"
+  got="$(date -u -d "$sent" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$sent" +%s)"
+  want=$(( $(date -u +%s) - want_win ))
+  delta=$(( got - want )); [ "$delta" -ge 0 ] || delta=$(( 0 - delta ))
+  if [ "$delta" -le 120 ]; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name: and sits --window seconds before now, so the bound tracks the flag"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        merged:>= is %ss away from the requested window\n' "$name" "$delta"
+  fi
 }
 
 # Streams captured SEPARATELY. run_sweep folds them, which cannot tell a

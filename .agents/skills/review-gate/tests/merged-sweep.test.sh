@@ -46,6 +46,9 @@
 #   ms32. a settings-file state dir, read    -> ONE baseline, whatever the
 #         from two directories                  cwd of the pass
 #   ms33. a missing reduction lib            -> exit 2, never bash's exit 1
+#   ms34. the QUERY actually sent             -> the qualifiers, the type and
+#                                               the merged: bound coverage
+#                                               rests on
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,33 +60,6 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 PASS=0
 FAIL=0
-
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        must not contain: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  else
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
-  fi
-}
 
 # shellcheck source=lib/merged-sweep-fixtures.sh
 . "$TEST_DIR/lib/merged-sweep-fixtures.sh"
@@ -693,11 +669,15 @@ assert_contains "$out" "500 merged PR(s) in the window" "ms27f: reporting the WO
 
 # At the ceiling the only remedy left is the window, and the line says that
 # rather than telling the operator to raise a limit already at its maximum.
+# Its own fixture, so reordering or editing ms27 cannot change what it tests.
 fresh_state
+fixture "$(STUB_ISSUE_COUNT=86 envelope "$(pr 11 "$MERGED_AT" dev '[]' '[]' '[]')")"
 set +e
 out=$(run_sweep -- --limit 80); rc=$?
 set -e
+assert_eq "$rc" "1" "ms27e: a window over the ceiling still fails closed"
 assert_contains "$out" "already at its 80 ceiling" "ms27e: at the ceiling the remedy named is the window"
+assert_not_contains "$out" "raise --limit" "ms27e: and never tells the operator to raise a maxed-out limit"
 
 fresh_state
 fixture "$(STUB_HAS_NEXT=true envelope "$(pr 11 "$MERGED_AT" dev '[]' '[]' '[]')")"
@@ -790,6 +770,20 @@ else
   assert_eq "$SPLIT_OUT" "" "ms33b: with stdout empty"
 fi
 chmod 644 "$LIBTEST/lib/settings.sh"; SWEEP="$SWEEP_REAL"
+
+# --- ms34: the REQUEST the coverage claim rests on -----------------------
+# Every arm above feeds the stub a fixture, which proves nothing about what
+# was asked for. Replacing the qualifier set with "repo:X is:pr", or
+# type:ISSUE with type:REPOSITORY, left the whole suite green.
+fresh_state
+fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
+for w in 172800 3600; do
+  : > "$TMP_ROOT/argv.log"
+  set +e
+  run_sweep STUB_ARGV_LOG="$TMP_ROOT/argv.log" -- --no-state --window "$w" >/dev/null 2>&1
+  set -e
+  assert_sent_query "ms34 (--window $w)" "$w"
+done
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
