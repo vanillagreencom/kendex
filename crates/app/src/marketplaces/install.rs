@@ -6,7 +6,6 @@
 //! tool added since the scope was set up is offerable and one removed since
 //! does not read as present.
 
-use kendex_core::apply;
 use kendex_core::engine::ops::{self as engine_ops, AddRequest};
 use kendex_core::env::Env;
 use kendex_core::manifest::Method;
@@ -71,13 +70,16 @@ pub struct InstallItem {
 }
 
 /// What an install hands back: the subscription's packages as they stand
-/// now, and the repository effects the install brought — read and asked
-/// about in the window, because nothing here ran them.
+/// now, the repository effects the install brought — read and asked about
+/// in the window, because nothing here ran them — and what any package the
+/// plan took away had undone, which is not asked about at all.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Installed {
     pub packages: Vec<AvailablePackage>,
     pub repo_effects: Offers,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub undone: Vec<String>,
 }
 
 /// Install packages or a curated set from one subscription. `destination`
@@ -172,7 +174,7 @@ pub fn install(
         _ => engine_ops::add(env, &target, &request),
     }
     .map_err(|e| e.to_string())?;
-    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
+    let undone = crate::repo_effects::write(env, &report)?;
     // After the write, because the script an effect runs is the one this
     // install just put on disk.
     let repo_effects = kendex_core::repo_effects::offers_for(env, &target, &report.repo_effects)
@@ -188,5 +190,6 @@ pub fn install(
     Ok(Installed {
         packages,
         repo_effects,
+        undone,
     })
 }

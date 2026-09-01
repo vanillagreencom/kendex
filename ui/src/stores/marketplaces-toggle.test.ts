@@ -73,7 +73,7 @@ describe("a bare repository page's action", () => {
     // the live list is what says a (disabled) subscription still holds it.
     vi.mocked(commands.sourceToggle).mockResolvedValue({
       status: "ok",
-      data: [],
+      data: { sources: [] },
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",
@@ -170,7 +170,7 @@ describe("a repository page carried on as a subscription", () => {
     });
     vi.mocked(commands.sourceToggle).mockResolvedValue({
       status: "ok",
-      data: [],
+      data: { sources: [] },
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",
@@ -206,7 +206,7 @@ describe("a repository page carried on as a subscription", () => {
     });
     vi.mocked(commands.sourceToggle).mockResolvedValue({
       status: "ok",
-      data: [],
+      data: { sources: [] },
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",
@@ -240,7 +240,7 @@ describe("a repository page carried on as a subscription", () => {
     });
     vi.mocked(commands.sourceToggle).mockResolvedValue({
       status: "ok",
-      data: [],
+      data: { sources: [] },
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",

@@ -11,7 +11,7 @@ use kendex_core::package::{self, detail, diff};
 use serde::Serialize;
 use specta::Type;
 
-use crate::audit::{AuditView, view};
+use crate::audit::{AuditView, settle_report};
 
 pub mod update;
 
@@ -105,8 +105,7 @@ fn settle(env: &Env, scope: &Scope, plan: &apply::Plan) -> Result<AuditView, Str
 /// standing that leaves.
 fn render_scope(env: &Env, scope: &Scope) -> Result<AuditView, String> {
     let report = engine::audit(env, scope).map_err(|e| e.to_string())?;
-    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
-    Ok(view(env, scope))
+    settle_report(env, scope, &report)
 }
 
 #[tauri::command(async)]
@@ -138,8 +137,7 @@ pub fn fork_rename(
         },
     )
     .map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
-    Ok(view(&env, &scope))
+    settle_report(&env, &scope, &report)
 }
 
 /// Discard one package's edits and re-render it — the door back to "the
@@ -169,8 +167,7 @@ pub fn apply_discard_edits(
             &engine::PlanOptions::for_package_discarding_edits(kind, &name),
         )
         .map_err(|e| e.to_string())?;
-        apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
-        return Ok(view(&env, &scope));
+        return settle_report(&env, &scope, &report);
     }
     let manifest = manifest::load_for_mutation(&manifest::manifest_path(&env, &scope))
         .map_err(|e| e.to_string())?
@@ -185,8 +182,7 @@ pub fn apply_discard_edits(
         &engine::PlanOptions::for_package_discarding_edits(kind, name),
     )
     .map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
-    Ok(view(&env, &scope))
+    settle_report(&env, &scope, &report)
 }
 
 #[tauri::command(async)]

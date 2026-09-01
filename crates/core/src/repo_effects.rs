@@ -24,12 +24,14 @@
 //! notice they most need to read.
 mod declaration;
 pub mod disclosure;
+mod undo;
 use declaration::split_script;
 pub use declaration::{Declaration, RepoEffects, declaration, declared};
 pub use disclosure::{
     Companion, Disclosure, Offers, Withheld, Written, installed_skills, offers, offers_for,
     touches_git,
 };
+pub use undo::{Spoken, UndoError, undo};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;

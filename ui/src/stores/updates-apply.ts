@@ -15,6 +15,7 @@ import {
 } from "@/bindings";
 import { unansweredPackageError } from "@/lib/copy-updates";
 import { scopeKey } from "@/lib/scope";
+import { sayUndone } from "@/lib/undone";
 import { type BulkOutcome, outcomeOf } from "@/lib/update-outcome";
 
 type Report = (error: string) => void;
@@ -50,6 +51,7 @@ export const applyRow = async (
     report(response.error);
     return { ok: false };
   }
+  sayUndone(response.data.view.undone);
   return { ok: true, update: response.data };
 };
 
@@ -111,6 +113,7 @@ export const applyRows = async (
       outcome.ok = false;
       continue;
     }
+    sayUndone(response.data.view.undone);
     const answered = new Map(
       response.data.packages.map((one) => [targetKey(one), one]),
     );

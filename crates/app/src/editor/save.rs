@@ -15,7 +15,7 @@
 //! write that follows it. A second write would bind to bytes the first one
 //! had already replaced.
 
-use kendex_core::apply::{self, Op, PlannedOp, Pre};
+use kendex_core::apply::{Op, PlannedOp, Pre};
 use kendex_core::base::Base;
 use kendex_core::engine::{self, PlanOptions, ops};
 use kendex_core::env::Env;
@@ -29,6 +29,7 @@ use specta::Type;
 
 use super::env;
 use crate::audit::{AuditView, view};
+use crate::repo_effects::ExecuteError;
 use crate::whole_file::{WriteRefused, refusal, stale_at};
 
 /// A place's manifest and what the file it came from was at that moment.
@@ -233,13 +234,20 @@ fn write_customize(
     // The bound preconditions refuse a file that moved between the checks
     // above and the write itself, and that refusal is the same answer the
     // checks give — so it reaches the editor as the same choice.
-    apply::execute(env, &report.plan).map_err(|error| match stale_at(&error, &targets) {
-        true => WriteRefused::Stale,
-        false => WriteRefused::Failed {
-            message: error.to_string(),
+    // Through the one executor: a manifest saved with a package deleted out
+    // of it takes that package away, and its declared uninstaller has to run
+    // while its scripts are still on disk. A stale precondition still reads
+    // as the same refusal — the executor hands core's error on as its text.
+    let undone = crate::repo_effects::execute(env, &report).map_err(|refused| match &refused {
+        ExecuteError::Apply { error, .. } if stale_at(error, &targets) => WriteRefused::Stale,
+        _ => WriteRefused::Failed {
+            message: refused.to_string(),
         },
     })?;
-    Ok(view(env, &scope))
+    Ok(AuditView {
+        undone,
+        ..view(env, &scope)
+    })
 }
 
 /// The project root a settings file would sit in. Global has none: skills

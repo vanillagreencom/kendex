@@ -5,7 +5,6 @@
 //! command here. Reads take a [`Catalog`]: a subscription, or a repository
 //! opened from the Community tab before subscribing.
 
-use kendex_core::apply;
 use kendex_core::env::Env;
 use kendex_core::library::{self, ProvenanceRow};
 use kendex_core::manifest::{Manifest, manifest_path};
@@ -201,8 +200,12 @@ pub fn marketplace_subscribe(
     let env = env()?;
     let subscribed = source_ops::subscribe(&env, &scope, &reference, name.as_deref())
         .map_err(|e| e.to_string())?;
-    apply::execute(&env, &subscribed.report.plan).map_err(|e| e.to_string())?;
+    // The subscription's own plan, through the one executor: a manifest
+    // edited outside the window can leave a package the plan drops, and its
+    // uninstaller has to run while its scripts are still on disk.
+    let undone = crate::repo_effects::write(&env, &subscribed.report)?;
     let mut notes = subscribed.report.notes;
+    notes.extend(undone);
     // Fetch so counts and browsing land right away; a failure costs the
     // counts, never the subscription — the CLI verb behaves the same.
     if let Ok(Some(manifest)) =

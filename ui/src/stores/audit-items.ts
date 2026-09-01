@@ -8,6 +8,7 @@ import {
 } from "@/bindings";
 import { adoptedToastLabel } from "@/lib/copy";
 import { replacedToastLabel } from "@/lib/copy-in-the-way";
+import { sayUndone } from "@/lib/undone";
 import { replaceView } from "./audit-fold";
 import { type ErrorAction, useProblemsStore } from "./problems";
 import { useScanStore } from "./scan";
@@ -101,6 +102,11 @@ export function auditRunner(
         error: null,
       });
       if (opts.successMessage) toast.success(opts.successMessage);
+      // What the removal ran in the repository, said whatever the action
+      // was called: every command here answers with the same view.
+      sayUndone(response.data.undone);
+      // What the removal ran in the repository, said whatever the action
+      // was called: every command here answers with the same view.
       await useScanStore.getState().refresh();
       return true;
     }

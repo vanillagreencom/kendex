@@ -17,7 +17,7 @@ vi.mock("@/bindings", () => ({
 }));
 
 vi.mock("sonner", () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
+  toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
 }));
 
 vi.mock("./scan", () => ({
@@ -298,6 +298,38 @@ describe("audit store run() actions", () => {
     await useAuditStore.getState().toggle(globalScope, "hook", "lint", false);
 
     expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  // Removing a package that armed the repository runs its uninstaller
+  // first, and what ran is the removal's own account — a removal that
+  // said nothing left people hunting for shims under `.git/hooks`.
+  it("says what the removal ran in the repository", async () => {
+    vi.mocked(commands.removeItem).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...emptyView,
+        undone: [
+          "growth-guards: running scripts/install-git-hooks --uninstall",
+        ],
+      },
+    });
+
+    await useAuditStore.getState().removeItem(globalScope, "skill", "guards");
+
+    expect(toast.message).toHaveBeenCalledWith(
+      "growth-guards: running scripts/install-git-hooks --uninstall",
+    );
+  });
+
+  it("stays quiet when the removal had no repository effect to undo", async () => {
+    vi.mocked(commands.removeItem).mockResolvedValue({
+      status: "ok",
+      data: emptyView,
+    });
+
+    await useAuditStore.getState().removeItem(globalScope, "skill", "deploy");
+
+    expect(toast.message).not.toHaveBeenCalled();
   });
 
   it("a refused action surfaces as an error, never a silent success", async () => {

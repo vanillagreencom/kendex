@@ -388,10 +388,10 @@ lives in one capability table read by core and UI.
   `.agents/skills` — size-ratchet, todo-ban, byte-ceiling, suppression-ban, conflict-markers, changelog-entries,
   prose, commit-msg, and preflight's staged lanes. git's own `.git/hooks` shims run them: no kendex binary is in the
   path at commit time, and since git clones no hooks, a clone carries the scripts and one `guard install`
-  arms them. kendex implements no check — `guard install`/`guard uninstall` run the installer, every CLI verb
-  that drops a package runs its declared uninstaller before the files go (`engine_common::apply_report`, the one
-  executor of an `EngineReport`), and `guard run <hook>` execs its script with git's redirects passed through, the
-  one child not scrubbed because it is a hook body naming the snapshot judged. `guard check` asks the package too.
+  arms them. kendex implements no check — `guard install`/`guard uninstall` run the installer, either surface's
+  removal runs the leaving package's declared uninstaller before the files go (`repo_effects::undo`, behind their
+  one `EngineReport` executor), and `guard run <hook>` execs its script with git's redirects passed through, the one
+  child not scrubbed because it is a hook body naming the snapshot judged. `guard check` asks the package too.
   `kendex check` relays that same `--check`: the package's sentence and exit where it has something to report, a
   clean result folding into kendex's own all-clear. It asks only where a project's lock enables the skill AND the
   helper is already in `.git/hooks` — git clones none, so that file is the local arming that licenses the run.

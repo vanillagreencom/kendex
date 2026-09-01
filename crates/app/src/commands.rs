@@ -46,7 +46,11 @@ pub fn install_drift_hook(scope: kendex_core::model::Scope) -> Result<bool, Stri
     }
     let report =
         kendex_core::engine::plan_apply(&env, &scope, &options).map_err(|e| e.to_string())?;
-    kendex_core::apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
+    // Through the one executor, like every other report. Nothing was
+    // pending when this started, so the lock this plan writes is the one
+    // the scope already carries: no package leaves here, and the account of
+    // a removal is empty.
+    crate::repo_effects::write(&env, &report)?;
     Ok(true)
 }
 

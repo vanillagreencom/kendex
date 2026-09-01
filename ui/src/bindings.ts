@@ -225,9 +225,9 @@ export const commands = {
 	openUrl: (url: string) => typedError<null, string>(__TAURI_INVOKE("open_url", { url })),
 	/**  Every declared source in every scope — the Sources page's one query. */
 	sourcesOverview: () => typedError<SourceRow[], string>(__TAURI_INVOKE("sources_overview")),
-	sourceAdd: (scope: Scope, name: string, reference: string) => typedError<SourceRow[], string>(__TAURI_INVOKE("source_add", { scope, name, reference })),
-	sourceRemove: (scope: Scope, name: string) => typedError<SourceRow[], string>(__TAURI_INVOKE("source_remove", { scope, name })),
-	sourceToggle: (scope: Scope, name: string, enabled: boolean) => typedError<SourceRow[], string>(__TAURI_INVOKE("source_toggle", { scope, name, enabled })),
+	sourceAdd: (scope: Scope, name: string, reference: string) => typedError<SourcesAfter_Serialize, string>(__TAURI_INVOKE("source_add", { scope, name, reference })),
+	sourceRemove: (scope: Scope, name: string) => typedError<SourcesAfter_Serialize, string>(__TAURI_INVOKE("source_remove", { scope, name })),
+	sourceToggle: (scope: Scope, name: string, enabled: boolean) => typedError<SourcesAfter_Serialize, string>(__TAURI_INVOKE("source_toggle", { scope, name, enabled })),
 	/**
 	 *  Re-resolve every enabled remote across every scope. Returns warnings
 	 *  (offline caches keep serving); hard failures surface as the error.
@@ -239,7 +239,7 @@ export const commands = {
 	 *  Install a set whole. Its members derive from the catalog, so this declares
 	 *  one name and applies the plan that follows from it.
 	 */
-	bundleInstall: (scope: Scope, source: string, name: string, hold: boolean) => typedError<BundleInstalled, string>(__TAURI_INVOKE("bundle_install", { scope, source, name, hold })),
+	bundleInstall: (scope: Scope, source: string, name: string, hold: boolean) => typedError<BundleInstalled_Serialize, string>(__TAURI_INVOKE("bundle_install", { scope, source, name, hold })),
 	/**
 	 *  Every subscription across every scope — the Marketplaces page's one
 	 *  query.
@@ -272,7 +272,7 @@ export const commands = {
 	 *  carry the picker's answer; absent, the scope's own install defaults
 	 *  decide, brought up to date against this machine by the add itself.
 	 */
-	marketplaceInstall: (scope: Scope, source: string, items: InstallItem[], bundle: string | null, destination: { scope: "global" } | { scope: "project"; root: string } | null, hold: boolean, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<Installed, string>(__TAURI_INVOKE("marketplace_install", { scope, source, items, bundle, destination, hold, harnesses, method })),
+	marketplaceInstall: (scope: Scope, source: string, items: InstallItem[], bundle: string | null, destination: { scope: "global" } | { scope: "project"; root: string } | null, hold: boolean, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<Installed_Serialize, string>(__TAURI_INVOKE("marketplace_install", { scope, source, items, bundle, destination, hold, harnesses, method })),
 	/**
 	 *  Where an install of these kinds could land, for the picker the install
 	 *  flow draws. Two filters, both read from core: which tools can take the
@@ -298,8 +298,12 @@ export const commands = {
 	 *  Unsubscribe, removing or keeping the packages. `keep` converts each
 	 *  installation to a local fork; otherwise they are uninstalled, and
 	 *  `discard_edits` takes hand edits along instead of refusing.
+	 * 
+	 *  Answers with what the removal did about the repository effects of the
+	 *  packages that left with the source — the same account the terminal
+	 *  prints, for the window to show.
 	 */
-	marketplaceUnsubscribe: (scope: Scope, source: string, keep: boolean, discardEdits: boolean) => typedError<null, string>(__TAURI_INVOKE("marketplace_unsubscribe", { scope, source, keep, discardEdits })),
+	marketplaceUnsubscribe: (scope: Scope, source: string, keep: boolean, discardEdits: boolean) => typedError<string[], string>(__TAURI_INVOKE("marketplace_unsubscribe", { scope, source, keep, discardEdits })),
 	/**
 	 *  The directory as the tab shows it. `refresh` forces a revalidation;
 	 *  otherwise the cached list is served within its TTL.
@@ -602,6 +606,15 @@ export type AuditView_Deserialize = {
 	 */
 	exits: RowExits[],
 	/**
+	 *  What a removal in this action did about the repository effects of
+	 *  the packages that left with it: the same lines the terminal prints,
+	 *  so the window says what ran rather than leaving a repository armed
+	 *  against scripts that are gone. Empty on a plain read and on every
+	 *  action that took no declaring package away — and left off the wire
+	 *  entirely when it is empty, which is almost every read.
+	 */
+	undone: string[],
+	/**
 	 *  Set when this one scope couldn't be read at all — a corrupt or
 	 *  future-version lock or manifest. Carried as data so one scope's
 	 *  failure never blanks every other scope's audit (drift/plan/notes/
@@ -641,6 +654,15 @@ export type AuditView_Serialize = {
 	 *  ends up offering an action the plan rejects.
 	 */
 	exits: RowExits[],
+	/**
+	 *  What a removal in this action did about the repository effects of
+	 *  the packages that left with it: the same lines the terminal prints,
+	 *  so the window says what ran rather than leaving a repository armed
+	 *  against scripts that are gone. Empty on a plain read and on every
+	 *  action that took no declaring package away — and left off the wire
+	 *  entirely when it is empty, which is almost every read.
+	 */
+	undone?: string[],
 	/**
 	 *  Set when this one scope couldn't be read at all — a corrupt or
 	 *  future-version lock or manifest. Carried as data so one scope's
@@ -703,12 +725,32 @@ export type BundleDetail = {
 };
 
 /**
- *  What a bundle install hands back: every set as it stands now, and the
- *  repository effects its members brought for the window to ask about.
+ *  What a bundle install hands back: every set as it stands now, the
+ *  repository effects its members brought for the window to ask about, and
+ *  what any package the plan took away had undone.
  */
-export type BundleInstalled = {
+export type BundleInstalled = BundleInstalled_Serialize | BundleInstalled_Deserialize;
+
+/**
+ *  What a bundle install hands back: every set as it stands now, the
+ *  repository effects its members brought for the window to ask about, and
+ *  what any package the plan took away had undone.
+ */
+export type BundleInstalled_Deserialize = {
 	bundles: BundleRow[],
 	repoEffects: Offers,
+	undone: string[],
+};
+
+/**
+ *  What a bundle install hands back: every set as it stands now, the
+ *  repository effects its members brought for the window to ask about, and
+ *  what any package the plan took away had undone.
+ */
+export type BundleInstalled_Serialize = {
+	bundles: BundleRow[],
+	repoEffects: Offers,
+	undone?: string[],
 };
 
 /**  One member of a curated set, with where it stands here. */
@@ -1595,12 +1637,34 @@ export type InstallTarget = {
 
 /**
  *  What an install hands back: the subscription's packages as they stand
- *  now, and the repository effects the install brought — read and asked
- *  about in the window, because nothing here ran them.
+ *  now, the repository effects the install brought — read and asked about
+ *  in the window, because nothing here ran them — and what any package the
+ *  plan took away had undone, which is not asked about at all.
  */
-export type Installed = {
+export type Installed = Installed_Serialize | Installed_Deserialize;
+
+/**
+ *  What an install hands back: the subscription's packages as they stand
+ *  now, the repository effects the install brought — read and asked about
+ *  in the window, because nothing here ran them — and what any package the
+ *  plan took away had undone, which is not asked about at all.
+ */
+export type Installed_Deserialize = {
 	packages: AvailablePackage[],
 	repoEffects: Offers,
+	undone: string[],
+};
+
+/**
+ *  What an install hands back: the subscription's packages as they stand
+ *  now, the repository effects the install brought — read and asked about
+ *  in the window, because nothing here ran them — and what any package the
+ *  plan took away had undone, which is not asked about at all.
+ */
+export type Installed_Serialize = {
+	packages: AvailablePackage[],
+	repoEffects: Offers,
+	undone?: string[],
 };
 
 /**  One declared item: `[agents.<name>]` / `[skills.<name>]`. */
@@ -2642,6 +2706,39 @@ export type SourceRow = {
 	/**  Cache HEAD for remotes — freshness display. */
 	head: string | null,
 	declaredItems: string[],
+};
+
+/**
+ *  What a source action leaves: every declared source across every scope,
+ *  and what the removal did about the repository effects of any package
+ *  that left with it — the same account the terminal prints, so the window
+ *  says what ran rather than leaving a repository armed against scripts
+ *  that are gone.
+ */
+export type SourcesAfter = SourcesAfter_Serialize | SourcesAfter_Deserialize;
+
+/**
+ *  What a source action leaves: every declared source across every scope,
+ *  and what the removal did about the repository effects of any package
+ *  that left with it — the same account the terminal prints, so the window
+ *  says what ran rather than leaving a repository armed against scripts
+ *  that are gone.
+ */
+export type SourcesAfter_Deserialize = {
+	sources: SourceRow[],
+	undone: string[],
+};
+
+/**
+ *  What a source action leaves: every declared source across every scope,
+ *  and what the removal did about the repository effects of any package
+ *  that left with it — the same account the terminal prints, so the window
+ *  says what ran rather than leaving a repository armed against scripts
+ *  that are gone.
+ */
+export type SourcesAfter_Serialize = {
+	sources: SourceRow[],
+	undone?: string[],
 };
 
 /**  One check finding shaped for a screen with an Open button. */

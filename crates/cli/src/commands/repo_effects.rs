@@ -36,7 +36,7 @@ use std::io::IsTerminal;
 use kendex_core::engine::EngineReport;
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
-use kendex_core::repo_effects::{DeclaredEffects, Disclosure};
+use kendex_core::repo_effects::{DeclaredEffects, Disclosure, Spoken};
 
 use super::{CliResult, answer, say};
 
@@ -165,94 +165,21 @@ fn relay(report: &kendex_core::guard::GuardReport) {
     }
 }
 
-/// Run one of a package's declared scripts and hand its words on as they
-/// came. The verdict is the caller's to read; what it means differs by
-/// which script ran — `arm` settles the installer's in core, because a
-/// half-written repository has one account to give, and a caller undoing
-/// an effect reads the same exit against a plan it can still stop.
-fn run(
-    scope: &Scope,
-    declared: &DeclaredEffects,
-    spec: &str,
-) -> Result<kendex_core::guard::GuardReport, Box<dyn std::error::Error>> {
-    let report = kendex_core::repo_effects::run_script(scope, &declared.root, spec)?;
-    relay(&report);
-    Ok(report)
-}
-
 /// Run the uninstaller of every package this plan takes away, before the
-/// plan takes it.
+/// plan takes it, and say what ran.
 ///
-/// Before, because the uninstaller is one of the files going: after the
-/// plan there is nothing to run, and the effect outlives its package as
-/// shims that exec a script that is not there and fail every commit
-/// closed. Not asked about — removing the package is the ask — and said
-/// out loud, so the person knows what ran in their repository.
-///
-/// A package whose uninstaller fails stays installed: the plan stops here
-/// with the files still in place and the package's own words on the
-/// failure, so the person can run it by hand and remove again. The other
-/// order leaves the repository in the state this exists to prevent.
-///
-/// A package that declares no uninstaller has nothing to run, and the
-/// removal goes ahead with that said — its files were going either way,
-/// and the disclosure named this the day it was installed.
-///
-/// The same stand-down as the disclosure's: an effect that writes into
-/// `.git` was never offered where the project has no git work tree, so
-/// there is nothing armed to undo and the uninstaller — which exits 2
-/// outside a repository — is not run. Otherwise removing a package from a
-/// plain directory failed every time, over hooks it could never have had.
+/// The loop and its wording are core's, because the window owes the same
+/// account. This side is only which channel each line goes out on: the
+/// package's stdout is what a caller pipes for, so those bytes are relayed
+/// as they came, and everything else is a line to read.
 pub fn undo(scope: &Scope, report: &EngineReport) -> CliResult {
-    let Scope::Project { root } = scope else {
-        return Ok(());
-    };
-    let leaving = &report.repo_effects_leaving;
-    // Asked once, and only when something leaving would need the answer:
-    // the probe is git processes, and a package that writes nowhere near
-    // `.git` never asks. `touches_git` is core's, the same reading the
-    // disclosure was made under, so an effect is armed and disarmed on one
-    // answer rather than two spellings of one.
-    //
-    // `probe`, not the disclosure's `at`: that one withholds an offer where
-    // git will not answer, because it is about to ask somebody to authorize
-    // a path it cannot name. This side only asks whether the work tree that
-    // could have been armed is here.
-    let git_here = leaving
-        .iter()
-        .any(|declared| kendex_core::repo_effects::touches_git(&declared.effects))
-        && kendex_core::guard::Repo::probe(root)?.is_some();
-    for declared in leaving {
-        let name = &declared.name;
-        if kendex_core::repo_effects::touches_git(&declared.effects) && !git_here {
-            say(&format!(
-                "{name}: not inside a git work tree, so nothing it armed is here to undo"
-            ));
-            continue;
-        }
-        let Some(uninstaller) = &declared.effects.uninstaller else {
-            say(&format!(
-                "{name}: declares no uninstaller — what it changed about this repository stays{}",
-                match &declared.effects.removal {
-                    Some(removal) => format!("; to undo: {}", removal),
-                    None => String::new(),
-                }
-            ));
-            continue;
-        };
-        say(&format!("{name}: running {}", uninstaller));
-        let report = run(scope, declared, uninstaller)?;
-        if report.code != 0 {
-            // No verb named: under an apply or a refresh the package is
-            // already out of the manifest, and "remove it again" would
-            // answer "Nothing removed".
-            return Err(format!(
-                "{name}: {} exited {} — its files stay in place; \
-                 fix what it reported and run this again",
-                uninstaller, report.code
-            )
-            .into());
-        }
-    }
-    Ok(())
+    kendex_core::repo_effects::undo(
+        scope,
+        &report.repo_effects_leaving,
+        &mut |spoken| match spoken {
+            Spoken::Stdout(line) => answer(&line),
+            Spoken::Note(line) | Spoken::Stderr(line) => say(&line),
+        },
+    )
+    .map_err(|error| error.to_string().into())
 }

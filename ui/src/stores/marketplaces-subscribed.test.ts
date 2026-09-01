@@ -132,7 +132,7 @@ describe("a Community row's Subscribed marker", () => {
     });
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "ok",
-      data: null,
+      data: [],
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",

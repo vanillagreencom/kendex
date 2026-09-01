@@ -332,3 +332,214 @@ fn an_inert_package_brings_no_offer() {
     );
     assert!(installed.packages.iter().any(|p| p.name == "deploy"));
 }
+
+/// Arm the repository from the window, the way an install's second yes
+/// does, and prove the hooks are live.
+#[allow(clippy::unwrap_used)]
+fn arm(f: &Fixture) {
+    let installed = install_skills(f, &["growth-guards"], None);
+    let [offer] = installed.repo_effects.shown.as_slice() else {
+        panic!("one offer: {:?}", installed.repo_effects);
+    };
+    kendex_app::repo_effects::apply(&f.env, &f.scope, &offer.declared).unwrap();
+    assert!(
+        f.project.join(".git/hooks/kendex-guards").is_file(),
+        "the yes did not arm the hooks"
+    );
+}
+
+/// A commit in the project, with no kendex in the picture — what a shim
+/// pointing at a script that is gone costs.
+fn commit(f: &Fixture, message: &str) -> std::process::Output {
+    #[allow(clippy::unwrap_used)]
+    {
+        fs::write(f.project.join("late.txt"), message).unwrap();
+    }
+    #[allow(clippy::unwrap_used)]
+    std::process::Command::new("git")
+        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+        .args(["commit", "--quiet", "-a", "-m", message])
+        .current_dir(&f.project)
+        // All three, like `git` above: a pre-commit hook exports every one
+        // of them pointing at the repository being committed to, so a
+        // fixture that clears only GIT_DIR still inherits GIT_INDEX_FILE
+        // and writes its own staged entries into that repository's index.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .unwrap()
+}
+
+/// Removing the package from the window disarms the repository first, and
+/// the action's own result says what ran.
+///
+/// The terminal has done this since the uninstaller was declared; the
+/// window called `apply::execute` on the plan and dropped the report, so
+/// the scripts went and the shims stayed — and every commit in that
+/// repository failed closed until somebody found two files under
+/// `.git/hooks` by hand.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_a_package_disarms_the_repository_and_says_so() {
+    let f = fixture();
+    arm(&f);
+    git(&f.project, &["add", "."]);
+
+    let view = kendex_app::audit::remove(&f.env, &f.scope, ItemKind::Skill, "growth-guards")
+        .unwrap_or_else(|error| panic!("remove: {error}"));
+
+    assert!(
+        !f.project.join(".git/hooks/kendex-guards").exists(),
+        "the removal left the shim behind"
+    );
+    assert!(
+        view.undone
+            .iter()
+            .any(|line| line == "growth-guards: running scripts/install-git-hooks --uninstall"),
+        "{:?}",
+        view.undone
+    );
+    git(&f.project, &["add", "-A"]);
+    let after = commit(&f, "after removal");
+    assert!(
+        after.status.success(),
+        "the repository could not commit: {}",
+        String::from_utf8_lossy(&after.stderr)
+    );
+}
+
+/// Unsubscribing takes the source's packages with it, so it disarms them
+/// the same way and hands the account back for the window to show.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn unsubscribing_disarms_the_packages_that_leave_with_the_source() {
+    let f = fixture();
+    arm(&f);
+    git(&f.project, &["add", "."]);
+
+    let undone = kendex_app::unsubscribe::unsubscribe(&f.env, &f.scope, "cat", false, false)
+        .unwrap_or_else(|error| panic!("unsubscribe: {error}"));
+
+    assert!(
+        !f.project.join(".git/hooks/kendex-guards").exists(),
+        "the unsubscribe left the shim behind"
+    );
+    assert!(
+        undone
+            .iter()
+            .any(|line| line.starts_with("growth-guards: running")),
+        "{undone:?}"
+    );
+}
+
+/// A whole-scope apply takes a package away when the manifest no longer
+/// declares it — the shape a hand edit and the built-in editor both
+/// arrive at — and that removal disarms first too.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn applying_a_manifest_without_the_package_disarms_first() {
+    let f = fixture();
+    arm(&f);
+    let manifest = f.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    assert!(text.contains("[skills.growth-guards]"), "{text}");
+    fs::write(
+        &manifest,
+        text.replace("[skills.growth-guards]\nsource = \"cat\"\n", ""),
+    )
+    .unwrap();
+
+    let view = kendex_app::audit::apply_scope(&f.env, &f.scope, true)
+        .unwrap_or_else(|error| panic!("apply_scope: {error}"));
+
+    assert!(
+        !f.project.join(".git/hooks/kendex-guards").exists(),
+        "the apply left the shim behind"
+    );
+    assert!(
+        view.undone
+            .iter()
+            .any(|line| line.starts_with("growth-guards: running")),
+        "{:?}",
+        view.undone
+    );
+}
+
+/// An uninstaller that refuses stops the removal with the package's files
+/// still in place, and the refusal carries the package's own words.
+///
+/// The other order is the state this exists to prevent: files gone, shims
+/// still delegating to them, and nobody able to commit.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refusing_uninstaller_stops_the_removal() {
+    let f = fixture();
+    arm(&f);
+    // The installed copy's script, wrapped: everything passes through
+    // except the uninstall, which refuses.
+    let installer = f
+        .project
+        .join(".agents/skills/growth-guards/scripts/install-git-hooks");
+    let real = installer.with_file_name("install-git-hooks.real");
+    fs::rename(&installer, &real).unwrap();
+    fs::write(
+        &installer,
+        "#!/usr/bin/env bash\ncase \" $* \" in *\" --uninstall \"*) \
+         echo 'refusing to disarm' >&2; exit 1;; esac\n\
+         exec \"$(dirname \"$0\")/install-git-hooks.real\" \"$@\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&installer, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let error = match kendex_app::audit::remove(&f.env, &f.scope, ItemKind::Skill, "growth-guards")
+    {
+        Err(error) => error,
+        Ok(_) => panic!("the removal went ahead"),
+    };
+
+    assert!(error.contains("refusing to disarm"), "{error}");
+    assert!(error.contains("its files stay in place"), "{error}");
+    assert!(
+        installer.is_file(),
+        "the package's files went despite the refusal"
+    );
+    assert!(
+        f.project.join(".git/hooks/kendex-guards").is_file(),
+        "the shim went with a removal that refused"
+    );
+}
+
+/// A package that declares no uninstaller is removed with that said, and
+/// nothing is run.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_package_with_no_uninstaller_is_removed_with_that_said() {
+    let f = fixture();
+    install_skills(&f, &["noisy"], None);
+
+    let view = kendex_app::audit::remove(&f.env, &f.scope, ItemKind::Skill, "noisy")
+        .unwrap_or_else(|error| panic!("remove: {error}"));
+
+    assert!(
+        view.undone
+            .iter()
+            .any(|line| line.contains("noisy: declares no uninstaller")),
+        "{:?}",
+        view.undone
+    );
+}
+
+/// An inert package's removal has nothing to account for, so the window is
+/// told nothing — a line per removal would bury the one that matters.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_an_inert_package_says_nothing() {
+    let f = fixture();
+    install_skills(&f, &["deploy"], None);
+
+    let view = kendex_app::audit::remove(&f.env, &f.scope, ItemKind::Skill, "deploy")
+        .unwrap_or_else(|error| panic!("remove: {error}"));
+
+    assert!(view.undone.is_empty(), "{:?}", view.undone);
+}

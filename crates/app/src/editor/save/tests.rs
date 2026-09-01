@@ -126,7 +126,7 @@ fn a_writer_landing_after_the_editor_read_is_refused_mid_apply() {
         report.plan.ops
     );
 
-    let error = apply::execute(&env, &report.plan).unwrap_err();
+    let error = kendex_core::apply::execute(&env, &report.plan).unwrap_err();
     assert!(
         stale_at(
             &error,
@@ -176,7 +176,7 @@ fn a_refusal_through_a_symlinked_root_is_still_the_stale_choice() {
     )
     .unwrap();
 
-    let error = apply::execute(&env, &report.plan).unwrap_err();
+    let error = kendex_core::apply::execute(&env, &report.plan).unwrap_err();
     assert!(
         stale_at(
             &error,

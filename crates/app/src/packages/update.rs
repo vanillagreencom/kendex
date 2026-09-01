@@ -3,13 +3,12 @@
 //! never moves that scope's other followers, and both answer with what
 //! the plan wrote and what it refused rather than the view alone.
 
-use kendex_core::apply;
 use kendex_core::engine;
 use kendex_core::env::Env;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::package;
 
-use crate::audit::{AuditView, view};
+use crate::audit::{AuditView, settle_report};
 
 use super::env;
 
@@ -121,9 +120,8 @@ fn settle_package(
     report: &engine::EngineReport,
 ) -> Result<PackageUpdate, String> {
     let one = package_outcome(report, kind, name);
-    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
     Ok(PackageUpdate {
-        view: view(env, scope),
+        view: settle_report(env, scope, report)?,
         held_back: one.held_back,
         removed: one.removed,
         moved: one.moved,
@@ -172,9 +170,8 @@ pub fn package_update_many(
         .iter()
         .map(|target| package_outcome(&report, target.kind, &target.name))
         .collect();
-    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
     Ok(PackagesUpdate {
-        view: view(&env, &scope),
+        view: settle_report(&env, &scope, &report)?,
         packages,
     })
 }

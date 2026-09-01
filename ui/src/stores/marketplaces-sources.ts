@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import type { Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { rescanEverything } from "@/lib/rescan";
+import { sayUndone } from "@/lib/undone";
 import { dropCatalogCaches } from "./marketplaces-shared";
 
 /** What these actions need back from the store. */
@@ -22,6 +23,7 @@ export function sourceActions(set: Set, get: () => Sources) {
         toast.error(response.error);
         return;
       }
+      sayUndone(response.data.undone);
       // Turning a holder on or off changes which subscription a repository
       // page carries on as, so every derived read goes.
       dropCatalogCaches(set);

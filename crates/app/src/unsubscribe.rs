@@ -3,6 +3,7 @@
 
 use kendex_core::apply;
 use kendex_core::engine::ops as engine_ops;
+use kendex_core::env::Env;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::source_ops;
 use serde::Serialize;
@@ -55,6 +56,10 @@ pub fn marketplace_unsubscribe_preview(
 /// Unsubscribe, removing or keeping the packages. `keep` converts each
 /// installation to a local fork; otherwise they are uninstalled, and
 /// `discard_edits` takes hand edits along instead of refusing.
+///
+/// Answers with what the removal did about the repository effects of the
+/// packages that left with the source — the same account the terminal
+/// prints, for the window to show.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn marketplace_unsubscribe(
@@ -62,35 +67,49 @@ pub fn marketplace_unsubscribe(
     source: String,
     keep: bool,
     discard_edits: bool,
-) -> Result<(), String> {
-    use kendex_core::engine::detach;
-    let env = env()?;
-    let manifest = engine_ops::manifest_for_mutation(&env, &scope).map_err(|e| e.to_string())?;
-    let closure = detach::closure(&env, &scope, &source, &manifest).map_err(|e| e.to_string())?;
+) -> Result<Vec<String>, String> {
+    unsubscribe(&env()?, &scope, &source, keep, discard_edits)
+}
 
-    let plan = if closure.items.is_empty() {
-        source_ops::remove_source(&env, &scope, &source)
-            .map_err(|e| e.to_string())?
-            .plan
+/// The unsubscribe itself, against the environment it is given.
+pub fn unsubscribe(
+    env: &Env,
+    scope: &Scope,
+    source: &str,
+    keep: bool,
+    discard_edits: bool,
+) -> Result<Vec<String>, String> {
+    use kendex_core::engine::detach;
+    let manifest = engine_ops::manifest_for_mutation(env, scope).map_err(|e| e.to_string())?;
+    let closure = detach::closure(env, scope, source, &manifest).map_err(|e| e.to_string())?;
+
+    let mut undone = if closure.items.is_empty() {
+        let report = source_ops::remove_source(env, scope, source).map_err(|e| e.to_string())?;
+        crate::repo_effects::write(env, &report)?
     } else if keep {
-        detach::source(&env, &scope, &source).map_err(|e| e.to_string())?
+        // A conversion, not a removal: every package stays, under `local`
+        // instead of the source that is going. A bare plan with no report
+        // behind it drops nothing, and the resync below is what carries a
+        // report.
+        let plan = detach::source(env, scope, source).map_err(|e| e.to_string())?;
+        apply::execute(env, &plan).map_err(|e| e.to_string())?;
+        Vec::new()
     } else {
-        detach::remove(&env, &scope, &source, discard_edits)
-            .map_err(|e| e.to_string())?
-            .plan
+        let report =
+            detach::remove(env, scope, source, discard_edits).map_err(|e| e.to_string())?;
+        crate::repo_effects::write(env, &report)?
     };
-    apply::execute(&env, &plan).map_err(|e| e.to_string())?;
     if keep {
         // Keeping moved the catalog's mapping tables into the manifest, so
         // the install records are re-synced here — otherwise every kept
         // agent would read as drifted until the next refresh.
         let resync = kendex_core::engine::plan_apply(
-            &env,
-            &scope,
+            env,
+            scope,
             &kendex_core::engine::PlanOptions::default(),
         )
         .map_err(|e| e.to_string())?;
-        apply::execute(&env, &resync.plan).map_err(|e| e.to_string())?;
+        undone.extend(crate::repo_effects::write(env, &resync)?);
     }
-    Ok(())
+    Ok(undone)
 }

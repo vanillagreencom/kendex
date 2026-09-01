@@ -61,6 +61,14 @@ pub struct AuditView {
     /// it never works them out from the cause, which is how one surface
     /// ends up offering an action the plan rejects.
     pub exits: Vec<engine::exits::RowExits>,
+    /// What a removal in this action did about the repository effects of
+    /// the packages that left with it: the same lines the terminal prints,
+    /// so the window says what ran rather than leaving a repository armed
+    /// against scripts that are gone. Empty on a plain read and on every
+    /// action that took no declaring package away — and left off the wire
+    /// entirely when it is empty, which is almost every read.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub undone: Vec<String>,
     /// Set when this one scope couldn't be read at all — a corrupt or
     /// future-version lock or manifest. Carried as data so one scope's
     /// failure never blanks every other scope's audit (drift/plan/notes/
@@ -96,6 +104,7 @@ impl AuditView {
             safety: Vec::new(),
             adoptable: adoptable(),
             exits: Vec::new(),
+            undone: Vec::new(),
             error: Some(ScopeError::from(error)),
         }
     }
@@ -127,8 +136,24 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
         warnings: report.warnings,
         safety,
         adoptable: adoptable(),
+        undone: Vec::new(),
         error: None,
     }
+}
+
+/// Execute a report and answer with the scope's standing beside what the
+/// removal did about any repository effect leaving with it — the one way a
+/// command here writes a report it holds.
+pub(crate) fn settle_report(
+    env: &Env,
+    scope: &Scope,
+    report: &engine::EngineReport,
+) -> Result<AuditView, String> {
+    let undone = crate::repo_effects::write(env, report)?;
+    Ok(AuditView {
+        undone,
+        ..view(env, scope)
+    })
 }
 
 #[tauri::command(async)]
@@ -167,8 +192,7 @@ pub fn apply_scope(env: &Env, scope: &Scope, remove_orphans: bool) -> Result<Aud
         ..PlanOptions::default()
     };
     let report = engine::plan_apply(env, scope, &options).map_err(|e| e.to_string())?;
-    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
-    Ok(view(env, scope))
+    settle_report(env, scope, &report)
 }
 
 #[tauri::command(async)]
@@ -193,8 +217,7 @@ pub fn adopt_item(
         engine::adopt::adopt(&env, &scope, kind, &name, &harnesses).map_err(|e| e.to_string())?;
     apply::execute(&env, &move_plan).map_err(|e| e.to_string())?;
     let report = engine::audit(&env, &scope).map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
-    Ok(view(&env, &scope))
+    settle_report(&env, &scope, &report)
 }
 
 /// Install what the manifest declares over the files already sitting where
@@ -225,8 +248,7 @@ pub fn replace_unmanaged(
         },
     )
     .map_err(|e| e.to_string())?;
-    apply::execute(env, &report.plan).map_err(|e| e.to_string())?;
-    Ok(view(env, scope))
+    settle_report(env, scope, &report)
 }
 
 #[tauri::command(async)]
@@ -256,21 +278,24 @@ pub fn toggle_item(
         enabled,
     )
     .map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
-    Ok(view(&env, &scope))
+    settle_report(&env, &scope, &report)
+}
+
+/// Take one item out of a scope, against the environment it is given.
+///
+/// Removing one item never takes its unneeded leftovers with it here: the
+/// page has nowhere to preview that yet, and a sweep the user did not see
+/// is exactly the surprise the preview step exists to stop.
+pub fn remove(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<AuditView, String> {
+    let report = ops::remove(env, scope, &[name.to_owned()], Some(kind), false)
+        .map_err(|e| e.to_string())?;
+    settle_report(env, scope, &report)
 }
 
 #[tauri::command(async)]
 #[specta::specta]
 pub fn remove_item(scope: Scope, kind: ItemKind, name: String) -> Result<AuditView, String> {
-    let env = env()?;
-    // Removing one item never takes its unneeded leftovers with it here:
-    // the page has nowhere to preview that yet, and a sweep the user did
-    // not see is exactly the surprise the preview step exists to stop.
-    let report = ops::remove(&env, &scope, std::slice::from_ref(&name), Some(kind), false)
-        .map_err(|e| e.to_string())?;
-    apply::execute(&env, &report.plan).map_err(|e| e.to_string())?;
-    Ok(view(&env, &scope))
+    remove(&env()?, &scope, kind, &name)
 }
 
 #[cfg(test)]

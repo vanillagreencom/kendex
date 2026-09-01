@@ -18,7 +18,7 @@ pub mod recovery;
 pub mod repo_effects;
 mod scopes;
 pub mod sources;
-mod unsubscribe;
+pub mod unsubscribe;
 mod update_check;
 mod whole_file;
 mod window;

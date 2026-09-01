@@ -19,6 +19,7 @@ import {
   repoEffectsWithheldToast,
 } from "@/lib/copy-repo-effects";
 import { rescanEverything } from "@/lib/rescan";
+import { sayUndone } from "@/lib/undone";
 import { catalogKey, subscription } from "./marketplaces-shared";
 import { useProblemsStore } from "./problems";
 
@@ -136,6 +137,10 @@ export function installActions(set: Set, get: Get): InstallActions {
           ? items[0].name
           : `${items.length} packages`;
       toast.success(`Installed ${what}`);
+      // An install can still take a package away — a manifest edited
+      // outside the window leaves one the plan drops — and what its
+      // uninstaller ran is said here, not asked about.
+      sayUndone(response.data.undone);
       for (const held of withheld) {
         toast.info(repoEffectsWithheldToast(held.name, held.reason));
       }
