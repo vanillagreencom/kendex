@@ -196,14 +196,16 @@ fn a_written_tree_keeps_shebang_files_executable() {
 }
 
 /// The manifest as somebody keeps it: a header comment, comments against
-/// three of the tables, hand spacing, a trailing comment on a value, a key
-/// order no serializer would choose, a hook carrying a hand-written
-/// `enabled` flag, and `note`, a key the manifest model does not hold at
-/// all. Every case below asserts the whole file, so any byte a write
-/// disturbs shows up.
+/// the tables, a trailing comment on a value, a key order no serializer
+/// would choose, and `note`, a key the manifest model does not hold at
+/// all. Every key with a default is left out — `[install]` names only the
+/// harnesses, which pins the fan-out this fixture installs under and is
+/// not a default; the hooks name neither `agents` nor, for the second,
+/// `enabled`. So a write that lands any of them shows up here. Every case
+/// below asserts the whole file.
 fn kept_manifest(source: &std::path::Path) -> String {
     format!(
-        "# what this project installs\nschema = 6\n\n# the catalog we read\n[sources.cat]\nenabled = true\n{}\n\n[install]\nmethod   = \"symlink\"\nharnesses = [\"claude\"]\n\n# the one we actually use\n[skills.gh]\nsource = \"cat\"   # from the catalog\nnote = \"why I keep this\"\nenabled = true\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nenabled = true   # still on\nagents = \"all\"\n",
+        "# what this project installs\nschema = 6\n\n# the catalog we read\n[sources.cat]\nenabled = true\n{}\n\n[install]\nharnesses = [\"claude\"]\n\n# the one we actually use\n[skills.gh]\nsource = \"cat\"   # from the catalog\nnote = \"why I keep this\"\nenabled = true\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nenabled = true   # still on\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n",
         source_path(source)
     )
 }

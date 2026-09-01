@@ -165,7 +165,7 @@ export const auditHandlers: Record<string, Handler> = {
       availableSkills: AVAILABLE_SKILLS,
       automaticSkills: AUTOMATIC_SKILLS,
       declaredSkillRows: declaredSkillRows(m),
-      harnesses: m?.install.harnesses ?? ["claude"],
+      harnesses: m?.install?.harnesses ?? ["claude"],
       hookEvents: HOOK_EVENTS,
     };
   },
@@ -179,7 +179,7 @@ export const auditHandlers: Record<string, Handler> = {
     hooks: unknown[];
   }) => {
     const m = store.state.manifests[label(scope)];
-    const harnesses = m?.install.harnesses ?? ["claude"];
+    const harnesses = m?.install?.harnesses ?? ["claude"];
     return hooks.map(() =>
       harnesses.map((harness) => ({ harness, mode: "runs", note: null })),
     );

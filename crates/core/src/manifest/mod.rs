@@ -75,13 +75,19 @@ fn default_true() -> bool {
     true
 }
 
-/// Why every `enabled` skips at its default: the flag reads as true when
-/// it is absent, so writing it out says nothing the file did not already
-/// say, and kendex.toml is edited in place — a key the serialization
-/// spells out is a key the write puts in somebody's file. A hand-written
-/// one is safe either way: what a write may remove is decided by what the
-/// manifest read back out of that same file, never by what the serializer
-/// left out.
+/// Why every field with a default skips at it: an absent key already reads
+/// as that value, and kendex.toml is edited in place, so writing it out
+/// would put a key in somebody's file that says nothing the file did not
+/// already say. What the file does spell is safe either way — a removal is
+/// decided by what the manifest read back out of that same file, never by
+/// what the serializer left out. One predicate per default, each reading
+/// the `default_*` the field deserializes through. A field that gains a
+/// serde default and no skip falsifies ARCHITECTURE invariant 10; the
+/// derivation over this file is in the KEN-928 commit that closed the set.
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
 fn is_true(value: &bool) -> bool {
     *value
 }
@@ -89,9 +95,9 @@ fn is_true(value: &bool) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct InstallDefaults {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub harnesses: Vec<HarnessId>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub method: Method,
 }
 
@@ -176,12 +182,19 @@ pub struct FrontmatterOverrides {
 pub struct PluginDecl {
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub enabled: bool,
-    #[serde(default = "default_plugin_harness")]
+    #[serde(
+        default = "default_plugin_harness",
+        skip_serializing_if = "is_default_plugin_harness"
+    )]
     pub harness: HarnessId,
 }
 
 fn default_plugin_harness() -> HarnessId {
     HarnessId::Claude
+}
+
+fn is_default_plugin_harness(value: &HarnessId) -> bool {
+    *value == default_plugin_harness()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -207,7 +220,10 @@ pub struct CustomHook {
     pub harnesses: Option<Vec<String>>,
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub enabled: bool,
-    #[serde(default = "default_hook_agents")]
+    #[serde(
+        default = "default_hook_agents",
+        skip_serializing_if = "is_default_hook_agents"
+    )]
     pub agents: HookAgents,
 }
 
@@ -221,6 +237,10 @@ pub enum HookAgents {
 
 fn default_hook_agents() -> HookAgents {
     HookAgents::One("all".to_owned())
+}
+
+fn is_default_hook_agents(value: &HookAgents) -> bool {
+    *value == default_hook_agents()
 }
 
 /// Where a fork came from. A fork keeps the item's installed name — the
@@ -248,7 +268,7 @@ pub struct Manifest {
     pub schema: u32,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sources: BTreeMap<String, SourceDecl>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub install: InstallDefaults,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agents: BTreeMap<String, ItemDecl>,

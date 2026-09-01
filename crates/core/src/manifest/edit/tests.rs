@@ -127,10 +127,21 @@ fn an_unparsable_document_is_refused() {
     assert!(merged("not = [valid", "schema = 6\n", "schema = 6\n").is_err());
 }
 
-/// A hook as the serializer spells one, so a case says what it is testing
-/// rather than transcribing the model's every field.
+/// A hook as the serializer spells one — taken from the serializer, not
+/// written out here. A fixture that spells the fields by hand certifies
+/// whatever the serializer did on the day it was written and drifts the
+/// next time a field gains or loses a skip, which is how five cases came
+/// to assert an `enabled = true` the fold does not write.
+#[allow(clippy::unwrap_used)]
 fn hook(event: &str, command: &str) -> String {
-    format!("event = \"{event}\"\ncommand = \"{command}\"\nenabled = true\nagents = \"all\"\n")
+    let manifest: Manifest = toml::from_str(&format!(
+        "schema = 6\n\n[[custom-hooks]]\nevent = \"{event}\"\ncommand = \"{command}\"\n"
+    ))
+    .unwrap();
+    let text = toml::to_string_pretty(&manifest).unwrap();
+    const HEADER: &str = "[[custom-hooks]]\n";
+    let block = &text[text.find(HEADER).unwrap() + HEADER.len()..];
+    block[..block.find("\n[").map_or(block.len(), |cut| cut + 1)].to_owned()
 }
 
 /// An inline `custom-hooks` array is edited inline. The comment above it
@@ -145,7 +156,7 @@ fn an_inline_hook_array_is_edited_inline() {
     );
     assert_eq!(
         fold(current, &changed),
-        "schema = 6\n\n# my hooks\ncustom-hooks = [{ event = \"Stop\", command = \"./finished.sh\" , enabled = true, agents = \"all\"}]\n"
+        "schema = 6\n\n# my hooks\ncustom-hooks = [{ event = \"Stop\", command = \"./finished.sh\" }]\n"
     );
 
     let gained = format!(
@@ -155,7 +166,7 @@ fn an_inline_hook_array_is_edited_inline() {
     );
     assert_eq!(
         fold(current, &gained),
-        "schema = 6\n\n# my hooks\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" , enabled = true, agents = \"all\"}, { event = \"PreToolUse\", command = \"./guard.sh\", enabled = true, agents = \"all\" }]\n"
+        "schema = 6\n\n# my hooks\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" }, { event = \"PreToolUse\", command = \"./guard.sh\" }]\n"
     );
 }
 
@@ -170,12 +181,14 @@ fn an_empty_inline_array_gains_its_first_entry_inline() {
     );
     assert_eq!(
         fold(current, &desired),
-        "schema = 6\n\n# my hooks\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\", enabled = true, agents = \"all\" }]\n"
+        "schema = 6\n\n# my hooks\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" }]\n"
     );
 }
 
 /// A multi-line array gains an element without losing the layout or the
-/// comment written inside it.
+/// comment written inside it. Gaining is all this case ever exercised,
+/// which is how the positional-pairing class survived one level down: the
+/// four cases below cover losing and re-sorting.
 #[test]
 fn a_multiline_array_keeps_its_shape_and_its_inner_comment() {
     let current = "schema = 6\n\n[install]\nharnesses = [\n  # the one I use\n  \"claude\",\n]\n";
@@ -183,7 +196,7 @@ fn a_multiline_array_keeps_its_shape_and_its_inner_comment() {
         "schema = 6\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n";
     assert_eq!(
         fold(current, desired),
-        "schema = 6\n\n[install]\nharnesses = [\n  # the one I use\n  \"claude\", \"codex\",\n]\nmethod = \"symlink\"\n"
+        "schema = 6\n\n[install]\nharnesses = [\n  # the one I use\n  \"claude\",\n  \"codex\",\n]\nmethod = \"symlink\"\n"
     );
 }
 
@@ -268,12 +281,9 @@ fn a_hand_written_enabled_flag_survives_a_hook_edit() {
     let mut manifest: Manifest = toml::from_str(current).unwrap();
     manifest.custom_hooks[0].command = "./finished.sh".to_owned();
     let desired = toml::to_string_pretty(&manifest).unwrap();
-    // `[install]` comes with it. That table has no skip of its own, so the
-    // serializer spells it out whether or not the file had one — the one
-    // place a write still lands a table the operation did not name.
     assert_eq!(
         fold(current, &desired),
-        "schema = 6\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./finished.sh\"\nenabled = true   # still on\nagents = \"all\"\n\n[install]\nharnesses = []\nmethod = \"symlink\"\n"
+        "schema = 6\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./finished.sh\"\nenabled = true   # still on\n"
     );
 }
 
@@ -318,7 +328,7 @@ fn a_declaration_that_omits_enabled_keeps_omitting_it() {
     let current = "schema = 6\n\n# mine\n[skills.gh]\nsource = \"cat\"\n";
     assert_eq!(
         rebound(current, true),
-        "schema = 6\n\n# mine\n[skills.gh]\nsource = \"local\"\n\n[install]\nharnesses = []\nmethod = \"symlink\"\n"
+        "schema = 6\n\n# mine\n[skills.gh]\nsource = \"local\"\n"
     );
 }
 
@@ -330,7 +340,7 @@ fn a_hand_written_enabled_flag_stays_where_it_was_typed() {
     let current = "schema = 6\n\n[skills.gh]\nsource = \"cat\"\nenabled = true   # on purpose\n";
     assert_eq!(
         rebound(current, true),
-        "schema = 6\n\n[skills.gh]\nsource = \"local\"\nenabled = true   # on purpose\n\n[install]\nharnesses = []\nmethod = \"symlink\"\n"
+        "schema = 6\n\n[skills.gh]\nsource = \"local\"\nenabled = true   # on purpose\n"
     );
 }
 
@@ -341,7 +351,7 @@ fn a_disabled_declaration_keeps_its_flag() {
     let current = "schema = 6\n\n[skills.gh]\nsource = \"cat\"\nenabled = false\n";
     assert_eq!(
         rebound(current, false),
-        "schema = 6\n\n[skills.gh]\nsource = \"local\"\nenabled = false\n\n[install]\nharnesses = []\nmethod = \"symlink\"\n"
+        "schema = 6\n\n[skills.gh]\nsource = \"local\"\nenabled = false\n"
     );
 }
 
@@ -354,6 +364,104 @@ fn re_enabling_a_declaration_deletes_the_flag() {
     let current = "schema = 6\n\n[skills.gh]\nsource = \"cat\"\nenabled = false\n";
     assert_eq!(
         rebound(current, true),
-        "schema = 6\n\n[skills.gh]\nsource = \"local\"\n\n[install]\nharnesses = []\nmethod = \"symlink\"\n"
+        "schema = 6\n\n[skills.gh]\nsource = \"local\"\n"
     );
+}
+
+/// A list somebody annotated, in the spelling that annotates one: the
+/// comment sits after the value, on its line. TOML stores each of those
+/// against the value below it, so nothing here works by keeping an
+/// entry's own decoration.
+const ANNOTATED: &str = "schema = 6\n\n[suppressed]\nskill = [\n  \"alpha\",  # pulled in by gh\n  \"beta\",   # pulled in by fmt\n  \"gamma\",  # pulled in by rev\n]\n";
+
+#[allow(clippy::unwrap_used)]
+fn suppressing(names: &[&str]) -> String {
+    let desired = format!(
+        "schema = 6\n\n[suppressed]\nskill = [{}]\n",
+        names
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    fold(ANNOTATED, &desired)
+}
+
+/// Losing the first entry takes that entry's own annotation and leaves
+/// every other one where it was written.
+#[test]
+fn losing_the_first_entry_leaves_the_rest_annotated() {
+    assert_eq!(
+        suppressing(&["beta", "gamma"]),
+        "schema = 6\n\n[suppressed]\nskill = [\n  \"beta\",   # pulled in by fmt\n  \"gamma\",  # pulled in by rev\n]\n"
+    );
+}
+
+/// Losing a middle entry closes the gap without sliding the annotations
+/// up with it — by position, `gamma` would inherit what was written about
+/// `beta`.
+#[test]
+fn losing_a_middle_entry_does_not_slide_the_annotations() {
+    assert_eq!(
+        suppressing(&["alpha", "gamma"]),
+        "schema = 6\n\n[suppressed]\nskill = [\n  \"alpha\",  # pulled in by gh\n  \"gamma\",  # pulled in by rev\n]\n"
+    );
+}
+
+/// Losing the LAST entry is the case that stays broken longest: what was
+/// written about the entry above it is stored inside the entry that goes,
+/// so a fold that drops entries by their own bytes deletes an annotation
+/// about something still in the list.
+#[test]
+fn losing_the_last_entry_keeps_the_annotation_above_it() {
+    assert_eq!(
+        suppressing(&["alpha", "beta"]),
+        "schema = 6\n\n[suppressed]\nskill = [\n  \"alpha\",  # pulled in by gh\n  \"beta\",   # pulled in by fmt\n]\n"
+    );
+}
+
+/// `Manifest::suppress` sorts the list on every removal, so an ordinary
+/// `kendex remove` re-sorts a list somebody annotated. Each annotation
+/// moves with the skill it was written about.
+#[test]
+fn re_sorting_a_list_moves_each_annotation_with_its_own_value() {
+    assert_eq!(
+        suppressing(&["gamma", "alpha", "beta"]),
+        "schema = 6\n\n[suppressed]\nskill = [\n  \"gamma\",  # pulled in by rev\n  \"alpha\",  # pulled in by gh\n  \"beta\",   # pulled in by fmt\n]\n"
+    );
+}
+
+/// The security-shaped instance: a denial somebody annotated must not end
+/// up over a tool it no longer denies.
+#[test]
+fn dropping_a_denied_tool_takes_its_own_annotation() {
+    let current = "schema = 6\n\n[agent-frontmatter.claude.rev]\ndeny-tools = [\n  \"Bash\",     # never lets it shell out\n  \"WebFetch\", # never lets it push\n]\n";
+    let desired = "schema = 6\n\n[agent-frontmatter.claude.rev]\ndeny-tools = [\"WebFetch\"]\n";
+    assert_eq!(
+        fold(current, desired),
+        "schema = 6\n\n[agent-frontmatter.claude.rev]\ndeny-tools = [\n  \"WebFetch\", # never lets it push\n]\n"
+    );
+}
+
+/// A key gained inside an inline table lands before the closing brace,
+/// not before the comma above it. The spacing an inline table keeps at its
+/// brace belongs to the brace, and each spelling keeps its own.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_key_gained_inside_an_inline_table_reads_as_one() {
+    for (current, expected) in [
+        (
+            "schema = 6\n\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" }]\n",
+            "schema = 6\n\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\", matcher = \"Bash\" }]\n",
+        ),
+        (
+            "schema = 6\n\ncustom-hooks = [{event = \"Stop\", command = \"./done.sh\"}]\n",
+            "schema = 6\n\ncustom-hooks = [{event = \"Stop\", command = \"./done.sh\", matcher = \"Bash\"}]\n",
+        ),
+    ] {
+        let mut manifest: Manifest = toml::from_str(current).unwrap();
+        manifest.custom_hooks[0].matcher = Some("Bash".to_owned());
+        let desired = toml::to_string_pretty(&manifest).unwrap();
+        assert_eq!(fold(current, &desired), expected);
+    }
 }

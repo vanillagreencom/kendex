@@ -106,8 +106,8 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
 /// grows one. A file with none gets the one its last line needs, and every
 /// pass after that leaves the bytes alone. A repair that ran on every pass
 /// is how the file grew a blank line per apply. What a file already ends
-/// in is its own — `byte_faithful.rs` covers the blank line a person
-/// leaves there.
+/// in is its own — the blank line a person leaves there is covered by
+/// `manifest::edit`'s the_files_own_terminator_survives.
 ///
 /// The fixture carries a comment because it must survive: a write folds
 /// the changed keys into the document that is there rather than

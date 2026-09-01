@@ -1007,7 +1007,7 @@ export type CustomHook_Serialize = {
 	/**  Harness allowlist; `None` = every declared harness. */
 	harnesses?: string[] | null,
 	enabled?: boolean,
-	agents: HookAgents,
+	agents?: HookAgents,
 };
 
 /**
@@ -1590,7 +1590,14 @@ export type InstallChannel =
  */
 { kind: "unknown" };
 
-export type InstallDefaults = {
+export type InstallDefaults = InstallDefaults_Serialize | InstallDefaults_Deserialize;
+
+export type InstallDefaults_Deserialize = {
+	harnesses?: HarnessId[],
+	method?: Method,
+};
+
+export type InstallDefaults_Serialize = {
 	harnesses?: HarnessId[],
 	method?: Method,
 };
@@ -1868,7 +1875,7 @@ export type ManifestRead_Serialize = {
 export type Manifest_Deserialize = {
 	schema: number,
 	sources?: { [key in string]: SourceDecl_Deserialize },
-	install?: InstallDefaults,
+	install?: InstallDefaults_Deserialize,
 	agents?: { [key in string]: ItemDecl_Deserialize },
 	skills?: { [key in string]: ItemDecl_Deserialize },
 	hooks?: { [key in string]: ItemDecl_Deserialize },
@@ -1918,7 +1925,7 @@ export type Manifest_Deserialize = {
 export type Manifest_Serialize = {
 	schema: number,
 	sources?: { [key in string]: SourceDecl_Serialize },
-	install: InstallDefaults,
+	install?: InstallDefaults_Serialize,
 	agents?: { [key in string]: ItemDecl_Serialize },
 	skills?: { [key in string]: ItemDecl_Serialize },
 	hooks?: { [key in string]: ItemDecl_Serialize },
@@ -2399,7 +2406,7 @@ export type PluginDecl_Deserialize = {
  */
 export type PluginDecl_Serialize = {
 	enabled?: boolean,
-	harness: HarnessId,
+	harness?: HarnessId,
 };
 
 /**

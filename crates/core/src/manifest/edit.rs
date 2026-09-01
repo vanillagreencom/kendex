@@ -24,11 +24,19 @@
 //! thing, and the walk dispatches on the destination, so neither is
 //! rewritten into the other.
 //!
-//! List entries are paired by what they are, not by where they sit. A
-//! comment above a hook describes that hook, so removing or reordering
-//! hooks has to carry each comment with its own entry.
+//! List entries are paired by what an entry is — a hook by its name, a
+//! scalar by its own value — and by where it sits only for an entry
+//! nothing identifies. What somebody wrote about an entry then travels
+//! with that entry through a removal or a re-sort, rather than staying at
+//! the place it was stored. Which bytes those are is [`layout`]'s
+//! arithmetic: TOML keeps a comment written after a value against the
+//! value below it, so entry and annotation are one apart in the file and
+//! have to be put back together before anything moves.
 
-use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, TableLike, Value};
+use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, TableLike, Value};
+
+mod layout;
+use layout::{brace_run, rebuilt_array, reseat_brace};
 
 /// The text a write should leave behind.
 ///
@@ -85,13 +93,17 @@ fn merge_table(
 /// scalar that already says the right thing is left with its own bytes,
 /// and everything above it is a no-op when nothing under it changed.
 fn merge_item(destination: &mut Item, held: Option<&Item>, target: &Item) {
-    if let Some(wanted) = target.as_table_like()
-        && let Some(item) = destination.as_table_like_mut()
-    {
-        merge_table(item, held.and_then(Item::as_table_like), wanted);
+    if target.as_table_like().is_some() && destination.as_table_like().is_some() {
+        let brace = brace_run(destination);
+        if let Some(wanted) = target.as_table_like()
+            && let Some(item) = destination.as_table_like_mut()
+        {
+            merge_table(item, held.and_then(Item::as_table_like), wanted);
+        }
+        reseat_brace(destination, brace);
         return;
     }
-    if entries(target).is_some() && merge_entries(destination, held, target) {
+    if merge_entries(destination, held, target) {
         return;
     }
     if let (Item::Value(item), Item::Value(wanted)) = (&mut *destination, target) {
@@ -121,35 +133,28 @@ fn merge_entries(destination: &mut Item, held: Option<&Item>, target: &Item) -> 
         return false;
     };
     let held = held.and_then(entries).unwrap_or_default();
-    let merged: Vec<Item> = wanted
+    // Each merged entry keeps the destination place it continues, so the
+    // rebuild can hand it back the writing that was written about it.
+    let merged: Vec<(Option<usize>, Item)> = wanted
         .iter()
         .zip(paired(&standing, &wanted))
         .map(|(wanted, at)| match at {
             Some(at) => {
                 let mut entry = standing[at].clone();
                 merge_item(&mut entry, held.get(at), wanted);
-                entry
+                (Some(at), entry)
             }
-            None => gained(wanted),
+            None => (None, fresh(wanted)),
         })
         .collect();
     match destination {
         Item::ArrayOfTables(tables) => *tables = rebuilt_tables(merged),
         Item::Value(Value::Array(array)) => *array = rebuilt_array(array, merged),
-        _ => return false,
+        // `entries` answered for this item one statement ago, and it
+        // admits exactly the two spellings above.
+        other => unreachable!("a list is a table array or an array, not {other:?}"),
     }
     true
-}
-
-/// An entry the list did not have. It takes the default spacing rather
-/// than the serializer's, because it has no place in the destination's
-/// layout to inherit and the encoder lays out what it is not told about.
-fn gained(target: &Item) -> Item {
-    let mut entry = fresh(target);
-    if let Item::Value(value) = &mut entry {
-        value.decor_mut().clear();
-    }
-    entry
 }
 
 /// Which destination entry each target entry continues, by identity first
@@ -160,11 +165,11 @@ fn paired(standing: &[Item], target: &[Item]) -> Vec<Option<usize>> {
     let mut taken = vec![false; standing.len()];
     let mut pairing = vec![None; target.len()];
     for (index, wanted) in target.iter().enumerate() {
-        let Some(name) = wanted.as_table_like().and_then(identity) else {
+        let Some(name) = identity(wanted) else {
             continue;
         };
         for (at, entry) in standing.iter().enumerate() {
-            if taken[at] || entry.as_table_like().and_then(identity) != Some(name.clone()) {
+            if taken[at] || identity(entry).as_ref() != Some(&name) {
                 continue;
             }
             pairing[index] = Some(at);
@@ -181,17 +186,36 @@ fn paired(standing: &[Item], target: &[Item]) -> Vec<Option<usize>> {
     pairing
 }
 
-/// What makes one entry of a list the same entry across a write.
-/// `[[custom-hooks]]` is the only list of tables a manifest holds, and
-/// `name` is the identity it documents; an entry written by hand before an
-/// editor save stamped one is placed by what it runs instead.
-fn identity(entry: &dyn TableLike) -> Option<String> {
-    if let Some(name) = text(entry, "name") {
-        return Some(format!("name {name}"));
+/// What makes one entry of a list the same entry across a write. Every
+/// entry a manifest list can hold answers here, because the decoration the
+/// merge carries from entry to entry is the person's writing about that
+/// entry: a comment above a harness names that harness, and a comment
+/// above a hook describes that hook.
+///
+/// A scalar is its own identity, so a list that lost an element or was
+/// re-sorted — `Manifest::suppress` sorts on every removal — moves each
+/// annotation with the value it was written against. A table is its
+/// `name`, the identity `[[custom-hooks]]` documents, or what it runs for
+/// an entry written by hand before an editor save stamped one. Duplicates
+/// pair first-unclaimed, which the caller's `taken` sweep already decides.
+fn identity(entry: &Item) -> Option<String> {
+    if let Some(table) = entry.as_table_like() {
+        if let Some(name) = text(table, "name") {
+            return Some(format!("named {name}"));
+        }
+        return match (text(table, "event"), text(table, "command")) {
+            (Some(event), Some(command)) => Some(format!("runs {event}\u{1f}{command}")),
+            _ => None,
+        };
     }
-    match (text(entry, "event"), text(entry, "command")) {
-        (Some(event), Some(command)) => Some(format!("runs {event}\u{1f}{command}")),
-        _ => None,
+    match entry.as_value()? {
+        Value::String(value) => Some(format!("text {}", value.value())),
+        Value::Integer(value) => Some(format!("whole {}", value.value())),
+        Value::Boolean(value) => Some(format!("flag {}", value.value())),
+        // A float has no spelling that compares safely, and a datetime and
+        // an array are not shapes a manifest list holds. Nothing
+        // identifies them, so they pair by position, as they did before.
+        Value::Float(_) | Value::Datetime(_) | Value::Array(_) | Value::InlineTable(_) => None,
     }
 }
 
@@ -207,10 +231,14 @@ fn text(entry: &dyn TableLike, key: &str) -> Option<String> {
 /// entries that changed places have to change positions with them or the
 /// file would come back in the old order; the places are the survivors'
 /// own, so nothing moves past a table that is not part of this list.
-fn rebuilt_tables(merged: Vec<Item>) -> ArrayOfTables {
+fn rebuilt_tables(merged: Vec<(Option<usize>, Item)>) -> ArrayOfTables {
     let mut tables: Vec<Table> = merged
         .into_iter()
-        .filter_map(|entry| entry.into_table().ok())
+        .map(|(_, entry)| {
+            entry
+                .into_table()
+                .unwrap_or_else(|other| unreachable!("a table array holds tables, not {other:?}"))
+        })
         .collect();
     let mut places: Vec<isize> = tables.iter().filter_map(Table::position).collect();
     places.sort_unstable();
@@ -223,24 +251,6 @@ fn rebuilt_tables(merged: Vec<Item>) -> ArrayOfTables {
     let mut rebuilt = ArrayOfTables::new();
     for table in tables {
         rebuilt.push(table);
-    }
-    rebuilt
-}
-
-/// The merged entries as an inline array. A surviving entry keeps the
-/// decoration it was written with, so a multi-line array stays multi-line
-/// and the comments inside it stay where they are; a gained one takes the
-/// default spacing, because it has no place in that layout to inherit.
-fn rebuilt_array(destination: &Array, merged: Vec<Item>) -> Array {
-    let mut rebuilt = Array::new();
-    rebuilt.set_trailing_comma(destination.trailing_comma());
-    rebuilt.set_trailing(destination.trailing().clone());
-    *rebuilt.decor_mut() = destination.decor().clone();
-    for entry in merged {
-        let Ok(value) = entry.into_value() else {
-            continue;
-        };
-        rebuilt.push_formatted(value);
     }
     rebuilt
 }
