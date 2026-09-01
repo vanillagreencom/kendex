@@ -134,6 +134,14 @@ def bounds(existing):
         if _is_heading_1_or_2(lines[i]):
             end = i
             break
+        # A setext heading is its text line, not its underline, so the region
+        # ends one line above the `---`. Without this the splice runs past the
+        # repo's own section and the next render deletes it. The generated
+        # body cannot produce a false stop: `refusals` rejects a setext
+        # underline in every string that reaches it.
+        if i - 1 > start and markdown.setext_level(lines[i]) and lines[i - 1].strip():
+            end = i - 1
+            break
     return start, end
 
 

@@ -275,6 +275,30 @@ else
   bad 'an exclusion sentence after a fenced code block lands outside the fence'
 fi
 
+# The region ends at a setext heading's TEXT, not its underline. A terminator
+# that reads only `#` headings runs the owned span through the repo's own
+# section, and the splice then deletes it.
+if python3 - "$BI_ROOT/skills/bot-instructions" <<'PROBE'; then
+import sys
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from lib import render
+
+doc = "\n".join(["# fixture", "", "## Code Review Rules", "", "body", "",
+                 "Next section", "---", "", "repo prose", ""])
+lines = doc.split("\n")
+span = render.bounds(doc)
+if span is None:
+    sys.exit("bounds found no single region")
+if lines[span[1]] != "Next section":
+    sys.exit(f"the region ran past the setext heading, to {lines[span[1]]!r}")
+if "repo prose" in lines[span[0] + 1:span[1]]:
+    sys.exit("the splice would replace the repo's own prose")
+PROBE
+  ok 'the owned region ends above a setext heading, not through it'
+else
+  bad 'the owned region ends above a setext heading, not through it'
+fi
+
 # No bootstrap exemption: an unmarked region is the repo's whatever its body
 # holds, and a whitespace test would be exactly the boundary `renders.md`
 # § `AGENTS.md` says does not exist.
