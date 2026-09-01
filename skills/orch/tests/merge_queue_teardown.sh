@@ -457,11 +457,34 @@ launching_suites() {
   grep -lE 'cp [^#]*scripts/merge-queue-watch' "$1"/*.sh 2>/dev/null || true
 }
 
-# What arming looks like, checked as whole lines so a comment naming the
-# reaper cannot answer for a statement. The teardown these lines install is
-# what the abort case at the top of this file proves; this only asks whether
-# each launching suite installs it.
-suite_arms_teardown() { grep -qxF 'trap mq_reap_teardown EXIT' "$1"; }
+# What arming looks like. The EXIT traps a suite installs, heredoc bodies left
+# out: a second EXIT trap silently replaces the first, so counting them is the
+# check, and a match living only in fixture text arms nothing. Both shapes are
+# planted as controls below.
+#
+# A bounded scanner, not a shell parser: it follows <<DELIM and <<QUOTED
+# bodies, which is what these suites carry, and skips a line holding a
+# here-string because <<< opens no body.
+exit_traps_in() {
+  awk '
+    delim != "" {
+      line = $0; sub(/^[\t]+/, "", line)
+      if (line == delim) delim = ""
+      next
+    }
+    {
+      if ($0 !~ /<<</ && match($0, /<<-?[ \t]*[^ \t<>|;&()]+/)) {
+        d = substr($0, RSTART, RLENGTH)
+        sub(/^<<-?[ \t]*/, "", d)
+        gsub(/[^A-Za-z0-9_]/, "", d)
+        if (d != "") delim = d
+      }
+      line = $0; sub(/^[ \t]+/, "", line)
+      if (line ~ /^trap[ \t].*[ \t]EXIT([ \t]|$)/) print line
+    }
+  ' "$1"
+}
+suite_arms_teardown() { [[ "$(exit_traps_in "$1")" == 'trap mq_reap_teardown EXIT' ]]; }
 suite_seals_path() {
   local body
   body=$(grep -v '^[[:space:]]*#' "$1") || return 1
@@ -479,8 +502,9 @@ while IFS= read -r suite; do
   else bad "$suite_name launches supervisors without sealing its PATH"; fi
 done <<< "$roster"
 
-# Controls. The derivation must FIND a suite nobody listed, and neither check
-# may be answered by a comment.
+# Controls. The derivation must FIND a suite nobody listed, and the arming
+# check must accept only a suite that really installs the reaping teardown —
+# each planted shape below passed a plain whole-line match and leaks.
 planted="$TMP/planted"
 mkdir -p "$planted"
 printf '#!/usr/bin/env bash\ncp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"\n' > "$planted/unarmed_suite.sh"
@@ -488,18 +512,42 @@ planted_roster=$(launching_suites "$planted")
 case "$planted_roster" in *"$planted/unarmed_suite.sh"*) ok "the derivation finds a launching suite no list names" ;;
   *) bad "the derivation missed a planted launching suite: $planted_roster" ;; esac
 
+cat > "$planted/armed_suite.sh" <<'ARMED'
+#!/usr/bin/env bash
+cp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"
+trap mq_reap_teardown EXIT
+ARMED
 # The shape every merge-queue suite had before KEN-995: the fixture tree
-# removed, the processes it started left running. The audit exists to red on
-# exactly this, and saying so here keeps that resting on the property rather
-# than on the grep's shape.
-printf '#!/usr/bin/env bash\ncp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"\ntrap %s EXIT\n' \
-  "'rm -rf \"\$TMP\"'" > "$planted/old_teardown_suite.sh"
-if suite_arms_teardown "$planted/old_teardown_suite.sh"; then bad "a suite tearing down the pre-KEN-995 way passed the arming check"
-else ok "a suite tearing down the pre-KEN-995 way fails the arming check"; fi
-
+# removed, the processes it started left running.
+cat > "$planted/old_teardown_suite.sh" <<'OLD'
+#!/usr/bin/env bash
+cp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"
+trap 'rm -rf -- "${TMP:?}"' EXIT
+OLD
+# Armed, then silently disarmed: bash keeps only the last EXIT handler.
+cat > "$planted/override_suite.sh" <<'OVERRIDE'
+#!/usr/bin/env bash
+cp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"
+trap mq_reap_teardown EXIT
+trap 'rm -rf -- "${TMP:?}"' EXIT
+OVERRIDE
+# Armed nowhere but in a fixture it writes for a child.
+cat > "$planted/heredoc_only_suite.sh" <<'HEREDOC'
+#!/usr/bin/env bash
+cp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"
+trap 'rm -rf -- "${TMP:?}"' EXIT
+cat > "$TMP/child.sh" <<'CHILD'
+trap mq_reap_teardown EXIT
+CHILD
+HEREDOC
 printf '#!/usr/bin/env bash\n# trap mq_reap_teardown EXIT\n# tools/tests/lib/sealed-bin and "$SEALED:$PATH"\n' > "$planted/comment_decoy.sh"
-if suite_arms_teardown "$planted/comment_decoy.sh"; then bad "a comment naming the teardown passed the arming check"
-else ok "a comment naming the teardown does not pass for a statement"; fi
+
+if suite_arms_teardown "$planted/armed_suite.sh"; then ok "a suite that installs the reaping teardown passes the arming check"
+else bad "the arming check rejects a suite that is armed"; fi
+for shape in old_teardown_suite override_suite heredoc_only_suite comment_decoy; do
+  if suite_arms_teardown "$planted/$shape.sh"; then bad "the arming check accepted $shape"
+  else ok "the arming check rejects $shape"; fi
+done
 if suite_seals_path "$planted/comment_decoy.sh"; then bad "a comment naming the sealed directory passed the sealing check"
 else ok "a comment naming the sealed directory does not pass for a statement"; fi
 
