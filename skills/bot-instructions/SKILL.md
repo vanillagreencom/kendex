@@ -410,7 +410,9 @@ recommend parsing them.
 
 The procedure is [references/checklist.md](references/checklist.md) § Adding a
 repo, beside the settings work it runs into, and it derives its order from
-`toml-schema`'s cross-flag clauses and `adopt`'s rule rather than restating one.
-The shape worth knowing before you start: nothing that depends on a flag is
-written before the flag, so a capability's surfaces, `adopt` and `render` all
-happen in the pass that turns it on.
+`toml-schema`'s cross-flag clauses, `adopt`'s rule and `agents-section`'s
+ungated nested-`AGENTS.md` clause rather than restating one. The shape worth
+knowing before you start: nothing that depends on a flag is written before the
+flag, so a capability's surfaces, `adopt` and `render` all happen in the pass
+that turns it on — and the one constraint no flag carries, a nested
+`## Code Review Rules` section, is cleared before the first render of all.

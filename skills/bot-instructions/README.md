@@ -87,10 +87,11 @@ bot output has to do about it.
 ## Adding a repo
 
 The sequence is [references/checklist.md](references/checklist.md) § Adding a
-repo, and it is not a preference: `toml-schema`'s cross-flag clauses and
-`adopt`'s own rule fix the order, so that file derives it from them rather than
-asserting it. Two passes — a repo-wide TOML with every bot off, then one pass
-per capability that enables it, adopts its paths and renders them.
+repo, and it is not a preference: `toml-schema`'s cross-flag clauses, `adopt`'s
+own rule, and `agents-section`'s ungated nested-`AGENTS.md` clause fix the
+order, so that file derives it from them rather than asserting it. Two passes —
+a repo-wide TOML with every bot off, then one pass per capability that enables
+it, adopts its paths and renders them.
 
 What a reader coming here for the shape needs: nothing that depends on a flag
 is written before the flag, and a bot whose install or enablement step is

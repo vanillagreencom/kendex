@@ -2,18 +2,30 @@
 
 ## Adding a repo
 
-Two passes. The order is not a preference — `toml-schema`'s cross-flag clauses
-and `adopt`'s own rule fix it, and a sequence that ignores them writes a TOML
-that does not validate.
+Two passes. The order is not a preference — three rules fix it, and a sequence
+that ignores them writes a TOML that does not validate or a render that stops.
 
-**What those clauses require, since everything below follows from them.** A
-`[[surface]]` set needs at least one of `copilot`, `coderabbit`, `macroscope` or
-`qodo_best_practices` on, because those four are every route surface text has.
-`copilot` or `coderabbit` needs `codex`, because the `AGENTS.md` section is
-where both get most of their doctrine. `qodo_best_practices` and
-`qodo_review_md` need `qodo`. And `adopt` takes a file or region over only for a
-capability that is on. So **capability-dependent content lands with its
-capability**, and nothing that depends on a flag is written before the flag.
+**What those rules require, since everything below follows from them.**
+
+*From `toml-schema`'s cross-flag clauses.* A `[[surface]]` set needs at least
+one of `copilot`, `coderabbit`, `macroscope` or `qodo_best_practices` on,
+because those four are every route surface text has. `copilot` or `coderabbit`
+needs `codex`, because the `AGENTS.md` section is where both get most of their
+doctrine. `qodo_best_practices` and `qodo_review_md` need `qodo`.
+
+*From `adopt`'s own rule.* It takes a file or region over only for a capability
+that is on.
+
+Those two give **capability-dependent content lands with its capability**, and
+nothing that depends on a flag is written before the flag.
+
+*From `agents-section`'s nested-`AGENTS.md` clause.* It rejects a nested
+`AGENTS.md` carrying a `## Code Review Rules` section, it is the one clause no
+flag gates, and it runs against the repo before every write. So it is invisible
+to the flag reasoning above and constrains the sequence anyway: a repo holding
+such a section cannot complete **any** render, including a pass-one render with
+every flag off. Clearing it is therefore a pass-one prerequisite rather than
+part of the `codex` capability's own pass.
 
 **Pass one, the repo-wide TOML.** `[repo]`, `[exclusions]`, `[cadence]`,
 `[tone]`, `[budgets]` and any `[doctrine.*]` overrides, with every `[bots]` flag
@@ -24,43 +36,53 @@ false and no `[[surface]]` entries.
    `[doctrine.append]`, which will not fold and stay hand-written as policy
    paths. Write the repo-wide tables; leave the surfaces for the pass that turns
    on a bot able to read them.
-2. Do not run `adopt` here. Nothing can be adopted for a capability that is off,
+2. Clear any nested `AGENTS.md` carrying a `## Code Review Rules` section. Fold
+   what it holds into `[doctrine.append]` or a `[[surface]]` and delete the
+   section, or move the section out of an `AGENTS.md`. The generator writes only
+   the root one, and `agents-section` rejects a nested one unconditionally, so
+   this is what a pass-one render stops on if it is skipped. Its content is not
+   lost: it lands in the TOML written in step 1.
+3. Do not run `adopt` here. Nothing can be adopted for a capability that is off,
    so it would report nothing on exactly the repo this planning is for.
-3. Run `render`. It writes nothing and says so, because every flag is off. The
-   no-op is the staging point, not a finished install — the existing bot files
-   are still the repo's own and still what the bots read.
+4. Run `render`. With step 2 done it writes nothing and says so, because every
+   flag is off; that no-op is the staging point, not a finished install, and the
+   existing bot files are still the repo's own and still what the bots read.
+   With step 2 skipped it does not write nothing — it stops on the nested
+   section before the write and names the file, which is the clause doing its
+   job rather than a failure of the sequence.
 
 **Pass two, per capability.** Enable `codex` first if this repo wants `copilot`
 or `coderabbit`, and `qodo` before its two sub-flags. Then, one capability at a
 time, finishing each before starting the next so a failure names the bot that
 caused it:
 
-4. Work that capability's settings section below.
-5. Do its prerequisite, where it has one. `codex` needs a `## Code Review Rules`
+5. Work that capability's settings section below.
+6. Do its prerequisite, where it has one. `codex` needs a `## Code Review Rules`
    heading added to `AGENTS.md` by hand, since the generator never adds it.
    `coderabbit` needs CodeRabbit's published schema at
    `.bot-instructions/coderabbit-schema.json`; no verb writes it and
    `coderabbit-schema` fails without it, deliberately, because a validator that
    skipped on a missing schema would be silent for the life of the repo.
    `qodo_review_md` needs the portal toggle already on.
-6. Set the flag. With the first of `copilot`, `coderabbit`, `macroscope` or
+7. Set the flag. With the first of `copilot`, `coderabbit`, `macroscope` or
    `qodo_best_practices`, add the `[[surface]]` entries planned in step 1 — they
    are legal from that moment and were not before.
-7. Run `adopt`. It can now take over that capability's generated paths, the
+8. Run `adopt`. It can now take over that capability's generated paths, the
    `AGENTS.md` region the heading opened included, and it names every file and
    region it takes plus every repo-root or `.github/` markdown file those files
    point at. That second list is where a repo-wide hand-written reviewer file
    shows up. Read both against the TOML: a claim in one of those files that the
    TOML does not carry is about to be deleted, or to go on steering reviews from
    outside the package.
-8. Run `render`, then read the diff. Doctrine text appearing for the first time
+9. Run `render`, then read the diff. Doctrine text appearing for the first time
    is expected; a repo-specific claim disappearing means it never made it into
    the TOML.
-9. Run `check`. Then repeat from step 4 for the next capability.
+10. Run `check`. Then repeat from step 5 for the next capability.
 
 **Walked end to end, for a repo that arrives with hand-written bot files.**
-Pass one commits a TOML that validates, renders nothing, and leaves those files
-untouched and still authoritative. The first capability's pass sets `codex`,
+Pass one clears any nested `## Code Review Rules` section into the TOML, then
+commits a TOML that validates and a render that writes nothing, leaving those
+files untouched and still authoritative. The first capability's pass sets `codex`,
 opens the `AGENTS.md` region, adopts it, and renders the section. The next sets
 `copilot`, adds the surfaces, and adopts `.github/copilot-instructions.md` and
 the `.instructions.md` names those surfaces produce — a hand-written file in
@@ -78,14 +100,14 @@ expressed in any file the repo contains. Skip one and the repo looks fully
 configured while a bot reviews nothing, or reviews with the wrong scope, and no
 render or validator can tell.
 
-Work one capability's section at a time, as step 4 of the sequence above, and
-record each line's outcome in the repo beside the TOML so the next person can
-tell a deliberate `false` from an unanswered question.
+Work one capability's section at a time, as the settings step of the sequence
+above, and record each line's outcome in the repo beside the TOML so the next
+person can tell a deliberate `false` from an unanswered question.
 
 A capability whose section here is unanswered stays `false` in `[bots]`. A
 `true` flag renders files that reach nothing, which is worse than no files at
-all — and a section answered but never followed by step 6 leaves the reverse,
-a bot enabled at the vendor reading nothing this package wrote.
+all — and a section answered but never followed by setting the flag leaves the
+reverse, a bot enabled at the vendor reading nothing this package wrote.
 
 None of this state is machine-readable from the repo, and an administrator can
 change any of it without touching the repo. Every check here can keep passing
