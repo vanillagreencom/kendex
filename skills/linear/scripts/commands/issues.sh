@@ -2674,8 +2674,7 @@ remove_relation() {
     local query='
     query GetRelations($id: String!) {
         issue(id: $id) {
-            relations { nodes { id type relatedIssue { identifier } } }
-            inverseRelations { nodes { id type issue { identifier } } }
+'"$ISSUE_RELATION_FIELDS"'
         }
     }'
     local result

@@ -1,11 +1,11 @@
 #!/bin/bash
 # Linear CLI - Output Formatters
-# Converts GraphQL responses to safe, flat structures
-# Source this file in command scripts
 
 set -euo pipefail
 
-readonly ISSUE_RELATION_FIELDS='relations { nodes { id type relatedIssue { id identifier title state { name } } } } inverseRelations { nodes { id type issue { id identifier title state { name type } } } }'
+readonly ISSUE_BLOCKS_FIELDS='relations { nodes { id type relatedIssue { id identifier title state { name type } } } }'
+readonly ISSUE_BLOCKED_BY_FIELDS='inverseRelations { nodes { id type issue { id identifier title state { name type } } } }'
+readonly ISSUE_RELATION_FIELDS="$ISSUE_BLOCKS_FIELDS $ISSUE_BLOCKED_BY_FIELDS"
 readonly ISSUE_RELATION_JQ='
 def issue_is_open: (.state.type | IN("completed", "canceled") | not);
 def issue_blocks_relations($relations): [($relations // [])[] | select(.type == "blocks")];

@@ -38,13 +38,13 @@ Use `issues.backlog`, or fall back to a cache query:
 .agents/skills/linear/scripts/linear.sh cache issues list --project "[ACTIVE_PROJECT]" --state "Backlog" --max
 ```
 
-Plan parents and standalone issues only — exclude anything with a non-empty `parent_id` (`issues.backlog` already applies this filter; apply it yourself to the fallback). Per issue, take `id`, `title`, `description`, `priority`, `estimate`, `agent`, `labels`, `blocked_by[]`, `blocked_by_open[]`, and `blocks[]`.
+Plan parents and standalone issues only — exclude anything with a non-empty `parent_id` (`issues.backlog` already applies this filter; apply it yourself to the fallback). Per issue, take `id`, `title`, `description`, `priority`, `estimate`, `agent`, `labels`, `blocked_by[]`, and `blocks[]`.
 
 ## 4. Architecture Order
 
 ### 4.1 Partition by Blocking
 
-Unblocked means `blocked_by_open` is empty. A blocked issue whose open blocker is in the unblocked set can share the cycle, blocker first.
+Unblocked = `blocked_by` empty or every blocker Done. A blocked issue whose blocker is in the unblocked set can share the cycle, blocker first.
 
 ### 4.2 Read the Code
 
