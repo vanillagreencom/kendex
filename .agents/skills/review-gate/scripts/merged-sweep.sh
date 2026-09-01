@@ -10,8 +10,22 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Both libs are SOURCED, and under set -e a missing one ends the run at
+# exit 1 — the code that promises attention lines — with nothing on stdout,
+# which a consumer reduces to "nothing to do". Both fail closed at 2.
+lib_readable() { # PATH
+  [ -r "$1" ] || { echo "::error::merged-sweep: cannot read $1 — the skill install is incomplete; re-run kendex refresh, or check the file mode" >&2; exit 2; }
+}
+lib_defines() { # PATH SYMBOL — a truncated or mismatched lib defines nothing
+  { [ -n "${!2+x}" ] || command -v "$2" >/dev/null 2>&1; } \
+    || { echo "::error::merged-sweep: $1 defines no $2 — it is truncated or from another version; re-run kendex refresh" >&2; exit 2; }
+}
+
+lib_readable "$script_dir/lib/settings.sh"
 # shellcheck source=lib/settings.sh
 . "$script_dir/lib/settings.sh"
+lib_defines "$script_dir/lib/settings.sh" rg_setting
 
 # Both scratch paths are removed on ANY exit, including a signal: an
 # interrupted pass must not leave a half-written state file beside the real
@@ -33,11 +47,14 @@ finding arrive too late for anyone to read it?
   --window SECS      only PRs merged within this many seconds (default
                      172800 — 48h); at most 9 digits
   --limit N          how many merged PRs the one query reads (default 20,
-                     max 40). The ceiling is where the query still
+                     max 80). The ceiling is where the query still
                      completes, not where GraphQL stops counting: measured
-                     on a busy repo, 40 answers in ~4s and 80 returns HTTP
-                     504. A window holding more than this is itself a
-                     fail-closed line, never silence over the remainder
+                     2026-09-01 on one busy repo, 40 answers in ~4s and 80
+                     in ~8s over six runs with none failing, while 100
+                     failed once in two: load-dependent, so re-measure
+                     before trusting it elsewhere. A window holding more
+                     merged PRs than --limit reads is itself a fail-closed
+                     line, never silence over the remainder
   --no-state         report every current finding, deduping nothing — the
                      audit form; the sweep writes no state file
   --state-file PATH  override the per-repo state file (default:
@@ -49,7 +66,7 @@ finding arrive too late for anyone to read it?
                      baseline. GITIGNORE it: the default writes inside the
                      repository
 
-Attention kind:
+Attention kinds (column 3):
   post-merge-findings  a merged PR carries a review or a review thread
                        created after its mergedAt with no disposition
                        reply (Fixed in <sha>, Declined: <reason>, or a
@@ -67,28 +84,32 @@ Attention kind:
                        cannot prove fails CLOSED: a truncated
                        reviewThreads page (GitHub documents no ordering
                        for it), a review or comment page whose every entry
-                       is post-merge, an unparsable timestamp, and a window
-                       holding more merged PRs than --limit read
+                       is post-merge, and an unparsable timestamp
+  sweep:window-truncated  the window holds more merged PRs than this page
+                       read, so the sweep cannot answer for the remainder.
+                       Belongs to no single PR, so it carries "-" and
+                       "--------" in the first two columns
 
 Dedupe: per-repo state, the same rising-edge mechanism as oversee-watch's
 PW_SEEN. Each finding is keyed by its node id; a key present in the
 previous pass is not re-emitted, and one that clears and later recurs is
 news again. So a finding surfaces ONCE and stays quiet while unchanged, and
 silence means "nothing NEW needs you" — use --no-state to re-read what is
-still outstanding.
+still outstanding. sweep:window-truncated is EXEMPT: a shortfall no reply
+can clear is a standing property, not an event, so it carries no key and
+REPEATS every pass while it holds. Announce-once there would leave the
+gap, and a gap that worsens, silent from the second pass on.
 
-Output: one tab-separated line per merged PR with new findings, the same
-shape pr-watch.sh emits, so one reducer consumes both:
+Output: one tab-separated attention line, the same shape pr-watch.sh
+emits, so one reducer consumes both:
   <pr-number> <TAB> <head-sha-8> <TAB> <kind> <TAB> <detail>
-The sweep-level truncation line belongs to no single PR and carries "-" and
-"--------" in those two columns.
 
 Exit codes:
   0  nothing new needs attention
   1  at least one attention line
   2  a read or config failure — always GLOBAL (missing or malformed
-     GH_REPO, a bad flag, a broken merged-PR listing, an unusable state
-     file). One query answers for the whole sweep, so there is no per-PR
+     GH_REPO, a bad flag, a repository the read could not reach, a broken
+     merged-PR listing, an unusable state file). One query answers for the whole sweep, so there is no per-PR
      failure to isolate: exit 2 reports on stderr and prints NO lines on
      stdout at all. Surface stderr, never stdout alone. Attention lines are
      buffered until the state file is written, so a state write that fails
@@ -99,7 +120,9 @@ Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
 Settings: REVIEW_GATE_MERGED_SWEEP_STATE_DIR — the directory holding the
 per-repo state files, resolved like every other engine key (env >
 .env.local > .kendex/settings.toml > kendex.settings.toml > the built-in
-tmp/review-gate-merged-sweep).
+tmp/review-gate-merged-sweep), except that the settings FILES are read
+from the repository root, so the key is anchored the way the path it names
+is and an off-root caller resolves the same value.
 USAGE
 }
 
@@ -113,8 +136,15 @@ if [ -z "${GH_REPO:-}" ]; then
   echo "::error::merged-sweep: GH_REPO is required" >&2
   exit 2
 fi
+# The shape arm alone is not enough: GH_REPO is spliced into the search
+# query STRING below, so anything it accepts between the slashes becomes
+# search syntax — "acme/widgets is:draft" sweeps a legitimately empty set
+# and exits 0 in silence. Constrain it to the charset GitHub allows.
 case "$GH_REPO" in
   */*/*|/*|*/) echo "::error::merged-sweep: GH_REPO must be OWNER/REPO (got '$GH_REPO')" >&2; exit 2 ;;
+  *[!A-Za-z0-9._/-]*)
+    echo "::error::merged-sweep: GH_REPO may hold only letters, digits, '.', '_' and '-' either side of the slash (got '$GH_REPO'); it is spliced into a search query, where a space or a qualifier would silently change the set swept" >&2
+    exit 2 ;;
   */*) ;;
   *) echo "::error::merged-sweep: GH_REPO must be OWNER/REPO (got '$GH_REPO')" >&2; exit 2 ;;
 esac
@@ -160,13 +190,17 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# GraphQL rejects first:0, and the upper bound is the MEASURED one, not the
-# API's: against vanillagreencom/kendex this query answers in about 4s at 40
-# and returns HTTP 504 at 80 and above. Both bounds are refused rather than
-# clamped — a clamp would silently sweep a different set than the operator
-# asked for, and the saturation line below is what reports a window this
-# page cannot cover.
-LIMIT_MAX=40
+# GraphQL rejects first:0, and the upper bound is MEASURED, not the API's.
+# Re-measured 2026-09-01 against vanillagreencom/kendex on a full page (7d
+# window, issueCount 264): 40 in 3.7-4.3s, 60 in 5.4s, 80 in 7.9-8.9s over
+# six runs with no failure, 100 failing once in two at ~11s on a truncated
+# response. The ceiling is 80 because the cliff is at 100 and that repo's
+# 48h window held 78 merged PRs, which one pass at 80 covers. One repo at
+# one time, not a settled threshold: the figure this replaced was carried
+# across an API change without a re-run and did not survive one. Both
+# bounds are refused, never clamped — a clamp would sweep a different set
+# than the operator asked for.
+LIMIT_MAX=80
 if [ "$LIMIT" -lt 1 ] || [ "$LIMIT" -gt "$LIMIT_MAX" ]; then
   echo "::error::merged-sweep: --limit must be between 1 and $LIMIT_MAX (got $LIMIT)" >&2
   exit 2
@@ -181,7 +215,18 @@ fi
 # re-announce every outstanding finding as news with nothing said.
 SETTING_HINT="set REVIEW_GATE_MERGED_SWEEP_STATE_DIR, pass --state-file, or pass --no-state"
 if [ "$USE_STATE" = "1" ] && [ -z "$STATE_FILE" ]; then
-  state_dir="$(rg_setting REVIEW_GATE_MERGED_SWEEP_STATE_DIR "tmp/review-gate-merged-sweep")" || exit 2
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
+  # The KEY resolves from the repository root, not only the path it names:
+  # rg_setting reads .env.local and the settings TOMLs as CWD-relative
+  # paths, so an off-root caller finds none of them, takes the built-in
+  # default, and anchors a DIFFERENT directory under the same root —
+  # re-announcing every finding every pass, the failure the anchoring
+  # exists to stop. One key, one anchor, on both halves.
+  if [ -n "$repo_root" ]; then
+    state_dir="$(cd "$repo_root" && rg_setting REVIEW_GATE_MERGED_SWEEP_STATE_DIR "tmp/review-gate-merged-sweep")" || exit 2
+  else
+    state_dir="$(rg_setting REVIEW_GATE_MERGED_SWEEP_STATE_DIR "tmp/review-gate-merged-sweep")" || exit 2
+  fi
   if [ -z "$state_dir" ]; then
     echo "::error::merged-sweep: REVIEW_GATE_MERGED_SWEEP_STATE_DIR is explicitly empty — a state directory is required; $SETTING_HINT" >&2
     exit 2
@@ -189,7 +234,6 @@ if [ "$USE_STATE" = "1" ] && [ -z "$STATE_FILE" ]; then
   case "$state_dir" in
     /*) ;;
     *)
-      repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
       if [ -z "$repo_root" ]; then
         echo "::error::merged-sweep: a relative state directory ($state_dir) is anchored on the repository root, and this is not a git working tree — $SETTING_HINT with an absolute path" >&2
         exit 2
@@ -225,7 +269,13 @@ fi
 # could neither BE a post-merge finding nor ANSWER one. reviewThreads is
 # the exception: GitHub documents no ordering for it, so its bound rests on
 # nothing and any truncation there fails closed outright.
-query='query($q:String!,$limit:Int!){
+# repository(owner,name){id} rides along as the POSITIVE proof that the
+# named repo was READ. search answers a misspelled, renamed or
+# no-longer-authorized repository with issueCount 0, no errors and gh exit
+# 0 — indistinguishable from a quiet window — while this field answers it
+# with NOT_FOUND and a null, which both handlers below fail closed on.
+query='query($owner:String!,$name:String!,$q:String!,$limit:Int!){
+  repository(owner:$owner, name:$name){ id }
   search(query:$q, type:ISSUE, first:$limit){
     issueCount
     pageInfo{ hasNextPage }
@@ -269,9 +319,10 @@ fi
 # fault instead of the one knob that fixes it.
 gh_err="$(mktemp)" || { echo "::error::merged-sweep: could not create a temporary file for the read" >&2; exit 2; }
 raw="$(gh api graphql -f query="$query" \
+    -f owner="${GH_REPO%%/*}" -f name="${GH_REPO#*/}" \
     -f q="repo:$GH_REPO is:pr is:merged sort:updated-desc merged:>=$cutoff_iso" \
     -F limit="$LIMIT" 2>"$gh_err")" || {
-  echo "::error::merged-sweep: could not list merged PRs in the last ${WINDOW}s at --limit $LIMIT; GitHub answers HTTP 504 on an over-large page, so lower --limit before suspecting auth or network" >&2
+  echo "::error::merged-sweep: could not read $GH_REPO for merged PRs in the last ${WINDOW}s at --limit $LIMIT; the gh lines below name the cause — NOT_FOUND is a misspelled or renamed repository, or one outside this token's access, and HTTP 504 is an over-large page, so lower --limit before suspecting auth or network" >&2
   sed 's/^/::error::merged-sweep: gh: /' "$gh_err" >&2
   exit 2
 }
@@ -281,12 +332,14 @@ if [ -z "$raw" ]; then
 fi
 
 # --- reduce -------------------------------------------------------------
+lib_readable "$script_dir/lib/merged-sweep-reduce.sh"
 # shellcheck source=lib/merged-sweep-reduce.sh
 . "$script_dir/lib/merged-sweep-reduce.sh"
+lib_defines "$script_dir/lib/merged-sweep-reduce.sh" MERGED_SWEEP_REDUCE_JQ
 
 rows="$(jq -r --argjson cutoff "$cutoff" --argjson limit "$LIMIT" \
     --argjson limit_max "$LIMIT_MAX" "$MERGED_SWEEP_REDUCE_JQ" <<<"$raw" 2>/dev/null)" || {
-  echo "::error::merged-sweep: merged-PR listing is malformed (broken read, a row without a number/head/mergedAt, or graphql errors)" >&2
+  echo "::error::merged-sweep: merged-PR listing is malformed, or $GH_REPO could not be read (broken read, an unreadable or misspelled repository, a row without a number/head/mergedAt, or graphql errors)" >&2
   exit 2
 }
 
@@ -303,19 +356,27 @@ out=""
 # Node ids are opaque: split them on whitespace with globbing OFF, so a
 # metacharacter in a future id shape can never expand against the cwd.
 set -f
-while IFS=$'\t' read -r number head keys detail; do
+while IFS=$'\t' read -r number head kind keys detail; do
   [ -n "$number" ] || continue
-  new=0
-  for key in $keys; do
-    current="$current$key"$'\n'
-    if [ "$USE_STATE" = "0" ]; then
-      new=1
-    elif ! grep -qxF -- "$key" <<<"$seen"; then
-      new=1
-    fi
-  done
+  if [ "$keys" = "-" ]; then
+    # A standing condition, not an event: no key, so nothing marks it seen
+    # and it re-emits every pass while it holds. That is what makes "narrow
+    # --window until the line stops" a usable instruction instead of one
+    # that appears to succeed on pass two.
+    new=1
+  else
+    new=0
+    for key in $keys; do
+      current="$current$key"$'\n'
+      if [ "$USE_STATE" = "0" ]; then
+        new=1
+      elif ! grep -qxF -- "$key" <<<"$seen"; then
+        new=1
+      fi
+    done
+  fi
   [ "$new" = "1" ] || continue
-  out="$out$(printf '%s\t%s\t%s\t%s' "$number" "$head" "post-merge-findings" "$detail")"$'\n'
+  out="$out$(printf '%s\t%s\t%s\t%s' "$number" "$head" "$kind" "$detail")"$'\n'
   attention=1
 done <<<"$rows"
 set +f

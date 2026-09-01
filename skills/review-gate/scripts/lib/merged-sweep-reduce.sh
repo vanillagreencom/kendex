@@ -6,10 +6,12 @@
 #
 # Inputs bound by the caller: $cutoff (epoch seconds — the window floor),
 # $limit and $limit_max (the page size actually asked for, and its ceiling).
-# Output: one @tsv row per finding —
-#   <pr-number> <TAB> <head-sha-8> <TAB> <space-joined keys> <TAB> <detail>
-# The caller turns the key list into the dedupe decision and replaces the
-# key column with the attention kind.
+# Output: one @tsv row per attention line —
+#   <pr-number> <TAB> <head-sha-8> <TAB> <kind> <TAB> <keys> <TAB> <detail>
+# The kind is decided HERE, because the reduction is what knows which
+# condition it found; the caller prints column 3 as given. A keys column of
+# "-" means the row carries NO dedupe key: it is a standing condition, not
+# an event, so the caller emits it on every pass while it holds.
 
 # shellcheck disable=SC2034 # read by merged-sweep.sh, which sources this file
 MERGED_SWEEP_REDUCE_JQ='
@@ -33,6 +35,11 @@ def at: (.createdAt | epoch);
 def is_reply: human and ((.body // "") | (disposition or tracking));
 
 if (.errors? // [] | length) > 0 then error("graphql errors present")
+# The repository probe is the positive proof that the named repo was READ.
+# search answers an unreadable or misspelled repo with issueCount 0 and no
+# error at all, so without this the sweep would exit 0 in silence over a
+# repository it never reached.
+elif (.data.repository | not) then error("the repository named by GH_REPO could not be read")
 elif (.data.search.nodes | type) != "array" then error("malformed merged-PR container")
 elif ((.data.search.issueCount | type) != "number")
      or ((.data.search.pageInfo.hasNextPage | type) != "boolean")
@@ -40,10 +47,12 @@ then error("merged-PR listing carries no coverage metadata")
 else
   .data.search as $s
   # A page that did not reach the whole window says so and fails closed
-  # instead of reporting silence over the remainder. Keyed like every other
-  # finding, so it dedupes.
+  # instead of reporting silence over the remainder. It carries NO key: a
+  # coverage shortfall is a standing property of the read that no reply
+  # clears, so announce-once would leave the gap silent from the second
+  # pass on — and a gap that WORSENS silent with it.
   | (if ($s.issueCount > ($s.nodes | length)) or $s.pageInfo.hasNextPage
-     then [ [ "-", "--------", "sweep:window-truncated",
+     then [ [ "-", "--------", "sweep:window-truncated", "-",
               "\($s.issueCount) merged PR(s) in the window, \($s.nodes | length) read at --limit \($limit) — the rest is UNSWEPT; \(if $limit < $limit_max then "raise --limit (max \($limit_max)) or narrow --window" else "narrow --window, since --limit is already at its \($limit_max) ceiling" end). Oldest merged PR read: \([$s.nodes[] | .mergedAt // empty] | min // "none")" ]
             | @tsv ]
      else [] end)
@@ -101,7 +110,8 @@ else
        or $bad_ts > 0) as $overflow
     | select(($late_reviews | length) > 0 or ($late_threads | length) > 0 or $overflow)
     | ($late_reviews + $late_threads + (if $overflow then ["\($pr.number):overflow"] else [] end)) as $keys
-    | [ ($pr.number | tostring), ($pr.headRefOid[0:8]), ($keys | join(" ")),
+    | [ ($pr.number | tostring), ($pr.headRefOid[0:8]), "post-merge-findings",
+        ($keys | join(" ")),
         (if $bad_ts > 0
          then "a review or thread comment carries a timestamp that will not parse, so post-merge activity cannot be placed either side of the merge — fail closed; re-read #\($pr.number) by hand"
          elif $overflow

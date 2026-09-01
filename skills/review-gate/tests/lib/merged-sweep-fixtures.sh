@@ -71,10 +71,16 @@ pr() { # number, mergedAt, author, reviews-json, comments-json, threads-json,
 # coverage metadata it compares against: issueCount defaults to the node
 # count and hasNextPage to false, i.e. "this page covered the window", so
 # only the arms that mean to trip the truncation guard do.
+# data.repository is the repository PROBE the sweep rides along with the
+# search: STUB_NO_REPO=yes makes it null, which is what GitHub returns for
+# a repository the token cannot read while search still answers 0 findings
+# and gh still exits 0.
 envelope() { # pr-json...
   jq -n --argjson nodes "$(jq -sc '.' <<<"$*")" \
     --argjson total "${STUB_ISSUE_COUNT:--1}" --argjson next "${STUB_HAS_NEXT:-false}" \
-    '{data:{search:{issueCount:(if $total < 0 then ($nodes|length) else $total end),
+    --arg norepo "${STUB_NO_REPO:-}" \
+    '{data:{repository:(if $norepo == "yes" then null else {id:"R_kgDOabc123"} end),
+            search:{issueCount:(if $total < 0 then ($nodes|length) else $total end),
                     pageInfo:{hasNextPage:$next}, nodes:$nodes}}}'
 }
 
@@ -109,6 +115,21 @@ run_split() { # env-tokens... [-- flags...]
        env GH_REPO=acme/widgets STUB_FIXTURE="$TMP_ROOT/fixture.json" \
            REVIEW_GATE_MERGED_SWEEP_STATE_DIR="$TMP_ROOT/state" "${envs[@]}" \
        "$SWEEP" ${flags[@]+"${flags[@]}"}) >"$TMP_ROOT/split.out" 2>"$TMP_ROOT/split.err"
+  SPLIT_RC=$?
+  set -e
+  SPLIT_OUT="$(cat "$TMP_ROOT/split.out")"
+  SPLIT_ERR="$(cat "$TMP_ROOT/split.err")"
+}
+
+# One pass with an explicit CWD and NO state-dir default in its
+# environment, so an arm can prove where the settings ladder and the state
+# anchoring each resolve from. Extra NAME=VALUE tokens join that pass.
+run_at() { # cwd, [env-tokens...]
+  local at="$1"; shift
+  set +e
+  (cd "$at" && PATH="$TMP_ROOT/bin:$PATH" \
+     env GH_REPO=acme/widgets STUB_FIXTURE="$TMP_ROOT/fixture.json" "$@" \
+     "$SWEEP") >"$TMP_ROOT/split.out" 2>"$TMP_ROOT/split.err"
   SPLIT_RC=$?
   set -e
   SPLIT_OUT="$(cat "$TMP_ROOT/split.out")"

@@ -278,14 +278,16 @@ nothing else.
 
 # the same reduction over recently-MERGED PRs (env: GH_REPO) — one
 # post-merge-findings line per merged PR carrying a review or review thread
-# comment that arrived after the merge with no disposition reply, and the
-# same line where the read cannot prove itself: reviews or threads past the
-# page bound, a timestamp that will not parse, or a window holding more
-# merged PRs than --limit read. Those ask for a manual re-read. EDGE
-# triggered, unlike pr-watch: per-repo state announces each finding once
+# comment that arrived after the merge with no disposition reply, or whose
+# own read cannot prove itself (reviews or threads past the page bound, a
+# timestamp that will not parse); those ask for a manual re-read. A window
+# holding more merged PRs than --limit read is a SECOND kind,
+# sweep:window-truncated, which carries no dedupe key and repeats every
+# pass while the gap holds. Findings are EDGE triggered, unlike pr-watch:
+# per-repo state announces each once
 # (REVIEW_GATE_MERGED_SWEEP_STATE_DIR, gitignore it), so exit 0 means
 # nothing NEW and --no-state is the standing audit form.
-# Flags: --window SECS (default 172800), --limit N (default 20, max 40),
+# Flags: --window SECS (default 172800), --limit N (default 20, max 80),
 # --no-state, --state-file PATH
 .agents/skills/review-gate/scripts/merged-sweep.sh
 ```

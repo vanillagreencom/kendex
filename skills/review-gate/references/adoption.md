@@ -219,11 +219,11 @@ review with no quiet period — so a review round landing in the queue's final
 minutes merges before anyone reads it. `merged-sweep.sh` sweeps
 recently-merged PRs for that, emitting one `post-merge-findings` line per
 merged PR carrying a review, or a review thread comment, created after its
-`mergedAt` with no disposition reply. It also emits that line when the read
-cannot prove itself: a PR whose reviews or threads exceed the page bound, a
-timestamp that will not parse, or a window holding more merged PRs than one
-query read. Those lines ask for a manual re-read; they are the fail-closed
-half of the same kind.
+`mergedAt` with no disposition reply. It emits that same line when one PR's
+read cannot prove itself — reviews or threads past the page bound, a
+timestamp that will not parse — which asks for a manual re-read. A window
+holding more merged PRs than one query read is a second kind,
+`sweep:window-truncated`, which belongs to no single PR.
 
 ```bash
 export GH_REPO=your-org/your-repo
@@ -249,15 +249,21 @@ rule. A relative value is anchored on the repository root, never the
 process cwd, so a loop that changes directory between passes keeps its
 baseline.
 
-One query answers for the whole sweep, and `--limit` (default 20, max 40) is
+One query answers for the whole sweep, and `--limit` (default 20, max 80) is
 how many merged PRs it reads. Enumeration is the GitHub search API bounded
 by `merged:`, so the window is a counted set rather than an ordering
 premise: when it holds more PRs than one page read, the sweep says so
 instead of reporting silence over the remainder. Raise `--limit`, or narrow
-`--window` until the line stops. Search is eventually consistent and
-separately rate-limited, so a PR merged seconds ago may not appear until
-the next pass. Exit 2 is always a global failure with nothing on stdout, so
-a consumer that sees lines is looking at findings.
+`--window` until the line stops — an instruction you can follow, because
+that line carries no dedupe key and repeats on every pass while the gap
+holds. The ceiling of 80 is MEASURED (about 8s on a full page against one
+busy repo, with the failure cliff at 100), not an API limit, and a 504 is
+load-dependent: re-measure on your own repo before leaning on the number.
+Search is eventually consistent and separately rate-limited, so a PR merged
+seconds ago may not appear until the next pass. Exit 2 is always a global
+failure with nothing on stdout, so a consumer that sees lines is looking at
+findings — and a repository the read could not reach is one of those
+failures, never a quiet window.
 
 ## Verification
 

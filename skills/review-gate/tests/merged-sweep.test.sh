@@ -35,11 +35,17 @@
 #   ms26. an older canonical reply, newer    -> still a finding (the LAST
 #         bare track-word                       reply decides, both arms)
 #   ms27. the window holds more PRs than     -> a sweep-level fail-closed
-#         --limit reads                         line, deduped like the rest
+#         --limit reads                         line that REPEATS while the
+#                                               gap holds (no dedupe key)
 #   ms28. --state-file                       -> writes that file, and never
 #                                               the default state dir
 #   ms29. a relative state dir               -> anchored on the repo root, so
 #                                               a changed cwd keeps the edge
+#   ms30. a repo the read cannot reach       -> exit 2, never quiet silence
+#   ms31. GH_REPO carrying search syntax     -> exit 2 before the query
+#   ms32. a settings-file state dir, read    -> ONE baseline, whatever the
+#         from two directories                  cwd of the pass
+#   ms33. a missing reduction lib            -> exit 2, never bash's exit 1
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -413,7 +419,7 @@ for bad in "acme" "acme/widgets/extra" "/widgets" "acme/"; do
   assert_eq "$rc" "2" "ms20b: GH_REPO '$bad' is refused"
 done
 
-for bad_flag in "--limit 0" "--limit 41" "--limit 101" "--limit abc" "--window 90s" "--window 1234567890123"; do
+for bad_flag in "--limit 0" "--limit 81" "--limit 101" "--limit abc" "--window 90s" "--window 1234567890123"; do
   set +e
   # shellcheck disable=SC2086
   out=$(run_sweep -- $bad_flag); rc=$?
@@ -427,17 +433,17 @@ assert_eq "$rc" "2" "ms21b: an unknown argument exits 2"
 fresh_state
 fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
 set +e
-out=$(run_sweep -- --limit 40); rc=$?
+out=$(run_sweep -- --limit 80); rc=$?
 set -e
-assert_eq "$rc" "1" "ms21c: --limit 40 is the documented ceiling and is accepted"
+assert_eq "$rc" "1" "ms21c: --limit 80 is the documented ceiling and is accepted"
 fresh_state
 set +e
-out=$(run_sweep -- --limit 0040 --window 0172800); rc=$?
+out=$(run_sweep -- --limit 0080 --window 0172800); rc=$?
 set -e
 assert_eq "$rc" "1" "ms21d: zero-padded numbers are judged by magnitude, not by digit count"
 fresh_state
 set +e
-out=$(run_sweep -- --limit 0041); rc=$?
+out=$(run_sweep -- --limit 0081); rc=$?
 set -e
 assert_eq "$rc" "2" "ms21e: and a zero-padded value over the ceiling is still refused"
 
@@ -528,28 +534,17 @@ rm -f -- "${TMP_ROOT:?}/explicit-state"
 # start from an empty baseline.
 git init -q "$TMP_ROOT/repo" 2>/dev/null
 mkdir -p "$TMP_ROOT/repo/sub"
-run_at() { # cwd, [flags...]
-  local at="$1"; shift
-  set +e
-  (cd "$at" && PATH="$TMP_ROOT/bin:$PATH" \
-     env GH_REPO=acme/widgets STUB_FIXTURE="$TMP_ROOT/fixture.json" \
-         REVIEW_GATE_MERGED_SWEEP_STATE_DIR="sweep-state" \
-     "$SWEEP" "$@") >"$TMP_ROOT/split.out" 2>"$TMP_ROOT/split.err"
-  SPLIT_RC=$?
-  set -e
-  SPLIT_OUT="$(cat "$TMP_ROOT/split.out")"
-  SPLIT_ERR="$(cat "$TMP_ROOT/split.err")"
-}
+AT_REL=(REVIEW_GATE_MERGED_SWEEP_STATE_DIR="sweep-state")
 if [ -d "$TMP_ROOT/repo/.git" ]; then
   fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
-  run_at "$TMP_ROOT/repo"
+  run_at "$TMP_ROOT/repo" "${AT_REL[@]}"
   assert_eq "$SPLIT_RC" "1" "ms29: the first pass from the repo root reports the finding"
   if [ -f "$TMP_ROOT/repo/sweep-state/acme_widgets" ]; then
     PASS=$((PASS + 1)); printf '  ok    %s\n' "ms29: writing under the repository root"
   else
     FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms29: no state file under the repository root"
   fi
-  run_at "$TMP_ROOT/repo/sub"
+  run_at "$TMP_ROOT/repo/sub" "${AT_REL[@]}"
   assert_eq "$SPLIT_RC" "0" "ms29b: a second pass from a SUBDIRECTORY keeps the same baseline"
   if [ -d "$TMP_ROOT/repo/sub/sweep-state" ]; then
     FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms29b: a second state dir appeared under the cwd"
@@ -603,7 +598,7 @@ assert_eq "$(grep -c 'post-merge-findings' <<<"$out")" "2" "ms24: one line per P
 
 # --- ms25 (finding #8): the re-raise shape -------------------------------
 # A reviewer commenting again on a line it already flagged lands in a
-# PRE-merge thread. Reading only the thread'"'"'s first comment reported
+# PRE-merge thread. Reading only the thread's first comment reported
 # silence over exactly that.
 fresh_state
 RERAISE="$(thread THR_reraise 2 \
@@ -665,20 +660,44 @@ set -e
 assert_eq "$rc" "1" "ms27: a window holding more merged PRs than the page read fails closed"
 assert_contains "$out" "86 merged PR(s) in the window, 1 read" "ms27: naming the count it could not reach"
 assert_contains "$out" "UNSWEPT" "ms27: and saying the remainder is unswept"
-assert_contains "$out" "raise --limit (max 40)" "ms27: naming the remedy that applies below the ceiling"
-assert_contains "$out" "post-merge-findings" "ms27: as an ordinary attention line"
+assert_contains "$out" "raise --limit (max 80)" "ms27: naming the remedy that applies below the ceiling"
+assert_row ms27 "$out" "-" "--------" "sweep:window-truncated" "UNSWEPT"
+
+# ms27b: a STANDING condition, not an event — keyed through the rising
+# edge it fired once, then went silent with the gap still open.
 set +e
 out=$(run_sweep); rc=$?
 set -e
-assert_eq "$rc" "0" "ms27b: and it dedupes like every other finding"
+assert_eq "$rc" "1" "ms27b: the coverage row REPEATS while the gap holds — it is not an event"
+assert_contains "$out" "86 merged PR(s) in the window" "ms27b: naming the same standing gap"
+if [ -s "$TMP_ROOT/state/acme_widgets" ]; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms27b: the coverage row wrote a dedupe key"
+else
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "ms27b: and wrote no dedupe key of its own"
+fi
+
+# ms27f: a gap that WORSENS is the case a constant key hid completely —
+# pass 1 at 3, pass 2 at 500, and the second pass must still report.
+fresh_state
+fixture "$(STUB_ISSUE_COUNT=3 envelope "$(pr 11 "$MERGED_AT" dev '[]' '[]' '[]')")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms27f: a small gap reports"
+fixture "$(STUB_ISSUE_COUNT=500 envelope "$(pr 11 "$MERGED_AT" dev '[]' '[]' '[]')")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms27f: and a gap that worsened is never silent"
+assert_contains "$out" "500 merged PR(s) in the window" "ms27f: reporting the WORSE count, not the old one"
 
 # At the ceiling the only remedy left is the window, and the line says that
 # rather than telling the operator to raise a limit already at its maximum.
 fresh_state
 set +e
-out=$(run_sweep -- --limit 40); rc=$?
+out=$(run_sweep -- --limit 80); rc=$?
 set -e
-assert_contains "$out" "already at its 40 ceiling" "ms27e: at the ceiling the remedy named is the window"
+assert_contains "$out" "already at its 80 ceiling" "ms27e: at the ceiling the remedy named is the window"
 
 fresh_state
 fixture "$(STUB_HAS_NEXT=true envelope "$(pr 11 "$MERGED_AT" dev '[]' '[]' '[]')")"
@@ -693,6 +712,84 @@ set +e
 out=$(run_sweep); rc=$?
 set -e
 assert_eq "$rc" "0" "ms27d: a page that reached the whole window says nothing"
+
+# --- ms30: the repository boundary fails CLOSED --------------------------
+# search answers an unreadable repository with issueCount 0, no errors and
+# gh exit 0 — a quiet window's shape. Only the probe tells them apart.
+fresh_state
+fixture "$(STUB_NO_REPO=yes envelope)"
+run_split
+assert_eq "$SPLIT_RC" "2" "ms30: a repository the read could not reach exits 2, never quiet silence"
+assert_contains "$SPLIT_ERR" "could not be read" "ms30: naming the repository as the cause"
+assert_eq "$SPLIT_OUT" "" "ms30: with stdout empty"
+# The must-fail control: the SAME empty set with the probe answering is an
+# ordinary quiet window, so the arm above is proving the probe.
+fresh_state
+fixture "$(envelope)"
+run_split
+assert_eq "$SPLIT_RC" "0" "ms30b: the same empty result set from a READABLE repo is just a quiet window"
+
+# --- ms31: GH_REPO is spliced into a search query ------------------------
+# Search syntax smuggled through it returns a legitimately empty set, so
+# without a charset check the sweep exits 0 over an unswept repository.
+for bad in "acme/widgets is:draft" "acme/widgets zzzznotarealtoken" "acme/wid gets" "acme/widgets\"x" "acme/widg<ets"; do
+  fresh_state
+  set +e
+  out=$(run_sweep GH_REPO="$bad"); rc=$?
+  set -e
+  assert_eq "$rc" "2" "ms31: GH_REPO '$bad' is refused before the query"
+done
+# And the control: every character a real owner/repo name uses still passes.
+fresh_state
+fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
+set +e
+out=$(run_sweep GH_REPO="acme-org.io_x/widgets.js-2"); rc=$?
+set -e
+assert_eq "$rc" "1" "ms31b: a name using every allowed character is accepted"
+
+# --- ms32: the KEY resolves from the repository root, like the path ------
+# The value was anchored, the key was not, so an off-root settings-file
+# consumer took the built-in default and anchored a DIFFERENT directory.
+git init -q "$TMP_ROOT/repo2" 2>/dev/null
+mkdir -p "$TMP_ROOT/repo2/sub"
+if [ -d "$TMP_ROOT/repo2/.git" ]; then
+  printf '[env]\nREVIEW_GATE_MERGED_SWEEP_STATE_DIR = "var/sweepstate"\n' \
+    > "$TMP_ROOT/repo2/kendex.settings.toml"
+  fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
+  run_at "$TMP_ROOT/repo2"
+  assert_eq "$SPLIT_RC" "1" "ms32: the first pass from the repo root reports the finding"
+  run_at "$TMP_ROOT/repo2/sub"
+  assert_eq "$SPLIT_RC" "0" "ms32b: a pass from a SUBDIRECTORY reads the same settings-file baseline"
+  if [ -d "$TMP_ROOT/repo2/tmp/review-gate-merged-sweep" ]; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms32b: the off-root pass fell back to the BUILT-IN default dir"
+  else
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "ms32b: and never fell back to the built-in default directory"
+  fi
+else
+  echo "  skip  ms32: git init produced no working tree here"
+fi
+
+# --- ms33: a missing lib is a read failure, not bash's exit 1 -------------
+# Sourced under set -e, a missing lib exits 1 with no stdout — the code
+# promising attention lines. Run a COPY, leaving the shipped tree alone.
+LIBTEST="$TMP_ROOT/skillcopy"
+cp -R "$SKILL_ROOT/scripts" "$LIBTEST"
+rm -f "$LIBTEST/lib/merged-sweep-reduce.sh"
+fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
+SWEEP_REAL="$SWEEP"; SWEEP="$LIBTEST/merged-sweep.sh"
+run_split
+assert_eq "$SPLIT_RC" "2" "ms33: a missing reduction lib exits 2, not bash's exit 1"
+assert_contains "$SPLIT_ERR" "the skill install is incomplete" "ms33: naming the install as the cause"
+assert_eq "$SPLIT_OUT" "" "ms33: with stdout empty"
+chmod 000 "$LIBTEST/lib/settings.sh"
+if [ -r "$LIBTEST/lib/settings.sh" ]; then
+  echo "  skip  ms33b: settings.sh stayed readable at mode 000 (root, or a permissionless filesystem)"
+else
+  run_split
+  assert_eq "$SPLIT_RC" "2" "ms33b: an unreadable settings lib exits 2 the same way"
+  assert_eq "$SPLIT_OUT" "" "ms33b: with stdout empty"
+fi
+chmod 644 "$LIBTEST/lib/settings.sh"; SWEEP="$SWEEP_REAL"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
