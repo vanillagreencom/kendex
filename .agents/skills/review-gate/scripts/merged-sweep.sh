@@ -198,9 +198,8 @@ done
 
 # GraphQL rejects first:0, and the upper bound is MEASURED, not the API's:
 # print_usage carries the figures, the date and the repo they came from.
-# Both bounds are refused, never clamped — a clamp would sweep a different
-# set than the operator asked for, and the saturation row below is what
-# reports a window one page cannot cover.
+# Both are refused, never clamped — a clamp would sweep a different set than
+# the operator asked for, and the saturation row reports what one page cannot.
 LIMIT_MAX=80
 if [ "$LIMIT" -lt 1 ] || [ "$LIMIT" -gt "$LIMIT_MAX" ]; then
   echo "::error::merged-sweep: --limit must be between 1 and $LIMIT_MAX (got $LIMIT)" >&2
@@ -208,19 +207,17 @@ if [ "$LIMIT" -lt 1 ] || [ "$LIMIT" -gt "$LIMIT_MAX" ]; then
 fi
 
 # --- state --------------------------------------------------------------
-# One file per repo, the same shape oversee-watch keeps for PW_SEEN: the
-# keys of the previous pass, one per line, replaced atomically. Anchored on
-# the REPOSITORY ROOT, never the cwd, as oversee-watch anchors its own — a
-# poll loop that changed directory would otherwise re-announce everything.
+# One file per repo, the shape oversee-watch keeps for PW_SEEN: the previous
+# pass's keys, one per line, replaced atomically. Anchored on the REPOSITORY
+# ROOT, never the cwd, as oversee-watch anchors its own — a poll loop that
+# changed directory would otherwise re-announce everything.
 SETTING_HINT="set REVIEW_GATE_MERGED_SWEEP_STATE_DIR, pass --state-file, or pass --no-state"
 if [ "$USE_STATE" = "1" ] && [ -z "$STATE_FILE" ]; then
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
   # The KEY resolves from the repository root, not only the path it names:
-  # rg_setting reads .env.local and the settings TOMLs as CWD-relative
-  # paths, so an off-root caller finds none of them, takes the built-in
-  # default, and anchors a DIFFERENT directory under the same root —
-  # re-announcing every finding every pass, the failure the anchoring
-  # exists to stop. One key, one anchor, on both halves.
+  # rg_setting reads .env.local and the settings TOMLs as CWD-relative paths,
+  # so an off-root caller finds none, takes the built-in default and anchors a
+  # DIFFERENT directory under the same root, re-announcing everything forever.
   if [ -n "$repo_root" ]; then
     state_dir="$(cd "$repo_root" && rg_setting REVIEW_GATE_MERGED_SWEEP_STATE_DIR "tmp/review-gate-merged-sweep")" || exit 2
   else
@@ -244,7 +241,12 @@ if [ "$USE_STATE" = "1" ] && [ -z "$STATE_FILE" ]; then
     echo "::error::merged-sweep: could not create the state directory $state_dir ($SETTING_HINT)" >&2
     exit 2
   }
-  STATE_FILE="$state_dir/$(printf '%s' "$GH_REPO" | tr -c 'A-Za-z0-9._-' '_')"
+  # INJECTIVE. Slugging the slash to an underscore made acme/foo_bar and
+  # acme_foo/bar one file, so two repos in one state dir overwrote each other
+  # and a synthetic key — which, unlike a node id, repeats across repos —
+  # could suppress the other's FIRST alert. %2F cannot collide: the validator
+  # above accepts no percent, and every other character passes through.
+  STATE_FILE="$state_dir/${GH_REPO%%/*}%2F${GH_REPO#*/}"
 fi
 seen=""
 if [ "$USE_STATE" = "1" ] && [ -e "$STATE_FILE" ]; then
@@ -274,11 +276,10 @@ fi
 # is newer than every pre-merge one, so truncation hides only content that
 # could neither BE a finding nor ANSWER one. reviewThreads is the
 # exception: no documented ordering, so any truncation fails closed.
-# repository(owner,name){id} rides along as the POSITIVE proof that the
-# named repo was READ. search answers a misspelled, renamed or
-# no-longer-authorized repository with issueCount 0, no errors and gh exit
-# 0 — indistinguishable from a quiet window — while this field answers it
-# with NOT_FOUND and a null, which both handlers below fail closed on.
+# repository(owner,name){id} is the POSITIVE proof the named repo was READ:
+# search answers a misspelled, renamed or unauthorized repository with
+# issueCount 0, no errors and gh exit 0 — a quiet window's shape — while
+# this field answers NOT_FOUND and a null, which both handlers fail closed on.
 query='query($owner:String!,$name:String!,$q:String!,$limit:Int!){
   repository(owner:$owner, name:$name){ id }
   search(query:$q, type:ISSUE, first:$limit){

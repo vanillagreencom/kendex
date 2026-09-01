@@ -138,6 +138,9 @@ envelope() { # pr-json...
                     pageInfo:{hasNextPage:$next}, nodes:$nodes}}}'
 }
 
+# The state filename for GH_REPO=acme/widgets, named once: the slug is an
+# INJECTIVE encoding, so a change to it changes every arm that reads state.
+STATE_SLUG="acme%2Fwidgets"
 fixture() { printf '%s\n' "$1" > "$TMP_ROOT/fixture.json"; }
 fresh_state() { rm -rf -- "${TMP_ROOT:?}/state"; }
 
@@ -280,7 +283,7 @@ assert_merge_tie_arms() {
   run_split
   assert_eq "$SPLIT_RC" "1" "ms37: a review tied with mergedAt surfaces"
   assert_row ms37 "$SPLIT_OUT" "16" "$HEAD_A8" "post-merge-findings" "same second as the merge"
-  assert_eq "$(cat "$TMP_ROOT/state/acme_widgets")" "16:overflow:merge-tie" \
+  assert_eq "$(cat "$TMP_ROOT/state/${STATE_SLUG}")" "16:overflow:merge-tie" \
     "ms37: keyed ONLY on the overflow arm, naming the tie as its cause — widening the finding predicate to >= would key the review id here too"
   assert_not_contains "$SPLIT_OUT" "landed after the merge with no disposition reply" \
     "ms37: and never as a confirmed finding — the read cannot prove which side it is on"
@@ -352,7 +355,7 @@ assert_overflow_cause_arms() {
   fixture "$one"
   run_split
   assert_eq "$SPLIT_RC" "1" "ms40: the first fail-closed cause reports"
-  assert_eq "$(grep ':overflow:' "$TMP_ROOT/state/acme_widgets")" "19:overflow:thread-comments" \
+  assert_eq "$(grep ':overflow:' "$TMP_ROOT/state/${STATE_SLUG}")" "19:overflow:thread-comments" \
     "ms40: keyed on the PR AND the cause that fired"
   run_split
   assert_eq "$SPLIT_RC" "0" "ms40: an unchanged second pass stays silent"
@@ -360,7 +363,7 @@ assert_overflow_cause_arms() {
   run_split
   assert_eq "$SPLIT_RC" "1" "ms40: a SECOND distinct cause on the same PR reports again"
   assert_contains "$SPLIT_OUT" "will not parse" "ms40: with the more specific detail the new cause earns"
-  assert_eq "$(grep ':overflow:' "$TMP_ROOT/state/acme_widgets")" "19:overflow:thread-comments+unparsable-time" \
+  assert_eq "$(grep ':overflow:' "$TMP_ROOT/state/${STATE_SLUG}")" "19:overflow:thread-comments+unparsable-time" \
     "ms40: and the key now names both causes"
 }
 
@@ -386,4 +389,53 @@ assert_ghost_author_arms() {
     "[$(review REV_s "$AFTER_MERGE" COMMENTED "note to self" dev User)]" '[]' '[]')")"
   run_split
   assert_eq "$SPLIT_RC" "0" "ms41: a real self-review, both logins KNOWN and equal, is still excluded"
+}
+
+# The STANDING reply is the newest by PUBLICATION, not the trailing element
+# of a creation-ordered array (ms42). Each pair below is listed in creation
+# order and publishes in the reverse one, so position and time disagree and
+# a positional pick reads the wrong reply. Both arms are driven, and the
+# second case is the first with the bodies swapped, so the mutant reds in
+# whichever direction it is wrong.
+assert_standing_by_time_arms() {
+  local c1 c2 p2 p1 late bare canon
+  c1="$(iso -1700)"; c2="$(iso -1600)"   # created:   bare, then canonical
+  p2="$(iso -1500)"; p1="$(iso -1400)"   # published: canonical, then bare
+  late="$(review REV_o "$AFTER_MERGE" COMMENTED "P1: this leaks" codex Bot)"
+  bare="$(comment "$c1" "tracking that separately" dev User "$p1")"
+  canon="$(comment "$c2" "Declined: the handle is closed" dev User "$p2")"
+  fresh_state
+  fixture "$(envelope "$(pr 23 "$MERGED_AT" dev "[$late]" "[$bare,$canon]" '[]')")"
+  run_split
+  assert_eq "$SPLIT_RC" "1" "ms42: the newest reply BY PUBLICATION stands, and it answers nothing"
+  bare="$(comment "$c2" "tracking that separately" dev User "$p2")"
+  canon="$(comment "$c1" "Declined: the handle is closed" dev User "$p1")"
+  fresh_state
+  fixture "$(envelope "$(pr 23 "$MERGED_AT" dev "[$late]" "[$canon,$bare]" '[]')")"
+  run_split
+  assert_eq "$SPLIT_RC" "0" "ms42: and with the bodies swapped the same rule answers the finding"
+  bare="$(comment "$c1" "tracking that separately" dev User "$p1")"
+  canon="$(comment "$c2" "Declined: the handle is closed" dev User "$p2")"
+  fresh_state
+  fixture "$(envelope "$(pr 23 "$MERGED_AT" dev '[]' '[]' \
+    "[$(thread THR_o2 3 "$(comment "$AFTER_MERGE" "P1: this leaks" codex Bot)" "$bare" "$canon")]")")"
+  run_split
+  assert_eq "$SPLIT_RC" "1" "ms42: the thread arm reads the same clock, not the array position"
+}
+
+# The state slug is INJECTIVE (ms43). Mapping the slash to an underscore put
+# acme/foo_bar and acme_foo/bar in one file, so the second repo swept read
+# the first repo IDs as already seen. The fixture is the same PR both times,
+# which is the collision at its sharpest: identical keys, different repos.
+assert_slug_injective_arms() {
+  fresh_state
+  fixture "$(envelope "$(pr 22 "$MERGED_AT" dev \
+    "[$(review REV_c "$AFTER_MERGE" COMMENTED "P1: this leaks" codex Bot)]" '[]' '[]')")"
+  run_split GH_REPO=acme/foo_bar
+  assert_eq "$SPLIT_RC" "1" "ms43: the first repository reports its finding"
+  run_split GH_REPO=acme_foo/bar
+  assert_eq "$SPLIT_RC" "1" "ms43: and the second reports its OWN first alert, not the first repository's baseline"
+  assert_eq "$(LC_ALL=C ls "$TMP_ROOT/state" | LC_ALL=C sort | tr '\n' ' ')" \
+    "acme%2Ffoo_bar acme_foo%2Fbar " \
+    "ms43: two distinct accepted GH_REPO values, two distinct state files"
 }

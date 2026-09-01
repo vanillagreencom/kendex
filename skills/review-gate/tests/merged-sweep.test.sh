@@ -47,6 +47,8 @@
 #   ms38.  a 2nd finding in a seen thread    -> reports; the key is the comment
 #   ms40.  a 2nd overflow CAUSE on a PR       -> reports; the key names causes
 #   ms41.  a ghost author on both sides       -> a finding, not a self-review
+#   ms42.  creation order vs publication order-> the standing reply is by TIME
+#   ms43.  acme/foo_bar vs acme_foo/bar       -> two state files, never one
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -117,7 +119,7 @@ set +e
 out=$(run_sweep -- --no-state); rc=$?
 set -e
 assert_eq "$rc" "1" "ms5b: --no-state from a fresh baseline reports the finding"
-if [ -e "$TMP_ROOT/state/acme_widgets" ]; then
+if [ -e "$TMP_ROOT/state/${STATE_SLUG}" ]; then
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms5b: --no-state wrote a state file"
 else
   PASS=$((PASS + 1)); printf '  ok    %s\n' "ms5b: and wrote no state file"
@@ -418,9 +420,9 @@ assert_eq "$rc" "2" "ms21e: and a zero-padded value over the ceiling is still re
 
 fresh_state
 mkdir -p "$TMP_ROOT/state"
-printf 'x\n' > "$TMP_ROOT/state/acme_widgets"
-chmod 000 "$TMP_ROOT/state/acme_widgets"
-if [ -r "$TMP_ROOT/state/acme_widgets" ]; then
+printf 'x\n' > "$TMP_ROOT/state/${STATE_SLUG}"
+chmod 000 "$TMP_ROOT/state/${STATE_SLUG}"
+if [ -r "$TMP_ROOT/state/${STATE_SLUG}" ]; then
   # Running as root (or on a filesystem that ignores the mode) makes this
   # arm unreachable; say so rather than assert an unproducible pass.
   echo "  skip  ms22: the state file stayed readable at mode 000 (root, or a permissionless filesystem)"
@@ -431,7 +433,7 @@ else
   assert_eq "$rc" "2" "ms22: an unreadable state file exits 2, never a silent fresh baseline"
   assert_contains "$out" "cannot read the state file" "ms22: named as the READ, not any later write"
 fi
-chmod 644 "$TMP_ROOT/state/acme_widgets"
+chmod 644 "$TMP_ROOT/state/${STATE_SLUG}"
 fresh_state
 
 # ms22c: an unwritable state DIR fails at mkdir, before any read.
@@ -504,7 +506,7 @@ if [ -d "$TMP_ROOT/repo/.git" ]; then
   fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
   run_at "$TMP_ROOT/repo" "${AT_REL[@]}"
   assert_eq "$SPLIT_RC" "1" "ms29: the first pass from the repo root reports the finding"
-  if [ -f "$TMP_ROOT/repo/sweep-state/acme_widgets" ]; then
+  if [ -f "$TMP_ROOT/repo/sweep-state/${STATE_SLUG}" ]; then
     PASS=$((PASS + 1)); printf '  ok    %s\n' "ms29: writing under the repository root"
   else
     FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms29: no state file under the repository root"
@@ -633,7 +635,7 @@ out=$(run_sweep); rc=$?
 set -e
 assert_eq "$rc" "1" "ms27b: the coverage row REPEATS while the gap holds — it is not an event"
 assert_contains "$out" "86 merged PR(s) in the window" "ms27b: naming the same standing gap"
-if [ -s "$TMP_ROOT/state/acme_widgets" ]; then
+if [ -s "$TMP_ROOT/state/${STATE_SLUG}" ]; then
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms27b: the coverage row wrote a dedupe key"
 else
   PASS=$((PASS + 1)); printf '  ok    %s\n' "ms27b: and wrote no dedupe key of its own"
@@ -785,6 +787,8 @@ assert_merge_tie_arms
 assert_thread_key_arms
 assert_overflow_cause_arms
 assert_ghost_author_arms
+assert_standing_by_time_arms
+assert_slug_injective_arms
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

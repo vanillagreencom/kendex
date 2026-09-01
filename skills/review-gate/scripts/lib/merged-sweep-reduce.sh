@@ -129,7 +129,14 @@ else
          # because a real login differs from the "" default, so this is one
          # lost review and never a whole silent PR.
          | select(($pr.author.login == null) or ($r.author.login != $pr.author.login))
-         | ([ $pr_replies[] | select(at > $rat) ] | last) as $standing
+         # The STANDING reply is the newest by the clock every arm compares
+         # on, never the trailing element: the connection is ordered by
+         # CREATION, and since `at` became a publication time the two orders
+         # disagree — a reply drafted first and published last sits earlier
+         # in the array and would lose. These two arms and the finding-time
+         # pick below are the only places in this reduction that choose one
+         # element out of an ordered list, and all three now use max_by(at).
+         | ([ $pr_replies[] | select(at > $rat) ] | max_by(at)) as $standing
          | select(($standing == null) or (($standing.body // "") | answered | not))
          | $r.id ]) as $late_reviews
     # A thread is a finding when it carries a post-merge comment that is
@@ -152,7 +159,7 @@ else
          # STRICTLY after the finding: a reply in the same second as the
          # finding cannot be proved to answer it, so it does not and the
          # thread surfaces. This boundary already fails closed.
-         | ([ $post[] | select(is_reply) | select(at > $finding_at) ] | last) as $standing
+         | ([ $post[] | select(is_reply) | select(at > $finding_at) ] | max_by(at)) as $standing
          | select(($standing == null) or (($standing.body // "") | answered | not))
          # The thread id is the fallback, not the key: a comment the response
          # returned without the id the query asked for keeps the coarser
