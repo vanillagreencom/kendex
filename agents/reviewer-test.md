@@ -27,6 +27,7 @@ Coverage of changed paths (branches, error paths, boundaries), test quality, det
 - **Assertion tightness**: matchers loose enough to also match a skip note, a shared suffix, or a wrong-cause message; assertions on source text that survive logic inversion.
 - **Wiring**: a new test file is only real if a runner invokes it — verify CI/run-all wiring for every added suite.
 - **Environment**: assumptions that break under root, another locale, or elevated parallelism.
+- **Clock**: a test that bounds a duration with `sleep`, `setTimeout`, or `date` proves nothing on a loaded runner; the boundary is staged or the clock is injected.
 - Any test you mutation-validate follows the reviewer skill's § Mutation-Stability Pairing.
 
 ## Output

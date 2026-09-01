@@ -74,7 +74,7 @@ SEGMENTS=$(printf '%s\n' "$COMMAND" \
         # an empty segment between two newlines, which matches nothing. A
         # closing paren separates too, so a case-arm body (`x) rm …;;`) and
         # a subshell tail become their own segments.
-        gsub(/[;|&)]/, "\n", blob)
+        gsub(/[;)&|]/, "\n", blob)
         printf "%s", blob
       }')
 

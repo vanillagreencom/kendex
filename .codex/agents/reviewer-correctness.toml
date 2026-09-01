@@ -37,6 +37,7 @@ For each changed predicate, parser, or guard, mentally execute:
 - **Pre-steady-state** — behavior while detection is still pending, state is unseeded, or readiness was declared on selection rather than on answerability.
 - **Teardown symmetry** — for every install/enable/claim path, walk uninstall/disable/release under: another worktree still installed, the helper already missing, a partially applied prior run, and a foreign tool owning the same file.
 - **Staged vs worktree** — a `--staged` or index-reading mode reads its policy inputs (baseline, excludes, settings) from the index too, never from the worktree.
+- **Workflow order** — a `→ §N` route, a `Skip if`, or a `[PLACEHOLDER]` the diff adds to a workflow is executed in document order; name the section that runs it and the line that binds the placeholder, or the route is a finding.
 
 ## Removed Behavior
 

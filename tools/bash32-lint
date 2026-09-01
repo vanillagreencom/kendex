@@ -28,6 +28,13 @@ set -uo pipefail
 # macOS system bash — a Bash 4 construct in a suite, or in the lib a suite
 # sources, breaks the run on a 3.2 host as surely as one in a script.
 #
+# hooks/ is named rather than discovered: it is one directory, and its
+# scripts run on whatever bash the harness starts them with, which on a Mac
+# is the 3.2 in /bin. tools/ is NOT in the roster. This file defines the
+# pattern set in string literals and explains it in comments that quote the
+# constructs, so a scan of tools/ reds on this file's own text and the fix
+# would be to respell the definition it is judging by.
+#
 # The exceptions are declared, with the reason, because a roster that
 # discovers its members cannot tell a directory that is exempt from one that
 # quietly emptied out. A stale entry ends the run for any of them, checked
@@ -170,7 +177,7 @@ fi
 ROOT="$(git rev-parse --show-toplevel)" || die "not in a git repository"
 if [ "$#" -eq 0 ]; then
   cd "$ROOT" || die "cannot enter $ROOT"
-  set -- skills/*/scripts skills/*/tests
+  set -- skills/*/scripts skills/*/tests hooks
 fi
 
 at_root() { # at_root PATH — a roster path, read from the toplevel.
