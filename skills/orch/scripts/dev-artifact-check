@@ -66,7 +66,7 @@ usage() {
   cat << 'EOF'
 Usage:
   dev-artifact-check --worktree WT --issue ISSUE --round-id RID \
-    [--expect-items-from-round] [--wait SECS] [--interval SECS]
+    [--expect-items-from-round] [--record-baseline] [--wait SECS] [--interval SECS]
   dev-artifact-check --file <json_path> [--round-id RID] [--expect-items N,N,...] \
     [--wait SECS] [--interval SECS]
 
@@ -85,9 +85,9 @@ requires it exists, its internal .round_id == RID, then the scalar/kind, commit
 object (against WT's git repo, kendex#994), and items gates. A kind fix receipt
 automatically resolves --expect-items-from-round authorization even when the
 caller supplied no expected-set flag. Implement and analysis remain flagless.
-An accepted implement receipt also binds its verified baseline to the active
-workflow-state round and worktree lease, then creates the immutable record under
-the repository's git common directory. File mode: validates one explicit JSON file (round_id checked only when --round-id
+After Check B passes, --record-baseline binds an implement receipt to the active
+round, current HEAD, and set-once workflow-state value.
+File mode: validates one explicit JSON file (round_id checked only when --round-id
 is supplied). It is a test/parity affordance — round-trip checks and known-path
 artifacts — with no production caller; the orch workflows always use round mode.
 There is one identity model (round id); the mtime freshness gate and the old
@@ -112,6 +112,7 @@ repeat checks remain valid, while worktree-push ignores the retired round.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
+                      "baseline_unbindable"|
                       "comparison_failed"|"classifier_failed"|
                       "unapproved_additions"|"incomplete",
               warning: "commit_unreachable"|null,
@@ -142,6 +143,9 @@ reason meanings when ok=false:
               (kendex#994) — e.g. a hand-reconstructed SHA with a fabricated
               tail. Round mode only, and only when the worktree is a git repo;
               --file mode has no repo to check against and skips this gate.
+  baseline_unbindable
+              an implement receipt's measurement does not match its commit, or
+              --record-baseline cannot bind it to the active current HEAD
   unapproved_additions
               a fix round added a protected file since its authorized base_sha
               without naming that exact file in adds. The files field names
@@ -525,6 +529,7 @@ file=""
 want_round=""
 expect_items=""
 expect_from_round=false
+record_baseline=false
 round_record=""
 authorization=""
 repo=""
@@ -543,6 +548,7 @@ if [[ "${1:-}" == "--file" ]]; then
       --expect-items) need "$1" $#; expect_items="$2"; shift 2 ;;
       --expect-items-from-round)
         die "--expect-items-from-round requires round mode (there is no worktree/issue/round to resolve a round record from)" ;;
+      --record-baseline) die "--record-baseline requires round mode" ;;
       --wait)         need "$1" $#; wait_secs="$2"; shift 2 ;;
       --interval)     need "$1" $#; interval="$2"; shift 2 ;;
       *) die "unknown --file argument: $1" ;;
@@ -560,6 +566,7 @@ elif [[ "${1:-}" == --* ]]; then
       --round-id)     need "$1" $#; round_id="$2"; shift 2 ;;
       --expect-items) need "$1" $#; expect_items="$2"; shift 2 ;;
       --expect-items-from-round) expect_from_round=true; shift ;;
+      --record-baseline) record_baseline=true; shift ;;
       --wait)         need "$1" $#; wait_secs="$2"; shift 2 ;;
       --interval)     need "$1" $#; interval="$2"; shift 2 ;;
       *) die "unknown argument: $1" ;;
@@ -668,29 +675,44 @@ reroute_flagless_fix() {
 }
 
 check_once() {
-  local out rc=0 verdict kind commit receipt_lines
+  local out rc=0 verdict kind commit receipt_lines measured
   out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$authorization")" || rc=$?
   if (( rc == 0 )); then
     verdict="$(jq -r '.verdict' <<<"$out")" || {
       printf '%s: could not read the emitted artifact verdict\n' "$PROG" >&2
       return 2
     }
-    if [[ "$verdict" == "accept" ]] && ! retire_authorization "$authorization"; then
-      printf '%s: could not retire accepted round authorization %s\n' "$PROG" "$authorization" >&2
-      return 2
-    fi
     kind="$(jq -r '.kind' "$file")"
-    if [[ "$verdict" == "accept" && "$round_mode" == "true" && "$kind" == "implement" ]] \
+    if [[ "$record_baseline" == "true" && "$kind" != "implement" ]]; then
+      out="$(emit false "$file" invalid)"
+      rc=1
+    fi
+    if (( rc == 0 )) && [[ "$verdict" == "accept" && "$round_mode" == "true" && "$kind" == "implement" ]] \
       && [[ "$(git -C "$worktree" rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]; then
       # shellcheck source=lib/branch-growth.sh
       source "$SCRIPT_DIR/lib/branch-growth.sh"
       commit="$(jq -r '.commit' "$file")"
       receipt_lines="$(jq -r '.baseline_lines' "$file")"
-      if ! accept_implementation_baseline \
-        "$worktree" "$issue" "$round_id" "$commit" "$receipt_lines" "$SCRIPT_DIR"; then
+      if ! branch_baseline_lines "$worktree" "$SCRIPT_DIR/resolve-base-branch" "$commit" measured; then
         printf '%s: %s\n' "$PROG" "$BRANCH_GROWTH_ERROR" >&2
-        return 2
+        out="$(emit false "$file" baseline_unbindable)"
+        rc=1
+      elif [[ "$receipt_lines" != "$measured" ]]; then
+        printf '%s: receipt baseline %s does not match commit measurement %s\n' \
+          "$PROG" "$receipt_lines" "$measured" >&2
+        out="$(emit false "$file" baseline_unbindable)"
+        rc=1
+      elif [[ "$record_baseline" == "true" ]] \
+        && ! record_growth_baseline \
+          "$worktree" "$issue" "$round_id" "$commit" "$receipt_lines" "$SCRIPT_DIR"; then
+        printf '%s: %s\n' "$PROG" "$BRANCH_GROWTH_ERROR" >&2
+        out="$(emit false "$file" baseline_unbindable)"
+        rc=1
       fi
+    fi
+    if (( rc == 0 )) && [[ "$verdict" == "accept" ]] && ! retire_authorization "$authorization"; then
+      printf '%s: could not retire accepted round authorization %s\n' "$PROG" "$authorization" >&2
+      return 2
     fi
   fi
   printf '%s\n' "$out"

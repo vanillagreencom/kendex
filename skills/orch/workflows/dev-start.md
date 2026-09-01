@@ -169,6 +169,14 @@ git -C "[WORKTREE_PATH]" status --porcelain
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
 | `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
+For an `implement` receipt at `accept` + B pass, record the set-once baseline only after the table's exact-commit check:
+
+```bash
+.agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --record-baseline
+```
+
+This call rechecks the active round, current HEAD, and receipt measurement at the write. Its verdict must remain `accept`; `baseline_unbindable` follows the `retry` row. Analysis rounds skip it.
+
 **Analysis rounds.** When THIS round was delegated as investigate-and-recommend, the receipt is `kind: analysis`: no `commit`, no `validate`, the recommendation in `summary`. B expects NO new commit and a clean worktree, with no exact-commit binding and no validate gate. On A `accept` + B pass, read the recommendation and decide the next step: delegate implementation as a fresh round, close with reasoning, or re-scope. A `kind` that does not match what was delegated → the `retry` row.
 
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).

@@ -83,27 +83,23 @@ assert_eq "$("$STATE" --state-dir "$worktree/tmp" get issue-776 '.pr.baseline_li
 # round-trips through dev-artifact-check round mode as valid
 assert_eq "$(env ORCH_STATE_DIR="$worktree/tmp" "$CHECK" --worktree "$worktree" --issue issue-776 --round-id "$RID" | jq -r '.reason')" "valid" \
   "implement single round-trips through dev-artifact-check round mode as valid"
+env ORCH_STATE_DIR="$worktree/tmp" "$CHECK" --worktree "$worktree" --issue issue-776 --round-id "$RID" --record-baseline >/dev/null
 assert_eq "$("$STATE" --state-dir "$worktree/tmp" get issue-776 .pr.baseline_lines)" "3" \
   "orchestrator acceptance records additions plus deletions"
-"$WRITE" --worktree "$worktree" --kind implement --issue issue-776 --round-id stale-1 \
-  --branch issue-776 --commit "$implementation_head" --validate pass >/dev/null
-set +e
-stale_error="$(env ORCH_STATE_DIR="$worktree/tmp" "$CHECK" --worktree "$worktree" \
-  --issue issue-776 --round-id stale-1 2>&1)"
-stale_rc=$?
-set -e
-assert_eq "$stale_rc" "2" "a stale implementation receipt cannot write the baseline"
-assert_eq "$([[ "$stale_error" == *"does not bind active round"* ]] && echo yes)" "yes" \
-  "the stale receipt refusal names the active-round mismatch"
 printf 'four\nfive\n' >> "$worktree/implementation.txt"
 git -C "$worktree" add implementation.txt
 git -C "$worktree" commit -q -m growth
-"$STATE" --state-dir "$worktree/tmp" set issue-776 dev_round_id 2-2 >/dev/null
-"$WRITE" --worktree "$worktree" --kind implement --issue issue-776 --round-id 2-2 \
-  --branch issue-776 --commit "$(git -C "$worktree" rev-parse HEAD)" --validate pass >/dev/null
-env ORCH_STATE_DIR="$worktree/tmp" "$CHECK" --worktree "$worktree" --issue issue-776 --round-id 2-2 >/dev/null
-assert_eq "$("$STATE" --state-dir "$worktree/tmp" get issue-776 .pr.baseline_lines)" "3" \
-  "a later implementation receipt does not move the round-1 baseline"
+"$STATE" --state-dir "$worktree/tmp" set issue-776 dev_round_id old-head >/dev/null
+"$WRITE" --worktree "$worktree" --kind implement --issue issue-776 --round-id old-head \
+  --branch issue-776 --commit "$implementation_head" --validate pass >/dev/null
+set +e
+old_head_out="$(env ORCH_STATE_DIR="$worktree/tmp" "$CHECK" --worktree "$worktree" \
+  --issue issue-776 --round-id old-head --record-baseline 2>/dev/null)"
+old_head_rc=$?
+set -e
+assert_eq "$old_head_rc" "1" "baseline acceptance refuses a receipt commit behind current HEAD"
+assert_eq "$(jq -r '.reason' <<<"$old_head_out")" "baseline_unbindable" \
+  "the old-head refusal returns a routed retry reason"
 current_head="$(git -C "$worktree" rev-parse HEAD)"
 
 # --- valid implement: no qa labels → [] ; --no-summary → false ; FAILING validate ---
@@ -144,7 +140,6 @@ assert_eq "$("$CHECK" --worktree "$fix_worktree" --issue issue-776 --round-id 7-
   "fix round-trips through bound round authorization"
 
 # --- valid bundled implement: --bundled + items ---
-init_growth_state "$STATE" "$worktree" PROJ-100 8-8
 current_head="$(git -C "$worktree" rev-parse HEAD)"
 out="$("$WRITE" --worktree "$worktree" --kind implement --issue PROJ-100 --round-id 8-8 \
   --branch feat/proj-100 --commit "$current_head" --validate pass --bundled \
@@ -153,7 +148,7 @@ out="$("$WRITE" --worktree "$worktree" --kind implement --issue PROJ-100 --round
 assert_eq "$(jq -r '.bundled' "$out")" "true" "bundled implement .bundled true"
 assert_eq "$(jq -r '.items | length' "$out")" "2" "bundled implement has 2 items"
 assert_eq "$(jq -c '.qa_labels' "$out")" '["needs-safety-audit","needs-review"]' "bundled implement aggregated qa_labels"
-assert_eq "$(env ORCH_STATE_DIR="$worktree/tmp" "$CHECK" --worktree "$worktree" --issue PROJ-100 --round-id 8-8 | jq -r '.reason')" "valid" \
+assert_eq "$("$CHECK" --file "$out" | jq -r '.reason')" "valid" \
   "bundled implement round-trips as valid"
 
 # --- Blocked decision accepted ---

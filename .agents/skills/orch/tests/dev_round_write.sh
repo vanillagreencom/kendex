@@ -80,19 +80,7 @@ assert_text_not_matches() {
 }
 
 round_write() {
-  local worktree="" issue="" round_id="" arg previous=""
-  for arg in "$@"; do
-    case "$previous" in
-      --worktree) worktree="$arg" ;;
-      --issue) issue="$arg" ;;
-      --round-id) round_id="$arg" ;;
-    esac
-    previous="$arg"
-  done
-  if [[ -n "$worktree" && -n "$issue" && -n "$round_id" && -f "$worktree/tmp/workflow-state-$issue.json" ]]; then
-    "$STATE" --state-dir "$worktree/tmp" set "$issue" dev_round_id "$round_id" >/dev/null
-  fi
-  env ORCH_STATE_DIR="$worktree/tmp" "$WRITE_BIN" "$@"
+  growth_round_write "$STATE" "$WRITE_BIN" "$@"
 }
 
 run_workflow_round_command() {
@@ -181,50 +169,18 @@ assert_exit2 "a different item set under the same round id exits 2 (immutable ro
   --worktree "$worktree" --issue issue-1230 --round-id "$RID" --item 3 "replacement"
 assert_eq "$(jq -c '[.items[].n]' "$out")" "[1,2]" "the refused rewrite left the original record intact"
 
-# The first implementation receipt fixes the baseline before any push. A fix
-# round at exactly 2x remains valid; the next line refuses on either side of
-# the first push.
 growth_wt="$TMP_ROOT/growth-wt"
 growth_remote="$TMP_ROOT/growth-remote.git"
-mkdir -p "$growth_wt"
-git -C "$growth_wt" init -q -b main
-git -C "$growth_wt" config user.email test@example.com
-git -C "$growth_wt" config user.name Test
-git -C "$growth_wt" config commit.gpgsign false
-git -C "$growth_wt" commit -q --allow-empty -m base
+init_growth_repo "$growth_wt"
 git -C "$growth_wt" switch -q -c growth
 printf 'one\ntwo\n' > "$growth_wt/change.txt"
 git -C "$growth_wt" add change.txt
 git -C "$growth_wt" commit -q -m implementation
-init_growth_state "$STATE" "$growth_wt" KEN-GROWTH 1-1
-growth_head="$(git -C "$growth_wt" rev-parse HEAD)"
-"$RETURN_WRITE" --worktree "$growth_wt" --kind implement --issue KEN-GROWTH --round-id 1-1 \
-  --branch growth --commit "$growth_head" --validate pass >/dev/null
-assert_eq "$("$STATE" --state-dir "$growth_wt/tmp" get KEN-GROWTH '.pr.baseline_lines // "null"')" "null" \
-  "the developer receipt does not mutate workflow state"
-env ORCH_STATE_DIR="$growth_wt/tmp" "$CHECK" --worktree "$growth_wt" --issue KEN-GROWTH --round-id 1-1 >/dev/null
-assert_eq "$("$STATE" --state-dir "$growth_wt/tmp" get KEN-GROWTH .pr.baseline_lines)" "2" \
-  "acceptance records the verified two-line branch baseline"
-growth_baseline="$growth_wt/.git/kendex/branch-baselines/KEN-GROWTH.json"
-assert_eq "$(jq -c '[.round_id,.commit,.lines,.source]' "$growth_baseline")" \
-  "[\"1-1\",\"$growth_head\",2,\"implementation\"]" "the immutable baseline binds the accepted round and commit"
-"$STATE" --state-dir "$growth_wt/tmp" set KEN-GROWTH pr \
-  "{\"baseline_lines\":99,\"baseline_round_id\":\"1-1\",\"baseline_commit\":\"$growth_head\",\"baseline_source\":\"implementation\"}" >/dev/null
-set +e
-cache_error="$("$WRITE" --worktree "$growth_wt" --issue KEN-GROWTH --round-id 1-2 --item 1 cache-mismatch 2>&1)"
-cache_rc=$?
-set -e
-assert_eq "$cache_rc" "2" "a mutable baseline mismatch fails closed"
-assert_eq "$([[ "$cache_error" == *"does not match immutable record"* ]] && echo yes)" "yes" \
-  "the cache mismatch names the immutable record"
-"$STATE" --state-dir "$growth_wt/tmp" set KEN-GROWTH pr \
-  "{\"baseline_lines\":2,\"baseline_round_id\":\"1-1\",\"baseline_commit\":\"$growth_head\",\"baseline_source\":\"implementation\"}" >/dev/null
+init_growth_state "$STATE" "$growth_wt" KEN-GROWTH 1-1 2
 printf 'three\nfour\n' >> "$growth_wt/change.txt"
 git -C "$growth_wt" add change.txt
 git -C "$growth_wt" commit -q -m at-limit
 "$WRITE" --worktree "$growth_wt" --issue KEN-GROWTH --round-id 2-2 --item 1 at-limit >/dev/null
-assert_eq "$([[ -f "$growth_wt/tmp/dev-round-KEN-GROWTH-2-2.json" ]] && echo yes)" "yes" \
-  "a fix round at exactly twice the baseline is unchanged"
 printf 'five\n' >> "$growth_wt/change.txt"
 git -C "$growth_wt" add change.txt
 git -C "$growth_wt" commit -q -m over-limit
@@ -233,7 +189,7 @@ growth_error="$("$WRITE" --worktree "$growth_wt" --issue KEN-GROWTH --round-id 3
 growth_rc=$?
 set -e
 assert_eq "$growth_rc" "3" "a pre-push fix round past twice the baseline is refused"
-assert_eq "$([[ "$growth_error" == *"branch diffstat is 5 lines"* && "$growth_error" == *"authorized baseline is 2 lines"* && "$growth_error" == *"2x"* ]] && echo yes)" \
+assert_eq "$([[ "$growth_error" == *"branch diffstat is 5 lines"* && "$growth_error" == *"baseline is 2 lines"* && "$growth_error" == *"2x"* ]] && echo yes)" \
   "yes" "the refusal prints both numbers and the rule"
 git init -q --bare "$growth_remote"
 git -C "$growth_wt" remote add origin "$growth_remote"
@@ -244,8 +200,6 @@ after_push_rc=$?
 set -e
 assert_eq "$after_push_rc" "3" "the same oversized branch is refused after its first push"
 
-# Must-fail control: remove the one live tripwire call and the oversized round
-# writes successfully. The substitution proves its one match and changed file.
 mutant_root="$TMP_ROOT/tripwire-mutant"
 mkdir -p "$mutant_root"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$mutant_root/"
@@ -260,34 +214,30 @@ env ORCH_STATE_DIR="$growth_wt/tmp" "$mutant_write" --worktree "$growth_wt" --is
 assert_eq "$([[ -f "$growth_wt/tmp/dev-round-KEN-GROWTH-5-5.json" ]] && echo yes)" "yes" \
   "must-fail control goes red when the size check is removed"
 
-# Fresh standalone routes have no implementation receipt. Their first fix
-# round creates the immutable baseline through the configured state directory.
 custom_wt="$TMP_ROOT/custom-state-wt"
 custom_state="$TMP_ROOT/custom-orch-state"
-mkdir -p "$custom_wt"
-git -C "$custom_wt" init -q -b main
-git -C "$custom_wt" config user.email test@example.com
-git -C "$custom_wt" config user.name Test
-git -C "$custom_wt" config commit.gpgsign false
-git -C "$custom_wt" commit -q --allow-empty -m base
+init_growth_repo "$custom_wt"
+custom_exclude="$(git -C "$custom_wt" rev-parse --path-format=absolute --git-path info/exclude)"
+printf 'tmp/\n' >> "$custom_exclude"
+"$STATE" --state-dir "$custom_state" init KEN-FAILED --worktree "$custom_wt" --branch main >/dev/null
+"$STATE" --state-dir "$custom_state" set KEN-FAILED dev_round_id 1-0 >/dev/null
+set +e
+env ORCH_STATE_DIR="$custom_state" "$WRITE_BIN" --worktree "$custom_wt" --issue KEN-FAILED \
+  --round-id 1-0 --items-file "$TMP_ROOT/missing-items.json" >/dev/null 2>&1
+failed_stamp_rc=$?
+set -e
+assert_eq "$failed_stamp_rc" "2" "a failed standalone stamp exits 2"
+assert_eq "$("$STATE" --state-dir "$custom_state" get KEN-FAILED '.pr.baseline_lines // "null"')" "null" \
+  "a failed standalone stamp publishes no baseline"
 "$STATE" --state-dir "$custom_state" init KEN-CUSTOM --worktree "$custom_wt" --branch main >/dev/null
 "$STATE" --state-dir "$custom_state" set KEN-CUSTOM dev_round_id 1-1 >/dev/null
 env ORCH_STATE_DIR="$custom_state" "$WRITE_BIN" --worktree "$custom_wt" --issue KEN-CUSTOM \
   --round-id 1-1 --item 1 standalone >/dev/null
-assert_eq "$("$STATE" --state-dir "$custom_state" get KEN-CUSTOM .pr.baseline_source)" "first-fix" \
-  "a fresh standalone route records its first-fix baseline"
-assert_eq "$([[ ! -e "$custom_wt/tmp/workflow-state-KEN-CUSTOM.json" ]] && echo yes)" "yes" \
-  "a configured workflow-state directory is not bypassed"
+assert_eq "$("$STATE" --state-dir "$custom_state" get KEN-CUSTOM .pr.baseline_lines)" "1" \
+  "a fresh standalone route records its first-fix baseline after stamping"
 
-# Binary rows contribute no text lines. The floor of 1 keeps a binary-only
-# implementation usable and admits a one-line follow-up fix.
 binary_wt="$TMP_ROOT/binary-wt"
-mkdir -p "$binary_wt"
-git -C "$binary_wt" init -q -b main
-git -C "$binary_wt" config user.email test@example.com
-git -C "$binary_wt" config user.name Test
-git -C "$binary_wt" config commit.gpgsign false
-git -C "$binary_wt" commit -q --allow-empty -m base
+init_growth_repo "$binary_wt"
 git -C "$binary_wt" switch -q -c binary
 printf '\0one\0two\0' > "$binary_wt/icon.bin"
 git -C "$binary_wt" add icon.bin
@@ -299,29 +249,21 @@ binary_head="$(git -C "$binary_wt" rev-parse HEAD)"
 assert_eq "$(jq -r '.baseline_lines' "$binary_wt/tmp/dev-return-KEN-BINARY-1-1.json")" "1" \
   "a binary-only implementation uses the one-line floor"
 env ORCH_STATE_DIR="$binary_wt/tmp" "$CHECK" --worktree "$binary_wt" --issue KEN-BINARY --round-id 1-1 >/dev/null
+env ORCH_STATE_DIR="$binary_wt/tmp" "$CHECK" --worktree "$binary_wt" --issue KEN-BINARY --round-id 1-1 --record-baseline >/dev/null
 printf 'one\n' > "$binary_wt/fix.txt"
 git -C "$binary_wt" add fix.txt
 git -C "$binary_wt" commit -q -m one-line-fix
 "$WRITE" --worktree "$binary_wt" --issue KEN-BINARY --round-id 2-2 --item 1 one-line >/dev/null
-assert_eq "$([[ -f "$binary_wt/tmp/dev-round-KEN-BINARY-2-2.json" ]] && echo yes)" "yes" \
-  "the zero-text baseline admits a one-line fix"
 
-# A measurement failure keeps its cause after returning from the helper.
 no_base_wt="$TMP_ROOT/no-base-wt"
-mkdir -p "$no_base_wt"
-git -C "$no_base_wt" init -q -b feature
-git -C "$no_base_wt" config user.email test@example.com
-git -C "$no_base_wt" config user.name Test
-git -C "$no_base_wt" config commit.gpgsign false
-git -C "$no_base_wt" commit -q --allow-empty -m root
+init_growth_repo "$no_base_wt" feature
 init_growth_state "$STATE" "$no_base_wt" KEN-NOBASE 1-1
 set +e
 no_base_error="$("$WRITE" --worktree "$no_base_wt" --issue KEN-NOBASE --round-id 1-1 --item 1 fail 2>&1)"
 no_base_rc=$?
 set -e
-assert_eq "$no_base_rc" "2" "an unresolvable base fails closed"
-assert_eq "$([[ "$no_base_error" == *"base branch 'main' has no local or origin ref"* ]] && echo yes)" "yes" \
-  "the measurement failure keeps a cause-specific diagnostic"
+assert_eq "$([[ "$no_base_rc" == 2 && "$no_base_error" == *"base branch 'main' has no local or origin ref"* ]] && echo yes)" \
+  "yes" "an unresolvable base fails closed with its cause"
 
 # A partial record pair is never repaired after delegation. The orchestrator
 # mints a fresh round instead of recreating authorization or baseline state.

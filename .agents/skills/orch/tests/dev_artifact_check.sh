@@ -63,17 +63,7 @@ reason() {
 }
 
 round_write() {
-  local worktree="" issue="" round_id="" arg previous=""
-  for arg in "$@"; do
-    case "$previous" in
-      --worktree) worktree="$arg" ;;
-      --issue) issue="$arg" ;;
-      --round-id) round_id="$arg" ;;
-    esac
-    previous="$arg"
-  done
-  "$STATE" --state-dir "$worktree/tmp" set "$issue" dev_round_id "$round_id" >/dev/null
-  env ORCH_STATE_DIR="$worktree/tmp" "$ROUND_WRITE_BIN" "$@"
+  growth_round_write "$STATE" "$ROUND_WRITE_BIN" "$@"
 }
 
 echo "=== dev-artifact-check ==="
@@ -304,6 +294,12 @@ rt_head="$(git -C "$rt_wt" rev-parse HEAD)"
 rt_impl="$("$WRITE" --worktree "$rt_wt" --kind implement --issue issue-9 --round-id 5-6 --branch b --commit "$rt_head" --validate pass)"
 assert_eq "$([[ -f "$rt_impl" ]] && echo yes)" "yes" "writer produced the round-scoped implement artifact"
 assert_eq "$(env ORCH_STATE_DIR="$rt_wt/tmp" "$CHECK" --worktree "$rt_wt" --issue issue-9 --round-id 5-6 | jq -r '.reason')" "valid" "writer implement output round-trips as valid"
+assert_eq "$("$STATE" --state-dir "$rt_wt/tmp" get issue-9 '.pr.baseline_lines // "null"')" "null" \
+  "Check A does not publish the baseline"
+assert_eq "$(env ORCH_STATE_DIR="$rt_wt/tmp" "$CHECK" --worktree "$rt_wt" --issue issue-9 \
+  --round-id 5-6 --record-baseline | jq -r '.reason')" "valid" "post-B acceptance records the baseline"
+assert_eq "$("$STATE" --state-dir "$rt_wt/tmp" get issue-9 .pr.baseline_lines)" "1" \
+  "the baseline has one authoritative workflow-state value"
 "$WRITE" --worktree "$rt_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --file "$rt_wt/tmp/dev-return-issue-9-7-8.json" --expect-items 1,2)" "valid" "writer fix output round-trips through file-mode --expect-items"
 printf 'Recommend: re-scope; seam moved in refactor.\n' > "$rt_wt/analysis.md"
@@ -535,8 +531,6 @@ git -C "$gitwt" reset -q --hard HEAD~1   # orphan_sha still resolves, now unreac
 head_sha="$(git -C "$gitwt" rev-parse HEAD)"
 fake_sha="${head_sha:0:8}00000000000000000000000000000000"
 gartifact="$gitwt/tmp/dev-return-$issue-$R.json"
-init_growth_state "$STATE" "$gitwt" "$issue" "$R"
-export ORCH_STATE_DIR="$gitwt/tmp"
 
 # valid, reachable commit (HEAD) → valid with no warning
 printf '%s' "$valid_impl" | jq -c --arg c "$head_sha" '.commit=$c' > "$gartifact"
@@ -578,7 +572,6 @@ printf '%s' "$valid_impl" | jq -c 'del(.commit)' > "$gartifact"
 assert_eq "$(reason --worktree "$gitwt" --issue "$issue" --round-id "$R")" "invalid" "missing .commit in a git worktree stays reason=invalid (scalar gate first)"
 printf '%s' "$valid_impl" | jq -c --arg c "$fake_sha" '.commit=$c | .bundled=true | .items=[]' > "$gartifact"
 assert_eq "$(reason --worktree "$gitwt" --issue "$issue" --round-id "$R")" "commit_unresolvable" "commit_unresolvable beats bundled-item incompleteness"
-unset ORCH_STATE_DIR
 
 # non-repo worktree keeps today's behavior: commit gates skipped, still valid
 printf '%s' "$valid_impl" > "$artifact"
@@ -623,6 +616,7 @@ dev_start="$REPO_ROOT/skills/orch/workflows/dev-start.md"
 assert_file_contains "$dev_start" "$WATCHDOG_STAMP" "dev-start still stamps dev_delegated_at (watchdog deadline)"
 assert_file_contains "$dev_start" "$ROUND_STAMP" "dev-start mints dev_round_id before delegation"
 assert_file_contains "$dev_start" "$ROUND_CHECK" "dev-start § 3 accepts via dev-artifact-check round mode"
+assert_file_contains "$dev_start" "--record-baseline" "dev-start records the baseline only after A and B pass"
 assert_file_contains "$dev_start" "Round ID: [DEV_ROUND_ID]" "dev-start delegation carries the Round ID line"
 assert_file_contains "$dev_start" "$ARTIFACT_KEY_LINE" "dev-start delegation carries the Artifact Key line (normalized state key)"
 
@@ -723,6 +717,8 @@ assert_contains_str "$check_help" "comparison_failed" "--help documents Git comp
 assert_contains_str "$check_help" "classifier_failed" "--help documents classifier failures"
 assert_contains_str "$check_help" "--expect-items (--file mode only)" "--help confines the weaker item-list flag to file mode"
 assert_contains_str "$check_help" "incomplete" "--help documents the incomplete reason"
+assert_contains_str "$check_help" "baseline_unbindable" "--help documents baseline retry routing"
+assert_contains_str "$check_help" "--record-baseline" "--help documents post-B baseline acceptance"
 artifact_checks_ref="$REPO_ROOT/skills/orch/references/artifact-checks.md"
 assert_file_contains "$artifact_checks_ref" "--help" "artifact-checks reference routes to the help contracts"
 assert_file_not_contains "$dev_return_schema" "reason \`incomplete\`" "dev-return schema does not duplicate the verdict vocabulary"

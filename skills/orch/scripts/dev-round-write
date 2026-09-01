@@ -109,8 +109,8 @@ traversing, empty-component, multiline, and duplicate paths are rejected. Paths 
 record captures the worktree's current HEAD as base_sha; a worktree with no
 resolvable HEAD is rejected.
 Before either record is written, the branch's additions plus deletions must be
-at most twice the immutable baseline. The first accepted implementation receipt
-sets it; a fresh standalone route anchors it at its first fix round.
+at most twice workflow state pr.baseline_lines. Full implementation acceptance
+sets it; a fresh standalone route records it after both first-fix records land.
 An oversized branch exits 3 and must be cut before another fix round. Both
 record halves must already exist or both be absent. A missing half is
 never recreated; mint a new round.
@@ -173,6 +173,7 @@ issue_given=false
 round_id_given=false
 items_file_given=false
 adds_file_given=false
+baseline_pending=false
 
 while (( $# > 0 )); do
   case "$1" in
@@ -224,6 +225,7 @@ git_common_dir="$(git -C "$worktree" rev-parse --path-format=absolute --git-comm
   || die "worktree '$worktree' has no resolvable git common directory"
 
 run_size_tripwire "$worktree" "$issue" "$round_id"
+[[ "$BRANCH_GROWTH_STATUS" == "uninitialized" ]] && baseline_pending=true
 
 # --- Exactly one item source: inline --item xor --items-file ---
 if [[ "$items_file_given" == "true" ]] && (( ${#item_n[@]} > 0 )); then
@@ -364,6 +366,14 @@ else
   if ! ln "$tmp" "$out" 2>/dev/null; then
     cmp -s "$tmp" "$out" \
       || die "round record $out raced with different content — mint a NEW round id"
+  fi
+fi
+
+if [[ "$baseline_pending" == "true" ]]; then
+  if ! record_growth_baseline \
+    "$worktree" "$issue" "$round_id" "$base_sha" "$BRANCH_GROWTH_LINES" "$SCRIPT_DIR"; then
+    printf '%s: %s\n' "$PROG" "$BRANCH_GROWTH_ERROR" >&2
+    exit 2
   fi
 fi
 

@@ -50,17 +50,7 @@ assert_contains() {
 }
 
 round_write() {
-  local worktree="" issue="" round_id="" arg previous=""
-  for arg in "$@"; do
-    case "$previous" in
-      --worktree) worktree="$arg" ;;
-      --issue) issue="$arg" ;;
-      --round-id) round_id="$arg" ;;
-    esac
-    previous="$arg"
-  done
-  "$STATE" --state-dir "$worktree/tmp" set "$issue" dev_round_id "$round_id" >/dev/null
-  env ORCH_STATE_DIR="$worktree/tmp" "$ROUND_WRITE_BIN" "$@"
+  growth_round_write "$STATE" "$ROUND_WRITE_BIN" "$@"
 }
 
 # Stub worktree script: prints STUB_PUSH_STDOUT, exits STUB_PUSH_EXIT, and
