@@ -10,70 +10,53 @@
 #   gh api repos/[OWNER]/[REPO]/pulls/[N]/reviews --jq '.[0].commit_id'
 #   git diff --shortstat [THAT_COMMIT] HEAD
 #
-# The list has one home, `references/finding-disposition.md` § Decision flow.
-# The filing bar points at it and restates nothing, so the two cannot disagree.
+# WHAT THIS COVERS is structure, which is all a token pin can establish
+# (`review-bots.md`, the markdown-contract bullet): the step opener exists, it
+# routes to `decline`, it sits ahead of Step 1 in document order, the filing bar
+# and § Recurrence point at it rather than restating it, the cap paragraph names
+# it, and the filing bar carries no second copy of the class list.
 #
-# NOT covered: that a run actually consults Step 0 first. Document order is what
-# this file can decide — the step's presence, its classes, and its placement
-# ahead of Step 1 — and `dev/tests/engineering-rules-lint.test.sh` holds the
-# dev-side half where the same deferral is stated.
+# WHAT IT DOES NOT COVER, and none is asked for: every behavioral claim the
+# section makes. That a decline precedes examining the claim, that the diff's
+# authorship does not reopen the step, the membership of the class list, the
+# security exception's route to Step 1, and Step 1's remedy for code the
+# Done-when does not name all live only in prose, and prose negates and
+# qualifies around any literal — a suite pinning those sentences passes over a
+# Step 0 rewritten to file what it declines. The `order` rule pins the document
+# position, not the sentence claiming it: a rewrite that keeps Step 0 first and
+# denies the ordering in words is outside what this can decide.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
 DISP="$SKILL_DIR/references/finding-disposition.md"
 FLOW="## Decision flow"
 BAR="## Filing bar"
+REC="## Recurrence"
 
 echo "=== orch disposition step-zero lint ==="
 
-# The step itself, and the two properties that make it an exclusion rather than
-# a verdict: it runs before the claim is examined, and the diff's authorship
-# does not reopen it.
-rule "the decision flow opens with the excluded classes" "$DISP" "$FLOW" \
-  '0. **Is it one of the excluded classes?**'
-rule "Step 0 declines before the claim is examined" "$DISP" "$FLOW" \
-  "before the claim's truth is examined"
-rule "Step 0 holds whatever the diff introduced" "$DISP" "$FLOW" \
-  'whatever this diff introduced or armed'
+# The step, and the verdict it routes to. `decline` is the inline literal that
+# separates this step from one that files or fixes the same classes.
+rule "the decision flow opens with the excluded classes and declines them" \
+  "$DISP" "$FLOW" '0. **Is it one of the excluded classes?**' '`decline`'
 
-# The classes, one rule each: a list that loses a member silently is the shape
-# that let the machinery in.
-rule "Step 0 excludes a race between two invocations" "$DISP" "$FLOW" \
-  'a race between two invocations on one machine'
-rule "Step 0 excludes a crash between two writes" "$DISP" "$FLOW" \
-  'a crash between two writes'
-rule "Step 0 excludes an input nothing shipped emits" "$DISP" "$FLOW" \
-  'an input no shipped producer emits'
-rule "Step 0 excludes a hole in review-grown machinery" "$DISP" "$FLOW" \
-  'a hole in a mechanism that itself came from a review round'
-rule "Step 0 excludes the already-privileged second writer" "$DISP" "$FLOW" \
-  "a second writer who already holds the user's privileges"
-
-# The one way past it, and the clause that exception must not reopen.
-rule "a shipped security or data-loss defect reaches Step 1" "$DISP" "$FLOW" \
-  'security or data-loss defect a shipped path reaches goes to Step 1'
-rule "the exception leaves the second-writer clause closed" "$DISP" "$FLOW" \
-  'does not reopen the second-writer clause'
-
-# The order that gives the step its force. Without it the list is prose sitting
-# beside a branch that already answered.
+# The placement that gives the step its force. Without it the list is prose
+# sitting behind a branch that already answered.
 order "the excluded classes precede the defect question" "$DISP" \
   '^0\. \*\*Is it one of the excluded classes' '^1\. \*\*Does it claim a defect'
 
-# The two sentences elsewhere in the file that would otherwise say the opposite:
-# the round cap's carve-out, and Step 1's remedy for code the Done-when does not
-# name.
-rule "the round cap's carve-out defers to Step 0" "$DISP" "" \
-  'and Step 0 does not exclude'
-rule "unrequired defective code is deleted, not guarded" "$DISP" "$FLOW" \
-  'never by hardening it and never by a second mechanism guarding the first'
+# One home. Each of the three sections that would otherwise carry a second copy
+# routes to Step 0 by name instead.
+rule "the filing bar routes candidates through Step 0" "$DISP" "$BAR" \
+  'Step 0' '`category: "issue"`'
+rule "Recurrence orders itself behind Step 0" "$DISP" "$REC" 'Step 0'
+rule "the round cap's carve-out names Step 0" "$DISP" "$FLOW" \
+  '`REVIEW_MAX_EXTERNAL_ROUNDS`' 'Step 0'
 
-# One home. A filing bar that restates a class can drift from Step 0's copy,
-# and the drifting copy is the one a filing pass reads.
+# The copy that was there before this contract, whose drift is what put a
+# filing pass on a different list from the deciding pass.
 absent "the filing bar restates no excluded class" "$DISP" "$BAR" \
   'a race between two invocations|a crash between two writes|no shipped producer emits|hole in a mechanism that itself came from a review round|second writer who already holds' \
   'Never for a race between two invocations on one machine: declined, not filed.'
-rule "the filing bar runs every candidate through Step 0" "$DISP" "$BAR" \
-  'Every candidate runs through Step 0 before the bar judges it'
 
 md_report

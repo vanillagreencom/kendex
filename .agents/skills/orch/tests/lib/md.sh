@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# The one markdown reader the orch doc lints use.
+# The one markdown reader the doc lints share. It lives under orch because
+# orch's lints were its first callers, not because they are its only ones: a
+# suite in any skill may source it, and `skills/dev/tests` does.
 #
 # Before this file every lint carried its own HTML-comment stripper, heading
 # slicer and planted-control scaffolding, and each grew to pin the sentences of
@@ -45,6 +47,12 @@
 # reaches itself, `md_report` to close, the path variables SKILL_DIR,
 # SKILLS_ROOT, REPO_ROOT and MD_LIB_DIR, and MD_TMP for scratch. Nothing else
 # here is a suite's to call.
+#
+# THOSE PATHS ARE RESOLVED FROM THIS FILE, so TESTS_DIR, SKILL_DIR and
+# SKILLS_ROOT all name orch whoever sourced it. A caller outside orch must set
+# its own SKILL_DIR after the `source` line, or a rule written in the house
+# style, `"$SKILL_DIR/SKILL.md"`, reads orch's document and answers about the
+# wrong file. REPO_ROOT and MD_LIB_DIR are the same for every caller.
 #
 # A suite must NOT install its own EXIT trap. Sourcing this file installs one
 # that removes MD_TMP, and `trap ... EXIT` replaces rather than adds, so a
