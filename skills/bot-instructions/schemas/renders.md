@@ -164,18 +164,25 @@ Read by Codex, by Copilot code review on GitHub.com, and by CodeRabbit through
 true, which `toml-schema` requires whenever `copilot` or `coderabbit` is.
 
 **Owned region.** From the heading line through the line before the next
-`^#{1,2} ` heading, or end of file. The heading line matches `^## Code Review
-Rules$` exactly: no trailing whitespace, no CR, no leading BOM. Exactly one such
-heading must exist: zero is an error, and two is an error rather than a guess
-about which one to replace. The generator replaces that region's body and
-touches nothing else in the file.
+heading at level 1 or 2, or end of file. The generator replaces that region's
+body and touches nothing else in the file.
 
-The match is exact rather than forgiving on purpose. kendex's own `tools/guard`
-slices this section with `grep -q '^## Code Review Rules$'` and an awk rule
-keyed the same way, so a heading a looser generator accepted would be a heading
-that repo's guard reports as missing. Where the two predicates differ, the
-stricter one is the contract; a repo whose heading carries trailing whitespace
-gets an error naming the byte rather than a render its own guard rejects.
+The two ends use different predicates, deliberately. The **opening** matches
+`^## Code Review Rules$` exactly — no trailing whitespace, no CR, no leading
+BOM — because kendex's `tools/guard` slices this section the same way, and a
+heading a looser generator accepted would be one that repo's guard reports as
+missing. Exactly one such heading must exist: zero is an error, and two is an
+error rather than a guess about which one to replace. The **terminator** uses
+the wide heading predicate from `repo-toml.md` § The content refusals, at level
+1 or 2. Anything narrower would fail to see a following section whose `#` sits
+after one to three spaces — markdown reads that as a heading, so the repo owns
+it, and a terminator that missed it would let the splice swallow that section
+and everything below it. It is also the predicate the input refusals already
+use, so the two agree.
+
+Where the opening predicates differ, the stricter one is the contract: a repo
+whose heading carries trailing whitespace gets an error naming the byte rather
+than a render its own guard rejects.
 
 **Missing section.** An error. The generator never creates `AGENTS.md` and
 never adds the heading. Guidance for the repo: add the heading by hand, then
@@ -415,9 +422,10 @@ the `!` prefix CodeRabbit needs. This filters what Qodo analyzes for
 `/improve`, not what the review agent reads, which is why the prose above
 exists as well.
 
-**Escaping.** Guidance strings are TOML basic multi-line (`"""`). A repo or
-doctrine string containing `"""` is refused. Backslashes are escaped; TOML
-basic strings interpret them.
+**Escaping.** Guidance strings are TOML basic multi-line (`"""`), which is why
+every value reaching one is under the toml-delimiter refusal in `repo-toml.md`
+§ The content refusals — that table marks which, and carries the predicate.
+Backslashes are escaped; TOML basic strings interpret them.
 
 ## `best_practices.md`
 

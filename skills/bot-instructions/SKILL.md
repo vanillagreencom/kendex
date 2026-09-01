@@ -44,12 +44,15 @@ and the drift validator reds before that happens.
 | Qodo | `.pr_agent.toml`, `best_practices.md`, `REVIEW.md` | the default branch root |
 | Macroscope | `.macroscope/ignore.md`, `.macroscope/correctness/*.md`, plus `.macroscope/check-run-agents/**` and `.macroscope/approvability.md`, which this package never writes | the pull request's most recent commit, or the default branch for a fork |
 
-Three of the five reach the `AGENTS.md` section, which is why it is the
-doctrine root and why `[bots] codex = false` with `copilot` or `coderabbit` on
-is a `toml-schema` error. Codex and Macroscope are the two that do not: neither
-reads an `AGENTS.md` at all, so a block left out of the one surface this package
-writes for each reaches that bot nowhere, and both carry every block. The
-routing table in
+Three of the five reach the `AGENTS.md` section — Codex, Copilot and
+CodeRabbit — which is why it is the doctrine root and why `[bots] codex = false`
+with `copilot` or `coderabbit` on is a `toml-schema` error. Qodo and Macroscope
+are the two that do not.
+
+A separate count decides which surfaces carry every block: Codex and Macroscope
+each read exactly one surface this package writes, so a block left out of that
+one reaches the bot nowhere. That is why `AGENTS.md` and
+`.macroscope/correctness/doctrine.md` carry all eight. The routing table in
 [schemas/renders.md](schemas/renders.md) is where that lives, one row per block
 and one column per destination.
 
@@ -217,16 +220,26 @@ whose merge gate consumes bot output has to do instead:
   that a tampered generator cannot report a clean render. It does not and cannot
   stop a policy change, which is what the approval rule above is for.
 
-**The render inputs**, which is every path a render reads. This is the one
-statement of the set: the marker names them, `check --staged` reads each from
-the index, every one is under the open rule above, and the policy set below
-contains them.
+**The render inputs**, which is every path a render reads to produce bytes. This
+is the one statement of the set: the marker names them, `check --staged` reads
+each from the index, every one is under the open rule above, and the policy set
+below contains them.
 
 - `bot-instructions.toml`.
 - The spec copy's doctrine source and routing table.
 - `.bot-instructions/coderabbit-schema.json`, when `[bots] coderabbit` is true.
 - The resolved install manifest, when `[exclusions] derive_render` is true.
 - The existing `AGENTS.md`, when `[bots] codex` is true.
+
+What a repo-state validator walks is deliberately not in that set: `orphan`'s
+sweep of `.github/instructions/**` and `.macroscope/correctness/**`, and
+`agents-section`'s walk for nested `AGENTS.md`. Those enumerate paths rather
+than reading a fixed input, so the marker could not name them and no render
+consumes their bytes. They are covered twice over anyway — every open is under
+the rule above, and a repo-state validator reads whichever tree `check`
+selected, the worktree by default and the index under `--staged`, so the staged
+lane still judges one coherent state. The policy set below does contain the
+trees they walk.
 
 **The policy set**, which is every path whose bytes decide what a bot is told or
 whether a render validates. This list is the one statement of it; the checklist

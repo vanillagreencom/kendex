@@ -281,10 +281,12 @@ absent from the union of `[review_agent] issues_user_guidelines` and
 `compliance_user_guidelines`, or the reverse. Blocks are compared by identity
 after the same normalization the render applies, not by whole-string equality:
 the two sections carry the same set of blocks, split differently. It also
-rejects a `[github_app] pr_commands` entry naming a command whose section
-carries no guidance at all. That set is `repo-toml.md` § `[cadence]`'s verb
-set, read rather than restated: the two have to accept the same commands, and
-a second copy here is how they would stop.
+rejects a `[github_app] pr_commands` entry **whose role in `repo-toml.md`
+§ `[cadence]`'s verb table is review** and whose section carries no guidance.
+The clause reads that table's role column rather than restating a set: a
+non-review verb reads a section this render leaves alone by design, so its
+presence is not a finding, and the vendor's own documented default carries
+one.
 
 The set it compares is the routing table's three `pr_agent` columns, read as
 data rather than restated here. That is what keeps this a check on the render
@@ -313,11 +315,21 @@ number.
 Macroscope cannot read is a file it will not apply, and the repo's only signal
 is the absence of a comment it was expecting.
 
-**Rejects.** In a generated correctness file: a frontmatter key other than
-`include` or `exclude`, a value that is not a YAML array of strings, and an
-empty `include`. In the generated `ignore.md`: a non-blank line that is neither
-a glob in the dialect nor a single-line HTML comment, and any line after the
-first `-->` on a comment line.
+**Rejects.** In a generated correctness file for a `[[surface]]`: a frontmatter
+key other than `include` or `exclude`, a value that is not a YAML array of
+strings, and an `include` that is empty **or absent**. Absent is the one that
+matters: omitted frontmatter applies repo-wide, so a renderer bug dropping
+`include` silently widens a path-scoped surface to the whole repository with
+every validator green.
+
+`doctrine.md` is the one generated correctness file that carries no frontmatter,
+and it is deliberate — the routing table gives it every block precisely because
+it applies repo-wide. It is told apart by its name, which is reserved and which
+no surface may take, so the two cases never have to be guessed at.
+
+**Rejects, in the generated `ignore.md`.** A non-blank line that is neither a
+glob in the dialect nor a single-line HTML comment, and any line after the first
+`-->` on a comment line.
 
 The `ignore.md` half holds the render to this package's own conservative
 grammar, not to a vendor rule: Macroscope documents none. The grammar assumes

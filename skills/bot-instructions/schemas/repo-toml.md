@@ -127,7 +127,7 @@ than rendering a partly understood file.
 |-----|------|----------|---------|
 | `name` | string | yes | The repo's own name, used in generated file headers. One line, `[A-Za-z0-9._-]` only, because it renders as a `#` heading line |
 | `summary` | string | yes | What this repo is, in two to six sentences. Rendered near the top of the Copilot and Qodo surfaces, which is the only place a bot learns the shape of the codebase |
-| `tracker` | string | no | Issue prefix, e.g. `KEN`. Substituted into the `reply-contract` block's `<issue>` placeholder. Absent leaves the placeholder generic, which a repo guard pinning the tracked reply form reads as the form being gone |
+| `tracker` | string | no | Issue prefix, e.g. `KEN`. Substituted into the `reply-contract` block's `<issue>` placeholder, so it reaches every destination that block does, `.pr_agent.toml` included. Its character class in the table below is what keeps it safe in all of them. Absent leaves the placeholder generic, which a repo guard pinning the tracked reply form reads as the form being gone |
 
 `summary` is prose about this repo, not doctrine. Anything in it that would be
 true of another repo belongs in a doctrine block instead. It is under the same
@@ -302,14 +302,15 @@ these — `toml-schema`, `agents-section`, and the Escaping paragraphs in
 `renders.md` — cites this table rather than restating it, so a predicate written
 here is the only predicate.
 
-| Input string | heading | frontmatter | marker | comment-close | character class |
-|--------------|---------|-------------|--------|---------------|-----------------|
-| `[repo] name` | – | – | – | – | single line, `[A-Za-z0-9._-]` |
-| `[repo] summary` | yes | yes | yes | – | – |
-| `[[surface]] instructions` | yes | yes | yes | – | – |
-| `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | yes | – | – |
-| doctrine block text | yes | yes | yes | – | – |
-| `[[exclusions.path]] reason` | – | – | yes | yes | single line |
+| Input string | heading | frontmatter | marker | comment-close | toml-delimiter | character class |
+|--------------|---------|-------------|--------|---------------|----------------|-----------------|
+| `[repo] name` | – | – | – | – | – | single line, `[A-Za-z0-9._-]` |
+| `[repo] tracker` | – | – | – | – | – | single line, `[A-Za-z0-9._-]` |
+| `[repo] summary` | yes | yes | yes | – | yes | – |
+| `[[surface]] instructions` | yes | yes | yes | – | – | – |
+| `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | yes | – | yes | – |
+| doctrine block text | yes | yes | yes | – | yes | – |
+| `[[exclusions.path]] reason` | – | – | yes | yes | – | single line |
 | `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | the glob dialect above, plus its path-shape rule |
 | `[tone] coderabbit` | – | – | – | – | ASCII only |
 | `[cadence] qodo_commands` entries | – | – | – | – | a verb from the set above, no whitespace, no `--` |
@@ -327,6 +328,12 @@ The predicates, written once:
   files this package owns.
 - **comment-close** — `-->`, which would end the HTML comment a `reason` is
   rendered inside and put the rest of the value on a line of its own.
+- **toml-delimiter** — `"""`, which would end the TOML multi-line string the
+  value is rendered inside. `.pr_agent.toml` carries every doctrine block and
+  `[repo] summary` as basic multi-line strings, so a value holding the delimiter
+  closes its own string and the rest of it becomes TOML. Marked on exactly the
+  values that reach a TOML string; `[[surface]] instructions` reaches Qodo
+  through `best_practices.md`, which is markdown.
 - **character class** — as stated for `[repo] name`, for globs, for `[tone]
   coderabbit` and for `qodo_commands` above. `[tone]` is ASCII so the local
   length count and the vendor's cannot disagree about what one character is,
