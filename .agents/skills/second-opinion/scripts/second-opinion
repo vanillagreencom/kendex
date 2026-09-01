@@ -226,9 +226,8 @@ with exit 1.
 
 Exit codes:
   0  success
-  1  config failure (bad target, missing jq), no eligible target (same-model
-     review refused), challenge/quick CLI failure or timeout, or unrecoverable
-     non-JSON after the one-shot retry (review/audit)
+  1  config failure (bad target, missing jq), no eligible target (same-model review refused),
+     challenge/quick CLI failure or timeout, or unrecoverable non-JSON after retry (review/audit)
   3  review: derived diff scope is empty or invalid — nothing to review
   4  review/audit: model self-reported no review was performed
      (qa_metadata.review_performed=false) or omitted the required qa_metadata
@@ -249,8 +248,9 @@ Exit codes:
      exits 6 only when every lane failed, none unusably
   75 detached wait: completion or cleanup is recoverable; cleanup failure preserves state
   124 detached wait: deadline passed; process group gone; runtime state removed
-  1 detached wait: follow its diagnostic; relaunch for vanished worker, invalid recovery state, or missing artifact;
-     keep completed artifact on replay/runtime-removal failure; otherwise act on replayed worker cause
+  1 detached wait: follow its diagnostic; relaunch now only when it says the worker group is gone;
+     invalid state may leave the run active, so identify/stop it or wait for its per-CLI timeout before restart;
+     after missing artifact, restart only once the original process ends; keep completed artifact on replay/runtime-removal failure; otherwise act on replayed worker cause
 HELP
 }
 # Help is answered before project configuration is read: sourcing a repo's

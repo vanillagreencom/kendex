@@ -471,8 +471,14 @@ assert_contains "$TMP_ROOT/help.stdout" "124 detached wait:" \
   "help owns the deadline outcome"
 assert_contains "$TMP_ROOT/help.stdout" "1 detached wait: follow its diagnostic" \
   "help routes shared exit 1 by its diagnostic"
-assert_contains "$TMP_ROOT/help.stdout" "relaunch for vanished worker, invalid recovery state, or missing artifact" \
-  "help limits relaunch to unrecoverable wait state"
+assert_contains "$TMP_ROOT/help.stdout" "relaunch now only when it says the worker group is gone" \
+  "help limits immediate relaunch to a proven-stopped worker group"
+assert_contains "$TMP_ROOT/help.stdout" "invalid state may leave the run active" \
+  "help does not read invalid recovery state as a stopped run"
+assert_contains "$TMP_ROOT/help.stdout" "identify/stop it or wait for its per-CLI timeout before restart" \
+  "help prevents restart while the original call may still run"
+assert_contains "$TMP_ROOT/help.stdout" "after missing artifact, restart only once the original process ends" \
+  "help avoids an output race after missing artifact"
 assert_contains "$TMP_ROOT/help.stdout" "keep completed artifact on replay/runtime-removal failure" \
   "help preserves completed output on local wait failure"
 assert_contains "$TMP_ROOT/help.stdout" "otherwise act on replayed worker cause" \
