@@ -30,17 +30,17 @@ queue state; this script only verifies the live PR head and state before
 claiming a verdict, so a stale artifact cannot route actions for a head
 that has since moved.
 
-ID is the workflow-state key; an issue-less PR uses repository-local key pr-N,
-which cannot collide with normalized GitHub key issue-N. `consume` validates
-every field the lifecycle file holds -- repository, PR, prepared head and
-generation, watch id, artifact, live head, supervisor lease, deadlines, gate
-mode, recovery count -- before it claims, and repeated calls return
-phase-specific resume or no-op actions rather than the initial claim.
-launch_failed is active, not terminal, and routes to resume_launch for the
-same watch. cleanup enters --root before calling its absolute worktree helper,
-so removing the lane's own cwd cannot break the transition; it completes as
-removed, absent, skipped, or safety-preserving kept, and cleanup_pending is
-resumable. Terminal statuses are failed, abandoned, and complete;
+ID is the workflow-state key; an issue-less PR uses repository-local key
+pr-N, which cannot collide with normalized GitHub key issue-N. `consume`
+revalidates the prepared repository, PR, head and generation against the
+verdict artifact and the live PR, plus the supervisor lease and its
+deadlines, before it claims; repeated calls return phase-specific resume or
+no-op actions rather than the initial claim. launch_failed is active, not
+terminal, and routes to resume_launch for the same watch. cleanup enters
+--root before calling its absolute worktree helper, so removing the lane's
+own cwd cannot break the transition; it completes as removed, absent,
+skipped, or safety-preserving kept, and cleanup_pending is resumable.
+Terminal statuses are failed, abandoned, and complete;
 awaiting_lane_postmerge is not one.
 
 Phase justifications — the named failure each phase prevents:

@@ -28,8 +28,10 @@ reply contract is in the orch skill, not here.
 - No style, wording, or naming preferences. No speculative hardening on
   fail-closed paths. No test-coverage asks unless the diff changes behavior
   no test exercises. Formatting and lint belong to CI, not review.
-- Do not re-raise a finding class answered `Declined: <reason>` on this PR
-  unless the relevant code changed since.
+- Do not re-raise a finding class already answered with a documented
+  rationale — `Declined: <reason>` on this PR, a settings comment, an engine
+  header comment, or a note in `skills/review-gate/references/` — unless the
+  relevant code changed since.
 - Author replies are `Fixed in <sha>`, `Declined: <reason>`, or
   `Tracked: KEN-<n>` / `#<n>`. A decline takes a reason form
   `skills/orch/references/finding-disposition.md` § Decision flow sets

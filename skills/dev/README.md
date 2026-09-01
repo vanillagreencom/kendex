@@ -13,7 +13,7 @@ The orchestrator owns the cycle; this skill owns one round of it. Both lifecycle
 
 ## Setup
 
-Install with `kendex add dev`; `kendex refresh` picks up updates. It needs `orch` (the shared runtime, and the caller), `github`, and `decider` alongside it, plus `linear` for Linear-tracked work. A benchmarking skill is optional: when one is installed, `baseline`-labelled issues capture a pre-implementation baseline for the performance QA agent.
+Install with `kendex add dev`; `kendex refresh` picks up updates. It needs `orch` (the shared runtime, and the caller), `github`, `decider`, and `code-quality` (the code standards § Engineering Rules delegates to) alongside it, plus `linear` for Linear-tracked work. A benchmarking skill is optional: when one is installed, `baseline`-labelled issues capture a pre-implementation baseline for the performance QA agent.
 
 Agent-type names, the commit prefix, and QA-label triggers are project-configurable — see SKILL.md § Configuration and the project's label application guide.
 

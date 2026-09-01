@@ -65,11 +65,11 @@ Don't:
 - Claims broader than what the adjacent code or assertion actually enforces.
 - A numeral counting things outside the sentence. State the property and the command that enumerates it. A numeral bound to something adjacent — a list in the same paragraph, a constant a check compares against, one a ratchet owns — stays.
 
-Same rules for docs, READMEs, and skill/agent files: state the rule or behavior, never its provenance or justification. Their reader is an agent — write the shortest unambiguous rule and delete sentences nothing acts on.
+Same rules for docs, READMEs, skill/agent files, and commit bodies, which explain intent and never narrate the diff: state the rule or behavior, never its provenance or justification. Their reader is an agent — write the shortest unambiguous rule and delete sentences nothing acts on. Plain words over jargon, in code and prose alike: name things by what they do.
 
 ## Over-Engineering
 
-Build only what was asked. No speculative abstractions, no error handling for impossible scenarios, no generalization before a third caller exists. Delete wrappers that only forward.
+Build only what was asked. No speculative abstractions, no error handling for impossible scenarios, no generalization before a third caller exists. Delete wrappers that only forward. A new dependency needs a one-line justification in its commit message.
 
 One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns — delegate. A second spelling is a defect even when both copies agree. Package behavior lives in the package's shipped scripts; a host binary only locates, execs, and surfaces results.
 

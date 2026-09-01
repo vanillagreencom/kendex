@@ -36,6 +36,11 @@ These are known, deliberate trade-offs. Raising them again is noise:
   activity type, or reason about a job's permissions is settled: name the
   gap in the upstream suite instead.
 
+- **No test-coverage asks for instruction markdown or for `tools/guard`
+  rules in a change that adds no guard test lane.** What a test must cover is
+  `.github/instructions/tests.instructions.md`. A markdown contract lint pins
+  tokens, never sentences, so a claim that lives only in prose has no lint
+  coverage and none is asked for.
 - **The PreToolUse commit hook reads git words, not shell expansion.**
   Quoted flags, `flag=` assignments, aliases, and other spellings the shell
   would have to expand are outside its contract; the installed git hook is

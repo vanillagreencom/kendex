@@ -283,7 +283,7 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 
 ### 6.2 Create Issues
 
-**Skip if** nothing clears the filing bar in [references/finding-disposition.md](../references/finding-disposition.md). Blocked items, `category: "issue"` suggestions, and each `freeze` row's class issue that clear it go into an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`, with `source: "pr-comments"` and `tracker.type` set to the resolved `TRACKER` (plus `tracker.repository` for GitHub items), then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`.
+**Skip if** nothing clears the filing bar in [references/finding-disposition.md](../references/finding-disposition.md). Blocked items, skipped items, `category: "issue"` suggestions, and each `freeze` row's class issue that clear it go into an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`, with `source: "pr-comments"` and `tracker.type` set to the resolved `TRACKER` (plus `tracker.repository` for GitHub items), then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`.
 
 ### 6.3 Re-Triage Or Exit
 
@@ -292,8 +292,8 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 | Outcome | Reply body |
 |---------|------------|
 | Applied | `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]` |
-| Skipped / declined | `Declined: [REASON]` |
-| Blocked → issue | `Tracked: [CREATED_ISSUE_ID]` |
+| Skipped or declined, nothing filed | `Declined: [REASON]` |
+| Blocked or skipped → issue | `Tracked: [CREATED_ISSUE_ID]` |
 | Already fixed | The finding's `draft_response` |
 | Question | The finding's `draft_response` |
 
@@ -315,7 +315,7 @@ This section counts the round and decides whether to loop; the cap is § 6.1's a
 .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
 ```
 
-This is the only writer of `pr_comment_review.iterations` in any workflow: one triage pass advances it by exactly one, and a caller that runs this workflow records its results without touching the counter.
+This is the only writer of `pr_comment_review.iterations` in any workflow, as § 8 is the only writer of the result arrays: one triage pass advances the counter by exactly one, and a caller that runs this workflow writes neither.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{known: (.pr_review_baseline.last_threads // [])}'
@@ -391,16 +391,25 @@ Awaiting your response — ask questions, override skipped items, or confirm don
 
 ## 8. Update State And Return
 
-One tool call per block — each append runs per item:
+One tool call per block — each append runs per item. A fix and a skip entry carry the finding's own text, so each is written to a file with the harness file-write tool and bound by path:
+
+```json
+{"description": "[DESC]", "location": "[LOC]", "commit": "[SHA]", "source": "[SOURCE]"}
+```
+```bash
+.agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.fixes [WORKTREE_PATH]/tmp/state-fix-[ISSUE_ID].json
+```
+```json
+{"description": "[DESC]", "reason": "[REASON]"}
+```
+```bash
+.agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.skipped [WORKTREE_PATH]/tmp/state-skipped-[ISSUE_ID].json
+```
+
+An issue id is not finding text and stays inline:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.fixes '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}'
-```
-```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.issues_created "[CREATED_ISSUE_ID]"
-```
-```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.skipped '{"description":"[DESC]","reason":"[REASON]"}'
 ```
 
 **Managed**: return to the parent workflow's next section. **Standalone**: session complete.

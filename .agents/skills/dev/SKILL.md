@@ -5,7 +5,7 @@ summary: "Dev-agent workflows for implementing an issue and applying review fixe
 license: MIT
 user-invocable: true
 dependencies:
-  required: [orch, github, decider]
+  required: [orch, github, decider, code-quality]
   optional: [linear]
 metadata:
   author: vanillagreen
@@ -37,7 +37,7 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
 - Before adding a function, parser, stub or loop, grep the repo for the verb it performs; before stating a rule, grep for the rule. A second copy of that verb, in any language, is a twin and never delegation, and so is a second statement of a rule another file owns, in prose, config or a table: call or cite the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.
 - Stale docs are bugs: contradicting a committed doc means updating it in the same change.
 
-Code standards — correctness, comments, over-engineering, cleanup — are the code-quality skill's.
+Code standards — correctness, comments, over-engineering, cleanup — are [`../code-quality/SKILL.md`](../code-quality/SKILL.md).
 
 ## Round Contract
 
@@ -64,7 +64,7 @@ Deterministic gate findings are fixed here, never carried into review. Fix what 
 
 ## Reflect
 
-**Skip if** nothing recurred and nothing surprised you. Otherwise put the lesson where it will be read again — architecture docs when patterns, APIs, or documented behavior changed, or the managing project's kendex config (`kendex.toml` at the kendex project root, `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`. Bar: would this save 5+ minutes in a future session? One surgical addition per lesson, no verbose examples. What you cannot update yourself goes in your return as `[process]` discovered work.
+**Skip if** nothing recurred and nothing surprised you. Otherwise put the lesson where it will be read again — architecture docs when patterns, APIs, or documented behavior changed, or the managing project's kendex config (`kendex.toml` at the kendex project root, `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`. Bar: would this save 5+ minutes in a future session? One surgical addition per lesson, no verbose examples. A config edit takes effect only once it is rendered, which is the orchestrator's step from the main checkout after merge, so name it — and anything else you cannot update yourself — in your return as `[process]` discovered work.
 
 ## Configuration
 
