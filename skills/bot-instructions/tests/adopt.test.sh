@@ -249,7 +249,7 @@ sys.path.insert(0, os.path.join(PKG, "scripts"))
 from lib import writer
 
 PAYLOAD = ("x" * 4000 + "\n")
-real = os.rename
+real = os.replace
 state = {"hit": False}
 
 
@@ -268,16 +268,16 @@ def debris():
 
 
 before = open(os.path.join(repo, "README.md")).read()
-os.rename = fail_once
+os.replace = fail_once
 try:
     writer.replace(repo, "README.md", data=PAYLOAD, require_marker=False)
 except OSError as exc:
     if exc.errno != 28:
         sys.exit(f"the write failed for the wrong reason: {exc}")
 else:
-    sys.exit("the stubbed rename did not fail the replacement")
+    sys.exit("the stubbed replace did not fail the replacement")
 finally:
-    os.rename = real
+    os.replace = real
 if not state["hit"]:
     sys.exit("the stub never raised, so this probe proved nothing")
 if open(os.path.join(repo, "README.md")).read() != before:

@@ -179,10 +179,10 @@ def qodo_best_practices(ctx, out):
     if text is None:
         return
     budget = ctx.config.budgets["qodo_best_practices_lines"]
-    lines = len(text.split("\n"))
+    lines = len(text.splitlines())
     if lines > budget:
         worst = sorted(
-            ((s["name"], len(s["instructions"].split("\n"))) for s in ctx.config.surfaces),
+            ((s["name"], len(s["instructions"].splitlines())) for s in ctx.config.surfaces),
             key=lambda p: -p[1],
         )
         top = "; ".join(f"{n}: {c}" for n, c in worst[:5])

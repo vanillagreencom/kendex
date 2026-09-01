@@ -52,7 +52,7 @@ def replace(root, rel, data=None, transform=None, require_marker=True):
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
-        os.rename(tmp, target)
+        os.replace(tmp, target)
     except BaseException:
         # Every exit that is not the rename removes the temp file, so a re-run
         # is not refused by the debris of the run before it.

@@ -116,7 +116,7 @@ cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
 cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
 lines_toml 100000
 bi_must render --repo "$repo" --spec "$SPEC"
-actual="$(python3 -c 'import sys;print(len(open(sys.argv[1]).read().split(chr(10))))' "$repo/best_practices.md")"
+actual="$(python3 -c 'import sys;print(sum(1 for _ in open(sys.argv[1])))' "$repo/best_practices.md")"
 cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
 lines_toml "$((actual + 1))"
 expect_green "the line budget one unit above the rendered count passes" \
@@ -124,6 +124,10 @@ expect_green "the line budget one unit above the rendered count passes" \
 cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
 lines_toml "$((actual - 1))"
 expect_red qodo-best-practices "the line budget one unit below the rendered count reds" \
+  render --dry-run --repo "$repo"
+cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
+lines_toml "$actual"
+expect_green "the line budget exactly at the rendered count passes" \
   render --dry-run --repo "$repo"
 
 bi_summary
