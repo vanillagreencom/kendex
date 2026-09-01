@@ -241,7 +241,7 @@ test("a step condition naming an unknown shard is reported", () => {
 test("a matrix shard no step names is reported", () => {
 	const workflow = readFileSync(workflowPath, "utf8");
 	const list = workflow.match(/^ {8}shard: \[(.+)\]$/m)[0];
-	const ghost = workflow.replace(list, list.replace("]", ", ghost]"));
+	const ghost = workflow.replace(list, list.replace(/\]$/, ", ghost]"));
 	assert.notEqual(ghost, workflow, "the mutation matched no matrix list");
 	const shards = shardConditions(ghost).map((condition) => condition.replace(/^matrix\.shard == '|'$/g, ""));
 	const named = stepShardNames(ghost);
