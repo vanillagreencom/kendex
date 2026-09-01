@@ -277,9 +277,13 @@ and stays in review scope. The tracked-path condition is what keeps a
 derivation and the dead-exclusion clause from contradicting each other: a
 subtree the install has not produced, or one git ignores, excludes nothing,
 and deriving it would name a glob that clause rejects with no edit an author
-could make to clear it. A derived glob is held to the glob dialect like a
-declared one, and a manifest key or directory name outside it fails naming the
-manifest row that produced it: this is the one glob source no author writes as
+could make to clear it. A render root the index holds as an entry of its own — staged as a symlink, or
+as a file — is refused naming that root rather than derived as an empty set,
+because git stores such a root as one entry with the tree under its real name
+and an empty derivation would leave that tree in review scope silently. A
+derived glob is held to the glob dialect like a declared one, and a manifest
+key or directory name outside it fails naming the manifest row that produced
+it: this is the one glob source no author writes as
 a glob, and the paths render as prose on the two surfaces that read them as
 prose, where nothing would judge them as patterns at all.
 

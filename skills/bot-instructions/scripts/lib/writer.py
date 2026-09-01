@@ -127,8 +127,8 @@ def _gate(dir_fd, leaf, rel, require_marker, strict):
             raise RenderError(
                 f"{rel}: carries no {MARKER_TOKEN!r} marker at its canonical position, so "
                 "it is the repo's own file and render will not replace it — run `adopt` "
-                "to take it over. A marker further down the file is quoted content, not "
-                "ownership"
+                "to take it over. A marker anywhere below the first line of the first "
+                "comment is quoted content, not ownership"
             )
         return _identity(st), existing, substituted
     finally:
@@ -231,14 +231,24 @@ def _fsync_dir(dir_fd):
 
 
 class RenderLock:
-    """One render at a time. A second one refuses rather than interleaving."""
+    """One render at a time. A second one refuses rather than interleaving.
+
+    The lock lives under `RUN_DIR`, so taking it creates that directory in a
+    repo that has none — and three of `render_verb`'s returns write nothing
+    after that: `--dry-run`, every `[bots]` flag false, and a validator
+    failure. All three report writing nothing, and `--dry-run` is documented
+    as "validate and write nothing", so leaving the directory behind made the
+    preview mutate a clean tree. A run that created the directory and left it
+    empty removes it again.
+    """
 
     def __init__(self, root_fd):
         self.root_fd = root_fd
         self.fd = None
+        self.made_run_dir = False
 
     def __enter__(self):
-        _ensure_run_dir(self.root_fd)
+        self.made_run_dir = _ensure_run_dir(self.root_fd)
         rel = f"{RUN_DIR}/{LOCK_NAME}"
         dir_fd, leaf = _walk_to_parent(self.root_fd, _components(rel), create=True)
         try:
@@ -263,15 +273,27 @@ class RenderLock:
         # Releasing must not raise: an exception here would replace whatever
         # the render was already failing on with a worse-diagnosed one.
         _remove(self.root_fd, f"{RUN_DIR}/{LOCK_NAME}")
+        if self.made_run_dir:
+            # Only what this run created, and only while it is empty: a
+            # manifest an interrupted write left behind, or the vendored
+            # CodeRabbit schema, keeps the directory and `rmdir` says so.
+            try:
+                os.rmdir(RUN_DIR, dir_fd=self.root_fd)
+            except OSError:
+                pass
+            self.made_run_dir = False
         return False
 
 
 def _ensure_run_dir(root_fd):
+    """Create `RUN_DIR` if it is absent. True when THIS call created it."""
     try:
         os.mkdir(RUN_DIR, 0o755, dir_fd=root_fd)
     except OSError as exc:
         if exc.errno != errno.EEXIST:
             raise RenderError(f"{RUN_DIR}: cannot create ({exc.strerror})") from exc
+        return False
+    return True
 
 
 MANIFEST_REL = f"{RUN_DIR}/{MANIFEST_NAME}"

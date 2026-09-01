@@ -40,6 +40,20 @@ def paragraphs(text):
     return out
 
 
+def summary_block(model):
+    """`[repo] summary` as the repo wrote it.
+
+    `renders.md` § Common rules: repo text is never reflowed, and
+    `tone_instructions` is the only line-break exception. `paragraphs` is for
+    doctrine, whose text this package hard-wraps in its own spec copy for the
+    spec copy's sake; running it over the summary as well reflowed repo prose
+    on two of the three surfaces that carry it, while `render_qodo` emitted
+    the same value unchanged — so the two forms of one string also disagreed
+    across surfaces. This is the one form.
+    """
+    return model.summary.strip("\n")
+
+
 def as_bullet(text):
     """One block, exactly one bullet, no blank line inside.
 
@@ -66,7 +80,7 @@ def copilot_instructions(model):
     out = [model.marker("html"), ""]
     out.append(f"# {model.repo_name}")
     out.append("")
-    out.extend([p for p in paragraphs(model.summary)])
+    out.append(summary_block(model))
     out.append("")
     out.append("# Code review calibration")
     out.append("")
@@ -150,9 +164,8 @@ def macroscope_doctrine(model):
             out.append("")
     out.append("## about this repository")
     out.append("")
-    for para in paragraphs(model.summary):
-        out.append(para)
-        out.append("")
+    out.append(summary_block(model))
+    out.append("")
     return "\n".join(out).rstrip("\n") + "\n"
 
 

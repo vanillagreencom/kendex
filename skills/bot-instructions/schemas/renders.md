@@ -30,6 +30,15 @@ preserves the marker further down would otherwise read as managed, and `render`
 would overwrite bytes `adopt` never took over. `render`, `adopt` and `orphan`
 all ask that one question of every output.
 
+The position is read as **the first line of the first comment**, one predicate
+for every comment syntax. Both generated markers put the token on that line —
+the HTML form is one line entire, and the `#` form opens with the token and
+closes on its second line — so no syntax needs its own rule, and none of the
+ways of reading further is available to any of them: a `#` run whose later
+lines carry the token, an HTML comment closed earlier in the line with the
+token after the `-->`, and an HTML comment that never closes are each a
+hand-written file, refused.
+
 The marker is a comment in that file's syntax naming this package, the spec
 copy's version, and the paths this render read — SKILL.md § The render inputs
 is the set. A repo input is named by the repo-relative path actually read; the
@@ -140,7 +149,12 @@ target, one temp name per write.
 The rest of the write path: the lock is `.bot-instructions/render.lock`, created
 exclusively and removed when the render ends, and a second render refuses
 naming it rather than waiting — a wait would be a queue nobody asked for, and a
-lock the run breaks on its own would be no lock. The manifest is
+lock the run breaks on its own would be no lock. A run that created
+`.bot-instructions/` to hold that lock removes the directory again when it ends
+empty, so the returns that write nothing — `--dry-run`, every `[bots]` flag
+false, and a validator failure — leave a repo without one exactly as they found
+it. `--dry-run` says it validates and writes nothing, and a directory is
+something. The manifest is
 `.bot-instructions/render-manifest.json`, written before the first replacement
 and removed after the last, so a run finding one says it is finishing an earlier
 set. **The scratch tree is in memory, never on disk**: the build holds each

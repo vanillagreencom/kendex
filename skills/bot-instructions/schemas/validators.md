@@ -325,6 +325,15 @@ flag says where the exclusions come from, not whether they are checked: the
 cross-surface, unreadable-surface, dead-exclusion and prose-destination
 clauses judge a hand-written set just as well.
 
+**Rejects, also.** A declared render root the index holds as an entry of its
+own — a harness root staged as a symlink, or as a file. The derivation asks
+which immediate subdirectories under that root hold a tracked path, and git
+stores such a root as one entry with the tree under its real name, so the
+question has no answer and an empty set would put the harness tree back in
+review scope with nothing saying so. Refusing names the root: an empty
+derivation means the root holds no tracked subdirectory, and it must not also
+mean the root is not a directory.
+
 **Rejects, also.** A resolved manifest that declares no install. Reading the
 wrong file and finding nothing to exclude is indistinguishable from a repo with
 nothing to exclude, and this comparison cannot tell them apart on its own: both

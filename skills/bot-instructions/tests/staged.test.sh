@@ -148,4 +148,43 @@ else
 fi
 reset
 
+# Inside the repo is a question about path components. A lexical
+# `startswith("..")` answered a question about characters, so a spec copy at
+# `<repo>/..spec` — an ordinary in-repo directory — was read from the WORKTREE
+# while the outputs came from the index, and unstaged doctrine bytes decided
+# whether the staged outputs passed. The pair is the same doctrine edit, made
+# in the worktree only: inside the repo it must be ignored, and outside it
+# must be read, because an external copy is in no index to read from.
+dotdot="$(bi_vendored_repo staged-dotdot ..spec)" || exit 1
+edit_doctrine() {
+  python3 - "$1" <<'DOCTRINE'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+out = s.replace("### declined\n", "### declined\n\nOne more sentence for this block.\n", 1)
+assert out != s, "the doctrine fixture shape changed"
+open(p, "w").write(out)
+DOCTRINE
+}
+
+edit_doctrine "$dotdot/..spec/SKILL.md"
+expect_green 'a spec copy at ..spec is inside the repo, so --staged reads the index' \
+  check --staged --repo "$dotdot" --spec "$dotdot/..spec"
+git -C "$dotdot" add -A >/dev/null 2>&1
+expect_red drift 'and the same edit staged is what the outputs are stale against' \
+  check --staged --repo "$dotdot" --spec "$dotdot/..spec"
+
+outside="$(bi_rendered_repo staged-outside)" || exit 1
+mkdir -p "$BI_TMP/outside-spec/schemas"
+cp "$BI_ROOT/skills/bot-instructions/SKILL.md" "$BI_TMP/outside-spec/SKILL.md"
+cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" \
+   "$BI_TMP/outside-spec/schemas/renders.md"
+bi_must render --repo "$outside" --spec "$BI_TMP/outside-spec" || exit 1
+bi_commit "$outside"
+expect_green 'a spec copy outside the repo is read from the worktree, and agrees' \
+  check --staged --repo "$outside" --spec "$BI_TMP/outside-spec"
+edit_doctrine "$BI_TMP/outside-spec/SKILL.md"
+expect_red drift 'and an edit to it is read there, since no index carries it' \
+  check --staged --repo "$outside" --spec "$BI_TMP/outside-spec"
+
 bi_summary

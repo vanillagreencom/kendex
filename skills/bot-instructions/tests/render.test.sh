@@ -175,6 +175,65 @@ for verb in check adopt; do
   fi
 done
 
+# `--dry-run` says it validates and writes nothing, and a directory is
+# something. The lock lives under `.bot-instructions/`, so taking it created
+# that directory in a repo that had none, and the preview mutated a clean
+# tree. The pair below is the every-flag-false return, which reaches the same
+# state down a different one of `render_verb`'s four returns. Both assert on
+# the DIRECTORY: the lock file itself was always removed.
+no_run_dir() {
+  local repo label
+  repo="$1"; label="$2"
+  if [ -e "$repo/.bot-instructions" ]; then
+    bad "$label" "the run directory is there: $(ls -A "$repo/.bot-instructions" | tr '\n' ' ')"
+  else
+    ok "$label"
+  fi
+}
+
+# The vendored CodeRabbit schema is the one thing a repo of its own keeps in
+# that directory, so the fixture turns that bot off: with it on, the directory
+# is the repo's and this control could not tell the two apart.
+dry="$(bi_new_repo dry-run-run-dir)"
+python3 - "$dry" <<'TOMLEDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1], "bot-instructions.toml")
+p.write_text(p.read_text().replace("coderabbit = true", "coderabbit = false"))
+TOMLEDIT
+rm -rf -- "${dry:?}/.bot-instructions"
+git -C "$dry" add -A >/dev/null 2>&1
+expect_green 'a dry run on a repo with no .bot-instructions validates' \
+  render --dry-run --repo "$dry"
+no_run_dir "$dry" 'and leaves no .bot-instructions behind'
+
+nothing="$(bi_minimal_repo nothing-enabled)"
+printf '%s' "$BI_MIN_HEAD" > "$nothing/bot-instructions.toml"
+expect_green 'a render with every [bots] flag false writes nothing' render --repo "$nothing"
+no_run_dir "$nothing" 'and leaves no .bot-instructions behind either'
+
+# `renders.md` § Common rules: repo text is never reflowed, `tone_instructions`
+# alone excepted. `[repo] summary` reaches three surfaces, and two of them ran
+# it through the doctrine paragraph-joiner, so a summary the repo wrote across
+# two lines arrived as one — with `.pr_agent.toml` carrying the same string
+# unreflowed, so the two forms of it also disagreed with each other.
+if python3 - "$repo" <<'SUMMARY'; then
+import sys
+repo = sys.argv[1]
+want = ("fixture is a small repository the bot-instructions suites render end to end. It\n"
+        "has one skill render tree, one harness render tree, and one test directory.")
+assert "\n" in want, "the fixture summary is no longer multi-line"
+missing = [rel for rel in (".github/copilot-instructions.md",
+                           ".macroscope/correctness/doctrine.md",
+                           ".pr_agent.toml")
+           if want not in open(repo + "/" + rel).read()]
+if missing:
+    sys.exit("reflowed in: " + ", ".join(missing))
+SUMMARY
+  ok 'a multi-line [repo] summary keeps its line breaks on every surface'
+else
+  bad 'a multi-line [repo] summary keeps its line breaks on every surface'
+fi
+
 # No bootstrap exemption: an unmarked region is the repo's whatever its body
 # holds, and a whitespace test would be exactly the boundary `renders.md`
 # § `AGENTS.md` says does not exist.

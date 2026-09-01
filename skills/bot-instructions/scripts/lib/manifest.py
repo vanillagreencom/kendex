@@ -18,9 +18,10 @@ the opposite of what the derivation is for; one naming a tree with nothing
 tracked under it excludes nothing, and `exclusion-consistency`'s
 dead-exclusion clause rejects it with no edit an author could make to clear
 it. `tree.subdirs` answers that question from the index alone, identically in
-both modes. `skills/review-gate/references/vendored-paths.md` § The
-harness-render variant draws the same line for the review gate's own set and
-names the merged paths.
+both modes, and refuses a root the index holds as an entry of its own rather
+than answering it with the empty set.
+`skills/review-gate/references/vendored-paths.md` § The harness-render variant
+draws the same line for the review gate's own set and names the merged paths.
 """
 
 import tomllib

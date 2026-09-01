@@ -195,7 +195,12 @@ fi
 
 # A render root reached through a symlink used to derive nothing, and because
 # both sides of the comparison came through the same walk they agreed on
-# empty and the run reported a clean pass. The index still carries the tree.
+# empty and the run reported a clean pass. Two states, and only the first was
+# ever asserted, which is why the second stayed open.
+#
+# The symlink UNSTAGED: the index still carries the tree under `.claude/`, so
+# the derivation has its answer and the walk that lost it is what the index
+# read replaced.
 repo="$(bi_rendered_repo excl-symlinked-root)" || exit 1
 mv "$repo/.claude" "$repo/claude-real"
 ln -s claude-real "$repo/.claude"
@@ -206,6 +211,26 @@ else
   bad 'a harness root reached through a symlink does not lose its derived tree' \
       "$(head -3 "$repo/.macroscope/ignore.md" | tr '\n' ' ')"
 fi
+
+# The symlink STAGED, which the fixture above never reached: git now holds
+# `.claude` as one entry and the tree under its real name, so no tracked path
+# opens with `.claude/` and the derivation has no answer to give. An empty set
+# there is the harness tree back in review scope with nothing saying so, so
+# the run refuses naming the root — on both verbs, since one function answers
+# for both.
+git -C "$repo" add -A >/dev/null 2>&1
+if [ "$(git -C "$repo" ls-files -s -- .claude | cut -c1-6)" != "120000" ]; then
+  bad 'the staged-symlink fixture stages the symlink' \
+      "$(git -C "$repo" ls-files -s -- .claude | head -2 | tr '\n' ' ')"
+else
+  ok 'the staged-symlink fixture stages the symlink'
+fi
+expect_red exclusion-consistency \
+  'a harness root staged as a symlink is refused, not derived as empty' \
+  render --dry-run --repo "$repo"
+expect_red exclusion-consistency \
+  'and --staged refuses it too, from the same derivation' \
+  check --staged --repo "$repo"
 
 # --- git as an input that can fail -------------------------------------------
 # `git ls-files` returning nothing because git could not run is not a repo

@@ -48,10 +48,18 @@ def _spec_source(repo, spec_root, work, staged):
     index like every other render input: reading doctrine from the worktree
     while the outputs come from the index would let an unstaged doctrine edit
     decide what the staged outputs were compared against.
+
+    Inside is a question about path COMPONENTS, and `startswith("..")` answered
+    a question about characters: `<repo>/..spec` is a directory inside the
+    repo whose relative path opens with those two bytes, so a spec copy there
+    was read from the worktree while the outputs came from the index — the one
+    thing this function exists to prevent, in the mode SKILL.md says judges one
+    coherent state. `relpath` leaves an escape as a leading `..` component, so
+    the first component is the whole test.
     """
     inside = os.path.relpath(spec_root, repo)
-    if staged and not inside.startswith(".."):
-        prefix = "" if inside == "." else inside + "/"
+    if staged and inside.split(os.sep)[0] != os.pardir:
+        prefix = "" if inside == os.curdir else inside + "/"
         return work, tuple(prefix + name for name in SPEC_FILES)
     return tree.Worktree(spec_root), SPEC_FILES
 

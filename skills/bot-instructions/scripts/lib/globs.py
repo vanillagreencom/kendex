@@ -116,9 +116,15 @@ def _collapse(pattern):
 def _translate(pattern, where=None):
     """Dialect glob to regex. `**` crosses `/`; `*` and `?` do not.
 
-    `a/**` matches `a` itself, which is how every engine here reads "this
-    directory and below" — the dead-exclusion clause would otherwise call a
-    tree exclusion dead in a repo tracking only the directory's own files.
+    A trailing `/**` keeps its slash, so `a/**` matches every path under `a`
+    and never a tracked file named `a`. Making the slash optional put this
+    matcher's answer at odds with `git ls-files -- ':(glob)a/**'`, which
+    selects nothing in a repo whose only entry is that file — and the
+    dead-exclusion clause decides with this matcher, so it accepted an
+    exclusion git and CodeRabbit apply to no path, the exact config that
+    clause exists to catch. `tests/globs.test.sh` measures the pair against
+    git's wildmatch, which `renders.md` names as the engine the dialect
+    targets.
 
     The compile is guarded because the dialect's character class is wider than
     a regex character class: `[z-a]` is made of permitted bytes and is a
@@ -146,14 +152,9 @@ def _translate(pattern, where=None):
     while i < n:
         c = pattern[i]
         if pattern.startswith("**", i):
-            trailing_slash = pattern.startswith("**/", i)
-            if trailing_slash:
+            if pattern.startswith("**/", i):
                 out.append("(?:[^/]*/)*")
                 i += 3
-            elif out and out[-1] == "/":
-                out.pop()
-                out.append("(?:/.*)?")
-                i += 2
             else:
                 out.append(".*")
                 i += 2

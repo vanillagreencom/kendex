@@ -27,7 +27,11 @@
 work="$BI_TMP/globs"
 mkdir -p "$work/a/b" "$work/ab" "$work/docs"
 git -C "$work" init -q .
-for f in a/f a/b/g ab/h top.md docs/x.md; do printf 'x\n' > "$work/$f"; done
+# `solo` is a tracked FILE with no tree under it, which is what makes
+# `solo/**` a boundary case rather than a repetition of `a/**`: git selects
+# nothing for it, and a translation that lets a trailing `/**` match the
+# directory itself selects the file.
+for f in a/f a/b/g ab/h top.md docs/x.md solo; do printf 'x\n' > "$work/$f"; done
 git -C "$work" add -A >/dev/null 2>&1
 
 # One vector: git's selection for the pattern against this package's.
@@ -72,7 +76,7 @@ export BI_ROOT
 
 # Every shape the dialect permits.
 for p in 'a/**' 'a/*' '**' '*' '*.md' '**/*.md' '**/g' 'a/**/g' 'a/*/g' 'a/b/**' \
-         'a?f' 'a**' '[a]b/h' 'docs/**' 'top.md'; do
+         'a?f' 'a**' '[a]b/h' 'docs/**' 'top.md' 'solo/**'; do
   vector "$p" agree
 done
 

@@ -219,13 +219,16 @@ bi_control() {
 # A repo that vendors the spec copy inside itself, which is the consumer shape
 # and the only one where `--staged` can read the spec copy from the index.
 BI_VENDORED_SPEC=".agents/skills/bot-instructions"
+# `$2` is where inside the repo the spec copy is vendored, for the controls
+# that turn on whether a path is inside; it defaults to the installed one.
 bi_vendored_repo() {
-  local repo
+  local repo at
   repo="$(bi_rendered_repo "$1")" || return 1
-  mkdir -p "$repo/$BI_VENDORED_SPEC/schemas"
-  cp "$BI_ROOT/skills/bot-instructions/SKILL.md" "$repo/$BI_VENDORED_SPEC/SKILL.md"
-  cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$repo/$BI_VENDORED_SPEC/schemas/renders.md"
-  bi_must render --repo "$repo" --spec "$repo/$BI_VENDORED_SPEC" || return 1
+  at="${2:-$BI_VENDORED_SPEC}"
+  mkdir -p "$repo/$at/schemas"
+  cp "$BI_ROOT/skills/bot-instructions/SKILL.md" "$repo/$at/SKILL.md"
+  cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$repo/$at/schemas/renders.md"
+  bi_must render --repo "$repo" --spec "$repo/$at" || return 1
   bi_commit "$repo"
   printf '%s\n' "$repo"
 }
