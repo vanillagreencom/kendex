@@ -592,3 +592,29 @@ fn clearing_install_would_take_the_table_written_around_it() {
          can reach this, that is what it costs"
     );
 }
+
+/// What pairing by position costs, and what it buys, on one list. Nothing
+/// identifies a value that changed — a changed value is a different value
+/// — so it pairs by where it sat, lands on the slot it replaced, and
+/// keeps what was written there.
+///
+/// Renaming every entry is the half that earns it: each stays an edit of
+/// its own line rather than three drops and three appends, and each
+/// annotation stays where the person put it. Replacing one entry with
+/// another in the same write is the same mechanism read the other way,
+/// and it costs: the new value stands under a note about the old one.
+/// Neither is a defect the fold can tell apart from the other, so the
+/// behaviour is pinned here rather than described.
+#[test]
+fn a_value_paired_by_position_keeps_the_note_written_in_its_slot() {
+    assert_eq!(
+        suppressing(&["one", "two", "three"]),
+        "schema = 6\n\n[suppressed]\nskill = [\n  \"one\",  # pulled in by gh\n  \"two\",   # pulled in by fmt\n  \"three\",  # pulled in by rev\n]\n",
+        "an edit of every entry is an edit of every line"
+    );
+    assert_eq!(
+        suppressing(&["alpha", "delta", "gamma"]),
+        "schema = 6\n\n[suppressed]\nskill = [\n  \"alpha\",  # pulled in by gh\n  \"delta\",   # pulled in by fmt\n  \"gamma\",  # pulled in by rev\n]\n",
+        "and the price of it: delta stands under what was written about beta"
+    );
+}

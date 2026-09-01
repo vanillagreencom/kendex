@@ -30,7 +30,9 @@
 //! travels with that entry through a removal or a re-sort. The positional
 //! half is what keeps an edit an edit rather than a drop and an append,
 //! and it has a price: an entry paired that way inherits what was written
-//! about whatever stood in its slot.
+//! about whatever stood in its slot, which
+//! `tests::a_value_paired_by_position_keeps_the_note_written_in_its_slot`
+//! holds to.
 //!
 //! Where those bytes are is not where they look. An array of values keeps
 //! them in [`layout`]'s four places, an entry and its annotation always
@@ -207,7 +209,10 @@ fn paired(standing: &[Item], target: &[Item]) -> Vec<Option<usize>> {
 /// a value edited in place is a different value. It pairs by position, so
 /// it lands on the slot it replaced and keeps the note written there —
 /// which is what makes an edit an edit, and what makes `"Write", # no
-/// writing files` read `"WebFetch", # no writing files` afterwards.
+/// writing files` read `"WebFetch", # no writing files` afterwards. Both
+/// halves of that are asserted in
+/// `tests::a_value_paired_by_position_keeps_the_note_written_in_its_slot`,
+/// so the trade is a fixture rather than a sentence.
 fn identity(entry: &Item) -> Option<String> {
     if let Some(table) = entry.as_table_like() {
         if let Some(name) = text(table, "name") {
