@@ -477,9 +477,12 @@ lives in one capability table read by core and UI.
 - **Catalogs are adversarial input.** Every catalog read goes through
   `source_read`: resolves against the canonical root, refuses symlinks,
   carries depth/count/byte budgets; raw filesystem reads over catalog
-  paths are guard-banned. Frontmatter parses as real YAML (aliases and
-  duplicate keys refused, bounds enforced); every interpolated value in a
-  generated file is quoted.
+  paths are guard-banned. Structured frontmatter values parse as bounded
+  YAML with aliases and duplicate keys refused; tolerant readers keep the
+  plain one-line values harnesses accept. Renderers pass foreign values for
+  generated fields through the target format's scalar encoder. The compact
+  skill-name rewrite instead replaces or inserts a literal `name:` line and
+  relies on target validation.
 - **The source store is immutable; revisions are declared.** Each commit
   is materialized once into a directory named after its object id,
   published by rename, read unchanged thereafter; fetching touches only a
