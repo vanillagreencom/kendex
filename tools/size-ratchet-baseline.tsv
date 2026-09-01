@@ -60,9 +60,9 @@ pi-extensions/pi-web-tools/tests/youtube-video.test.ts	844
 skills/decider/scripts/decisions	484
 skills/deep-research/scripts/deep-research	529
 skills/github/scripts/commands/pr-merge.sh	713
-skills/github/scripts/git-diff-summary	961
+skills/github/scripts/git-diff-summary	586
 skills/github/scripts/lib/gh-auth.sh	475
-skills/github/scripts/lib/github-api.sh	943
+skills/github/scripts/lib/github-api.sh	612
 skills/github/scripts/lib/verify-lib.sh	415
 skills/growth-guards/scripts/install-git-hooks	535
 skills/growth-guards/scripts/lib/settings.sh	467

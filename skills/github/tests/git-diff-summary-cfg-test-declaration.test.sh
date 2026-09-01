@@ -68,9 +68,37 @@ run_case gated-and-ungated \
     $'#[cfg(test)]\n#[path = "candidate.rs"]\nmod candidate_test;\nmod candidate;' \
     panic_path_added production
 
+# An attribute binds to the next line only: a #[cfg(test)] left behind on an
+# unrelated item must not gate the declaration further down the file.
+run_case stale-gate \
+    $'#[cfg(test)]\nfn helper() {}\n\nmod candidate;' \
+    panic_path_added production
+
 run_case no-declaration \
     $'pub fn unrelated() -> u32 {\n    1\n}' \
     panic_path_added production
+
+# Nested: the gate sits in an ancestor directory's module, reached through a
+# #[path] that walks down into the candidate's directory.
+nested="$SANDBOX/nested"
+mkdir -p "$nested/src/inner"
+git -C "$nested" init -q -b main
+git -C "$nested" config user.email test@example.com
+git -C "$nested" config user.name test
+git -C "$nested" config commit.gpgsign false
+printf '%s\n' $'#[cfg(test)]\n#[path = "inner/candidate.rs"]\nmod candidate_test;' >"$nested/src/lib.rs"
+git -C "$nested" add src/lib.rs
+git -C "$nested" commit -q -m declaration
+cat >"$nested/src/inner/candidate.rs" <<'RUST'
+pub fn parse(value: &str) -> u32 {
+    value.parse().unwrap()
+}
+RUST
+git -C "$nested" add src/inner/candidate.rs
+nested_result="$($SUMMARY -C "$nested" --staged)"
+assert_eq "nested risk flag" '["test_panic_path_added"]' \
+    "$(jq -c '.risk_flags' <<<"$nested_result")"
+assert_eq "nested scope" "support" "$(jq -r '.scope' <<<"$nested_result")"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

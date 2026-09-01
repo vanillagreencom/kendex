@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# `gh_graphql_threads` is the one reviewThreads pager in this skill. pr-data,
-# pr-threads and bot_review_status all read threads through it, so the paging
-# and the fail-closed rules are proven once, here, against a two-page stub.
+# `gh_graphql_threads` is the one reviewThreads pager in this skill. pr-data
+# and pr-threads both read threads through it, so the paging and the
+# fail-closed rules are proven once, here, against a two-page stub.
 #
 # Every caller decides whether a PR is clean, so a page that cannot be
 # verified must produce no output at all: a partial list read as a complete

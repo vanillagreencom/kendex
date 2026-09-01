@@ -40,32 +40,30 @@ tracked change. Every `.rs` file in the candidate's own directory and its
 ancestor directories is scanned once, emitting candidate-agnostic route
 records that the per-candidate evaluator filters afterwards.
 
-**Lexing.** Source is masked before matching: line-comment precedence, nested
-block comments, and the contents of string, raw-string, byte/C-string and
-char literals blanked, so quoted braces, `//` and `/*` cannot corrupt
-structure. Item matching runs on the mask and values are read from the
-original at the same offsets. A leading UTF-8 BOM and a crate shebang are
-first-line preambles, dropped ahead of the first item.
+**The form read.** The literal declaration, at column zero, `pub`/`pub(...)`
+accepted and `#[path]` optional:
 
-**Routes.** A route is a `mod` declaration or an `include!` of the target,
-each carrying its own attribute gate. Bare `mod name;` emits both legal forms
+```rust
+#[cfg(test)]
+#[path = "scan_fixtures.rs"]
+mod scan_fixtures;
+```
+
+An attribute binds to the next line and is dropped by anything else, so only
+a contiguous block carries a gate. Bare `mod name;` emits both legal forms
 (`name.rs` and `name/mod.rs`) and resolves in the declaring file's module
 directory — its own directory for `mod.rs`/`lib.rs`/`main.rs`, its directory
-plus its file stem otherwise. `#[path]` values and `include!` literals
-resolve in the containing file's directory, per the Rust reference. Targets
-are lexically normalized so equivalent spellings compare equal. `include!` is
-evaluated at the invocation site for every delimiter form, and only when its
-argument IS a direct string literal.
+plus its file stem otherwise. A `#[path]` value resolves in the containing
+file's directory, per the Rust reference. Targets are lexically normalized so
+equivalent spellings compare equal.
 
-**Skip regions.** Braced bodies — inline modules, `macro_rules!` definitions,
-macro invocations, and fn/impl/struct bodies — emit no records at all, and
-nested macro token trees are jumped over rather than scanned, so an
-`include!` that Rust never expands fabricates nothing.
+**Everything else emits nothing.** A declaration inside a body or a macro, an
+`include!`, one spelled across lines, one inside a string or a comment: no
+record for that shape, so the file keeps its file-local classification rather
+than a guessed one. This is review-flag hygiene, not an adversarial control.
 
 **Verdict.** A candidate whose every found route is `#[cfg(test)]`-gated is
 test scope. Any ungated route, no route found, a `bin/` segment or
 `lib.rs`/`main.rs` crate root, or a read failure — including a symlinked
 declaring module, whose blob is link text rather than source — keeps the
-file-local classification: every shape the scanner cannot resolve fails toward no
-record rather than a guessed one. The residual limits of this model are
-enumerated in the `git-diff-summary` header.
+file-local classification.

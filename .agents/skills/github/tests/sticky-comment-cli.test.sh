@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# User-facing tests for sticky-comment.sh fallback behavior and live
-# detect_bot_reviewers own-comment reaction scanning.
+# User-facing tests for sticky-comment.sh and find-comment.sh fallback
+# behavior.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,7 +8,6 @@ FIXTURES="$TEST_DIR/fixtures"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 STICKY="$REPO_ROOT/skills/github/scripts/commands/sticky-comment.sh"
 FIND_COMMENT="$REPO_ROOT/skills/github/scripts/commands/find-comment.sh"
-LIB="$REPO_ROOT/skills/github/scripts/lib/github-api.sh"
 
 PASS=0
 FAIL=0
@@ -81,91 +80,6 @@ assert_eq "$(jq -r .id <<<"$out")" "4001" "find-comment review-summary returns C
 assert_eq "$(jq -r .author <<<"$out")" "chatgpt-codex-connector[bot]" "find-comment review-summary preserves Codex author"
 out=$("$FIND_COMMENT" 124 --author 'missing-reviewer[bot]' --review-summary)
 assert_eq "$out" "{}" "find-comment review-summary no-match returns empty object"
-
-echo
-echo "=== detect_bot_reviewers own-comment reactions ==="
-# shellcheck source=/dev/null
-source "$LIB"
-# The mocks below answer by bare endpoint; the paginating wrapper is one page here.
-gh_rest_all() { gh_rest "$1"; }
-
-gh_rest() {
-    case "$1" in
-        repos/{owner}/{repo}/pulls/42/reviews)
-            printf '[]\n'
-            ;;
-        repos/{owner}/{repo}/issues/42/comments)
-            cat "$FIXTURES/codex_own_comment.json"
-            ;;
-        repos/{owner}/{repo}/issues/42/reactions)
-            printf '[]\n'
-            ;;
-        repos/{owner}/{repo}/issues/comments/4001/reactions)
-            cat "$FIXTURES/codex_eyes_body_reactions.json"
-            ;;
-        *)
-            echo "unexpected endpoint: $1" >&2
-            return 1
-            ;;
-    esac
-}
-
-detected=$(detect_bot_reviewers 42 | paste -sd, -)
-assert_eq "$detected" "chatgpt-codex-connector[bot]" "detect includes Codex own-comment reaction reviewer"
-
-gh_rest() {
-    case "$1" in
-        repos/{owner}/{repo}/pulls/42/reviews)
-            printf '[]\n'
-            ;;
-        repos/{owner}/{repo}/issues/42/comments)
-            cat "$FIXTURES/codex_own_comment.json"
-            ;;
-        repos/{owner}/{repo}/issues/42/reactions)
-            printf '[]\n'
-            ;;
-        repos/{owner}/{repo}/issues/comments/4001/reactions)
-            printf '[{"user":{"login":"linear-code[bot]"},"content":"+1"}]\n'
-            ;;
-        *)
-            echo "unexpected endpoint: $1" >&2
-            return 1
-            ;;
-    esac
-}
-
-detected=$(detect_bot_reviewers 42 | paste -sd, -)
-assert_eq "$detected" "" "detect ignores unrelated bot reaction on review-bot comment"
-
-gh_rest() {
-    case "$1" in
-        repos/{owner}/{repo}/pulls/42/reviews)
-            printf '[]\n'
-            ;;
-        repos/{owner}/{repo}/issues/42/comments)
-            cat "$FIXTURES/codex_own_comment.json"
-            ;;
-        repos/{owner}/{repo}/issues/42/reactions)
-            printf '[]\n'
-            ;;
-        repos/{owner}/{repo}/issues/comments/4001/reactions)
-            echo '{"error":"reaction fetch failed"}' >&2
-            return 1
-            ;;
-        *)
-            echo "unexpected endpoint: $1" >&2
-            return 1
-            ;;
-    esac
-}
-
-if detect_bot_reviewers 42 >/dev/null 2>"$TMPDIR/detect.err"; then
-    FAIL=$((FAIL + 1))
-    echo "  FAIL  detect propagates own-comment reaction fetch failures"
-else
-    PASS=$((PASS + 1))
-    echo "  ok    detect propagates own-comment reaction fetch failures"
-fi
 
 echo
 echo "----"

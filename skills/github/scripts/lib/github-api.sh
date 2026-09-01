@@ -196,11 +196,6 @@ gh_graphql() {
     done
 }
 
-# Every page of a list endpoint as one array (REST pages at 30 by default).
-gh_rest_all() {
-    gh_rest "$1?per_page=100" --paginate --slurp | jq -c 'add // []'
-}
-
 # Execute REST API call with error handling
 # Usage: gh_rest "repos/{owner}/{repo}/pulls/123"
 gh_rest() {
@@ -257,42 +252,6 @@ gh_rest() {
             ;;
         esac
     done
-}
-
-# Parse --format argument from args
-# Usage: remaining_args=$(parse_format_arg "$@")
-# Sets FORMAT global variable
-parse_format_arg() {
-    FORMAT="${DEFAULT_FORMAT}"
-    local remaining_args=()
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-        --format)
-            FORMAT="$2"
-            shift 2
-            ;;
-        --format=*)
-            FORMAT="${1#--format=}"
-            shift
-            ;;
-        *)
-            remaining_args+=("$1")
-            shift
-            ;;
-        esac
-    done
-
-    # Validate format
-    case "$FORMAT" in
-    safe | raw) ;;
-    *)
-        echo "{\"error\": \"Invalid format: $FORMAT. Use: safe, raw\"}" >&2
-        return 1
-        ;;
-    esac
-
-    echo "${remaining_args[@]:-}"
 }
 
 # Check whether a value is already a concrete GitHub token. `op://` references
@@ -391,17 +350,17 @@ get_formal_review_verdict() {
     esac
 }
 
-# Comment bodies that look like bot review/status output rather than generic
+# Comment bodies that look like bot review output rather than generic
 # automation comments (for example Linear linkbacks). Keep this broad enough for
 # Claude sticky comments, but narrow enough that unrelated bot comments do not
-# become reviewers and block review-status consumers.
+# get selected as the review summary.
 _review_signal_comment_regex() {
     printf '%s' 'Claude finished|View job|### PR Review|### Review Summary|## Review|### Inline|### Recommendation|Recommendation:|Verdict:|Status:'
 }
 
 # Review-summary comments can contain terminal verdicts, so no-config fallback
 # only accepts known review-bot identities. Custom bots remain supported by
-# explicit GH_BOT_USERNAME / --bot / BOT_REVIEWERS paths.
+# explicit GH_BOT_USERNAME / --bot paths.
 _review_comment_bot_login_regex() {
     printf '%s' '^(claude|claude-code|review-bot|chatgpt-codex-connector)\[bot\]$'
 }
@@ -517,199 +476,6 @@ compute_sticky_verdict_from_body() {
     echo "pending"
 }
 
-# ---------------------------------------------------------------------------
-# Multi-bot review signal abstraction
-# ---------------------------------------------------------------------------
-# Different bots signal review state differently:
-#   - Claude-style: formal PR review (APPROVED|CHANGES_REQUESTED) + sticky
-#                   "View job" comment with checklist + verdict text
-#   - Codex-style:  reactions on the PR body or its earliest comment
-#                   (👀 = reviewing/pending, 👍 = approved); inline review
-#                   threads when changes are requested
-#
-# `bot_review_status_compute` derives a per-reviewer status from preloaded
-# JSON inputs so the logic is unit-testable without hitting GitHub.
-# `bot_review_status` is a thin wrapper that fetches the inputs via `gh`.
-
-# Normalize a reaction `content` value across REST and GraphQL.
-# REST returns: "+1", "-1", "laugh", "hooray", "confused", "heart", "rocket", "eyes"
-# GraphQL returns: "THUMBS_UP", "THUMBS_DOWN", "LAUGH", "HOORAY", "CONFUSED", "HEART", "ROCKET", "EYES"
-_normalize_reaction_content() {
-    case "$1" in
-        THUMBS_UP|"+1") echo "+1" ;;
-        THUMBS_DOWN|"-1") echo "-1" ;;
-        EYES|eyes) echo "eyes" ;;
-        LAUGH|laugh) echo "laugh" ;;
-        HOORAY|hooray) echo "hooray" ;;
-        CONFUSED|confused) echo "confused" ;;
-        HEART|heart) echo "heart" ;;
-        ROCKET|rocket) echo "rocket" ;;
-        *) echo "$1" ;;
-    esac
-}
-
-# Compute per-reviewer status from preloaded JSON inputs.
-#
-# Args:
-#   $1 reviewer login (e.g. "chatgpt-codex-connector[bot]")
-#   $2 reviews JSON array (from /repos/{owner}/{repo}/pulls/{pr}/reviews)
-#   $3 issue comments JSON array (from /repos/{owner}/{repo}/issues/{pr}/comments)
-#   $4 PR body reactions JSON array (from /repos/{owner}/{repo}/issues/{pr}/reactions)
-#   $5 reviewer's own first-comment reactions JSON array, or "[]"
-#   $6 review threads JSON array — each thread {isResolved, isOutdated, comments:{nodes:[{author:{login}}]}}
-#
-# Decision order (signals always recorded regardless):
-#   1. Reviewer has unresolved (current) inline threads → "changes"
-#   2. Latest formal review APPROVED/CHANGES_REQUESTED   → that verdict
-#   3. Sticky/View-job comment terminal verdict          → that verdict
-#   4. 👍 reaction on PR body or own comment             → "approved"
-#   5. 👀 reaction on PR body or own comment             → "pending"
-#   6. Sticky present but parsed as pending              → "pending"
-#   7. Otherwise                                         → "unknown"
-#
-# Output: single-line JSON object
-#   {reviewer, status, signals, updated_at, unresolved_threads}
-bot_review_status_compute() {
-    local reviewer="$1"
-    local reviews_json="${2:-[]}"
-    local comments_json="${3:-[]}"
-    local body_reactions="${4:-[]}"
-    local own_reactions="${5:-[]}"
-    local threads_json="${6:-[]}"
-
-    [[ -z "$reviews_json" ]] && reviews_json='[]'
-    [[ -z "$comments_json" ]] && comments_json='[]'
-    [[ -z "$body_reactions" ]] && body_reactions='[]'
-    [[ -z "$own_reactions" ]] && own_reactions='[]'
-    [[ -z "$threads_json" ]] && threads_json='[]'
-
-    local signals='[]'
-    local status="unknown"
-    local updated_at=""
-
-    # --- formal review ---
-    local formal_state formal_at
-    formal_state=$(jq -r --arg u "$reviewer" \
-        '[.[] | select(.user.login == $u)] | last | .state // empty' \
-        <<<"$reviews_json" 2>/dev/null || echo "")
-    formal_at=$(jq -r --arg u "$reviewer" \
-        '[.[] | select(.user.login == $u)] | last | .submitted_at // .created_at // empty' \
-        <<<"$reviews_json" 2>/dev/null || echo "")
-    case "$formal_state" in
-        APPROVED)
-            signals=$(jq -c '. + ["formal_review:approved"]' <<<"$signals")
-            status="approved"
-            [[ -n "$formal_at" ]] && updated_at="$formal_at"
-            ;;
-        CHANGES_REQUESTED)
-            signals=$(jq -c '. + ["formal_review:changes_requested"]' <<<"$signals")
-            status="changes"
-            [[ -n "$formal_at" ]] && updated_at="$formal_at"
-            ;;
-        COMMENTED)
-            signals=$(jq -c '. + ["formal_review:commented"]' <<<"$signals")
-            ;;
-    esac
-
-    # --- sticky / review summary comment ---
-    local sticky_obj sticky_body sticky_at
-    sticky_obj=$(select_sticky_comment_from_comments "$comments_json" "$reviewer" false)
-    if [[ -n "$sticky_obj" && "$sticky_obj" != "null" ]]; then
-        sticky_body=$(jq -r '.body // ""' <<<"$sticky_obj")
-        sticky_at=$(jq -r '.updated_at // .created_at // ""' <<<"$sticky_obj")
-        local sv
-        sv=$(compute_sticky_verdict_from_body "$sticky_body")
-        signals=$(jq -c --arg s "sticky:$sv" '. + [$s]' <<<"$signals")
-        if [[ "$status" == "unknown" ]]; then
-            case "$sv" in
-                approved) status="approved"; updated_at="${updated_at:-$sticky_at}" ;;
-                changes)  status="changes";  updated_at="${updated_at:-$sticky_at}" ;;
-                pending)  status="pending";  updated_at="${updated_at:-$sticky_at}" ;;
-            esac
-        fi
-    fi
-
-    # --- reactions (Codex-style) ---
-    local has_eyes=0 has_thumbs=0
-    local content normalized
-    while IFS= read -r content; do
-        [[ -z "$content" ]] && continue
-        normalized=$(_normalize_reaction_content "$content")
-        case "$normalized" in
-            eyes) has_eyes=1 ;;
-            "+1") has_thumbs=1 ;;
-        esac
-    done < <(jq -r --arg u "$reviewer" '
-        [.[] | select(.user.login == $u) | .content] | unique | .[]
-    ' <<<"$body_reactions" 2>/dev/null)
-
-    while IFS= read -r content; do
-        [[ -z "$content" ]] && continue
-        normalized=$(_normalize_reaction_content "$content")
-        case "$normalized" in
-            eyes) has_eyes=1 ;;
-            "+1") has_thumbs=1 ;;
-        esac
-    done < <(jq -r --arg u "$reviewer" '
-        [.[] | select(.user.login == $u) | .content] | unique | .[]
-    ' <<<"$own_reactions" 2>/dev/null)
-
-    if [[ $has_eyes -eq 1 ]]; then
-        signals=$(jq -c '. + ["reaction:eyes"]' <<<"$signals")
-    fi
-    if [[ $has_thumbs -eq 1 ]]; then
-        signals=$(jq -c '. + ["reaction:+1"]' <<<"$signals")
-    fi
-
-    # --- unresolved review threads authored by this reviewer ---
-    # Match the thread author to the configured reviewer robustly.
-    # The reviewer login is discovered from REST (reviews/comments/reactions) and
-    # carries the "[bot]" suffix (e.g. "chatgpt-codex-connector[bot]"), while the
-    # GraphQL review-thread author login for the SAME GitHub App bot is the bare
-    # app slug ("chatgpt-codex-connector"). An exact `==` match therefore missed a
-    # bot's unresolved inline thread, leaving the reviewer unknown/pending with
-    # unresolved_threads:0 until timeout. Normalize BOTH sides — lowercase and
-    # strip a trailing "[bot]" — before comparing so attribution is stable across
-    # the REST/GraphQL identity mismatch and login casing.
-    local unresolved
-    unresolved=$(jq --arg u "$reviewer" '
-        def norm: ascii_downcase | sub("\\[bot\\]$"; "");
-        ($u | norm) as $ru
-        | [.[]
-           | select((.isResolved // false) == false)
-           | select((.isOutdated // false) == false)
-           | select([.comments.nodes[]?.author.login // empty | norm] | any(. == $ru))
-          ] | length
-    ' <<<"$threads_json" 2>/dev/null || echo 0)
-    [[ -z "$unresolved" || "$unresolved" == "null" ]] && unresolved=0
-    if [[ "$unresolved" -gt 0 ]]; then
-        signals=$(jq -c --arg s "inline:$unresolved" '. + [$s]' <<<"$signals")
-    fi
-
-    # --- final status resolution ---
-    # Unresolved-by-reviewer ALWAYS forces "changes" — this is the Codex path
-    # where the bot signals fix requests via inline threads only. For Claude
-    # this matches the existing behavior because formal CHANGES_REQUESTED is
-    # already "changes".
-    if [[ "$unresolved" -gt 0 ]]; then
-        status="changes"
-    elif [[ "$status" == "unknown" ]]; then
-        if [[ $has_thumbs -eq 1 ]]; then
-            status="approved"
-        elif [[ $has_eyes -eq 1 ]]; then
-            status="pending"
-        fi
-    fi
-
-    jq -n -c \
-        --arg reviewer "$reviewer" \
-        --arg status "$status" \
-        --argjson signals "$signals" \
-        --arg updated_at "$updated_at" \
-        --argjson unresolved "$unresolved" \
-        '{reviewer:$reviewer, status:$status, signals:$signals, updated_at:$updated_at, unresolved_threads:$unresolved}'
-}
-
 # Every reviewThreads page for a PR, merged into one JSON array of thread
 # nodes on stdout.
 #
@@ -776,103 +542,6 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
     done
     printf '%s\n' "$nodes"
 }
-
-# Live wrapper: fetches all required inputs from GitHub and calls
-# bot_review_status_compute. Returns the same JSON shape.
-bot_review_status() {
-    local pr="$1"
-    local reviewer="$2"
-
-    local reviews comments body_reactions own_reactions threads first_comment_id
-
-    reviews=$(gh_rest_all "repos/{owner}/{repo}/pulls/$pr/reviews") || return 1
-    comments=$(gh_rest_all "repos/{owner}/{repo}/issues/$pr/comments") || return 1
-    body_reactions=$(gh_rest "repos/{owner}/{repo}/issues/$pr/reactions") || return 1
-
-    first_comment_id=$(jq -r --arg u "$reviewer" \
-        '[.[] | select(.user.login == $u)] | first | .id // empty' \
-        <<<"$comments" 2>/dev/null || echo "")
-    if [[ -n "$first_comment_id" ]]; then
-        own_reactions=$(gh_rest "repos/{owner}/{repo}/issues/comments/$first_comment_id/reactions") || return 1
-    else
-        own_reactions="[]"
-    fi
-
-    # Review threads come from GraphQL: REST does not expose isResolved cleanly.
-    local repo_info owner repo
-    repo_info=$(get_repo_info) || return 1
-    owner=$(get_owner "$repo_info")
-    repo=$(get_repo "$repo_info")
-    threads=$(gh_graphql_threads "$owner" "$repo" "$pr" '
-                          isResolved
-                          isOutdated
-                          comments(first: 5) { nodes { author { login } } }') || return 1
-
-    bot_review_status_compute "$reviewer" "$reviews" "$comments" "$body_reactions" "$own_reactions" "$threads"
-}
-
-# Auto-detect bot reviewers that have emitted review-specific signals. Generic
-# automation comments (Linear linkbacks, release notes, etc.) are intentionally
-# excluded so they do not surface as unknown reviewers in review-status output.
-detect_bot_reviewers_from_inputs() {
-    local reviews_json="${1:-[]}"
-    local comments_json="${2:-[]}"
-    local reactions_json="${3:-[]}"
-    local marker_re login_re
-    marker_re="$(_review_signal_comment_regex)"
-    login_re="$(_review_comment_bot_login_regex)"
-
-    {
-        jq -r '.[].user.login | select(endswith("[bot]"))' <<<"$reviews_json"
-        jq -r --arg marker_re "$marker_re" --arg login_re "$login_re" '
-            .[]
-            | select((.user.login // "") | test($login_re))
-            | select((.body // "") | test($marker_re; "i"))
-            | .user.login
-        ' <<<"$comments_json"
-        jq -r --arg login_re "$login_re" '
-            .[]
-            | select((.user.login // "") | test($login_re))
-            | .user.login
-        ' <<<"$reactions_json"
-    } | sort -u | grep -v '^$' || true
-}
-
-# Auto-detect bot reviewers — formal-review bots, bots with review-signal
-# comments, bots reacting on the PR body, and bots reacting on their own issue
-# comment (Codex-style fallback).
-detect_bot_reviewers() {
-    local pr="$1"
-    local reviews comments reactions
-    reviews=$(gh_rest_all "repos/{owner}/{repo}/pulls/$pr/reviews") || return 1
-    comments=$(gh_rest_all "repos/{owner}/{repo}/issues/$pr/comments") || return 1
-    reactions=$(gh_rest "repos/{owner}/{repo}/issues/$pr/reactions") || return 1
-
-    local reviewers
-    reviewers=$(detect_bot_reviewers_from_inputs "$reviews" "$comments" "$reactions")
-
-    # Codex can signal via a reaction on its own first comment rather than on
-    # the PR body. Include those reaction authors without treating every bot
-    # comment author as a reviewer.
-    local comment_id comment_author comment_reactions reaction_reviewers login_re
-    login_re="$(_review_comment_bot_login_regex)"
-    while IFS=$'\t' read -r comment_id comment_author; do
-        [[ -z "$comment_id" || -z "$comment_author" ]] && continue
-        comment_reactions=$(gh_rest "repos/{owner}/{repo}/issues/comments/$comment_id/reactions") || return 1
-        reaction_reviewers=$(jq -r --arg author "$comment_author" '
-            .[]
-            | select((.user.login // "") == $author)
-            | select((.content // "") == "+1" or (.content // "") == "eyes" or (.content // "") == "THUMBS_UP" or (.content // "") == "EYES")
-            | .user.login
-        ' <<<"$comment_reactions" 2>/dev/null || true)
-        if [[ -n "$reaction_reviewers" ]]; then
-            reviewers=$(printf '%s\n%s\n' "$reviewers" "$reaction_reviewers" | sort -u | grep -v '^$' || true)
-        fi
-    done < <(jq -r --arg login_re "$login_re" '.[] | select((.user.login // "") | test($login_re)) | [.id, .user.login] | @tsv' <<<"$comments" 2>/dev/null || true)
-
-    printf '%s\n' "$reviewers" | sort -u | grep -v '^$' || true
-}
-
 
 # Check if bot token is configured and valid
 # Usage: check_bot_token [format]

@@ -119,9 +119,6 @@ get_pr_data() {
     repo=$(get_repo "$repo_info")
 
     # GraphQL query for PR data.
-    # `reactions` on the PR itself and on each PR-level comment let downstream
-    # consumers interpret bots that signal review state via reactions
-    # (e.g. Codex: 👀 = reviewing, 👍 = approved).
     local query='
 query($owner: String!, $repo: String!, $pr: Int!) {
   repository(owner: $owner, name: $repo) {
@@ -132,9 +129,6 @@ query($owner: String!, $repo: String!, $pr: Int!) {
       files(first: 100) {
         nodes { path }
       }
-      reactions(first: 100) {
-        nodes { content user { login } }
-      }
       comments(first: 50) {
         nodes {
           id
@@ -142,9 +136,6 @@ query($owner: String!, $repo: String!, $pr: Int!) {
           body
           url
           createdAt
-          reactions(first: 100) {
-            nodes { content user { login } }
-          }
         }
       }
     }
@@ -179,26 +170,11 @@ query($owner: String!, $repo: String!, $pr: Int!) {
             output="$result"
             ;;
         safe)
-            output=$(echo "$result" | jq '
-                def reaction_norm(c):
-                    if   c == "THUMBS_UP"   then "+1"
-                    elif c == "THUMBS_DOWN" then "-1"
-                    elif c == "EYES"        then "eyes"
-                    elif c == "LAUGH"       then "laugh"
-                    elif c == "HOORAY"      then "hooray"
-                    elif c == "CONFUSED"    then "confused"
-                    elif c == "HEART"       then "heart"
-                    elif c == "ROCKET"      then "rocket"
-                    else (c // "") | ascii_downcase end;
-                {
+            output=$(echo "$result" | jq '{
                 number: .repository.pullRequest.number,
                 title: (.repository.pullRequest.title // ""),
                 branch: (.repository.pullRequest.headRefName // ""),
                 files: [.repository.pullRequest.files.nodes[].path],
-                reactions: [.repository.pullRequest.reactions.nodes[]? | {
-                    content: reaction_norm(.content),
-                    user: (.user.login // "")
-                }],
                 threads: [.repository.pullRequest.reviewThreads.nodes[] | {
                     id: .id,
                     is_resolved: .isResolved,
@@ -220,26 +196,19 @@ query($owner: String!, $repo: String!, $pr: Int!) {
                     body: (.body // ""),
                     url: (.url // ""),
                     created_at: (.createdAt // ""),
-                    source: "pr-level",
-                    reactions: [(.reactions.nodes[]? // empty) | {
-                        content: reaction_norm(.content),
-                        user: (.user.login // "")
-                    }]
+                    source: "pr-level"
                 }]
             }')
             ;;
     esac
 
     # Apply actionable filter (unresolved non-outdated threads, no bot comments).
-    # `reactions` is preserved on the top-level PR so callers can interpret
-    # reaction-based reviewers (e.g. Codex 👀/👍) downstream.
     if [ "$actionable" = "true" ] && [ "$FORMAT" != "raw" ]; then
         output=$(echo "$output" | jq --arg bot_user "${GH_BOT_USERNAME:-review-bot[bot]}" '{
             number,
             title,
             branch,
             files,
-            reactions: (.reactions // []),
             threads: [.threads[] | select(.is_resolved == false and .is_outdated == false) | {
                 id, path, line, source,
                 comments: [.comments[] | select(.author | IN("github-actions", "github-actions[bot]", "dependabot", "dependabot[bot]", "codecov", "codecov[bot]", $bot_user) | not)]
