@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::manifest::{Manifest, ManifestFile};
+use crate::manifest::Manifest;
 use crate::model::{ItemKind, Scope};
 use crate::registry::collections::Collection;
 
@@ -70,10 +70,8 @@ pub fn collection_steps(
     // person to confirm it, and fetch every repository — before the
     // install reloaded the same file and refused. So the refusal comes
     // out here, at the door, in the record's own words.
-    let manifest = match crate::manifest::load(&crate::manifest::manifest_path(env, scope))? {
-        ManifestFile::Current(manifest) => *manifest,
-        ManifestFile::Absent => Manifest::default(),
-    };
+    let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
+        .unwrap_or_default();
     let mut by_repo: BTreeMap<String, CollectionStep> = BTreeMap::new();
     for member in &collection.members {
         let identity = crate::source_ref::repo_identity(&member.repo);

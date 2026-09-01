@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::lock_path;
-use crate::manifest::{self, ManifestFile};
+use crate::manifest;
 use crate::model::Scope;
 use crate::settings_template::TemplateSource;
 
@@ -34,11 +34,10 @@ use crate::settings_template::TemplateSource;
 /// settings.
 pub fn settings_templates(env: &Env, scope: &Scope) -> Result<BTreeMap<String, TemplateSource>> {
     let scope = &scope.canonical();
-    let ManifestFile::Current(manifest) = manifest::load(&manifest::manifest_path(env, scope))?
-    else {
+    let lock = crate::lock::load(&lock_path(env, scope))?;
+    let Some(manifest) = manifest::load_current(&manifest::manifest_path(env, scope))? else {
         return Ok(BTreeMap::new());
     };
-    let lock = crate::lock::load(&lock_path(env, scope))?;
     let state = super::desired::desired_state(env, scope, &manifest, &lock, false, None)?;
     Ok(state.settings_templates)
 }

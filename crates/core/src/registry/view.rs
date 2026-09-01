@@ -40,8 +40,8 @@ pub struct DirectoryRow {
 }
 
 pub fn directory(env: &Env, fetch: &dyn Fetch, force_refresh: bool) -> Result<DirectoryView> {
+    let subscribed = subscribed_repos(env)?;
     let loaded = cache::load(env, fetch, force_refresh)?;
-    let subscribed = subscribed_repos(env);
     let rows = loaded
         .index
         .marketplaces
@@ -76,11 +76,11 @@ pub fn directory(env: &Env, fetch: &dyn Fetch, force_refresh: bool) -> Result<Di
 
 /// Every repository any scope subscribes to, spelled the one canonical
 /// way.
-fn subscribed_repos(env: &Env) -> BTreeSet<String> {
-    crate::source_ops::repo_subscriptions(env)
+fn subscribed_repos(env: &Env) -> Result<BTreeSet<String>> {
+    Ok(crate::source_ops::repo_subscriptions(env)?
         .into_iter()
         .filter_map(|row| row.repo_key)
-        .collect()
+        .collect())
 }
 
 fn leaf_of(repo: &str) -> String {

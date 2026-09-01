@@ -1,3 +1,4 @@
+use kendex_core::env::Env;
 use kendex_core::harness::{KindCaps, capabilities};
 use kendex_core::model::{HarnessId, ItemKind};
 use kendex_core::scan;
@@ -100,11 +101,19 @@ pub fn report_route(
     name: String,
     kind: Option<ItemKind>,
 ) -> Result<ReportRouteView, String> {
-    let env = env()?;
-    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&env, &scope))
+    route_for(&env()?, &scope, &name, kind)
+}
+
+fn route_for(
+    env: &Env,
+    scope: &kendex_core::model::Scope,
+    name: &str,
+    kind: Option<ItemKind>,
+) -> Result<ReportRouteView, String> {
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))
         .map_err(|e| e.to_string())?;
     let route =
-        kendex_core::report::route(&lock, &name, kind, kendex_core::report::DEFAULT_UPSTREAM);
+        kendex_core::report::route(&lock, name, kind, kendex_core::report::DEFAULT_UPSTREAM);
     let issue_url = route.repo.as_ref().map(|repo| {
         let mut url = format!(
             "https://github.com/{repo}/issues/new?title={}",
@@ -121,4 +130,30 @@ pub fn report_route(
         label: route.label,
         issue_url,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::route_for;
+    use kendex_core::env::{Env, FakeOs};
+    use kendex_core::model::Scope;
+
+    #[test]
+    fn a_malformed_lock_fails_the_report_route() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = Env::fake(tmp.path(), FakeOs::Linux);
+        let project = tmp.path().join("dev/app");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join(".kendex-lock.json"),
+            format!(r#"{{"version":{}"#, kendex_core::lock::LOCK_VERSION),
+        )
+        .unwrap();
+        let scope = Scope::Project { root: project };
+
+        let Err(error) = route_for(&env, &scope, "gh", None) else {
+            panic!("a malformed lock must fail the route");
+        };
+        assert!(error.contains("could not be read"), "{error}");
+    }
 }

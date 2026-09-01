@@ -67,7 +67,7 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
             // page carries on as it, from its own store and without the
             // network — a spelling that keys a different store entry must
             // not turn an offline open into a failed fetch.
-            if let Some(held) = subscribed_as(env, &key) {
+            if let Some(held) = subscribed_as(env, &key)? {
                 (open_held(env, &held)?, None, Some(held))
             } else {
                 let resolution = crate::remote::sync(env, &key, None)?;
@@ -75,7 +75,7 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
                 // The fetch may be the one a never-fetched subscription
                 // under this spelling was waiting for: it is Ready now, and
                 // the page carries on as it rather than offering Subscribe.
-                match subscribed_as(env, &key) {
+                match subscribed_as(env, &key)? {
                     Some(held) => (open_held(env, &held)?, warning, Some(held)),
                     None => (super::open_repo(env, key, resolution)?, warning, None),
                 }
@@ -126,22 +126,28 @@ pub fn about(env: &Env, catalog: &Catalog) -> Result<AboutReport> {
 /// repository however it spells it and can be read right now. One that is
 /// turned off or never fetched resolves as not Ready and is passed over:
 /// the page just read the repository, and switching onto a subscription
-/// whose content is unreachable would trade that for an empty page.
-fn subscribed_as(env: &Env, key: &str) -> Option<SubscriptionRef> {
-    crate::source_ops::repo_subscriptions(env)
-        .into_iter()
-        .filter(|row| row.repo_key.as_deref() == Some(key))
-        .find(|row| {
-            let Ok(Some(manifest)) = crate::source_ops::load_current(env, &row.scope) else {
-                return false;
-            };
-            matches!(
-                crate::source::resolve(env, &row.scope, &row.name, &manifest),
-                Ok(crate::source::SourceState::Ready(_))
-            )
-        })
-        .map(|row| SubscriptionRef {
-            scope: row.scope,
-            source: row.name,
-        })
+/// whose content is unreachable would trade that for an empty page. A
+/// manifest that cannot be read fails the summary instead of making its
+/// subscription disappear.
+fn subscribed_as(env: &Env, key: &str) -> Result<Option<SubscriptionRef>> {
+    for row in crate::source_ops::repo_subscriptions(env)? {
+        if row.repo_key.as_deref() != Some(key) {
+            continue;
+        }
+        let Some(manifest) =
+            crate::manifest::load_current(&crate::manifest::manifest_path(env, &row.scope))?
+        else {
+            continue;
+        };
+        if matches!(
+            crate::source::resolve(env, &row.scope, &row.name, &manifest),
+            Ok(crate::source::SourceState::Ready(_))
+        ) {
+            return Ok(Some(SubscriptionRef {
+                scope: row.scope,
+                source: row.name,
+            }));
+        }
+    }
+    Ok(None)
 }

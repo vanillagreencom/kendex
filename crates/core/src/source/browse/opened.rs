@@ -7,7 +7,7 @@
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::Lock;
-use crate::manifest::{Manifest, ManifestFile};
+use crate::manifest::Manifest;
 use crate::model::{ItemKind, Scope};
 use crate::source_read::SealedSource;
 
@@ -28,10 +28,8 @@ pub(crate) struct Browsed {
 }
 
 fn records(env: &Env, scope: &Scope) -> Result<(Manifest, Lock)> {
-    let manifest = match crate::manifest::load(&crate::manifest::manifest_path(env, scope))? {
-        ManifestFile::Current(manifest) => *manifest,
-        ManifestFile::Absent => Manifest::default(),
-    };
+    let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
+        .unwrap_or_default();
     let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
     Ok((manifest, lock))
 }

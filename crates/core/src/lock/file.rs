@@ -219,8 +219,8 @@ pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
     Ok(LockFile::Current(lock))
 }
 
-/// Load for mutation. An absent lock is a fresh scope; anything this build
-/// cannot read has already been refused by [`parse_text`].
+/// Load the current lock for reads or mutations. An absent lock is an empty
+/// current record; a present record this build cannot read is an error.
 pub fn load(path: &Path) -> Result<Lock> {
     match load_file(path)? {
         LockFile::Absent => Ok(Lock {

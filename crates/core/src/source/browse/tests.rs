@@ -101,6 +101,34 @@ fn packages_listed_for_a_plain_discovered_marketplace() {
     assert!(rows.iter().any(|row| row.name == "extra"));
 }
 
+#[test]
+fn malformed_scope_records_fail_the_browse_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let catalog = tmp.path().join("catalog");
+    skill(&catalog, "skills", "gh", "body");
+    let (env, scope) = project(tmp.path(), "schema = [broken\n");
+
+    assert!(matches!(
+        packages(&env, &cat(&scope)),
+        Err(crate::error::CoreError::TomlParse { .. })
+    ));
+
+    fs::write(
+        crate::manifest::manifest_path(&env, &scope),
+        sources_decl(&catalog),
+    )
+    .unwrap();
+    fs::write(
+        crate::lock::lock_path(&env, &scope),
+        format!(r#"{{"version":{}"#, crate::lock::LOCK_VERSION),
+    )
+    .unwrap();
+    assert!(matches!(
+        packages(&env, &cat(&scope)),
+        Err(crate::error::CoreError::LockCorrupt { .. })
+    ));
+}
+
 /// The Packages row shows the summary when the header writes one and the
 /// description when it does not.
 #[test]

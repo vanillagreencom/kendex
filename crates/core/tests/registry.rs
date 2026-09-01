@@ -1,6 +1,10 @@
 //! The community directory client: strict parse with caps, the
 //! ETag/TTL/offline ladder, and the skills.sh adapter.
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
 use kendex_core::registry::{Fetch, FetchResponse, cache, index, skillssh};
@@ -69,6 +73,26 @@ fn body_with(marketplaces: &str) -> String {
 
 fn env_in(dir: &Path) -> Env {
     Env::fake(dir, FakeOs::Linux)
+}
+
+#[test]
+fn a_malformed_manifest_fails_the_directory_subscription_join() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = rooted(&dir);
+    let env = env_in(&root);
+    let manifest = env.global_manifest_file();
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    std::fs::write(&manifest, "schema = [broken\n").unwrap();
+    let fetch = Canned::new(vec![ok(
+        200,
+        None,
+        &body_with(r#"{"repo":"owner/repo","name":"repo"}"#),
+    )]);
+
+    assert!(matches!(
+        kendex_core::registry::view::directory(&env, &fetch, true),
+        Err(CoreError::TomlParse { .. })
+    ));
 }
 
 #[test]

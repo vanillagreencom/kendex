@@ -5,7 +5,7 @@
 
 #[path = "../../test_util.rs"]
 mod test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -180,6 +180,28 @@ fn rows_of(read: &ScopeSettings, skill: &str) -> Vec<(String, String, Current)> 
     rows.iter()
         .map(|row| (row.key.clone(), row.default.clone(), row.current.clone()))
         .collect()
+}
+
+#[test]
+fn a_corrupt_lock_without_a_manifest_fails_the_settings_view() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("dev/app");
+    fs::create_dir_all(&project).unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    fs::write(
+        project.join(".kendex-lock.json"),
+        format!(r#"{{"version":{}"#, kendex_core::lock::LOCK_VERSION),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        scope_settings(&env, &scope),
+        Err(CoreError::LockCorrupt { .. })
+    ));
 }
 
 /// The whole read model on a settled scope: every declared key with its

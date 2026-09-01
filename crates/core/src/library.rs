@@ -16,7 +16,7 @@ use specta::Type;
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::LockFile;
-use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest, ManifestFile};
+use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
 
 /// Where one installation came from.
@@ -58,10 +58,8 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
     let scopes: Vec<Scope> = scopes.iter().map(Scope::canonical).collect();
     let mut rows: BTreeMap<(Scope, ItemKind, String, HarnessId), Origin> = BTreeMap::new();
     for scope in &scopes {
-        let manifest = match crate::manifest::load(&crate::manifest::manifest_path(env, scope))? {
-            ManifestFile::Current(manifest) => *manifest,
-            ManifestFile::Absent => Manifest::default(),
-        };
+        let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
+            .unwrap_or_default();
         let LockFile::Current(lock) = crate::lock::load_file(&crate::lock::lock_path(env, scope))?
         else {
             continue;

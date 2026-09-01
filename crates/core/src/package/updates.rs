@@ -159,7 +159,9 @@ pub(crate) fn scope_key(scope: &Scope) -> String {
 /// back flagged, never filtered, so the surface that hides them can also
 /// offer the way back.
 pub fn updates(env: &Env, scope: &Scope) -> Result<UpdatesReport> {
-    let Some(manifest) = load_current(env, scope)? else {
+    let Some(manifest) =
+        crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
+    else {
         return Ok(UpdatesReport {
             rows: Vec::new(),
             warnings: Vec::new(),
@@ -339,11 +341,4 @@ pub fn set_ignored(
         Ok(())
     })?;
     Ok(())
-}
-
-fn load_current(env: &Env, scope: &Scope) -> Result<Option<crate::manifest::Manifest>> {
-    match crate::manifest::load(&crate::manifest::manifest_path(env, scope))? {
-        crate::manifest::ManifestFile::Current(manifest) => Ok(Some(*manifest)),
-        crate::manifest::ManifestFile::Absent => Ok(None),
-    }
 }

@@ -41,7 +41,9 @@ fn a_reference_can_carry_the_revision_it_reads() {
         let report = add_source(&env, &scope, name, reference).unwrap();
         crate::apply::execute(&env, &report.plan).unwrap();
     }
-    let manifest = load_current(&env, &scope).unwrap().unwrap();
+    let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(&env, &scope))
+        .unwrap()
+        .unwrap();
 
     let pinned = &manifest.sources["pinned"];
     assert_eq!(pinned.repo.as_deref(), Some("owner/repo"));

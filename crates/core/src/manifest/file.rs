@@ -56,6 +56,15 @@ pub fn load(path: &Path) -> Result<ManifestFile> {
     parse_text(path, &text)
 }
 
+/// The current manifest when the file exists. Absence is `None`; a present
+/// file this build cannot read is an error.
+pub fn load_current(path: &Path) -> Result<Option<Manifest>> {
+    match load(path)? {
+        ManifestFile::Absent => Ok(None),
+        ManifestFile::Current(manifest) => Ok(Some(*manifest)),
+    }
+}
+
 /// [`load`] for text the caller already read — the importer classifies the
 /// exact bytes its preconditions bind to.
 pub fn parse_text(path: &Path, text: &str) -> Result<ManifestFile> {

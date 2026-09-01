@@ -3,6 +3,7 @@
 //! browse's "carry on as this subscription" both read.
 
 use crate::env::Env;
+use crate::error::Result;
 use crate::model::Scope;
 
 /// One declared remote subscription, read off the manifest alone — no
@@ -17,23 +18,21 @@ pub struct RepoSubscription {
 }
 
 /// Every remote subscription across the personal scope and every project,
-/// personal first, from the manifests alone. A scope that cannot be read
-/// contributes nothing rather than blocking the caller: the Community
-/// tab's Subscribed badge and the detail page's "carry on as this
-/// subscription" both read this one list, so they cannot disagree.
-pub fn repo_subscriptions(env: &Env) -> Vec<RepoSubscription> {
+/// personal first, from the manifests alone. An absent manifest contributes
+/// nothing; an unreadable manifest fails the join.
+pub fn repo_subscriptions(env: &Env) -> Result<Vec<RepoSubscription>> {
     let mut scopes = vec![Scope::Global];
-    if let Ok(settings) = crate::settings::load(env) {
-        scopes.extend(
-            settings
-                .projects
-                .into_iter()
-                .map(|root| Scope::Project { root }),
-        );
-    }
+    scopes.extend(
+        crate::settings::load(env)?
+            .projects
+            .into_iter()
+            .map(|root| Scope::Project { root }),
+    );
     let mut out = Vec::new();
     for scope in scopes {
-        let Ok(Some(manifest)) = super::load_current(env, &scope) else {
+        let Some(manifest) =
+            crate::manifest::load_current(&crate::manifest::manifest_path(env, &scope))?
+        else {
             continue;
         };
         for (name, decl) in &manifest.sources {
@@ -47,7 +46,7 @@ pub fn repo_subscriptions(env: &Env) -> Vec<RepoSubscription> {
             });
         }
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -72,7 +71,7 @@ mod tests {
         )
         .unwrap();
 
-        let rows = repo_subscriptions(&env);
+        let rows = repo_subscriptions(&env).unwrap();
         let key_of = |name: &str| {
             rows.iter()
                 .find(|row| row.name == name)
@@ -105,7 +104,7 @@ mod tests {
         )
         .unwrap();
 
-        let rows = repo_subscriptions(&env);
+        let rows = repo_subscriptions(&env).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "kendex");
         assert_eq!(

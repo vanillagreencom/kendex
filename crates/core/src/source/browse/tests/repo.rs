@@ -96,6 +96,20 @@ fn the_summary_counts_and_names_the_head_and_knows_no_subscription() {
 }
 
 #[test]
+fn a_malformed_manifest_fails_the_repository_summary() {
+    let (_tmp, env, _upstream) = fixture();
+    let project = env.home.join("dev/app");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(project.join("kendex.toml"), "schema = [broken\n").unwrap();
+    crate::settings::register_project(&env, &project).unwrap();
+
+    assert!(matches!(
+        summary(&env, &repo()),
+        Err(CoreError::TomlParse { .. })
+    ));
+}
+
+#[test]
 fn a_readable_subscription_to_the_same_repository_is_found_and_an_unfetched_one_passed_over() {
     let (_tmp, env, _upstream) = fixture();
     let manifest = env.global_manifest_file();
