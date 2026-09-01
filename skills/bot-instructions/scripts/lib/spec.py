@@ -30,12 +30,15 @@ _DASH = "–"
 
 
 class Doctrine:
-    def __init__(self, blocks, version, skill_rel, renders_rel, routing):
+    def __init__(self, blocks, version, routing, positions):
         self.blocks = blocks            # id -> text
         self.version = version
-        self.skill_rel = skill_rel
-        self.renders_rel = renders_rel
         self.routing = routing          # column -> [block ids in order]
+        # block id -> {column: position}. Its own attribute rather than a
+        # `_positions` key inside `routing`, whose documented type is the line
+        # above: a sentinel key there makes any iteration over `routing` read
+        # one entry that is not a column.
+        self.positions = positions
 
 
 def check_marker_path(path):
@@ -147,8 +150,7 @@ def parse_routing(renders_text, where):
             ((pos[column], block) for block, pos in table.items() if column in pos),
         )
         routing[column] = [block for _, block in pairs]
-    routing["_positions"] = table
-    return routing
+    return routing, table
 
 
 def load(spec_tree, skill_rel, renders_rel):
@@ -161,8 +163,8 @@ def load(spec_tree, skill_rel, renders_rel):
         raise SpecError(f"{renders_rel}: the spec copy has no routing table")
     version = read_version(skill_text, skill_rel)
     blocks = parse_doctrine(skill_text, skill_rel)
-    routing = parse_routing(renders_text, renders_rel)
-    return Doctrine(blocks, version, skill_rel, renders_rel, routing)
+    routing, positions = parse_routing(renders_text, renders_rel)
+    return Doctrine(blocks, version, routing, positions)
 
 
 def frozen_ids():

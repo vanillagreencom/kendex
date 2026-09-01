@@ -62,6 +62,14 @@ def main(argv=None):
         print("--staged is a check mode; render and adopt write the working tree",
               file=sys.stderr)
         return 2
+    if args.dry_run and args.verb != "render":
+        # `adopt` is the one-time verb that writes, so a flag it accepts and
+        # ignores is the worst place for one: a run meant to preview took the
+        # files over. This package's thesis is that a declared thing happens
+        # whole or refuses naming it.
+        print(f"--dry-run is a render mode; {args.verb} does not write a set to preview",
+              file=sys.stderr)
+        return 2
     # The two roots an operator names are resolved through their symlinks
     # once, here. Containment is about not escaping the resolved root, never
     # about how the operator spelled it, and in a kendex-installed repo the

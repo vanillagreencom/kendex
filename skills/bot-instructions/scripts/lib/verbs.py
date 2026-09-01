@@ -7,6 +7,8 @@ mixed tree that says so beats one that does not. Each individual replacement
 is atomic, so every path holds either its old bytes or its new ones.
 """
 
+import re
+
 from . import marker, render, run, writer
 from .errors import RenderError, ValidationFailed
 from .fsutil import open_root
@@ -74,7 +76,12 @@ def _splice(ctx, root_fd):
                 "AGENTS.md: the owned region could not be located at write time — the "
                 "heading is gone or duplicated since the build read it"
             )
-        if not marker.region_owned(current) and current.strip():
+        if not marker.region_owned(current):
+            # No whitespace test: a region whose body is empty is still a
+            # region this package does not own, and treating it as writable
+            # would be the bootstrap exemption `renders.md` § `AGENTS.md`
+            # refuses — a boundary between a region render may write unmarked
+            # and one it must refuse. The bootstrap is adopt, then render.
             raise RenderError(
                 "AGENTS.md: the `## Code Review Rules` region carries no marker at its "
                 "canonical position, so it is the repo's own — run `adopt` to take it over"
@@ -163,8 +170,6 @@ def _adopt_region(ctx, root_fd, pointers):
     pointers |= points_at(held[0])
     return [f"adopted AGENTS.md § Code Review Rules ({len(held[0].splitlines())} lines it held)"]
 
-
-import re
 
 # `adopt` names every repo-root or `.github/` markdown file an adopted file
 # points at. Three forms, one level, no recursion: an inline link's target, a

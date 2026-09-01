@@ -26,7 +26,8 @@ names the merged paths.
 import tomllib
 
 from .constants import DERIVED_REASON
-from .errors import ManifestError
+from .errors import InputError, ManifestError
+from . import globs
 
 ROOT_MANIFEST = "kendex.toml"
 LOCAL_MANIFEST = "kendex-local.toml"
@@ -103,7 +104,7 @@ def derive(tree, resolved):
             # This repo's own file: its content of record is edited here, so
             # it stays in review scope.
             continue
-        trees.add(f".agents/skills/{name}/**")
+        trees.add(_checked(f".agents/skills/{name}/**", f"[skills.{name}]"))
     for harness in resolved.harnesses:
         row = HARNESS_ROOTS.get(harness)
         if row is None:
@@ -118,5 +119,27 @@ def derive(tree, resolved):
         # rejects as dead config no `bot-instructions.toml` edit can clear.
         present = tree.subdirs(root)
         for sub in present if subtrees is None else [s for s in subtrees if s in present]:
-            trees.add(f"{root}/{sub}/**")
+            trees.add(_checked(f"{root}/{sub}/**", f"[install] harnesses {harness!r}"))
     return [{"glob": g, "reason": DERIVED_REASON, "derived": True} for g in sorted(trees)]
+
+
+def _checked(glob, source):
+    """A derived glob, held to the same dialect every declared one meets.
+
+    This is the one glob source that never passed `globs.check`: a manifest
+    key and an on-disk directory name become pattern bytes without an author
+    writing them as a glob. Downstream byte validators caught some of it by
+    accident, on the surfaces that parse; the paths also render as prose into
+    `AGENTS.md`, where nothing reads them as globs at all, so a name carrying
+    a newline and a heading landed live reviewer instructions in a generated
+    file. Refusing at the source names which manifest row produced it.
+    """
+    try:
+        globs.check(glob, source)
+    except InputError as exc:
+        raise ManifestError(
+            f"{exc}. A derived exclusion is rendered as a pattern on three surfaces and "
+            "as prose on two, so a name outside the dialect is refused here rather than "
+            "carried into an output"
+        ) from exc
+    return glob

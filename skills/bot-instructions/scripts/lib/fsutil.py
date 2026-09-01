@@ -11,8 +11,7 @@ import errno
 import os
 import stat
 
-from .constants import MARKER_TOKEN
-from .errors import ContainmentError, LockError, RenderError
+from .errors import ContainmentError, RenderError
 
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _DIRECTORY = getattr(os, "O_DIRECTORY", 0)
@@ -121,8 +120,9 @@ def walk(root_fd, rel, _depth=0):
     """Every regular file below `rel`, repo-relative, sorted.
 
     A symlink met on the way is a finding rather than something to follow:
-    `orphan` and `agents-section` walk trees named by the tree under judgment,
-    and a symlinked directory there is a read out of the repo.
+    `orphan` sweeps trees named by the tree under judgment, and a symlinked
+    directory there is a read out of the repo. `orphan` is the only caller —
+    `agents-section` filters the tracked path list and walks nothing.
     """
     if _depth > 64:
         raise ContainmentError(f"{rel}: directory nesting past 64 levels")
@@ -159,6 +159,3 @@ def walk(root_fd, rel, _depth=0):
         os.close(dir_fd)
     return out
 
-
-def carries_marker(text):
-    return text is not None and MARKER_TOKEN in text

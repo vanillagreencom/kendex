@@ -1,10 +1,20 @@
 """The content refusals, as one table.
 
-`schemas/repo-toml.md` § The content refusals is the spec's statement of this;
-ROWS below is the implementation's, and it is the only predicate any caller
-runs. `toml-schema` applies the rows whose source is `bot-instructions.toml`;
-the render-side second check applies the `doctrine block text` row, because
-doctrine text does not come through that file at all.
+`schemas/repo-toml.md` § The content refusals is the spec's statement of this.
+ROWS below encodes every row of that table whose refusals are content classes,
+and is the only predicate their callers run. `toml-schema` applies the rows
+whose source is `bot-instructions.toml`; the render-side second check applies
+the `doctrine block text` row, because doctrine text does not come through
+that file at all.
+
+**Two of the table's ten rows are enforced elsewhere, and this is not their
+copy.** The glob row — `[[surface]] globs`, `exclude_globs`,
+`[[exclusions.path]] glob` — is `globs.check`, whose character class and
+path-shape clauses are its own; the `[cadence] qodo_commands` row is
+`config._cadence` reading `constants.QODO_VERBS`. Both are cited from the
+table rather than restated here, and a reader counting clauses off it lands on
+three structures, not one. `tests/toml-schema.test.sh` holds the table against
+these three, so a row added to either side without the other reds.
 
 Refusals, not escapes: every class here is refused at input. The render
 escapes only what a format requires of text already known to be legal.
@@ -136,7 +146,3 @@ def apply(row, value, where):
         if why is not None:
             raise InputError(f"{where}: {why} ({name} refusal, {row})")
 
-
-def clause_count():
-    """Every marked cell is one clause with one control. The suite counts."""
-    return sum(len(preds) for preds, _ in ROWS.values())

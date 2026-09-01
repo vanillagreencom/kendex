@@ -10,7 +10,6 @@ import tomllib
 
 from .constants import (
     ALL_BLOCK_COLUMNS,
-    CODERABBIT_SCHEMA_PATH,
     MARKER_TOKEN,
     QODO_VERBS,
     ROUTING_COLUMNS,
@@ -25,7 +24,7 @@ def doctrine_routing(ctx, out):
     v = "doctrine-routing"
     doc = ctx.doctrine
     headings = set(doc.blocks)
-    rows = set(doc.routing["_positions"])
+    rows = set(doc.positions)
     for bid in sorted(headings - rows):
         out.append(Finding(v, f"doctrine block {bid!r} has no row in the routing table; "
                               "an unrouted block renders into nothing at all"))
@@ -43,7 +42,7 @@ def doctrine_routing(ctx, out):
                               "the comparison is against the frozen set and not the pair"))
     for column in ROUTING_COLUMNS:
         order = doc.routing[column]
-        positions = [doc.routing["_positions"][b][column] for b in order]
+        positions = [doc.positions[b][column] for b in order]
         if len(set(positions)) != len(positions):
             out.append(Finding(v, f"column {column!r} repeats a position"))
         if positions and positions != list(range(1, len(positions) + 1)):
@@ -77,10 +76,10 @@ def coderabbit_schema(ctx, out):
     except jsonschema.Unimplemented as exc:
         out.append(Finding(v, str(exc)))
         return
-    _completeness(v, doc, schema, "", out)
+    _completeness(v, doc, schema, render_coderabbit.overrides(ctx.model), "", out)
 
 
-def _completeness(v, doc, schema, path, out):
+def _completeness(v, doc, schema, chosen, path, out):
     """Every property the vendored schema defines a default for, at every depth.
 
     Root-only completeness passes a render that dropped a nested option under
@@ -90,7 +89,9 @@ def _completeness(v, doc, schema, path, out):
     for key, sub in (schema.get("properties") or {}).items():
         here = f"{path}.{key}" if path else key
         nested = sub.get("type") == "object" and sub.get("properties")
-        if not nested and "default" not in sub:
+        # The render's own predicate, so the two cannot disagree about a key
+        # and leave a state no config can satisfy.
+        if not render_coderabbit.in_full_state(sub, chosen, here):
             continue
         if key not in doc:
             out.append(Finding(v, f"the render omits {here!r}, which the vendored schema "
@@ -98,7 +99,7 @@ def _completeness(v, doc, schema, path, out):
                                   "precedence ladder this package does not control"))
             continue
         if nested and isinstance(doc[key], dict):
-            _completeness(v, doc[key], sub, here, out)
+            _completeness(v, doc[key], sub, chosen, here, out)
 
 
 def coderabbit_filters(ctx, out):
@@ -135,9 +136,9 @@ def copilot_frontmatter(ctx, out):
         if not path.startswith(".github/instructions/"):
             continue
         name = path.rsplit("/", 1)[1].removesuffix(".instructions.md")
-        front = _frontmatter(text)
+        front, why = _frontmatter(text)
         if front is None:
-            out.append(Finding(v, "no YAML frontmatter", path))
+            out.append(Finding(v, why or "no YAML frontmatter", path))
             continue
         if "applyTo" not in front:
             out.append(Finding(v, "no `applyTo`, so the file matches nothing and never "
@@ -172,15 +173,28 @@ def _exclude_agent(v, front, surface, path, out):
 
 
 def _frontmatter(text):
+    """`(mapping, why)`. Exactly one of the two is None.
+
+    Absent frontmatter and frontmatter the reader could not parse are
+    different failures with different fixes, and collapsing them into one
+    `None` sent the author looking for a dropped block when the render had
+    emitted one nothing could read — the wrong half of the renderer. A body
+    that parses to something other than a mapping is its own answer too,
+    rather than a value the callers then reach `.get` on.
+    """
     if not text.startswith("---\n"):
-        return None
+        return None, None
     end = text.find("\n---\n", 3)
     if end == -1:
-        return None
+        return None, "frontmatter opens with `---` and never closes"
     try:
-        return yamlread.loads(text[4:end])
-    except Exception:
-        return None
+        front = yamlread.loads(text[4:end], "frontmatter")
+    except Exception as exc:
+        return None, f"frontmatter is present and does not parse: {exc}"
+    if not isinstance(front, dict):
+        return None, ("frontmatter parses to a "
+                      f"{type(front).__name__}, and only a mapping carries keys")
+    return front, None
 
 
 def copilot_budget(ctx, out):
@@ -288,11 +302,12 @@ def macroscope_render(ctx, out):
 
 
 def _correctness(v, path, text, out):
-    front = _frontmatter(text)
+    front, why = _frontmatter(text)
     if front is None:
-        out.append(Finding(v, "no frontmatter. Omitted frontmatter applies repo-wide, so a "
-                              "dropped `include` silently widens a path-scoped surface to "
-                              "the whole repository", path))
+        out.append(Finding(v, why or
+                           "no frontmatter. Omitted frontmatter applies repo-wide, so a "
+                           "dropped `include` silently widens a path-scoped surface to "
+                           "the whole repository", path))
         return
     for key in front:
         if key not in ("include", "exclude"):

@@ -7,7 +7,6 @@ check lives in `spec.parse_doctrine`, which applies the `doctrine block text`
 row before any of this runs.
 """
 
-from .constants import MARKER_TOKEN
 from .model import exclude_sentence
 
 AGENTS_HEADING = "## Code Review Rules"

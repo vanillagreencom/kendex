@@ -277,7 +277,11 @@ and stays in review scope. The tracked-path condition is what keeps a
 derivation and the dead-exclusion clause from contradicting each other: a
 subtree the install has not produced, or one git ignores, excludes nothing,
 and deriving it would name a glob that clause rejects with no edit an author
-could make to clear it.
+could make to clear it. A derived glob is held to the glob dialect like a
+declared one, and a manifest key or directory name outside it fails naming the
+manifest row that produced it: this is the one glob source no author writes as
+a glob, and the paths render as prose on the two surfaces that read them as
+prose, where nothing would judge them as patterns at all.
 
 **A harness root is never derived whole**, and the subdirectory rule is why. A
 harness root holds two kinds of thing: subdirectories the harness install owns
@@ -371,15 +375,34 @@ a second check could never red.
 `instructions` is under the heading, frontmatter and marker refusals below.
 Each restructures at least one output: a heading ends the `AGENTS.md` owned
 region, `---` opens frontmatter, and the marker decides which files this package
-owns.
+owns. It is also required to be non-empty, which is a rule about the surface
+rather than about the string: whitespace renders a `path_instructions` entry
+with no text, a `.instructions.md` carrying a marker and nothing under it, and
+a best-practices section with no body — a surface that costs its bots a read
+and tells them nothing, on the flag combinations where `macroscope-render`'s
+no-text clause never runs. Drop the surface instead.
+
+A `[...]` class is made of permitted characters and is not itself checked
+character by character, so the dialect admits one shape no engine can compile:
+a reversed range like `[z-a]`. `globs.check` proves the pattern compiles as its
+last clause, which makes that a `toml-schema` finding naming the glob rather
+than a traceback out of a validator much later. Consecutive `**/` are collapsed
+to one before matching — `**/**/` covers exactly what `**/` covers, and nesting
+the translation of `**/` is exponential in the number of them, which is a
+runtime the dead-exclusion clause pays once per tracked path.
 
 ## The content refusals
 
 One row per input string, one column per refusal class, and an **Enforced**
 column saying which side reads that row's value. Everything that judges these —
 `toml-schema` and the Escaping paragraphs in `renders.md` — cites this table
-rather than restating it, so a predicate written here is the only predicate,
-and one place in the implementation encodes every cell.
+rather than restating it, so a predicate written here is the only predicate.
+Three structures encode it, one per kind of cell: `refusals.ROWS` holds the
+eight rows whose refusals are content classes, `globs.check` holds the glob
+row, whose character class and path-shape clauses are its own, and
+`config._cadence` holds the `qodo_commands` row. A reader counting clauses off
+this table lands on those three, and `tests/toml-schema.test.sh` holds the
+table against them so a row added on one side without the other reds.
 
 The Enforced column exists because one row is not in `bot-instructions.toml` at
 all. Doctrine block text lives in the spec copy, so `toml-schema` never sees it

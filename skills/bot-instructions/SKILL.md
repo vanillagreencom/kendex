@@ -191,10 +191,14 @@ at the open. Two halves, and both are needed:
   which is what makes it checkable at all — re-deriving a path from a descriptor
   needs a different mechanism on each platform this repo targets.
 - **Every open, not every write.** `render` writes, but `check` mostly reads:
-  `drift` opens each path the TOML produces, `orphan` walks the four
-  `.github/instructions/` and `.macroscope/` trees testing each file for the
-  marker, and `agents-section` reads the repo's tracked nested `AGENTS.md`
-  files. Those sets are named by the tree under judgment. `adopt` opens no
+  `drift` opens each path the TOML produces, `orphan` opens every path
+  `validators.md` § `orphan` names — the root outputs it may have written, the
+  two Macroscope read paths it never writes, and the trees it sweeps — testing
+  each for the marker, and `agents-section` reads the repo's tracked nested
+  `AGENTS.md` files. Cited rather than listed a second time, per § Cross-file
+  sets: `orphan`'s set is the one the flag-off case turns on, so a partial
+  copy here would understate the disclosure argument this paragraph exists to
+  make. Those sets are named by the tree under judgment. `adopt` opens no
   file it merely names: it reports the markdown files an adopted one points
   at rather than reading them, so nothing about their contents can reach a
   report. A symlink at any of those paths is
@@ -270,15 +274,16 @@ below contains them.
   state from the index, judging a state nobody is committing.
 - The existing `AGENTS.md`, when `[bots] codex` is true.
 
-What a repo-state validator walks is deliberately not in that set: `orphan`'s
-sweep of `.github/instructions/**` and `.macroscope/correctness/**`, and
-`agents-section`'s walk for nested `AGENTS.md`. Those enumerate paths rather
-than reading a fixed input, so the marker could not name them and no render
-consumes their bytes. They are covered twice over anyway — every open is under
-the rule above, and a repo-state validator reads whichever tree `check`
-selected, the worktree by default and the index under `--staged`, so the staged
-lane still judges one coherent state. The policy set below does contain the
-trees they walk.
+What a repo-state validator reads is deliberately not in that set:
+`orphan`'s sweep of the trees `validators.md` § `orphan` names, and
+`agents-section`'s read of the repo's tracked nested `AGENTS.md` files. Those
+enumerate paths rather than reading a fixed input, so the marker could not
+name them and no render consumes their bytes. They are covered twice over
+anyway — every open is under the rule above, and a repo-state validator reads
+whichever tree `check`
+selected, the worktree by default and the index under `--staged`, so the
+staged lane still judges one coherent state. The policy set below does contain
+the trees they read.
 
 **The policy set**, which is every path whose bytes decide what a bot is told or
 whether a render validates. This list is the one statement of it; the checklist

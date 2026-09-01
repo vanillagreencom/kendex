@@ -77,4 +77,52 @@ git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json
 expect_green 'the canonical render validates against the pinned vendored schema' \
   check --repo "$repo"
 
+# An override naming a property the vendored copy does not define is a choice
+# that never applies: the walk consults overrides by dotted path, so the key
+# resolved to the vendor's default with nothing said. Renaming a property is
+# what a schema refresh does, which is the documented way in.
+python3 - "$SCHEMA" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+props = d["properties"]["reviews"]["properties"]
+props["summary_high_level"] = props.pop("high_level_summary")
+json.dump(d, open(p, "w"), indent=2)
+PY
+expect_message "defines no such property" \
+  'an override naming a property the vendored schema renamed' render --dry-run --repo "$repo"
+git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json
+
+# The render and the completeness clause ask one predicate, so a schema shape
+# neither a config nor a default can satisfy cannot exist: an object with
+# properties and no defaults beneath it is omitted by the render AND not
+# required by the validator. Two predicates here left every render blocked.
+python3 - "$SCHEMA" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["properties"]["reviews"]["properties"]["requirements"] = {
+    "type": "object", "properties": {"files": {"type": "array"}}}
+json.dump(d, open(p, "w"), indent=2)
+PY
+bi_run render --repo "$repo"
+if [ "$bi_status" -ne 0 ]; then
+  bad 'a schema object with no defaults beneath it blocks nothing' "$bi_out"
+elif python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
+from lib import yamlread
+# Parsed, not grepped: doctrine prose in a block scalar carries the word too.
+body = open(sys.argv[2] + "/.coderabbit.yaml").read()
+doc = yamlread.loads(body.split("\n", 6)[-1])
+if "requirements" in doc.get("reviews", {}):
+    sys.exit("the render emitted a key the schema gives no value for")
+PROBE
+  ok 'a schema object with no defaults beneath it blocks nothing'
+else
+  bad 'a schema object with no defaults beneath it blocks nothing' \
+      'the render emitted a key the schema gives no value for'
+fi
+git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json .coderabbit.yaml
+
 bi_summary

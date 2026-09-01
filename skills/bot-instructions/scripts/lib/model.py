@@ -9,18 +9,23 @@ implementation's single copy of that list, and the marker, the staged read and
 
 from .constants import (
     CODERABBIT_SCHEMA_PATH,
-    DERIVED_REASON,
     MARKER_CLOSE,
     MARKER_TOKEN,
-    PACKAGE,
     TOML_PATH,
 )
 from .errors import InputError
-from . import globs, manifest, refusals
+from . import manifest, spec
 
 
 class RenderModel:
     def __init__(self, config, doctrine, exclusions, inputs):
+        # Every path here is interpolated into the marker comment, so every
+        # path here meets the class that cannot close one. They are this
+        # package's own constants today; the check is what keeps the claim in
+        # `spec.py` and `renders.md` § Common rules true if the list ever
+        # becomes operator- or repo-derived, which is the direction it grows.
+        for path in inputs:
+            spec.check_marker_path(path)
         self.config = config
         self.doctrine = doctrine
         self.exclusions = exclusions      # ordered [{glob, reason, derived}]

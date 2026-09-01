@@ -110,4 +110,44 @@ raise SystemExit(1)
   fi
 done
 
+# `**/` translates to `(?:[^/]*/)*`, and nesting those is exponential in the
+# number of `**`: rejecting a deep path took seconds at a dozen, inside the
+# clause that runs this once per tracked path. Consecutive runs collapse to
+# one, which is a rewrite of the pattern and not of its meaning, so this is
+# two assertions — the results are unchanged, and the cost is bounded.
+if python3 - "$BI_ROOT/skills/bot-instructions" <<'PROBE'; then
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
+from lib import globs
+
+paths = ["a", "a/b", "a/x/b", "b", "a/x/y/b", "a/b/c", "x/b", "a/x/y/z/b"]
+for n in range(1, 6):
+    many = "a/" + "**/" * n + "b"
+    for p in paths:
+        if bool(globs.matching(many, [p])) != bool(globs.matching("a/**/b", [p])):
+            sys.exit(f"{many!r} and 'a/**/b' disagree on {p!r}")
+# In a child with a hard deadline: uncollapsed, twenty `**` against a
+# twenty-deep path does not return in any time a CI lane will wait, and a
+# control that waits with it reports a timeout rather than a failure.
+import subprocess
+probe = (
+    "import sys; sys.path.insert(0, %r);"
+    "from lib import globs;"
+    "globs.matching('a/' + '**/' * 20 + 'b',"
+    " ['a/' + '/'.join('d%%d' %% i for i in range(20)) + '/x'])"
+    % os.path.join(sys.argv[1], "scripts")
+)
+try:
+    subprocess.run([sys.executable, "-c", probe], timeout=10, check=True,
+                   capture_output=True)
+except subprocess.TimeoutExpired:
+    sys.exit("twenty `**` against a twenty-deep path did not finish in 10s")
+except subprocess.CalledProcessError as exc:
+    sys.exit(f"the match raised: {exc.stderr.decode()[:200]}")
+PROBE
+  ok 'consecutive `**` collapse: same matches, bounded cost'
+else
+  bad 'consecutive `**` collapse: same matches, bounded cost'
+fi
+
 bi_summary

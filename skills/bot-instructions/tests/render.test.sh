@@ -104,7 +104,8 @@ agents = os.path.join(repo, "AGENTS.md")
 
 def ctx():
     return run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
-                       ("SKILL.md", "schemas/renders.md"), "render")
+                       ("SKILL.md", "schemas/renders.md"), "render",
+                       ("SKILL.md", "schemas/renders.md"))
 
 def edit():
     with open(agents, "a") as fh:
@@ -160,6 +161,93 @@ PROBE
   ok "an edit the gate read is carried through, and one after it refuses"
 else
   bad "an edit the gate read is carried through, and one after it refuses"
+fi
+
+# A flag a verb accepts and ignores is the shape this package refuses
+# everywhere else, and `adopt` is the one-time verb that writes: a run meant
+# to preview would have taken the files over.
+for verb in check adopt; do
+  bi_run "$verb" --dry-run --repo "$repo"
+  if [ "$bi_status" -eq 2 ] && printf '%s\n' "$bi_out" | grep -q -- '--dry-run is a render mode'; then
+    ok "--dry-run is refused on $verb, naming the verb"
+  else
+    bad "--dry-run is refused on $verb, naming the verb" "exit $bi_status: $bi_out"
+  fi
+done
+
+# No bootstrap exemption: an unmarked region is the repo's whatever its body
+# holds, and a whitespace test would be exactly the boundary `renders.md`
+# § `AGENTS.md` says does not exist.
+empty_region="$(bi_new_repo empty-region)"
+printf '# fixture\n\nx\n\n## Code Review Rules\n\n## Something else\n\nText.\n' \
+  > "$empty_region/AGENTS.md"
+git -C "$empty_region" add -A >/dev/null 2>&1
+expect_message "run \`adopt\` to take it over" \
+  'an unmarked region with an empty body is refused, not written' \
+  render --repo "$empty_region"
+
+# Each `path_filters` entry carries its reason, from the same two sources
+# `.macroscope/ignore.md` draws on. Both surfaces that subtract for real say
+# why; a bare list is indistinguishable from a mistake at the next read.
+if python3 - "$repo" <<'PROBE'; then
+import sys
+repo = sys.argv[1]
+lines = open(repo + "/.coderabbit.yaml").read().split("\n")
+start = next(i for i, ln in enumerate(lines) if ln.strip() == "path_filters:")
+entries, comments = 0, 0
+for i in range(start + 1, len(lines)):
+    body = lines[i].strip()
+    if body.endswith(":") and not body.startswith(("#", "-", "!")):
+        break
+    if body.startswith("- "):
+        entries += 1
+        if not lines[i - 1].strip().startswith("#"):
+            sys.exit(f"path_filters entry on line {i + 1} carries no reason above it")
+        if len(lines[i - 1].strip()) < 4:
+            sys.exit(f"the reason above line {i + 1} is empty")
+        comments += 1
+if entries == 0:
+    sys.exit("read no path_filters entries, so this proved nothing")
+if entries != comments:
+    sys.exit(f"{entries} entries and {comments} reasons")
+PROBE
+  ok 'every path_filters entry carries its reason above it'
+else
+  bad 'every path_filters entry carries its reason above it'
+fi
+
+# Every path the marker interpolates into a comment meets the class that
+# cannot close one. They are this package's own constants today, so the
+# control injects one through the manifest read, which is the input list's one
+# repo-derived member.
+if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
+import os, sys
+PKG, repo = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import manifest, run, tree
+from lib.errors import SpecError
+
+original = manifest.resolve
+
+def leaky(t):
+    resolved, paths = original(t)
+    return resolved, paths + ["kendex.toml --> and live reviewer instructions"]
+
+manifest.resolve = leaky
+try:
+    run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
+                ("SKILL.md", "schemas/renders.md"), "check",
+                ("SKILL.md", "schemas/renders.md"))
+    sys.exit("a marker input path outside the class was accepted")
+except SpecError as exc:
+    if "refuses" not in str(exc):
+        sys.exit(f"refused, but not by the marker-path clause: {exc}")
+finally:
+    manifest.resolve = original
+PROBE
+  ok 'a marker input path outside the class is refused'
+else
+  bad 'a marker input path outside the class is refused'
 fi
 
 bi_summary

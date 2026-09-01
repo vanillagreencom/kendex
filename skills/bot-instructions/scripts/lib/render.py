@@ -14,8 +14,6 @@ from .constants import CODERABBIT_SCHEMA_PATH, CODERABBIT_TOP_LEVEL
 from .errors import InputError, RenderError
 from . import render_coderabbit, render_markdown, render_qodo
 
-AGENTS_REGION = "AGENTS.md#region"
-
 
 class Build:
     def __init__(self, model, files, region_body):
@@ -23,11 +21,13 @@ class Build:
         self.files = files              # repo-relative path -> text
         self.region_body = region_body  # None when [bots] codex is false
 
-    def paths(self):
-        return list(self.files)
 
-
-def build(tree, model):
+def build(model, schema=None):
+    """The scratch tree. `schema` is the vendored CodeRabbit schema, already
+    read under `coderabbit-schema`'s own clause: reading it a second time here
+    would judge it twice, report the second failure as a `toml-schema` finding
+    at `bot-instructions.toml`, and let the two reads disagree about a file
+    the first one already passed."""
     bots = model.config.bots
     files = {}
     region = None
@@ -40,7 +40,12 @@ def build(tree, model):
                 render_markdown.instructions_file(model, surface)
             )
     if bots["coderabbit"]:
-        files[".coderabbit.yaml"] = render_coderabbit.render(model, load_schema(tree))
+        if schema is None:
+            raise RenderError(
+                ".coderabbit.yaml: [bots] coderabbit is true and no vendored schema was "
+                "handed to the render. The caller reads it under coderabbit-schema"
+            )
+        files[".coderabbit.yaml"] = render_coderabbit.render(model, schema)
     if bots["qodo"]:
         files[".pr_agent.toml"] = render_qodo.render(model)
     if bots["qodo_best_practices"] and model.config.surfaces:
@@ -94,8 +99,21 @@ def load_schema(tree):
     return schema
 
 
-def splice(existing, region_body, path="AGENTS.md"):
-    """Replace the owned region's body in `existing`, returning new bytes.
+def headings(existing):
+    """Every line that opens the owned region, by index."""
+    return [i for i, ln in enumerate(existing.split("\n"))
+            if ln == render_markdown.AGENTS_HEADING]
+
+
+def bounds(existing):
+    """`(start, end)` of the owned region, or None when there is not exactly one.
+
+    The one answer to "where is the region", read by the splice, by
+    `region_of`, and by `agents-section`'s heading count. Four places asking
+    it independently is four places a change to the heading predicate has to
+    land, and two of them disagreeing about a boundary is a defect no test
+    would surface: the splice would write to one span while `drift` compared
+    another.
 
     The opening matches `^## Code Review Rules$` exactly — no trailing
     whitespace, no CR, no leading BOM — because kendex's `tools/guard` slices
@@ -106,19 +124,30 @@ def splice(existing, region_body, path="AGENTS.md"):
     swallow that section and everything below it.
     """
     lines = existing.split("\n")
-    opens = [i for i, ln in enumerate(lines) if ln == render_markdown.AGENTS_HEADING]
+    opens = headings(existing)
     if len(opens) != 1:
-        raise RenderError(
-            f"{path}: found {len(opens)} `{render_markdown.AGENTS_HEADING}` headings; "
-            "exactly one is required. Zero is an error and two is an error rather than "
-            "a guess about which one to replace"
-        )
+        return None
     start = opens[0]
     end = len(lines)
     for i in range(start + 1, len(lines)):
         if _is_heading_1_or_2(lines[i]):
             end = i
             break
+    return start, end
+
+
+def splice(existing, region_body, path="AGENTS.md"):
+    """Replace the owned region's body in `existing`, returning new bytes."""
+    lines = existing.split("\n")
+    span = bounds(existing)
+    if span is None:
+        raise RenderError(
+            f"{path}: found {len(headings(existing))} "
+            f"`{render_markdown.AGENTS_HEADING}` headings; "
+            "exactly one is required. Zero is an error and two is an error rather than "
+            "a guess about which one to replace"
+        )
+    start, end = span
     body = region_body.strip("\n").split("\n")
     # One blank line each side of the body, so the region never runs into the
     # heading that terminates it.
@@ -137,14 +166,8 @@ def _is_heading_1_or_2(line):
 
 def region_of(existing, path="AGENTS.md"):
     """The owned region's body in `existing`, for `drift` to compare."""
-    lines = existing.split("\n")
-    opens = [i for i, ln in enumerate(lines) if ln == render_markdown.AGENTS_HEADING]
-    if len(opens) != 1:
+    span = bounds(existing)
+    if span is None:
         return None
-    start = opens[0]
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        if _is_heading_1_or_2(lines[i]):
-            end = i
-            break
-    return "\n".join(lines[start + 1 : end]).strip("\n")
+    start, end = span
+    return "\n".join(existing.split("\n")[start + 1 : end]).strip("\n")

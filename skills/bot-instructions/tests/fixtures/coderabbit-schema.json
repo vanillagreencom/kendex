@@ -68,6 +68,51 @@
           "default": false,
           "type": "boolean"
         },
+        "high_level_summary_in_walkthrough": {
+          "type": "boolean"
+        },
+        "review_details": {
+          "type": "boolean"
+        },
+        "review_progress": {
+          "type": "boolean"
+        },
+        "fail_commit_status": {
+          "type": "boolean"
+        },
+        "changed_files_summary": {
+          "type": "boolean"
+        },
+        "sequence_diagrams": {
+          "type": "boolean"
+        },
+        "estimate_code_review_effort": {
+          "type": "boolean"
+        },
+        "assess_linked_issues": {
+          "type": "boolean"
+        },
+        "related_issues": {
+          "type": "boolean"
+        },
+        "related_prs": {
+          "type": "boolean"
+        },
+        "suggested_labels": {
+          "type": "boolean"
+        },
+        "auto_apply_labels": {
+          "type": "boolean"
+        },
+        "suggested_reviewers": {
+          "type": "boolean"
+        },
+        "auto_assign_reviewers": {
+          "type": "boolean"
+        },
+        "in_progress_fortune": {
+          "type": "boolean"
+        },
         "path_filters": {
           "default": [],
           "type": "array",

@@ -16,6 +16,24 @@ from .errors import RenderError
 INDENT = "  "
 
 
+class Commented:
+    """One sequence item and the comment line above it.
+
+    `reviews.path_filters` is the one place a rendered value needs a reason
+    beside it — `renders.md` § `reviews.path_filters` requires one per entry,
+    for the reason `repo-toml.md` § `[exclusions]` gives for requiring the key
+    at all: an exclusion with no stated reason is indistinguishable from a
+    mistake at the next read. A YAML comment runs to end of line, so the text
+    is refused rather than escaped if it could leave that line.
+    """
+
+    def __init__(self, value, comment):
+        if "\n" in comment or "\r" in comment:
+            raise RenderError("a YAML comment carries one line; this one carries a newline")
+        self.value = value
+        self.comment = comment
+
+
 def block(value, indent, folded=False):
     """One string as a block scalar with an explicit indentation indicator.
 
@@ -60,6 +78,9 @@ def emit(node, indent=""):
         return lines
     if isinstance(node, list):
         for item in node:
+            if isinstance(item, Commented):
+                lines.append(f"{indent}# {item.comment}")
+                item = item.value
             if isinstance(item, dict):
                 inner = emit(item, indent + INDENT)
                 lines.append(f"{indent}- {inner[0].lstrip()}")

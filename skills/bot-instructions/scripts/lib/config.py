@@ -78,9 +78,6 @@ class Config:
         self.doctrine_append = data["doctrine"]["append"]
         self.doctrine_replace = data["doctrine"]["replace"]
 
-    def bot(self, name):
-        return self.bots[name]
-
 
 def _typed(value, want, where):
     if want is bool:
@@ -177,6 +174,13 @@ def _surfaces(entries, where):
         if name in seen:
             raise InputError(f"{w} name: {name!r} is declared twice")
         seen.add(name)
+        if not s["instructions"].strip():
+            raise InputError(
+                f"{w} instructions: empty. A surface renders a `path_instructions` entry "
+                "with no text, a `.instructions.md` with a marker and nothing under it, "
+                "and a best-practices section with no body — guidance that costs its "
+                "bots a read and says nothing. Drop the surface instead"
+            )
         globs.check_list(s["globs"], f"{w} globs")
         if s["exclude_globs"] is not None:
             globs.check_list(s["exclude_globs"], f"{w} exclude_globs")

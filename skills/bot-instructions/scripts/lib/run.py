@@ -12,7 +12,7 @@ rather than counting it as passed.
 import contextlib
 import tomllib
 
-from .constants import CODERABBIT_SCHEMA_PATH, MARKER_TOKEN, TOML_PATH
+from .constants import CODERABBIT_SCHEMA_PATH, TOML_PATH
 from .errors import (Finding, InputError, ManifestError, SourceUnavailable,
                      ValidationFailed)
 from . import config as config_mod
@@ -21,7 +21,6 @@ from . import render as render_mod
 from . import spec as spec_mod
 from . import validators_bytes as vb
 from . import validators_repo as vr
-from . import globs
 
 BYTE_VALIDATORS = (
     vb.doctrine_routing,
@@ -54,15 +53,16 @@ def _as_finding(validator, path, other=None, other_path=None):
 
 
 class Context:
-    def __init__(self, root, tree, spec_tree, spec_paths, verb, spec_names=None):
+    def __init__(self, root, tree, spec_tree, spec_paths, verb, spec_names):
         # `spec_paths` is how the spec copy is READ; `spec_names` is how the
         # marker records it. They differ under `--staged`, where the spec copy
         # is read from the index at its repo-relative path, and wherever the
         # spec copy sits outside the repo: an absolute checkout path in a
         # rendered file would make the render depend on where CI put the
         # trusted checkout. The two names identify the input; the version says
-        # which copy it was.
-        spec_names = list(spec_names or spec_paths)
+        # which copy it was. Both are required, so no caller can leave the
+        # marker recording whatever path this run happened to read.
+        spec_names = list(spec_names)
         self.root = root
         self.tree = tree
         self.verb = verb
@@ -72,7 +72,6 @@ class Context:
             raise InputError(f"{TOML_PATH}: absent at the repo root")
         with _as_finding("toml-schema", TOML_PATH):
             self.config = config_mod.parse(toml_text, TOML_PATH)
-        self.spec_paths = list(spec_paths)
         self.doctrine = spec_mod.load(spec_tree, *spec_paths)
         self.frozen_ids = spec_mod.frozen_ids()
         # An unknown `[doctrine.*]` block id is a `toml-schema` clause; a
@@ -87,7 +86,7 @@ class Context:
             with _as_finding("coderabbit-schema", CODERABBIT_SCHEMA_PATH):
                 self.schema = render_mod.load_schema(tree)
         with _as_finding("toml-schema", TOML_PATH):
-            self.build = render_mod.build(tree, self.model)
+            self.build = render_mod.build(self.model, self.schema)
         self._tracked = None
 
     def read(self, rel):
@@ -125,10 +124,15 @@ class Context:
 def _exclusions_from(reader):
     """Each rendered surface's exclusion list, read back out of the bytes.
 
-    A file present but unreadable is recorded as unreadable rather than left
-    out of the comparison: dropping it would let a malformed surface agree
-    with every other by having no entries, which is the silent failure this
-    package exists to remove. `unreadable` is a sentinel no glob can equal.
+    Returns `(sets, unreadable)`. A file present but unreadable is carried in
+    the second rather than left out of the first: dropping it would let a
+    malformed surface agree with every other by having no entries, which is
+    the silent failure this package exists to remove. It is carried as a
+    failure rather than as a sentinel string in the glob list, because a
+    sentinel flows into the set comparisons and arrives as
+    `'<unreadable: ...>' is in the rendered exclusions and the resolved
+    manifest derives no such tree` — a parse failure dressed as a set mismatch
+    naming a glob nobody wrote.
 
     **Absent and empty are different answers.** `None` is the surface not
     being rendered at all — a bot whose `[bots]` flag is false has no
@@ -141,25 +145,26 @@ def _exclusions_from(reader):
     from . import yamlread
 
     out = {}
+    bad = {}
     text = reader(".coderabbit.yaml")
     if text is not None:
         try:
             entries = yamlread.loads(text)["reviews"]["path_filters"]
             out[".coderabbit.yaml"] = [e[1:] for e in entries if e.startswith("!")]
         except Exception as exc:
-            out[".coderabbit.yaml"] = [f"<unreadable: {exc}>"]
+            bad[".coderabbit.yaml"] = f"reviews.path_filters cannot be read: {exc}"
     text = reader(".pr_agent.toml")
     if text is not None:
         try:
             out[".pr_agent.toml"] = list(tomllib.loads(text).get("ignore", {}).get("glob", []))
         except (tomllib.TOMLDecodeError, AttributeError, TypeError) as exc:
-            out[".pr_agent.toml"] = [f"<unreadable: {exc}>"]
+            bad[".pr_agent.toml"] = f"[ignore] glob cannot be read: {exc}"
     text = reader(".macroscope/ignore.md")
     if text is not None:
         out[".macroscope/ignore.md"] = [
             ln for ln in text.split("\n") if ln.strip() and not ln.lstrip().startswith("<!--")
         ]
-    return out
+    return out, bad
 
 
 def validate(ctx):

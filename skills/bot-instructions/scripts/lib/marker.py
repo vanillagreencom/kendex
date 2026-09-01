@@ -1,10 +1,11 @@
 """Ownership: the marker, at its canonical position.
 
 `renders.md` § Common rules puts the marker at the file's **first comment**,
-preceded only by a prologue the format requires. There are exactly two such
-prologues and no output has any other: YAML frontmatter in a
-`.instructions.md` file, and the `yaml-language-server` schema line at the top
-of `.coderabbit.yaml`.
+preceded only by a prologue the format requires, and names the two: YAML
+frontmatter in a markdown output that carries it, and the
+`yaml-language-server` schema line at the top of `.coderabbit.yaml`. That set
+is cited rather than restated — `_after_prologue` below keys on the extension,
+so a second copy of the file list here would go stale against both.
 
 **Ownership is the marker at that position, not the marker anywhere.** A
 hand-written file at a generated path that merely quotes or preserves the

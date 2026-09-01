@@ -58,7 +58,7 @@ def agents_section(ctx, out):
                               "generator never creates it and never adds the heading",
                            "AGENTS.md"))
         return
-    count = sum(1 for ln in text.split("\n") if ln == heading)
+    count = len(render.headings(text))
     if count != 1:
         out.append(Finding(v, f"found {count} `{heading}` headings; exactly one is "
                               "required", "AGENTS.md"))
@@ -148,9 +148,17 @@ def exclusion_consistency(ctx, out):
     # `derive_render` defaults to false, so gating them on it left every repo
     # on the default with `_prose_destinations` — the only enforcer of
     # SKILL.md § Every rendered config excludes the render trees — never run.
+    sources, unreadable = ctx.exclusion_sources()
+    scratch, scratch_bad = ctx.scratch_exclusions()
+    for name, why in sorted({**scratch_bad, **unreadable}.items()):
+        # Named as the read failure it is. A surface whose exclusion list
+        # cannot be read is left out of the comparisons below rather than
+        # compared against a stand-in value, which would arrive as a set
+        # mismatch naming a glob nobody wrote.
+        out.append(Finding(v, f"{why}, so this surface cannot be compared", name))
     if ctx.config.exclusions["derive_render"]:
-        _derived_set(v, ctx, ctx.exclusion_sources(), out)
-    _cross_surface(v, ctx, ctx.scratch_exclusions(), out)
+        _derived_set(v, ctx, sources, out)
+    _cross_surface(v, ctx, scratch, out)
     _prose_destinations(v, ctx, out)
     _dead_globs(v, ctx, out)
 

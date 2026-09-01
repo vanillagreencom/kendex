@@ -65,6 +65,7 @@ def findings(repo, verb="check"):
         tree.Worktree(PACKAGE),
         ("SKILL.md", "schemas/renders.md"),
         verb,
+        ("SKILL.md", "schemas/renders.md"),
     )
     return run.validate(ctx)
 
@@ -96,12 +97,68 @@ def control(repo, want, label, module, name, replacement, also=()):
         report(False, label, f"expected exactly {expected}; fired: {fired or 'nothing'}")
 
 
+def says(repo, want, label, module, name, replacement, needle, absent=None):
+    """A red control that also reads its own message.
+
+    Three findings this package emits are the right validator with the wrong
+    cause — a parse failure arriving as a set mismatch, an unreadable
+    frontmatter block arriving as an absent one. Asserting only the validator
+    identity would pass on exactly the message the fix replaced, so these
+    assert the sentence a reader acts on.
+    """
+    with patched(module, name, replacement):
+        try:
+            found = findings(repo, "render")
+        except Exception as exc:  # noqa: BLE001
+            report(False, label, f"the render raised before any validator ran: {exc}")
+            return
+    mine = [f for f in found if f.validator == want]
+    stray = [f for f in found if absent and absent in f.message]
+    if not mine:
+        report(False, label, f"{want} did not fire; fired: "
+                             f"{sorted({f.validator for f in found}) or 'nothing'}")
+    elif not any(needle in f.message for f in mine):
+        report(False, label, f"expected {needle!r}; got: {mine[0].message[:160]}")
+    elif stray:
+        # The other half, and the one a needle alone cannot prove: the failure
+        # must not ALSO arrive dressed as an ordinary finding somewhere else.
+        report(False, label, f"a finding still carries {absent!r}: {stray[0].message[:160]}")
+    else:
+        report(True, label)
+
+
+def _wrong_cause(repo):
+    """A failure must not arrive dressed as an ordinary finding."""
+    qodo = render_qodo.render
+
+    def broken_toml(m):
+        return qodo(m).replace("[ignore]", "[ignore] this line is not TOML")
+
+    says(repo, "exclusion-consistency",
+         "an unreadable exclusion surface is named as unreadable, not as a stray glob",
+         render_qodo, "render", broken_toml,
+         "[ignore] glob cannot be read", absent="<unreadable:")
+
+    surface = render_markdown.macroscope_surface
+
+    def broken_frontmatter(m, s):
+        text = surface(m, s)
+        head, _, rest = text.partition("\n---\n")
+        return head.replace("include:", "include: [unclosed,") + "\n---\n" + rest
+
+    says(repo, "macroscope-render",
+         "frontmatter that will not parse says so, rather than reading as absent",
+         render_markdown, "macroscope_surface", broken_frontmatter,
+         "does not parse")
+
+
 def main(repo, no_derive):
     _coderabbit(repo)
     _copilot(repo)
     _qodo(repo)
     _macroscope(repo)
     _exclusions(repo)
+    _wrong_cause(repo)
     _unconditional(no_derive)
     print(f"mutations.py: {PASS} passed, {FAIL} failed")
     return 1 if FAIL else 0

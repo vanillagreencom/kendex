@@ -75,6 +75,12 @@ def check(glob, where):
         )
     if any(p == "" for p in parts):
         raise InputError(f"{where}: glob {glob!r} has an empty component")
+    # Last, so every clause above owns its own message: the dialect's class
+    # permits `[` and `]` and says nothing about what goes between them, and a
+    # `[...]` here reaches a regex character class. Proving it compiles at
+    # input is what makes a reversed range a `toml-schema` finding rather than
+    # a traceback out of the dead-exclusion clause much later.
+    _translate(glob)
 
 
 def check_list(globs, where):
@@ -89,13 +95,36 @@ def check_list(globs, where):
         check(g, f"{where}[{i}]")
 
 
+def _collapse(pattern):
+    """Consecutive `**/` runs to one, which no match result depends on.
+
+    `**/` translates to `(?:[^/]*/)*`, and nesting those is exponential: each
+    added `**` multiplied the time to reject a non-matching path by about
+    three and a half, so `a/` plus twelve of them against a twenty-deep
+    tracked path took seconds inside `_dead_globs`, which runs this over every
+    tracked path in the repo. `**/**/` covers exactly what `**/` covers, so
+    collapsing is a rewrite of the pattern and not of its meaning.
+    """
+    while "**/**/" in pattern:
+        pattern = pattern.replace("**/**/", "**/")
+    return pattern
+
+
 def _translate(pattern):
     """Dialect glob to regex. `**` crosses `/`; `*` and `?` do not.
 
     `a/**` matches `a` itself, which is how every engine here reads "this
     directory and below" — the dead-exclusion clause would otherwise call a
     tree exclusion dead in a repo tracking only the directory's own files.
+
+    The compile is guarded because the dialect's character class is wider than
+    a regex character class: `[z-a]` is made of permitted bytes and is a
+    reversed range `re` refuses. A raw traceback there would be the one
+    refusal in this package that does not name the clause that refused it.
     """
+    from .errors import InputError
+
+    pattern = _collapse(pattern)
     out = ["^"]
     i, n = 0, len(pattern)
     while i < n:
@@ -128,12 +157,14 @@ def _translate(pattern):
             out.append(re.escape(c))
         i += 1
     out.append("$")
-    return re.compile("".join(out))
-
-
-def matches(pattern, path):
-    """Does `path` fall under `pattern` in this dialect's reading?"""
-    return _translate(pattern).match(path) is not None
+    try:
+        return re.compile("".join(out))
+    except re.error as exc:
+        raise InputError(
+            f"glob {pattern!r} is in the dialect's character class but is not a pattern "
+            f"this package can match ({exc}). A `[...]` class here reaches a regex "
+            "character class, where a reversed range is an error"
+        ) from exc
 
 
 def matching(pattern, paths):

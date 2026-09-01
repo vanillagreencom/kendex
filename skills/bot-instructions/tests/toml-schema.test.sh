@@ -290,4 +290,117 @@ else
   bad 'render says it wrote nothing rather than exiting quietly' "$bi_out"
 fi
 
+# A surface whose text is empty renders a `path_instructions` entry with no
+# text, a `.instructions.md` with a marker and nothing under it, and a
+# best-practices section with no body. `macroscope-render`'s no-text clause is
+# the only thing that would have caught it, and it does not run with
+# `[bots] macroscope` false — which is a legitimate flag state.
+repo="$(bi_new_repo empty-surface)"
+python3 - "$repo" "$BI_FIXTURES/canonical.toml" <<'PY'
+import re, sys
+repo, src = sys.argv[1], sys.argv[2]
+# The canonical TOML with one surface's text emptied and nothing else changed,
+# so the clause under test is the only one with anything to say. A fixture
+# with every route flag false reds `toml-schema` on its own.
+text = re.sub(r'(name = "tests".*?instructions = """\n).*?(\n""")', r'\1\2',
+              open(src).read(), flags=re.S)
+open(repo + "/bot-instructions.toml", "w").write(text)
+PY
+expect_red toml-schema 'a [[surface]] whose instructions are empty' \
+  render --dry-run --repo "$repo"
+
+# The dialect's class permits `[`, `]` and every byte between them, so a
+# reversed range is made of nothing but allowed characters and is a pattern no
+# engine compiles. Proving it compiles is a `toml-schema` clause, which is what
+# makes it a finding rather than a traceback out of the dead-exclusion clause.
+repo="$(bi_minimal_repo reversed-class)"
+bi_control toml-schema 'a reversed character range, which is in the class and compiles nowhere' "$repo" <<'EOF'
+
+[[exclusions.path]]
+glob = "src/[z-a].rs"
+reason = "a range no engine reads"
+EOF
+
+# § Cross-file sets: the content-refusal table is the single statement, and
+# three structures encode it. Held against them here, so a row or a marked
+# cell added on one side without the other reds rather than being noticed by a
+# reader who happens to count.
+if python3 - "$BI_ROOT/skills/bot-instructions" <<'PROBE'; then
+import os, re, sys
+PKG = sys.argv[1]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import refusals
+from lib.constants import QODO_VERBS
+
+table = open(os.path.join(PKG, "schemas/repo-toml.md")).read()
+rows = [ln for ln in table.split("\n")
+        if ln.startswith("| ") and ln.count("|") == 10
+        and not ln.startswith("| Input string")
+        and not ln.startswith("|---")]
+if len(rows) != 10:
+    sys.exit(f"read {len(rows)} rows out of the table, expected the documented ten")
+
+# The six columns whose cells are a yes/dash, in the table's order, against
+# the predicate names ROWS spells.
+COLUMNS = ["heading", "frontmatter", "marker", "comment-close", "toml-delimiter", "control"]
+# The table's row labels, mapped to the ROWS key or to the structure that owns
+# them. Two rows are not content classes and are enforced elsewhere.
+ELSEWHERE = {
+    "`[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob`": "globs.check",
+    "`[cadence] qodo_commands` entries": "config._cadence",
+}
+LABELS = {
+    "`[repo] name`": "[repo] name",
+    "`[repo] tracker`": "[repo] tracker",
+    "`[repo] summary`": "[repo] summary",
+    "`[[surface]] instructions`": "[[surface]] instructions",
+    "`[doctrine.append]` / `[doctrine.replace]` values": "[doctrine.*] values",
+    "doctrine block text": "doctrine block text",
+    "`[[exclusions.path]] reason`": "[[exclusions.path]] reason",
+    "`[tone] coderabbit`": "[tone] coderabbit",
+}
+seen = set()
+for line in rows:
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    label = cells[0]
+    if label in ELSEWHERE:
+        seen.add(label)
+        continue
+    if label not in LABELS:
+        sys.exit(f"table row {label!r} is neither a ROWS row nor one of the two "
+                 "the table says are enforced elsewhere")
+    key = LABELS[label]
+    if key not in refusals.ROWS:
+        sys.exit(f"table row {label!r} has no {key!r} in refusals.ROWS")
+    seen.add(label)
+    want = {COLUMNS[i] for i, cell in enumerate(cells[1:7]) if cell == "yes"}
+    have = {p for p in refusals.ROWS[key][0] if p in COLUMNS}
+    if want != have:
+        sys.exit(f"{key!r}: the table marks {sorted(want)} and ROWS runs {sorted(have)}")
+    enforced = cells[8]
+    owner = refusals.ROWS[key][1]
+    if owner not in enforced:
+        sys.exit(f"{key!r}: the table's Enforced column says {enforced!r}, ROWS says {owner!r}")
+if len(seen) != 10:
+    sys.exit(f"matched {len(seen)} of the table's rows")
+if set(LABELS.values()) != set(refusals.ROWS):
+    sys.exit("refusals.ROWS holds a row the table does not")
+# The two the table says live elsewhere, held against the structures that own
+# them rather than taken on trust.
+from lib import globs
+from lib.errors import InputError
+try:
+    globs.check("a,b", "control")
+except InputError:
+    pass
+else:
+    sys.exit("globs.check does not enforce the glob row")
+if not QODO_VERBS:
+    sys.exit("config._cadence reads an empty verb set")
+PROBE
+  ok 'the content-refusal table agrees with the three structures that encode it'
+else
+  bad 'the content-refusal table agrees with the three structures that encode it'
+fi
+
 bi_summary

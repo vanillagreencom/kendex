@@ -467,6 +467,15 @@ branch has been observed to hit a base-branch mis-detection that skips pull
 requests targeting the default branch, and the wildcard also covers stacked
 pull requests.
 
+**An override naming no property the vendored schema defines fails the
+render**, naming the key. The walk resolves this package's choices against the
+schema, so a property the vendored copy does not define is a choice that never
+applies and a key that resolves to the vendor's default instead — silently, and
+with every validator green. Renaming a property is what a schema refresh does,
+and refreshing that copy is a step in `references/checklist.md`, so this is the
+expected way in rather than a hypothetical one. `load_schema`'s top-level check
+is the same shape one level up.
+
 **`reviews.path_filters`.** The exclusion set, each entry prefixed `!`, each
 preceded by a comment carrying its reason — the entry's own `reason` where it
 has one, and the fixed string `repo-toml.md` § `[exclusions]` states for a
