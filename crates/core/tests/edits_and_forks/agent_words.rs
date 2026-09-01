@@ -206,14 +206,9 @@ fn a_line_the_person_typed_in_the_harnesss_words_stays_as_they_wrote_it() {
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
     assert_eq!(
-        times(&source, "Use the read_file tool."),
-        1,
-        "the capture rewrote a line the person typed themselves: {source}"
-    );
-    assert_eq!(
-        times(&source, "Use the Read tool."),
-        1,
-        "the publisher's own line did not come back in the published words: {source}"
+        prose(&source),
+        ["Use the Read tool.", "My body.", "Use the read_file tool."],
+        "each line has to hold its own words where it stands: the publisher's opening said back, and the one they typed left alone: {source}"
     );
 }
 
@@ -282,37 +277,46 @@ fn an_edit_at_the_front_still_says_the_lines_after_it_back() {
 }
 
 /// A paragraph deleted from between two the rendering says alike. Nothing
-/// in the text tells the survivor from the one that went, so the pairing
-/// takes the later of the two, which reads the survivor as the copy that
-/// stood below the deletion. That is right for this deletion and wrong for
-/// the other one, and no reading of the text can be right for both.
+/// in the text tells the survivor from the one that went — whichever the
+/// person deleted, what is left reads the same, byte for byte — so the
+/// survivor is left in the words the rendering said it. Assigning it one
+/// of the two published lines would be right for one of these deletions
+/// and would write bytes the person never had for the other.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn deleting_one_of_two_paragraphs_a_harness_renders_alike_keeps_the_survivor() {
-    let w = agent_world(
-        "\"claude\", \"gemini\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUse the glob tool.\n\nUse the Glob tool.\n\nUpstream body.\n",
-        "",
-        "",
-    );
-    let file = rendered(&w, HarnessId::Gemini, "rev");
-    let text = fs::read_to_string(&file).unwrap();
-    assert_eq!(times(&text, "Use the glob tool."), 2, "{text}");
-    // The first of the two paragraphs, and only the first.
-    fs::write(&file, text.replacen("Use the glob tool.\n\n", "", 1)).unwrap();
-    edit_body(&file);
+fn deleting_one_of_two_paragraphs_a_harness_renders_alike_leaves_the_survivor_as_rendered() {
+    for deleted in [0, 1] {
+        let w = agent_world(
+            "\"claude\", \"gemini\"",
+            "---\nname: rev\ndescription: agent rev\n---\nUse the glob tool.\n\nUse the Glob tool.\n\nUpstream body.\n",
+            "",
+            "",
+        );
+        let file = rendered(&w, HarnessId::Gemini, "rev");
+        let text = fs::read_to_string(&file).unwrap();
+        assert_eq!(times(&text, "Use the glob tool."), 2, "{text}");
+        // The rendering says both paragraphs the same way, so which one
+        // this deletes is which occurrence it cuts out.
+        let paragraph = "Use the glob tool.\n\n";
+        let at = text.match_indices(paragraph).nth(deleted).unwrap().0;
+        fs::write(
+            &file,
+            format!("{}{}", &text[..at], &text[at + paragraph.len()..]),
+        )
+        .unwrap();
+        edit_body(&file);
 
-    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
-    apply::execute(&w.env, &plan).unwrap();
-    resettle(&w);
+        let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+        apply::execute(&w.env, &plan).unwrap();
+        resettle(&w);
 
-    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
-    assert_eq!(
-        times(&source, "Use the Glob tool."),
-        1,
-        "the survivor came back as lowercase prose: {source}"
-    );
-    assert_eq!(times(&source, "Use the glob tool."), 0, "{source}");
+        let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+        assert_eq!(
+            prose(&source),
+            ["Use the glob tool.", "My body."],
+            "deleting paragraph {deleted} put the other paragraph's words on the survivor: {source}"
+        );
+    }
 }
 
 /// Claude renders a body as it was authored, so there is nothing to line
@@ -341,4 +345,19 @@ fn a_body_past_the_pairings_ceiling_forks_where_nothing_was_said_differently() {
         source.contains("Line 2099.") && source.contains("My body."),
         "the capture lost the body it was asked to keep"
     );
+}
+
+/// The prose of a captured source, its frontmatter and blank separators
+/// dropped. Counting occurrences cannot say which of two lines was said
+/// back and which was left alone, so the tests that turn on that read the
+/// lines where they stand.
+fn prose(source: &str) -> Vec<&str> {
+    source
+        .lines()
+        .skip_while(|line| *line != "---")
+        .skip(1)
+        .skip_while(|line| *line != "---")
+        .skip(1)
+        .filter(|line| !line.trim().is_empty())
+        .collect()
 }

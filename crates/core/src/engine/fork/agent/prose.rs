@@ -8,6 +8,8 @@
 //! twice, and whatever it said in one harness's words would be what every
 //! other harness renders.
 
+use std::collections::{HashMap, HashSet};
+
 use crate::render::agent::GENERATED_BANNER;
 use crate::render::inside_a_block;
 
@@ -90,7 +92,12 @@ pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> Result<String, Str
 /// the same line, a fenced sample keeps every byte while the prose above
 /// it is reworded into those same words, and a person may type the
 /// harness's own name for a tool; matched by text, each of those puts a
-/// line into the source that nobody wrote.
+/// line into the source that nobody wrote. Position answers it only while
+/// every copy of a line the rendering says twice is still standing:
+/// delete one and what is left reads the same whichever it was. Those are
+/// held back rather than assigned, so a fork loses a restoration rather
+/// than writing a word the publisher used somewhere else onto a line the
+/// person kept.
 ///
 /// `Err` on either of the two things the pairing needs. The rendering and
 /// the published prose have to hold the same number of lines:
@@ -131,11 +138,46 @@ fn as_authored<'a>(
             kept.len()
         ));
     }
+    let ambiguous = ambiguous(kept, rendered, authored);
     let mut words = kept.to_vec();
     for (at, stands_for) in aligned(kept, rendered) {
+        if ambiguous.contains(rendered[stands_for]) {
+            continue;
+        }
         words[at] = authored[stands_for];
     }
     Ok(words)
+}
+
+/// The renderings no kept line can be attributed by. `replace` is
+/// Gemini's word for Edit and for MultiEdit alike, and a body naming both
+/// publishes two lines this harness says the same way.
+///
+/// Two things have to hold before one of those is said back. The lines
+/// behind the occurrences have to differ, because where the catalog
+/// published them alike there is nothing to tell apart. And the body has
+/// to have kept a copy for every copy the rendering says: with all of
+/// them standing the pairing walks them in the order they stand, and with
+/// one gone nothing in the text says which one it was, since whichever
+/// the person deleted the survivor reads the same. Short of both, the
+/// rendering is held back and every kept line matching it is left as the
+/// rendering says it — a restoration lost, which is the cost of not
+/// writing a word the publisher used somewhere else onto a line the
+/// person kept.
+fn ambiguous<'a>(kept: &[&str], rendered: &[&'a str], authored: &[&str]) -> HashSet<&'a str> {
+    let mut published: HashMap<&str, &str> = HashMap::new();
+    let mut alike: HashSet<&'a str> = HashSet::new();
+    for (line, published_as) in rendered.iter().zip(authored) {
+        if published
+            .insert(line, published_as)
+            .is_some_and(|first| first != *published_as)
+        {
+            alike.insert(*line);
+        }
+    }
+    let held = |lines: &[&str], line: &str| lines.iter().filter(|held| **held == line).count();
+    alike.retain(|line| held(kept, line) != held(rendered, line));
+    alike
 }
 
 /// The most cells [`aligned`] will hold, which is what bounds the bodies
@@ -154,16 +196,11 @@ const CELLS: usize = 4_000_000;
 /// and every line around it still pairs where it stands. A cell per kept
 /// line per rendered line is the cost, which [`CELLS`] bounds.
 ///
-/// The walk back is from the end, so where the rendering says two lines
-/// alike the later one is paired. Nothing in the text can tell those two
-/// apart — whichever the person deleted, the survivor reads the same — and
-/// the choice is only ever right for one of the two deletions. Taking the
-/// later one reads the survivor as the copy that stood below the deletion.
-///
-/// That tie-break is why the alignment is written out here rather than
-/// asked of `similar`, which this crate already diffs lines with:
-/// `TextDiff` yields these same pairs, and every algorithm it offers picks
-/// the other copy.
+/// Where the rendering says two lines alike the walk pairs them in the
+/// order they stand, which is what the body holding a copy for every copy
+/// the rendering says makes right. Short of that nothing in the text says
+/// which copy is which, and [`ambiguous`] holds them back rather than let
+/// the walk decide.
 fn aligned(kept: &[&str], rendered: &[&str]) -> Vec<(usize, usize)> {
     let width = rendered.len() + 1;
     let mut common = vec![0u32; (kept.len() + 1) * width];
