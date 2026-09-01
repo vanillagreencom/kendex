@@ -19,6 +19,19 @@ use crate::source_ref::{owner_repo, repo_identity};
 
 pub const DEFAULT_UPSTREAM: &str = crate::manifest::DEFAULT_SOURCE_REPO;
 
+/// What the lock recorded about where the reported asset came from, so a
+/// triager can date a report against the fix that already landed. Both
+/// halves are read off one entry: a commit and a rendered hash from
+/// different installations would describe nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Provenance {
+    /// `<repo>@<commit7>`, the repo spelled the way a lookup takes it.
+    pub source: String,
+    /// The first seven characters of what the apply wrote, where the lock
+    /// recorded one.
+    pub rendered: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
     pub kendex_owned: bool,
@@ -31,6 +44,10 @@ pub struct Route {
     /// The kind the report is about: the one the caller named, or the one
     /// the matching lock entries agree on when the caller named none.
     pub kind: Option<ItemKind>,
+    /// Where the matching entries say the bytes came from. `None` when the
+    /// name is in no lock entry, or in none that recorded a commit: an
+    /// installation nothing dated cannot be dated afterwards.
+    pub provenance: Option<Provenance>,
 }
 
 /// The routing label for a kendex-owned asset, by what it is.
@@ -67,7 +84,26 @@ pub fn route(lock: &Lock, name: &str, kind: Option<ItemKind>, upstream: &str) ->
         label: (owned && wanted == repo_identity(DEFAULT_UPSTREAM))
             .then(|| derive_label(name, kind).to_owned()),
         kind,
+        provenance: provenance(&matching),
     }
+}
+
+/// The recorded origin of the matching entries, off the first entry that
+/// carries a commit — entries are ordered by lock key, so the same lock
+/// answers the same way every run.
+fn provenance(matching: &[&LockEntry]) -> Option<Provenance> {
+    let entry = matching.iter().find(|e| e.source_commit.is_some())?;
+    let commit = entry.source_commit.as_deref()?;
+    Some(Provenance {
+        source: format!("{}@{}", filing_target(&entry.source_repo), short(commit)),
+        rendered: entry.rendered_hash.as_deref().map(short),
+    })
+}
+
+/// A hash as a marker carries it: seven characters, cut on a character
+/// boundary because a lock is a file anyone can edit.
+fn short(hash: &str) -> String {
+    hash.chars().take(7).collect()
 }
 
 /// The upstream as something to file against: a GitHub reference folded to
@@ -143,6 +179,49 @@ mod tests {
         assert!(!route.kendex_owned);
         assert_eq!(route.repo, None);
         assert_eq!(route.label, None);
+    }
+
+    /// A report has to be datable against the fix that already landed, so
+    /// the route carries what the lock recorded: the repo and commit the
+    /// bytes came from, and what the apply wrote, both cut short. The entry
+    /// that recorded a commit answers even when another sorts ahead of it,
+    /// and both halves come off that one entry.
+    #[test]
+    fn a_dated_entry_carries_its_recorded_provenance() {
+        let mut dated = entry("guard", ItemKind::Skill, DEFAULT_UPSTREAM);
+        dated.source_commit = Some("abc1234def5678".to_owned());
+        dated.rendered_hash = Some("9f8e7d6c5b4a".to_owned());
+        // The undated entry from `lock_of` sorts under `skill:...`, ahead of
+        // this key: what answers is the dated entry, not the first one.
+        let mut lock = lock_of(&[("guard", ItemKind::Skill, DEFAULT_UPSTREAM)]);
+        lock.entries.insert("zz-dated".to_owned(), dated.clone());
+        assert_eq!(
+            route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM).provenance,
+            Some(Provenance {
+                source: format!("{DEFAULT_UPSTREAM}@abc1234"),
+                rendered: Some("9f8e7d6".to_owned()),
+            })
+        );
+
+        // A commit without a rendering still dates the report.
+        dated.rendered_hash = None;
+        lock.entries.insert("zz-dated".to_owned(), dated);
+        let route = route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM);
+        assert_eq!(route.provenance.and_then(|p| p.rendered), None);
+    }
+
+    /// An installation the lock never dated cannot be dated afterwards, and
+    /// a name it never recorded even less so: the route says nothing rather
+    /// than inventing a commit.
+    #[test]
+    fn an_undated_entry_has_no_provenance() {
+        let lock = lock_of(&[("guard", ItemKind::Skill, DEFAULT_UPSTREAM)]);
+        let recorded = route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM);
+        assert_eq!(recorded.provenance, None);
+        assert_eq!(
+            route(&Lock::default(), "guard", None, DEFAULT_UPSTREAM).provenance,
+            None
+        );
     }
 
     /// A skill installed from another marketplace keeps filing against the

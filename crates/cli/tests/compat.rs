@@ -301,14 +301,6 @@ fn report_files_through_a_stubbed_gh() {
     let tmp = sandbox_with_catalog();
     let home = tmp.path();
     let proj = home.join("proj");
-    fs::write(
-        proj.join(".kendex-lock.json"),
-        lock_of(
-            &proj,
-            r#""hook:guard:claude":{"name":"guard","kind":"hook","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x","enabled":true}"#,
-        ),
-    )
-    .unwrap();
 
     let bin = home.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -328,26 +320,53 @@ fn report_files_through_a_stubbed_gh() {
         std::env::var("PATH").unwrap_or_default()
     );
 
-    let output = kendex_in(
-        home,
-        &proj,
-        &[
-            "report", "--hook", "guard", "--title", "Broken", "--body", "Details",
-        ],
-        &[("PATH", path)],
-    );
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains("Issue filed: https://github.com/x/1")
-    );
-    let args = fs::read_to_string(home.join("gh-args.txt")).unwrap();
-    assert!(args.contains("vanillagreencom/kendex"));
-    assert!(args.contains("harness"));
-    assert!(args.contains("kendex-report:v1 asset=guard kind=hook"));
+    // Triage dates a report against the fix that already landed, so the
+    // marker carries what the lock recorded. An installation the lock never
+    // dated says so and still files.
+    for (recorded, stamped) in [
+        (
+            r#","sourceCommit":"abc1234def5678","renderedHash":"9f8e7d6c5b4a""#,
+            "source=vanillagreencom/kendex@abc1234 rendered=9f8e7d6",
+        ),
+        ("", "source=unlocked rendered=unlocked"),
+    ] {
+        fs::write(
+            proj.join(".kendex-lock.json"),
+            lock_of(
+                &proj,
+                &format!(
+                    r#""hook:guard:claude":{{"name":"guard","kind":"hook","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"copy","installedAt":"2026-01-01T00:00:00Z","sourceHash":"x"{recorded},"enabled":true}}"#
+                ),
+            ),
+        )
+        .unwrap();
+
+        let output = kendex_in(
+            home,
+            &proj,
+            &[
+                "report", "--hook", "guard", "--title", "Broken", "--body", "Details",
+            ],
+            &[("PATH", path.clone())],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("Issue filed: https://github.com/x/1")
+        );
+        let args = fs::read_to_string(home.join("gh-args.txt")).unwrap();
+        assert!(args.contains("vanillagreencom/kendex"));
+        assert!(args.contains("harness"));
+        assert!(
+            args.contains(&format!(
+                "kendex-report:v1 asset=guard kind=hook ownership=kendex {stamped} -->"
+            )),
+            "{args}"
+        );
+    }
 }
 
 /// A release publishes what it built for this target beside its feed, and
