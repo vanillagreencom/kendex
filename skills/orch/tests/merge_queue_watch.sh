@@ -30,6 +30,7 @@ eq() { if [[ "$1" == "$2" ]]; then ok "$3"; else bad "$3 (expected $2, got $1)";
 wait_file() { local i; for ((i=0;i<100;i++)); do [[ -s "$1" ]] && return 0; sleep 0.05; done; return 1; }
 wait_exists() { local i; for ((i=0;i<100;i++)); do [[ -e "$1" ]] && return 0; sleep 0.05; done; return 1; }
 wait_state() { local i; for ((i=0;i<200;i++)); do [[ "$(jq -r .status "$1")" == "$2" ]] && return 0; sleep 0.05; done; return 1; }
+wait_gone() { local i; for ((i=0;i<200;i++)); do running "$1" || return 0; sleep 0.05; done; return 1; }
 running() { local state; state=$(ps -p "$1" -o stat= 2>/dev/null) || return 1; state="${state//[[:space:]]/}"; [[ -n "$state" && "$state" != Z* ]]; }
 inode() { stat -c %i "$1" 2>/dev/null || stat -f %i "$1"; }
 
@@ -129,7 +130,12 @@ cat > "$BIN/setsid" <<'EOF'
 set -euo pipefail
 [[ ! -f "$WATCH_SETSID_FAIL" ]] || exit 41
 if [[ -f "$WATCH_SETSID_DELAY.enabled" ]]; then
-  "$WATCH_REAL_SETSID" -f bash -c 'touch "$WATCH_SETSID_DELAY.entered"; while [[ ! -f "$WATCH_SETSID_DELAY.release" ]]; do sleep 0.05; done; exec "$@"' bash "$WATCH_REAL_SETSID" "$@"
+  # The outer `setsid -f` has already detached this delayed supervisor into its
+  # own session, so the gated shell runs it directly rather than exec-ing setsid
+  # a second time. Staying its parent is what lets the shell touch `.exited`
+  # when the supervisor finishes, which is the condition the test waits on
+  # instead of a fixed settle sleep. `shift` drops the caller's `-f`.
+  "$WATCH_REAL_SETSID" -f bash -c 'touch "$WATCH_SETSID_DELAY.entered"; while [[ ! -f "$WATCH_SETSID_DELAY.release" ]]; do sleep 0.05; done; shift; "$@" || true; touch "$WATCH_SETSID_DELAY.exited"' bash "$@"
   exit 0
 fi
 if [[ -f "$WATCH_SETUP_GATE.enabled" ]]; then touch "$WATCH_SETUP_GATE.entered"; while [[ ! -f "$WATCH_SETUP_GATE.release" ]]; do sleep 0.05; done; fi
@@ -480,13 +486,19 @@ export WATCH_RELEASE="$old_release"
 prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+stale_supervisor_pid=$(jq -r .supervisor_pid "$state_path")
 jq '.status="launch_failed"|.action="launch"|.supervisor_pid=null' "$state_path" > "$TMP/publication-state.json"
 chmod 600 "$TMP/publication-state.json"; mv "$TMP/publication-state.json" "$state_path"
 export WATCH_RELEASE="$new_release"
 launch_bounded "$watch"
 publication_replacement=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .artifact_path)
 touch "$new_release"; wait_file "$publication_replacement" || bad "publication-fence replacement verdict missing"
-touch "$old_release"; sleep 0.5
+# The stale supervisor sits on its worker until this release, then makes the one
+# publication attempt this fence has to refuse and exits. Waiting for that
+# process to go away is waiting for exactly that attempt to be over; the fixed
+# settle sleep it replaces only guessed at when it was.
+touch "$old_release"
+wait_gone "$stale_supervisor_pid" || bad "stale started supervisor never finished its publication attempt"
 [[ ! -e "$artifact" ]] && ok "stale started supervisor cannot publish after replacement" || bad "publication fence admitted the stale started supervisor"
 eq "$(jq -r .verdict "$publication_replacement")" ejected "stale publication leaves the replacement verdict intact"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
@@ -497,6 +509,7 @@ export WATCH_RELEASE="$RELEASE"
 if [[ -n "$REAL_SETSID" ]]; then
   prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
   delayed_runtime=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .runtime_dir)
+  rm -f -- "$WATCH_SETSID_DELAY.exited"
   touch "$WATCH_SETSID_DELAY.enabled"
   set +e; "$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" --poll 1 --max-wait 10 >/dev/null 2>&1; delayed_rc=$?; set -e
   [[ "$delayed_rc" -ne 0 ]] && ok "pre-PID supervisor delay enters launch recovery" || bad "pre-PID supervisor delay reported success"
@@ -511,7 +524,10 @@ if [[ -n "$REAL_SETSID" ]]; then
   worker_count=$(wc -l < "$WATCH_WORKER_LOG")
   printf 'malformed\n' > "$MODE"
   touch "$WATCH_SETSID_DELAY.release"
-  sleep 0.5
+  # The gate shell touches `.exited` once the released supervisor has returned,
+  # so the assertions below read a finished attempt rather than a sleep's guess
+  # at one.
+  wait_exists "$WATCH_SETSID_DELAY.exited" || bad "released delayed supervisor never finished"
   eq "$(wc -l < "$WATCH_WORKER_LOG")" "$worker_count" "unregistered delayed supervisor cannot start a worker"
   [[ ! -e "$artifact" ]] && ok "unregistered delayed supervisor cannot publish into retry files" || bad "unregistered delayed supervisor published after retry"
   eq "$(jq -r .verdict "$delayed_replacement_artifact")" ejected "unregistered delayed supervisor cannot rewrite the replacement verdict"
@@ -519,7 +535,7 @@ if [[ -n "$REAL_SETSID" ]]; then
   result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
   eq "$(jq -r .action <<<"$result")" recovery "replacement verdict wins after delayed supervisor release"
   "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
-  rm -f -- "$WATCH_SETSID_DELAY.entered" "$WATCH_SETSID_DELAY.release"
+  rm -f -- "$WATCH_SETSID_DELAY.entered" "$WATCH_SETSID_DELAY.release" "$WATCH_SETSID_DELAY.exited"
 else
   ok "pre-PID supervisor fence skipped without setsid"
 fi
@@ -645,10 +661,13 @@ wait_state "$state_path" launch_failed || bad "launch failure did not claim befo
 touch "$WATCH_REGISTRATION_GATE.release"
 set +e; wait "$registration_launch_pid"; registration_launch_rc=$?; set -e
 [[ "$registration_launch_rc" -ne 0 ]] && ok "post-check registration remains a launch failure" || bad "post-check registration revived launch"
-sleep 0.3
-eq "$(wc -l < "$WATCH_WORKER_LOG")" "$worker_count" "supervisor rechecks state after PID publication"
+# The supervisor publishes its PID and only then rechecks the state it lost, so
+# the PID file appearing and that process going away bound the window this case
+# is about exactly — the settle sleep it replaces only approximated them.
+wait_file "$registration_runtime/supervisor.pid" || bad "late-registering supervisor never published its PID"
 registration_pid=$(cat < "$registration_runtime/supervisor.pid")
-if ! running "$registration_pid"; then ok "late-registering supervisor exits before deadline"; else bad "late-registering supervisor survived its failed generation"; fi
+if wait_gone "$registration_pid"; then ok "late-registering supervisor exits before deadline"; else bad "late-registering supervisor survived its failed generation"; fi
+eq "$(wc -l < "$WATCH_WORKER_LOG")" "$worker_count" "supervisor rechecks state after PID publication"
 touch "$RELEASE"
 "$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
 rm -f -- "$WATCH_REGISTRATION_GATE.enabled" "$WATCH_REGISTRATION_GATE.entered" "$WATCH_REGISTRATION_GATE.release"

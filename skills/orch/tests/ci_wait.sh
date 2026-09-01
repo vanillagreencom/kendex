@@ -64,51 +64,9 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-
-dump_stderr() {
-  local file="$1"
-  [[ -n "$file" && -f "$file" ]] || return 0
-  printf '        stderr:\n'
-  sed 's/^/          /' "$file"
-}
-
-assert_eq() {
-  local got="$1" want="$2" name="$3" stderr_file="${4:-}"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-    dump_stderr "$stderr_file"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3" stderr_file="${4:-}"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-    dump_stderr "$stderr_file"
-  fi
-}
-
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3" stderr_file="${4:-}"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unwanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-    dump_stderr "$stderr_file"
-  else
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  fi
-}
+# The pass/fail counters and the assertion vocabulary every waiter suite shares.
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
@@ -317,27 +275,40 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/op"
 
+# Virtual clock, on the same PATH as the gh stub: `date +%s` reads a file the
+# `sleep` stub advances, so every poll budget below is spent in arithmetic
+# rather than in real seconds. Rationale in lib/virtual-clock.sh, along with the
+# escape hatch case 7 takes — its hanging-auth stub needs a real sleep, so it
+# runs with STUB_CLOCK= and both stubs fall through to the real commands.
+# shellcheck source=lib/virtual-clock.sh
+source "$TEST_DIR/lib/virtual-clock.sh"
+virtual_clock_install "$TMP_ROOT/bin" "$TMP_ROOT/clock"
+
 # Run ci-wait via the .agents symlink, exactly how it's invoked in
 # production. `env "$@"` injects test-controlled env tokens / stub flags.
 run_wait() {
+  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env "$@" .agents/skills/orch/scripts/ci-wait 1 1 30)
 }
 
 run_wait_short() {
+  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env "$@" .agents/skills/orch/scripts/ci-wait 1 1 5)
 }
 
 run_wait_json() {
+  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env "$@" .agents/skills/orch/scripts/ci-wait 1 1 30 --json)
 }
 
 run_wait_json_short() {
+  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env "$@" .agents/skills/orch/scripts/ci-wait 1 1 5 --json)
@@ -430,9 +401,13 @@ assert_eq "$(cat "$api_count_file")" "1" "case6: selected token validates once a
 
 # Case 7: no env tokens and keyring auth hangs. The bounded auth preflight
 # should return the normal no-working-auth diagnostic instead of hanging.
+# The one case that opts out of the virtual clock: the hang is what is under
+# test, so `STUB_CLOCK=` sends the stub's `sleep 5` to the real sleep, leaving
+# the preflight a wait to actually bound. On the virtual clock the stub would
+# return instantly and there would be no hang to survive.
 stderr="$TMP_ROOT/case7.err"
 set +e
-output=$(timeout 6s bash -c 'cd "$1" && PATH="$2:$PATH" KENDEX_GITHUB_AUTH_TIMEOUT=1 STUB_GH_AUTH_STATUS_SLEEP=1 .agents/skills/orch/scripts/ci-wait 1 1 30' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" 2>"$stderr")
+output=$(timeout 6s bash -c 'cd "$1" && PATH="$2:$PATH" STUB_CLOCK= KENDEX_GITHUB_AUTH_TIMEOUT=1 STUB_GH_AUTH_STATUS_SLEEP=1 .agents/skills/orch/scripts/ci-wait 1 1 30' bash "$TMP_ROOT/repo" "$TMP_ROOT/bin" 2>"$stderr")
 rc=$?
 set -e
 assert_eq "$rc" "3" "case7: hanging keyring auth exits 3" "$stderr"

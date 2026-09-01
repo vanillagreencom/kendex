@@ -49,39 +49,9 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-
-dump_stderr() {
-  local file="$1"
-  [[ -n "$file" && -f "$file" ]] || return 0
-  printf '        stderr:\n'
-  sed 's/^/          /' "$file"
-}
-
-assert_eq() {
-  local got="$1" want="$2" name="$3" stderr_file="${4:-}"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-    dump_stderr "$stderr_file"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3" stderr_file="${4:-}"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-    dump_stderr "$stderr_file"
-  fi
-}
+# The pass/fail counters and the assertion vocabulary every waiter suite shares.
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/seq"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
@@ -329,6 +299,14 @@ checkruns_body() {
   printf '{"total_count":%d,"check_runs":[%s]}' "$((done + pending))" "${runs%,}"
 }
 
+# Virtual clock, on the same PATH as the gh stub: `date +%s` reads a file the
+# `sleep` stub advances, so every budget here is spent in arithmetic instead of
+# in real seconds, and the deadline cases stop racing the runner. Rationale and
+# the per-case escape hatch back to real time: lib/virtual-clock.sh.
+# shellcheck source=lib/virtual-clock.sh
+source "$TEST_DIR/lib/virtual-clock.sh"
+virtual_clock_install "$TMP_ROOT/bin" "$TMP_ROOT/clock"
+
 # Run queue-wait through the .agents symlink, exactly how it is invoked in
 # production. `env "$@"` injects the stub's fixture directory and knobs; the
 # trailing args are the caller-visible ones.
@@ -339,6 +317,7 @@ run_queue_wait() {
     shift
   done
   shift || true
+  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env STUB_SEQ_DIR="$SEQ_DIR" \
@@ -523,7 +502,6 @@ assert_eq "$rc" "0" "transient error absorbed, wait completes" "$err"
 assert_eq "$(jq -r .verdict <<<"$out")" "merged" "transient error does not change the verdict" "$err"
 assert_eq "$(jq -r '.transient_api_errors // 0' <<<"$out")" "1" "transient error counted in JSON" "$err"
 
-
 # --- 18. a one-poll queued verdict is flagged low-confidence -----------------
 # With poll_interval == max_wait the loop polls exactly once. The "still queued"
 # observation is then a single sample; the verdict must say so, in both the
@@ -542,19 +520,18 @@ hout="$(run_queue_wait -- 1 1 1 --no-check-probe 2>"$herr")" && rc=0 || rc=$?
 assert_contains "$hout" "LOW CONFIDENCE" "one-poll human verdict is flagged low-confidence" "$herr"
 
 # --- 19. max_wait is a real upper bound (sleep clamped to remaining) ---------
-# poll_interval 3 with max_wait 4: the second poll's full interval would push
-# elapsed to ~6 unless the final sleep is clamped to the ~1s of remaining budget.
+# poll_interval 3 with max_wait 4: the first sleep spends 3 of the budget and
+# the second is clamped to the 1 that remains, landing elapsed on exactly the
+# budget. Unclamped it would be 6. On the virtual clock those are the only two
+# numbers reachable, so the assertion is the equality rather than a bound with
+# a second of slack for wall-clock jitter — a clamp off by anything at all is
+# now a failure rather than rounding.
 new_case budget_upper_bound
 write_fixture state last "$pr_open"
 write_fixture queue last "$q_in_queue"
 err="$TMP_ROOT/e19"
 out="$(run_queue_wait -- 1 3 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-elapsed_seconds="$(jq -r .elapsed_seconds <<<"$out")"
-if [[ "$elapsed_seconds" =~ ^[0-9]+$ ]] && [ "$elapsed_seconds" -le 5 ]; then
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "elapsed ($elapsed_seconds s) stays within max_wait+1 (clamped sleep)"
-else
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        elapsed_seconds=%s (want <= 5)\n' "budget upper bound" "$elapsed_seconds"; dump_stderr "$err"
-fi
+assert_eq "$(jq -r .elapsed_seconds <<<"$out")" "4" "elapsed lands on max_wait exactly (clamped sleep)" "$err"
 
 # --- 20. late-findings guard: unresolved thread while queued -----------------
 # ANY unresolved thread seen while queued triggers, with no baseline: an

@@ -24,39 +24,9 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-
-dump_stderr() {
-  local file="$1"
-  [[ -n "$file" && -f "$file" ]] || return 0
-  printf '        stderr:\n'
-  sed 's/^/          /' "$file"
-}
-
-assert_eq() {
-  local got="$1" want="$2" name="$3" stderr_file="${4:-}"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-    dump_stderr "$stderr_file"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3" stderr_file="${4:-}"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-    dump_stderr "$stderr_file"
-  fi
-}
+# The pass/fail counters and the assertion vocabulary every waiter suite shares.
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
 
 # Whole-line match, for the --help rows below. Both `conflicting` and
 # `base_conflict` occur in --help prose and in the cause list, so a substring
@@ -189,6 +159,14 @@ q_in_queue='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueu
 q_out='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null}}}}'
 q_armed_only='{"data":{"repository":{"pullRequest":{"id":"PR_node1","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
 
+# Virtual clock, on the same PATH as the gh stub: `date +%s` reads a file the
+# `sleep` stub advances, so a budget here is spent in arithmetic rather than in
+# real seconds — including STUB_QUEUE_DELAY, which charges a poll its cost on
+# the same clock. Rationale and the per-case escape hatch: lib/virtual-clock.sh.
+# shellcheck source=lib/virtual-clock.sh
+source "$TEST_DIR/lib/virtual-clock.sh"
+virtual_clock_install "$TMP_ROOT/bin" "$TMP_ROOT/clock"
+
 run_queue_wait() {
   local env_args=()
   while [[ $# -gt 0 && "$1" != "--" ]]; do
@@ -196,6 +174,7 @@ run_queue_wait() {
     shift
   done
   shift || true
+  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env STUB_SEQ_DIR="$SEQ_DIR" \

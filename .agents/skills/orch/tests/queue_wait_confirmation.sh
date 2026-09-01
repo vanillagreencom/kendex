@@ -34,39 +34,9 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-
-dump_stderr() {
-  local file="$1"
-  [[ -n "$file" && -f "$file" ]] || return 0
-  printf '        stderr:\n'
-  sed 's/^/          /' "$file"
-}
-
-assert_eq() {
-  local got="$1" want="$2" name="$3" stderr_file="${4:-}"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-    dump_stderr "$stderr_file"
-  fi
-}
-
-assert_le() {
-  local got="$1" bound="$2" name="$3" stderr_file="${4:-}"
-  if [[ "$got" =~ ^[0-9]+$ ]] && [ "$got" -le "$bound" ]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted: <= %s\n        got:    %s\n' "$name" "$bound" "$got"
-    dump_stderr "$stderr_file"
-  fi
-}
+# The pass/fail counters and the assertion vocabulary every waiter suite shares.
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/seq"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
@@ -156,51 +126,14 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
-# Virtual clock, on the same PATH as the gh stub. On wall time these cases have
-# no margin worth the name. They run on budgets of a few seconds, and once a
-# poll costs a large fraction of a second the deadline arrives before the
-# squeezed confirmation poll can land, so every case goes red. That is what a
-# contended CI runner and a busy developer box both produce, and it is what
-# made this suite eject merge groups (KEN-879).
-#
-# None of it is about real duration. What the cases assert is arithmetic over
-# the clock queue-wait itself keeps, and queue-wait reads wall time only as
-# `date +%s` and waits only through `sleep`, so owning those two commands makes
-# the budget exact rather than raced. A sleep advances the clock, a poll costs
-# nothing unless the stub is told to charge for it, and every assertion below
-# lands on the same number no matter how slow the machine is. The suite also
-# stops needing `date +%N`, a GNU extension that is absent on macOS.
-REAL_DATE="$(command -v date)"
-REAL_SLEEP="$(command -v sleep)"
-if [[ ! -x "$REAL_DATE" || ! -x "$REAL_SLEEP" ]]; then
-  echo "no external date/sleep for the clock stubs to fall back on" >&2
-  exit 1
-fi
-
-cat > "$TMP_ROOT/bin/date" <<'EOF'
-#!/usr/bin/env bash
-# `+%s` is the clock queue-wait keeps its budget on. Every other form is the
-# real date, so a timestamp the script prints is still a real timestamp.
-if [[ "${1:-}" == "+%s" && -f "${STUB_CLOCK:-}" ]]; then
-  cat "$STUB_CLOCK"
-  exit 0
-fi
-exec "$STUB_REAL_DATE" "$@"
-EOF
-chmod +x "$TMP_ROOT/bin/date"
-
-cat > "$TMP_ROOT/bin/sleep" <<'EOF'
-#!/usr/bin/env bash
-# Whole seconds advance the clock and return; that is every wait queue-wait and
-# the gh stub make. Anything else is a real sleep, so an unexpected fractional
-# wait still waits rather than silently passing.
-if [[ "${1:-}" =~ ^[0-9]+$ && -f "${STUB_CLOCK:-}" ]]; then
-  printf '%s' "$(( $(cat "$STUB_CLOCK") + $1 ))" > "$STUB_CLOCK"
-  exit 0
-fi
-exec "$STUB_REAL_SLEEP" "$@"
-EOF
-chmod +x "$TMP_ROOT/bin/sleep"
+# Virtual clock, on the same PATH as the gh stub: `date +%s` reads a file the
+# `sleep` stub advances, so the budget arithmetic these cases assert is exact
+# rather than raced against the runner. Full rationale, and the per-case escape
+# hatch back to real time, in lib/virtual-clock.sh. It also means the suite no
+# longer needs `date +%N`, a GNU extension absent on macOS.
+# shellcheck source=lib/virtual-clock.sh
+source "$TEST_DIR/lib/virtual-clock.sh"
+virtual_clock_install "$TMP_ROOT/bin" "$TMP_ROOT/clock"
 
 SEQ_DIR=""
 new_case() {
@@ -227,15 +160,10 @@ run_queue_wait() {
     shift
   done
   shift || true
-  # Start each run at the real epoch, so anything reading an absolute time
-  # still reads a plausible one, and let the run move the clock from there.
-  date +%s > "$TMP_ROOT/clock"
+  virtual_clock_reset
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env STUB_SEQ_DIR="$SEQ_DIR" \
-           STUB_CLOCK="$TMP_ROOT/clock" \
-           STUB_REAL_DATE="$REAL_DATE" \
-           STUB_REAL_SLEEP="$REAL_SLEEP" \
            QUEUE_WAIT_CONFIRM_POLLS=2 \
            QUEUE_WAIT_ARM_GRACE=120 \
            QUEUE_WAIT_PROBE_INTERVAL=0 \

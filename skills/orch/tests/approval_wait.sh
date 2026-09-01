@@ -89,45 +89,9 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-PASS=0
-FAIL=0
-
-dump_stderr() {
-  local file="$1"
-  [[ -n "$file" && -f "$file" ]] || return 0
-  printf '        stderr:\n'
-  sed 's/^/          /' "$file"
-}
-
-# For checks whose predicate is not a string comparison (exit codes, emptiness).
-pass() {
-  PASS=$((PASS + 1))
-  printf '  ok    %s\n' "$1"
-}
-
-assert_eq() {
-  local got="$1" want="$2" name="$3" stderr_file="${4:-}"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-    dump_stderr "$stderr_file"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3" stderr_file="${4:-}"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-    dump_stderr "$stderr_file"
-  fi
-}
+# The pass/fail counters and the assertion vocabulary every waiter suite shares.
+# shellcheck source=lib/waiter-assertions.sh
+source "$TEST_DIR/lib/waiter-assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
@@ -454,6 +418,17 @@ printf 'unexpected gh call: %s\n' "$*" >&2
 exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
+
+# Virtual clock, on the same PATH as the gh stub: `date +%s` reads a file the
+# `sleep` stub advances, so the poll budgets below are spent in arithmetic
+# rather than in real seconds. Rationale and the per-case escape hatch back to
+# real time: lib/virtual-clock.sh. The clock is seeded once and runs forward
+# across the whole suite rather than being reset per case — approval-wait takes
+# its own START_TIME and nudge clock at the top of each run, so every budget
+# here is measured from that run's start and no case reads an absolute time.
+# shellcheck source=lib/virtual-clock.sh
+source "$TEST_DIR/lib/virtual-clock.sh"
+virtual_clock_install "$TMP_ROOT/bin" "$TMP_ROOT/clock"
 
 # Run approval-wait via the .agents symlink, exactly how it's invoked in
 # production. `env "$@"` injects test-controlled env tokens / stub flags.
