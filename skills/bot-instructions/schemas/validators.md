@@ -288,8 +288,12 @@ case the key exists to prevent. For a surface with `reviewer_only = false` the
 render emits no `excludeAgent`; if one is present it must still be one of the
 two values `references/limits.md` documents.
 
-Two controls on that clause, per § Controls: a reviewer-only surface rendered
-with the key missing, and one rendered with `code-review`.
+Three controls, per § Controls, one per clause: a reviewer-only surface
+rendered with the key missing, one rendered with `code-review`, and an ordinary
+surface rendered with an `excludeAgent` outside the two documented values. The
+third is easy to leave out because the render emits no key there, which is
+exactly why it needs naming — a clause nothing exercises is a clause nothing
+proves.
 
 ## `copilot-budget`
 
@@ -523,19 +527,20 @@ that may have moved on; and an unstaged doctrine edit
 would silently decide what the staged outputs were compared against, passing or
 failing on bytes nobody is committing.
 
-**Controls.** The hand-edit fixture, a fixture whose only change is a deleted
-marker line, and one pair per render input for the mode. Per input — the TOML,
-the spec copy, the vendored schema, each install manifest read — a staged,
-consistent set with a divergent worktree copy of that input, asserted green;
-and a staged copy of that input that its staged outputs are stale against,
-asserted red. Plus
-one for absence: an input staged as absent, asserted on the absence rather than
-on its worktree copy.
+**Controls.** The hand-edit fixture; a fixture whose only change is a deleted
+marker line; a fixture editing the `AGENTS.md` owned region, which reds this
+validator alone and is what proves the region comparison lives here rather than
+in `agents-section`; and one pair per render input for the mode. Per input —
+the TOML, the spec copy, the vendored schema, each install manifest read — a
+staged, consistent set with a divergent worktree copy of that input, asserted
+green, and a staged copy of that input that its staged outputs are stale
+against, asserted red. Plus one for absence: an input staged as absent,
+asserted on the absence rather than on its worktree copy.
 
 A TOML-only pair is what a generator reading the index for the TOML and the
-worktree for everything else passes, with the failure § Which tree names shipping
-intact. One clause, one control, applied to the validator whose clause names
-four inputs.
+worktree for everything else passes, with the failure § Which tree names
+shipping intact. One clause, one control, applied to the validator whose clause
+names four inputs.
 
 ## Where these run
 

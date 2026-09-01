@@ -2,15 +2,20 @@
 
 ## Adding a repo
 
+Two passes, and the first one deliberately renders nothing.
+
+**Pass one, staging.** The `[bots]` flags start false, so this pass produces a
+committed `bot-instructions.toml` and no instruction files. That is the point:
+a repo commits its intent before any vendor setting exists to honour it, and a
+flag turned on ahead of its settings work renders a file the bot is not yet
+reading.
+
 1. Write `bot-instructions.toml` at the repo root per
-   [schemas/repo-toml.md](schemas/repo-toml.md). An existing hand-written bot
+   [schemas/repo-toml.md](../schemas/repo-toml.md). An existing hand-written bot
    file is the source for its `[[surface]]` blocks and exclusions: read it,
    move its repo-specific claims into the TOML, and let doctrine carry the
-   rest.
-2. If `[bots] codex` is true, add a `## Code Review Rules` heading to
-   `AGENTS.md` by hand. The generator never adds it, and `adopt` in the next
-   step is what takes the region it opens.
-3. Run `adopt`, which names every existing file and region it is taking over,
+   rest. Leave every `[bots]` flag false.
+2. Run `adopt`, which names every existing file and region it is taking over,
    and every repo-root or `.github/` markdown file those files point at. That
    second list is where a repo-wide hand-written reviewer file shows up — one
    that restates doctrine and carries an accepted-trade-off list, reached only
@@ -19,17 +24,32 @@
    and is a policy path. Read both lists against the TOML: a claim in one of
    those files that the TOML does not carry is about to be deleted, or to go on
    steering reviews from outside the package.
-4. If `[bots] coderabbit` is true, put CodeRabbit's published schema at
-   `.bot-instructions/coderabbit-schema.json`. No verb writes it and
-   `coderabbit-schema` fails without it, deliberately: a validator that skipped
-   on a missing schema would be silent for the life of the repo, which is the
-   failure it exists to catch.
-5. Run `render`, then read the diff. Doctrine text appearing for the first time
-   is expected; a repo-specific claim disappearing means it never made it into
-   the TOML.
-6. Work the settings below. Every bot has at least one setting no file can
-   express, and a bot whose install or enablement step is skipped reviews
-   nothing while every file in the repo looks correct.
+3. Run `render`. It writes nothing and says so, because every flag is off. A
+   no-op here is the staging point, not a finished install.
+
+**Pass two, per capability.** Work one bot at a time, and finish each before
+starting the next, so a failure names the bot that caused it.
+
+4. Work that capability's settings below. Every bot has at least one setting no
+   file can express, and a bot whose install or enablement step is skipped
+   reviews nothing while every file in the repo looks correct.
+5. Do the flag's own prerequisite, where it has one. `codex` needs a
+   `## Code Review Rules` heading added to `AGENTS.md` by hand, since the
+   generator never adds it. `coderabbit` needs CodeRabbit's published schema at
+   `.bot-instructions/coderabbit-schema.json`; no verb writes it and
+   `coderabbit-schema` fails without it, deliberately, because a validator that
+   skipped on a missing schema would be silent for the life of the repo.
+   `qodo_review_md` needs the portal toggle already on.
+6. Set the flag, then run `adopt` again if that capability's prerequisite left
+   an unmarked region or the repo already had a file at one of its generated
+   paths, then `render`.
+7. Read the diff. Doctrine text appearing for the first time is expected; a
+   repo-specific claim disappearing means it never made it into the TOML.
+8. Run `check`. Then repeat from step 4 for the next capability.
+
+The install is finished when every capability the repo wants is on, `check` is
+clean, and the smoke test at the end of this file has seen each enabled bot
+comment. A repo that stops after pass one has staged the work, not done it.
 
 ## The settings
 
@@ -38,14 +58,14 @@ expressed in any file the repo contains. Skip one and the repo looks fully
 configured while a bot reviews nothing, or reviews with the wrong scope, and no
 render or validator can tell.
 
-Work this once per repo, in the pull request that adds
-`bot-instructions.toml`. Record the outcome of each line in that repo, next to
-the TOML, so the next person can tell a deliberate `false` from an unanswered
-question.
+Work one capability's section at a time, as step 4 of the sequence above, and
+record each line's outcome in the repo beside the TOML so the next person can
+tell a deliberate `false` from an unanswered question.
 
-A bot capability whose row here is unanswered should be `false` in `[bots]`. A
+A capability whose section here is unanswered stays `false` in `[bots]`. A
 `true` flag renders files that reach nothing, which is worse than no files at
-all.
+all — and a section answered but never followed by step 6 leaves the reverse,
+a bot enabled at the vendor reading nothing this package wrote.
 
 None of this state is machine-readable from the repo, and an administrator can
 change any of it without touching the repo. Every check here can keep passing
