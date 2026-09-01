@@ -1,3 +1,3 @@
-- A word the shell produces rather than reveals is still not seen: a flag
-  reached through a variable, a substitution, or `$'\x2d\x6e'`. Git's armed
-  hooks are the control for those.
+- A bypass is seen only where a word already spells it. One the shell would
+  join, unquote or expand into the word is not seen: a quote, a backslash, a
+  brace, a variable, an `include.path`.
