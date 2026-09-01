@@ -276,8 +276,8 @@ fn plan_registration(
     // new event would leave the old one live and the hook would fire
     // twice.
     let retire = match super::item_record::retire_previous(item, existing) {
-        Ok(retire) => retire,
-        Err(why) => return Ok(Planned::Conflict(why)),
+        super::item_record::Previous::Settled => None,
+        super::item_record::Previous::Retire(path, edit) => Some((path, edit)),
     };
     let edits: Vec<(PathBuf, ConfigEdit)> =
         retire.into_iter().chain(edits.iter().cloned()).collect();

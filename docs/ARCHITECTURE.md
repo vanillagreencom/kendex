@@ -431,8 +431,6 @@ lives in one capability table read by core and UI.
   does an answer short of certainty: an entry moved, duplicated, or
   unnamed by the record is the person's to keep, and the pass registers
   under the identity it renders beside it (`item_record::retire_previous`).
-  Pi's whole-file registry is the exception: a recorded command moved or
-  duplicated there conflicts before another registration is written.
   Removal reads the same record; an editor rewrites only its own registration;
   an entry no edit of kendex's can reach is neither reconciled nor retired —
   proven by applying and reading back.
