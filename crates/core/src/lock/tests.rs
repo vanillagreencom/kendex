@@ -232,10 +232,12 @@ fn recording(path: &Path, key: &str, emitted: &Path, wrote_it: Option<&Path>) {
 
 /// Containment cannot answer whose record this is: a checkout nested below
 /// this root sits inside it, so every path a lock carried out of that
-/// checkout names passes the boundary. The record says which root wrote it,
-/// and the refusal names both so the reader can see which is which.
+/// checkout names passes the boundary and the nested tree is what a
+/// refresh would then take back. The record says which root wrote it, so
+/// each position is read as a remainder of that root and resolves onto the
+/// one reading — which is this project's own tree, never the writer's.
 #[test]
-fn a_project_lock_another_project_wrote_is_refused_naming_both() {
+fn a_project_lock_another_project_wrote_resolves_onto_the_project_reading_it() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("here");
     let nested = root.join("vendor/thing");
@@ -248,14 +250,20 @@ fn a_project_lock_another_project_wrote_is_refused_naming_both() {
         Some(&nested),
     );
 
-    let refused = load(&path).unwrap_err();
-    assert!(
-        matches!(
-            &refused,
-            CoreError::LockFromAnotherProject { recorded, root: reading, .. }
-                if recorded == &nested && reading == &root
-        ),
-        "{refused:?}"
+    let lock = load(&path).unwrap();
+    assert_eq!(
+        lock.entries["skill:gh:claude"]
+            .emitted
+            .as_ref()
+            .unwrap()
+            .paths,
+        vec![root.join(".agents/skills/gh")],
+        "the remainder lands under the root reading, not the one that wrote it"
+    );
+    assert_eq!(
+        lock.root,
+        Some(crate::paths::canonical(&root).unwrap()),
+        "and the record is this project's from here on"
     );
 }
 
@@ -418,7 +426,9 @@ fn a_relatively_named_project_lock_still_has_a_boundary() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join(LOCK_FILE);
     let elsewhere = tmp.path().join("there/.agents/skills/gh");
-    recording(&path, "skill:gh:claude", &elsewhere, Some(tmp.path()));
+    // Written under the same directory it is read from — the current one —
+    // so nothing resolves and the claim is judged where it stands.
+    recording(&path, "skill:gh:claude", &elsewhere, Some(Path::new(".")));
     let text = std::fs::read_to_string(&path).unwrap();
 
     assert!(matches!(

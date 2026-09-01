@@ -3,9 +3,11 @@
 //!
 //! Refresh reads `emitted.paths` as the positions this scope owns and takes
 //! back the ones it no longer renders. Pointed at another tree those are
-//! somebody else's files, and a project scope writes only inside its own
-//! root — so the record is refused, naming the path, and the other tree is
-//! not read as this one's to take.
+//! somebody else's files. A record naming the root it was written under
+//! states each position as a remainder of that root, so the read resolves
+//! them onto the root reading instead and the other tree is never named; a
+//! position with no such remainder — another tree outright, or one walking
+//! back out through `..` — is refused, naming the path.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -92,13 +94,14 @@ fn refresh() -> PlanOptions {
     }
 }
 
-/// The must-fail control for the containment refusal. Without it the copied
-/// record is read as this project's own: every path it names is a position
-/// the new render does not produce, so refresh takes them to the trash —
-/// out of the other checkout.
+/// The must-fail control for reading a travelled record against the root
+/// reading it. Without that the copied record is read as naming this
+/// project's positions where it stands: every path it holds is one the new
+/// render does not produce, so refresh takes them to the trash — out of the
+/// other checkout.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_lock_carried_from_another_checkout_is_refused_and_that_checkout_stands() {
+fn a_lock_carried_from_another_checkout_resolves_here_and_that_checkout_stands() {
     let tmp = tempfile::tempdir().unwrap();
     // Resolved: the engine resolves a scope root before writing any of the
     // paths it records, and on macOS the temp directory is reached through
@@ -132,7 +135,7 @@ fn a_lock_carried_from_another_checkout_is_refused_and_that_checkout_stands() {
         Some(&Entry::File(
             fs::read_to_string(catalog.join("skills/ship/SKILL.md")).unwrap()
         )),
-        "the install this refusal protects is on disk to begin with"
+        "the install this resolution protects is on disk to begin with"
     );
     assert_eq!(
         before.get(Path::new(".claude/skills/ship")),
@@ -142,29 +145,33 @@ fn a_lock_carried_from_another_checkout_is_refused_and_that_checkout_stands() {
 
     // The whole operation, the way refresh runs it: plan the scope, and
     // carry out whatever it planned.
-    let refused = match plan_apply(&env, &project(&elsewhere), &refresh()) {
-        Ok(report) => {
-            kendex_core::apply::execute(&env, &report.plan).unwrap();
-            None
-        }
-        Err(error) => Some(error),
-    };
+    let planned = plan_apply(&env, &project(&elsewhere), &refresh()).unwrap();
+    kendex_core::apply::execute(&env, &planned.plan).unwrap();
 
     assert_eq!(
         snapshot(&installed),
         before,
         "the checkout the lock came from is exactly as it was"
     );
-    let refused = refused.expect("a record naming another project is refused");
-    assert!(
-        matches!(
-            &refused,
-            CoreError::LockOutsideProject { key, recorded, root, .. }
-                if key == "skill:ship:claude"
-                    && recorded == &installed.join(".agents/skills/ship")
-                    && root == &elsewhere
-        ),
-        "the refusal names the entry, the path it claims and the project that cannot hold it: {refused:?}"
+    assert_eq!(
+        snapshot(&elsewhere).get(Path::new(".agents/skills/ship/SKILL.md")),
+        Some(&Entry::File(
+            fs::read_to_string(catalog.join("skills/ship/SKILL.md")).unwrap()
+        )),
+        "and the checkout reading the record renders its own copy"
+    );
+    let record = kendex_core::lock::load(&elsewhere.join(".kendex-lock.json")).unwrap();
+    assert_eq!(
+        record.entries["skill:ship:claude"]
+            .emitted
+            .as_ref()
+            .unwrap()
+            .paths,
+        vec![
+            elsewhere.join(".agents/skills/ship"),
+            elsewhere.join(".claude/skills/ship"),
+        ],
+        "and every position it holds is one of its own"
     );
 }
 
@@ -284,13 +291,13 @@ fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_s
 
 /// Containment is not ownership. A second checkout nested below this root
 /// sits inside it, so every path a lock carried out of that checkout names
-/// passes the boundary check — and the parent's refresh then reads them as
-/// positions it owns and takes back the ones its own render does not
-/// produce, out of the nested tree. The record says which root wrote it, so
-/// the read can tell.
+/// passes the boundary check — and read where it stands, the parent's
+/// refresh takes back the ones its own render does not produce, out of the
+/// nested tree. The record says which root wrote it, so each position is a
+/// remainder of that root and resolves onto the parent's own tree instead.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_lock_from_a_checkout_nested_inside_the_project_is_refused_and_that_checkout_stands() {
+fn a_lock_from_a_checkout_nested_inside_the_project_resolves_here_and_that_checkout_stands() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let catalog = home.join("catalog");
@@ -325,33 +332,32 @@ fn a_lock_from_a_checkout_nested_inside_the_project_is_refused_and_that_checkout
         Some(&Entry::File(
             fs::read_to_string(catalog.join("skills/ship/SKILL.md")).unwrap()
         )),
-        "the install this refusal protects is on disk to begin with"
+        "the install this resolution protects is on disk to begin with"
     );
     assert!(
         nested.join(".agents/skills/ship").starts_with(&outer),
         "the claim is one containment reads as inside"
     );
 
-    let refused = match plan_apply(&env, &project(&outer), &refresh()) {
-        Ok(report) => {
-            kendex_core::apply::execute(&env, &report.plan).unwrap();
-            None
-        }
-        Err(error) => Some(error),
-    };
+    let planned = plan_apply(&env, &project(&outer), &refresh()).unwrap();
+    kendex_core::apply::execute(&env, &planned.plan).unwrap();
 
     assert_eq!(
         snapshot(&nested),
         before,
         "the checkout the lock came from is exactly as it was"
     );
-    let refused = refused.expect("a record another checkout wrote is refused");
-    assert!(
-        matches!(
-            &refused,
-            CoreError::LockFromAnotherProject { recorded, root, .. }
-                if recorded == &nested && root == &outer
-        ),
-        "the refusal names the project that wrote the record and the one reading it: {refused:?}"
+    let record = kendex_core::lock::load(&outer.join(".kendex-lock.json")).unwrap();
+    assert_eq!(
+        record.entries["skill:ship:claude"]
+            .emitted
+            .as_ref()
+            .unwrap()
+            .paths,
+        vec![
+            outer.join(".agents/skills/ship"),
+            outer.join(".claude/skills/ship"),
+        ],
+        "and the parent reads the record as naming its own positions"
     );
 }

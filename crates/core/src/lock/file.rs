@@ -1,5 +1,6 @@
-//! Reading and writing a lock file: what sits at a path, the boundary a
-//! project's record may claim, and the one version shape that loads.
+//! Reading and writing a lock file: what sits at a path, where a record
+//! carried in from another checkout resolves, the boundary a project's
+//! record may claim, and the one version shape that loads.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -61,12 +62,17 @@ fn outside_the_project(root: &Path, lock: &Lock) -> Option<(String, PathBuf)> {
 }
 
 /// A project scope installs only inside its own root, so `emitted.paths`
-/// reaching past it is not a record this project ever wrote — a lock carried
-/// along with a copied checkout is one that does. Refresh and removal read
-/// those paths as the positions this scope owns and take back the ones a new
-/// render no longer produces, which in another tree is somebody else's
+/// reaching past it is a position this scope may not touch. Refresh and
+/// removal read those paths as the ones this scope owns and take back what
+/// a new render no longer produces, which past the root is somebody else's
 /// files. So the record is refused, naming the path, at both ends: no read
 /// hands one out and no write puts one down.
+///
+/// On the read this is the floor under
+/// [`resolve_against_reading_root`], which has already rebased every
+/// position a travelled record stated as a remainder of its own root. What
+/// reaches here is what had no remainder to rebase — a claim on another
+/// tree outright, or one walking back out through `..`.
 ///
 /// The global lock has no single root — each harness owns a directory of its
 /// own — so it has no boundary to check.
@@ -102,21 +108,72 @@ fn same_directory(recorded: &Path, root: &Path) -> bool {
     )
 }
 
-/// Which project wrote this record, held against the project reading it.
+/// Where a travelled record's positions sit, read from the project reading
+/// it rather than from the one that wrote it.
 ///
-/// [`refuse_foreign_paths`] establishes containment, and containment is not
-/// ownership: a second checkout nested below this root sits inside it, so
-/// every path a lock carried out of that checkout names is inside too.
-/// Refresh reads those as positions this project owns and takes back the
-/// ones a new render no longer produces — out of the nested tree. Only the
-/// root that wrote the record settles it, so the record says which.
+/// A project's lock travels. `git worktree` seeds each linked checkout with
+/// a copy, and so does anyone who copies a tree; the record that arrives
+/// names every position as an absolute path under the root that wrote it.
+/// Read as written those are the other checkout's files, and refresh reads
+/// them as the positions this scope owns and takes back the ones a new
+/// render no longer produces — out of that checkout.
 ///
-/// A record naming no project is refused rather than adopted: nothing here
-/// knows who wrote it, and reading it as this project's is exactly the
+/// So they are not read as written. A record names the root it went down
+/// under, which makes each position that root plus a remainder, and the
+/// remainder is the part the record actually states: where the same
+/// position sits here is the reading root plus that remainder. The rebase
+/// is total, so nothing it produces leaves the reading root and a travelled
+/// record cannot reach another tree whatever it was carrying — the reason
+/// this is a resolution and not a refusal.
+///
+/// A position the writing root does not contain has no remainder to rebase
+/// and nothing here may invent one, so it is left as it stands for
+/// [`refuse_foreign_paths`] to judge against the reading root.
+///
+/// A record naming no project is refused rather than adopted: with no root
+/// to rebase off, reading its positions as this project's is exactly the
 /// guess the refusal exists to stop.
 ///
-/// The global lock has no single root, so it records none and there is
-/// nothing to hold it to.
+/// The global lock has no single root — each harness owns a directory of
+/// its own — so it records none and has nothing to resolve against.
+fn resolve_against_reading_root(path: &Path, lock: &mut Lock) -> Result<()> {
+    let Some(root) = project_root_at(path) else {
+        return Ok(());
+    };
+    let Some(recorded) = lock.root.as_deref() else {
+        return Err(CoreError::LockWithoutProject {
+            path: path.to_path_buf(),
+        });
+    };
+    if same_directory(recorded, root) {
+        return Ok(());
+    }
+    let recorded = recorded.to_path_buf();
+    for entry in lock.entries.values_mut() {
+        let Some(emitted) = entry.emitted.as_mut() else {
+            continue;
+        };
+        for position in &mut emitted.paths {
+            if let Ok(remainder) = position.strip_prefix(&recorded) {
+                *position = root.join(remainder);
+            }
+        }
+    }
+    // The record is this project's now, and the next write says so. Left
+    // naming the writer, every later read would rebase paths that already
+    // sit here — off a root this tree has no relation to.
+    lock.root = Some(canonical(root).unwrap_or_else(|_| root.to_path_buf()));
+    Ok(())
+}
+
+/// The write end of the same question: which project a record may be put
+/// down naming.
+///
+/// A read resolves a foreign root because it can — every position rebases
+/// onto the reading root and none can escape it. A write has nothing to
+/// resolve: the record handed in is the one that lands, and a project lock
+/// that cannot hand out another project's name must not be made to hold it
+/// either.
 fn refuse_another_project(path: &Path, lock: &Lock) -> Result<()> {
     let Some(root) = project_root_at(path) else {
         return Ok(());
@@ -210,12 +267,12 @@ pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
             },
         });
     }
-    let lock: Lock = serde_json::from_value(value).map_err(|e| CoreError::LockCorrupt {
+    let mut lock: Lock = serde_json::from_value(value).map_err(|e| CoreError::LockCorrupt {
         path: path.to_path_buf(),
         message: e.to_string(),
     })?;
+    resolve_against_reading_root(path, &mut lock)?;
     refuse_foreign_paths(path, &lock)?;
-    refuse_another_project(path, &lock)?;
     Ok(LockFile::Current(lock))
 }
 

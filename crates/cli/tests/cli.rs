@@ -2,7 +2,7 @@
 
 #[path = "../../test_util.rs"]
 mod test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::Path;
@@ -246,6 +246,72 @@ fn declared(home: &Path, body: &str) -> std::path::PathBuf {
     )
     .unwrap();
     project
+}
+
+/// Everything under `from`, put down again under `to` — a checkout of the
+/// same tree, which is what a linked worktree is.
+#[allow(clippy::unwrap_used)]
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let there = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &there);
+        } else {
+            fs::copy(entry.path(), &there).unwrap();
+        }
+    }
+}
+
+/// The must-fail control for reading a lock in the checkout it was copied
+/// into. `git worktree` seeds every linked checkout with the main one's
+/// `.kendex-lock.json`, whose every position is an absolute path under the
+/// main checkout; read where it stands, the record belongs to another tree
+/// and the read-only verbs refuse instead of answering. Nothing composing
+/// them in a worktree can then be checked at all.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let project = declared(home, "Read the plan first.\n");
+    assert!(kendex(home, &project, &["apply", "-y"]).status.success());
+
+    // The linked worktree: the same tracked tree, render and lock included.
+    let worktree = home.join("dev/.worktrees/app");
+    copy_tree(&project, &worktree);
+
+    let verified = kendex(home, &worktree, &["verify"]);
+    let printed = String::from_utf8_lossy(&verified.stderr).into_owned();
+    assert!(
+        verified.status.success(),
+        "verify must answer for the worktree it runs in: {printed}"
+    );
+    assert!(
+        printed.contains("✓ skill deploy"),
+        "and answer for the install the record names: {printed}"
+    );
+
+    let checked = kendex(home, &worktree, &["check"]);
+    let printed = String::from_utf8_lossy(&checked.stdout).into_owned();
+    assert_eq!(
+        checked.status.code(),
+        Some(0),
+        "check reads the same record and reaches the same verdict: {printed}"
+    );
+    assert!(
+        !printed.contains("another checkout"),
+        "no could-not-check line stands in for the answer: {printed}"
+    );
+
+    // The whole point of the refusal it replaces: the checkout the record
+    // came from is untouched by anything the worktree just did.
+    assert_eq!(
+        fs::read_to_string(project.join(".claude/skills/deploy/SKILL.md")).unwrap(),
+        fs::read_to_string(home.join("catalog/skills/deploy/SKILL.md")).unwrap(),
+        "and the checkout the lock came from still holds its own install"
+    );
 }
 
 /// A plan that cannot write says so. An install kendex refuses to touch

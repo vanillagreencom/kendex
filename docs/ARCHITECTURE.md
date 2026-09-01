@@ -120,7 +120,7 @@ lives in one capability table read by core and UI.
    Ownership is what kendex wrote, read from the positions lock entries
    wrote (recorded for skills and codex commands, derived elsewhere) —
    never from the lock key alone, from an entry merely on the books, or
-   from a project record another root wrote or naming a position outside its own root. A link the user put at a shared config file or a manifest
+   from a position outside the reading root — where a travelled record resolves. A link the user put at a shared config file or a manifest
    (dotfiles) is not foreign: the edit goes through it, link kept, and the precondition
    binds to the bytes reachable there whatever entry type carries them; whether a link
    may sit at a position is decided at plan time, never by the write.
