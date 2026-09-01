@@ -433,9 +433,16 @@ echo "--- the ordering section covers every entry the derivation names ---"
 #
 # The rule, and it is the file's rule rather than this script's: a multi-word
 # entry strands when its FIRST word is in neither list — nothing else deletes
-# the head — and its LAST word is not in the filler list, since the filler
-# pass runs ahead of the strips in both orders and takes an entry ending in a
-# filler word apart before either strip reaches its tail.
+# the head — and its LAST word is not in the OTHER list, the one still
+# running ahead of the strips in that probe, which would otherwise take the
+# entry apart before either strip reached its tail.
+#
+# Nothing in that rule is about WHICH list an entry lives in. Both probes
+# exist because both lists must run ahead of the strips, so the derivation
+# runs over both alternations, each against its own ordering section. The
+# filler list carries only single words today and derives nothing; that is a
+# fact about its contents, not a property of it, and the day someone adds a
+# phrase there this reds instead of the suite staying green.
 alt_of() { # alt_of FIRST_ALTERNATIVE -> the alternation that opens with it
   awk -v k="$1" 'index($0, "gsub(\"\\\\b(" k) { sub(/^.*gsub\("\\\\b\(/, ""); sub(/\)\\\\b".*$/, ""); print; exit }' <<<"$prog"
 }
@@ -460,30 +467,35 @@ else
   flatten()  { tr 'A-Z' 'a-z' <<<"$1" | sed 's/[^a-z0-9]\{1,\}/ /g; s/^ //; s/ $//'; }
   in_list()  { printf '%s\n' "$1" | grep -Eqx "($2)"; }
 
-  SECTION_FLAT=""
-  while IFS= read -r line; do
-    SECTION_FLAT="$SECTION_FLAT
+  DERIVED=0
+  derive_over() { # derive_over SOURCE_ALT TAIL_ALT LIST_NAME SECTION_HEADING
+    local src="$1" tail_alt="$2" name="$3" heading="$4" flat="" found=0 line entry w first last
+    while IFS= read -r line; do
+      flat="$flat
 $(flatten "$line")"
-  done < <(section 'a label phrase, then a count' "$CORPUS/declines-unreasoned.txt")
-  [ -n "$SECTION_FLAT" ] || bad "the ordering section read nothing" "declines-unreasoned.txt"
+    done < <(section "$heading" "$CORPUS/declines-unreasoned.txt")
+    while IFS= read -r entry; do
+      case "$entry" in *' '*) ;; *) continue ;; esac
+      w="$(words_of "$entry")"
+      first="${w%% *}"; last="${w##* }"
+      in_list "$first" "$LABEL_ALT" && continue
+      in_list "$first" "$FILLER_ALT" && continue
+      in_list "$last" "$tail_alt" && continue
+      found=$((found + 1))
+      if printf '%s' "$flat" | grep -qF " $w "; then
+        ok "derived and covered — $name: $entry"
+      else
+        bad "a derived $name entry has no ordering fixture — $entry" \
+            "the derivation strands \"$w\"; add a reply spelling it with spaces, then a count, under \"$heading\""
+      fi
+    done < <(split_top "$src")
+    [ "$found" = 0 ] || [ -n "$flat" ] || bad "the $name ordering section read nothing" "$heading"
+    DERIVED=$((DERIVED + found))
+  }
 
-  n=0
-  while IFS= read -r entry; do
-    case "$entry" in *' '*) ;; *) continue ;; esac
-    w="$(words_of "$entry")"
-    first="${w%% *}"; last="${w##* }"
-    in_list "$first" "$LABEL_ALT" && continue
-    in_list "$first" "$FILLER_ALT" && continue
-    in_list "$last" "$FILLER_ALT" && continue
-    n=$((n + 1))
-    if printf '%s' "$SECTION_FLAT" | grep -qF " $w "; then
-      ok "derived and covered — $entry"
-    else
-      bad "a derived entry has no ordering fixture — $entry" \
-          "the derivation strands \"$w\"; add a reply spelling it with spaces, then a count, to the ordering section"
-    fi
-  done < <(split_top "$LABEL_ALT")
-  [ "$n" -gt 0 ] || bad "the derivation named no entry" "the label list carries no stranding entry, which cannot be right"
+  derive_over "$LABEL_ALT"  "$FILLER_ALT" label  'a label phrase, then a count'
+  derive_over "$FILLER_ALT" "$LABEL_ALT"  filler 'a filler word, then a count'
+  [ "$DERIVED" -gt 0 ] || bad "the derivation named no entry" "neither word list carries a stranding entry, which cannot be right"
 fi
 
 echo
@@ -518,8 +530,8 @@ echo "--- every pass of reason_left is measured by a fixture ---"
 # pair of passes that commutes, which is a rule enumerating its own instances:
 # it goes stale on the next change to the pipeline, and re-deriving it costs
 # the same hand-measurement it was meant to replace. Deletion needs no
-# exceptions. Reordering is not left unheld — every reorder that changes a
-# verdict today reds this suite through the corpus, and the two orderings
+# exceptions. Reordering is not left unheld — a reorder that moves the
+# verdict of a reply the corpus holds reds this suite, and the two orderings
 # that are load-bearing have named probes above.
 #
 # The whole corpus goes through in ONE jq call per variant, compared as a
