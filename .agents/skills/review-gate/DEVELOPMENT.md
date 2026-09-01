@@ -101,6 +101,11 @@ a substring, an inline flow mapping on the trigger key line, a foreign
 is a new hole. Equality has no such gap, because the template carries no
 per-repo values: a copy that differs is a copy someone edited.
 
+What it therefore never answers is what the TEMPLATE says. Both sides of the
+diff come from that one file, so an edit re-copied into every consumer is
+invisible here by construction. That question belongs to
+`tests/review-writer-template.test.sh` § The workflow template, upstream.
+
 What equality cannot express is handled in one of two ways, and the
 difference matters to anyone reading a clean run.
 
@@ -159,9 +164,18 @@ values. The two per-repo knobs it once held are gone —
   `REVIEW_GATE_CHECK_RUN_NAME`, read by a term the relay's `if:` already
   carries, so opting in is uncommenting the trigger and setting a variable.
 
-`tests/review-writer-template.test.sh` EXECUTES the relay step against a gh
-stub, over both copies, and that is where the step's meaning is asserted; it
-runs here, upstream, on every change. Nothing greps the YAML for the
-expressions GitHub evaluates — `validate-workflow.sh` answers that whole
-class by equality against this template, in the catalog and in every
-consumer, and equality has no spelling a pin could miss.
+`tests/review-writer-template.test.sh` answers what the template MEANS, and
+it is the only thing that can. Equality (§ Equality, not re-derivation) asks
+whether an adopted copy is still a copy; both sides of that diff come from
+this template, so editing the template and re-copying leaves it empty however
+broken the contract now is. The suite's `[template]` block therefore runs
+against the shipped template ALONE — equality already carries the template
+into every copy — and holds the classes equality cannot reach: the two job
+`if:` expressions byte-exact, the relay's isolation (no checkout, no
+`concurrency:`, no `issues: write`), the one `actions: write` and where it
+sits, `persist-credentials: false` counted against the checkouts, the bare
+default-branch ref with its guard ahead of the checkout and a nonzero exit,
+the `check_run` breaker's list against the job names, and the relay's timeout
+against its own retry budget. Its `relay:` battery then EXECUTES the relay
+step against a gh stub, over both copies. Both run here, upstream, on every
+change.

@@ -29,12 +29,14 @@ These are known, deliberate trade-offs. Raising them again is noise:
 - **An adopted review-gate workflow is validated by verbatim EQUALITY
   against the shipped template.** `validate-workflow.sh` asks one question —
   is this copy still `templates/review-gate-writer.yml`? — and re-derives
-  nothing about what the workflow means. What the template MEANS is asserted
-  upstream in `skills/review-gate/tests/review-writer-template.test.sh`,
-  which is the only place that can answer it. A finding that
-  `validate-workflow.sh` fails to evaluate an expression, enumerate an
-  activity type, or reason about a job's permissions is settled: name the
-  gap in the upstream suite instead.
+  nothing about what the workflow means, so a finding that it fails to
+  evaluate an expression or reason about a job's permissions is answering the
+  wrong question of the wrong tool. What the TEMPLATE means is answered
+  upstream in `skills/review-gate/tests/review-writer-template.test.sh`: the
+  `[template]` block derives it from the shipped template alone, and the
+  `relay:` battery executes the relay step against a gh stub. Name a gap
+  there, against what that block actually covers — it holds the classes
+  equality cannot reach, not every expression in the file.
 
 - **No test-coverage asks for instruction markdown or for `tools/guard`
   rules in a change that adds no guard test lane.** What a test must cover is

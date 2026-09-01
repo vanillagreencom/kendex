@@ -117,19 +117,19 @@ jobs:
           done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -vE '/(scripts|tests)/lib/|/tests/controls/')
           exit "$fail"
 
-      # Tighten-only file-size gate against tools/size-ratchet-baseline.tsv
-      # + tools/size-ratchet-excludes; reads tracked files at HEAD only. Runs
-      # on every event because the preflight copy is NOT a required context:
-      # only this one can block a PR, and a guard that cannot block is advice.
+      # Tighten-only file-size gate against the baseline and excludes under
+      # tools/; reads tracked files at HEAD only. The only run of it in CI,
+      # on every event, and the one that can block a PR — a guard that cannot
+      # block is advice. always(): a failing step above must not swallow it.
       - name: size-ratchet (tighten-only file-size gate)
-        if: matrix.shard == 'rest'
+        if: always() && matrix.shard == 'rest'
         run: skills/size-ratchet/scripts/size-ratchet
 
-      # Unconditioned for the same reason as the size gate above. The commit
-      # lane runs todo-ban --staged and judges only what a commit adds; this
-      # scan takes the rest, in every blob git reads as text.
+      # Same posture, same reasons. The commit lane runs todo-ban --staged
+      # and judges what a commit adds; this scan takes the rest, in every
+      # blob git reads as text.
       - name: todo-ban (index-wide work-marker scan)
-        if: matrix.shard == 'rest'
+        if: always() && matrix.shard == 'rest'
         run: skills/growth-guards/scripts/todo-ban
 
       # Every skill must route problem reports through `kendex report`: a

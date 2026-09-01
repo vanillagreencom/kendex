@@ -2,25 +2,35 @@
 # Assertions on the review-gate WORKFLOW YAML — split out of
 # review-writer.test.sh, which is the review-writer.sh engine suite.
 #
-#   relay:*  the relay step's SCRIPT, extracted from the YAML and EXECUTED
-#            against a gh stub — not a pin, the real shell (VST-210).
+# Two instrument classes, over two different subjects:
 #
-# Nothing here greps the YAML for expressions GitHub evaluates (job-level
-# if:, permissions, triggers, refs, budgets). The template carries no
-# per-repo values, so scripts/validate-workflow.sh answers that whole class
-# by equality against the shipped template: any reworded expression, in any
-# spelling, is the copy no longer being a copy.
+#   [template]  the TEMPLATE's own contract — expressions GitHub evaluates
+#               and an offline run cannot execute (job-level if:,
+#               permissions, refs, guard order), and relations between two
+#               values inside the file (the retry budget against the job
+#               timeout, the check_run breaker's list against the job names).
+#               Run against templates/review-gate-writer.yml ALONE.
+#   relay:*     the relay step's SCRIPT, extracted from the YAML and EXECUTED
+#               against a gh stub — not a pin, the real shell (VST-210). Run
+#               against both copies.
 #
-# BOTH COPIES ARE RUN: the shipped template, and the adopted
-# .github/workflows/review-gate-writer.yml found by walking up to the
-# enclosing repo. That copy is what actually gates PRs and is hand-maintained,
-# so template-only assertions would prove the behavior of a file CI never
-# runs. Two divergence classes are legitimate, and neither is a value anyone
-# types: this repo's self-adoption swaps the vendored script path for the
-# tracked one, and a consumer that opted into check_run has uncommented two
-# trigger lines. The whole-file drift check is scoped to self-adoption for
-# the second of those. Only the template is asserted when no adopted copy is
-# found at all.
+# WHY THE TEMPLATE CLASS LIVES HERE AND NOWHERE ELSE. scripts/validate-workflow.sh
+# is EQUALITY: it asks whether an adopted copy is still a copy, and re-derives
+# nothing about what the workflow means. Its two sides both come from this
+# template, so the routine maintenance path — edit the template, re-copy into
+# .github/workflows/review-gate-writer.yml — leaves its diff empty however
+# broken the contract now is. Equality carries the template into every copy;
+# it cannot judge the template. So the derivations run once, upstream, where
+# a template edit originates.
+#
+# The relay battery runs against BOTH copies: the shipped template, and the
+# adopted .github/workflows/review-gate-writer.yml found by walking up to the
+# enclosing repo. That copy is what actually gates PRs and is hand-maintained.
+# Two divergence classes are legitimate, and neither is a value anyone types:
+# this repo's self-adoption swaps the vendored script path for the tracked
+# one, and a consumer that opted into check_run has uncommented two trigger
+# lines. The whole-file drift check is scoped to self-adoption for the second
+# of those. Only the template is asserted when no adopted copy is found.
 #
 # THE RELAY NEVER REDS is the invariant every relay case asserts, over both
 # the runner's shells AND over its own environment (each env: binding dropped
@@ -109,6 +119,120 @@ if [[ -n "$SELF_ADOPTION" && -f "$SELF_ADOPTION" ]]; then
   WORKFLOWS+=("$SELF_ADOPTION"); WORKFLOW_LABELS+=("$ADOPTED_LABEL")
 else
   printf '  note  %s\n' "no adopted workflow found at ${SELF_ADOPTION:-<no enclosing repo root>} — asserting the template only"
+fi
+
+# --------------------------------------------- the template's own contract ---
+
+# Derivations over the SHIPPED TEMPLATE, and only it. `validate-workflow.sh`
+# answers whether an adopted COPY is still a copy; it derives nothing, by
+# design, so it cannot judge what the template says — edit the template,
+# re-copy, and its diff is empty on a broken contract. These run here,
+# upstream, where a template edit originates, and once rather than per copy:
+# equality already carries the template into every copy. Each reads an
+# expression GitHub evaluates and an offline run cannot execute, or relates
+# two values inside the file.
+
+if [[ -f "$TEMPLATE" ]]; then
+  echo "=== the template's own contract ==="
+  # The write job is the file's last; the relay sits between the merge-group
+  # job and it.
+  write_block="$(sed -n '/^  write:/,$p' "$TEMPLATE")"
+  relay_block="$(sed -n '/^  request-converge:/,/^  write:/p' "$TEMPLATE")"
+  whole="$(cat "$TEMPLATE")"
+
+  # A match is the failure — and so is a grep READ error, which never passes.
+  absent() { # haystack, ERE, name
+    local rc=0
+    grep -qE -- "$2" <<<"$1" || rc=$?
+    case "$rc" in
+      1) PASS=$((PASS + 1)); printf '  ok    [template] %s\n' "$3" ;;
+      0) FAIL=$((FAIL + 1)); printf '  FAIL  [template] %s\n' "$3" ;;
+      *) FAIL=$((FAIL + 1)); printf '  FAIL  [template] %s — could not be read\n' "$3" ;;
+    esac
+  }
+  tpl_eq() { assert_eq "$1" "$2" "[template] $3"; }
+
+  if [[ -z "$write_block" || -z "$relay_block" ]]; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  [template] %s\n' "could not slice the relay and write job blocks (job renamed or reordered?)"
+  else
+    # BYTE-EXACT, not term-wise: an appended '|| true' leaves every term in
+    # place and makes the expression always true, so the relay runs on the
+    # converge legs it excludes and the write job's evictable concurrency
+    # group lands on a PR-attached leg (VST-210).
+    tpl_eq "$(grep -m 1 -E '^    if: ' <<<"$relay_block" || true)" \
+      "    if: github.event_name != 'merge_group' && github.event_name != 'workflow_dispatch' && github.event_name != 'schedule' && (github.event_name != 'check_run' || github.event.check_run.name == vars.REVIEW_GATE_CHECK_RUN_NAME)" \
+      "the relay's if: is EXACTLY the expected expression"
+    tpl_eq "$(grep -m 1 -E '^    if: ' <<<"$write_block" || true)" \
+      "    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'" \
+      "the write job's if: is EXACTLY the two converge legs"
+
+    # The relay is the job every PR-attached leg reaches, pull_request_target
+    # included: no checkout, no engine, no PR code, and nothing evictable.
+    absent "$relay_block" 'uses: actions/checkout' "the relay checks nothing out — the pull_request_target job holds no repository content"
+    absent "$relay_block" '^    concurrency:' "the relay holds NO concurrency group, so it can never be evicted onto a PR as a cancelled check"
+    # Dispatch is its whole scope; sustained failure surfaces as gate
+    # staleness (cron floor + pr-watch --heal), never as an incident here.
+    absent "$relay_block" '^      issues: write$' "the relay holds NO issues:write — the no-escalation decision stands"
+    # The writer never re-runs CI. Counted, so a second grant anywhere lands here.
+    absent "$write_block" 'actions: write' "the WRITE job holds no actions:write"
+    if [[ "$(grep -cF -- 'actions: write' "$TEMPLATE" || true)" == "1" ]] && grep -qF -- 'actions: write' <<<"$relay_block"; then
+      PASS=$((PASS + 1)); printf '  ok    [template] %s\n' "exactly ONE actions:write in the workflow, and it is the relay's dispatch scope"
+    else
+      FAIL=$((FAIL + 1)); printf '  FAIL  [template] %s\n' "actions:write is not exactly one grant, on the relay job"
+    fi
+
+    # A write-capable token on a checked-out tree is the pull_request_target
+    # hazard. COUNTED against the checkouts: a single-match pin is satisfied
+    # by the first and says nothing about the second.
+    checkouts="$(grep -c 'uses: actions/checkout' "$TEMPLATE" || true)"
+    creds="$(grep -cF -- 'persist-credentials: false' "$TEMPLATE" || true)"
+    if [[ "$checkouts" != "0" && "$creds" == "$checkouts" ]]; then
+      PASS=$((PASS + 1)); printf '  ok    [template] %s\n' "all $checkouts checkout(s) drop credentials"
+    else
+      FAIL=$((FAIL + 1)); printf '  FAIL  [template] EVERY checkout must drop credentials — %s checkout(s), %s persist-credentials: false\n' "$checkouts" "$creds"
+    fi
+
+    # Both engine jobs check out the DEFAULT branch, bare: a fallback would
+    # be a per-repo value in a file that carries none, and a wrong one runs
+    # an engine from a branch that does not exist.
+    tpl_eq "$(grep -cF -- 'ref: ${{ github.event.repository.default_branch }}' "$TEMPLATE" || true)" "2" "BOTH checkouts pin the bare default-branch expression"
+    absent "$whole" 'default_branch \|\|' "no ref falls back to a hardcoded branch name"
+    # ORDER, not ingredients: a guard AFTER its checkout has already let the
+    # unpinned ref onto disk. G a guard's binding, C a checkout, in file order.
+    tpl_eq "$(awk '/^          DEFAULT_BRANCH: / { printf "G" } /^      - uses: actions\/checkout/ { printf "C" } END { printf "\n" }' "$TEMPLATE")" "GCGC" "each engine job's default-branch guard PRECEDES its checkout"
+    # The REFUSAL, not the diagnostic beside it. Bound to the guard's OWN
+    # message: the two missing-engine guards also exit 1.
+    tpl_eq "$(awk '/default_branch resolved empty/ { w = 3; next } w > 0 { if ($0 ~ /^[[:space:]]*exit[[:space:]]+[1-9]/) { n++; w = 0 } else w-- } END { print n + 0 }' "$TEMPLATE")" "2" "BOTH guard steps exit NONZERO on an empty resolution"
+
+    # The check_run breaker recognises this workflow's own completions once a
+    # consumer opts check_run in. Rename a job without the list and it stops
+    # matching, with no concurrency group on the relay to throttle what
+    # follows. Job names are the 4-space `name:`; step names carry a `- `.
+    job_names="$(grep -E '^    name: ' "$TEMPLATE" | sed 's/^    name: //' | sort)"
+    guard_names="$(sed -n '/case "\${CHECK_NAME:-}" in/,/esac/p' "$TEMPLATE" | grep -E '^ *"[^"]+"(\|"[^"]+")*\)$' | tr '|' '\n' | sed 's/[")]//g; s/^ *//' | sort)"
+    if [[ -n "$guard_names" && "$job_names" == "$guard_names" ]]; then
+      PASS=$((PASS + 1)); printf '  ok    [template] %s\n' "the check_run breaker lists exactly this workflow's job names"
+    else
+      FAIL=$((FAIL + 1)); printf '  FAIL  [template] the check_run breaker has drifted from the job names\n        jobs:  [%s]\n        guard: [%s]\n' "$(tr '\n' '/' <<<"$job_names")" "$(tr '\n' '/' <<<"$guard_names")"
+    fi
+
+    # The RELATION, so a coordinated retune passes and an uncoordinated one
+    # lands here. All four terms come from the file; a timeout under the
+    # retry budget kills a rate-limit retry and leaves a CANCELLED check on
+    # the PR head. `|| true` on each read: a no-match would abort the suite
+    # under this file's pipefail rather than fail the check.
+    tmo="$(grep -oE '^    timeout-minutes: [0-9]+' <<<"$relay_block" | head -n 1 | awk '{print $2}' || true)"
+    cap_s="$(grep -oE '^          cap=[0-9]+' <<<"$relay_block" | head -n 1 | cut -d= -f2 || true)"
+    attempt_s="$(grep -oE 'timeout [0-9]+ gh api' <<<"$relay_block" | head -n 1 | awk '{print $2}' || true)"
+    jitter_s="$(grep -oE '^          jitter_max=[0-9]+' <<<"$relay_block" | head -n 1 | cut -d= -f2 || true)"
+    if [[ -z "$tmo" || -z "$cap_s" || -z "$attempt_s" || -z "$jitter_s" ]]; then
+      FAIL=$((FAIL + 1)); printf '  FAIL  [template] the relay budget is unpinned — timeout-minutes=%s cap=%s per-attempt=%s jitter_max=%s\n' "$tmo" "$cap_s" "$attempt_s" "$jitter_s"
+    elif (( tmo * 60 > 2 * attempt_s + cap_s + jitter_s )); then
+      PASS=$((PASS + 1)); printf '  ok    [template] %s\n' "the relay's timeout budget (${tmo}m) outlasts its worst case (2 x ${attempt_s}s + ${cap_s}s cap + ${jitter_s}s jitter)"
+    else
+      FAIL=$((FAIL + 1)); printf '  FAIL  [template] %s\n' "the relay's timeout budget (${tmo}m) is NOT above its worst case — a retry is killed and leaves a cancelled check on the PR head"
+    fi
+  fi
 fi
 
 
