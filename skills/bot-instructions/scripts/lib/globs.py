@@ -128,8 +128,14 @@ def _translate(pattern, where=None):
     The refusal quotes the glob AS WRITTEN, not the collapsed pattern `re`
     saw: `_collapse` rewrites `**/**/` to `**/`, and quoting that names a
     string no file in the repo holds, so grepping for what the message says
-    finds nothing. `where` is the key it came from, which `check` carries and
-    the `matching()` entry point has none of.
+    finds nothing.
+
+    `where` is the key the glob came from. `check` carries one; `matching()`
+    does not, and its unprefixed form is a backstop rather than a reachable
+    clause — every glob reaching `matching` has already compiled once inside
+    `check`. It stands because `check` proving the compile is a property of
+    the call ORDER, and a raw traceback out of the dead-exclusion clause is
+    what this guard exists to prevent.
     """
     from .errors import InputError
 

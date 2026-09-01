@@ -125,11 +125,47 @@ else
 fi
 git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json .coderabbit.yaml
 
-# The other half of the same walk: an object carrying its OWN default whose
-# children define none. Recursing there filters every child out, and emitting
-# the `{}` that leaves replaces the vendor's default object with an empty one
-# whose sub-keys resume resolving down the ladder — while the completeness
-# clause is satisfied, because the key is present.
+# The other half of the same walk: an object carrying its OWN default. The
+# walk sees only what `properties` describes, so a default key the properties
+# do not name is invisible to it — `mode` here. Choosing between the default
+# and the recursion drops one side either way; the vendor's own keys have to
+# survive alongside the walked ones, or they resume resolving down the ladder
+# while the completeness clause is satisfied because the key is present.
+python3 - "$SCHEMA" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["properties"]["reviews"]["properties"]["requirements"] = {
+    "type": "object",
+    "default": {"files": ["docs/**"], "mode": "strict"},
+    "properties": {"files": {"type": "array", "default": ["src/**"]},
+                   "unset": {"type": "string"}},
+}
+json.dump(d, open(p, "w"), indent=2)
+PY
+bi_run render --repo "$repo"
+if [ "$bi_status" -ne 0 ]; then
+  bad 'an object default merges with the values its properties walk produces' "$bi_out"
+elif python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
+from lib import yamlread
+body = open(sys.argv[2] + "/.coderabbit.yaml").read()
+got = yamlread.loads(body.split("\n", 6)[-1]).get("reviews", {}).get("requirements")
+# `mode` survives from the default, `files` comes from the walk at depth, and
+# `unset` has no default anywhere so it is not written.
+if got != {"files": ["src/**"], "mode": "strict"}:
+    sys.exit(f"rendered {got!r}")
+PROBE
+  ok 'an object default merges with the values its properties walk produces'
+else
+  bad 'an object default merges with the values its properties walk produces' \
+      'a key was dropped from one side of the merge'
+fi
+git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json .coderabbit.yaml
+
+# The empty-subtree case the merge also has to cover: nothing beneath the
+# object is in full state, so the default is the whole value.
 python3 - "$SCHEMA" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -159,6 +195,31 @@ else
       'the render replaced the vendor default with an empty object'
 fi
 git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json .coderabbit.yaml
+
+# The one arrival route the input table cannot cover: a default in the
+# VENDORED SCHEMA. No `bot-instructions.toml` produces it, and the emitter
+# does not re-check the class — a guard there would replace the three findings
+# below with one bare refusal out of the render, naming no validator. Nothing
+# is written either way: `render_verb` validates before its write phase.
+python3 - "$SCHEMA" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["properties"]["reviews"]["properties"]["vendor_note"] = {
+    "type": "string",
+    "default": "first line\nsecond" + chr(0x2028) + " line\n",
+}
+json.dump(d, open(p, "w"), indent=2)
+PY
+expect_red 'coderabbit-schema coderabbit-filters exclusion-consistency' \
+  'a schema default carrying a line separator reds the validators that read it' \
+  render --dry-run --repo "$repo"
+if printf '%s\n' "$bi_out" | grep -qF 'U+2028 LINE SEPARATOR'; then
+  ok 'and each names the character it could not read past'
+else
+  bad 'and each names the character it could not read past' "$bi_out"
+fi
+git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json
 
 # The reader runs the same class the input table refuses on. A rendered file
 # reaching it with a character a YAML reader breaks a line on would be read as

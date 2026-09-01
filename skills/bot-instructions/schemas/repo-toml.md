@@ -458,9 +458,10 @@ The predicates, written once:
   `path_filters:` key of its own and the entry below it loses its `!` — the
   state `renders.md` § `reviews.path_filters` names as the one that turns the
   exclusion list into an allowlist. `scripts/lib/refusals.py` is the one
-  statement of the class; `yamlemit` and `yamlread` run that predicate rather
-  than a narrower copy, because not every string reaching them arrives through
-  a row of this table.
+  statement of the class, and `yamlread` runs that predicate rather than a
+  narrower copy: a default in the vendored schema reaches a rendered file
+  through no row of this table, and the reader is where three validators can
+  each refuse it naming themselves.
 
   A character class exempts a row from this mark only when it **enumerates the
   permitted characters**, because then no control is among them. A class that

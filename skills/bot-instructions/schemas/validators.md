@@ -554,8 +554,9 @@ unproven clause which is dead or unreachable stays green for good.
 
 **The region's bytes are `drift`'s, not this validator's.** Every clause here is
 structural — does the section exist, is it unique, is there an unmanaged nested
-one — and none compares anything against a render. That is what lets all of them run before the write, which is what makes
-the write-phase splice failure unreachable. A byte comparison could not: before
+one — and none compares anything against a render. That is what lets all of
+them run before the write, which is what makes the write-phase splice failure
+unreachable. A byte comparison could not: before
 the write the repo holds the last render, so any change to doctrine, the TOML or
 the tracker substitution would make it fire and `render` would write nothing,
 leaving the region unable to be updated at all in a repo where `toml-schema`
@@ -700,8 +701,8 @@ place they cannot fail. `orphan` looks for what the current TOML does not
 produce, and the scratch tree holds only what it does produce. `drift` compares
 a path's bytes against a fresh render, which in the scratch tree are the same
 bytes. Every `agents-section` clause reads the repo: the nested-`AGENTS.md`
-tracked-path read needs a repo to read, and the other two need a file the scratch tree does
-not hold at all, since `AGENTS.md` is the one output the build never assembles
+tracked-path read needs a repo to read, and the other two need a file the
+scratch tree does not hold at all, since `AGENTS.md` is the one output the build never assembles
 whole — the build produces the region's body and the write splices it.
 Comparing that body against itself is the vacuity the split exists to remove.
 

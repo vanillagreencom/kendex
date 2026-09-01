@@ -13,8 +13,8 @@ import contextlib
 import tomllib
 
 from .constants import CODERABBIT_SCHEMA_PATH, TOML_PATH
-from .errors import (Finding, InputError, ManifestError, SourceUnavailable,
-                     ValidationFailed)
+from .errors import (Finding, InputError, ManifestError, RenderError,
+                     SourceUnavailable, ValidationFailed)
 from . import config as config_mod
 from . import model as model_mod
 from . import render as render_mod
@@ -47,7 +47,12 @@ def _as_finding(validator, path, other=None, other_path=None):
         # the wrong file.
         raise
     except ManifestError as exc:
-        raise ValidationFailed([Finding(other or validator, str(exc), other_path or path)]) from exc
+        # `other_path` passes THROUGH, `None` included. Every manifest message
+        # names its own file or row — `kendex.toml: absent`, `[install]
+        # harnesses: 'nosuch' has no render root` — so a trailing
+        # `[bot-instructions.toml]` sends the reader to a file that is correct,
+        # which is the wrong-cause shape `manifest._checked` exists to prevent.
+        raise ValidationFailed([Finding(other or validator, str(exc), other_path)]) from exc
     except InputError as exc:
         raise ValidationFailed([Finding(validator, str(exc), path)]) from exc
 
@@ -79,7 +84,7 @@ class Context:
         # Both are raised where the value is first needed, and both are the
         # validator's finding rather than an unattributed failure — a control
         # asserts on the validator's own identity.
-        with _as_finding("toml-schema", TOML_PATH, "exclusion-consistency", TOML_PATH):
+        with _as_finding("toml-schema", TOML_PATH, "exclusion-consistency"):
             self.model = model_mod.build(tree, self.config, self.doctrine, spec_names)
         self.schema = None
         if self.config.bots["coderabbit"]:
@@ -146,20 +151,33 @@ def _exclusions_from(reader):
 
     out = {}
     bad = {}
-    text = reader(".coderabbit.yaml")
+
+    def read(path, what):
+        """The read, INSIDE the guard. A file that cannot be decoded is as
+        unreadable as one that cannot be parsed, and the clause that reports
+        an unreadable surface is the one that should say so. Read outside the
+        guard, a generated file holding a byte that is not UTF-8 left `check`
+        with a bare message naming no validator and no finding count."""
+        try:
+            return reader(path)
+        except RenderError as exc:
+            bad[path] = f"{what} cannot be read: {exc}"
+            return None
+
+    text = read(".coderabbit.yaml", "reviews.path_filters")
     if text is not None:
         try:
             entries = yamlread.loads(text)["reviews"]["path_filters"]
             out[".coderabbit.yaml"] = [e[1:] for e in entries if e.startswith("!")]
         except Exception as exc:
             bad[".coderabbit.yaml"] = f"reviews.path_filters cannot be read: {exc}"
-    text = reader(".pr_agent.toml")
+    text = read(".pr_agent.toml", "[ignore] glob")
     if text is not None:
         try:
             out[".pr_agent.toml"] = list(tomllib.loads(text).get("ignore", {}).get("glob", []))
         except (tomllib.TOMLDecodeError, AttributeError, TypeError) as exc:
             bad[".pr_agent.toml"] = f"[ignore] glob cannot be read: {exc}"
-    text = reader(".macroscope/ignore.md")
+    text = read(".macroscope/ignore.md", "the exclusion lines")
     if text is not None:
         out[".macroscope/ignore.md"] = [
             ln for ln in text.split("\n") if ln.strip() and not ln.lstrip().startswith("<!--")

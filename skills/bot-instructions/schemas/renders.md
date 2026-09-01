@@ -95,14 +95,21 @@ derived from the copy taken before it. So the splice's bound is the one above,
 and it is that bound because the ownership check, the region, and the bytes
 spliced all come from one open.
 
-That one open also decodes strictly, and only that one. **A read this run
-judges by, or writes back, must round-trip; a read it throws away need not.**
-So a read-modify-write refuses a file holding a byte that is not UTF-8, naming
-the path, before anything is written: substituting it would put U+FFFD into
-content this package does not own, in the file whose non-owned bytes belong to
-the repo, and report success. Every validator read refuses on the same rule,
-in the working tree and in the index alike, or the pre-commit lane passes a
-commit no render can produce.
+That one open also decodes strictly, and it is the only open in the write path
+that does. **FILE CONTENT this run judges by, or writes back, must round-trip;
+content it throws away need not.** So a read-modify-write refuses a file
+holding a byte that is not UTF-8, naming the path, before anything is written:
+substituting it would put U+FFFD into content this package does not own, in
+the file whose non-owned bytes belong to the repo, and report success. Every
+validator read refuses on the same rule, in the working tree and in the index
+alike, or the pre-commit lane passes a commit no render can produce.
+
+**A path list is not file content, and stays lossy.** `git ls-files -z` emits
+whatever names the repo holds, and a name is bytes to git; a repo tracking one
+that is not UTF-8 is a working repo, not a repo to refuse. The substituted
+name matches no glob and reads as an odd name in a report, where refusing
+would fail the whole run over a path nothing was going to act on. That is the
+one exception to the rule above, and it is the only one outside the write path.
 
 The replacement of a generated file substitutes instead, and has to. Its bytes
 come from the scratch tree; the file's own text is read for the marker test
@@ -544,12 +551,17 @@ targets because the values reaching them are the same set.
 
 **A line is what the READER calls a line, not what `\n` calls one.** The
 `control` class of `repo-toml.md` § The content refusals holds `U+0085`,
-`U+2028` and `U+2029` for that reason, and the emitter and the reader here run
-that predicate rather than a `\n`/`\r` copy of it: the strings they handle
-include doctrine text, schema defaults and derived globs, which arrive through
-no row of that table. A comment line that ends early becomes structure, and a
-block scalar's text after such a character reaches the parser unindented and
-ends the scalar.
+`U+2028` and `U+2029` for that reason: a comment line that ends early becomes
+structure, and a block scalar's text after such a character reaches the parser
+unindented and ends the scalar.
+
+The **reader** runs that class, and the emitter does not. Every string the
+emitter carries from the repo comes through a row of that table already; the
+one that does not is a default in the vendored schema, and refusing it at the
+emitter would raise out of the render with no validator named. Reading the
+emitted file back is what `coderabbit-schema`, `coderabbit-filters` and
+`exclusion-consistency` each do, so all three refuse it, each naming itself,
+before `render` writes anything.
 
 The one exception is the **empty string**, which a block scalar cannot carry at
 all. It is emitted `""`. That is a property of the form rather than a choice,

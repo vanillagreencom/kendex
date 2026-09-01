@@ -314,4 +314,55 @@ else
   bad 'the tracked list is read once per run, whatever the harness count'
 fi
 
+# A failure with no message still names a cause. `KeyboardInterrupt` and
+# `SystemExit` stringify to nothing, and a Ctrl-C part way through is the case
+# both partial-set reports exist for — so the test is on the STRING, not on
+# the exception, which is truthy whatever its message.
+repo="$(bi_new_repo interrupted-adopt)"
+mkdir -p "$repo/.github/instructions"
+for f in .coderabbit.yaml .pr_agent.toml best_practices.md REVIEW.md; do
+  printf 'the repo wrote this\n' > "$repo/$f"
+done
+git -C "$repo" add -A >/dev/null 2>&1
+if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
+import os, sys
+PKG, repo = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import run, tree, verbs
+from lib.errors import RenderError
+
+ctx = run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
+                  ("SKILL.md", "schemas/renders.md"), "check",
+                  ("SKILL.md", "schemas/renders.md"))
+seen = []
+original = verbs._adopt_file
+
+
+def interrupting(ctx_, root_fd, path):
+    seen.append(path)
+    if len(seen) == 3:
+        raise KeyboardInterrupt
+    return original(ctx_, root_fd, path)
+
+
+verbs._adopt_file = interrupting
+try:
+    verbs.adopt_verb(ctx, repo)
+    sys.exit("the probe never interrupted the adopt")
+except RenderError as exc:
+    report = str(exc)
+finally:
+    verbs._adopt_file = original
+if len(seen) < 3:
+    sys.exit(f"the probe interrupted after {len(seen)} files, so it proved nothing")
+if "adopt failed: KeyboardInterrupt" not in report:
+    sys.exit(f"the cause is not named: {report!r}")
+if "adopted " not in report:
+    sys.exit(f"the partial-set report is gone: {report!r}")
+PROBE
+  ok 'an interrupted adopt names the interrupt as its cause'
+else
+  bad 'an interrupted adopt names the interrupt as its cause'
+fi
+
 bi_summary

@@ -233,6 +233,31 @@ else
   done
 fi
 
+# The return that writes nothing says so. This branch never reaches
+# `clear_manifest`, so a sentence worded where the manifest is READ tells a
+# repo left mid-render that the interrupted set was finished while the
+# manifest still names it and every path still holds its old bytes.
+repo="$(bi_minimal_repo adopt-manifest-no-paths)"
+printf 'schema = 1\n[repo]\nname = "fixture"\nsummary = "A fixture repository."\n' \
+  > "$repo/bot-instructions.toml"
+mkdir -p "$repo/.bot-instructions"
+printf '{"pending": [".coderabbit.yaml", "AGENTS.md"]}\n' \
+  > "$repo/.bot-instructions/render-manifest.json"
+bi_run render --repo "$repo"
+if [ "$bi_status" -ne 0 ]; then
+  bad 'a render that writes nothing does not claim it finished the set' "$bi_out"
+elif printf '%s\n' "$bi_out" | grep -qF 'this run finishes the set'; then
+  bad 'a render that writes nothing does not claim it finished the set' "$bi_out"
+elif ! printf '%s\n' "$bi_out" | grep -qF '.coderabbit.yaml, AGENTS.md'; then
+  bad 'a render that writes nothing does not claim it finished the set' \
+    "the pending set was not named at all: $bi_out"
+elif [ -f "$repo/.bot-instructions/render-manifest.json" ]; then
+  ok 'a render that writes nothing does not claim it finished the set'
+else
+  bad 'a render that writes nothing does not claim it finished the set' \
+    'the manifest is gone, so something cleared it'
+fi
+
 # The other half of the decode rule, and the reason it is stated by content
 # mode. A generated file this package OWNS that picked up a stray byte is
 # `render`'s to repair: the bytes written come from the scratch tree and the
@@ -244,8 +269,25 @@ fi
 repo="$(bi_rendered_repo adopt-stray-byte-owned)" || exit 1
 cp "$repo/REVIEW.md" "$BI_TMP/rendered-review.md"
 printf 'stray \xe9\n' >> "$repo/REVIEW.md"
+# Both halves say so out loud. `check` refuses with a validator naming itself
+# and a remedy, and `render` names the repair beside the paths it wrote — a
+# generated file rewritten from bytes nobody could read is not something to
+# replace without a word.
+expect_red drift \
+  'check refuses a generated file that does not decode, naming its validator' \
+  check --repo "$repo"
+if printf '%s\n' "$bi_out" | grep -qF 'A render replaces it'; then
+  ok 'and names the remedy'
+else
+  bad 'and names the remedy' "$bi_out"
+fi
 expect_green 'a generated file holding a stray byte is repaired by render, not refused' \
   render --repo "$repo"
+if printf '%s\n' "$bi_out" | grep -qF 'REVIEW.md held bytes that are not UTF-8'; then
+  ok 'and the render says which file it repaired'
+else
+  bad 'and the render says which file it repaired' "$bi_out"
+fi
 if cmp -s "$repo/REVIEW.md" "$BI_TMP/rendered-review.md"; then
   ok 'and it holds the fresh render afterwards'
 else

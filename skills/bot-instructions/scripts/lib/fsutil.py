@@ -138,7 +138,12 @@ def decode_text(raw, rel):
     Both tree implementations read through here, so `check` and
     `check --staged` answer the same question about the same repo. The write
     phase asks for it by content mode — `writer._gate`, whose `data=` form
-    decodes lossily for the marker test and writes none of it.
+    decodes lossily for the marker test, writes none of it, and reports the
+    repair so a replaced corruption is not silent.
+
+    FILE CONTENT is the whole of what this covers. A path list from git is
+    bytes to git and stays lossy in `tree._git`, which is the one exception
+    `renders.md` § Common rules names beside the rule.
     """
     try:
         return raw.decode("utf-8")

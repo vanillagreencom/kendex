@@ -14,7 +14,7 @@ produced.
 import tomllib
 
 from .constants import EXCLUSION_PROSE_COLUMNS
-from .errors import Finding
+from .errors import Finding, RenderError
 from . import globs, manifest, marker, render, render_markdown
 
 # Every root-level path this package may have written, plus
@@ -106,13 +106,35 @@ def _scanned(ctx):
     return found
 
 
+_UNREADABLE = object()
+
+
+def _readable(v, ctx, path, out):
+    """One produced path's bytes, or `_UNREADABLE` with the finding recorded.
+
+    A path this package produces whose bytes it cannot decode differs from a
+    fresh render — the render's bytes decode and these do not — so saying so
+    is this validator's clause. Read outside a guard it left `check` with a
+    bare message naming no validator, no finding count, and no remedy, while
+    `render` quietly replaced the file.
+    """
+    try:
+        return ctx.read_output(path)
+    except RenderError as exc:
+        out.append(Finding(v, f"{exc}, so it cannot be compared with a fresh render. "
+                              "A render replaces it", path))
+        return _UNREADABLE
+
+
 def drift(ctx, out):
     """A hand edit to a generated file survives until the next render, then
     vanishes; between those moments the repo's behavior does not match its
     source, and the edit's author has no reason to suspect it."""
     v = "drift"
     for path, rendered in sorted(ctx.build.files.items()):
-        actual = ctx.read_output(path)
+        actual = _readable(v, ctx, path, out)
+        if actual is _UNREADABLE:
+            continue
         if actual is None:
             out.append(Finding(v, "the current TOML produces this path and it is absent",
                                path))
@@ -121,7 +143,9 @@ def drift(ctx, out):
                                   f"{_first_diff(actual, rendered)}", path))
     if ctx.build.region_body is None:
         return
-    existing = ctx.read_output("AGENTS.md")
+    existing = _readable(v, ctx, "AGENTS.md", out)
+    if existing is _UNREADABLE:
+        return
     if existing is None:
         out.append(Finding(v, "[bots] codex is true and AGENTS.md is absent", "AGENTS.md"))
         return
@@ -148,11 +172,13 @@ def exclusion_consistency(ctx, out):
     them, so a newly rendered tree is reviewed as if it were this repo's code."""
     v = "exclusion-consistency"
     # The flag gates the derived-set clause and nothing else: it says where
-    # the exclusions come from, not whether they are checked. The other three
-    # judge hand-written `[[exclusions.path]]` entries just as well, and
-    # `derive_render` defaults to false, so gating them on it left every repo
-    # on the default with `_prose_destinations` — the only enforcer of
-    # SKILL.md § Every rendered config excludes the render trees — never run.
+    # the exclusions come from, not whether they are checked. Every clause
+    # BELOW that branch judges a hand-written `[[exclusions.path]]` set just
+    # as well — stated by where they sit rather than counted, because a count
+    # here went stale the moment one was added. `derive_render` defaults to
+    # false, so gating them on it left every repo on the default with
+    # `_prose_destinations` — the only enforcer of SKILL.md § Every rendered
+    # config excludes the render trees — never run.
     sources, unreadable = ctx.exclusion_sources()
     scratch, scratch_bad = ctx.scratch_exclusions()
     for name, why in sorted({**scratch_bad, **unreadable}.items()):

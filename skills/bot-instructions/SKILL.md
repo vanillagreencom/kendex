@@ -198,8 +198,8 @@ at the open. Two halves, and both are needed:
   the structure that owns it rather than partitioned again here, per §
   Cross-file sets: `orphan`'s set is the one the flag-off case turns on, so a
   split that stops matching the tuple would understate the disclosure argument
-  this paragraph exists to make. Those sets are named by the tree under judgment. `adopt` opens no
-  file it merely names: it reports the markdown files an adopted one points
+  this paragraph exists to make. Those sets are named by the tree under
+  judgment. `adopt` opens no file it merely names: it reports the markdown files an adopted one points
   at rather than reading them, so nothing about their contents can reach a
   report. A symlink at any of those paths is
   followed by a trusted reader, and its bytes are quoted into a `check` finding

@@ -143,12 +143,12 @@ def _run(root, args):
 
 
 def _git(root, args):
-    # This decode stays lossy, and it is the one place that is right. A path
-    # is bytes to git, and `ls-files -z` emits whatever the repo holds; a repo
-    # tracking one such name is a working repo, not a repo to refuse. The
-    # substituted name matches no glob and reads as an odd name in a report,
-    # where refusing would take the whole run down. File CONTENT is the other
-    # question, and `fsutil.decode_text` answers it strictly.
+    # Lossy, and named as the exception in `renders.md` § Common rules beside
+    # the rule it is an exception to: that rule is about FILE CONTENT, and a
+    # path is bytes to git. `ls-files -z` emits whatever names the repo holds,
+    # so a repo tracking one that is not UTF-8 is a working repo rather than a
+    # repo to refuse; the substituted name matches no glob and reads as an odd
+    # name in a report. `fsutil.decode_text` answers the content question.
     return [p for p in _run(root, args).stdout.decode("utf-8", "replace").split("\0") if p]
 
 

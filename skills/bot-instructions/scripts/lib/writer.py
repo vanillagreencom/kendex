@@ -54,7 +54,11 @@ def _gate(dir_fd, leaf, rel, require_marker, strict):
     landed in between, and the gate would see nothing wrong because its own
     baseline was already the post-edit file.
 
-    `(None, None)` when the path is absent — a path this package is creating
+    Returns a third element: whether the lossy read SUBSTITUTED anything, so
+    the caller can say a generated file was rewritten from bytes it could not
+    read rather than replacing them without a word.
+
+    `(None, None, False)` when the path is absent — a path this package is creating
     has nothing to protect.
 
     `strict` is the caller's content mode, and it is the whole of what the
@@ -72,7 +76,7 @@ def _gate(dir_fd, leaf, rel, require_marker, strict):
         fd = os.open(leaf, os.O_RDONLY | _NOFOLLOW, dir_fd=dir_fd)
     except OSError as exc:
         if exc.errno == errno.ENOENT:
-            return None, None
+            return None, None, False
         if exc.errno in (errno.ELOOP, errno.EMLINK):
             raise ContainmentError(f"{rel}: is a symlink and is never replaced") from exc
         raise RenderError(f"{rel}: cannot open to check the marker ({exc.strerror})") from exc
@@ -81,7 +85,18 @@ def _gate(dir_fd, leaf, rel, require_marker, strict):
         if not stat.S_ISREG(st.st_mode):
             raise ContainmentError(f"{rel}: is not a regular file")
         raw = _read_all(fd)
-        existing = decode_text(raw, rel) if strict else raw.decode("utf-8", "replace")
+        substituted = False
+        if strict:
+            existing = decode_text(raw, rel)
+        else:
+            existing = raw.decode("utf-8", "replace")
+            # A strict attempt rather than a U+FFFD search: a file may hold
+            # that character legitimately, and only a failed decode proves the
+            # read invented one.
+            try:
+                raw.decode("utf-8")
+            except UnicodeDecodeError:
+                substituted = True
         if require_marker and not marker_mod.at_canonical_position(rel, existing):
             raise RenderError(
                 f"{rel}: carries no {MARKER_TOKEN!r} marker at its canonical position, so "
@@ -89,12 +104,12 @@ def _gate(dir_fd, leaf, rel, require_marker, strict):
                 "to take it over. A marker further down the file is quoted content, not "
                 "ownership"
             )
-        return _identity(st), existing
+        return _identity(st), existing, substituted
     finally:
         os.close(fd)
 
 
-def replace(root_fd, rel, data=None, require_marker=True, transform=None):
+def replace(root_fd, rel, data=None, require_marker=True, transform=None, notes=None):
     """Replace `rel` with `data`, atomically, behind the marker gate.
 
     `transform` is the read-modify-write form, and the only one a caller
@@ -109,6 +124,11 @@ def replace(root_fd, rel, data=None, require_marker=True, transform=None):
     temp file exists. It also settles the decode: only the read-modify-write
     form has to round-trip, because only there is the text read the text
     written.
+
+    `notes` is a list this appends an operator-facing line to when the
+    replacement REPAIRED something the run would otherwise not mention — a
+    generated file whose old bytes did not decode. Silently replacing those is
+    the right behaviour and saying nothing about it is not.
     """
     if (data is None) == (transform is None):
         # Neither is a caller that would reach `os.write(fd, None)` with the
@@ -123,7 +143,10 @@ def replace(root_fd, rel, data=None, require_marker=True, transform=None):
     dir_fd, leaf = _walk_to_parent(root_fd, parts, create=True)
     tmp = f".{leaf}.bot-instructions-tmp.{os.getpid()}"
     try:
-        before, existing = _gate(dir_fd, leaf, rel, require_marker, transform is not None)
+        before, existing, substituted = _gate(
+            dir_fd, leaf, rel, require_marker, transform is not None)
+        if substituted and notes is not None:
+            notes.append(f"{rel} held bytes that are not UTF-8; this render replaced them")
         if transform is not None:
             data = transform(existing)
             if data is None:

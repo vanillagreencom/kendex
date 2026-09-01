@@ -14,43 +14,58 @@ from .errors import RenderError, ValidationFailed
 from .fsutil import open_root
 
 
+def _cause(exc):
+    """What to print for a failure. Its message, or its class when it has none."""
+    return str(exc) or type(exc).__name__
+
+
 def render_verb(ctx, root, dry_run=False):
     """Validate, then write. A validator failure leaves the repo untouched."""
     root_fd = open_root(root)
     lines = []
     with writer.RenderLock(root_fd):
         pending = writer.read_manifest(root_fd)
-        if pending:
-            # A preview says what a render WOULD finish; a run that writes
-            # says what it IS finishing. Both carry the set, because a repo
-            # left mid-render by an interrupted write is the one state a
-            # preview most needs to surface, and both early returns below
-            # build on `lines` rather than replacing it.
-            lines.append(
-                "an earlier render left a manifest naming "
-                + ", ".join(pending)
-                + ("; a render would finish that set" if dry_run
-                   else "; this run finishes the set")
-            )
+
+        def left_over(tail):
+            """The pending-manifest line, worded for the return that carries it.
+
+            Decided HERE rather than where the manifest is read, because only
+            one of the four returns below reaches `clear_manifest`. Wording
+            the sentence once, up front, made the every-flag-false return say
+            a set was finished while it wrote nothing and left the manifest
+            naming it — and a fifth return added later would inherit the same
+            claim. A return that finishes nothing says so.
+            """
+            if not pending:
+                return []
+            return [f"an earlier render left a manifest naming {', '.join(pending)}; {tail}"]
+
         run.require_clean(ctx)
         paths = sorted(ctx.build.files)
         if ctx.build.region_body is not None:
             paths.append("AGENTS.md")
         if not paths:
-            return lines + ["nothing to render: every [bots] flag is false"] + ctx.skipped
+            return (left_over("this run writes nothing and does not clear it")
+                    + ["nothing to render: every [bots] flag is false"] + ctx.skipped)
         if dry_run:
-            return lines + [f"would write {p}" for p in paths] + ctx.skipped
+            return (left_over("a render would finish that set")
+                    + [f"would write {p}" for p in paths] + ctx.skipped)
+        lines.extend(left_over("this run finishes the set"))
         writer.write_manifest(root_fd, paths)
-        written = []
+        written, repaired = [], []
         try:
             for path in sorted(ctx.build.files):
-                writer.replace(root_fd, path, ctx.build.files[path])
+                writer.replace(root_fd, path, ctx.build.files[path], notes=repaired)
                 written.append(path)
             if ctx.build.region_body is not None:
                 _splice(ctx, root_fd)
                 written.append("AGENTS.md")
         except BaseException as exc:
-            lines.append(f"write phase failed: {exc}")
+            # `KeyboardInterrupt` and `SystemExit` stringify to NOTHING, and a
+            # Ctrl-C part way through is the case this report exists for. The
+            # test is on the string: an exception instance is truthy whatever
+            # its message, so `exc or ...` would still print the empty one.
+            lines.append(f"write phase failed: {_cause(exc)}")
             lines.append("replaced before the failure: " + (", ".join(written) or "none"))
             lines.append(
                 "every path above holds either its old bytes or its new ones, and the "
@@ -59,6 +74,7 @@ def render_verb(ctx, root, dry_run=False):
             raise RenderError("\n".join(lines)) from exc
         writer.clear_manifest(root_fd)
         lines.extend(f"wrote {p}" for p in written)
+        lines.extend(repaired)
     return lines + ctx.skipped
 
 
@@ -136,16 +152,24 @@ def adopt_verb(ctx, root):
             # neither, because those files now carry the marker.
             raise RenderError("\n".join(
                 lines
-                + [f"points at {t} — read it against the TOML" for t in sorted(pointers)]
-                + [f"adopt failed: {exc}",
+                + _pointer_lines(pointers)
+                + [f"adopt failed: {_cause(exc)}",
                    "the paths named above were taken over before the failure and "
                    "nothing else was — re-run adopt to finish the set"]
             )) from exc
-    for target in sorted(pointers):
-        lines.append(f"points at {target} — read it against the TOML")
+    lines.extend(_pointer_lines(pointers))
     if not lines:
         lines.append("nothing to adopt: every generated path is already this package's")
     return lines
+
+
+def _pointer_lines(pointers):
+    """The markdown files the adopted content points at, in one place.
+
+    Both the success return and the partial-set report carry this list, and
+    two copies of the sentence is two things to keep in step.
+    """
+    return [f"points at {t} — read it against the TOML" for t in sorted(pointers)]
 
 
 def _adopt_file(ctx, root_fd, path):

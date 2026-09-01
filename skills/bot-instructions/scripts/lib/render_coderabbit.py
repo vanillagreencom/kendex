@@ -153,17 +153,32 @@ def full_state(schema, chosen, path=""):
         if here in chosen:
             out[key] = chosen[here]
         elif sub.get("type") == "object" and sub.get("properties"):
-            nested = full_state(sub, chosen, here)
-            # An object that carries its OWN default and whose subtree
-            # contributes nothing: the recursion filters every child out, and
-            # `{}` there would replace the vendor's default object with an
-            # empty one whose sub-keys then resolve down the ladder — the
-            # failure full state exists to remove, arriving as a key the
-            # completeness clause is satisfied by because it is present.
-            out[key] = nested if nested else sub["default"]
+            # MERGED, not chosen between. An object's own default may carry
+            # keys its `properties` do not describe, and the walk cannot see
+            # them: taking the recursion alone drops those sub-keys, which
+            # then resume resolving down the ladder — the failure full state
+            # exists to remove, arriving as a key the completeness clause is
+            # satisfied by because it is present. The walked values win where
+            # both name a key, since those are the vendor's own defaults read
+            # at depth plus anything this package chose.
+            out[key] = _merged(sub.get("default"), full_state(sub, chosen, here))
         else:
             out[key] = sub["default"]
     return out
+
+
+def _merged(default, nested):
+    """An object's own default under the values the walk produced.
+
+    A `default` that is not a mapping cannot merge, and `null` is the case
+    that matters: emitting it would reach `yamlemit` as None, which has no
+    YAML form and raises with no validator named. An object property whose
+    default says "nothing here" is the empty mapping this walk already
+    produces for it.
+    """
+    if not isinstance(default, dict):
+        return nested
+    return {**default, **nested}
 
 
 def unresolved(schema, chosen):
