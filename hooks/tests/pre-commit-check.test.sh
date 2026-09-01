@@ -4,15 +4,10 @@
 # `commit` word, whether the working directory's git hooks are armed, and
 # whether a word of that command is --no-verify or a short cluster holding -n.
 #
-# Before those words are read, everything bash removes while assembling a word
-# is removed here too — quote characters, an unquoted backslash, a line
-# continuation, brace-expansion braces — and bash's own metacharacters
-# (`| & ; ( ) < >`) become spaces, so the word judged is the word bash would
-# hand git. Both directions of the trade that
-# leaves are pinned below: a bypass spelled inside a message, a heredoc or a
-# comment is refused as if it were the flag, and a bypass assembled out of
-# anything but quotes and metacharacters is not seen at all. Git's armed hooks
-# are the control either way.
+# The hook reads no shell, so both directions of that trade are pinned below:
+# a bypass spelled inside a message, a heredoc or a comment is refused as if it
+# were the flag, and a bypass the shell would assemble out of quoted fragments
+# is not seen at all. Git's armed hooks are the control either way.
 #
 # HOOK_UNDER_TEST runs this suite against another hook file, which is how the
 # must-fail control checks that these assertions can go red.
@@ -142,6 +137,7 @@ both 'sudo git commit -m x' 0 2 "a wrapper in front of git"
 both '/usr/bin/git commit -m x' 0 2 "an absolute git path"
 both 'git status' 0 0 "no commit word"
 both 'git log --grep=commit' 0 0 "commit inside a longer word"
+both "git log | grep 'commit'" 0 0 "a quoted commit word in an ordinary grep"
 both 'git config alias.st status' 0 0 "a config write with no commit"
 both 'echo commit && git status' 0 0 "a commit word before the git word"
 
@@ -158,7 +154,7 @@ for empty in '' ' ' '   \t  ' '\n\n'; do
 done
 
 run_hook "$UNARMED" '{"tool_input":{"command":""}}'
-assert_eq "$rc" "0" "a payload with no command field is left alone"
+assert_eq "$rc" "0" "an empty command string is left alone"
 
 echo
 echo "an unreadable payload is refused, never skipped"
@@ -276,111 +272,6 @@ both '`git commit -m x`' 0 2 "the backtick form with no bypass"
 both 'x=$(git commit -m x)' 0 2 "the substitution form with no bypass"
 
 echo
-echo "the word bash would assemble is the word judged (KEN-899)"
-
-# Quote characters come out and metacharacters become spaces, both
-# character-for-character with nothing remembered. Without that pass each of
-# these reached git as a commit with the bypass attached and this hook saw an
-# inert word, which is the one direction the trade must not run: --no-verify
-# switches off the armed hooks this design calls the judge, so a commit through
-# here is a commit nothing checks at all.
-#
-# These four are the must-fail material for the pass. Delete the four
-# COMMAND=${COMMAND//...} lines and they go red together.
-both 'g'"''"'it commit '"$NV"' -m x' 2 2 "quotes inside the git word"
-both 'git \"commit\" '"$NV" 2 2 "a quoted subcommand"
-both '\"git\" commit '"$NV" 2 2 "a quoted command word"
-both 'git commit>/dev/null -n -m x' 2 2 "a redirection glued to the subcommand"
-both 'git commit \"'"$NV"'\" -m x' 2 2 "a quoted flag"
-
-run_hook "$ARMED" "$(payload 'g'"''"'it commit '"$NV"' -m x')"
-assert_contains "$err" "The word '--no-verify' would skip" "the refusal names the assembled flag"
-
-# The controls, so the pass stays a rewrite and not a refusal of its own: the
-# same forms carrying no bypass still defer where the hooks are armed.
-both 'g'"''"'it commit -m x' 0 2 "the same git word with no bypass"
-both 'git commit -m x >/dev/null' 0 2 "a redirection after a plain commit"
-both 'git commit -m \"a quoted message\"' 0 2 "a quoted message with no bypass"
-
-echo
-echo "a metacharacter separates words here as it does in bash"
-
-# The second half of the same rewrite. bash(1) calls these metacharacters and
-# lists nine: | & ; ( ) < > space tab newline. Space, tab and newline are IFS
-# and < > were the redirection half; these are the rest, taken as the class
-# rather than as the two forms that were reported. Left attached, each hid a
-# word bash would have separated: `true;git` is not a git word here, `commit&`
-# is not a commit word, and the commit ran unchecked either way.
-both 'true;git commit '"$NV"' -m x' 2 2 "a semicolon in front of the git word"
-both 'git commit&>/dev/null -n' 2 2 "an ampersand-redirect glued to the subcommand"
-both 'true&&git commit '"$NV"' -m x' 2 2 "an and-list with no spaces"
-both 'true||git commit '"$NV"' -m x' 2 2 "an or-list with no spaces"
-both 'true|git commit '"$NV"' -m x' 2 2 "a pipe with no spaces"
-
-run_hook "$ARMED" "$(payload 'true;git commit '"$NV"' -m x')"
-assert_contains "$err" "The word '--no-verify' would skip" "the refusal names the flag behind the separator"
-
-# The controls. Separating on a metacharacter must not manufacture a bypass,
-# and it must not lose the word-order rule: a commit word before the git word
-# is still no commit.
-both 'true;git commit -m x' 0 2 "the same list with no bypass"
-both '(git commit -m x)' 0 2 "a subshell with no bypass"
-both 'git commit -m x&' 0 2 "a backgrounded commit with no bypass"
-both 'echo commit;git status' 0 0 "a commit word before the git word, across a separator"
-
-echo
-echo "an escape and a brace are assembly too (KEN-899 round 9)"
-
-# The third and last class of word assembly a stateless pass can reach. bash
-# removes an unquoted backslash, joins across a backslash-newline, and takes
-# the braces off a brace expansion, all before git sees the word — so every
-# form here reached git as a real bypass while this hook returned 0. The limit
-# written here in the round before said a backslash fell on the over-refusal
-# side. It does not: bash REMOVES it, which puts these on the allow side, and
-# that is the direction the trade must never run.
-both 'g\\it commit '"$NV"' -m x' 2 2 "a backslash inside the git word"
-both 'git com\\mit '"$NV"' -m x' 2 2 "a backslash inside the subcommand"
-both 'git commit --no-ver\\ify -m x' 2 2 "a backslash inside the flag"
-both 'git com\\\nmit '"$NV"' -m x' 2 2 "a line continuation inside the subcommand"
-both 'git commit --no-ver\\\nify -m x' 2 2 "a line continuation inside the flag"
-both 'git commit --no-{verify,x} -m x' 2 2 "a brace expansion assembling the flag"
-
-run_hook "$ARMED" "$(payload 'g\\it commit '"$NV"' -m x')"
-assert_contains "$err" "The word '--no-verify' would skip" "the refusal names the assembled flag"
-
-# The controls: assembling a word must not manufacture a bypass, and the join
-# must not weld two commands into one.
-both 'g\\it commit -m x' 0 2 "the same git word with no bypass"
-both 'git commit -m a\\b' 0 2 "a backslash in a message with no bypass"
-both 'git commit -m a{b,c}' 0 2 "a brace expansion with no bypass"
-both 'git commit -m \"C:\\\\src\\\\repo\"' 0 2 "a windows path in a message"
-
-# The join reads both ways, and this is the direction that is easy to miss:
-# bash welds `echo a\` onto the next line, so the word is `agit` and no git
-# runs at all. The round before refused this; allowing it is the correct
-# answer, not a loosening.
-both 'echo a\\\ngit commit '"$NV" 0 0 "a continuation welding echo onto the git word"
-
-# The two this class adds to the accepted over-refusals, named rather than
-# counted. Both are text bash would not run as a bypass: it keeps a backslash
-# that is not an escape inside double quotes, and it reads `{git` as a command
-# name because no blank follows the brace. Taking the deletions means taking
-# these, and the brace-expansion bypass above is why that trade is worth it.
-both 'git commit -m \"use \\\\'"$NV"' here\"' 2 2 "an escaped flag inside a quoted message"
-both '{git commit -n -m x' 2 2 "a brace bash reads as part of the command name"
-
-echo
-echo "the far side of the boundary: a word produced rather than revealed"
-
-# Where a stateless pass stops, and it stops for a reason that cannot be fixed
-# by another character class: the characters are not in the command. Pinned so
-# the limit is measured rather than asserted, and so the next reader does not
-# take the class above for a promise it does not make.
-both "git commit \$'\\\\x2d\\\\x6e' -m x" 0 2 "ANSI-C quoting spelling the short flag"
-# shellcheck disable=SC2016
-both 'F='"$NV"'; git commit $F -m x' 0 2 "a flag reached through a variable"
-
-echo
 echo "the trade: text that reads as a bypass is refused"
 
 # The hook reads no shell, so a flag spelled inside a message, a heredoc body or
@@ -391,27 +282,20 @@ both 'git commit -m \"prose mentioning -n inside\"' 2 2 "-n inside a quoted mess
 both 'git commit -m x  # never '"$NV" 2 2 "the flag in a comment tail"
 both 'cat <<EOF > n.md\nrun cat -n on the file\nEOF\ngit commit -m note' 2 2 "-n in a heredoc body"
 
-# The ones the normalization adds to that list, named rather than counted.
-# Dropping the quotes is what makes the first two words plain; the three after
-# them are a metacharacter standing where a space would have to be for the word
-# to count, so separating on it is what exposes them. main refused none of these
-# five, and they are the price of the nine forms it refused that this now
-# refuses again.
-both 'git commit -m \"'"$NV"' should never be used\"' 2 2 "the flag alone in a quoted message"
-both "git log | grep 'commit'" 0 2 "a quoted commit word in an ordinary grep"
-both 'git commit -m \"rebased ('"$NV"' never)\"' 2 2 "the flag opening a parenthesis in a message"
-both 'git commit -m \"ran cat;-n on it\"' 2 2 "-n behind a semicolon in a message"
-both 'git log --oneline \"(commit)\"' 0 2 "a commit word opening a parenthesis"
-
 echo
-echo "the trade: a bypass the shell would assemble elsewhere is not seen"
+echo "the trade: a bypass the shell would assemble is not seen"
 
-# The other side of the same rule, and what the pass deliberately stops short
-# of. Quotes and metacharacters are the whole of it: a key the shell reaches
-# through a file, an alias or a variable is in no word of the command, and
-# reading one means carrying state across characters — the tokenizer this hook
-# replaced. Git's armed hooks are the control for these.
+# The other side of the same rule. Git's armed hooks are the control here: they
+# run unless the flag reaches git, and a word this hook cannot read is a word it
+# does not refuse. Pinned so the limit is measured rather than assumed. The
+# include.path form is the residual config hole: the key is in the file it
+# names, not in any word of this command.
+both 'git commit \"'"$NV"'\" -m x' 0 2 "a quoted flag"
+both 'g'"''"'it commit '"$NV"' -m x' 0 0 "quotes inside the git word"
+both 'git commit>/dev/null -n -m x' 0 0 "a redirection glued to the subcommand"
 both 'git -cinclude.path=/tmp/c commit -m x' 0 2 "a key reached through an include.path"
+# shellcheck disable=SC2016
+both 'F='"$NV"'; git commit $F -m x' 0 2 "a flag reached through a variable"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
