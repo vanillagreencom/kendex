@@ -641,3 +641,35 @@ fn a_repeated_value_leaves_an_edited_neighbour_unpaired() {
         "the surviving copy keeps the earlier slot, and second a's line goes"
     );
 }
+
+/// The editor's path, which is where a hand-written manifest is actually
+/// edited. `hook::name_custom_hooks` stamps a derived name onto every
+/// hook the editor saves, so the target carries names the file does not,
+/// and pairing on names alone places nothing at all — the whole list falls
+/// to position, and dropping the first hook seats the survivor under the
+/// dropped hook's comment.
+///
+/// The names are stamped by the real function rather than written here:
+/// what the target looks like on that path is the thing under test.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hook_the_editor_has_just_named_pairs_with_the_one_it_names() {
+    let current = "schema = 6\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n\n# says we are done\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n";
+    let mut manifest: Manifest = toml::from_str(current).unwrap();
+    manifest.custom_hooks.remove(0);
+    assert!(
+        crate::hook::name_custom_hooks(&mut manifest),
+        "the editor names what it saves, and this case is nothing without it"
+    );
+    let desired = toml::to_string_pretty(&manifest).unwrap();
+
+    assert_eq!(
+        fold(current, &desired),
+        format!(
+            "schema = 6\n\n# says we are done\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nname = \"{}\"\n",
+            manifest.custom_hooks[0].name.as_deref().unwrap()
+        ),
+        "the hook that survived keeps its own comment, not the deleted one's, \
+         and the name it gained lands under the keys already written"
+    );
+}

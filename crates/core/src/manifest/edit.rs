@@ -24,9 +24,10 @@
 //! thing, and the walk dispatches on the destination, so neither is
 //! rewritten into the other.
 //!
-//! List entries are paired by what an entry is — a hook by its name, a
-//! scalar by its own value — and what identity could not place takes the
-//! slot it sat in, where identity has not already claimed that slot. What
+//! List entries are paired by what an entry is — a hook by its name, or
+//! by what it runs where only one side has been named, and a scalar by
+//! its own value — and what identity could not place takes the slot it
+//! sat in, where identity has not already claimed that slot. What
 //! somebody wrote about an entry then travels with that entry through a
 //! removal or a re-sort. The positional half is what keeps an edit an
 //! edit rather than a drop and an append, and it has a price: an entry
@@ -166,24 +167,32 @@ fn merge_entries(destination: &mut Item, held: Option<&Item>, target: &Item) -> 
     true
 }
 
-/// Which destination entry each target entry continues, by identity first
-/// and by position for whatever identity could not place. An entry that
-/// pairs with nothing is gained; a destination entry nothing pairs with is
-/// dropped, and the comment written above it goes with it.
+/// Which destination entry each target entry continues: by identity, one
+/// key at a time from the strongest, and by position for whatever no key
+/// could place. An entry that pairs with nothing is gained; a destination
+/// entry nothing pairs with is dropped, and the comment written above it
+/// goes with it.
 fn paired(standing: &[Item], target: &[Item]) -> Vec<Option<usize>> {
+    let standing_keys: Vec<Identity> = standing.iter().map(identity).collect();
+    let target_keys: Vec<Identity> = target.iter().map(identity).collect();
     let mut taken = vec![false; standing.len()];
     let mut pairing = vec![None; target.len()];
-    for (index, wanted) in target.iter().enumerate() {
-        let Some(name) = identity(wanted) else {
-            continue;
-        };
-        for (at, entry) in standing.iter().enumerate() {
-            if taken[at] || identity(entry).as_ref() != Some(&name) {
+    // A rank at a time, so a stronger key never loses a slot to a weaker
+    // one, and like is compared with like: an entry that answers on one
+    // rank and not another is simply absent from that round.
+    for rank in 0..RANKS {
+        for (index, wanted) in target_keys.iter().enumerate() {
+            let (None, Some(key)) = (pairing[index], wanted[rank].as_ref()) else {
                 continue;
+            };
+            for (at, entry) in standing_keys.iter().enumerate() {
+                if taken[at] || entry[rank].as_ref() != Some(key) {
+                    continue;
+                }
+                pairing[index] = Some(at);
+                taken[at] = true;
+                break;
             }
-            pairing[index] = Some(at);
-            taken[at] = true;
-            break;
         }
     }
     for (index, slot) in pairing.iter_mut().enumerate() {
@@ -203,10 +212,18 @@ fn paired(standing: &[Item], target: &[Item]) -> Vec<Option<usize>> {
 ///
 /// A scalar is its own identity, so a list that lost an element or was
 /// re-sorted — `Manifest::suppress` sorts on every removal — moves each
-/// annotation with the value it was written against. A table is its
-/// `name`, the identity `[[custom-hooks]]` documents, or what it runs for
-/// an entry written by hand before an editor save stamped one. Duplicates
-/// pair first-unclaimed, which the caller's `taken` sweep already decides.
+/// annotation with the value it was written against.
+///
+/// A table answers on two keys, because one is not enough to survive the
+/// editor. `name` is the identity `[[custom-hooks]]` documents and the
+/// stronger key: a hook whose command was edited is still that hook. But
+/// `hook::name_custom_hooks` stamps a name onto every hook the editor
+/// saves, so on that path the target is named and the file it is folded
+/// into is not, and nothing about the names can match. What the name was
+/// derived from can: a hook also answers on the event and command it
+/// runs, and `paired` tries that key once the names have placed what they
+/// can. Duplicates pair first-unclaimed, which the caller's `taken` sweep
+/// already decides.
 ///
 /// Nothing here identifies an entry whose value changed, and nothing can:
 /// a value edited in place is a different value. It pairs by the slot it
@@ -223,16 +240,25 @@ fn paired(standing: &[Item], target: &[Item]) -> Vec<Option<usize>> {
 /// `tests::a_value_paired_by_position_keeps_the_note_written_in_its_slot`
 /// and `tests::a_repeated_value_leaves_an_edited_neighbour_unpaired`, so
 /// the trade is a fixture rather than a sentence.
-fn identity(entry: &Item) -> Option<String> {
-    if let Some(table) = entry.as_table_like() {
-        if let Some(name) = text(table, "name") {
-            return Some(format!("named {name}"));
-        }
-        return match (text(table, "event"), text(table, "command")) {
-            (Some(event), Some(command)) => Some(format!("runs {event}\u{1f}{command}")),
-            _ => None,
-        };
-    }
+/// How many keys an entry can be recognized by, strongest first.
+const RANKS: usize = 2;
+
+/// The keys one entry answers on, `None` where it answers on none.
+type Identity = [Option<String>; RANKS];
+
+fn identity(entry: &Item) -> Identity {
+    let Some(table) = entry.as_table_like() else {
+        return [None, scalar(entry)];
+    };
+    let named = text(table, "name").map(|name| format!("named {name}"));
+    let runs = match (text(table, "event"), text(table, "command")) {
+        (Some(event), Some(command)) => Some(format!("runs {event}\u{1f}{command}")),
+        _ => None,
+    };
+    [named, runs]
+}
+
+fn scalar(entry: &Item) -> Option<String> {
     match entry.as_value()? {
         Value::String(value) => Some(format!("text {}", value.value())),
         Value::Integer(value) => Some(format!("whole {}", value.value())),

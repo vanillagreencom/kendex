@@ -159,7 +159,9 @@ pub struct FrontmatterOverrides {
 ///
 /// A declaration written before the harness was part of it belongs to Claude
 /// Code — the only tool whose plugin switch kendex ever wrote — so that is
-/// what an older manifest reads back as, and the next write records it.
+/// what an older manifest reads back as. A write leaves the omission where
+/// it found it: Claude is the default the key skips at, and spelling it out
+/// would put a key in the file that says what the file already said.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct PluginDecl {
