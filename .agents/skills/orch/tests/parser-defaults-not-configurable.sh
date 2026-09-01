@@ -42,23 +42,38 @@ bad() {
 
 # A stub gh so no case reaches the network; every command here fails before or
 # at auth, and none of them may decide the outcome by talking to GitHub.
+#
+# And a stub for every terminal open_gui can resolve. No assertion in this file
+# measures a launch, but the SKILLS_DIR leak control below drops the very export
+# it is proving, so its stubbed worktree CLI exits 0 printing no path and the
+# launch that follows used to reach the real ghostty on PATH — a window on the
+# operator's desktop at a directory that was already deleted (KEN-1084). A test
+# that proves a parser property must not be able to open one while doing it.
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/no-lanes"
 printf '#!/bin/sh\nexit 1\n' >"$TMP_ROOT/bin/gh"
-chmod +x "$TMP_ROOT/bin/gh"
+for stub in ghostty xdg-terminal-exec stub-terminal; do
+  printf '#!/bin/sh\nexit 0\n' >"$TMP_ROOT/bin/$stub"
+done
+chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/ghostty" \
+  "$TMP_ROOT/bin/xdg-terminal-exec" "$TMP_ROOT/bin/stub-terminal"
 
 # run SCRIPT DIR ARGS... — one hermetic invocation, combined output.
 #
 # TMUX is unset because oversee-watch's lane-window check only fires outside
 # tmux, and this suite must not pass merely because the developer ran it from a
-# tmux pane. ORCH_LANE_DIRS points at an empty directory so `lanes` never reads
-# the real accounts on this machine.
+# tmux pane. That also makes every open-terminal case here a GUI launch, so
+# TERMINAL names the stub above: it is the first thing open_gui resolves, and
+# pinning it is what keeps a case off the real desktop whatever PATH holds.
+# ORCH_LANE_DIRS points at an empty directory so `lanes` never reads the real
+# accounts on this machine.
 run() {
   local script="$1" dir="$2"
   shift 2
   # The command's own status is returned, not swallowed: the empty-value sweep
   # below asserts on it. Callers that only read the output append `|| true`.
   (cd "$dir" && PATH="$TMP_ROOT/bin:$PATH" \
-    env -u TMUX ORCH_LANES_FETCH_CMD=true ORCH_LANE_DIRS="$TMP_ROOT/no-lanes" \
+    env -u TMUX TERMINAL=stub-terminal ORCH_LANES_FETCH_CMD=true \
+      ORCH_LANE_DIRS="$TMP_ROOT/no-lanes" \
       "$dir/.agents/skills/orch/scripts/$script" "$@") 2>&1
 }
 

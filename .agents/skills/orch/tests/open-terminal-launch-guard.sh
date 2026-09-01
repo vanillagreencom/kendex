@@ -102,6 +102,21 @@ run() {
   RC=$?
   set -e
   ERR="$(cat "$TMP_ROOT/$name.err")"
+  # open_gui detaches the launch (`setsid ... &`), so the stub's line can land
+  # after open-terminal has already exited — on a loaded box it did, and the
+  # case read an empty log. Which wait to take is DERIVED from the script's own
+  # report rather than from a flag each call site remembers: an exit 0 says a
+  # launch was started, so wait for its line; any other status says none was, so
+  # watch a real interval and prove none appears.
+  local i=0
+  if [[ "$RC" -eq 0 ]]; then
+    while [ "$i" -lt 100 ] && [ ! -s "$term_log" ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+  else
+    sleep 1
+  fi
   TERM_LOG_TEXT="$(cat "$term_log")"
   TMUX_LOG_TEXT="$(cat "$tmux_log")"
 }
@@ -143,9 +158,10 @@ assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" "premise: and \$TERMINAL is 
 echo
 echo "=== the refusal can fail: with the guard gone the window opens ==="
 
-# The must-fail control. `launchable_dir` is the whole protection, so the
-# mutation is its one test — with that gone the function returns 0 for every
-# path and the launch proceeds exactly as it did before this guard existed.
+# The must-fail control, run over BOTH shapes the guard refuses. `launchable_dir`
+# is the whole protection, so the mutation is its one test — with that gone the
+# function returns 0 for every path and each launch proceeds exactly as it did
+# before this guard existed.
 MUTANT="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT"
 sed 's/\[\[ -d "$1" \]\] && return 0/return 0/' "$SRC_OT" > "$MUTANT/open-terminal"
@@ -158,9 +174,17 @@ MUTANT_REPO="$TMP_ROOT/mutant-repo"
 stage "$MUTANT_REPO" "$MUTANT/open-terminal"
 
 run mutant "$MUTANT_REPO/scripts/open-terminal" missing --ghostty CC-1
-assert_eq "$RC" "0" "control: without the guard the launch is reported as successful"
+assert_eq "$RC" "0" "control: without the guard the deleted-path launch is reported as successful"
 assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" \
   "control: and a terminal really is opened at the directory that is gone"
+
+# The empty path is the shape the leak actually took, so it carries its own
+# control rather than riding on the deleted one: a guard written as a stat of a
+# non-empty path would refuse the case above and still launch this one.
+run mutant_empty "$MUTANT_REPO/scripts/open-terminal" empty --ghostty CC-1
+assert_eq "$RC" "0" "control: without the guard the empty-path launch is reported as successful"
+assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" \
+  "control: and a terminal really is opened for the empty working directory"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
