@@ -262,7 +262,8 @@ OUT="$("$OUT_DIR/checkout/.agents/skills/growth-guards/scripts/install-git-hooks
 
 HELPER="$OUT_DIR/elsewhere.git/hooks/kendex-guards"
 [ -f "$HELPER" ] || HELPER="$OUT_DIR/checkout/.git/hooks/kendex-guards"
-sed -i "s|^installed_scripts=.*|installed_scripts=''|" "$HELPER"
+sed -i.bak "s|^installed_scripts=.*|installed_scripts=''|" "$HELPER"
+rm -f "$HELPER.bak"
 
 MARK="TO""DO"
 printf '# %s: nope\n' "$MARK" >"$OUT_DIR/checkout/b.py"
@@ -308,7 +309,8 @@ OUT="$("$IN_DIR/.agents/skills/growth-guards/scripts/install-git-hooks" --repo "
 # search under test.
 HELPER2="$IN_DIR/meta/repo.git/hooks/kendex-guards"
 [ -f "$HELPER2" ] || HELPER2="$IN_DIR/.git/hooks/kendex-guards"
-sed -i "s|^installed_scripts=.*|installed_scripts=''|" "$HELPER2"
+sed -i.bak "s|^installed_scripts=.*|installed_scripts=''|" "$HELPER2"
+rm -f "$HELPER2.bak"
 
 MARK2="TO""DO"
 printf '# %s: nope\n' "$MARK2" >"$IN_DIR/b.py"
@@ -331,7 +333,8 @@ printf 'hello\n' >"$R90/a.txt"
 git -C "$R90" add -A
 commit_in "$R90" "feat: base"
 git -C "$R90" worktree add -q "$TMP/wt9" -b wt9b
-sed -i "s|^installed_scripts=.*|installed_scripts=''|" "$R90/.git/hooks/kendex-guards"
+sed -i.bak "s|^installed_scripts=.*|installed_scripts=''|" "$R90/.git/hooks/kendex-guards"
+rm -f "$R90/.git/hooks/kendex-guards.bak"
 printf '# %s: nope\n' "$MARK" >"$TMP/wt9/c.py"
 git -C "$TMP/wt9" add -A
 OUT=""; RC=0
