@@ -54,11 +54,32 @@ def summary_block(model):
     return model.summary.strip("\n")
 
 
+def block_paragraphs(model, bid, text):
+    """A block's paragraphs, for an output that keeps paragraphs apart.
+
+    Package-authored doctrine is joined: this package hard-wraps its own prose
+    in the spec copy, and those breaks belong to that file rather than to the
+    meaning. A block a repo overrode keeps every line break it was written
+    with, per `renders.md` § Common rules — a fenced example in a
+    `[doctrine.replace]` arrived as one line, and a fence needs its own.
+    `model.repo_authored` is the distinction, and it says why the two rules
+    were never in conflict.
+    """
+    if model.repo_authored(bid):
+        return [text.strip("\n")]
+    return paragraphs(text)
+
+
 def as_bullet(text):
     """One block, exactly one bullet, no blank line inside.
 
     A repo guard that pins the reply contract reads it as a single bullet, and
-    a blank line ends that read.
+    a blank line ends that read. So this joins whatever the block's origin:
+    the owned region is the second place a target forbids line breaks, and
+    § Common rules names it beside `tone_instructions`. Reindenting an
+    author's fenced block into a list item would be the generator rewriting
+    words to make them fit, which this package refuses in favour of the
+    author choosing a block that reaches an output with room for it.
     """
     return "- " + " ".join(paragraphs(text))
 
@@ -87,7 +108,7 @@ def copilot_instructions(model):
     for bid, text in model.blocks_for("copilot-instructions"):
         out.append(f"## {bid}")
         out.append("")
-        for para in paragraphs(text):
+        for para in block_paragraphs(model, bid, text):
             out.append(para)
             out.append("")
     out.append("## Reply contract")
@@ -125,7 +146,7 @@ def review_md(model):
     for bid, text in model.blocks_for("REVIEW.md"):
         out.append(f"## {bid}")
         out.append("")
-        for para in paragraphs(text):
+        for para in block_paragraphs(model, bid, text):
             out.append(para)
             out.append("")
     return "\n".join(out).rstrip("\n") + "\n"
@@ -159,7 +180,7 @@ def macroscope_doctrine(model):
     for bid, text in model.blocks_for("macroscope doctrine.md"):
         out.append(f"## {bid}")
         out.append("")
-        for para in paragraphs(text):
+        for para in block_paragraphs(model, bid, text):
             out.append(para)
             out.append("")
     out.append("## about this repository")

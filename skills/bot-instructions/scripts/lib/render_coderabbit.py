@@ -64,10 +64,20 @@ def path_instructions(model):
     if model.exclusions:
         # The path filters already remove those trees; this is what stops a
         # finding arriving through a file that references them.
+        #
+        # One line for this package's own prose, whose breaks are the spec
+        # copy's wrapping. A block a repo overrode keeps its own, like every
+        # other destination, and then the paths need a paragraph of their own
+        # so an override ending in a fence still closes it.
+        bid = "render-out-of-scope"
+        text = model.block(bid)
+        joined = not model.repo_authored(bid)
+        if joined:
+            text = text.replace("\n", " ")
         out.append({
             "path": "**",
-            "instructions": model.block("render-out-of-scope").replace("\n", " ")
-            + " Those paths here: " + ", ".join(model.exclusion_globs) + ".",
+            "instructions": text + (" " if joined else "\n\n")
+            + "Those paths here: " + ", ".join(model.exclusion_globs) + ".",
         })
     return out
 

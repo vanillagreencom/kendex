@@ -219,8 +219,20 @@ first, in lexicographic order, then `[[exclusions.path]]` entries in
 declaration order. Stable ordering is what makes a re-render diff readable.
 
 **Repo text is never reflowed.** Line breaks in a TOML multi-line string are
-preserved except where a target's syntax forbids them, which is
-`tone_instructions` alone.
+preserved except where a target forbids them, and two do: `tone_instructions`,
+which CodeRabbit reads as one scalar, and the `AGENTS.md` owned region, where
+§ `AGENTS.md` requires one block to be exactly one bullet with no blank line
+inside.
+
+**Doctrine text is reflowed by its origin, not by its destination.** A block
+as the spec copy wrote it is this package's own prose, hard-wrapped for that
+file, and its paragraphs are joined on every destination that carries them —
+those breaks belong to the spec copy rather than to the meaning. A block a
+repo overrode through `[doctrine.append]` or `[doctrine.replace]` is repo
+text, so the rule above governs it and its line breaks reach every
+destination. The two read as a contradiction only while the origin is out of
+hand: joining both is how a fenced example in an override arrived as one line
+on every surface that carries paragraphs.
 
 **`exclude_globs` is real on one surface only.** Macroscope has an `exclude`
 frontmatter key evaluated after `include`, so the subtraction is expressed

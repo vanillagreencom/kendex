@@ -50,6 +50,24 @@ printf '\n[[exclusions.path]]\nglob = "app/[slug]/**"\nreason = "a route that do
 expect_red exclusion-consistency 'an exclusion glob matching no tracked path' \
   render --dry-run --repo "$repo"
 
+# The other side of that clause, and the direction that costs more: an
+# exclusion naming a bare directory is how git and CodeRabbit read "this tree",
+# and `git ls-files -- ':(glob)docs'` returns the files beneath it. Matched
+# exactly, it covered nothing, the clause called a correct exclusion dead, and
+# a repo configured that way could not render or check at all — a valid
+# configuration refused, rather than a bad one let through.
+alive="$(bi_new_repo excl-bare-dir)"
+{
+  cat "$BI_FIXTURES/canonical.toml"
+  printf '\n[[exclusions.path]]\nglob = "docs"\nreason = "operator prose, not this repo behavior"\n'
+} > "$alive/bot-instructions.toml"
+git -C "$alive" add -A >/dev/null 2>&1
+bi_must adopt --repo "$alive" || exit 1
+expect_green 'an exclusion naming a bare directory renders' render --repo "$alive"
+bi_commit "$alive"
+expect_green 'and checks clean, since the tree beneath it is what it covers' \
+  check --repo "$alive"
+
 # The verdict has to be reachable before it can be trusted. In a repo that
 # tracks nothing, every glob matches nothing for a reason that is not the
 # author's, so the clause says it cannot answer rather than reporting each

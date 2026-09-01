@@ -126,6 +126,20 @@ def _translate(pattern, where=None):
     git's wildmatch, which `renders.md` names as the engine the dialect
     targets.
 
+    **A pattern holding no wildcard covers the paths beneath it**, which is
+    git's own rule for a pathspec and the one this had missed in the other
+    direction: `git ls-files -- ':(glob)docs'` selects every tracked file under
+    that directory, while an exact match selected none of them and
+    `_dead_globs` called a correct exclusion dead — refusing `render` and
+    `check` on a repo configured the way git and CodeRabbit read it. A false
+    rejection rather than a miss, and the worse of the two: nothing slips
+    through, a working repo simply cannot render.
+
+    The boundary is git's: `*`, `?` and `[` are what `has_wildcard` looks for,
+    and one of them anywhere turns the prefix rule off. Measured — `docs` and
+    `docs/sub` cover their trees, while `do*`, `doc?`, `[d]ocs` and `*/sub`
+    select nothing at all.
+
     The compile is guarded because the dialect's character class is wider than
     a regex character class: `[z-a]` is made of permitted bytes and is a
     reversed range `re` refuses. A raw traceback there would be the one
@@ -147,6 +161,9 @@ def _translate(pattern, where=None):
 
     as_written = pattern
     pattern = _collapse(pattern)
+    # git's own test for whether a pathspec is a literal path, and so a
+    # directory prefix rather than a name to match exactly.
+    literal = not any(c in pattern for c in "*?[")
     out = ["^"]
     i, n = 0, len(pattern)
     while i < n:
@@ -173,7 +190,7 @@ def _translate(pattern, where=None):
         else:
             out.append(re.escape(c))
         i += 1
-    out.append("$")
+    out.append("(?:/.*)?$" if literal else "$")
     try:
         return re.compile("".join(out))
     except re.error as exc:

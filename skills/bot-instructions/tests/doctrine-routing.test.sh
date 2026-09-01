@@ -276,4 +276,90 @@ else
   bad 'and that block keeps the line and everything below it too'
 fi
 
+# A block's ORIGIN decides whether its paragraphs are joined. Doctrine from
+# the spec copy is this package's own prose, hard-wrapped for that file, so
+# joining it is right; a `[doctrine.replace]` is a repo author's bytes, and
+# `renders.md` § Common rules says repo text is never reflowed. One helper
+# answered for both, so a fenced example in an override came out as one line
+# in every destination that carries paragraphs.
+#
+# Both halves in one fixture: the overridden block must survive intact, and a
+# block NOT overridden must still arrive joined, or a fix that simply stopped
+# joining everything would read as coverage.
+fenced="$(bi_new_repo doctrine-fenced)"
+{
+  cat "$BI_FIXTURES/canonical.toml"
+  cat <<'OVERRIDE'
+
+[doctrine.replace]
+severity = """
+Rank a finding by what it costs, not by how easy it was to see.
+
+```
+severity = consequence * reach
+```
+
+Say which term you could not measure.
+"""
+render-out-of-scope = """
+Vendored trees are read, never reviewed.
+
+```
+git ls-files -- ':(glob)vendor'
+```
+"""
+OVERRIDE
+} > "$fenced/bot-instructions.toml"
+bi_must adopt --repo "$fenced" || exit 1
+bi_must render --repo "$fenced" || exit 1
+if python3 - "$BI_ROOT/skills/bot-instructions" "$fenced" <<'PROBE'; then
+import os, sys
+PKG, repo = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import spec as spec_mod, tree, yamlread
+
+FENCE = "```\nseverity = consequence * reach\n```"
+CARRIERS = (".github/copilot-instructions.md", "REVIEW.md",
+            ".macroscope/correctness/doctrine.md", ".pr_agent.toml")
+for rel in CARRIERS:
+    if FENCE not in open(os.path.join(repo, rel)).read():
+        sys.exit(f"{rel}: the overridden block's fence was reflowed away")
+
+# The catch-all CodeRabbit entry carries a block through a different helper,
+# which collapsed every newline in it unconditionally. `render-out-of-scope`
+# is the block it carries, so the fixture overrides that one too.
+OUT_OF_SCOPE = "```\ngit ls-files -- \':(glob)vendor\'\n```"
+doc = yamlread.loads(open(os.path.join(repo, ".coderabbit.yaml")).read())
+catch_all = [e for e in doc["reviews"]["path_instructions"] if e["path"] == "**"]
+if not catch_all:
+    sys.exit(".coderabbit.yaml: no catch-all path_instructions entry to judge")
+entry = catch_all[0]["instructions"]
+if OUT_OF_SCOPE not in entry:
+    sys.exit(f".coderabbit.yaml: the catch-all entry reflowed the override: {entry[:120]!r}")
+depth = 0
+for line in entry.split("\n"):
+    if line.strip().startswith("```"):
+        depth = 1 - depth
+    elif "Those paths here:" in line and depth:
+        sys.exit(".coderabbit.yaml: the exclusion paths landed inside the fence")
+if depth:
+    sys.exit(".coderabbit.yaml: the catch-all entry leaves a fence open")
+
+# The other half: a block the repo did NOT override still arrives joined, so
+# the spec copy's own wrapping is not carried into the outputs as line breaks.
+blocks = spec_mod.load(tree.Worktree(PKG), "SKILL.md", "schemas/renders.md").blocks
+wrapped = [b for b, t in blocks.items() if "\n" in t.strip() and b != "severity"]
+if not wrapped:
+    sys.exit("no package-authored block is hard-wrapped, so the pair proves nothing")
+copilot = open(os.path.join(repo, CARRIERS[0])).read()
+for bid in wrapped:
+    first = blocks[bid].strip().split("\n")[0]
+    if first + "\n" in copilot:
+        sys.exit(f"{bid}: a package-authored block kept the spec copy's wrapping")
+PROBE
+  ok 'an overridden block keeps its line breaks, and a package one is still joined'
+else
+  bad 'an overridden block keeps its line breaks, and a package one is still joined'
+fi
+
 bi_summary

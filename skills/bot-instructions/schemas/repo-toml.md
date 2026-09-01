@@ -546,7 +546,10 @@ block for this repo; `replace` substitutes the block's whole text. An unknown
 block id is an error, so a doctrine rename cannot leave a repo silently
 carrying an override that reaches nothing. Their values carry the refusals
 their own row in § The content refusals marks, which is a wider set than
-`instructions` has and is stated only there.
+`instructions` has and is stated only there. They are repo text, so their line
+breaks are preserved wherever the block lands — a fenced example survives as
+one — with the `AGENTS.md` owned region the one exception, since a block
+renders there as a single bullet whatever wrote it.
 
 Prefer `append`. A `replace` means this repo disagrees with doctrine, which is
 worth arguing at the doctrine source rather than in one repo's TOML. A

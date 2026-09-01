@@ -31,6 +31,12 @@ git -C "$work" init -q .
 # `solo/**` a boundary case rather than a repetition of `a/**`: git selects
 # nothing for it, and a translation that lets a trailing `/**` match the
 # directory itself selects the file.
+#
+# `docs` and `doc?` are the pair on git's other rule: a pathspec holding no
+# wildcard covers the paths beneath it, and one holding any of `*?[` does not.
+# `docs` selects `docs/x.md` and `doc?` selects nothing, so a matcher missing
+# the rule disagrees on the first and one applying it to every pattern
+# disagrees on the second.
 for f in a/f a/b/g ab/h top.md docs/x.md solo; do printf 'x\n' > "$work/$f"; done
 git -C "$work" add -A >/dev/null 2>&1
 
@@ -76,7 +82,7 @@ export BI_ROOT
 
 # Every shape the dialect permits.
 for p in 'a/**' 'a/*' '**' '*' '*.md' '**/*.md' '**/g' 'a/**/g' 'a/*/g' 'a/b/**' \
-         'a?f' 'a**' '[a]b/h' 'docs/**' 'top.md' 'solo/**'; do
+         'a?f' 'a**' '[a]b/h' 'docs/**' 'top.md' 'solo/**' 'docs' 'doc?'; do
   vector "$p" agree
 done
 
