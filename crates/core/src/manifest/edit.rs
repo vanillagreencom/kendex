@@ -25,13 +25,17 @@
 //! rewritten into the other.
 //!
 //! List entries are paired by what an entry is — a hook by its name, a
-//! scalar by its own value — and by where it sits only for an entry
-//! nothing identifies. What somebody wrote about an entry then travels
-//! with that entry through a removal or a re-sort, rather than staying at
-//! the place it was stored. Which bytes those are is [`layout`]'s
-//! arithmetic: TOML keeps a comment written after a value against the
-//! value below it, so entry and annotation are one apart in the file and
-//! have to be put back together before anything moves.
+//! scalar by its own value — and everything identity could not place
+//! pairs by where it sits. What somebody wrote about an entry then
+//! travels with that entry through a removal or a re-sort. The positional
+//! half is what keeps an edit an edit rather than a drop and an append,
+//! and it has a price: an entry paired that way inherits what was written
+//! about whatever stood in its slot.
+//!
+//! Where those bytes are is not where they look. An array of values keeps
+//! them in [`layout`]'s four places, an entry and its annotation always
+//! one slot apart; an array of tables keeps a table's annotation on the
+//! table, so [`rebuilt_tables`] carries it by moving the table itself.
 
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, TableLike, Value};
 
@@ -198,6 +202,12 @@ fn paired(standing: &[Item], target: &[Item]) -> Vec<Option<usize>> {
 /// `name`, the identity `[[custom-hooks]]` documents, or what it runs for
 /// an entry written by hand before an editor save stamped one. Duplicates
 /// pair first-unclaimed, which the caller's `taken` sweep already decides.
+///
+/// Nothing here identifies an entry whose value changed, and nothing can:
+/// a value edited in place is a different value. It pairs by position, so
+/// it lands on the slot it replaced and keeps the note written there —
+/// which is what makes an edit an edit, and what makes `"Write", # no
+/// writing files` read `"WebFetch", # no writing files` afterwards.
 fn identity(entry: &Item) -> Option<String> {
     if let Some(table) = entry.as_table_like() {
         if let Some(name) = text(table, "name") {
@@ -237,6 +247,9 @@ fn rebuilt_tables(merged: Vec<(Option<usize>, Item)>) -> ArrayOfTables {
         .map(|(_, entry)| {
             entry
                 .into_table()
+                // Refused before the fold rather than here: `held_by_model`
+                // deserializes the file through `Manifest` first, and serde
+                // takes no array of tables for a list of strings.
                 .unwrap_or_else(|other| unreachable!("a table array holds tables, not {other:?}"))
         })
         .collect();

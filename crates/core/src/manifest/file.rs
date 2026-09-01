@@ -121,6 +121,31 @@ pub fn observed(path: &Path) -> Result<Manifest> {
     }
 }
 
+/// The predicates the model's serde attributes skip through. They live
+/// beside the write because that is the whole reason they exist.
+///
+/// Why every field with a default skips at it: an absent key already reads
+/// as that value, and kendex.toml is edited in place, so writing it out
+/// would put a key in somebody's file that says nothing the file did not
+/// already say. What the file does spell is safe either way — a removal is
+/// decided by what the manifest read back out of that same file, never by
+/// what the serializer left out.
+///
+/// Two rules hold that. Every field serde gives a default carries a skip
+/// predicate beside it; a field that gains the one without the other
+/// falsifies ARCHITECTURE invariant 10, and the serde attributes on the
+/// model are where that is read off. And no predicate restates a default: each
+/// asks the same `default_*` or `Default` the field deserializes through,
+/// so changing a default moves the write with it instead of silently
+/// inverting the field.
+pub(super) fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
+pub(super) fn is_true(value: &bool) -> bool {
+    *value == super::default_true()
+}
+
 /// Persist a manifest, in place. The file is written by hand, so the
 /// serialization below is not what lands: it is folded into the document
 /// already there ([`super::edit::merged`]), which touches only the keys

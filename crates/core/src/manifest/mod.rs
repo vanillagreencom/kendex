@@ -67,7 +67,7 @@ pub struct SourceDecl {
     /// repository's default branch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
-    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    #[serde(default = "default_true", skip_serializing_if = "file::is_true")]
     pub enabled: bool,
 }
 
@@ -75,29 +75,12 @@ fn default_true() -> bool {
     true
 }
 
-/// Why every field with a default skips at it: an absent key already reads
-/// as that value, and kendex.toml is edited in place, so writing it out
-/// would put a key in somebody's file that says nothing the file did not
-/// already say. What the file does spell is safe either way — a removal is
-/// decided by what the manifest read back out of that same file, never by
-/// what the serializer left out. One predicate per default, each reading
-/// the `default_*` the field deserializes through. A field that gains a
-/// serde default and no skip falsifies ARCHITECTURE invariant 10; the
-/// derivation over this file is in the KEN-928 commit that closed the set.
-fn is_default<T: Default + PartialEq>(value: &T) -> bool {
-    *value == T::default()
-}
-
-fn is_true(value: &bool) -> bool {
-    *value
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct InstallDefaults {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub harnesses: Vec<HarnessId>,
-    #[serde(default, skip_serializing_if = "is_default")]
+    #[serde(default, skip_serializing_if = "file::is_default")]
     pub method: Method,
 }
 
@@ -117,7 +100,7 @@ pub struct ItemDecl {
     /// follows the source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
-    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    #[serde(default = "default_true", skip_serializing_if = "file::is_true")]
     pub enabled: bool,
 }
 
@@ -180,7 +163,7 @@ pub struct FrontmatterOverrides {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct PluginDecl {
-    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    #[serde(default = "default_true", skip_serializing_if = "file::is_true")]
     pub enabled: bool,
     #[serde(
         default = "default_plugin_harness",
@@ -218,7 +201,7 @@ pub struct CustomHook {
     /// Harness allowlist; `None` = every declared harness.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harnesses: Option<Vec<String>>,
-    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    #[serde(default = "default_true", skip_serializing_if = "file::is_true")]
     pub enabled: bool,
     #[serde(
         default = "default_hook_agents",
@@ -268,7 +251,7 @@ pub struct Manifest {
     pub schema: u32,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sources: BTreeMap<String, SourceDecl>,
-    #[serde(default, skip_serializing_if = "is_default")]
+    #[serde(default, skip_serializing_if = "file::is_default")]
     pub install: InstallDefaults,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agents: BTreeMap<String, ItemDecl>,

@@ -3,7 +3,7 @@
 //! kendex.toml, and the assertion is on the bytes.
 
 use super::merged;
-use crate::manifest::Manifest;
+use crate::manifest::{InstallDefaults, Manifest};
 
 /// A fold with `held` derived the way `manifest::save` derives it: the
 /// manifest this very document reads back as, spelled by the serializer
@@ -188,7 +188,7 @@ fn an_empty_inline_array_gains_its_first_entry_inline() {
 /// A multi-line array gains an element without losing the layout or the
 /// comment written inside it. Gaining is all this case ever exercised,
 /// which is how the positional-pairing class survived one level down: the
-/// four cases below cover losing and re-sorting.
+/// cases below cover losing and re-sorting.
 #[test]
 fn a_multiline_array_keeps_its_shape_and_its_inner_comment() {
     let current = "schema = 6\n\n[install]\nharnesses = [\n  # the one I use\n  \"claude\",\n]\n";
@@ -297,12 +297,12 @@ fn a_split_hook_list_keeps_the_places_it_was_written_in() {
         "schema = 6\n\n[[custom-hooks]]\n{}\n[install]\nmethod = \"copy\"\n",
         hook("Stop", "./b.sh")
     );
+    // Spelled out rather than built from `hook()` again: the helper is
+    // already the target handed to the fold, and a helper on both sides
+    // of one assertion cannot see itself drift.
     assert_eq!(
         fold(split, &keep_second),
-        format!(
-            "schema = 6\n\n[install]\nmethod = \"copy\"\n\n# second\n[[custom-hooks]]\n{}",
-            hook("Stop", "./b.sh")
-        )
+        "schema = 6\n\n[install]\nmethod = \"copy\"\n\n# second\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./b.sh\"\n"
     );
 }
 
@@ -464,4 +464,131 @@ fn a_key_gained_inside_an_inline_table_reads_as_one() {
         let desired = toml::to_string_pretty(&manifest).unwrap();
         assert_eq!(fold(current, &desired), expected);
     }
+}
+
+/// A list somebody wrote, folded against exactly what it already says.
+/// The whole file has to come back byte for byte: a manifest write folds
+/// every array in the file, so a run of bytes this cannot reproduce turns
+/// each `kendex add` into a reformat of arrays nobody touched.
+#[allow(clippy::unwrap_used)]
+fn refolded(list: &str) -> String {
+    rewritten(&format!("schema = 6\n\n[suppressed]\nskill = {list}\n"))
+}
+
+/// The file a write leaves behind when the manifest it carries is the one
+/// this file already reads as. `save` builds exactly these two documents
+/// and writes only where the bytes moved, so anything but the input back
+/// is a key some operation landed without naming it.
+#[allow(clippy::unwrap_used)]
+fn rewritten(current: &str) -> String {
+    let held: Manifest = toml::from_str(current).unwrap();
+    let held = toml::to_string_pretty(&held).unwrap();
+    merged(current, &held, &held).unwrap()
+}
+
+/// Every way a person can hold the bytes between the last value and the
+/// bracket. TOML keeps them in the array's trailing text only when the
+/// list ends with a comma; without one they are the last value's suffix,
+/// and an array with no values keeps the whole span in its trailing.
+#[test]
+fn the_bytes_before_the_bracket_survive_however_they_are_kept() {
+    for list in [
+        // No trailing comma: the line break before `]` is the last
+        // value's suffix, and nothing else in the file knows about it.
+        "[\n  \"alpha\",\n  \"beta\"\n]",
+        // The same, held on one line by spaces.
+        "[ \"alpha\" ]",
+        // An annotation written before the comma rather than after it,
+        // which is the other place a suffix can hold a person's words.
+        "[\n  \"alpha\" # the main one\n  ,\n  \"beta\",\n]",
+        // No values at all, so there is no prefix to read the opening
+        // line from and no suffix to read the closing one.
+        "[\n]",
+        "[\n  # none yet\n]",
+        // The shapes that were already covered, so a fix for the ones
+        // above cannot pay for itself here.
+        "[\n  \"alpha\",\n]",
+        "[\"alpha\", \"beta\"]",
+    ] {
+        assert_eq!(
+            refolded(list),
+            format!("schema = 6\n\n[suppressed]\nskill = {list}\n"),
+            "folding {list} against itself must change nothing"
+        );
+    }
+}
+
+/// Emptying a list reaches its own end state in one write. A second fold
+/// that moved another byte would mean the first left the file in a shape
+/// kendex does not itself write, which invariant 11 does not allow.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn emptying_a_list_settles_in_one_write() {
+    let current = "schema = 6\n\n[suppressed]\nskill = [\n  \"alpha\",\n]\n";
+    let empty = "schema = 6\n\n[suppressed]\nskill = []\n";
+    let once = fold(current, empty);
+    assert_eq!(once, "schema = 6\n\n[suppressed]\nskill = [\n]\n");
+    let held: Manifest = toml::from_str(&once).unwrap();
+    let held = toml::to_string_pretty(&held).unwrap();
+    assert_eq!(merged(&once, &held, empty).unwrap(), once);
+}
+
+/// An entry gained in the middle of a one-line list is separated once,
+/// and takes nothing from the entry it displaced. Appending takes the
+/// separator the same way and leaves none before the bracket.
+#[test]
+fn a_gained_entry_is_separated_once_wherever_it_lands() {
+    let current = "schema = 6\n\n[suppressed]\nskill = [\"alpha\", \"zulu\"]\n";
+    for names in [["alpha", "mike", "zulu"], ["alpha", "zulu", "mike"]] {
+        let desired = format!(
+            "schema = 6\n\n[suppressed]\nskill = [{}]\n",
+            names
+                .iter()
+                .map(|name| format!("\"{name}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        assert_eq!(fold(current, &desired), desired);
+    }
+}
+
+/// A declaration that left a field out gets it back from nobody. Both
+/// shapes here are the only ones in which their field's skip is reachable
+/// at all: `[install]`'s own skip hides the harnesses question whenever
+/// install is wholly default, and a plugin declares nothing else.
+#[test]
+fn a_write_names_no_field_a_declaration_left_out() {
+    for current in [
+        "schema = 6\n\n# how things install here\n[install]\nmethod = \"copy\"\n",
+        "schema = 6\n\n[plugins.\"fmt@mkt\"]\nenabled = true\n",
+    ] {
+        assert_eq!(rewritten(current), current);
+    }
+}
+
+/// A boundary, pinned rather than fixed. `Manifest::install` skips at its
+/// default, so a manifest whose install is default spells no `[install]`
+/// at all — and the sweep reads a table `held` names and the target does
+/// not as a table the manifest dropped. Everything written against it
+/// goes: the comment above the header, and a note left inside it.
+///
+/// Nothing reaches this today. An install goes from non-default to
+/// default only if a write clears every harness or resets the method, and
+/// nothing in the tree does either: the engine only adds harnesses, the
+/// editor only refills them, and nothing writes the method at all. The
+/// day something does, this case turns red here instead of quietly in
+/// somebody's file.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn clearing_install_would_take_the_table_written_around_it() {
+    let current = "schema = 6\n\n# how things install here\n[install]\nmethod = \"copy\"\nnote = \"why I chose copy\"\n";
+    let mut manifest: Manifest = toml::from_str(current).unwrap();
+    manifest.install = InstallDefaults::default();
+    let desired = toml::to_string_pretty(&manifest).unwrap();
+    assert_eq!(
+        fold(current, &desired),
+        "schema = 6\n",
+        "the whole table goes, comment and note with it — the day a writer \
+         can reach this, that is what it costs"
+    );
 }
