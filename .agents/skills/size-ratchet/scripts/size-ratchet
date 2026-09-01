@@ -161,11 +161,12 @@ bootstraps rather than raises. No commit message is read: a pre-commit hook
 cannot see one, so the reason belongs in the commit body for review, not in
 a check.
 
-A commit that MOVES SIZE_RATCHET_BASELINE leaves HEAD carrying nothing at the
-path this run reads, so the added and raised checks have no reference and a
-raise would land unjudged. Such a commit is refused unless the rows arriving
-at the new path are byte for byte the rows that left the old one: the move
-travels alone, and the rows change in the commit after it.
+A commit that REPOINTS SIZE_RATCHET_BASELINE is judged by what HEAD holds a
+row set at, because rows at the new path may be a stranger's rather than the
+ones HEAD was judged against. None is a bootstrap. Exactly one, at the path
+this run reads, is an ordinary run. Exactly one elsewhere passes only when the
+arriving rows are that set byte for byte. Two or more is ambiguous and
+refuses: the repoint travels alone, and the rows change in the commit after.
 
 A run whose HEAD carries no baseline rows has no reference for the added and
 raised checks, so the verdict line says so rather than reading as clean.
@@ -1773,6 +1774,10 @@ diff_touches_settings() { # — 0 when a settings source is in the change
       # explicit one is whatever the caller typed, and the resolver honours
       # `./x`, `sub/../x` and `a/b/../../x` as the same source, so the raw
       # spelling is compared to nothing git ever records.
+      # Probed on the ORIGINAL spelling, before it is reduced: an absolute
+      # source drops out of the reduction below, and one pointing from outside
+      # the repository INTO it still resolves to a file a commit can change.
+      [ ! -L "$SIZE_RATCHET_SETTINGS_FILE" ] || return 0
       explicit="$(settings_source_repo_path "$SIZE_RATCHET_SETTINGS_FILE")"
       if [ -n "$explicit" ]; then
         set -- "$explicit" ".env.local"
@@ -1781,6 +1786,17 @@ diff_touches_settings() { # — 0 when a settings source is in the change
       fi
       ;;
   esac
+  # A SYMLINKED source counts as touched without asking what it resolves to.
+  # The comparison below is lexical, so it names the LINK while the resolver
+  # reads through to the target: a commit rewriting the target changed the
+  # effective settings and matched nothing here, and the repoint sailed past.
+  # Answering "what does this resolve to" properly means a second copy of the
+  # resolver's own path handling, which is the thing this file does not keep.
+  # Assuming it changed is the fail-closed answer and costs only the scan, in
+  # a repository that symlinks its settings at all.
+  for src in "$@"; do
+    [ ! -L "$src" ] || return 0
+  done
   list_changed_paths "treat a repointed baseline as absent"
   while IFS= read -r -d '' p || [ -n "$p" ]; do
     [ -n "$p" ] || continue

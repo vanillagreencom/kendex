@@ -349,5 +349,85 @@ RAISE=1 run_frozen --staged
   && ok "control: without the shim the same tree gets the ordinary refusal" \
   || bad "control: the row-set tree without the shim is refused normally" "rc=$RC out=$OUT"
 
+
+# A SYMLINKED settings source. The match against changed paths is lexical, so
+# it names the LINK while the resolver reads through to the target: a commit
+# rewriting the target changed the effective settings, matched nothing here,
+# and the repoint sailed past at exit 0.
+#
+# All four spellings run against ONE tree. A lone symlink case would prove
+# nothing — the two direct arms are what show a refusal is about the symlink
+# and not about the fixture.
+symlink_repo() { # NAME — copy-and-repoint raising a frozen row, settings at
+                 # config/settings.toml with a settings-link beside it
+  new_repo "$1"
+  mkdir -p "$R/tools" "$R/config"
+  mkfile x.test.txt 15
+  printf 'x.test.txt\t15\n' >"$R/tools/a.tsv"
+  printf '[env]\nSIZE_RATCHET_BASELINE = "tools/a.tsv"\n' >"$R/config/settings.toml"
+  ( cd "$R" && ln -sf config/settings.toml settings-link )
+  git -C "$R" add -A
+  git -C "$R" commit -q -m "seed: settings at config/settings.toml, a settings-link beside it"
+  mkfile x.test.txt 20
+  printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+  printf '[env]\nSIZE_RATCHET_BASELINE = "tools/b.tsv"\n' >"$R/config/settings.toml"
+  git -C "$R" add -A
+}
+run_source() { # SETTINGS-FILE-SPELLING [lane args...]
+  local spelling="$1"; shift
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && SIZE_RATCHET_SETTINGS_FILE="$spelling" SIZE_RATCHET_THRESHOLD=10 \
+    SIZE_RATCHET_FROZEN_CLASSES='*.test.*' RATCHET_RAISE=1 "$SR" "$@" 2>&1)" || RC=$?
+}
+# The premise: settings-link really is a symlink whose target is the file the
+# commit rewrites, so the lexical name and the effective file differ.
+symlink_repo symdirectrel
+[ -L "$R/settings-link" ] && [ "$(readlink "$R/settings-link")" = "config/settings.toml" ] \
+  && ok "the fixture's settings-link really points at the file the commit rewrites" \
+  || bad "settings-link points at config/settings.toml" "$(readlink "$R/settings-link" 2>&1)"
+run_source "config/settings.toml" --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "control: the direct relative spelling is refused" \
+  || bad "control: direct relative spelling refused" "rc=$RC out=$OUT"
+symlink_repo symdirectabs
+run_source "$R/config/settings.toml" --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "control: the direct absolute spelling is refused" \
+  || bad "control: direct absolute spelling refused" "rc=$RC out=$OUT"
+symlink_repo symrel
+run_source "settings-link" --staged
+[ "$RC" -ne 0 ] \
+  && ok "the relative symlink spelling is refused" \
+  || bad "the relative symlink spelling is refused" "rc=$RC out=$OUT"
+symlink_repo symabs
+run_source "$R/settings-link" --staged
+[ "$RC" -ne 0 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "the absolute symlink spelling is refused, where it used to pass" \
+  || bad "the absolute symlink spelling is refused" "rc=$RC out=$OUT"
+# The worktree lane has no tracked-symlink refusal in front of it, so every
+# symlinked source reaches this check there — including the DEFAULT name.
+symlink_repo symrelwork
+run_source "settings-link"
+[ "$RC" -ne 0 ] \
+  && ok "and the worktree lane refuses the relative symlink too" \
+  || bad "the worktree lane refuses a relative symlink source" "rc=$RC out=$OUT"
+new_repo symdefault
+mkdir -p "$R/tools" "$R/config"
+mkfile x.test.txt 15
+printf 'x.test.txt\t15\n' >"$R/tools/a.tsv"
+printf '[env]\nSIZE_RATCHET_BASELINE = "tools/a.tsv"\n' >"$R/config/settings.toml"
+( cd "$R" && ln -sf config/settings.toml kendex.settings.toml )
+git -C "$R" add -A
+git -C "$R" commit -q -m "seed: the DEFAULT settings name is itself a symlink"
+mkfile x.test.txt 20
+printf 'x.test.txt\t20\n' >"$R/tools/b.tsv"
+printf '[env]\nSIZE_RATCHET_BASELINE = "tools/b.tsv"\n' >"$R/config/settings.toml"
+git -C "$R" add -A
+RAISE=1 run_frozen
+[ "$RC" -ne 0 ] \
+  && ok "a symlinked DEFAULT source is refused in the worktree lane, with no override set" \
+  || bad "a symlinked default source is refused in the worktree lane" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
