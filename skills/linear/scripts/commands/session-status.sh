@@ -37,8 +37,8 @@ Output:
     - research_pending: has research label, Todo/Backlog (needs human execution)
     - research_ready: has research label, In Progress/In Review (session_init.sh verifies findings exist)
     - backlog: Backlog state, unblocked, excludes research + sub-issues
-    - blocked: has incomplete blockers (excludes sub-issues)
-    - Each issue includes children_progress: {total, done, children[]} if it has sub-issues
+    - blocked: has blockers outside completed and canceled state types (excludes sub-issues)
+    - Each issue includes state, state_type, blocked_by, blocked_by_open, and children_progress
   - pr_blockers: sub-issues with pending work (Todo/In Progress/Backlog) whose parent is "In Review"
 
 Examples:

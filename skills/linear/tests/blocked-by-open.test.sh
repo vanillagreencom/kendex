@@ -21,8 +21,9 @@ git -C "$TMP_ROOT" init -q -b main
 main='{"id":"issue-1","identifier":"KEN-1","title":"dependent","description":"","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"project-1","name":"Project"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Kendex"},"labels":{"nodes":[]},"priority":0,"estimate":null,"sortOrder":0,"url":"","createdAt":"","updatedAt":"","archivedAt":null,"trashed":false,"children":{"nodes":[]},"relations":{"nodes":[]},"inverseRelations":{"nodes":[{"id":"rel-open","type":"blocks","issue":{"id":"issue-2","identifier":"KEN-2","title":"open","state":{"name":"Working","type":"started"}}},{"id":"rel-done","type":"blocks","issue":{"id":"issue-3","identifier":"KEN-3","title":"done","state":{"name":"Shipped","type":"completed"}}},{"id":"rel-canceled","type":"blocks","issue":{"id":"issue-4","identifier":"KEN-4","title":"canceled","state":{"name":"Abandoned","type":"canceled"}}}]}}'
 child="$(jq -cn --argjson base "$main" '$base | .id = "issue-6" | .identifier = "KEN-6" | .title = "child" | .parent = {identifier: "KEN-1"}')"
 terminal_only="$(jq -cn --argjson base "$main" '$base | .id = "issue-5" | .identifier = "KEN-5" | .title = "ready" | .state = {name: "Backlog", type: "backlog"} | .inverseRelations.nodes |= map(select(.issue.state.type != "started"))')"
+research="$(jq -cn --argjson base "$main" '$base | .id = "issue-7" | .identifier = "KEN-7" | .title = "research" | .state = {name: "In Progress", type: "started"} | .labels.nodes = [{name: "research"}] | .inverseRelations.nodes = [] | .relations.nodes = [{id: "out-open", type: "blocks", relatedIssue: {id: "issue-2", identifier: "KEN-2", title: "open", state: {name: "Working", type: "started"}}}, {id: "out-done", type: "blocks", relatedIssue: {id: "issue-3", identifier: "KEN-3", title: "done", state: {name: "Shipped", type: "completed"}}}, {id: "out-canceled", type: "blocks", relatedIssue: {id: "issue-4", identifier: "KEN-4", title: "canceled", state: {name: "Abandoned", type: "canceled"}}}]')"
 bundle="$(jq -cn --argjson base "$main" --argjson child "$child" '$base | .children.nodes = [$child]')"
-cache_issues="$(jq -cn --argjson main "$main" --argjson ready "$terminal_only" --argjson child "$child" '[$main, $ready, $child]')"
+cache_issues="$(jq -cn --argjson main "$main" --argjson ready "$terminal_only" --argjson research "$research" --argjson child "$child" '[$main, $ready, $research, $child]')"
 printf '%s\n' "$cache_issues" >"$TMP_ROOT/.cache/linear/issues.json"
 printf '%s\n' '[{"id":"project-1","name":"Project","state":"started","priority":1,"progress":0,"labels":{"nodes":[]},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}]' >"$TMP_ROOT/.cache/linear/projects.json"
 printf '%s\n' '[]' >"$TMP_ROOT/.cache/linear/cycles.json"
@@ -126,6 +127,8 @@ assert_jq "session status routes open blockers to blocked" "$session" \
   '([.issues.blocked[] | select(.id == "KEN-1")][0]) | .blocked_by == ["KEN-2", "KEN-3", "KEN-4"] and .blocked_by_open == ["KEN-2"]'
 assert_jq "session status routes terminal-only history to backlog" "$session" \
   '([.issues.backlog[] | select(.id == "KEN-5")][0]) | .blocked_by == ["KEN-3", "KEN-4"] and .blocked_by_open == []'
+assert_jq "session research blocks include only open targets" "$session" \
+  '([.issues.research_ready[] | select(.id == "KEN-7")][0]).blocks == ["KEN-2"]'
 
 assert_contains "production inverse projection requests state type" \
   "$ISSUE_BLOCKED_BY_FIELDS" 'state { name type }'
