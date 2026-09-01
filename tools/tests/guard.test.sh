@@ -707,5 +707,47 @@ run_guard
   || bad "an agent edit landing all three renders passes" "rc=$RC out=$OUT"
 git -C "$R" checkout -q -- agents .claude/agents .codex .pi
 
+# A new agent definition owes a render to every harness directory that
+# tracks any, though none of its own is tracked yet. The control puts the
+# per-file judgement back — a render owed only when it is already tracked.
+printf '# fresh agent\n' >"$R/agents/fresh.md"
+git -C "$R" add agents/fresh.md
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/fresh.md -> .claude/agents/fresh.md"* ]] \
+  && [[ "$OUT" == *"agents/fresh.md -> .codex/agents/fresh.toml"* ]] \
+  && [[ "$OUT" == *"agents/fresh.md -> .pi/agents/fresh.md"* ]] \
+  && ok "a new agent definition with no render reds, naming all three" \
+  || bad "a new agent definition with no render reds, naming all three" "rc=$RC out=$OUT"
+if mutant_guard 's|^require_render() { |require_render() { git ls-files --error-unmatch -- "$2" >/dev/null 2>\&1 \|\| return 0; |'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with rendered judged per file the new agent passes" \
+    || bad "control: with rendered judged per file the new agent passes" "rc=$RC out=$OUT"
+else
+  bad "control: the per-file judgement could not be put back in a guard copy"
+fi
+printf '# fresh agent render\n' >"$R/.claude/agents/fresh.md"
+printf 'name = "fresh"\n' >"$R/.codex/agents/fresh.toml"
+printf '# fresh agent render\n' >"$R/.pi/agents/fresh.md"
+git -C "$R" add .claude/agents/fresh.md .codex/agents/fresh.toml .pi/agents/fresh.md
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "the new agent with its three renders staged beside it passes" \
+  || bad "the new agent with its three renders staged beside it passes" "rc=$RC out=$OUT"
+git -C "$R" reset -q HEAD -- agents .claude/agents .codex .pi
+rm -f "$R/agents/fresh.md" "$R/.claude/agents/fresh.md" "$R/.codex/agents/fresh.toml" "$R/.pi/agents/fresh.md"
+
+# A harness directory that tracks nothing is owed nothing.
+git -C "$R" rm -q .pi/agents/demo.md
+git -C "$R" commit -q -m "chore: no pi renders"
+printf '# amended\n' >>"$R/agents/demo.md"
+printf '# amended\n' >>"$R/.claude/agents/demo.md"
+printf '# amended\n' >>"$R/.codex/agents/demo.toml"
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "an agent edit with no pi render tracked anywhere passes without one" \
+  || bad "an agent edit with no pi render tracked anywhere passes without one" "rc=$RC out=$OUT"
+git -C "$R" reset -q --hard HEAD~1
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

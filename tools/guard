@@ -209,16 +209,14 @@ render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${di
   { render_changed=""; say "the changed-file set for the render rule could not be read"; }
 render_tracked=$(git -c core.quotePath=false ls-files -- .agents/skills .claude/agents .codex/agents .pi/agents) ||
   { render_tracked=""; say "the tracked render set could not be read"; }
-rendered_skills=$(sed -n 's#^\.agents/skills/\([^/]*\)/.*#\1#p' <<<"$render_tracked" | sort -u)
 render_hits=""
+renders_under() { # DIR — anything is tracked under DIR
+  grep -q -- "^$1/" <<<"$render_tracked"
+}
 require_render() { # SOURCE RENDER — RENDER changes with SOURCE
   grep -Fxq -- "$2" <<<"$render_changed" ||
     render_hits="$render_hits$1 -> $2
 "
-}
-require_agent_render() { # SOURCE HARNESS-DIR RENDER — when HARNESS-DIR tracks anything
-  grep -q -- "^$2/" <<<"$render_tracked" || return 0
-  require_render "$1" "$3"
 }
 while IFS= read -r f; do
   [ -n "$f" ] || continue
@@ -226,15 +224,14 @@ while IFS= read -r f; do
   skills/*/*)
     x="${f#skills/}"
     x="${x%%/*}"
-    grep -Fxq -- "$x" <<<"$rendered_skills" || continue
-    require_render "$f" ".agents/$f"
+    renders_under ".agents/skills/$x" && require_render "$f" ".agents/$f"
     ;;
   agents/*.md)
     n="${f#agents/}"
     n="${n%.md}"
-    require_agent_render "$f" .claude/agents ".claude/agents/$n.md"
-    require_agent_render "$f" .codex/agents ".codex/agents/$n.toml"
-    require_agent_render "$f" .pi/agents ".pi/agents/$n.md"
+    renders_under .claude/agents && require_render "$f" ".claude/agents/$n.md"
+    renders_under .codex/agents && require_render "$f" ".codex/agents/$n.toml"
+    renders_under .pi/agents && require_render "$f" ".pi/agents/$n.md"
     ;;
   esac
 done <<<"$render_changed"
