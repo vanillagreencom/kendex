@@ -93,6 +93,25 @@ else
   done
 fi
 
+# The glob entries above answer for themselves: a skills/ directory that
+# left the roster fails the loop. A hand-named entry does not, so it is
+# read out of the roster line and looked for in what --list prints —
+# dropping one from the line reds here. Read, never restated: a second copy
+# of the roster is the staleness this file exists to catch.
+named=""
+status=0
+named="$(sed -n 's#^  set -- \(.*\)$#\1#p' "$LINT" | tr ' ' '\n' | grep -v '[*]')" || status=$?
+if [ "$status" -ne 0 ] || [ -z "$named" ]; then
+  bad "no hand-named roster entry could be read from the lint, so none is proven listed"
+else
+  for d in $named; do
+    case "$NL$ROSTER$NL" in
+    *"$NL$d$NL"*) ok "the hand-named roster entry $d is in what --list prints" ;;
+    *) bad "the roster line names $d, but --list does not print it" ;;
+    esac
+  done
+fi
+
 # --- 2. the tree is clean, which is the assertion the lint exists to make -
 status=0
 out="$("$LINT" 2>&1)" || status=$?

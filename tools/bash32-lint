@@ -30,10 +30,14 @@ set -uo pipefail
 #
 # hooks/ is named rather than discovered: it is one directory, and its
 # scripts run on whatever bash the harness starts them with, which on a Mac
-# is the 3.2 in /bin. tools/ is NOT in the roster. This file defines the
-# pattern set in string literals and explains it in comments that quote the
-# constructs, so a scan of tools/ reds on this file's own text and the fix
-# would be to respell the definition it is judging by.
+# is the 3.2 in /bin.
+#
+# tools/ is NOT in the roster. This file defines the pattern set in string
+# literals and explains it in comments that quote the constructs, so the
+# scan reds on the definition it judges by, and respelling that definition
+# would change what it matches. tools/tests/ reds as well, on a construct
+# name a check hands the scan as a narrowed pattern. Clearing tools/ takes
+# more than a respell; `tools/bash32-lint tools` lists what is there now.
 #
 # The exceptions are declared, with the reason, because a roster that
 # discovers its members cannot tell a directory that is exempt from one that

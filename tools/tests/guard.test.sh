@@ -87,16 +87,16 @@ printf '%s\n' \
   '    let tmp = tempfile::tempdir().unwrap();' \
   '    drop(tmp);' \
   '}' >"$R/crates/core/tests/existing_temp.rs"
-# The bash32-lint lane runs on every pass and reads its exception entries
-# relative to the repository it runs in, so the fixture carries those
-# directories from the first commit — derived from the lint itself, because
-# a copy of the list here would go stale with it. Beside them, one rendered
-# skill and one agent with a render per harness, in step.
+# The bash32-lint lane runs on every pass and resolves its exception entries
+# and its hand-named roster entries against the repository it runs in, so the
+# fixture derives each rather than copying a list that goes stale with it. An
+# exception directory holds no shell file; a roster one dies without one.
 while IFS= read -r e; do
-  [ -n "$e" ] || continue
-  mkdir -p "$R/$e"
-  printf 'not shell\n' >"$R/$e/README.md"
-done < <(sed -n 's#^NO_\(SCAN\|SHELL\)="\(.*\)"$#\2#p' "$REPO/tools/bash32-lint" | tr ' ' '\n')
+  mkdir -p "$R/$e" && printf 'not shell\n' >"$R/$e/README.md"
+done < <(sed -n 's#^NO_\(SCAN\|SHELL\)="\(.*\)"$#\2#p' "$REPO/tools/bash32-lint" | tr ' ' '\n' | grep .)
+while IFS= read -r e; do
+  mkdir -p "$R/$e" && printf '#!/usr/bin/env bash\necho rostered\n' >"$R/$e/rostered.sh"
+done < <(sed -n 's#^  set -- \(.*\)$#\1#p' "$REPO/tools/bash32-lint" | tr ' ' '\n' | grep -v '[*]')
 mkdir -p "$R/skills/demo/scripts" "$R/skills/demo/tests" \
   "$R/.agents/skills/demo/scripts" "$R/.agents/skills/demo/tests" \
   "$R/agents" "$R/.claude/agents" "$R/.codex/agents" "$R/.pi/agents"

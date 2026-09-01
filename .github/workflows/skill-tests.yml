@@ -151,7 +151,7 @@ jobs:
 
       # One scan for Bash 4+ syntax over the roster `tools/bash32-lint --list`
       # prints. bash32-lint.test.sh proves its teeth.
-      - name: bash32-lint (Bash 3.2 portability across the skill tree)
+      - name: bash32-lint (Bash 3.2 portability across the roster)
         if: matrix.shard == 'rest'
         run: tools/bash32-lint
 
