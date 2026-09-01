@@ -64,9 +64,13 @@ section_of() { # FILE LINE — print that line's enclosing heading section
 }
 
 sites_seen=0
+matched_site_files=()
 for f in "${site_files[@]}"; do
 	invocations="$(awk '
 		/linear\.sh issues create( |$|\\)/ {
+			# Flush first: a continued invocation is still open when the
+			# next one starts, and overwriting the buffer drops it whole.
+			if (collecting) { print start "\t" buf; collecting = 0 }
 			start = NR; buf = $0
 			if (buf !~ /\\$/) { print start "\t" buf; next }
 			collecting = 1; next
@@ -80,6 +84,7 @@ for f in "${site_files[@]}"; do
 	' "$f")"
 	[[ -n "$invocations" ]] || continue
 	sites_seen=$((sites_seen + 1))
+	matched_site_files+=("$f")
 	while IFS= read -r invocation; do
 		[[ -n "$invocation" ]] || continue
 		line="${invocation%%$'\t'*}"
@@ -91,8 +96,21 @@ for f in "${site_files[@]}"; do
 			fail "${f#"$SKILLS_ROOT/"}:$line runs issues create in a section naming no body source — cite the issue template or state the Reached by: line beside the command"
 	done <<<"$invocations"
 done
-[[ "$sites_seen" -ge 5 ]] ||
-	fail "only $sites_seen create site(s) found; the derivation stopped matching the tree"
+# A site that drifts out of the command-shaped pattern — an extra space, a
+# renamed path — leaves the derived set silently, and the document still reads
+# the same. Cross-check against the loose mention: a file that talks about an
+# issues create must be one the strict pattern matched. `issues created` is
+# prose about a count, not an invocation.
+while IFS= read -r f; do
+	[[ -n "$f" ]] || continue
+	printf '%s\n' ${matched_site_files[@]+"${matched_site_files[@]}"} | grep -qxF "$f" ||
+		fail "${f#"$SKILLS_ROOT/"} mentions an issues create the command-shaped pattern does not match — the site left the derived set without leaving the tree"
+done < <(grep -rlE 'issues create([^d]|$)' "$SKILLS_ROOT"/*/workflows/*.md "$SKILLS_ROOT"/*/patterns/*.md 2>/dev/null || true)
+
+# The cross-check catches drift; only a floor catches deletion. It is a
+# ratchet: it rises with the tree and never falls on its own.
+[[ "$sites_seen" -ge 7 ]] ||
+	fail "only $sites_seen create site(s) found; a site left the tree"
 
 # --- 2. every audit-input writer states a source the schema declares ---------
 enum_line="$(grep -m1 -E '"source": "[a-z|-]+"' "$INPUT_SCHEMA")" ||
@@ -116,11 +134,14 @@ in_enum() {
 # entirely. A selected writer that states no source FAILS — skipping one is
 # how a value outside the enum sat in the tree unnoticed.
 writers_seen=0
+matched_writer_files=()
 while IFS= read -r hit; do
 	file="${hit%%:*}"
 	rest="${hit#*:}"
 	line="${rest%%:*}"
 	writers_seen=$((writers_seen + 1))
+	printf '%s\n' ${matched_writer_files[@]+"${matched_writer_files[@]}"} | grep -qxF "$file" ||
+		matched_writer_files+=("$file")
 	stated="$(section_of "$file" "$line" |
 		sed -nE 's/.*"?source"?: "([a-z-]+)".*/\1/p' | head -1)"
 	[[ -n "$stated" ]] ||
@@ -128,8 +149,18 @@ while IFS= read -r hit; do
 	in_enum "$stated" ||
 		fail "${file#"$SKILLS_ROOT/"}:$line states source \"$stated\", which the schema's enum does not declare ($enum_values)"
 done < <(grep -rnE 'audit-issues\.md --(issues|analyzed)' "$SKILLS_ROOT"/*/workflows/*.md || true)
+# Same cross-check, same reason: a workflow that names an audit input and
+# names audit-issues is handing one over, whatever shape its call is written
+# in, so the strict pattern must have matched it.
+while IFS= read -r f; do
+	[[ -n "$f" ]] || continue
+	grep -q 'tmp/audit-' "$f" || continue
+	printf '%s\n' ${matched_writer_files[@]+"${matched_writer_files[@]}"} | grep -qxF "$f" ||
+		fail "${f#"$SKILLS_ROOT/"} names an audit input and audit-issues but no file-mode invocation was matched — the caller left the derived set without leaving the tree"
+done < <(grep -rl 'audit-issues\.md' "$SKILLS_ROOT"/*/workflows/*.md 2>/dev/null || true)
+
 [[ "$writers_seen" -ge 6 ]] ||
-	fail "only $writers_seen audit-issues caller(s) found; the derivation stopped matching the tree"
+	fail "only $writers_seen audit-issues caller(s) found; a caller left the tree"
 
 # Every source the producer calls review-born must be one that can occur.
 review_born_line="$(grep -m1 -F '`review_born` is true when' "$TPM_AUDIT")" ||

@@ -126,6 +126,18 @@ run_linear issues create --title "From review" \
 assert_refused_before_api "a reach naming a codex review"
 
 run_linear issues create --title "From review" \
+  --description "$(printf 'Reached by: the pull request comment on the second push\n')"
+assert_refused_before_api "a reach naming a pull request comment"
+
+run_linear issues create --title "From review" \
+  --description "$(printf 'Reached by: a pull-request thread\n')"
+assert_refused_before_api "a reach naming a pull-request thread"
+
+run_linear issues create --title "From review" \
+  --description "$(printf 'Reached by: the PR review suggestion\n')"
+assert_refused_before_api "a reach naming a PR review suggestion"
+
+run_linear issues create --title "From review" \
   --description "$(printf 'Reached by: a name containing a quote\n')"
 assert_refused_before_api "a reach naming only a shape"
 assert_contains "the shape refusal comes from the value branch" "$ERR" "names no producer"
@@ -159,6 +171,16 @@ assert_created "a reach reporting what a user could not do"
 run_linear issues create --title "Harness install" \
   --description "$(printf 'Reached by: kendex install --harness codex on a fresh project\n')"
 assert_created "a reach naming a harness install command"
+
+# The artifact is what the list refuses, never the words around it: a pull
+# request a user opens, and the pr-comments workflow, are both producers.
+run_linear issues create --title "Contributor PR" \
+  --description "$(printf 'Reached by: a user filing a pull request\n')"
+assert_created "a reach naming a user filing a pull request"
+
+run_linear issues create --title "Comments audit" \
+  --description "$(printf 'Reached by: running the pr-comments audit path\n')"
+assert_created "a reach naming the pr-comments workflow as its producer"
 
 echo "=== guard on: an unsubstituted placeholder and a null token are absent ==="
 

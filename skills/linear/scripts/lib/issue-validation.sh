@@ -292,7 +292,7 @@ REACH_RULE='An issue names what reaches it: the user action, run, check, or ship
 # recover. `could` and `might` are absent for the same reason: they mark a
 # speculative impact, which the filing bar judges on its own line, and as
 # words they refuse `could not` in a report of what a user actually hit.
-REACH_REFUSED_WORDS='(^|[^a-z0-9])((copilot|codex|reviewer|bot) (review|comment|thread|suggestion)|review (thread|comment|round)|(pr|code) review|prrt_|(the|this) finding|in theory|hypothetical)'
+REACH_REFUSED_WORDS='(^|[^a-z0-9])((copilot|codex|reviewer|bot|pr|pull request|pull-request) (review|comment|thread|suggestion)|review (thread|comment|round)|code review|prrt_|(the|this) finding|in theory|hypothetical)'
 
 # A value describing an input FORM is a shape, not a producer: no run emits it
 # and no user performs it.
