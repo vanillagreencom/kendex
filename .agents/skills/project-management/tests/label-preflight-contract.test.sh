@@ -68,13 +68,7 @@ require "$tpm_audit" 'cache issues get \[ISSUE_ID\]' 'supported cached issue fet
 require "$tpm_audit" 'blocks`, `blocked_by`, `blocked_by_open`, and `related`' 'relation fields come from the cached issue payload'
 
 tpm_cycle="$SKILL_DIR/workflows/tpm-cycle-plan.md"
-require "$tpm_cycle" 'cache issues list --project.*--state "Backlog" --max' 'authoritative cached Backlog candidate set'
-require "$tpm_cycle" 'candidate set.*project is complete|project is complete.*candidate set' 'completion check uses Backlog candidates'
 require "$tpm_cycle" 'blocked_by_open.*empty' 'open-blocker partition'
-candidate_line="$(grep -n 'cache issues list --project.*--state "Backlog" --max' "$tpm_cycle" | head -n1 | cut -d: -f1)"
-completion_line="$(grep -n 'project is complete' "$tpm_cycle" | head -n1 | cut -d: -f1)"
-[[ -n "$candidate_line" && -n "$completion_line" && "$candidate_line" -lt "$completion_line" ]] ||
-  fail 'Backlog candidates must be loaded before the project-complete check'
 
 audit_issues="$SKILL_DIR/workflows/audit-issues.md"
 if grep -Fq 'Agent returns `.JSON` file. If missing, halt.' "$audit_issues"; then

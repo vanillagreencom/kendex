@@ -10,15 +10,9 @@ Analyze the backlog, compute architecture order, and recommend a cycle plan.
 .agents/skills/linear/scripts/linear.sh session-status
 ```
 
-Extract `project.name` (use as `[ACTIVE_PROJECT]` everywhere), `project.id`, `cycle.id`, `cycle.name`, the `issues.actionable` / `issues.in_progress` / `issues.blocked` arrays, `backlog_projects` (ordered by `sort_order`), and `next_project`.
+Extract `project.name` (use as `[ACTIVE_PROJECT]` everywhere), `project.id`, `cycle.id`, `cycle.name`, the `issues.backlog` / `issues.actionable` / `issues.in_progress` arrays, `backlog_projects` (ordered by `sort_order`), and `next_project`.
 
-Load the authoritative Backlog candidates before any completion check:
-
-```bash
-.agents/skills/linear/scripts/linear.sh cache issues list --project "[ACTIVE_PROJECT]" --state "Backlog" --max
-```
-
-Keep only parents and standalone rows whose `parent_id` is empty; call the resulting normalized rows `CANDIDATES`. An empty candidate set plus empty `issues.actionable`, `issues.in_progress`, and `issues.blocked` means the project is complete — return early per § 7 with `status: "project_complete"`, filename hint `tmp/cycle-plan-project-complete-YYYYMMDD-HHMMSS.json`, `completed_project`, `next_projects[]` from `backlog_projects`, `recommended` (first ready project, with a reason), and `actions.mark_complete`.
+**All three issue arrays empty** means the project is complete — return early per § 7 with `status: "project_complete"`, filename hint `tmp/cycle-plan-project-complete-YYYYMMDD-HHMMSS.json`, `completed_project`, `next_projects[]` from `backlog_projects`, `recommended` (first ready project, with a reason), and `actions.mark_complete`.
 
 If any label recommendation may follow, load the inventory first — `cache labels list --format=safe`. Every `actions.set_labels[]` entry must name its update mode and category and carry enough data for the caller to preflight a full final set.
 
@@ -38,7 +32,13 @@ Set `velocity.adjustment` only on a trigger: current ≥150% of baseline for 2+ 
 
 ## 3. Backlog Candidates
 
-Use `CANDIDATES` from § 1 for completion, ordering, capacity, and the returned plan. Each row carries `id`, `title`, `description`, `state_type`, `priority`, `estimate`, `agent`, `labels`, `blocked_by[]`, `blocked_by_open[]`, and `blocks[]`.
+Use `issues.backlog`, or fall back to a cache query:
+
+```bash
+.agents/skills/linear/scripts/linear.sh cache issues list --project "[ACTIVE_PROJECT]" --state "Backlog" --max
+```
+
+Plan parents and standalone issues only — exclude anything with a non-empty `parent_id` (`issues.backlog` already applies this filter; apply it yourself to the fallback). Per issue, take `id`, `title`, `description`, `priority`, `estimate`, `agent`, `labels`, `blocked_by[]`, `blocked_by_open[]`, and `blocks[]`.
 
 ## 4. Architecture Order
 
