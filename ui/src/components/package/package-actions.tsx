@@ -19,8 +19,11 @@ import {
   UPDATE_LABEL,
 } from "@/lib/copy";
 import { DELETE_LABEL } from "@/lib/copy-projects";
+import { UPDATES_ONE_AT_A_TIME_NOTE } from "@/lib/copy-updates";
 import { editorOpenPath } from "@/lib/editor-path";
 import { useProblemsStore } from "@/stores/problems";
+import { useUpdatesStore } from "@/stores/updates";
+import { useVersionsBusy } from "./use-package-data";
 
 /** The package page's header actions: update when a newer version exists,
  *  the open-in menu, delete, and report. */
@@ -64,6 +67,12 @@ export function PackageActions({
   onDelete: () => void;
 }) {
   const showError = useProblemsStore((s) => s.showError);
+  // Update commits through the updates store, so it also waits on a check;
+  // Delete beside it goes another way and does not. The check's half is
+  // the one this surface can name — the rest is the page's own manifest
+  // work, which says so where it started.
+  const updating = useVersionsBusy(busy);
+  const waiting = useUpdatesStore((s) => s.checking);
 
   const openInFileBrowser = () => {
     void commands.revealPath(primaryPath).then((response) => {
@@ -88,7 +97,12 @@ export function PackageActions({
   return (
     <div className="flex flex-wrap items-center gap-2">
       {updateAvailable ? (
-        <Button size="sm" disabled={busy} onClick={onUpdate}>
+        <Button
+          size="sm"
+          disabled={updating}
+          title={waiting ? UPDATES_ONE_AT_A_TIME_NOTE : undefined}
+          onClick={onUpdate}
+        >
           {UPDATE_LABEL}
         </Button>
       ) : null}

@@ -1,11 +1,17 @@
 // The Follow source switch: one row's state change, then a write that
 // settles behind it. The chain a flip starts — move the hold, apply the
 // scope, then read every scope's standing again — takes seconds of git and
-// planning, and awaiting it before the switch moved held the whole page for
-// as long as it ran. The flip is recorded here as pending, worn by the rows
-// on screen until the read that follows the write lands, and its scope
-// holds while it is outstanding: an apply moves what is installed there,
-// and nowhere else.
+// planning, and awaiting it before the switch moved left the switch itself
+// dead under the hand that clicked it. The flip is recorded here as
+// pending, worn by the rows on screen until the read that follows the
+// write lands.
+//
+// Two different things are scoped and page-wide. What the pending record
+// decides is which ROWS the landing may not be acted on from — an apply
+// moves what is installed in that scope and nowhere else. The write itself
+// raises the store's page-wide `busy` for as long as it and its reload
+// run, because that flag is what a check refuses on, and a write it did
+// not cover is a check running beside a commit its report predates.
 import type { ItemKind, Scope, UpdateRow } from "@/bindings";
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import type { ReadState } from "@/lib/read-state";
@@ -111,8 +117,9 @@ export function followSwitch({
       rows: withPending(get().rows, [flip]),
       pendingFollows: [...get().pendingFollows, flip],
     });
-    // The switch has already moved on screen; `busy` covers only the write
-    // and the read behind it, which is what a check must not run beside.
+    // The switch has already moved on screen; `busy` covers the write and
+    // the read behind it, and holds every control on the page for that
+    // long — a commit is a commit, whichever scope it lands in.
     await holding(async () => {
       try {
         const response = await settled(

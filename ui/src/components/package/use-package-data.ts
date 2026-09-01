@@ -17,6 +17,7 @@ import {
   VERSION_ERROR_TITLE,
 } from "@/lib/copy";
 import { sameScope } from "@/lib/scope";
+import { settled } from "@/lib/settled";
 import {
   type OutcomeLines,
   showUpdateOutcome,
@@ -163,7 +164,10 @@ export function packageVersionActions(
   ) => {
     setBusy(true);
     return holdingBusy(async () => {
-      const response = await call;
+      // A transport failure rejects rather than refusing. Unwrapped it
+      // would skip the report, leave `setBusy` up for the life of the view
+      // and skip the read-back this promises either way.
+      const response = await settled(call);
       setBusy(false);
       if (response.status === "error") {
         showError(response.error);
@@ -222,17 +226,21 @@ export function packageVersionActions(
 export function useManifestBusy(switching: boolean, scopes: Scope[]): boolean {
   const auditBusy = useAuditStore((s) => s.busy);
   const updatesBusy = useUpdatesStore((s) => s.busy);
-  // A check out is the other half of the updates store's exclusion: its
-  // report is built before anything these controls commit, and landing it
-  // after would put the rows back. The controls refuse rather than start.
-  const checking = useUpdatesStore((s) => s.checking);
   const settling = useUpdatesStore((s) =>
     s.pendingFollows.some((one) =>
       scopes.some((scope) => sameScope(one.scope, scope)),
     ),
   );
   const saving = useEditorStore((s) => s.saving);
-  return (
-    auditBusy || switching || updatesBusy || checking || settling || saving
-  );
+  return auditBusy || switching || updatesBusy || settling || saving;
+}
+
+/** The gate for this page's three version-changing controls alone —
+ *  Update, switch version, and Follow source. They commit through
+ *  `holdingBusy`, so a check must not run beside them; every other control
+ *  this page holds writes through the audit or editor store, takes no part
+ *  in that exclusion, and would only lose a save to a mirror fetch. */
+export function useVersionsBusy(manifestBusy: boolean): boolean {
+  const checking = useUpdatesStore((s) => s.checking);
+  return manifestBusy || checking;
 }

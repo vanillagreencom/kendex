@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type VersionRow } from "@/bindings";
+import { VERSION_ERROR_TITLE } from "@/lib/copy";
 import { diffHarness, packageVersionActions } from "./use-package-data";
 
 describe("diffHarness", () => {
@@ -37,8 +38,9 @@ vi.mock("@/stores/scan", () => ({
 vi.mock("@/stores/audit", () => ({
   useAuditStore: { getState: () => ({ refresh: vi.fn() }) },
 }));
+const showError = vi.hoisted(() => vi.fn());
 vi.mock("@/stores/problems", () => ({
-  useProblemsStore: { getState: () => ({ showError: vi.fn() }) },
+  useProblemsStore: { getState: () => ({ showError }) },
 }));
 
 const ref = {
@@ -151,6 +153,28 @@ describe("packageVersionActions", () => {
     actions(false, reload).switchTo(version("c".repeat(40)));
     await vi.waitFor(() => expect(reload).toHaveBeenCalled());
 
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  // A transport failure rejects rather than refusing, and only a wrapper
+  // sees it. Unwrapped it said nothing to the person, left the page's own
+  // flag up for the life of the view, and skipped the read-back the
+  // refusal path above promises happens either way.
+  it("answers a rejected write the way it answers a refusal", async () => {
+    const reload = vi.fn();
+    const setBusy = vi.fn();
+    vi.mocked(commands.packageUpdate).mockRejectedValue(new Error("ipc down"));
+
+    packageVersionActions(ref, "gh", false, setBusy, reload).updateToLatest(
+      version("b".repeat(40)),
+    );
+
+    await vi.waitFor(() => expect(reload).toHaveBeenCalled());
+    expect(setBusy.mock.calls).toEqual([[true], [false]]);
+    expect(showError).toHaveBeenCalledWith({
+      title: VERSION_ERROR_TITLE,
+      message: "ipc down",
+    });
     expect(toast.success).not.toHaveBeenCalled();
   });
 

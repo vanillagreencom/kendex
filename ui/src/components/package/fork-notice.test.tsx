@@ -9,6 +9,8 @@ import { EditedNotice } from "./fork-notice";
 const stub = vi.hoisted(() => ({
   rows: [] as unknown[],
   settling: [] as { scope: { scope: string; root?: string } }[],
+  busy: false,
+  checking: false,
 }));
 vi.mock("@/stores/updates", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/stores/updates")>();
@@ -20,7 +22,8 @@ vi.mock("@/stores/updates", async (importOriginal) => {
       rows: stub.rows,
       pendingFollows: stub.settling,
       read: { status: "landed", error: null },
-      checking: false,
+      busy: stub.busy,
+      checking: stub.checking,
     };
     return selector ? selector(state) : state;
   };
@@ -30,9 +33,12 @@ vi.mock("@/stores/updates", async (importOriginal) => {
 const render = (
   rows: UpdateRow[],
   settling: { scope: { scope: string; root?: string } }[] = [],
+  running: { busy?: boolean; checking?: boolean } = {},
 ) => {
   stub.rows = rows;
   stub.settling = settling;
+  stub.busy = running.busy ?? false;
+  stub.checking = running.checking ?? false;
   return renderToStaticMarkup(
     <EditedNotice
       scope={{ scope: "global" }}
@@ -116,11 +122,11 @@ describe("package page edited notice", () => {
     expect(html).toContain(">View changes<");
   });
 
-  // Keeping the files as a fork copies what is on disk, so no value read
-  // off the row goes into it — but it commits, and a check out has a
-  // report built before that commit which would land after. The store
-  // refuses it now, and the button says so.
-  it("holds Keep as my own while a flip settles in this scope", () => {
+  // Keeping the files as a fork copies what is on disk and reads nothing
+  // off the row, so a failed or running check does not bar it — that state
+  // is where the way out is most wanted. What bars it is that it commits,
+  // which is the pair the store refuses it on.
+  it("holds Keep as my own for the work already running, and nothing else", () => {
     const rows = [
       edited({ editedHarnesses: ["claude"], forkableHarness: "claude" }),
     ];
@@ -130,7 +136,12 @@ describe("package page edited notice", () => {
       return tag.includes('disabled=""');
     };
     expect(forkHeld(render(rows))).toBe(false);
-    expect(forkHeld(render(rows, [{ scope: { scope: "global" } }]))).toBe(true);
+    expect(forkHeld(render(rows, [], { busy: true }))).toBe(true);
+    expect(forkHeld(render(rows, [], { checking: true }))).toBe(true);
+    // The two the discard beside it waits for, which this one does not.
+    expect(forkHeld(render(rows, [{ scope: { scope: "global" } }]))).toBe(
+      false,
+    );
   });
 
   // Discarding applies the row's latest commit off a `pinned` a settling
@@ -154,5 +165,8 @@ describe("package page edited notice", () => {
         render(rows, [{ scope: { scope: "project", root: "/home/me/app" } }]),
       ),
     ).toBe(false);
+    // A check about to replace the rows bars it for the same reason the
+    // flip does: the `latest` it would apply is not confirmed.
+    expect(discardHeld(render(rows, [], { checking: true }))).toBe(true);
   });
 });

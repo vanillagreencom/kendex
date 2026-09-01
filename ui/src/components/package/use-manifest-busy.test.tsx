@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Scope } from "@/bindings";
-import { useManifestBusy } from "./use-package-data";
+import { useManifestBusy, useVersionsBusy } from "./use-package-data";
 
 // Static rendering reads each store's initial snapshot, so both store hooks
 // are wrapped to let a test flip their busy flags.
@@ -50,8 +50,27 @@ function Probe({ switching, scopes }: { switching: boolean; scopes: Scope[] }) {
   return <span>{useManifestBusy(switching, scopes) ? "busy" : "idle"}</span>;
 }
 
+function VersionsProbe() {
+  return <span>{useVersionsBusy(false) ? "busy" : "idle"}</span>;
+}
+
 const render = (switching: boolean, scopes: Scope[] = [GLOBAL]) =>
   renderToStaticMarkup(<Probe switching={switching} scopes={scopes} />);
+
+// A check builds its report once, so a commit the version controls make
+// while it is out would be missing from it and the landing would put the
+// rows back. Every other control this page holds writes through the audit
+// or editor store and takes no part in that: gating them on a mirror fetch
+// would only cost a save.
+describe("useVersionsBusy", () => {
+  it("adds a running check, and nothing else does", () => {
+    stub.checking = true;
+    expect(renderToStaticMarkup(<VersionsProbe />)).toContain("busy");
+    expect(render(false)).toContain("idle");
+    stub.checking = false;
+    expect(renderToStaticMarkup(<VersionsProbe />)).toContain("idle");
+  });
+});
 
 describe("useManifestBusy", () => {
   it("is one gate over the audit apply, a version switch, updates-store work, and a save", () => {
@@ -66,17 +85,6 @@ describe("useManifestBusy", () => {
     stub.saving = true;
     expect(render(false)).toContain("busy");
     stub.saving = false;
-  });
-
-  // A check builds its report once, so a commit these controls make while
-  // it is out would be missing from it and the landing would put the rows
-  // back. The check's own half of the exclusion is the store refusing to
-  // start one; this is the half that keeps a write from starting under it.
-  it("holds while a check is out", () => {
-    stub.checking = true;
-    expect(render(false)).toContain("busy");
-    stub.checking = false;
-    expect(render(false)).toContain("idle");
   });
 
   // These controls command the engine directly, outside the updates store's

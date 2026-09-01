@@ -20,6 +20,7 @@ import {
   NO_UPDATE_STANDING_NOTE,
   UPDATE_NEEDS_CHECK_HERE,
   UPDATES_CHECKING,
+  UPDATES_ONE_AT_A_TIME_NOTE,
 } from "@/lib/copy-updates";
 import {
   READ_LANDED,
@@ -360,14 +361,28 @@ describe("the package page's Update", () => {
 
   // A running check would unmount Update on every press of the button,
   // guarding a hazard this surface has not got: its Update sends scope,
-  // kind and name, and its versions come from its own read.
-  it("still offers Update while a check is running", async () => {
+  // kind and name, and its versions come from its own read. What it does
+  // owe the check is not starting a commit under it — the button stays,
+  // held for the length of the fetch and saying which work it waits on.
+  it("keeps Update through a check, held and saying why", async () => {
     const host = await openWithUpdates(
       [{ ...updateRow(VG), updateAvailable: true }],
       { checking: true },
     );
-    expect(updateButton(host)).toBeDefined();
+    const update = updateButton(host);
+    expect(update).toBeDefined();
+    expect(update?.disabled).toBe(true);
+    expect(update?.title).toBe(UPDATES_ONE_AT_A_TIME_NOTE);
     expect(host.textContent).not.toContain(UPDATE_NEEDS_CHECK_HERE);
+  });
+
+  // The control: nothing else about the update read holds this button, so
+  // a landed read with no work out leaves it live.
+  it("offers Update with nothing running", async () => {
+    const host = await openWithUpdates([
+      { ...updateRow(VG), updateAvailable: true },
+    ]);
+    expect(updateButton(host)?.disabled).toBe(false);
   });
 
   // Where the flag does bear on this page: with no row for the place, a

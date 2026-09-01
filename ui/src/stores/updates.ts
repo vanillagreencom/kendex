@@ -36,9 +36,11 @@ interface UpdatesState {
    *  this — the check runs offline on load, so "everything is up to date"
    *  needs the age of the fetch it rests on beside it. */
   lastFetched: number | null;
-  /** True while a write of the update standing is running, wherever it was
-   *  started. Raised through [holdingBusy] and never set directly, so the
-   *  writes it covers are the ones `grep -rn holdingBusy ui/src` finds. */
+  /** True while a write that went through [holdingBusy] is running. That
+   *  wrapper is the definition rather than a summary of one:
+   *  `grep -rn holdingBusy ui/src` is the list, and a mutation reaching the
+   *  engine another way — a marketplace install, an audit apply — does not
+   *  raise this and takes no part in the exclusion below. */
   busy: boolean;
   /** True while a mirror fetch is running — the explicit "check". It and
    *  `busy` exclude each other: a fetch builds its report once, so a commit
@@ -79,7 +81,7 @@ let writesOut = 0;
 
 /** Hold the store's `busy` for as long as `work` runs.
  *
- *  Every write of the update standing goes through this, wherever it lives:
+ *  Every write the exclusion covers goes through this, wherever it lives:
  *  `check` refuses on `busy` alone, so a write the flag does not cover is a
  *  check running beside it, and a report built before that commit landing
  *  after it. Paths outside this module reach it by import; `followSwitch`
@@ -130,9 +132,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       // cost the network twice for one answer. A write already running is
       // the other half: the fetch builds its report once, so a commit that
       // lands while it is out would not be in it, and landing it would put
-      // the rows back as they were before that commit. Every write of the
-      // standing raises `busy` through [holdingBusy], so this reads one
-      // flag rather than asking each path.
+      // the rows back as they were before that commit. Every write that
+      // goes through [holdingBusy] raises `busy`, so this reads one flag
+      // rather than asking each path.
       if (get().checking || get().busy) return;
       set({ checking: true });
       try {

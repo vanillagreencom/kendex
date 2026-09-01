@@ -310,9 +310,10 @@ describe("updates store", () => {
     expect(useUpdatesStore.getState().reading).toBe(false);
   });
 
-  // The control: with nothing committing meanwhile, a check still outranks
-  // every read out — which is what the landing-time rank is for, and what
-  // the case above must not take away.
+  // The control for the exclusion in `updates-exclusion.test.ts`: with
+  // nothing committing meanwhile, a check still outranks every read out.
+  // That landing-time rank is what the exclusion protects, and what
+  // refusing writes beside a check must not take away.
   it("still outranks a read that was out when the check answers", async () => {
     let landRead!: (
       value: Awaited<ReturnType<typeof commands.updatesOverview>>,

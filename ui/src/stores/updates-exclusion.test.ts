@@ -248,4 +248,29 @@ describe("the check and the writes exclude each other", () => {
     await updating;
     expect(useUpdatesStore.getState().busy).toBe(false);
   });
+
+  // The fork is the one write with no row-capture predicate: it copies
+  // what is on disk. A check that failed leaves rows on screen nothing
+  // confirmed, and that is exactly when the way out of an edited place is
+  // wanted — so nothing but the work already running may bar it.
+  it("forks an edited place after a check that failed", async () => {
+    useUpdatesStore.setState({
+      rows: [row({})],
+      read: { status: "failed", error: "no network" },
+    });
+    vi.mocked(commands.packageFork).mockResolvedValue({
+      status: "ok",
+      data: null,
+    } as never);
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [row({})], warnings: [], lastFetched: null },
+    });
+
+    await keepAsOwn(
+      row({ blockedByLocalEdit: true, forkableHarness: "claude" }),
+    );
+
+    expect(commands.packageFork).toHaveBeenCalled();
+  });
 });

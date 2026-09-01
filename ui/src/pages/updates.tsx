@@ -217,7 +217,7 @@ export function UpdatesPage() {
         description={IGNORE_CONFIRM_BODY}
         confirmLabel={IGNORE_CONFIRM_LABEL}
         busy={busy}
-        confirmDisabled={checking}
+        confirmDisabled={busy || checking}
         confirmDisabledNote={UPDATES_ONE_AT_A_TIME_NOTE}
         onConfirm={() => {
           if (!confirmIgnore) return;

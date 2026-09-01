@@ -16,8 +16,11 @@ import {
   NO_VERSIONS_NOTE,
   SWITCH_VERSION_LABEL,
 } from "@/lib/copy";
+import { UPDATES_ONE_AT_A_TIME_NOTE } from "@/lib/copy-updates";
 import { relativeTime } from "@/lib/relative-time";
 import { installedRow, versionRowLabel } from "@/lib/versions";
+import { useUpdatesStore } from "@/stores/updates";
+import { useVersionsBusy } from "./use-package-data";
 
 /** The version picker: every version of the package, newest first, the
  *  installed one marked. Picking a version selects it — the actions under
@@ -33,12 +36,18 @@ export function VersionMenu({
   versions: VersionRow[];
   /** The declaration holds a version (manual updates). */
   held: boolean;
+  /** The page's manifest gate. A check is added here: these two commit
+   *  through the updates store, so one must not run beside them. */
   busy: boolean;
   onSwitch: (row: VersionRow) => void;
   onCompare: (row: VersionRow) => void;
   onFollow: () => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const running = useVersionsBusy(busy);
+  // The check's half of that gate is the one this surface can name: the
+  // rest is the page's own manifest work, which says so where it started.
+  const waiting = useUpdatesStore((s) => s.checking);
   const installed = installedRow(versions);
   const selected =
     versions.find((row) => row.id === selectedId && !row.installed) ?? null;
@@ -102,7 +111,8 @@ export function VersionMenu({
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
-              disabled={busy}
+              disabled={running}
+              title={waiting ? UPDATES_ONE_AT_A_TIME_NOTE : undefined}
               onClick={() => onSwitch(selected)}
             >
               {SWITCH_VERSION_LABEL}
@@ -121,7 +131,13 @@ export function VersionMenu({
       ) : null}
 
       {held ? (
-        <Button size="sm" variant="ghost" disabled={busy} onClick={onFollow}>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={running}
+          title={waiting ? UPDATES_ONE_AT_A_TIME_NOTE : undefined}
+          onClick={onFollow}
+        >
           {FOLLOW_SOURCE_LABEL}
         </Button>
       ) : null}

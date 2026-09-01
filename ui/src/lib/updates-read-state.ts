@@ -17,8 +17,10 @@ interface PageState {
  *  mount or a return to the window starts a reload over rows that landed
  *  perfectly well, and the answer it brings back is what the captured
  *  values would be committed against. A settling follow flip is not here:
- *  it replaces every row too but holds only its own scope, so ask
- *  `rowUnsettled` whether a given row may be acted on. */
+ *  it replaces every row too, but which rows it leaves unconfirmed is its
+ *  own scope's, so ask `rowUnsettled` about a given row. The page-wide
+ *  hold a flip's write takes is the store's `busy`, which nothing here
+ *  reads. */
 export const unsettled = (state: PageState): boolean =>
   state.read.status !== "landed" || state.checking || state.reading;
 
