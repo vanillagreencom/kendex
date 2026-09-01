@@ -28,7 +28,7 @@ Uncertain about category, prefer `fix` (if related); uncertain about relevance, 
 | Small, quick to apply | `fix` |
 | Doc or reference updates for changed code | `fix`, always, regardless of size |
 | Test coverage added to an existing test | `fix` |
-| Test coverage needing a new file, suite, or scenarios | `issue` |
+| Test coverage needing a new file, suite, or scenarios | `issue` when the untested path can fail in real usage without a test reddening, the failure named; else `decline` |
 | Performance fix inside touched code | `fix` |
 | Performance work needing benchmarks | `issue` |
 | Architectural or cross-component change | `issue` |
@@ -49,6 +49,8 @@ An `issue` signal is necessary but not sufficient. Every candidate carries its s
 - **est≥2 refactors** — restructuring too large to absorb here that unblocks or protects user-visible work.
 - **Decision revisits** — a recorded decision the finding argues should change.
 - **Unexplained anomalies with evidence** — observed and reproducible, cause unknown; filed as an investigation issue whose deliverable is the diagnosis.
+
+Every filing carries the `Reached by:` line project-management's creation bar requires (its SKILL.md § Disposition). A review-born finding clears the bar only where that reach is a user or a shipped run — priority 2 with a `Symptom:` line naming the run, user, or red check that already showed it. Below that, a true defect is fixed here when it is tiny (est-1, no new helper, no new file) and is otherwise declined with its reason; a review-born P3 does not file. `linear.sh issues create` refuses a body carrying neither line where `LINEAR_REQUIRE_REACH` is set.
 
 Never for a finding that asks for a product decision the issue does not carry — a new command, a parity feature, a behavior nobody specified: that is declined, since filing it makes a reviewer's preference look like ordered work. Every candidate runs through Step 0 before the bar judges it, whichever door it arrived by — a `category: "issue"` suggestion, an item escalated at a cap, a Discovered Work or deliberately-left-out bullet from a dev return — and one Step 0 excludes is declined there. Step 0 is the only place the classes are written.
 

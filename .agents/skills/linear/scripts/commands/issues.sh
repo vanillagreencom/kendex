@@ -108,6 +108,12 @@ Create Options:
                         skill), which owns labels, project, priority, and
                         relations — do not create tracked issues directly.
 
+  Reach guard: with LINEAR_REQUIRE_REACH set in kendex.settings.toml [env],
+  create refuses a description with no `Reached by:` line naming the user
+  action, run, check, or shipped producer that arrives at the defect, one
+  whose value names only a review thread, a reviewer, or a shape, and a
+  `--priority 2` body with no `Symptom:` line.
+
 Update Options:
   --state <name>        New state
   --label(s) <a,b,c>    Replace labels (comma-separated)
@@ -1215,6 +1221,7 @@ create_issue() {
     fi
 
     require_agent_routing_label "$labels" "$no_agent_label" || return 1
+    require_issue_reach "$description" "$priority" || return 1
 
     # --attach: refuse unreadable paths before any API call, then upload
     # (uploads run only after the routing guard above has passed). Images

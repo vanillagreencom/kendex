@@ -74,6 +74,7 @@ In a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed syml
 | `LINEAR_FORMAT` | Default output format | `safe` |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `PROJ` |
 | `LINEAR_AGENT_LABELS` | Declared `agent:*` taxonomy; non-empty makes `issues create` refuse unrouted creates | — (unset = off) |
+| `LINEAR_REQUIRE_REACH` | Non-empty makes `issues create` refuse a body naming nothing that reaches the defect | — (unset = off) |
 
 `LINEAR_API_KEY` belongs in `.env.local`; non-secret defaults in committed `kendex.settings.toml` `[env]`. A key from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key.
 
@@ -82,6 +83,8 @@ In a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed syml
 Never create a tracked issue directly from an orchestration or review session — route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations.
 
 Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses — before any API call — a create carrying no agent label from that set, including a typoed `agent:*` name. `--no-agent-label` permits a deliberate bare create.
+
+Where `LINEAR_REQUIRE_REACH` is set, `issues create` refuses — before any API call — a description with no `Reached by:` line naming the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask), a value naming only a review thread, a reviewer, or a shape, and a `--priority 2` body with no `Symptom:` line naming the run, user, or red check that already showed it. An item with nothing to name is a decline, not an issue.
 
 ## Attachments
 

@@ -20,5 +20,11 @@ LINEAR_TEAM_PREFIX = "PROJ"
 # such an issue is invisible to agent routing. Empty = guard off.
 LINEAR_AGENT_LABELS = ""
 
+# Non-empty makes `issues create` refuse a description with no `Reached by:`
+# line naming the user action, run, check, or shipped producer that arrives at
+# the defect, and refuse a `--priority 2` body with no `Symptom:` line.
+# Empty = guard off.
+LINEAR_REQUIRE_REACH = ""
+
 # Default output format for read commands: safe, table, ids, raw.
 LINEAR_FORMAT = "safe"

@@ -265,3 +265,68 @@ blocking_level_violation_message() {
 	printf 'Blocking-level violation: %s and %s sit in different bundles; a blocking relation must connect peers of one bundle (same direct parent, or both top-level). No replacement pair satisfies the rule; restructure the hierarchy or use '\''%s --related %s'\'' for traceability.' \
 		"$blocker" "$blocked" "$blocker" "$blocked"
 }
+
+# --- Reach guard (create-time filing bar) ---
+#
+# The reply grammar makes filing the cheap disposition: `Declined:` needs a
+# disproof a gate checks, `Tracked: <ID>` needs only an issue to exist, so a
+# hypothetical gets an issue where it should have got a decline. Every
+# `Tracked:` passes through issue creation, so creation is the one chokepoint
+# the filing bar can hold. Under LINEAR_REQUIRE_REACH (kendex.settings.toml
+# [env]) a create refuses, before any API call, a description that names
+# nothing the defect reaches through. Empty or unset keeps the guard off.
+
+# The rule every refusal quotes, so message and docs cannot drift apart.
+REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). A value naming only a review thread, a reviewer, or a shape is not a reach.'
+
+# Values that name a review artifact or a hypothesis rather than a producer.
+# A short literal list, not a grammar: each entry is a word that appears only
+# when the value names the thread a finding came from, or a condition nobody
+# has met. `could`, `might` and `in theory` are the filing bar's own words for
+# an impact that is not one.
+REACH_REFUSED_WORDS='review thread|review comment|pr review|code review|reviewer|copilot|codex|prrt_|the finding|this finding|could|might|in theory|hypothetical'
+
+# A value describing an input FORM is a shape, not a producer: no run emits it
+# and no user performs it.
+REACH_REFUSED_SHAPES='^(a|an) .*(containing|starting with|ending with|matching) |^(a|an) (empty|missing|malformed|invalid|unset|blank|null) '
+
+# issue_marked_value DESCRIPTION MARKER — the first `Marker:` value in the
+# body. MARKER is a POSIX bracket-case pattern, not a literal, because BSD sed
+# has no case-insensitive `s///` flag. Markdown emphasis around the marker is
+# tolerated: `Reached by:`, `**Reached by**:` and `**Reached by:**` are one
+# form, and a whole-line bold leaves its closing `**` on the value.
+issue_marked_value() {
+	local value
+	value=$(sed -n "s/^[[:space:]]*\**[[:space:]]*$2[[:space:]]*\**[[:space:]]*:[[:space:]]*\**[[:space:]]*//p" <<<"$1" | head -1)
+	value="${value%"${value##*[!*[:space:]]}"}"
+	printf '%s' "$value"
+}
+
+# require_issue_reach DESCRIPTION PRIORITY — 0 to proceed, 1 + a JSON error on
+# stderr for the caller to return on.
+require_issue_reach() {
+	local description="$1" priority="$2"
+	[ -n "${LINEAR_REQUIRE_REACH:-}" ] || return 0
+
+	local reach lower
+	reach=$(issue_marked_value "$description" '[Rr]eached[[:space:]][Bb]y')
+	if [ -z "$reach" ]; then
+		jq -cn --arg rule "$REACH_RULE" \
+			'{error: ("Refusing to create an issue with no \"Reached by:\" line. " + $rule + " Add the line to the description (project-management issue-description-template.md carries it) and retry - an item with nothing to name is a decline, not an issue.")}' >&2
+		return 1
+	fi
+
+	lower=$(printf '%s' "$reach" | tr '[:upper:]' '[:lower:]')
+	if [[ "$lower" =~ $REACH_REFUSED_WORDS ]] || [[ "$lower" =~ $REACH_REFUSED_SHAPES ]]; then
+		jq -cn --arg reach "$reach" --arg rule "$REACH_RULE" \
+			'{error: ("Refusing to create an issue whose \"Reached by:\" value names no producer: " + $reach + ". " + $rule + " Name the command, run, check, file, or user action that gets there; where none exists the item is a decline, not an issue.")}' >&2
+		return 1
+	fi
+
+	if [ "$priority" = "2" ] && [ -z "$(issue_marked_value "$description" '[Ss]ymptom')" ]; then
+		jq -cn '{error: "Refusing to create a priority-2 issue with no \"Symptom:\" line. Priority 2 is the reported tier: name the run, the user, or the red check that already showed the defect. Without one the item is normal work - create it at --priority 3."}' >&2
+		return 1
+	fi
+
+	return 0
+}
