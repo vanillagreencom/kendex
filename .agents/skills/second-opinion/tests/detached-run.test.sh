@@ -343,8 +343,8 @@ workflow_files=(
 # A workflow states the recoverable and terminal exit codes itself, or names
 # the --help that owns them. Both spellings are in the tree, so each row pins
 # the identifiers rather than either sentence.
-RESUME_FORM='Exit 75 means completion is still recoverable|second-opinion --help'
-TERMINAL_FORM='Exit 124 is terminal|until terminal'
+RESUME_FORM='Exit 75 means completion is still recoverable|per its exit code \(`second-opinion --help`\)'
+TERMINAL_FORM='Exit 124 is terminal|per its exit code \(`second-opinion --help`\) until terminal'
 for workflow_file in "${workflow_files[@]}"; do
   workflow_commands_detach "$workflow_file" \
     || fail "$workflow_file has no capped second-opinion command or one lacks --foreground"
@@ -363,16 +363,26 @@ if workflow_commands_detach "$TMP_ROOT/no-command-workflow.md"; then
   fail "the workflow wiring check accepted prose with no launch command"
 fi
 ok "the workflow wiring check rejects a missing launch command"
-# Control: prose that launches and waits but routes neither exit code must miss
-# both rows, so an alternation cannot pass a workflow that dropped the contract.
-cat > "$TMP_ROOT/no-exit-routing.md" <<'EOF'
-Execute the exact command printed after `wait:`, then read the artifact when it
-finishes. Exit 7 is unrelated and this line mentions no help output.
-EOF
-if grep -Eq "$RESUME_FORM" "$TMP_ROOT/no-exit-routing.md"; then
-  fail "the resume row accepted prose that routes no recoverable exit"
-fi
-if grep -Eq "$TERMINAL_FORM" "$TMP_ROOT/no-exit-routing.md"; then
-  fail "the terminal row accepted prose that routes no terminal exit"
-fi
-ok "both wait-contract rows reject prose that routes neither exit code"
+# Control: each row must red on a real workflow that keeps every surrounding
+# word and loses only its exit-code routing. Prose carrying neither form would
+# prove just that the assertion runs; one file per spelling is staged so both
+# alternation arms are shown able to fail.
+for control_source in \
+  "$REPO_ROOT/skills/second-opinion/workflows/review.md" \
+  "$REPO_ROOT/skills/orch/workflows/review-pr.md"; do
+  staged="$TMP_ROOT/staged-${control_source##*/}"
+  sed -e 's/ Exit 75 means completion is still recoverable; do other event checks, then rerun the same command\.//' \
+      -e 's/ Exit 124 is terminal: the run reached its deadline, and its processes are stopped when they can still be identified as belonging to it\.//' \
+      -e 's/ and repeat it per its exit code (`second-opinion --help`) until terminal//' \
+      "$control_source" > "$staged"
+  if cmp -s "$control_source" "$staged"; then
+    fail "the ${control_source##*/} control staged no change — its exit sentence moved"
+  fi
+  if grep -Eq "$RESUME_FORM" "$staged"; then
+    fail "the resume row passed ${control_source##*/} stripped of its exit routing"
+  fi
+  if grep -Eq "$TERMINAL_FORM" "$staged"; then
+    fail "the terminal row passed ${control_source##*/} stripped of its exit routing"
+  fi
+  ok "both wait-contract rows red on ${control_source##*/} stripped of its exit routing"
+done
