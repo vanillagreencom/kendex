@@ -114,16 +114,26 @@ install_cli() {
     install -m 0755 "$work/kendex" "$bindir/kendex"
   else
     echo "Installing to $bindir needs elevated permissions."
-    # Two commands rather than `install -D`, which would make the missing
-    # directory itself. That flag makes directories on GNU coreutils only:
-    # BSD install on macOS spells its own -D "-D dest" and takes an
-    # operand, so it reads "-m" as that operand and exits 64 on the usage
-    # it is left with. This is macOS's usual branch — /usr/local/bin is on
-    # PATH there whether or not it exists, and root owns it either way, so
-    # the mkdir above is the one that fails and leaves nothing to write
-    # into. -m means the same thing to both.
-    sudo mkdir -p "$bindir"
-    sudo install -m 0755 "$work/kendex" "$bindir/kendex"
+    # The branch is taken because the directory is not writable, whether or
+    # not it exists. Two commands rather than the one `install -D` that
+    # made the directory itself: -D makes directories on GNU coreutils
+    # only, and BSD install on macOS spells its own -D "-D dest" and takes
+    # an operand, so it reads the "-m" behind it as that operand and exits
+    # 64 on the usage it is left with. The mkdir is what keeps the pair
+    # equivalent to that -D, for the machine where the directory is not
+    # there yet and the unprivileged mkdir above could not make it. -m
+    # means the same thing to both tools, and stating it here is what the
+    # replaced command did: root's umask decides the mode otherwise.
+    #
+    # The default macOS layout comes here: /etc/paths puts root-owned
+    # /usr/local/bin on PATH. A mac whose /usr/local Homebrew chowned to
+    # the account takes the writable branch above instead.
+    if ! { [ -d "$bindir" ] || sudo mkdir -m 0755 -p "$bindir"; } \
+       || ! sudo install -m 0755 "$work/kendex" "$bindir/kendex"; then
+      echo "install.sh: the elevated install to $bindir did not complete" >&2
+      echo "  install into a directory you own instead, such as $HOME/.local/bin on your PATH" >&2
+      exit 1
+    fi
   fi
   echo "Installed the kendex command to $bindir/kendex"
   # What this script installed, so the desktop app can tell this file from

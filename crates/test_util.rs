@@ -115,6 +115,11 @@ pub const SUDO_STUB: &str = "#!/bin/sh\necho 'installer test tried to escalate' 
 /// this does not model reds here whether or not it is portable: teach it
 /// that flag, or drop the flag if the mac reads it differently.
 ///
+/// The mode it falls back to is one `install.sh` never passes, so a
+/// caller that dropped its `-m` is distinguishable from one that asked for
+/// 0755. Answering an absent flag with the mode the script happens to want
+/// would make every assertion about that mode pass without it.
+///
 /// The destination is unlinked rather than written through, because that
 /// is what `install` does and `cp` does not: over a read-only file in a
 /// writable directory the real tool replaces and `cp` fails. Writing
@@ -128,7 +133,7 @@ pub const SUDO_STUB: &str = "#!/bin/sh\necho 'installer test tried to escalate' 
 pub fn install_stub(root: &Path) -> String {
     format!(
         "#!/bin/sh\n\
-         mode=0755\n\
+         mode=0600\n\
          while [ $# -gt 2 ]; do\n\
          \x20 case \"$1\" in\n\
          \x20   -m) mode=\"$2\"; shift 2 ;;\n\
