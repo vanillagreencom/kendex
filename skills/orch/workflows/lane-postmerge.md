@@ -14,14 +14,9 @@ armed or nonmerged result.
    instructions. This workflow defines no generic command and does not infer
    one.
 
-3. On success, remove the issue worktree through the lifecycle owner. The
-   command revalidates repository, branch, path, and cleanliness immediately
-   before removal. A dirty, detached, foreign-branch, or re-pointed worktree is
-   kept and reported as a successful `kept` cleanup disposition. An interrupted
-   `cleanup_pending` owner can run the same command again; a concurrent owner is
-   refused. The command enters `[MAIN_REPO_ROOT]` before calling its absolute
-   worktree helper, so removing the lane's original cwd cannot break the
-   transition:
+3. On success, remove the issue worktree through the lifecycle owner, whose
+   revalidation, dispositions, and resume behaviour are
+   `merge-queue-watch --help`. A concurrent owner is refused:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/merge-queue-watch cleanup --root [MAIN_REPO_ROOT] --issue [STATE_KEY] --watch-id [WATCH_ID]

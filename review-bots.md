@@ -4,27 +4,6 @@ Instructions for automated PR reviewers (Copilot code review, Codex, and
 any successor). This file is reviewer context only — agent sessions must
 not load it as working instructions (that is why it is not in `AGENTS.md`).
 
-## Review economics
-
-Every push triggers a full re-review by every bot, and PRs here are pushed
-at agent speed — long finding tails are expensive in rounds, not just
-tokens. Calibrate accordingly:
-
-- **Consolidate, don't drip.** Surface everything you have about the
-  current diff in ONE round. A finding you could have raised last round
-  but held back costs a full re-review cycle.
-- **Severity honesty.** Merge-blocking findings are: correctness bugs,
-  fail-open paths in gating/CI code, security holes, data loss. Wording
-  preferences, style nits, and speculative hardening on already-fail-closed
-  paths are suggestions — batch them, mark them non-blocking, or omit them
-  on late rounds.
-- **Do not re-raise declined findings.** When a finding was declined with
-  a documented rationale (a reply on the thread, a settings comment, an
-  engine header comment, or a note in `skills/review-gate/references/`),
-  do not raise the same finding class again on a later round unless the
-  relevant code changed. Repo rules cited by bots live in
-  `.github/instructions/` — check there before asserting a rule.
-
 ## Accepted residual classes (decided — do not re-raise)
 
 These are known, deliberate trade-offs. Raising them again is noise:
@@ -57,15 +36,6 @@ These are known, deliberate trade-offs. Raising them again is noise:
   activity type, or reason about a job's permissions is settled: name the
   gap in the upstream suite instead.
 
-- **No test-coverage asks for instruction markdown or for `tools/guard`
-  rules in a change that adds no guard test lane.** What a test must
-  cover is `.github/instructions/tests.instructions.md`. A markdown
-  contract lint pins tokens, never sentences, and a token pin
-  establishes that a structural element is present — a section, a table
-  row, a schema field, a command route — never that a behavioral claim
-  written in prose is true: prose negates and qualifies around any
-  literal. A claim that lives only in prose therefore has no lint
-  coverage, and none is asked for.
 - **The PreToolUse commit hook reads git words, not shell expansion.**
   Quoted flags, `flag=` assignments, aliases, and other spellings the shell
   would have to expand are outside its contract; the installed git hook is

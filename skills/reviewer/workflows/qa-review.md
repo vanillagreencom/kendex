@@ -46,11 +46,7 @@ Mutation-validating a test as evidence commits you to the skill's Mutation-Stabi
 
 ## 3. Artifact, Validate, Return
 
-Write the JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md) to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`, with `qa_metadata.[agent_type]` populated per your agent file. Verdict: `action_required` when `blockers[]` is non-empty, else `pass`. Self-validate until `"ok": true`:
-
-```bash
-.agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] 0
-```
+Write and self-validate per the skill's § Output Contract: [`../schemas/review-finding.md`](../schemas/review-finding.md) is the field authority and `review-artifact-check` the pre-return check. Populate `qa_metadata.[agent_type]` per your agent file. Verdict: `action_required` when `blockers[]` is non-empty, else `pass`.
 
 Send exactly one agent-to-agent message, then go idle:
 

@@ -60,7 +60,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.agent // empty'
    ```
 
-2. **Group items by agent domain** when multi-domain, ordered per [SKILL.md § Coordination](../SKILL.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items — one 24-item round injected 8 new blockers, 2 of them P1.
+2. **Group items by agent domain** when multi-domain, ordered per [SKILL.md § Coordination](../SKILL.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items.
 
 3. **Gather decision context**:
 
@@ -200,9 +200,9 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles
    ```
 
-   A re-reported item whose recorded fix did not hold takes a second disposition while a bucket still lists it against the SHA of the failed fix, and an item escalated in one cycle can be fixed in a later one, so each write clears the item from BOTH buckets before appending its own entry. The match is the RECORDED entry's (location, description), the § 8 key: a re-reporting reviewer copies those two fields verbatim off the delegation's Fixed line, and the sha it names rides in the finding's recommendation, which no key reads. One write per item, and the item stands in exactly one bucket, once.
+   Each write clears the item from BOTH buckets before appending its own entry, matched on the RECORDED entry's (location, description), the § 8 key. One write per item, and the item stands in exactly one bucket, once.
 
-   The entry goes through a file, never `--arg` or `--argjson`. A double quote in the description invalidates a pasted JSON argument and an apostrophe ends the shell word, and a write that fails leaves the stale entry standing with nothing recorded.
+   The entry goes through a file, never `--arg` or `--argjson`.
 
    `cycles` is the general fix-round tally that fills review-pr § 1.2's previous-cycle block; it decides no cap. The re-review budget is `rereview_cycles`, raised only by review-pr § 4's `rereview_panel` write, so no fix round spends it and neither does § 7's QA re-check.
 

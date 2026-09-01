@@ -9,7 +9,10 @@ usage: sync-base [REPOSITORY]
 Resolves the repository's base branch, fetches that branch from origin, and
 fast-forwards the checkout that owns it or the local branch ref. Prints only
 the base branch name on success. Tracked dirtiness, any untracked collision,
-or a divergent base fails closed. Unrelated untracked files are preserved.
+or a divergent base fails closed, ignored files included. The fast-forward is
+the sole judge, through Git's no-overwrite-ignore rule, so a colliding path
+appearing at any moment before the merge still fails it. Unrelated untracked
+files are preserved.
 EOF
 }
 

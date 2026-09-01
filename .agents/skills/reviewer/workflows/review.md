@@ -19,7 +19,7 @@ Otherwise — the line absent, or reading `Diff-range: unavailable` — the pass
 git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD
 ```
 
-Either case beside a re-review block — the line absent, or reading `Diff-range: unavailable` — is a delegation that lost the boundary a scoped pass needs. The full-branch read above stands in for it and the pass is declared unscoped: open § 3's artifact `summary` with `unscoped re-review: Diff-range unavailable`, so no reader mistakes it for the focused verification it was delegated as.
+Either case beside a re-review block declares the pass unscoped: open § 3's artifact `summary` with `unscoped re-review: Diff-range unavailable`.
 
 ## 2. Review
 
@@ -31,11 +31,7 @@ Mutation-validating a test as evidence commits you to the skill's Mutation-Stabi
 
 ## 3. Artifact, Validate, Return
 
-Write the JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md) to the delegation's `Artifact:` path, or — when it carries none — to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` (`mkdir -p [WORKTREE_PATH]/tmp` first if needed). Verdict: `action_required` when `blockers[]` is non-empty, else `pass`. Self-validate until `"ok": true`:
-
-```bash
-.agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] 0
-```
+Write and self-validate per the skill's § Output Contract: [`../schemas/review-finding.md`](../schemas/review-finding.md) is the field authority and `review-artifact-check` the pre-return check. Verdict: `action_required` when `blockers[]` is non-empty, else `pass`.
 
 Send exactly one agent-to-agent message, then go idle:
 

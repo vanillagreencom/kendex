@@ -31,15 +31,13 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
 
 ## Engineering Rules
 
-- Scope is the reported symptom. Every behavioral surface a change touches must trace to a line in the report — if you cannot name that line, keep it out of this change. Two exceptions: the mechanical enablers of landing it — locks, changelog, baselines, dismissal renewals, that list and nothing else, never code that runs at runtime — ride without a line, a committed render of a source file you changed being neither exception since it traces to whatever line its source traces to, and a defect the change introduces or arms is in scope by definition unless Step 0 of [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) excludes it.
-- Prefer deleting code to abstracting it. Three similar lines beat a premature abstraction. A new dependency needs a one-line justification in its commit message.
+- Scope is the issue's Done-when. A behavioral surface that does not trace to it stays out of this change. Two exceptions: the mechanical enablers of landing it — locks, changelog, baselines, dismissal renewals, that list and nothing else, never code that runs at runtime — ride without tracing to it, a committed render of a source file you changed being neither exception since it traces to whatever its source traces to, and a defect the change introduces or arms is in scope by definition unless Step 0 of [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) excludes it.
 - Every behavior change ships with a test that fails without it.
-- An `else` that "shouldn't happen" is a bug: assert or return an error, never continue silently.
-- Plain words over jargon: name things by what they do. Comments say why, never what or when — no temporal markers, no references to the change that wrote them. Commit bodies explain intent, never narrate the diff.
-- Delete unused code completely — no compat shims, no `_renamed` vars, no "removed" comments.
 - No migration or compat code for this project's own formats — its manifest, settings, lock and cache shapes, never another tool's on-disk state, which an adapter may have to keep recognising: write no reader for an artifact an older version of this project wrote, and decline a finding that asks you to carry one forward. A layout, schema or cache change is one changelog line and a fresh install.
 - Before adding a function, parser, stub or loop, grep the repo for the verb it performs; before stating a rule, grep for the rule. A second copy of that verb, in any language, is a twin and never delegation, and so is a second statement of a rule another file owns, in prose, config or a table: call or cite the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.
 - Stale docs are bugs: contradicting a committed doc means updating it in the same change.
+
+Code standards — correctness, comments, over-engineering, cleanup — are the code-quality skill's.
 
 ## Round Contract
 
@@ -66,7 +64,7 @@ Deterministic gate findings are fixed here, never carried into review. Fix what 
 
 ## Reflect
 
-**Skip if** nothing recurred and nothing surprised you. Otherwise put the lesson where it will be read again — architecture docs when patterns, APIs, or documented behavior changed, or the managing project's kendex config (`kendex.toml` at the kendex project root, `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`, followed by `kendex refresh`. Bar: would this save 5+ minutes in a future session? One surgical addition per lesson, no verbose examples. What you cannot update yourself goes in your return as `[process]` discovered work.
+**Skip if** nothing recurred and nothing surprised you. Otherwise put the lesson where it will be read again — architecture docs when patterns, APIs, or documented behavior changed, or the managing project's kendex config (`kendex.toml` at the kendex project root, `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`. Bar: would this save 5+ minutes in a future session? One surgical addition per lesson, no verbose examples. What you cannot update yourself goes in your return as `[process]` discovered work.
 
 ## Configuration
 

@@ -58,7 +58,7 @@ Return by sending the workflow's `<output_format>` block — filled verbatim, no
 
 ## Re-Review Rounds
 
-Items the delegation lists as resolved are not re-reported, unless you check a Fixed item against the current diff and the defect is still there — report that one again, copying the listed entry's location and description verbatim and naming its recorded commit sha in your recommendation, or saying it was recorded then dropped in a rebase when the entry carries no sha, which is what makes the claim checkable and lets the orchestrator supersede the stale entry. A Fixed item you did not check, and every Escalated item, stays suppressed.
+Items the delegation lists as resolved are not re-reported, unless you check a Fixed item against the current diff and the defect is still there — report that one again, copying the listed entry's location and description verbatim and naming its recorded commit sha in your recommendation, or saying it was recorded then dropped in a rebase when the entry carries no sha. A Fixed item you did not check, and every Escalated item, stays suppressed.
 
 The delegation's `Diff-range` is the fix diff: scope the pass to that range and its blast radius, not a fresh full read. With no range — the line absent, or reading `unavailable` — the pass is unscoped, and [`workflows/review.md`](./workflows/review.md) § 1 owns what it reads and what it declares. Sweep every fixed defect's class before passing.
 

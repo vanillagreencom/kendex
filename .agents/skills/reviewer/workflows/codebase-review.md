@@ -14,11 +14,7 @@ Review per your agent file and the reviewer skill's Ethos; read the relevant cod
 
 ## 3. Artifact, Validate, Return
 
-Write the JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md) to `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json` (`mkdir -p [WORKTREE_PATH]/tmp` first if needed). Verdict: `action_required` when `blockers[]` is non-empty, else `pass`. Self-validate until `"ok": true`:
-
-```bash
-.agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] 0
-```
+Write and self-validate per the skill's § Output Contract: [`../schemas/review-finding.md`](../schemas/review-finding.md) is the field authority and `review-artifact-check` the pre-return check, with `-codebase-` in the artifact name. Verdict: `action_required` when `blockers[]` is non-empty, else `pass`.
 
 Send exactly one agent-to-agent message, then go idle:
 

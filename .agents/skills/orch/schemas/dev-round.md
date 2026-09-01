@@ -38,13 +38,11 @@ An `Adds:` delegation line maps to a JSON array passed through `--adds-file`; re
 
 The external authorization adds `"schema_version": 1`, `"worktree": "[CANONICAL_WORKTREE_ROOT]"`, and `"live": true` to the same issue, round, base, additions, and items fields.
 
-**Immutable per round.** Delegation fields never change. Re-running before acceptance when both records have byte-identical content is an idempotent retry. Different delegated content, a missing half, or a symlink exits 2. Never recreate either half after delegation and never fall back to an unbound item list. Mint a new round. An analysis round has no delegated items and writes no record.
-
-**Liveness.** On an `accept` verdict, `dev-artifact-check` atomically replaces the external authorization with the same record carrying `"live": false`. Repeat checks accept the retired record. `worktree-push` remaps only a live authorization, so a completed round cannot block a later rebase after its recovery copy is gone.
+**Immutable per round**, and retired on acceptance: `dev-round-write --help` and `dev-artifact-check --help` carry both contracts. Mint a new round and never fall back to an unbound item list. An analysis round has no delegated items and writes no record.
 
 ## Readers
 
-- **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the external authorization after checking the worktree copy exactly matches it. It compares the exact `base_sha` snapshot directly to `HEAD` through a checked, NUL-delimited Git probe, then retires an accepted authorization. `worktree-push` remaps both copies only while the authorization is live. Comparison failures return `comparison_failed`; an unusable classifier result returns `classifier_failed`.
+- **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the external authorization; its gates and refusal reasons are that script's `--help`.
 - **A respawned dev agent** reads `items[]` to recover the item numbers and texts.
 - **The tail-reconciliation nudge** points at the record.
 

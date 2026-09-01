@@ -2,7 +2,7 @@
 
 Desktop app + thin CLI (Rust + Tauri + React) for managing AI coding-harness customizations.
 
-**Orientation.** Read `docs/ARCHITECTURE.md` before structural work; stale docs are bugs — amend them in the same change. Open work lives in Linear (team KEN); scratch goes to `tmp/` (gitignored), never `/tmp`. Review bots follow `review-bots.md` and `.github/instructions/*.instructions.md`. Engineering rules are the dev skill's § Engineering Rules; finding dispositions are orch's `references/finding-disposition.md`.
+**Orientation.** Read `docs/ARCHITECTURE.md` before structural work; stale docs are bugs — amend them in the same change. Open work lives in Linear (team KEN); scratch goes to `tmp/` (gitignored), never `/tmp`. Review bots follow `review-bots.md` and `.github/instructions/*.instructions.md`. Engineering rules are the code-quality skill; round scope is the dev skill's § Engineering Rules; finding dispositions are orch's `references/finding-disposition.md`.
 
 Repo-specific rules:
 
@@ -10,11 +10,11 @@ Repo-specific rules:
 - `ui/` renders state and invokes commands; domain logic and types live in Rust, and TS bindings are generated, never hand-written.
 - The CHANGELOG is for consumers (Keep a Changelog): document app, CLI, and package changes; keep engine-internal and maintainer-only details out. An entry runs at most 200 characters — the outcome, a **Breaking:** migration inline, `— thanks @name` for outside contributors — never an essay.
 - An entry is a file, never a `CHANGELOG.md` line: write `changelog.d/<section>/<name>.md` holding the list item it becomes, per `changelog.d/README.md`. `.agents/skills/growth-guards/scripts/changelog-entries --collate` folds them in at release.
-- Where a skill has a rendered copy under `.agents/skills/`, a change to the source lands that copy in the same commit, because the render is committed and no check compares the two. A skill with no copy there has nothing to land. Where the project declares skill instructions for a skill, its render carries an injected block the source has no copy of, marked in the file by the renderer, and a comparison has to skip that block.
+- Where a skill has a rendered copy under `.agents/skills/`, a change to the source lands that copy in the same commit; a skill with no copy there has nothing to land. Where the project declares skill instructions for a skill, its render carries an injected block the source has no copy of, marked in the file by the renderer, and a comparison has to skip that block.
 - `ui/` installs with `npm ci --prefix ui`, in the main checkout only.
 - Every suite and the aggregator over them run on the pull request as well as in the merge queue, so a green PR proves what the queue re-proves and a red shard blocks the PR itself — fix it there rather than requeuing. Anything in `.github/workflows/skill-tests.yml` that does not run on every event carries an `if:` saying why.
 
-`tools/guard` enforces the rest — read the script; it is the list. It is the last lane of the package's commit chain, named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`; `tools/setup` arms that chain in a fresh clone, beside the package's own commit-msg gate. Neither judges a hook below its delegating line, so a `.git/hooks/commit-msg` calling a repo-local tools/commit-msg lane — which this repo does not have — blocks every commit until you delete that hook and run setup again. That gate holds the three rules only a commit message can carry: the header is `type(scope)!: subject`, the whole header line caps at 72 characters, and a change under `crates/` or `ui/` ships a changelog fragment or says `[no-changelog]` in the subject.
+`tools/guard` enforces the rest — read the script; it is the list. It is the last lane of the package's commit chain, named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`; `tools/setup` arms that chain in a fresh clone, beside the package's own commit-msg gate. Neither judges a hook below its delegating line: a `.git/hooks/commit-msg` calling a repo-local tools/commit-msg lane — which this repo does not have — blocks every commit until you delete that hook and run setup again. That gate holds the three rules only a commit message can carry: the header is `type(scope)!: subject`, the whole header line caps at 72 characters, and a change under `crates/` or `ui/` ships a changelog fragment or says `[no-changelog]` in the subject.
 
 ## Code Review Rules
 
