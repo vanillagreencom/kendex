@@ -56,7 +56,10 @@
 #   0  an EVENT line was printed
 #   2  usage error, or a global failure (gh not authenticated, repo
 #      unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
-#      the pr-watch state directory or file unusable, lanes given outside tmux)
+#      the pr-watch state directory or file unusable, lanes given outside
+#      tmux). A state file that cannot be written is judged AFTER the event it
+#      would have consumed is printed, so this status can follow an EVENT line
+#      on stdout: that event is delivered, its baseline is not
 #
 # Environment:
 #   OVERSEE_WATCH_PR_WATCH   path to the pr-watch reducer (default:
@@ -171,7 +174,10 @@ Exit codes:
   0  an EVENT line was printed
   2  usage error, or a global failure: gh not authenticated, repo
      unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
-     the pr-watch state directory or file unusable, lanes given outside tmux
+     the pr-watch state directory or file unusable, lanes given outside tmux.
+     A state file that cannot be written is judged after the event it would
+     have consumed is printed, so this status can follow an EVENT line: that
+     event is delivered, its baseline is not
 
 Environment:
   OVERSEE_WATCH_PR_WATCH   path to pr-watch.sh (default: the review-gate
@@ -297,22 +303,6 @@ if [[ ${#LANES[@]} -gt 0 && -z "${TMUX:-}" ]]; then
   die "lane windows given (${LANES[*]}) but not inside tmux; drop the lanes or run from the tmux session that owns them"
 fi
 
-# One canonical spelling per repository, settled once, here: GitHub reads a
-# repo path case-insensitively, so lowercasing each entry in place leaves the
-# duplicate check below, the reducer's state-file name, the repo it prefixes
-# its lines with and the GH_REPO it exports all naming one string. A repeat
-# would reduce that repository twice into one state file and report it twice
-# in the context, so it is a usage error, named as the caller spelled it.
-repos_seen=""
-for repo_i in ${REPOS[@]+"${!REPOS[@]}"}; do
-  repo_raw="${REPOS[$repo_i]}"
-  REPOS[$repo_i]="$(printf '%s' "$repo_raw" | tr '[:upper:]' '[:lower:]')"
-  if grep -qxF -- "${REPOS[$repo_i]}" <<<"$repos_seen"; then
-    die "--repo '$repo_raw' given twice; name each repository once"
-  fi
-  repos_seen+="${REPOS[$repo_i]}"$'\n'
-done
-
 # ISO8601 (UTC, Z suffix) → epoch, GNU date first, then BSD/macOS. -u is
 # load-bearing so the timestamp is not shifted by the local zone.
 to_epoch() {
@@ -357,6 +347,24 @@ if [[ ${#REPOS[@]} -eq 0 ]]; then
   [[ -n "$resolved" ]] || die "could not resolve the repository (gh repo view failed); pass --repo OWNER/REPO"
   REPOS=("$resolved")
 fi
+# One canonical spelling per repository, settled once, HERE — below the default
+# resolution, the one point every path's REPOS has reached its final value, so
+# a repo `gh repo view` reported in its registered casing is canonicalized too.
+# GitHub reads a repo path case-insensitively, so lowercasing each entry leaves
+# the duplicate check, the owner the merged check matches on, the reducer's
+# state-file name, the repo it prefixes its lines with and the GH_REPO it
+# exports all naming one string. A repeat would reduce that repository twice
+# into one state file and report it twice in the context, so it is a usage
+# error, named as the caller spelled it.
+repos_seen=""
+for repo_i in "${!REPOS[@]}"; do
+  repo_raw="${REPOS[$repo_i]}"
+  REPOS[$repo_i]="$(printf '%s' "$repo_raw" | tr '[:upper:]' '[:lower:]')"
+  if grep -qxF -- "${REPOS[$repo_i]}" <<<"$repos_seen"; then
+    die "--repo '$repo_raw' given twice; name each repository once"
+  fi
+  repos_seen+="${REPOS[$repo_i]}"$'\n'
+done
 # The reducer covers every --repo; the merged check and the heartbeat's open-PR
 # list are per-item and per-fleet queries against the first, the repo the
 # overseer's own items live in.
@@ -373,7 +381,15 @@ if [[ -z "$ITEM_BRANCHES" ]]; then
   echo "oversee-watch: no --item given; skipping the merged check (pr-watch/window/question checks still run)" >&2
 fi
 if [[ ${#REPOS[@]} -gt 1 ]]; then
-  echo "oversee-watch: the reducer covers ${REPOS[*]}; the merged check and the heartbeat's open-PR list read $REPO only" >&2
+  # Only the checks this run actually performs: the two notes above may have
+  # just reported the reducer or the merged check skipped.
+  if [[ -n "$ITEM_BRANCHES" ]]; then
+    repo_note="the merged check and the heartbeat's open-PR list read $REPO only"
+  else
+    repo_note="the heartbeat's open-PR list reads $REPO only"
+  fi
+  [[ -z "$PR_WATCH" ]] || repo_note="the reducer covers ${REPOS[*]}; $repo_note"
+  echo "oversee-watch: $repo_note" >&2
 fi
 
 pw_init_state

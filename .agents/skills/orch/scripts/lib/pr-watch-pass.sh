@@ -109,17 +109,23 @@ check_pr_watch() {
       event=1
     fi
   done
-  # The whole pass reduced without dying, so the baselines advance together.
+  PW_RC="$rc_max"
+  PW_OUT="${out_all%$'\n'}"
+  PW_ERR="${err_all%$'\n'}"
+  # The invariant: no baseline is committed before the pass has DELIVERED the
+  # event it raised. The event prints here, ahead of every write, so a write
+  # that fails leaves the event delivered and a baseline unadvanced — the next
+  # run repeats an event, which is the safe direction; a baseline advanced over
+  # an undelivered event loses that line for good.
+  if [[ "$event" -eq 1 ]]; then
+    echo "EVENT pr-watch rc=$PW_RC"
+    [[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"
+    [[ -z "$PW_ERR" ]] || printf '%s\n' "$PW_ERR"
+  fi
   for i in "${!REPOS[@]}"; do
     PW_SEEN[$i]="${pass_keys[$i]}"
     pw_save_state "$(pw_state_file "${REPOS[$i]}")" "${pass_keys[$i]}"
   done
-  PW_RC="$rc_max"
-  PW_OUT="${out_all%$'\n'}"
-  PW_ERR="${err_all%$'\n'}"
   [[ "$event" -eq 1 ]] || return 0
-  echo "EVENT pr-watch rc=$PW_RC"
-  [[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"
-  [[ -z "$PW_ERR" ]] || printf '%s\n' "$PW_ERR"
   exit 0
 }

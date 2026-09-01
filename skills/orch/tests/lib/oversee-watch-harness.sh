@@ -75,6 +75,8 @@ git -C "$TMP_ROOT/repo" init -q
 # gh stub, driven by files in $STUB_DIR:
 #   merged.json   body for `pr list --state merged` (default: [])
 #   open.txt      lines for `pr list --state open` (default: empty)
+#   repoview.txt  what `repo view` reports — the repository the watch resolves
+#                 when no --repo is given (default: owner/repo)
 #   auth-fail     present → keyring `auth status` fails
 #   list-fail     present → every `pr list` fails
 #   noisy         present → every successful `pr list` also writes to stderr
@@ -91,6 +93,7 @@ case "${1:-} ${2:-}" in
     [[ "${GH_TOKEN:-}" == ghp_stale* ]] && { echo "HTTP 401: Bad credentials" >&2; exit 1; }
     echo "someone"; exit 0 ;;
   "repo view")
+    [[ -f "$STUB_DIR/repoview.txt" ]] && { cat "$STUB_DIR/repoview.txt"; exit 0; }
     echo "owner/repo"; exit 0 ;;
   "pr list")
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
@@ -258,15 +261,19 @@ new_case() {
 # run_watch [ENV=VAL ...] -- ARGS...   (fast cadence; TMUX set unless NO_TMUX=1)
 # `--repo owner/repo` is supplied only when ARGS name no repo of their own:
 # --repo is repeatable, so injecting it beside a case's own would make that
-# case a two-repo fleet with owner/repo first.
+# case a two-repo fleet with owner/repo first. `--no-repo` is the harness's own
+# token, stripped before the watch runs: it asks for no --repo at all, the
+# default path where the watch resolves the repository from `gh repo view`.
 run_watch() {
-  local env_args=() repo_args=(--repo owner/repo) arg
+  local env_args=() repo_args=(--repo owner/repo) watch_args=() arg
   while [[ $# -gt 0 && "$1" != "--" ]]; do env_args+=("$1"); shift; done
   shift || true
   for arg in "$@"; do
-    [[ "$arg" == --repo || "$arg" == --repo=* ]] || continue
-    repo_args=()
-    break
+    case "$arg" in
+      --no-repo) repo_args=() ;;
+      --repo | --repo=*) repo_args=(); watch_args+=("$arg") ;;
+      *) watch_args+=("$arg") ;;
+    esac
   done
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
@@ -276,5 +283,5 @@ run_watch() {
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
            ${env_args[@]+"${env_args[@]}"} \
            .agents/skills/orch/scripts/oversee-watch --interval 0 --max-loops 2 \
-             ${repo_args[@]+"${repo_args[@]}"} "$@")
+             ${repo_args[@]+"${repo_args[@]}"} ${watch_args[@]+"${watch_args[@]}"})
 }

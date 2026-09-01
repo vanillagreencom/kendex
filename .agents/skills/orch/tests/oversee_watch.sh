@@ -304,6 +304,8 @@ err="$TMP_ROOT/e1m2"
 out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "run 2: a global failure on a later repo exits 2" "$err"
 assert_eq "$out" "" "run 2 prints no EVENT" "$err"
+assert_eq "$([[ -f "$STATE_DIR/owner_repo__none" ]] && echo yes || echo no)" "yes" \
+  "the earlier repo's baseline file is still there after the pass dies" "$err"
 assert_eq "$(cat "$STATE_DIR/owner_repo__none"; echo x)" "x" \
   "a pass that dies leaves the earlier repo's baseline where the last complete pass left it" "$err"
 
@@ -316,6 +318,27 @@ assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
   "the event the failing pass could not print is still an event" "$err"
 assert_contains "$out" "$(printf 'owner/repo\t12\taaaa0000\tthreads-open')" \
   "and it carries the line that was never delivered" "$err"
+
+# run 4: a state file that cannot be written is judged AFTER the event it would
+# have consumed is printed. Root writes anywhere, so the run is skipped there.
+if [[ "$(id -u)" -eq 0 ]]; then
+  printf '  skip  event printed before the baselines are flushed (running as root)\n'
+else
+  rm -f "$STATE_DIR/other_repo__none"
+  mkdir -p "$STATE_DIR/other_repo__none"
+  chmod 500 "$STATE_DIR/other_repo__none"
+  printf '12\taaaa0000\tthreads-open\t2 unresolved\n34\tcccc0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.owner_repo"
+  err="$TMP_ROOT/e1m4"
+  out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+  chmod 700 "$STATE_DIR/other_repo__none"
+  assert_eq "$rc" "2" "run 4: a state file that cannot be written exits 2" "$err"
+  assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
+    "the event is delivered before any baseline is written" "$err"
+  assert_contains "$out" "$(printf 'owner/repo\t34\tcccc0000\tthreads-open')" \
+    "and it carries the line that raised it" "$err"
+  assert_contains "$(cat "$err")" "could not write the pr-watch state file" \
+    "the write failure is still reported"
+fi
 
 # 1n. each repo's rising edge is measured against its OWN baseline: a standing
 # line on one repo is not news again because a clear repo shares the pass
@@ -424,16 +447,58 @@ assert_eq "$rc" "2" "an empty --repo= exits 2" "$err"
 assert_eq "$out" "" "an empty --repo= prints no EVENT" "$err"
 assert_contains "$(cat "$err")" "--repo requires a value" "the parser names the option missing its value"
 
-# 1t. a fleet of more than one repo is told what the merged check does NOT cover
+# 1t. a fleet of more than one repo is told what the checks below the reducer
+# do NOT cover — and the note names only the checks this run actually performs
 new_case prwatch_coverage_note
 err="$TMP_ROOT/e1t1"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch -- --repo owner/repo --repo other/repo --item issue-5 2>"$err")" && rc=0 || rc=$?
 assert_contains "$(cat "$err")" \
   "the reducer covers owner/repo other/repo; the merged check and the heartbeat's open-PR list read owner/repo only" \
   "a multi-repo fleet is told which repo the merged check reads"
 err="$TMP_ROOT/e1t2"
 out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_not_contains "$(cat "$err")" "the reducer covers" "a one-repo fleet gets no coverage note"
+
+# no --item: the note must not explain a merged check this run skipped
+err="$TMP_ROOT/e1t3"
+out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+assert_contains "$(cat "$err")" \
+  "the reducer covers owner/repo other/repo; the heartbeat's open-PR list reads owner/repo only" \
+  "the note drops the merged check when the run skipped it"
+assert_not_contains "$(cat "$err")" "the merged check and" \
+  "a skipped check is never claimed as covered"
+
+# no pr-watch: the note must not claim a reducer this run skipped
+err="$TMP_ROOT/e1t4"
+out="$(run_watch OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/absent-pr-watch.sh" -- --repo owner/repo --repo other/repo --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_contains "$(cat "$err")" \
+  "the merged check and the heartbeat's open-PR list read owner/repo only" \
+  "the note still names what the merged check reads without the reducer"
+assert_not_contains "$(cat "$err")" "the reducer covers" \
+  "and never claims a reducer that is not installed"
+
+# 1u. the repository resolved from `gh repo view` — the documented default,
+# reached only when no --repo is given — is canonicalized like any other: the
+# merged check matches its owner, pr-watch is handed one spelling, and the
+# baseline is keyed on it
+new_case default_repo_canonical
+printf 'VanillaGreenCom/Kendex\n' > "$STUB_DIR/repoview.txt"
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 5, "headRefName": "issue-5", "headRepositoryOwner": {"login": "VanillaGreenCom"}, "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+printf '12\taaaa0000\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
+printf '1' > "$STUB_DIR/prwatch.rc"
+err="$TMP_ROOT/e1u"
+out="$(run_watch -- --no-repo --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "a default-resolved repository exits 0" "$err"
+assert_contains "$out" "EVENT merged 5 issue-5" \
+  "a repository resolved from gh repo view still fires merged" "$err"
+assert_eq "$(cat "$STUB_DIR/prwatch.repo")" "vanillagreencom/kendex" \
+  "and reaches pr-watch in the canonical spelling" "$err"
+assert_eq "$([[ -f "$STATE_DIR/vanillagreencom_kendex__2026-08-15T09_00_00Z" ]] && echo yes || echo no)" "yes" \
+  "and keys its baseline on that same spelling" "$err"
 
 # --- 2. merged, with item, since, and case controls -------------------------
 new_case merged
