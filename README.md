@@ -3,13 +3,7 @@
 One place to manage AI coding-tool customizations, personally and
 per-project.
 
-<img src="docs/img/harness-claude.png" alt="Claude Code" height="20">
-<img src="docs/img/harness-codex.png" alt="Codex" height="20">
-<img src="docs/img/harness-opencode.png" alt="OpenCode" height="20">
-<img src="docs/img/harness-cursor.png" alt="Cursor" height="20">
-<img src="docs/img/harness-pi.png" alt="Pi" height="20">
-<img src="docs/img/harness-gemini.png" alt="Gemini CLI" height="20">
-<img src="docs/img/harness-copilot.png" alt="GitHub Copilot" height="20">
+<p><img src="docs/img/harness-claude.png" alt="Claude Code" height="20"> <img src="docs/img/harness-codex.png" alt="Codex" height="20"> <img src="docs/img/harness-opencode.png" alt="OpenCode" height="20"> <img src="docs/img/harness-cursor.png" alt="Cursor" height="20"> <img src="docs/img/harness-pi.png" alt="Pi" height="20"> <img src="docs/img/harness-gemini.png" alt="Gemini CLI" height="20"> <img src="docs/img/harness-copilot.png" alt="GitHub Copilot" height="20"></p>
 
 Manages agents, skills, hooks, commands, MCP servers, plugins, and Pi
 extensions. Desktop app and CLI over one engine, with a community at
