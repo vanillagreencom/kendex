@@ -16,10 +16,17 @@ function packages() {
 
 const workflowPath = join(root, "..", ".github", "workflows", "skill-tests.yml");
 
-// The `if:` every per-package suite step carries. A step that has drifted off
-// it is skipped on the shard that runs these suites, which looks identical to
-// a step that runs and passes.
-const nodeShard = "matrix.shard == 'node'";
+// The `if:` values a per-package suite step may carry, derived from the shard
+// list `strategy.matrix` actually runs. A step conditioned on a name that list
+// does not carry — a typo, or a shard since renamed — is skipped on every run,
+// which looks identical to a step that runs and passes. Deriving the set here
+// rather than pinning one shard's literal is what keeps a shard split from
+// silently retiring a suite, and keeps the teeth: an unknown name still fails.
+function shardConditions(workflow) {
+	const list = workflow.match(/^ {8}shard: \[(.+)\]$/m)?.[1];
+	assert.ok(list, `no "shard: [...]" matrix list in ${workflowPath} — the matrix reader is broken`);
+	return list.split(",").map((name) => `matrix.shard == '${name.trim()}'`);
+}
 
 // A package's CI entry point is `test:ci` when it declares one and `test`
 // otherwise. `test:ci` is how a package whose full `test` script cannot run on
@@ -34,8 +41,7 @@ function ciEntryPoint(pkg) {
 
 // Steps are list items at a fixed indent, and a block scalar's body is the
 // lines indented under it — `#` lines are shell comments, not commands.
-function ciSteps() {
-	const workflow = readFileSync(workflowPath, "utf8");
+function ciSteps(workflow) {
 	return workflow.split(/\n(?= {6}- )/).flatMap((block) => {
 		const dir = block.match(/^ {8}working-directory: pi-extensions\/([\w.-]+)$/m)?.[1];
 		if (dir === undefined) return [];
@@ -132,8 +138,23 @@ test("every Pi extension carries a consumer-facing CHANGELOG.md", () => {
 	}
 });
 
+// Packages whose declared CI entry point no enabled step invokes. Taking the
+// workflow source as an argument is what lets the control below run this exact
+// reader over a mutated copy instead of asserting against a second literal.
+function unrunPackages(workflow) {
+	const steps = ciSteps(workflow);
+	const shards = shardConditions(workflow);
+	return packages().flatMap(({ dir, pkg }) => {
+		const invocation = ciEntryPoint(pkg);
+		if (invocation === undefined) return [];
+		const runs = steps.some((step) => step.dir === dir && shards.includes(step.condition) && step.commands.includes(invocation));
+		return runs ? [] : [`${dir}: no step on a shard the matrix runs invokes \`${invocation}\``];
+	});
+}
+
 test("every Pi extension suite runs in CI under the package's own test script", () => {
-	const steps = ciSteps();
+	const workflow = readFileSync(workflowPath, "utf8");
+	const steps = ciSteps(workflow);
 	const dirs = packages().map(({ dir }) => dir);
 	const bearing = packages().filter(({ dir }) => suiteFiles(join(root, dir)).length > 0).map(({ dir }) => dir);
 	// Every side is derived from the tree and the workflow, so a reader that
@@ -155,12 +176,7 @@ test("every Pi extension suite runs in CI under the package's own test script", 
 	// step that builds, or runs a subset under another script name, satisfies
 	// the directory and proves nothing.
 	assert.deepEqual(
-		packages().flatMap(({ dir, pkg }) => {
-			const invocation = ciEntryPoint(pkg);
-			if (invocation === undefined) return [];
-			const runs = steps.some((step) => step.dir === dir && step.condition === nodeShard && step.commands.includes(invocation));
-			return runs ? [] : [`${dir}: no enabled node-shard step runs \`${invocation}\``];
-		}),
+		unrunPackages(workflow),
 		[],
 		"packages declare a test entry point that no skill-tests.yml step invokes",
 	);
@@ -170,4 +186,15 @@ test("every Pi extension suite runs in CI under the package's own test script", 
 		[],
 		"skill-tests.yml steps name a pi-extensions directory that is not a package",
 	);
+});
+
+// Must-fail control for the derivation above: nothing else in this file ties a
+// step's shard name back to the matrix, so without this case the accepted set
+// could widen to "any condition at all" and every assertion would stay green.
+test("a step conditioned on a shard the matrix does not run is reported, not accepted", () => {
+	const workflow = readFileSync(workflowPath, "utf8");
+	assert.deepEqual(unrunPackages(workflow), [], "precondition: the real workflow wires every package");
+	const typo = workflow.replaceAll("matrix.shard == 'pi-claude-bridge'", "matrix.shard == 'pi-claude-brige'");
+	assert.notEqual(typo, workflow, "the mutation matched nothing — this control no longer mutates the step it names");
+	assert.deepEqual(unrunPackages(typo), ["pi-claude-bridge: no step on a shard the matrix runs invokes `npm run test:ci`"]);
 });

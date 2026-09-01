@@ -5,17 +5,17 @@ name: Skill Tests
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
 #
-# THE FULL BATTERY RUNS ON EVERY EVENT: every shard and every cargo lane runs
-# on pull_request as well as in the merge queue and on the push to main, so a
-# green PR has already proven what the queue re-proves and an ejection —
-# dequeue, fix, requeue, pay the merge latency again — is rare instead of
-# routine. Runner minutes are free on this public repo and time to merge is
-# the metric. Three things stay event-scoped, each saying why below: the
-# AGGREGATOR, which is the ruleset's required context; the preflight job,
-# which needs a PR base to diff against; and the `rest` shard's size-ratchet
-# step, which preflight already covers on pull_request. The review gate never
-# conditions CI (it answers review-only; see the review-gate skill) — no gate
-# job here reads the predicate.
+# THE FULL BATTERY RUNS ON EVERY EVENT: every shard, the aggregator over them
+# and every cargo lane runs on pull_request as well as in the merge queue and
+# on the push to main, so a green PR has proven what the queue re-proves and
+# an ejection — dequeue, fix, requeue, pay the merge latency again — is rare
+# instead of routine. Whatever does NOT run everywhere carries its own `if:`
+# saying why. The review gate never conditions CI (it answers review-only;
+# see the review-gate skill) — no gate job here reads the predicate.
+#
+# Time to merge is the metric and hardware follows: the queue legs take the
+# org's paid Blacksmith runners, the pull_request legs free GitHub-hosted
+# ones, so PR and queue durations compare different machines.
 #
 # Heavy jobs run on Blacksmith when the org's CI_RUNNER_* variables are set,
 # falling back to GitHub-hosted so the workflow runs anywhere.
@@ -48,7 +48,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [review-gate, orch, rest, node, pi-claude-bridge]
-    runs-on: ${{ vars.CI_RUNNER_4V || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.CI_RUNNER_4V || 'ubuntu-latest' }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -114,12 +114,12 @@ jobs:
         if: matrix.shard == 'rest' && github.event_name != 'pull_request'
         run: skills/size-ratchet/scripts/size-ratchet
 
-      # The queue-side half of the work-marker gate: the preflight job runs
-      # only on pull_request, so without this a merge group never scans the
-      # index it is about to merge. The commit lane judges only what a commit
-      # adds; this scan takes the rest, in every blob git reads as text.
+      # The queue-side half of the work-marker gate, conditioned like the size
+      # gate above and for the same reason: preflight covers pull_request, and
+      # a merge group otherwise never scans the index it is about to merge. The
+      # commit lane judges what a commit adds; this scan takes the rest.
       - name: todo-ban (index-wide work-marker scan)
-        if: matrix.shard == 'rest'
+        if: matrix.shard == 'rest' && github.event_name != 'pull_request'
         run: skills/growth-guards/scripts/todo-ban
 
       # Every skill must route problem reports through `kendex report`. The
@@ -386,17 +386,17 @@ jobs:
 
   # AGGREGATOR — this job's name is the ruleset's required context, so the
   # `(shell + node)` in it is frozen history: renaming it to match today's
-  # shards leaves the ruleset waiting on a context nothing creates. On PR
-  # heads the expression is false and the job reports `skipped`; in a merge
-  # group or a main-push run it runs after every shard and fails unless ALL
-  # shards succeeded. `always()` is required because skipped/failed needs
-  # would otherwise skip this job too, and a skipped required context on a
-  # merge group would satisfy the ruleset without any suite having run (the
-  # fail-open this line exists to close).
+  # shards leaves the ruleset waiting on a context nothing creates. It runs on
+  # every event, pull_request included: GitHub counts a SKIPPED required
+  # context as satisfied, so an event-scoped condition here would let a PR with
+  # a red shard enter the queue and be ejected there. `always()` is required
+  # because skipped/failed needs would otherwise skip this job too, and a
+  # skipped required context would satisfy the ruleset without any suite having
+  # run (the fail-open this line exists to close).
   skill-suites:
     name: Skill suites (shell + node)
     needs: [skill-suites-shard]
-    if: always() && (github.event_name == 'merge_group' || github.event_name == 'push')
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

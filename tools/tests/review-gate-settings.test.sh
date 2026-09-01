@@ -16,7 +16,7 @@
 #
 # Lives under tools/tests/, not skills/orch/tests/: that suite ships with the
 # orch skill to other projects, and this policy is kendex's alone. tools/tests
-# is also what keeps the check merge-blocking — the shell shard globs
+# is also what keeps the check merge-blocking — the rest shard globs
 # tools/tests/*.test.sh and rolls up into the required "Skill suites (shell +
 # node)" context, which the gate-selftest job is not.
 set -euo pipefail

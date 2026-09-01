@@ -81,7 +81,7 @@ assert_eq "the WRONG label sits on the line above the fail-open form" \
 
 # Indentation is checked structurally rather than by parsing: every block here
 # steps by two spaces, so an odd indent or a tab is hand-edit damage. This
-# needs no YAML library, which the shell shard does not install and this suite
+# needs no YAML library, which the rest shard does not install and this suite
 # must not depend on being there — a check that cannot run must not be the
 # difference between a green suite and a red one. What it does NOT prove is
 # that a block is valid YAML; a malformed one fails at the copier's first
