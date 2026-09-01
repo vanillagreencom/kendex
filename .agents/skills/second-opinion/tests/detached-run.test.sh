@@ -17,6 +17,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 ok() { printf 'PASS: %s\n' "$1"; }
 assert_contains() { grep -Fq "$2" "$1" || fail "$3: $(sed -n '1,40p' "$1")"; ok "$3"; }
+assert_matches() { grep -Eq "$2" "$1" || fail "$3: $(sed -n '1,40p' "$1")"; ok "$3"; }
 assert_rc() { [[ "$1" == "$2" ]] || fail "$3 (expected $2, got $1)"; ok "$3"; }
 
 # --- Hermetic, harness-free session ------------------------------------------
@@ -339,15 +340,20 @@ workflow_files=(
   "$REPO_ROOT/skills/orch/workflows/review-pr.md"
   "$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 )
+# A workflow states the recoverable and terminal exit codes itself, or names
+# the --help that owns them. Both spellings are in the tree, so each row pins
+# the identifiers rather than either sentence.
+RESUME_FORM='Exit 75 means completion is still recoverable|second-opinion --help'
+TERMINAL_FORM='Exit 124 is terminal|until terminal'
 for workflow_file in "${workflow_files[@]}"; do
   workflow_commands_detach "$workflow_file" \
     || fail "$workflow_file has no capped second-opinion command or one lacks --foreground"
   ok "${workflow_file##*/} launches with --foreground"
   assert_contains "$workflow_file" 'exact command printed after `wait:`' \
     "${workflow_file##*/} executes the emitted wait command"
-  assert_contains "$workflow_file" 'Exit 75 means completion is still recoverable' \
+  assert_matches "$workflow_file" "$RESUME_FORM" \
     "${workflow_file##*/} resumes bounded waits"
-  assert_contains "$workflow_file" 'Exit 124 is terminal' \
+  assert_matches "$workflow_file" "$TERMINAL_FORM" \
     "${workflow_file##*/} treats the deadline result as terminal"
 done
 cat > "$TMP_ROOT/no-command-workflow.md" <<'EOF'
@@ -357,3 +363,16 @@ if workflow_commands_detach "$TMP_ROOT/no-command-workflow.md"; then
   fail "the workflow wiring check accepted prose with no launch command"
 fi
 ok "the workflow wiring check rejects a missing launch command"
+# Control: prose that launches and waits but routes neither exit code must miss
+# both rows, so an alternation cannot pass a workflow that dropped the contract.
+cat > "$TMP_ROOT/no-exit-routing.md" <<'EOF'
+Execute the exact command printed after `wait:`, then read the artifact when it
+finishes. Exit 7 is unrelated and this line mentions no help output.
+EOF
+if grep -Eq "$RESUME_FORM" "$TMP_ROOT/no-exit-routing.md"; then
+  fail "the resume row accepted prose that routes no recoverable exit"
+fi
+if grep -Eq "$TERMINAL_FORM" "$TMP_ROOT/no-exit-routing.md"; then
+  fail "the terminal row accepted prose that routes no terminal exit"
+fi
+ok "both wait-contract rows reject prose that routes neither exit code"

@@ -64,7 +64,7 @@ Deterministic gate findings are fixed here, never carried into review. Fix what 
 
 ## Reflect
 
-**Skip if** nothing recurred and nothing surprised you. Otherwise put the lesson where it will be read again — architecture docs when patterns, APIs, or documented behavior changed, or the managing project's kendex config (`kendex.toml` at the kendex project root, `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`. Bar: would this save 5+ minutes in a future session? One surgical addition per lesson, no verbose examples. A config edit takes effect only once it is rendered, which is the orchestrator's step from the main checkout after merge, so name it — and anything else you cannot update yourself — in your return as `[process]` discovered work.
+**Skip if** nothing recurred and nothing surprised you. Otherwise put the lesson where it will be read again — architecture docs when patterns, APIs, or documented behavior changed, or the managing project's kendex config (`kendex.toml` at the kendex project root, `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`. Bar: would this save 5+ minutes in a future session? One surgical addition per lesson, no verbose examples. A config edit takes effect only once it is rendered, which you cannot do from a worktree, so name it — and anything else you cannot update yourself — in your return as `[process]` discovered work.
 
 ## Configuration
 

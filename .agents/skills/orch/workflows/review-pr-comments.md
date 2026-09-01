@@ -292,7 +292,7 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 | Outcome | Reply body |
 |---------|------------|
 | Applied | `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]` |
-| Skipped or declined, nothing filed | `Declined: [REASON]` |
+| Skipped, blocked, or declined, nothing filed | `Declined: [REASON]` |
 | Blocked or skipped → issue | `Tracked: [CREATED_ISSUE_ID]` |
 | Already fixed | The finding's `draft_response` |
 | Question | The finding's `draft_response` |
@@ -315,7 +315,7 @@ This section counts the round and decides whether to loop; the cap is § 6.1's a
 .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
 ```
 
-This is the only writer of `pr_comment_review.iterations` in any workflow, as § 8 is the only writer of the result arrays: one triage pass advances the counter by exactly one, and a caller that runs this workflow writes neither.
+This is the only writer of `pr_comment_review.iterations` in any workflow: one triage pass advances the counter by exactly one, and a caller that runs this workflow writes neither it nor § 8's result arrays.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{known: (.pr_review_baseline.last_threads // [])}'
