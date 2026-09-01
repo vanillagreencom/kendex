@@ -108,7 +108,6 @@ skills/orch/scripts/worktree-push	421
 skills/orch/tests/approval_wait.sh	1557
 skills/orch/tests/dev_artifact_check.sh	815
 skills/orch/tests/lanes.sh	890
-skills/orch/tests/merge_queue_watch.sh	816
 skills/orch/tests/oversee_watch_lanes.sh	815
 skills/orch/tests/queue_wait.sh	896
 skills/orch/tests/worktree-cwd-precondition-lint.test.sh	940
@@ -120,8 +119,7 @@ skills/review-gate/scripts/validate.sh	581
 skills/review-gate/templates/review-gate-writer.yml	658
 skills/review-gate/tests/pr-watch.test.sh	1158
 skills/review-gate/tests/review-writer-template.test.sh	829
-skills/second-opinion/scripts/second-opinion	2694
-skills/second-opinion/scripts/second-opinion-runtime	420
+skills/second-opinion/scripts/second-opinion	2684
 skills/second-opinion/tests/cli-failure-gate.test.sh	1211
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999
 skills/second-opinion/tests/review-dual-model.test.sh	1516

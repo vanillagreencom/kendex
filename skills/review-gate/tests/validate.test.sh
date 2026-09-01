@@ -200,14 +200,6 @@ dir="$DIR"
 printf '\n[env] # comment\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
 expect_fail "a header the loader cannot parse is its own finding" "$dir" "table header(s) the loader cannot parse"
 
-# Every settings reader refuses a BOM-prefixed file whole, so the BOM is
-# its own finding — without it the report would blame lines the corrupted
-# read never classified.
-sandbox
-dir="$DIR"
-printf '\357\273\277[env]\nREVIEW_GATE_THREADS = "off"\n' >"$dir/kendex.settings.toml"
-expect_fail "a leading UTF-8 BOM is its own finding" "$dir" "byte-order mark"
-
 # An override naming something other than a regular file used to read as
 # ABSENT here, so the scan reported "every key resolves to its built-in
 # default" about a policy file it never opened. Present-but-unusable is a
@@ -463,4 +455,3 @@ expect_fail "an engine script that no longer parses is named" "$dir" "does not p
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
-

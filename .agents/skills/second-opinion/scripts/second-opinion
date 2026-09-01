@@ -89,7 +89,7 @@ Options:
   -h, --help        Show this help
 With --foreground, run the printed wait command unchanged until terminal.
 Exit 75 means completion is still recoverable; exit 124 means the run reached
-its deadline; its processes are stopped when still identifiable as its own.
+its deadline and its process group was stopped.
 Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
 first target that is available AND runs a different model from this session —
 the model this session runs is never dispatched to, in any mode, forced or not.
@@ -258,18 +258,16 @@ HELP
 # .env.local under --help would execute repository-controlled shell code. The
 # option parser treats -h/--help at any position as help, so the same scan
 # decides here.
-DETACHED_AUTH_REQUESTED=false
 for _arg in "$@"; do
   case "$_arg" in
     -h|--help) show_help; exit 0 ;;
-    --detached-worker) DETACHED_AUTH_REQUESTED=true ;;
   esac
 done
 unset _arg
-# shellcheck source=lib/detached-identity.sh
-source "$SCRIPT_DIR/lib/detached-identity.sh"
-second_opinion_authenticate_detached "$DETACHED_AUTH_REQUESTED" || exit 1
-second_opinion_freeze_preloader_state
+# Settle the entry-point state before a project file is loaded into this shell.
+readonly SCRIPT_DIR FOREGROUND_CAP_IN_CALLER_ENV FOREGROUND_CAP_WAS_IN_CALLER_ENV \
+  CURRENT_MODEL_IS_SESSION_SCOPED CURRENT_MODEL_IN_CALLER_ENV
+readonly -a ORIGINAL_ARGS
 # Resolved only after help is answered: help must not require a git
 # checkout around the installed script.
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
@@ -770,12 +768,6 @@ CURRENT_MODEL_SOURCE=""
 # refusal that names both values. Empty when there is no such conflict.
 CURRENT_MODEL_CONFLICT=""
 resolve_current_model() {
-  if $DETACHED_WORKER && [[ -n "$DETACHED_AUTH_MODEL" ]]; then
-    CURRENT_HARNESS="detached-parent"
-    CURRENT_MODEL=$(canon_identity "$DETACHED_AUTH_MODEL")
-    CURRENT_MODEL_SOURCE="$DETACHED_AUTH_SOURCE"
-    return
-  fi
   CURRENT_HARNESS=$(detect_current_harness)
   local harness_model="" declared=""
   case "$CURRENT_HARNESS" in claude|codex) harness_model="$CURRENT_HARNESS" ;; esac
@@ -1888,11 +1880,9 @@ if $MULTI_LANE; then
         echo "→ lane stderr capture could not be opened — log replay lost: $lane" >&2
       fi
       umask "$lane_umask_prev"
-      # A lane child of a detached run gets the same ownership proof and flag:
-      # it inherits the parent's identity rather than re-deriving one, and must
-      # not detach again. A foreground parent has no proof to hand down.
-      if [[ -n "$DETACHED_RUNTIME_DIR" ]]; then
-        export SECOND_OPINION_RUNTIME_DIR="$DETACHED_RUNTIME_DIR" SECOND_OPINION_RUN_TOKEN="$DETACHED_RUN_TOKEN"
+      # A lane child of a detached run keeps the internal flag so it does not
+      # detach a second time. The resolved model is already in its environment.
+      if $DETACHED_WORKER; then
         detached_worker_arg=--detached-worker
       else
         detached_worker_arg=

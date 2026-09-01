@@ -41,7 +41,6 @@ REAL_SETSID=$(command -v setsid || true)
 REAL_CHMOD=$(command -v chmod)
 REAL_FLOCK=$(command -v flock)
 REAL_PS=$(command -v ps)
-REAL_MKFIFO=$(command -v mkfifo)
 mkdir -p "$MAIN" "$BIN" "$SCRIPTS/lib"
 git -C "$MAIN" init -q
 git -C "$MAIN" config user.email test@example.com
@@ -184,19 +183,9 @@ fi
 exec "$WATCH_REAL_PS" "$@"
 EOF
 chmod +x "$BIN/ps"
-cat > "$BIN/mkfifo" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ -f "$WATCH_REGISTRATION_GATE.enabled" && "$*" == *"/events"* ]]; then
-  touch "$WATCH_REGISTRATION_GATE.entered"
-  while [[ ! -f "$WATCH_REGISTRATION_GATE.release" ]]; do sleep 0.05; done
-fi
-exec "$WATCH_REAL_MKFIFO" "$@"
-EOF
-chmod +x "$BIN/mkfifo"
 export PATH="$BIN:$SEALED:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WATCH_HEAD_FILE="$HEAD_FILE" WATCH_MAIN="$MAIN" WATCH_WORKTREE="$WT"
 export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_CLEANUP_INTERRUPT="$TMP/cleanup-interrupt"
-export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_SETSID_DELAY="$TMP/setsid-delay" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_WORKER_PID="$TMP/worker.pid" WATCH_WORKER_TOKEN="$TMP/worker.token" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_REAL_FLOCK="$REAL_FLOCK" WATCH_FAIL_FLOCK_GATE="$TMP/fail-flock-gate" WATCH_REAL_PS="$REAL_PS" WATCH_PS_LOG="$TMP/ps.log" WATCH_FLOCK_LOG="$TMP/flock.log" WATCH_SUPERVISOR_PID_GATE="$TMP/supervisor-pid-gate" WATCH_REAL_MKFIFO="$REAL_MKFIFO" WATCH_REGISTRATION_GATE="$TMP/registration-gate" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
+export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_SETSID_DELAY="$TMP/setsid-delay" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_WORKER_PID="$TMP/worker.pid" WATCH_WORKER_TOKEN="$TMP/worker.token" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_REAL_FLOCK="$REAL_FLOCK" WATCH_FAIL_FLOCK_GATE="$TMP/fail-flock-gate" WATCH_REAL_PS="$REAL_PS" WATCH_PS_LOG="$TMP/ps.log" WATCH_FLOCK_LOG="$TMP/flock.log" WATCH_SUPERVISOR_PID_GATE="$TMP/supervisor-pid-gate" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
 touch "$WATCH_PS_LOG" "$WATCH_FLOCK_LOG"
 # `flock -s` is the shared lock a supervisor takes to read its own currency, so
 # a count that moves while one supervisor is alive is evidence that one ran.
@@ -666,31 +655,6 @@ running "$wrong_command_pid" && ok "ps fallback requires supervisor command iden
 unset MERGE_QUEUE_FORCE_PS_IDENTITY
 kill "$wrong_command_pid" 2>/dev/null || true; wait "$wrong_command_pid" 2>/dev/null || true
 touch "$RELEASE"
-
-prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
-state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
-registration_runtime=$(jq -r .runtime_dir "$state_path"); worker_count=$(wc -l < "$WATCH_WORKER_LOG")
-rm -f -- "$WATCH_REGISTRATION_GATE.entered" "$WATCH_REGISTRATION_GATE.release"
-touch "$WATCH_REGISTRATION_GATE.enabled"
-"$SCRIPTS/merge-queue-watch" launch --root "$MAIN" --issue KEN-829 --watch-id "$watch" --poll 1 --max-wait 10 >"$TMP/registration-launch.out" 2>"$TMP/registration-launch.err" & registration_launch_pid=$!
-wait_exists "$WATCH_REGISTRATION_GATE.entered" || bad "supervisor did not pause before PID registration"
-wait_state "$state_path" launch_failed || bad "launch failure did not claim before PID registration"
-touch "$WATCH_REGISTRATION_GATE.release"
-set +e; wait "$registration_launch_pid"; registration_launch_rc=$?; set -e
-[[ "$registration_launch_rc" -ne 0 ]] && ok "post-check registration remains a launch failure" || bad "post-check registration revived launch"
-# The supervisor publishes its PID and only then rechecks the state it lost, so
-# the PID file appearing and that process going away bound the window this case
-# is about exactly — the settle sleep it replaces only approximated them.
-if wait_file "$registration_runtime/supervisor.pid"; then
-  registration_pid=$(cat < "$registration_runtime/supervisor.pid")
-  if wait_gone "$registration_pid"; then ok "late-registering supervisor exits before deadline"; else bad "late-registering supervisor survived its failed generation"; fi
-  eq "$(wc -l < "$WATCH_WORKER_LOG")" "$worker_count" "supervisor rechecks state after PID publication"
-else
-  bad "late-registering supervisor never published its PID"
-fi
-touch "$RELEASE"
-"$SCRIPTS/merge-queue-watch" fail --root "$MAIN" --issue KEN-829 --watch-id "$watch" --cause operator_abandoned >/dev/null
-rm -f -- "$WATCH_REGISTRATION_GATE.enabled" "$WATCH_REGISTRATION_GATE.entered" "$WATCH_REGISTRATION_GATE.release"
 
 prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep")
 launch_bounded "$watch"

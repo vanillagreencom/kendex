@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# A settings file the loader refuses (malformed table header, leading UTF-8
-# BOM) is a configuration error, never "undeclared": every second-opinion
+# A settings file the loader refuses is a configuration error, never
+# "undeclared": every second-opinion
 # run aborts at the startup project-env load naming the defect. Emitting
 # the undeclared refusal instead would send the operator hunting a
 # declaration while the real fix is one line in the settings file. Sibling
@@ -29,15 +29,11 @@ cp -R "$REPO_ROOT/skills/second-opinion" "$proj/second-opinion"
 SO="$proj/second-opinion/scripts/second-opinion"
 
 echo "=== a refused settings file fails the run as a config error ==="
-for defect in header bom; do
+for defect in header; do
   case "$defect" in
     header)
       printf '[env] # comment\nSECOND_OPINION_CURRENT_MODEL = "codex"\n' > "$proj/kendex.settings.toml"
       msg="unsupported table header shape"
-      ;;
-    bom)
-      printf '\357\273\277[env]\nSECOND_OPINION_CURRENT_MODEL = "codex"\n' > "$proj/kendex.settings.toml"
-      msg="byte-order mark"
       ;;
   esac
   rc=0

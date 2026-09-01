@@ -2,8 +2,8 @@
 # `graphql_query` refuses a write when no team target resolves, and it decides
 # what a write is with `linear_query_is_mutation`, which reads the document's
 # leading token. That classifier is only as good as the shape of the documents
-# in this skill: one that buried its operation behind a leading fragment, a
-# comment, or a BOM would be posted as a read and skip the guard entirely.
+# in this skill: one that buried its operation behind a leading fragment or a
+# comment would be posted as a read and skip the guard entirely.
 #
 # This lint holds that precondition. Every GraphQL document literal in scripts/
 # must start with its operation keyword, and must classify the way its operation

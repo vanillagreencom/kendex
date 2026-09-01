@@ -23,7 +23,7 @@ assert_rc() { [[ "$1" == "$2" ]] || fail "$3 (expected $2, got $1)"; ok "$3"; }
 # --- Hermetic, harness-free session ------------------------------------------
 # The skill copy lives inside its own project so PROJECT_ROOT resolution finds
 # no committed settings, and the `ps` stand-in reports init as the first parent
-# so harness detection finds nothing and the declared identity is what applies.
+# so harness detection finds nothing and the declared model is what applies.
 mkdir -p "$TMP_ROOT/proj/skills" "$TMP_ROOT/bin" "$TMP_ROOT/psbin" "$TMP_ROOT/work"
 git -C "$TMP_ROOT/proj" init -q
 cp -R "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/proj/skills/second-opinion"
@@ -32,10 +32,7 @@ RUNTIME="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion-runtime"
 
 cat > "$TMP_ROOT/psbin/ps" <<'SH'
 #!/usr/bin/env bash
-# Lies about ANCESTRY only. Every other query — above all the runtime's own
-# `-o pgid=,lstart=` identity check — reaches the real ps, because a stub that
-# answered those with silence would read as "cannot verify" and quietly turn
-# the identity check off in the suite that exists to exercise it.
+# Lies about ancestry only. Every other query reaches the host ps.
 args=("$@")
 mode=""; while [[ $# -gt 0 ]]; do case "$1" in -o) mode="$2"; shift 2 ;; *) shift ;; esac; done
 case "$mode" in
@@ -81,15 +78,12 @@ git -C "$TMP_ROOT/work" add file.txt
 git -C "$TMP_ROOT/work" -c commit.gpgsign=false commit -q -m init
 
 # direct_launch <runtime> <label> <budget> <wait-slice> <cli>: launch a real
-# detached worker with a bounded budget and print the emitted wait command. The
-# identity state is what the worker authenticates against, exactly as
-# second-opinion's own detach path writes it.
+# detached worker with a bounded budget and print the emitted wait command.
 direct_launch() {
   local runtime="$1" label="$2" budget="$3" slice="$4" cli="$5"
   mkdir "$TMP_ROOT/$label-runtime"
-  SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_LAUNCH_SOURCE=detected \
-    SECOND_OPINION_LAUNCH_IN_CALLER_ENV=false SECOND_OPINION_LAUNCH_SESSION_SCOPED=false \
-    SECOND_OPINION_CODEX_CMD="$cli" SLOW_CLI_READY_FILE="$TMP_ROOT/$label.ready" \
+  SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_CODEX_CMD="$cli" \
+    SLOW_CLI_READY_FILE="$TMP_ROOT/$label.ready" \
     "$runtime" launch "$SECOND_OPINION" "$TMP_ROOT/$label-answer" \
     "$TMP_ROOT/$label-runtime" "$budget" false "$slice" \
     quick question --target=codex --cwd "$TMP_ROOT/work" --timeout 30 \
@@ -172,27 +166,23 @@ ok "the killed run left no artifact"
 # --- Staged terminal states ---------------------------------------------------
 # A dead pid with no marker, an elapsed deadline, and a marker already on disk
 # are all built directly, so no case depends on winning a wall-clock margin.
-stage_runtime() { # LABEL TOKEN [MARKER-LINE]
-  local label="$1" token="$2" marker="${3:-}" dead
+stage_runtime() { # LABEL [MARKER-LINE]
+  local label="$1" marker="${2:-}" dead
   mkdir "$TMP_ROOT/$label"
-  printf '%s\n' "$token" > "$TMP_ROOT/$label/token"
   printf '%s' "$marker" > "$TMP_ROOT/$label/worker.log"
   [[ -z "$marker" ]] || printf '\n' >> "$TMP_ROOT/$label/worker.log"
   sleep 0 &
   dead=$!
   wait "$dead" 2>/dev/null || true
   printf '%s\n' "$dead" > "$TMP_ROOT/$label/pid"
-  # A recorded identity that cannot match a live process, so the pid check
-  # reaches its comparison instead of short-circuiting on a missing record.
-  printf '%s Thu Jan  1 00:00:00 1970\n' "$dead" > "$TMP_ROOT/$label/worker-id"
   printf 'staged answer\n' > "$TMP_ROOT/$label-answer"
 }
 
 echo "=== an elapsed deadline with no marker is terminal 124 ==="
-stage_runtime deadline-run stagedtoken
+stage_runtime deadline-run
 rc=0
 "$RUNTIME" wait "$TMP_ROOT/deadline-run-answer" "$TMP_ROOT/deadline-run" \
-  "$(($(date +%s) - 1))" stagedtoken 1 \
+  "$(($(date +%s) - 1))" 1 \
   > "$TMP_ROOT/deadline.stdout" 2> "$TMP_ROOT/deadline.stderr" || rc=$?
 assert_rc "$rc" 124 "an elapsed deadline with no marker returns 124"
 assert_contains "$TMP_ROOT/deadline.stderr" "reached its deadline" \
@@ -201,10 +191,10 @@ assert_contains "$TMP_ROOT/deadline.stderr" "reached its deadline" \
 ok "a terminal 124 removes the runtime directory"
 
 echo "=== the marker outranks an elapsed deadline and a dead pid ==="
-stage_runtime marker-run stagedtoken "__SECOND_OPINION_EXIT_stagedtoken__=0"
+stage_runtime marker-run "__SECOND_OPINION_EXIT__=0"
 rc=0
 "$RUNTIME" wait "$TMP_ROOT/marker-run-answer" "$TMP_ROOT/marker-run" \
-  "$(($(date +%s) - 1))" stagedtoken 1 \
+  "$(($(date +%s) - 1))" 1 \
   > "$TMP_ROOT/marker.stdout" 2> "$TMP_ROOT/marker.stderr" || rc=$?
 assert_rc "$rc" 0 "a published marker beats the deadline and the dead pid"
 assert_contains "$TMP_ROOT/marker.stdout" "$TMP_ROOT/marker-run-answer" \
@@ -235,12 +225,12 @@ SH
 chmod +x "$TMP_ROOT/race-bin/grep"
 race_wait() { # RUNTIME LABEL — run the staged window case, print the exit code
   local runtime="$1" label="$2" rc=0
-  stage_runtime "$label" stagedtoken
+  stage_runtime "$label"
   PATH="$TMP_ROOT/race-bin:$PATH" REAL_GREP="$(command -v grep)" \
     RACE_COUNT="$TMP_ROOT/$label.count" RACE_LOG="$TMP_ROOT/$label/worker.log" \
-    RACE_MARKER="__SECOND_OPINION_EXIT_stagedtoken__=5" \
+    RACE_MARKER="__SECOND_OPINION_EXIT__=5" \
     "$runtime" wait "$TMP_ROOT/$label-answer" "$TMP_ROOT/$label" \
-    "$(($(date +%s) + 60))" stagedtoken 5 \
+    "$(($(date +%s) + 60))" 5 \
     > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr" || rc=$?
   printf '%s\n' "$rc"
 }
@@ -254,7 +244,7 @@ ok "the recovered completion removes the runtime directory"
 # which read decided the run.
 RACE_MUTANT="$MUTANT_DIR/race-mutant-runtime"
 awk '
-  /if ! worker_is_ours "\$worker_pid" "\$runtime_dir"; then/ { print; dropping = 1; next }
+  /if \[\[ -z "\$worker_pid" \]\] \|\| ! process_group_alive "\$worker_pid"; then/ { print; dropping = 1; next }
   dropping && /\[\[ -z "\$line" \]\] \|\| continue/ { dropping = 0; next }
   dropping && (/grep_rc=0/ || /line=\$\(completion_line/ || /grep_rc -ne 2/) { next }
   { print }
@@ -271,10 +261,10 @@ assert_contains "$TMP_ROOT/race-mutant.stderr" "the detached worker is gone" \
 echo "=== a worker's own exit status is what the wait returns ==="
 # EXIT_CLI_FAILED and its siblings mean something an operator acts on, so the
 # protocol has to carry them out unchanged rather than flattening them to 1.
-stage_runtime cli-failed stagedtoken "__SECOND_OPINION_EXIT_stagedtoken__=5"
+stage_runtime cli-failed "__SECOND_OPINION_EXIT__=5"
 rc=0
 "$RUNTIME" wait "$TMP_ROOT/cli-failed-answer" "$TMP_ROOT/cli-failed" \
-  "$(($(date +%s) + 60))" stagedtoken 1 \
+  "$(($(date +%s) + 60))" 1 \
   > "$TMP_ROOT/cli-failed.stdout" 2> "$TMP_ROOT/cli-failed.stderr" || rc=$?
 assert_rc "$rc" 5 "the worker's distinct exit code reaches the caller"
 
@@ -289,8 +279,7 @@ assert_contains "$TMP_ROOT/lf.stderr" "artifact path contains CR or LF" \
 mkdir "$TMP_ROOT/symlink-runtime"
 ln -s "$TMP_ROOT/elsewhere.log" "$TMP_ROOT/symlink-runtime/worker.log"
 rc=0
-SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_LAUNCH_SOURCE=detected \
-  SECOND_OPINION_LAUNCH_IN_CALLER_ENV=false SECOND_OPINION_LAUNCH_SESSION_SCOPED=false \
+SECOND_OPINION_LAUNCH_MODEL=claude \
   "$RUNTIME" launch "$SECOND_OPINION" "$TMP_ROOT/symlink-answer" \
   "$TMP_ROOT/symlink-runtime" 20 false 2 quick question --target=codex \
   --cwd "$TMP_ROOT/work" > "$TMP_ROOT/symlink.stdout" 2> "$TMP_ROOT/symlink.stderr" || rc=$?
@@ -299,14 +288,6 @@ assert_contains "$TMP_ROOT/symlink.stderr" "cannot create worker log" \
   "the refusal names the log it would not follow"
 [[ -e "$TMP_ROOT/elsewhere.log" ]] && fail "the launch followed the planted symlink"
 ok "no output reached the symlink target"
-
-echo "=== --detached-worker is proven, not claimed ==="
-rc=0
-"$SECOND_OPINION" quick question --cwd "$TMP_ROOT/work" --detached-worker \
-  > "$TMP_ROOT/forged.stdout" 2> "$TMP_ROOT/forged.stderr" || rc=$?
-assert_rc "$rc" 1 "a caller passing --detached-worker without runtime state is refused"
-assert_contains "$TMP_ROOT/forged.stderr" "requires runtime ownership proof" \
-  "the refusal names the missing proof"
 
 echo "=== every shipped workflow launches capped and consumes the protocol ==="
 workflow_commands_detach() {

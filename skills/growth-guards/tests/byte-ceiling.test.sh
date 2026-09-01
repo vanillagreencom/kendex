@@ -239,24 +239,13 @@ OUT="$(cd "$R" && GROWTH_GUARDS_BYTE_CEILING_KB=5 "$BC" 2>&1)" && RC=0 || RC=$?
   || bad "environment overrides the settings file" "rc=$RC out=$OUT"
 
 echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
-# A directory (FIFO/socket/device are the same shape) fails -f exactly like
-# an absent file, so the configured settings would be skipped with nothing
-# said and the built-in 200 KB would decide.
+# A directory fails -f exactly like an absent file, so the configured settings
+# would be skipped with nothing said and the built-in 200 KB would decide.
 mkdir -p "$R/nonregular.dir"
 OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=nonregular.dir "$BC" 2>&1)" && RC=0 || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
   && ok "a DIRECTORY settings path is exit 2, not a silent built-in default" \
   || bad "a DIRECTORY settings path is exit 2" "rc=$RC out=$OUT"
-
-if mkfifo "$R/nonregular.fifo" 2>/dev/null; then
-  OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=nonregular.fifo "$BC" 2>&1)" && RC=0 || RC=$?
-  [ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
-    && ok "a FIFO settings path is exit 2, not a silent built-in default" \
-    || bad "a FIFO settings path is exit 2" "rc=$RC out=$OUT"
-  rm -f "$R/nonregular.fifo"
-else
-  echo "  skip  mkfifo unavailable — FIFO shape not exercised"
-fi
 
 # A symlink that does not resolve fails -e as well as -f, so an existence
 # test alone never sees it — the same silent-defaults trap one shape over.

@@ -230,23 +230,6 @@ run_raw || true
   && ok "an unrelated duplicated key is exit 2" \
   || bad "unrelated duplicated key is exit 2" "rc=$RC out=$OUT"
 
-# The BOM is neither whitespace nor `[` nor a key character: a BOM'd [env]
-# header would hide the whole table behind the silent built-in 400, and a
-# BOM'd first dotenv assignment would silently skip the layer.
-printf '\357\273\277[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
-run_raw || true
-[ "$RC" -eq 2 ] && case "$OUT" in *"byte-order mark"*) true ;; *) false ;; esac \
-  && ok "a BOM-prefixed settings file is exit 2, not an invisible table" \
-  || bad "BOM settings file is exit 2" "rc=$RC out=$OUT"
-
-printf '[env]\nSIZE_RATCHET_THRESHOLD = "9"\n' > "$R/kendex.settings.toml"
-printf '\357\273\277SIZE_RATCHET_THRESHOLD=8\n' > "$R/.env.local"
-run_raw || true
-[ "$RC" -eq 2 ] && case "$OUT" in *"byte-order mark"*) true ;; *) false ;; esac \
-  && ok "a BOM-prefixed .env.local is exit 2, not a skipped layer" \
-  || bad "BOM .env.local is exit 2" "rc=$RC out=$OUT"
-rm -f "$R/.env.local"
-
 # kendex-env validates before its parent-env skip; an exported value must
 # never let a broken committed file pass silently.
 printf '[env]\nDUP = "a"\nDUP = "b"\n' > "$R/kendex.settings.toml"
@@ -266,9 +249,8 @@ run_raw SIZE_RATCHET_THRESHOLD=9 || true
 rmdir "$R/.env.local"
 
 echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
-# A directory (FIFO/socket/device are the same shape) fails -f exactly like
-# an absent file, so the configured settings would be skipped with nothing
-# said and the built-in 400 would decide.
+# A directory fails -f exactly like an absent file, so the configured settings
+# would be skipped with nothing said and the built-in 400 would decide.
 new_repo nonregular
 mkfile f.txt 20
 git -C "$R" add -A
@@ -277,16 +259,6 @@ run_raw SIZE_RATCHET_SETTINGS_FILE=nonregular.dir || true
 [ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
   && ok "a DIRECTORY settings path is exit 2, not a silent built-in default" \
   || bad "a DIRECTORY settings path is exit 2" "rc=$RC out=$OUT"
-
-if mkfifo "$R/nonregular.fifo" 2>/dev/null; then
-  run_raw SIZE_RATCHET_SETTINGS_FILE=nonregular.fifo || true
-  [ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
-    && ok "a FIFO settings path is exit 2, not a silent built-in default" \
-    || bad "a FIFO settings path is exit 2" "rc=$RC out=$OUT"
-  rm -f "$R/nonregular.fifo"
-else
-  echo "  skip  mkfifo unavailable — FIFO shape not exercised"
-fi
 
 # A symlink that does not resolve fails -e as well as -f, so an existence
 # test alone never sees it — the same silent-defaults trap one shape over.

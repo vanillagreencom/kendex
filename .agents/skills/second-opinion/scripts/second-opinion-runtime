@@ -2,17 +2,9 @@
 set -euo pipefail
 RUNTIME_SELF="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
 die() { echo "second-opinion-runtime: $1" >&2; exit 1; }
-runtime_dir_valid() {
-  local dir="$1" token="$2" recorded
-  [[ -d "$dir" && ! -L "$dir" ]] || return 1
-  [[ -f "$dir/token" && ! -L "$dir/token" ]] || return 1
-  recorded=$(cat < "$dir/token") || return 1
-  [[ "$recorded" == "$token" ]]
-}
+runtime_dir_valid() { [[ -d "$1" && ! -L "$1" ]]; }
 validate_runtime_dir() {
-  local dir="$1" token="$2"
-  runtime_dir_valid "$dir" "$token" \
-    || die "runtime directory or token is missing, unsafe, or changed: $dir"
+  runtime_dir_valid "$1" || die "runtime directory is missing, unsafe, or changed: $1"
 }
 # THE PROBE IS THE GROUP, NOT ITS LEADER. A leader can exit while its children
 # run on — that is the ordinary shape of a CLI that forks — so probing the
@@ -128,12 +120,12 @@ launch() {
   [[ "$owned" == true || "$owned" == false ]] || die "owned must be true or false"
   [[ "$wait_slice" =~ ^[1-9][0-9]*$ && $wait_slice -lt 600 ]] \
     || die "wait slice must be positive and below 600 seconds"
-  # token and worker_pid are initialised, not merely declared: the cleanup below
-  # reads both, and it is armed before either is assigned. Under `set -u` a
+  # worker_pid is initialised, not merely declared: the cleanup below
+  # reads it, and it is armed before it is assigned. Under `set -u` a
   # declared-but-unassigned local is still unbound, so a signal arriving in that
   # first instant would fault the handler instead of running it.
-  local deadline token="" worker_pid="" cancel_rc="" log="$runtime_dir/worker.log"
-  local worker_args worker_id
+  local deadline worker_pid="" cancel_rc="" log="$runtime_dir/worker.log"
+  local worker_args launch_model="${SECOND_OPINION_LAUNCH_MODEL:-}"
   # THE WINDOW BETWEEN THE FORK AND THE PROTOCOL. Once the worker exists it can
   # only be recovered through what launch prints and stopped through what it
   # records, so until all of that is published the worker is unreachable — a
@@ -146,7 +138,7 @@ launch() {
   # still inside the frame, where a flag would be readable but pointless.
   cleanup_launch() {
     [[ -z "$worker_pid" ]] || stop_process_group "$worker_pid" 30
-    ! runtime_dir_valid "$runtime_dir" "$token" || rm -rf -- "${runtime_dir:?}" || true
+    ! runtime_dir_valid "$runtime_dir" || rm -rf -- "${runtime_dir:?}" || true
   }
   # Deferred across the fork window for the same reason as group_run: until
   # worker_pid is assigned there is no group to stop, and a handler exiting
@@ -155,18 +147,7 @@ launch() {
   trap 'request_cancel 143' TERM HUP
   trap 'request_cancel 130' INT
   trap cleanup_launch EXIT
-  token="$(date +%s).$$.$RANDOM"
-  (umask 077 && set -C && printf '%s\n' "$token" > "$runtime_dir/token") \
-    || die "cannot create runtime token: $runtime_dir/token"
-  if [[ -n "${SECOND_OPINION_LAUNCH_MODEL:-}" ]]; then
-    (umask 077 && set -C && printf '%s\n%s\n%s\n%s\n%s\n' "$token" \
-      "$SECOND_OPINION_LAUNCH_MODEL" "${SECOND_OPINION_LAUNCH_SOURCE:-}" \
-      "${SECOND_OPINION_LAUNCH_IN_CALLER_ENV:-false}" \
-      "${SECOND_OPINION_LAUNCH_SESSION_SCOPED:-false}" > "$runtime_dir/identity") \
-      || die "cannot create detached identity state"
-  fi
-  unset SECOND_OPINION_LAUNCH_MODEL SECOND_OPINION_LAUNCH_SOURCE \
-    SECOND_OPINION_LAUNCH_IN_CALLER_ENV SECOND_OPINION_LAUNCH_SESSION_SCOPED
+  unset SECOND_OPINION_LAUNCH_MODEL
   # set -C: the log is created here or not at all. A symlink planted at this
   # path would otherwise redirect the whole run's output somewhere else.
   set -C
@@ -183,12 +164,11 @@ launch() {
   # The wrapper appends the exit marker AFTER the worker returns. That marker,
   # not the pid recorded below, is what `wait` reads as the run's result.
   set -m
-  env -u SECOND_OPINION_CURRENT_MODEL \
-    SECOND_OPINION_RUNTIME_DIR="$runtime_dir" SECOND_OPINION_RUN_TOKEN="$token" \
+  SECOND_OPINION_CURRENT_MODEL="$launch_model" \
     nohup bash -c '
       rc=0
       "$@" || rc=$?
-      printf "__SECOND_OPINION_EXIT_%s__=%s\n" "$SECOND_OPINION_RUN_TOKEN" "$rc" >&2
+      printf "__SECOND_OPINION_EXIT__=%s\n" "$rc" >&2
       exit "$rc"
     ' second-opinion-worker "$script" "${worker_args[@]}" \
     < /dev/null > "$log" 2>&1 &
@@ -199,15 +179,10 @@ launch() {
   [[ -z "$cancel_rc" ]] || { cleanup_launch; exit "$cancel_rc"; }
   (umask 077 && set -C && printf '%s\n' "$worker_pid" > "$runtime_dir/pid") \
     || die "cannot record detached worker pid: $runtime_dir/pid"
-  # Recorded once, here, while the pid is unambiguously the process we just
-  # started. Everything that later acts on that pid compares against this.
-  worker_id=$(worker_identity "$worker_pid") || worker_id=""
-  (umask 077 && set -C && printf '%s\n' "$worker_id" > "$runtime_dir/worker-id") \
-    || die "cannot record detached worker identity: $runtime_dir/worker-id"
   printf 'artifact: %s\n' "$artifact"
   printf 'deadline: %s\n' "$deadline"
   printf 'wait:'
-  printf ' %q' "$RUNTIME_SELF" wait "$artifact" "$runtime_dir" "$deadline" "$token" "$wait_slice"
+  printf ' %q' "$RUNTIME_SELF" wait "$artifact" "$runtime_dir" "$deadline" "$wait_slice"
   printf '\n'
   # The run is now recoverable and stoppable by its consumer; the launcher's
   # ownership of it ends here, and so does the window the traps guard.
@@ -228,10 +203,7 @@ second_opinion_detach_if_needed() {
   runtime_dir=$(create_runtime_dir)
   [[ "$MODE" == "review" || "$MODE" == "audit" ]] && attempts=2
   budget=$((attempts * (10#$TIMEOUT + 30) + 60))
-  export SECOND_OPINION_LAUNCH_MODEL="$CURRENT_MODEL" \
-    SECOND_OPINION_LAUNCH_SOURCE="$CURRENT_MODEL_SOURCE" \
-    SECOND_OPINION_LAUNCH_IN_CALLER_ENV="$CURRENT_MODEL_IN_CALLER_ENV" \
-    SECOND_OPINION_LAUNCH_SESSION_SCOPED="$CURRENT_MODEL_IS_SESSION_SCOPED"
+  export SECOND_OPINION_LAUNCH_MODEL="$CURRENT_MODEL"
   exec "$RUNTIME_SELF" launch "$SCRIPT_DIR/second-opinion" "$artifact" "$runtime_dir" \
     "$budget" "$owned" 300 "${ORIGINAL_ARGS[@]}"
 }
@@ -242,102 +214,14 @@ completion_line() {
   while IFS= read -r match; do line="$match"; done <<< "$matches"
   printf '%s' "$line"
 }
-# A PID IS NOT AN IDENTITY. Pids are reused, so `kill -0` answers "some process
-# has this number", never "our worker is still running" — and acting on the
-# first answer as though it were the second signals a stranger. Every use of
-# the pid here goes through this: the worker is launched as its own
-# process-group leader, so its identity is that it still leads its own group
-# AND that it started when we recorded it starting. One `ps` call carries both,
-# in a form Linux and macOS both answer.
-#
-# UNVERIFIABLE NEVER PASSES. No ps, no record, no match — the pid is not ours,
-# which costs at worst an early 75 the caller resolves by rerunning.
-#
-# WHAT THAT GUARANTEES, EXACTLY, because the guarantee is not "never": a pid is
-# signalled only while it still leads its own group AND still reports the start
-# time recorded at launch. `ps` reports that time to the whole second, so one
-# window remains — a pid reused by another group leader inside the same second
-# the worker started. Reaching it means wrapping the host's pid space within
-# that second; measured on this repo's Linux host, 4194304 pids against about
-# 6500 forks a second is roughly 639 seconds of churn to come back around, and
-# a reuse at any later second cannot match a record that is already fixed.
-# Finer tokens exist — Linux /proc/<pid>/stat field 22 resolves to 10ms — but
-# not portably, and 10ms narrows the window rather than closing it. One path on
-# every host is worth more than a hundredfold on a window this shape, so the
-# claim stays the one stated here rather than an absolute one.
-# One `ps` answers both questions asked about a pid, and it is one call on
-# purpose: two would read the state and the identity at different moments.
-# lstart is last because it is the only field carrying spaces.
-worker_ps() { # PID — "STATE PGID STARTTIME" on stdout; 1 when unknowable
-  local pid="$1" line
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-  line=$(ps -o state=,pgid=,lstart= -p "$pid" 2>/dev/null) || return 1
-  line=$(printf '%s' "$line" | tr -s '[:space:]' ' ')
-  line="${line# }"
-  line="${line% }"
-  [[ -n "$line" ]] || return 1
-  printf '%s' "$line"
-}
-# The RECORD is the stable half of that line and only the stable half. Pgid and
-# start time are fixed for the life of the process; state is not, so a record
-# carrying it would stop matching the moment the worker changed state.
-worker_identity() { # PID — "PGID STARTTIME" on stdout; 1 when unknowable
-  local line
-  line=$(worker_ps "$1") || return 1
-  printf '%s' "${line#* }"
-}
-# TWO QUESTIONS, NOT ONE, and keeping them apart is the point: "is this the
-# process we started" is answered by the record, "is it still running" by the
-# state. A reaped worker keeps its pgid and its start time, and `kill -0` still
-# succeeds on it, so the record alone matches a run that is already over.
-worker_is_ours() { # PID RUNTIME_DIR — 0 only when the pid is ours AND running
-  local pid="$1" dir="$2" recorded line current
-  [[ -n "$pid" ]] || return 1
-  [[ -f "$dir/worker-id" && ! -L "$dir/worker-id" ]] || return 1
-  recorded=$(cat < "$dir/worker-id") || return 1
-  [[ -n "$recorded" ]] || return 1
-  line=$(worker_ps "$pid") || return 1
-  # Zombie. Nothing to wait for and nothing a signal can reach; on a PID 1 that
-  # does not reap, which is a container without an init, this is every run that
-  # ends without its marker rather than a rare shape.
-  [[ "${line%% *}" != Z* ]] || return 1
-  current="${line#* }"
-  [[ "$current" == "$recorded" ]] || return 1
-  # It led its own group when we started it; a pid that no longer leads that
-  # group is not the process we started, whatever else matches.
-  [[ "${current%% *}" == "$pid" ]]
-}
-# Stop a worker that outlived the run's deadline, and the CLI tree under it.
-# Identity AUTHORISES the signal; the group primitive then does the work. The
-# two jobs are separate on purpose: re-testing identity per iteration would end
-# the loop the moment the worker itself exited, leaving its children running —
-# which is the same leader-shaped mistake, one level up.
-stop_worker() { # PID RUNTIME_DIR
-  local pid="$1" dir="$2"
-  if ! worker_is_ours "$pid" "$dir"; then
-    # A DECLINE IS NOT A NO-OP, so it does not happen quietly. Whatever the run
-    # left running keeps running, and the wait is about to delete the runtime
-    # state and return 124, so the operator reading this line is the only one
-    # left who can act on it.
-    # It CAN fire on a run that then reports a real status, because the marker
-    # may land between the last poll and the deadline check. It stays here and
-    # not after the caller's re-read, so the decline and its line cannot part.
-    echo "second-opinion: the run reached its deadline, but its processes could not be" >&2
-    echo "identified as this run's own, so none were signalled. Stop by hand anything" >&2
-    echo "still running from it." >&2
-    return 0
-  fi
-  stop_process_group "$pid" 30
-}
 wait_for_run() {
-  local artifact="$1" runtime_dir="$2" deadline="$3" token="$4"
-  local wait_slice="$5" log="$2/worker.log" pid_file="$2/pid"
+  local artifact="$1" runtime_dir="$2" deadline="$3"
+  local wait_slice="$4" log="$2/worker.log" pid_file="$2/pid"
   [[ "$deadline" =~ ^[1-9][0-9]*$ ]] || die "deadline must be a positive epoch"
-  [[ "$token" =~ ^[A-Za-z0-9._-]+$ ]] || die "token is malformed"
   [[ "$wait_slice" =~ ^[1-9][0-9]*$ && $wait_slice -lt 600 ]] \
     || die "wait slice must be positive and below 600 seconds"
-  validate_runtime_dir "$runtime_dir" "$token"
-  local prefix="__SECOND_OPINION_EXIT_${token}__=" line status now grep_rc attempt_deadline
+  validate_runtime_dir "$runtime_dir"
+  local prefix="__SECOND_OPINION_EXIT__=" line status now grep_rc attempt_deadline
   local worker_pid=""
   if [[ -f "$pid_file" && ! -L "$pid_file" ]]; then
     worker_pid=$(cat < "$pid_file") || die "cannot read detached worker pid: $pid_file"
@@ -378,7 +262,7 @@ wait_for_run() {
     fi
     now=$(date +%s)
     if [[ $now -ge $deadline ]]; then
-      stop_worker "$worker_pid" "$runtime_dir"
+      [[ -z "$worker_pid" ]] || stop_process_group "$worker_pid" 30
       grep_rc=0
       line=$(completion_line "$log" "$prefix") || grep_rc=$?
       [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
@@ -388,7 +272,7 @@ wait_for_run() {
       echo "Error: detached run reached its deadline $deadline" >&2
       exit 124
     fi
-    if ! worker_is_ours "$worker_pid" "$runtime_dir"; then
+    if [[ -z "$worker_pid" ]] || ! process_group_alive "$worker_pid"; then
       grep_rc=0
       line=$(completion_line "$log" "$prefix") || grep_rc=$?
       [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
@@ -414,7 +298,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   case "$action" in
     group-run) [[ $# -ge 2 ]] || die "group arguments are incomplete"; group_run "$@" ;;
     launch) [[ $# -ge 7 ]] || die "launch arguments are incomplete"; launch "$@" ;;
-    wait) [[ $# -eq 5 ]] || die "wait arguments are incomplete"; wait_for_run "$@" ;;
+    wait) [[ $# -eq 4 ]] || die "wait arguments are incomplete"; wait_for_run "$@" ;;
     *) die "unknown action: $action" ;;
   esac
 fi

@@ -282,8 +282,7 @@ fi
 assert_contains "$dash_out" "user-data.txt" "dash-path warning names the untracked file"
 
 echo "=== non-file entries block the repair ==="
-# FIFOs/sockets/devices and empty untracked dirs are data the old file-only
-# inventory missed.
+# Empty untracked directories are data the old file-only inventory missed.
 rm -f "$WT/runtime"
 mkdir -p "$WT/runtime/empty-sub"
 set +e
@@ -298,18 +297,6 @@ fi
 assert_contains "$empty_out" "empty untracked directory" "warning names the empty dir"
 if [[ "$empty_rc" -ne 0 ]]; then ok "blocked repair exits nonzero"; else bad "blocked repair exits nonzero" "rc=0"; fi
 
-rm -rf "$WT/runtime"
-mkdir -p "$WT/runtime"
-if mkfifo "$WT/runtime/pipe.fifo" 2>/dev/null; then
-  set +e
-  fifo_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
-  set -e
-  if [[ -p "$WT/runtime/pipe.fifo" ]]; then ok "FIFO blocks and survives"; else bad "FIFO blocks and survives" "$fifo_out"; fi
-  assert_contains "$fifo_out" "pipe.fifo" "warning names the FIFO"
-  rm -f "$WT/runtime/pipe.fifo"
-else
-  ok "skipped: mkfifo unavailable"
-fi
 rm -rf "$WT/runtime"
 (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
 

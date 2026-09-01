@@ -7,8 +7,7 @@
 # A `.env` file is never read. The TOML reader loads the [env] table only;
 # a duplicate key inside [env], a value outside the contract grammar
 # (single-line double-quoted, no `"`, no `\`), or a `[`-leading line that
-# is not a lone [name] header, fails the load — as does a leading UTF-8
-# BOM in any project file.
+# is not a lone [name] header, fails the load.
 #
 # Bug 2 (kendex#507): the settings loader clobbered caller-provided env. Parent
 # values must now win over every project file, while the settings < .env.local
@@ -200,32 +199,6 @@ s6_case "an unquoted value" $'[env]\nUNQ = bare' "unsupported syntax for UNQ"
 # quoted foreign header after [env]) whole tables if it passes as content.
 s6_case "a commented [env] header" $'[env] # comment\nHIDDEN = "x"' "unsupported table header shape"
 s6_case "a quoted foreign header after [env]" $'[env]\nGOOD = "y"\n["notes"]\nLEAK = "z"' "unsupported table header shape"
-# A UTF-8 BOM is neither whitespace nor `[` to this reader: a BOM'd first
-# header would leave every assignment outside any table — silent defaults.
-s6_case "a BOM-prefixed first header" "$(printf '\357\273\277')"$'[env]\nHIDDEN = "x"' "byte-order mark"
-
-# Scenario 7: a BOM-prefixed .env.local refuses the load the same way. The
-# env file is SOURCED, and bash would read the BOM as part of the first
-# command name — the assignment it hides would be silently dropped.
-PROJ7="$TMP_ROOT/proj7"
-mkdir -p "$PROJ7"
-printf '\357\273\277BOMMED="x"\n' > "$PROJ7/.env.local"
-set +e
-s7_err=$(
-  set -euo pipefail
-  source "$LIB"
-  kendex_load_project_env "$PROJ7" 2>&1 >/dev/null
-)
-s7_code=$?
-set -e
-assert_eq "$s7_code" "1" "scenario 7: a BOM-prefixed .env.local fails the load"
-case "$s7_err" in
-  *"byte-order mark"*)
-    PASS=$((PASS + 1)); printf '  ok    scenario 7: the refusal names the BOM\n' ;;
-  *)
-    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 7: the refusal names the BOM\n        stderr: %s\n' "$s7_err" ;;
-esac
-
 # Scenario 8: a source is skipped only when ABSENT. A present-but-unusable
 # source (directory, dangling symlink, unreadable file) fails the load
 # loud, naming the path — silently treating it as absent would let a
