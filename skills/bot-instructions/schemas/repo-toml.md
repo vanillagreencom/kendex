@@ -96,14 +96,21 @@ is a valid glob and every validator passes. One holding `#` becomes a comment in
 `.coderabbit.yaml`. A ban list closes the shapes someone thought of; a character
 class closes the rest.
 
-**Path shape, on top of the class.** Refused: a leading `/`, a trailing `/`, a
-`..` component, and an empty component. The class does not cover these — `.`
-and `/` are both allowed characters, so `../**` and `/src/**` are made of
-nothing but permitted bytes — and they are the two shapes that matter most:
-`path_filters` hands these patterns to `git sparse-checkout`, and a `..` there
-is a path-escape in the one place this package gives its own strings to a
-checkout tool. Leading `/` is refused because it is an anchoring form the
-engines read differently.
+**Path shape, on top of the class.** Refused: an empty glob, a leading `/`, a
+trailing `/`, a `..` component, and an empty component. Each is its own clause,
+so each ships its own control.
+
+The class catches none of them. `.` and `/` are both permitted characters, so
+`../**` and `/src/**` are made of nothing but allowed bytes; and the class
+constrains which characters may appear rather than requiring one to, so `""`
+satisfies it and everything else stated here.
+
+Why each matters. A `..` component is a path escape in the one place this
+package hands its own strings to a checkout tool, since `path_filters` reaches
+`git sparse-checkout`. A leading `/` is an anchoring form the engines read
+differently. An empty glob means something different to each of the five, so it
+renders as a pattern whose effect is undefined and engine-dependent — the silent
+failure this package exists to remove.
 
 The metacharacters the class leaves out are worth naming for the error message:
 a brace (`{`, `}`), extglob (`!(`, `@(`, `+(`, `?(`, `*(`), a comma, a
@@ -112,7 +119,8 @@ backslash, a leading `!`, and a double quote. A comma because Copilot's
 because at least one engine reads them differently from the others, and a
 pattern that means two things is worse than one that is rejected.
 
-An empty glob list is an error wherever a glob list is required.
+An empty glob list is an error wherever a glob list is required, which is the
+list-level counterpart of the empty-glob clause above.
 
 ## Keys
 
@@ -311,9 +319,9 @@ here is the only predicate.
 | `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | yes | – | yes | – |
 | doctrine block text | yes | yes | yes | – | yes | – |
 | `[[exclusions.path]] reason` | – | – | yes | yes | – | single line |
-| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | the glob dialect above, plus its path-shape rule |
-| `[tone] coderabbit` | – | – | – | – | ASCII only |
-| `[cadence] qodo_commands` entries | – | – | – | – | a verb from the set above, no whitespace, no `--` |
+| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | – | non-empty, the glob dialect above, and its path-shape rule |
+| `[tone] coderabbit` | – | – | – | – | – | ASCII only |
+| `[cadence] qodo_commands` entries | – | – | – | – | – | a verb from the set above, no whitespace, no `--` |
 
 The predicates, written once:
 

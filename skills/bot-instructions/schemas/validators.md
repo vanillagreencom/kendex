@@ -102,10 +102,11 @@ The clauses are the cells of `repo-toml.md` § The content refusals: every marke
 cell is one clause with one control, and the predicates are that table's. That
 table carries every one of them, `[tone] coderabbit`'s ASCII rule and the
 `qodo_commands` verb set included, so neither list has anything the other lacks.
-One clause lives outside it, because it is a shape rather than a content
-refusal: a glob with a leading or trailing `/`, a `..` component, or an empty
-one, none of which the character class can catch since every byte in them is
-permitted.
+The glob row's path-shape rule is the one entry whose clauses that table names
+rather than marks, because they are shapes rather than content refusals: an
+empty glob, a leading or trailing `/`, a `..` component, and an empty component,
+each its own clause with its own control. The character class catches none of
+them — every byte in them is permitted, and an empty glob has no bytes at all.
 
 Reading the table's marked cells is how the control count is checked, which is
 what a validator restating its own copy of the predicates would defeat.
