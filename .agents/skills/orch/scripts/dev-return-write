@@ -57,6 +57,7 @@
 #     "issue": "[ISSUE_ID]",                  // required, normalized state key
 #     "branch": "[BRANCH]",                   // required
 #     "commit": "[HEAD_SHA_AFTER_COMMIT]",    // implement/fix only; OMITTED for analysis
+#     "baseline_lines": 138,                  // implement only; additions + deletions, floor 1
 #     "validate": "pass" | "FAILING: c1,c2",  // implement/fix only; OMITTED for analysis
 #     "validate_note": "…" | null,            // --validate-note; OMITTED for analysis
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
@@ -110,8 +111,8 @@ Usage:
     [--qa-label LABEL]... [--no-summary]
 
 Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
-The first implement receipt records additions plus deletions against the base
-branch as workflow state pr.baseline_lines; later receipts preserve it.
+An implement receipt carries additions plus deletions against the base branch,
+with a floor of 1. The orchestrator verifies and persists the first accepted one.
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
 REASONING must be non-empty. --validate is "pass" or begins with "FAILING:".
 --validate-note carries a qualified result the enumeration cannot express (a lane
@@ -181,6 +182,7 @@ branch=""
 commit=""
 validate=""
 validate_note=""
+baseline_lines=null
 summary_file=""
 summary_file_given=false
 summary_text=""
@@ -328,7 +330,7 @@ if [[ "$kind" == "fix" || "$bundled" == "true" ]]; then
 fi
 
 if [[ "$kind" == "implement" ]]; then
-  record_branch_baseline "$worktree" "$issue" "$SCRIPT_DIR" \
+  branch_baseline_lines "$worktree" "$SCRIPT_DIR/resolve-base-branch" "$commit" baseline_lines \
     || die "$BRANCH_GROWTH_ERROR"
 fi
 
@@ -411,6 +413,7 @@ else
     --arg issue "$issue" \
     --arg branch "$branch" \
     --arg commit "$commit" \
+    --argjson baseline_lines "$baseline_lines" \
     --arg validate "$validate" \
     --arg validate_note "$validate_note" \
     --argjson qa_labels "$qa_json" \
@@ -418,7 +421,7 @@ else
     "${summary_arg[@]}" \
     --argjson bundled "$bundled" \
     --argjson items "$items_json" \
-    '{
+    '({
        schema_version: $schema_version,
        round_id: $round_id,
        kind: $kind,
@@ -432,7 +435,7 @@ else
        summary: $summary,
        bundled: $bundled,
        items: $items
-     }' > "$tmp"
+     } + if $kind == "implement" then {baseline_lines: $baseline_lines} else {} end)' > "$tmp"
 fi
 
 mv "$tmp" "$out"

@@ -62,6 +62,20 @@ reason() {
   "$CHECK" "$@" 2>/dev/null | jq -r '.reason' || true
 }
 
+round_write() {
+  local worktree="" issue="" round_id="" arg previous=""
+  for arg in "$@"; do
+    case "$previous" in
+      --worktree) worktree="$arg" ;;
+      --issue) issue="$arg" ;;
+      --round-id) round_id="$arg" ;;
+    esac
+    previous="$arg"
+  done
+  "$STATE" --state-dir "$worktree/tmp" set "$issue" dev_round_id "$round_id" >/dev/null
+  env ORCH_STATE_DIR="$worktree/tmp" "$ROUND_WRITE_BIN" "$@"
+}
+
 echo "=== dev-artifact-check ==="
 
 worktree="$TMP_ROOT/wt"
@@ -71,7 +85,7 @@ R="1750000000-4242"
 artifact="$worktree/tmp/dev-return-$issue-$R.json"
 
 # A complete implement-kind receipt (round-scoped, all required fields present).
-valid_impl='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","validate":"pass","qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
+valid_impl='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","baseline_lines":1,"validate":"pass","qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
 # A complete fix-kind receipt with items[] (n = 1,2).
 valid_fix='{"schema_version":1,"round_id":"1750000000-4242","kind":"fix","issue":"issue-770","branch":"issue-770","commit":"def456a","validate":"FAILING: lint","summary_posted":true,"summary":null,"bundled":false,"items":[{"n":1,"decision":"Applied","reasoning":"fixed nil deref"},{"n":2,"decision":"Skipped","reasoning":"contradicts D010"}]}'
 # A complete analysis-kind receipt (kendex#952): read-only round, NO commit /
@@ -280,10 +294,16 @@ set -e
 WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
 rt_wt="$TMP_ROOT/rt"
 mkdir -p "$rt_wt"
-init_growth_state "$STATE" "$rt_wt" issue-9 1000000
-rt_impl="$("$WRITE" --worktree "$rt_wt" --kind implement --issue issue-9 --round-id 5-6 --branch b --commit c --validate pass)"
+git -C "$rt_wt" init -q -b main
+git -C "$rt_wt" config user.email test@example.com
+git -C "$rt_wt" config user.name Test
+git -C "$rt_wt" config commit.gpgsign false
+git -C "$rt_wt" commit -q --allow-empty -m base
+init_growth_state "$STATE" "$rt_wt" issue-9 5-6
+rt_head="$(git -C "$rt_wt" rev-parse HEAD)"
+rt_impl="$("$WRITE" --worktree "$rt_wt" --kind implement --issue issue-9 --round-id 5-6 --branch b --commit "$rt_head" --validate pass)"
 assert_eq "$([[ -f "$rt_impl" ]] && echo yes)" "yes" "writer produced the round-scoped implement artifact"
-assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 5-6)" "valid" "writer implement output round-trips as valid"
+assert_eq "$(env ORCH_STATE_DIR="$rt_wt/tmp" "$CHECK" --worktree "$rt_wt" --issue issue-9 --round-id 5-6 | jq -r '.reason')" "valid" "writer implement output round-trips as valid"
 "$WRITE" --worktree "$rt_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --file "$rt_wt/tmp/dev-return-issue-9-7-8.json" --expect-items 1,2)" "valid" "writer fix output round-trips through file-mode --expect-items"
 printf 'Recommend: re-scope; seam moved in refactor.\n' > "$rt_wt/analysis.md"
@@ -294,7 +314,8 @@ assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 9-10)" "valid
 # The delegated item set is persisted at delegation time (dev-round-write →
 # tmp/dev-round-ISSUE-RID.json), so the exact-set gate has an on-disk source of
 # truth instead of a number list typed from the orchestrator's context.
-ROUND_WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
+ROUND_WRITE_BIN="$REPO_ROOT/skills/orch/scripts/dev-round-write"
+ROUND_WRITE=round_write
 rr_wt="$TMP_ROOT/rr"
 mkdir -p "$rr_wt"
 git -C "$rr_wt" init -q -b main
@@ -302,7 +323,7 @@ git -C "$rr_wt" config user.email test@example.com
 git -C "$rr_wt" config user.name Test
 git -C "$rr_wt" config commit.gpgsign false
 git -C "$rr_wt" commit -q --allow-empty -m base
-init_growth_state "$STATE" "$rr_wt" issue-9 1000000
+init_growth_state "$STATE" "$rr_wt" issue-9 seed 1000000
 rr_head="$(git -C "$rr_wt" rev-parse HEAD)"
 "$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 \
   --item 1 "fix nil deref" --item 2 "cover expiry" >/dev/null
@@ -385,7 +406,7 @@ git -C "$adds_wt" config user.email test@example.com
 git -C "$adds_wt" config user.name Test
 git -C "$adds_wt" config commit.gpgsign false
 git -C "$adds_wt" commit -q --allow-empty -m base
-init_growth_state "$STATE" "$adds_wt" issue-826 1000000
+init_growth_state "$STATE" "$adds_wt" issue-826 seed 1000000
 
 "$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 1-1 --item 1 "fix finding" >/dev/null
 mkdir -p "$adds_wt/.agents/skills/orch/scripts" "$adds_wt/crates/new-parser" "$adds_wt/helpers" \
@@ -458,7 +479,7 @@ git -C "$diverge_wt" config user.email test@example.com
 git -C "$diverge_wt" config user.name Test
 git -C "$diverge_wt" config commit.gpgsign false
 git -C "$diverge_wt" commit -q --allow-empty -m base
-init_growth_state "$STATE" "$diverge_wt" issue-826 1000000
+init_growth_state "$STATE" "$diverge_wt" issue-826 seed 1000000
 "$ROUND_WRITE" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --item 1 compare >/dev/null
 git -C "$diverge_wt" checkout -q --orphan divergent
 git -C "$diverge_wt" commit -q --allow-empty -m divergent
@@ -514,6 +535,8 @@ git -C "$gitwt" reset -q --hard HEAD~1   # orphan_sha still resolves, now unreac
 head_sha="$(git -C "$gitwt" rev-parse HEAD)"
 fake_sha="${head_sha:0:8}00000000000000000000000000000000"
 gartifact="$gitwt/tmp/dev-return-$issue-$R.json"
+init_growth_state "$STATE" "$gitwt" "$issue" "$R"
+export ORCH_STATE_DIR="$gitwt/tmp"
 
 # valid, reachable commit (HEAD) → valid with no warning
 printf '%s' "$valid_impl" | jq -c --arg c "$head_sha" '.commit=$c' > "$gartifact"
@@ -555,6 +578,7 @@ printf '%s' "$valid_impl" | jq -c 'del(.commit)' > "$gartifact"
 assert_eq "$(reason --worktree "$gitwt" --issue "$issue" --round-id "$R")" "invalid" "missing .commit in a git worktree stays reason=invalid (scalar gate first)"
 printf '%s' "$valid_impl" | jq -c --arg c "$fake_sha" '.commit=$c | .bundled=true | .items=[]' > "$gartifact"
 assert_eq "$(reason --worktree "$gitwt" --issue "$issue" --round-id "$R")" "commit_unresolvable" "commit_unresolvable beats bundled-item incompleteness"
+unset ORCH_STATE_DIR
 
 # non-repo worktree keeps today's behavior: commit gates skipped, still valid
 printf '%s' "$valid_impl" > "$artifact"
@@ -724,17 +748,17 @@ assert_file_contains "$dev_round_schema" "--expect-items-from-round" "dev-round 
 noted_file="$worktree/tmp/noted.json"
 NOTE="80/80 on re-run; first run flaked on Rust Tests (release)"
 jq -n --arg note "$NOTE" '{schema_version:1,round_id:"1-1",kind:"implement",issue:"i",branch:"b",
-  commit:"c",validate:"pass",validate_note:$note,qa_labels:[],summary_posted:true,summary:null,
+  commit:"c",baseline_lines:1,validate:"pass",validate_note:$note,qa_labels:[],summary_posted:true,summary:null,
   bundled:false,items:[]}' > "$noted_file"
 out="$("$CHECK" --file "$noted_file")"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "an artifact carrying a validate_note is valid"
 assert_eq "$(jq -r '.validate' <<<"$out")" "pass" "the check echoes the enumerated verdict"
 assert_eq "$(jq -r '.validate_note' <<<"$out")" "$NOTE" "the check echoes the qualifier to the orchestrator"
 
-# Artifacts written before the field existed must keep validating unchanged.
+# The validation note remains optional beside the required baseline measurement.
 legacy_file="$worktree/tmp/legacy.json"
 jq -n '{schema_version:1,round_id:"1-1",kind:"implement",issue:"i",branch:"b",commit:"c",
-  validate:"pass",qa_labels:[],summary_posted:true,summary:null,bundled:false,items:[]}' > "$legacy_file"
+  baseline_lines:1,validate:"pass",qa_labels:[],summary_posted:true,summary:null,bundled:false,items:[]}' > "$legacy_file"
 out="$("$CHECK" --file "$legacy_file")"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "an artifact with no validate_note key is still valid"
 assert_eq "$(jq -r '.validate_note' <<<"$out")" "null" "an absent note reports null"
@@ -743,7 +767,7 @@ assert_eq "$(jq -r '.validate_note' <<<"$out")" "null" "an absent note reports n
 for bad in '""' '42' 'true' '[]'; do
   bad_file="$worktree/tmp/badnote.json"
   jq -n --argjson n "$bad" '{schema_version:1,round_id:"1-1",kind:"implement",issue:"i",branch:"b",
-    commit:"c",validate:"pass",validate_note:$n,qa_labels:[],summary_posted:true,summary:null,
+    commit:"c",baseline_lines:1,validate:"pass",validate_note:$n,qa_labels:[],summary_posted:true,summary:null,
     bundled:false,items:[]}' > "$bad_file"
   assert_eq "$("$CHECK" --file "$bad_file" 2>/dev/null | jq -r '.reason')" "invalid" \
     "validate_note $bad is rejected as invalid"

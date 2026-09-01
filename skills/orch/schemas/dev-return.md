@@ -4,7 +4,7 @@ The on-disk record a dev or QA agent writes at the end of an implement, fix, or 
 
 Written **only** by `dev-return-write` — never hand-authored, never composed with a file-write tool. The writer builds the JSON with `jq` and writes it atomically; its `--help` is the flag reference. Validation gates live in `dev-artifact-check --help`; round-closure routing in [`../references/artifact-checks.md`](../references/artifact-checks.md).
 
-The first `implement` receipt also records the branch's additions plus deletions in workflow state as `pr.baseline_lines`. Later implementation receipts preserve that baseline.
+Every `implement` receipt carries the branch's additions plus deletions at its commit as `baseline_lines`, with binary rows omitted and a floor of 1. `dev-artifact-check` recomputes that number and persists the first accepted active round outside the delegated worktree. The writer never changes workflow state.
 
 ## Identity: the round id
 
@@ -24,6 +24,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
   "issue": "PROJ-123",
   "branch": "user/proj-123",
   "commit": "abc123f",
+  "baseline_lines": 138,
   "validate": "pass",
   "validate_note": "80/80 on re-run; first run flaked on Rust Tests (release), same git_diff_hash",
   "qa_labels": ["needs-review"],
@@ -44,6 +45,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 | `issue` | Yes | `--issue` | Normalized workflow-state key (Parent ID when bundled) |
 | `branch` | Yes | `--branch` | Git branch (non-empty string) |
 | `commit` | implement/fix | `--commit` | HEAD SHA after the commit, or the prior HEAD when no commit was needed. **Absent for `analysis`** |
+| `baseline_lines` | implement | measured by writer | Additions plus deletions against the base branch at `commit`, omitting binary rows and floored at 1. The orchestrator recomputes it before accepting the first baseline. **Absent for `fix` and `analysis`** |
 | `validate` | implement/fix | `--validate` | `pass` or `FAILING: check1,check2` — a closed enumeration. **Absent for `analysis`** |
 | `validate_note` | Optional | `--validate-note` | A free-text qualifier the enumeration cannot express, or `null`. **Absent for `analysis`** |
 | `qa_labels` | Optional | `--qa-label` (repeatable) | Applied QA labels; `[]` when none |

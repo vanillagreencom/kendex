@@ -67,7 +67,10 @@ Persistent state file for orch workflows. Survives context compaction.
     "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567": "76543210f9e8d7c6b5a49382716051423344abcd"
   },
   "pr": {
-    "baseline_lines": 138
+    "baseline_lines": 138,
+    "baseline_round_id": "1769600000123456789-1837",
+    "baseline_commit": "abc123f",
+    "baseline_source": "implementation"
   },
   "pr_review_baseline": {
     "last_threads": ["PRRT_kwDOABC123", "PRRT_kwDODEF456"]
@@ -132,7 +135,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `escalated_items` | object[] | Items dev did not apply, plus items still outstanding when review-pr's cycle cap ends the fix loop. `outcome` records the per-item decision — `"blocked"` (could not fix; the cap path always writes this) or `"skipped"` (deliberately skipped); an entry without `outcome` is treated as blocked. The audit builder maps it to a distinct `origin`. An item is never in both buckets: every dev-fix outcome write clears the item from both, matched on (location, description), before appending its own entry |
 | `audit_issues_created` | string[] | Issue IDs created by audit |
 | `rebase_map` | object | Old→new commit SHA map accumulated from `worktree push` auto-rebase output (`rebase-map:` lines), written by orch `worktree-push`. Keys are pre-rebase SHAs; values are post-rebase SHAs, or the literal `"dropped"` when the replayed commit vanished. `worktree-push` rewrites the SHAs stored elsewhere in state at push time — `fixed_items[].commit` and `pr_comment_review.fixes[].commit` become the new SHA truncated to the recorded length, or the marked form `dropped:<recorded sha>` for a dropped mapping. The map remains for artifact-sourced references (e.g. perf QA `benchmark_commit`) — resolve through it repeatedly until no key matches |
-| `pr` | object | Pull-request growth state. `baseline_lines` is additions plus deletions against the base branch when the first implementation receipt lands. `dev-return-write` sets it once; rebases and later rounds do not move it |
+| `pr` | object | Cached pull-request growth state: `baseline_lines`, `baseline_round_id`, `baseline_commit`, and `baseline_source` (`implementation` or `first-fix`). The immutable record is `<git-common-dir>/kendex/branch-baselines/[ISSUE_ID].json`. `dev-artifact-check` writes the first accepted implementation baseline; a fresh standalone route may write it at its first fix round. Every fix-round stamp compares all cache fields with that record and fails closed on a mismatch. Rebases and later rounds do not move it |
 | `pr_review_baseline` | object | `last_threads[]` — the unresolved review-thread IDs present at the end of the last triage pass. `review-pr-comments.md` § 6.3 calls a thread new when its id is absent from this array; never store a count here |
 | `pr_comment_review` | object | PR comment review tracking: `iterations`, `fixes[]`, `issues_created[]`, `skipped[]`, `replied[]` (thread IDs answered), `patched_causes[]` — one `{cause, commit}` per patched cause, the single record [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence) reads: this workflow writes it where the reply resolves the thread, and [dev-fix.md](../workflows/dev-fix.md) § 2 writes it for the `pr-review`, `qa-review`, and `review` loops, whose items land in `fixed_items`; `frozen_causes[]` — one `{cause, issue}` per cause frozen by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), written before the `Tracked:` reply; a later finding on a listed cause is declined, never re-triaged |
 | `pr_approval` | object | Reviewer-gate override tracking: `forced` (the user chose Force merge past a missing verdict), `reviewer_down` (`PR_REVIEW_ON_TIMEOUT=proceed` auto-proceeded past the deadline with every reviewer silent), `gate` (legacy: `off` for a reviewer-less repo, still written and still read as the gate-4 fallback) |

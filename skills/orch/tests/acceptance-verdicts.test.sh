@@ -24,16 +24,19 @@ git -C "$WT" init -q -b main
 git -C "$WT" -c user.email=t@t -c user.name=t commit -q --allow-empty -m seed
 SHA="$(git -C "$WT" rev-parse HEAD)"
 "$SCRIPTS/workflow-state" --state-dir "$WT/tmp" init T-1 --worktree "$WT" --branch main >/dev/null
+export ORCH_STATE_DIR="$WT/tmp"
 
 # --- dev-artifact-check verdicts ---
 v() { "$SCRIPTS/dev-artifact-check" --worktree "$WT" --issue T-1 --round-id "$1" 2>/dev/null | jq -r '.verdict'; }
 
 check "no artifact for the round → wait" "wait" "$(v r-none || true)"
 
+"$SCRIPTS/workflow-state" set T-1 dev_round_id r-good >/dev/null
 "$SCRIPTS/dev-return-write" --worktree "$WT" --kind implement --issue T-1 --round-id r-good \
   --branch main --commit "$SHA" --validate pass --no-summary --summary ok >/dev/null
 check "valid artifact → accept" "accept" "$(v r-good)"
 
+"$SCRIPTS/workflow-state" set T-1 dev_round_id r-failing >/dev/null
 "$SCRIPTS/dev-return-write" --worktree "$WT" --kind implement --issue T-1 --round-id r-failing \
   --branch main --commit "$SHA" --validate "FAILING: cargo test" --no-summary --summary ok >/dev/null
 check "validate FAILING → retry" "retry" "$(v r-failing)"

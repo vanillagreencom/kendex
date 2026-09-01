@@ -19,6 +19,7 @@
 # skills/orch/schemas/dev-return.md):
 #   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix"|"analysis",
 #     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
+#     "baseline_lines": 138 (implement only; verified before persistence),
 #     "validate_note": "…"|null (optional free-text qualifier — kendex#884),
 #     "qa_labels": […], "summary_posted": bool, "summary": "…"|null,
 #     "bundled": bool, "items": [{"n": <number>, "decision": "Applied"|"Skipped"|"Blocked", "reasoning": "…"}] }
@@ -45,6 +46,7 @@
 set -euo pipefail
 
 PROG="dev-artifact-check"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Path-safe token grammar for --issue / --round-id (no '/', '..', whitespace).
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 # --expect-items is a comma-separated list of item numbers.
@@ -83,7 +85,9 @@ requires it exists, its internal .round_id == RID, then the scalar/kind, commit
 object (against WT's git repo, kendex#994), and items gates. A kind fix receipt
 automatically resolves --expect-items-from-round authorization even when the
 caller supplied no expected-set flag. Implement and analysis remain flagless.
-File mode: validates one explicit JSON file (round_id checked only when --round-id
+An accepted implement receipt also binds its verified baseline to the active
+workflow-state round and worktree lease, then creates the immutable record under
+the repository's git common directory. File mode: validates one explicit JSON file (round_id checked only when --round-id
 is supplied). It is a test/parity affordance — round-trip checks and known-path
 artifacts — with no production caller; the orch workflows always use round mode.
 There is one identity model (round id); the mtime freshness gate and the old
@@ -128,8 +132,9 @@ reason meanings when ok=false:
               wrong-typed/empty: .kind ∈ {implement,fix,analysis}; .issue/.branch
               non-empty strings; .round_id non-empty string; .schema_version a
               number. implement/fix additionally require .commit/.validate
-              non-empty strings; kind analysis requires the INVERSE — no .commit,
-              .validate, or .validate_note key present at all (an analysis round
+              non-empty strings; implement requires integer .baseline_lines >= 1;
+              fix forbids that field. kind analysis requires the INVERSE — no .commit,
+              .validate, .validate_note, or .baseline_lines key present at all (an analysis round
               produces no commit and runs no validation, so their presence is a
               fabricated claim — kendex#952)
   commit_unresolvable
@@ -255,11 +260,17 @@ has_required_fields() {
       and ((.schema_version? | type) == "number")
       and (if $k == "analysis"
            then ((has("commit") | not) and (has("validate") | not)
-                 and (has("validate_note") | not))
+                 and (has("validate_note") | not) and (has("baseline_lines") | not))
            else ((.commit? | type) == "string") and (.commit != "")
              and ((.validate? | type) == "string") and (.validate != "")
              and ((.validate_note? | type) as $t | $t == "null" or $t == null
                   or ($t == "string" and (.validate_note != "")))
+             and (if $k == "implement"
+                  then ((.baseline_lines? | type) == "number")
+                    and (.baseline_lines == (.baseline_lines | floor))
+                    and (.baseline_lines >= 1)
+                  else (has("baseline_lines") | not)
+                  end)
            end)
   ' "$1" >/dev/null 2>&1
 }
@@ -657,7 +668,7 @@ reroute_flagless_fix() {
 }
 
 check_once() {
-  local out rc=0 verdict
+  local out rc=0 verdict kind commit receipt_lines
   out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$authorization")" || rc=$?
   if (( rc == 0 )); then
     verdict="$(jq -r '.verdict' <<<"$out")" || {
@@ -667,6 +678,19 @@ check_once() {
     if [[ "$verdict" == "accept" ]] && ! retire_authorization "$authorization"; then
       printf '%s: could not retire accepted round authorization %s\n' "$PROG" "$authorization" >&2
       return 2
+    fi
+    kind="$(jq -r '.kind' "$file")"
+    if [[ "$verdict" == "accept" && "$round_mode" == "true" && "$kind" == "implement" ]] \
+      && [[ "$(git -C "$worktree" rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]; then
+      # shellcheck source=lib/branch-growth.sh
+      source "$SCRIPT_DIR/lib/branch-growth.sh"
+      commit="$(jq -r '.commit' "$file")"
+      receipt_lines="$(jq -r '.baseline_lines' "$file")"
+      if ! accept_implementation_baseline \
+        "$worktree" "$issue" "$round_id" "$commit" "$receipt_lines" "$SCRIPT_DIR"; then
+        printf '%s: %s\n' "$PROG" "$BRANCH_GROWTH_ERROR" >&2
+        return 2
+      fi
     fi
   fi
   printf '%s\n' "$out"
