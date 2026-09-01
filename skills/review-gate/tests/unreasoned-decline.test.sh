@@ -36,6 +36,36 @@ page_with() { # page_with PROGRAM THREAD_JSON… -> "unresolved untracked unreas
   jq -r "$1" <<<"{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[$2]}}}}}"
 }
 page() { page_with "$prog" "$1"; }
+
+# A probe plants a mutant by rewriting the program's text, and "the text
+# changed" is a contract that a WRONG change satisfies: an anchor that has
+# drifted can delete the pass a probe claims to move, and every assertion
+# under it then runs against a program nobody described. Each probe therefore
+# declares the SHAPE its mutation should have and this checks it — a move
+# preserves the line count, a substitution changes lines without changing the
+# count, a deletion removes exactly as many lines as it names.
+#
+# Prints nothing on success. On failure it reds and the caller skips its
+# assertions, because assertions under an unplanted mutant are not evidence.
+planted() { # planted LABEL SHAPE VARIANT   SHAPE: move | sub | del:N
+  local label="$1" shape="$2" variant="$3" want lines
+  if [ "$variant" = "$prog" ]; then
+    bad "probe planted nothing — $label" "the anchor matched no line"
+    return 1
+  fi
+  lines=$(( $(wc -l <<<"$prog") - $(wc -l <<<"$variant") ))
+  case "$shape" in
+    move|sub) want=0 ;;
+    del:*)    want="${shape#del:}" ;;
+    *)        bad "probe declared no shape — $label" "$shape"; return 1 ;;
+  esac
+  if [ "$lines" != "$want" ]; then
+    bad "probe planted the wrong shape — $label" \
+        "declared $shape, but the program lost $lines line(s)"
+    return 1
+  fi
+  return 0
+}
 thread() { # thread ISRESOLVED COMMENT_JSON… (comma-joined)
   printf '{"isResolved":%s,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[%s]}}' "$1" "$2"
 }
@@ -185,8 +215,7 @@ echo "--- must-fail probe: the term, reverted ---"
 # the real reason must stay uncounted: a probe where both fixtures moved would
 # prove the fixtures, not the term.
 REVERTED="$(sed 's/^    | gsub("\^ +| +\$"; "");$/    | gsub("^ +| +$"; "") | "x";/' <<<"$prog")"
-if [ "$REVERTED" = "$prog" ]; then
-  bad "probe planted nothing" "the reason_left tail did not match"
+if ! planted "the term, reverted" sub "$REVERTED"; then :
 else
   rprog="$REVERTED"
   rpage() { page_with "$rprog" "$1"; }
@@ -208,8 +237,7 @@ echo "--- must-fail probe: the shape reading, narrowed to the colon ---"
 # the punctuated one keeps counting: a probe where both moved would prove the
 # term, not the widening.
 NARROW="$(sed 's/declined\\\\b/declined:/g' <<<"$prog")"
-if [ "$NARROW" = "$prog" ]; then
-  bad "probe planted nothing" "the wide decline form did not match"
+if ! planted "the shape reading, narrowed" sub "$NARROW"; then :
 else
   nprog="$NARROW"
   npage() { page_with "$nprog" "$1"; }
@@ -232,8 +260,7 @@ echo "--- must-fail probe: the freeze vocabulary, removed ---"
 # here while the punctuated freeze fixture keeps counting, so the count is
 # this inflection's rather than the term's.
 UNFROZEN="$(sed 's/frozen|freezes?|freezing|/frozen|/' <<<"$prog")"
-if [ "$UNFROZEN" = "$prog" ]; then
-  bad "probe planted nothing" "the freeze vocabulary did not match"
+if ! planted "the freeze vocabulary, removed" sub "$UNFROZEN"; then :
 else
   uprog="$UNFROZEN"
   upage() { page_with "$uprog" "$1"; }
@@ -252,8 +279,7 @@ echo "--- must-fail probe: the tracker-id strip, removed ---"
 # as a stated reason. The bare reference must stop being counted here while a
 # label keeps counting, so the count is this strip's rather than the term's.
 UNSTRIPPED="$(sed '/gsub("\[A-Z\]\[A-Z0-9\]+-\[0-9\]+|#\[0-9\]+"; " ")/d' <<<"$prog")"
-if [ "$UNSTRIPPED" = "$prog" ]; then
-  bad "probe planted nothing" "the tracker-id strip did not match"
+if ! planted "the tracker-id strip, removed" del:1 "$UNSTRIPPED"; then :
 else
   sprog="$UNSTRIPPED"
   spage() { page_with "$sprog" "$1"; }
@@ -276,8 +302,7 @@ echo "--- must-fail probe: both name strips, removed ---"
 # reply that names a mechanism stays uncounted in both states. A probe where
 # both halves moved would prove the fixtures, not the strips.
 NONAME="$(sed '/^    | gsub("..S+..s+\[0-9\]+..s\*\/..s\*\[0-9\]+"/d; /^    | gsub("\[a-z0-9\]\[*a-z0-9._-\]*\**(\//d' <<<"$prog")"
-if [ "$NONAME" = "$prog" ]; then
-  bad "probe planted nothing" "the name strips did not match"
+if ! planted "both name strips, removed" del:2 "$NONAME"; then :
 else
   cprog="$NONAME"
   cpage() { page_with "$cprog" "$1"; }
@@ -313,10 +338,10 @@ echo "--- must-fail probe: each name strip alone ---"
 probe_alone() { # probe_alone LABEL SED_EXPR REPLY
   local label="$1" expr="$2" reply="$3" variant out
   variant="$(sed "$expr" <<<"$prog")"
-  if [ "$variant" = "$prog" ]; then
-    bad "probe planted nothing" "$label"
-    return
-  fi
+  # `|| return 0`, not `|| return`: probe_alone is called as a bare command
+  # under `set -e`, so a non-zero return would abort the suite before it
+  # printed its own count. The failure is already recorded by `bad`.
+  planted "$label" del:1 "$variant" || return 0
   out=$(page "$(thread true "$(human "$reply")")")
   counted "$out" && ok "live: counted — $label" || bad "live: counted — $label" "$out"
   out=$(page_with "$variant" "$(thread true "$(human "$reply")")")
@@ -343,10 +368,7 @@ MISORDERED="$(awk '
   index($0, "gsub(\"\\\\b(frozen") { lbl = $0; next }
   index($0, "(/[a-z0-9]")           { print; print lbl; next }
   { print }' <<<"$prog")"
-if [ "$MISORDERED" = "$prog" ]; then
-  bad "probe planted nothing" "the label pass and the strips did not match"
-elif [ "$(wc -l <<<"$MISORDERED")" != "$(wc -l <<<"$prog")" ]; then
-  bad "probe moved nothing" "the label pass was dropped rather than moved — its anchor stopped matching"
+if ! planted "the label pass, moved" move "$MISORDERED"; then :
 else
   n=0
   while IFS= read -r line; do
@@ -378,10 +400,7 @@ MISFILLER="$(awk '
   index($0, "gsub(\"\\\\b(a|an|the") { fil = $0; next }
   index($0, "(/[a-z0-9]")                { print; print fil; next }
   { print }' <<<"$prog")"
-if [ "$MISFILLER" = "$prog" ]; then
-  bad "probe planted nothing" "the filler pass and the strips did not match"
-elif [ "$(wc -l <<<"$MISFILLER")" != "$(wc -l <<<"$prog")" ]; then
-  bad "probe moved nothing" "the filler pass was dropped rather than moved — its anchor stopped matching"
+if ! planted "the filler pass, moved" move "$MISFILLER"; then :
 else
   n=0
   while IFS= read -r line; do
@@ -403,14 +422,78 @@ else
 fi
 
 echo
+echo "--- the ordering section covers every entry the derivation names ---"
+# The two probes above iterate a hand-written corpus section, so they prove
+# the entries someone already wrote down. What they cannot see is a label
+# entry ADDED to reason_left with no fixture beside it — the lists are the
+# half of this term that changes most, and a new multi-word entry is exactly
+# the shape the ordering fix exists to hold. So the set is derived HERE from
+# the program, the same way the pass sweep derives its lines, and the section
+# must cover it.
+#
+# The rule, and it is the file's rule rather than this script's: a multi-word
+# entry strands when its FIRST word is in neither list — nothing else deletes
+# the head — and its LAST word is not in the filler list, since the filler
+# pass runs ahead of the strips in both orders and takes an entry ending in a
+# filler word apart before either strip reaches its tail.
+alt_of() { # alt_of FIRST_ALTERNATIVE -> the alternation that opens with it
+  awk -v k="$1" 'index($0, "gsub(\"\\\\b(" k) { sub(/^.*gsub\("\\\\b\(/, ""); sub(/\)\\\\b".*$/, ""); print; exit }' <<<"$prog"
+}
+LABEL_ALT="$(alt_of frozen)"
+FILLER_ALT="$(alt_of "a|an|the")"
+if [ -z "$LABEL_ALT" ] || [ -z "$FILLER_ALT" ]; then
+  bad "the derivation read no word list" "label ${#LABEL_ALT} chars, filler ${#FILLER_ALT} chars"
+else
+  # Top-level alternatives only: depth counts both bracket kinds, so the `|`
+  # inside `instruction(s|ed)?` or `pushe[sd]?` does not split an entry.
+  split_top() {
+    awk '{ d = 0; s = ""; n = split($0, c, "");
+           for (i = 1; i <= n; i++) { ch = c[i]
+             if (ch == "(" || ch == "[") d++
+             else if (ch == ")" || ch == "]") d--
+             if (ch == "|" && d == 0) { print s; s = "" } else s = s ch }
+           print s }' <<<"$1"
+  }
+  # An entry spells its own separator class, so the words are what is left
+  # once the class, a single-character option and the group punctuation go.
+  words_of() { sed 's/\[[ /._-]*\]?*/ /g; s/\([a-z]\)?/ /g; s/[()?]//g; s/  */ /g; s/^ //; s/ $//' <<<"$1"; }
+  flatten()  { tr 'A-Z' 'a-z' <<<"$1" | sed 's/[^a-z0-9]\{1,\}/ /g; s/^ //; s/ $//'; }
+  in_list()  { printf '%s\n' "$1" | grep -Eqx "($2)"; }
+
+  SECTION_FLAT=""
+  while IFS= read -r line; do
+    SECTION_FLAT="$SECTION_FLAT
+$(flatten "$line")"
+  done < <(section 'a label phrase, then a count' "$CORPUS/declines-unreasoned.txt")
+  [ -n "$SECTION_FLAT" ] || bad "the ordering section read nothing" "declines-unreasoned.txt"
+
+  n=0
+  while IFS= read -r entry; do
+    case "$entry" in *' '*) ;; *) continue ;; esac
+    w="$(words_of "$entry")"
+    first="${w%% *}"; last="${w##* }"
+    in_list "$first" "$LABEL_ALT" && continue
+    in_list "$first" "$FILLER_ALT" && continue
+    in_list "$last" "$FILLER_ALT" && continue
+    n=$((n + 1))
+    if printf '%s' "$SECTION_FLAT" | grep -qF " $w "; then
+      ok "derived and covered — $entry"
+    else
+      bad "a derived entry has no ordering fixture — $entry" \
+          "the derivation strands \"$w\"; add a reply spelling it with spaces, then a count, to the ordering section"
+    fi
+  done < <(split_top "$LABEL_ALT")
+  [ "$n" -gt 0 ] || bad "the derivation named no entry" "the label list carries no stranding entry, which cannot be right"
+fi
+
+echo
 echo "--- must-fail probe: the whitespace around the count's slash ---"
 # `\s*` on either side of the slash is the only thing that reads "104 / 104"
 # as a count. Tightened to a bare slash the name in front of it survives, so
 # the fixture that spells the count with spaces flips: a character-level edit
 # has to change a VERDICT here, not just stop matching the probe's own text.
 SPACED="$(sed 's/..s\*\/..s\*/\//' <<<"$prog")"
-if [ "$SPACED" = "$prog" ]; then
-  bad "probe planted nothing" "the count slash did not match"
+if ! planted "the count slash, tightened" sub "$SPACED"; then :
 else
   t='Declined: frozen at a1fa74dca; lifecycle 104 / 104 and the full tools/guard pass at this head.'
   out=$(page "$(thread true "$(human "$t")")")
@@ -427,19 +510,27 @@ check clean "a path inside a mechanism still passes" \
 echo
 echo "--- every pass of reason_left is measured by a fixture ---"
 # The probes above each name ONE pass and prove it. This proves the set: every
-# line of reason_left is deleted in turn and the corpus must notice. Three
-# consecutive review rounds shipped a pass-order change that left some line
-# unmeasured — a strip whose characters no earlier pass let through, a number
-# strip whose digits a later strip had started eating — and each was found by
-# a reviewer running this sweep by hand rather than by the suite. Run here, a
-# reorder that strands a pass reds on the spot.
+# line of reason_left is replaced by an identity in turn, and the corpus must
+# notice. A pass no reply exercises is a pass whose next reorder or rewrite
+# ships unmeasured, and the failure names the line.
 #
-# The whole corpus goes through in ONE jq call per variant, and the aggregate
-# counts are compared rather than per-reply verdicts. That is sound because
-# deletion is monotone: removing a gsub can only leave MORE text standing, so
-# a reply can move from counted to uncounted and never back, and two replies
-# cannot cancel. A line whose deletion moves the aggregate on no file has no
-# fixture, and the failure prints the line.
+# DELETION, NOT REORDERING. A swap check would need an allowlist for every
+# pair of passes that commutes, which is a rule enumerating its own instances:
+# it goes stale on the next change to the pipeline, and re-deriving it costs
+# the same hand-measurement it was meant to replace. Deletion needs no
+# exceptions. Reordering is not left unheld — every reorder that changes a
+# verdict today reds this suite through the corpus, and the two orderings
+# that are load-bearing have named probes above.
+#
+# The whole corpus goes through in ONE jq call per variant, compared as a
+# single aggregate over all three files rather than reply by reply. What the
+# aggregate proves is one-directional and that is all this needs: if it moves,
+# some reply's verdict moved, and a reply whose verdict moves is exactly the
+# fixture being looked for. Deletion is NOT monotone — a gsub also inserts the
+# space it replaces with, so dropping one can join two runs into a single one
+# a later strip then takes whole, and a reply can move either way. All that
+# costs is a cancelling pair reporting "no fixture" for a line that has one,
+# which reds the suite and is read by a person, never a gap passing silently.
 lines_page() { # lines_page FILE -> one page holding every reply in the file
   local file="$1" line first=1 nodes=""
   while IFS= read -r line || [ -n "$line" ]; do
@@ -458,9 +549,23 @@ done
 # The pass lines are reason_left's body: its first line, then every `| gsub`
 # up to the trim. Each is replaced by an identity rather than cut, so the
 # pipeline still parses and only the pass under test is gone.
+#
+# The scan ends at the first line ending in `;`, so a `;` written mid-body
+# would shorten the sweep — silently, if the only guard were that it found
+# something. It therefore asserts what it captured: the body must run to the
+# LAST such line in reason_left, and the count must match the `| gsub` lines
+# the definition actually holds, plus its first line.
 # Bash 3.2: no mapfile. The line numbers are a space-separated list.
-PASS_LINES="$(awk '/^  def reason_left:/ { f = 1; next } f && /;$/ { print NR; f = 0; next } f { print NR }' <<<"$prog")"
-[ -n "$PASS_LINES" ] || bad "the pass sweep read no lines" "reason_left"
+reason_left_body() { awk '/^  def reason_left:/ { f = 1; next } f && /;$/ { print NR; f = 0; next } f { print NR }' <<<"$prog"; }
+PASS_LINES="$(reason_left_body)"
+declared=$(awk '/^  def reason_left:/ { f = 1; next } /^  if / { f = 0 } f' <<<"$prog" | grep -c .)
+captured=$(printf '%s\n' $PASS_LINES | grep -c .)
+if [ -z "$PASS_LINES" ]; then
+  bad "the pass sweep read no lines" "reason_left"
+elif [ "$captured" != "$declared" ]; then
+  bad "the pass sweep stopped short of reason_left's end" \
+      "captured $captured line(s) of $declared — a semicolon inside the body ends the scan early"
+fi
 
 baseline=$(page_with "$prog" "$CORPUS_NODES")
 for ln in $PASS_LINES; do

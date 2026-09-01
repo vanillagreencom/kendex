@@ -254,10 +254,11 @@ Declined: pre_existing
 Declined: nothing-to-do
 
 # --- a label phrase the path strip reaches first --------------------------
-# `n a` is a derived entry and belongs above by the derivation, but it cannot
-# sit there: the reply people actually write is "n/a", and the label list
-# carries a slash spelling of the entry so the filler pass cannot take the
-# `a` out of it first. That makes it a must-catch whatever the pass order is,
-# so the ordering probe cannot tell the two orders apart on it. Its own
-# section is how the probe leaves it alone without a skip list.
+# The derivation EXCLUDES `n a`, for the same reason it excludes `nothing to
+# do` one section up: its last word is `a`, which the filler list carries. It
+# is here rather than there because the reply people actually write is "n/a",
+# and the label list carries a slash spelling of the entry so the filler pass
+# cannot take the `a` out of it first — which makes it a must-catch whatever
+# the pass order is, and leaves the ordering probe nothing to tell apart. Its
+# own section is how the probe skips it without a skip list.
 Declined: n/a 9/9
