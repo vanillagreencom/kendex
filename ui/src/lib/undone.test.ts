@@ -17,27 +17,31 @@ describe("saying what a removal ran", () => {
     expect(toast.message).not.toHaveBeenCalled();
   });
 
-  // A departing package's uninstaller is a third party writing as much as
-  // it likes, and sonner shows three toasts at a time for four seconds
-  // each — so an uncapped account is a minutes-long drain over whatever
-  // the person does next. The lines that name the package and what ran
-  // come first; the tail is the script talking.
-  it("shows the first ten lines and counts the rest", () => {
+  // The account interleaves kendex's own notes with each departing
+  // package's output, in name order. Cutting it by position spends the
+  // budget on whoever talks first — which is the party kendex does not
+  // control — and the line it ate was the second package's stand-down
+  // notice, the only place kendex says an effect was left standing and
+  // names the manual remedy. The bound belongs where the source of each
+  // line is still known, and that is Rust.
+  it("says a later package's stand-down after a chatty one", () => {
+    const account = [
+      "aaa-loud: running scripts/out",
+      ...Array.from({ length: 9 }, (_, n) => `chatter ${n}`),
+      "zzz-quiet: declares no uninstaller — what it changed about this " +
+        "repository stays; to undo: undo it by hand",
+    ];
+
+    sayUndone(account);
+
+    expect(toast.message).toHaveBeenCalledTimes(account.length);
+    expect(toast.message).toHaveBeenLastCalledWith(account.at(-1));
+  });
+
+  it("says every line it is handed, however many that is", () => {
     sayUndone(Array.from({ length: 26 }, (_, n) => `line ${n}`));
-
-    expect(toast.message).toHaveBeenCalledTimes(11);
-    expect(toast.message).toHaveBeenNthCalledWith(10, "line 9");
-    expect(toast.message).toHaveBeenLastCalledWith("and 16 more lines");
-  });
-
-  it("counts one leftover line in the singular", () => {
-    sayUndone(Array.from({ length: 11 }, (_, n) => `line ${n}`));
-    expect(toast.message).toHaveBeenLastCalledWith("and 1 more line");
-  });
-
-  it("says exactly ten lines without a tally after them", () => {
-    sayUndone(Array.from({ length: 10 }, (_, n) => `line ${n}`));
-    expect(toast.message).toHaveBeenCalledTimes(10);
+    expect(toast.message).toHaveBeenCalledTimes(26);
+    expect(toast.message).toHaveBeenLastCalledWith("line 25");
   });
 });
 

@@ -4,21 +4,18 @@
 // only puts them on the screen.
 import { toast } from "sonner";
 
-/** How many lines are shown before the rest are counted instead. An
- *  uninstaller is a third party and its output is uncapped, and sonner
- *  shows three toasts at a time for four seconds each — so a chatty one
- *  becomes a minutes-long drain that buries whatever the person does
- *  next. The first lines are the ones that name the package and what ran;
- *  the tail is the script talking. */
-const SHOWN = 10;
-
-/** Show a removal's account, one line at a time. Silent when the removal
- *  took no declaring package away, which is almost every removal. */
+/** Show a removal's account, every line of it. Silent when the removal
+ *  took no declaring package away, which is almost every removal.
+ *
+ *  No cut here. A departing package's output is bounded already, per
+ *  package, by `repo_effects::execute` — which is the layer that can still
+ *  tell kendex's own lines from the package's and so keeps every one of
+ *  kendex's. Cutting again by position cannot make that distinction, and
+ *  the account it ate first was a later package's "declares no
+ *  uninstaller" notice, which is the only place kendex says an effect was
+ *  left standing and names the manual remedy. */
 export function sayUndone(undone: string[] | undefined) {
-  const lines = undone ?? [];
-  for (const line of lines.slice(0, SHOWN)) toast.message(line);
-  const rest = lines.length - SHOWN;
-  if (rest > 0) toast.message(`and ${rest} more line${rest === 1 ? "" : "s"}`);
+  for (const line of undone ?? []) toast.message(line);
 }
 
 /** The lines of `value`, or nothing if it is not a list of them. */
