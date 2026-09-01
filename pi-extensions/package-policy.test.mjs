@@ -66,21 +66,28 @@ function runShardGuard(workflow, shard) {
 	}
 }
 
+// The GitHub-hosted images the workflow's jobs run on, listed outright rather
+// than matched by OS family. A self-hosted runner registered as
+// `ubuntu-self-hosted` wears a family name and really runs, so a family pattern
+// stays green while the job has left GitHub's images. A job moving to a
+// different image adds that label here in the same commit: keeping the list
+// current is the point of this fixture, not a cost to design around.
+const hostedRunners = ["ubuntu-latest", "macos-latest", "windows-latest"];
+
 // Every job in this workflow names its runner outright, and the header comment
 // above the workflow states that as the rule. An expression there is how the
 // runner used to be picked — `vars.CI_RUNNER_*` with a fallback — and it let
 // one job run on different hardware per event, so shard durations did not
-// compare across events. The three families are the GitHub-hosted images, so a
-// vendor or self-hosted label reds here too rather than only an expression.
-// Every `runs-on:` KEY is read, not only the ones carrying a scalar on the same
-// line: the block form puts the value on the lines below, as a `group:` mapping
-// or a list, and a reader matching same-line scalars alone would drop that job
-// from the set rather than report it, leaving the floor below satisfied by its
-// neighbours while the job runs wherever the block says.
+// compare across events. Every `runs-on:` KEY is read, not only the ones
+// carrying a scalar on the same line: the block form puts the value on the
+// lines below, as a `group:` mapping or a list, and a reader matching same-line
+// scalars alone would drop that job from the set rather than report it, leaving
+// the floor below satisfied by its neighbours while the job runs wherever the
+// block says.
 function runnersNotNamedOutright(workflow) {
 	const keys = [...workflow.matchAll(/^ {4}runs-on:(.*)$/gm)].map((match) => match[0].trim());
 	assert.ok(keys.length > 0, `no "runs-on:" key in ${workflowPath} — the runner reader is broken`);
-	return keys.filter((key) => !/^runs-on: (?:ubuntu|macos|windows)-[\w.-]+$/.test(key));
+	return keys.filter((key) => !hostedRunners.some((label) => key === `runs-on: ${label}`));
 }
 
 // A package's CI entry point is `test:ci` when it declares one and `test`
@@ -323,6 +330,10 @@ test("a runs-on that is an expression, a foreign label or the block form is repo
 		],
 		["a job takes a vendor's runner", "    runs-on: blacksmith-4vcpu-ubuntu-2404", "runs-on: blacksmith-4vcpu-ubuntu-2404"],
 		["a job takes a self-hosted label", "    runs-on: self-hosted", "runs-on: self-hosted"],
+		// A self-hosted runner can be registered under any label its owner
+		// picks, an OS family name included, and that runner exists and runs.
+		// This is the case a family pattern cannot tell from a GitHub image.
+		["a self-hosted runner wears an OS-family label", "    runs-on: ubuntu-self-hosted", "runs-on: ubuntu-self-hosted"],
 		// The one case the other three cannot stand in for: the value moves off
 		// the key's line, so a same-line reader returns nothing for this job and
 		// the remaining jobs keep the floor satisfied. The report is the bare
