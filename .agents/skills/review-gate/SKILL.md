@@ -194,9 +194,8 @@ Evidence for the CURRENT head is any of:
    comment by a trusted bot login — never the PR author, even if configured —
    binding the evidence to this head's sha (floor
    `REVIEW_GATE_SHA_PREFIX_FLOOR`).
-4. **Operator override** (`REVIEW_GATE_OVERRIDE_CONTEXT`, legacy name
-   `REVIEW_GATE_OUTAGE_CONTEXT`): a trusted operator's status carrying a
-   NON-EMPTY reason, which is enforced and surfaced in the gate detail.
+4. **Operator override** (`REVIEW_GATE_OVERRIDE_CONTEXT`): a trusted
+   operator's status carrying a NON-EMPTY reason, which is enforced and surfaced in the gate detail.
    Substitutes for MISSING evidence ONLY — it never overrides a
    changes-requested or an unresolved thread; fix findings and resolve
    threads first, then attest.
@@ -283,8 +282,8 @@ nothing else.
 .agents/skills/review-gate/scripts/merged-sweep.sh
 ```
 
-The offline decision-table selftest and the live sandbox replay are the
-ENGINE's proofs and run in the kendex repo, not in a consumer's CI:
+The offline decision-table selftest and the wrapper suites are the ENGINE's
+proofs and run in the kendex repo, not in a consumer's CI:
 [DEVELOPMENT.md](DEVELOPMENT.md).
 
 For re-vendor PRs, suppress duplicate findings with the remedy-locus reviewer

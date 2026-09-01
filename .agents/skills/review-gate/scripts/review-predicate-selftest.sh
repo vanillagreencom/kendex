@@ -45,14 +45,9 @@ ACTIVE_CONTEXTS="$(rg_setting REVIEW_GATE_TRUSTED_STATUS_CONTEXTS "")" || exit 1
 ACTIVE_SKIPS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;skipped;queued")" || exit 1
 ACTIVE_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")" || exit 1
 ACTIVE_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 1
-# Mirrors the predicate's own resolution (v2 key wins over the legacy name):
-# a repo that follows the shipped example and sets only
-# REVIEW_GATE_OVERRIDE_CONTEXT must have its OWN override context tested, not
-# the legacy default.
-ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OVERRIDE_CONTEXT "__unset__")" || exit 1
-if [ "$ACTIVE_OUTAGE" = "__unset__" ]; then
-  ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "kendex-reviewer-outage")" || exit 1
-fi
+# Mirrors the predicate's own resolution, so a repo's OWN override context is
+# what the configured layer tests rather than the shipped default.
+ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OVERRIDE_CONTEXT "kendex-reviewer-outage")" || exit 1
 ACTIVE_PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" || exit 1
 ACTIVE_TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 1
 ACTIVE_MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 1
@@ -146,7 +141,7 @@ run() { # case-name, expected-verdict, expected-exit
     REVIEW_GATE_CHECKRUN_SKIP_PATTERNS="$CFG_SKIPS" \
     REVIEW_GATE_COMMENT_REVIEWERS="$CFG_REVIEWERS" \
     REVIEW_GATE_SHA_PREFIX_FLOOR="$CFG_FLOOR" \
-    REVIEW_GATE_OUTAGE_CONTEXT="$CFG_OUTAGE" \
+    REVIEW_GATE_OVERRIDE_CONTEXT="$CFG_OUTAGE" \
     REVIEW_GATE_STATUS_PUBLISHER_REJECT="$CFG_PUBLISHER_REJECT" \
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$CFG_TRUSTED_LOGINS" \
     REVIEW_GATE_REVIEW_OBJECT_MIN_STATE="$CFG_MIN_STATE" \
@@ -2443,7 +2438,7 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
     REVIEW_GATE_SETTINGS_FILE=/dev/null \
     REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="$CFG_CONTEXTS" \
     REVIEW_GATE_COMMENT_REVIEWERS="$CFG_REVIEWERS" \
-    REVIEW_GATE_OUTAGE_CONTEXT="$CFG_OUTAGE" \
+    REVIEW_GATE_OVERRIDE_CONTEXT="$CFG_OUTAGE" \
     REVIEW_GATE_STATUS_PUBLISHER_REJECT="$CFG_PUBLISHER_REJECT" \
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$CFG_TRUSTED_LOGINS" \
     REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" REVIEW_GATE_THREADS="$CFG_THREADS" \
@@ -2467,38 +2462,6 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
       failures=$((failures + 1)) ;;
   esac
   detail_rc=0
-
-  # The v2 key name is resolved by the PREDICATE (every live gate read
-  # honors it), not only by the writer — an adopter setting just the v2 key
-  # must not silently lose their override.
-  reset
-  CFG_OUTAGE="legacy-name"
-  status_ctx "v2-override-name" success "attested via the v2 key"
-  cases=$((cases + 1))
-  alias_rc=0
-  alias_line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
-    REVIEW_GATE_SETTINGS_FILE=/dev/null \
-    REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
-    REVIEW_GATE_OUTAGE_CONTEXT="legacy-name" \
-    REVIEW_GATE_OVERRIDE_CONTEXT="v2-override-name" \
-    REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="" REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" \
-    REVIEW_GATE_THREADS="$CFG_THREADS" REVIEW_GATE_CARRY_FORWARD="" \
-    GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
-    "$predicate" 2>/dev/null)" || alias_rc=$?
-  alias_line="$(head -n 1 <<<"$alias_line")"
-  case "$alias_line" in
-    verdict=approved*)
-      if [ "${alias_rc:-0}" -ne 0 ]; then
-        echo "FAIL  configured: the override-alias case exited ${alias_rc} despite the expected line" >&2
-        failures=$((failures + 1))
-      else
-        echo "ok    configured: REVIEW_GATE_OVERRIDE_CONTEXT wins over the legacy key in the predicate itself (approved)"
-      fi ;;
-    *) echo "FAIL  configured: the v2 override key was not honored by the predicate: $alias_line" >&2
-       failures=$((failures + 1)) ;;
-  esac
-  alias_rc=0
-  CFG_OUTAGE="$ACTIVE_OUTAGE"
 
   if [ -n "$ACTIVE_PUBLISHER_REJECT" ]; then
     reset

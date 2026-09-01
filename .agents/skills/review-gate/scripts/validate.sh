@@ -159,14 +159,11 @@ group "settings"
 SETTINGS_FILE="${REVIEW_GATE_SETTINGS_FILE:-kendex.settings.toml}"
 
 # The key ledger is the skill's own shipped example, so this tool cannot
-# drift from what the engine documents. REVIEW_GATE_OUTAGE_CONTEXT is the one
-# deliberate addition: the legacy override name, still resolved by the
-# predicate and deliberately absent from the example, which models v2.
+# drift from what the engine documents.
 EXAMPLE="$SKILL_DIR/kendex.settings.toml.example"
 [ -f "$EXAMPLE" ] ||
   die "$EXAMPLE is missing — it is the ledger of known keys, and without it an unknown-key scan would pass everything"
-KNOWN_KEYS="$(sed -n 's/^[[:space:]]*\([A-Z][A-Z0-9_]*\)[[:space:]]*=.*/\1/p' "$EXAMPLE")
-REVIEW_GATE_OUTAGE_CONTEXT"
+KNOWN_KEYS="$(sed -n 's/^[[:space:]]*\([A-Z][A-Z0-9_]*\)[[:space:]]*=.*/\1/p' "$EXAMPLE")"
 grep -q '^REVIEW_GATE_CONTEXT$' <<<"$KNOWN_KEYS" ||
   die "$EXAMPLE names no REVIEW_GATE_CONTEXT assignment — the ledger is unreadable and the unknown-key scan would pass everything"
 

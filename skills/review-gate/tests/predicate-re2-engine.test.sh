@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 # The predicate hands its thread jq to `gh --jq`, and gh's regex engine is
-# Go's RE2: no lookaround, at all. Every OTHER proof that runs unattended
-# puts that same program through the LOCAL jq, whose Oniguruma accepts
-# patterns RE2 refuses to compile. One other proof here does reach RE2 —
-# e2e-sandbox.sh replays the writer live, and the writer runs the predicate —
-# but it skips without E2E_REPO, so nothing in CI ran it. That is how #1930
-# shipped a lookbehind: local jq took it, and every live evaluation of a PR
-# carrying a `Declined:` reply died with `invalid regular expression`,
-# leaving the writer to red without posting anything and the gate status
-# frozen where it stood.
+# Go's RE2: no lookaround, at all. Every OTHER proof puts that same
+# program through the LOCAL jq, whose Oniguruma accepts patterns RE2
+# refuses to compile, so this is the only place the shipping engine reads
+# the program at all. That is how #1930 shipped a lookbehind: local jq took
+# it, and every live evaluation of a PR carrying a `Declined:` reply died
+# with `invalid regular expression`, leaving the writer to red without
+# posting anything and the gate status frozen where it stood.
 #
 # This suite is the missing half: the SHIPPED program, through the SHIPPED
 # engine, with no opt-in. The real `gh` (not the tests' shim) is pointed at a

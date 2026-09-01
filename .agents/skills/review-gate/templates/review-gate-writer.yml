@@ -61,9 +61,9 @@
 # is why every wait in the step below is bounded. The relay's own dispatch
 # failure exits GREEN and WARNS instead of reddening; it raises no alarm of
 # its own, and a sustained outage is detected as GATE STALENESS (the cron
-# floor plus pr-watch --heal), never by this job. The sandbox replay
-# classifies a PR-attached cancellation by whether it executed steps: only
-# a never-started run proves the split regressed.
+# floor plus pr-watch --heal), never by this job. A PR-attached cancellation
+# is classified by whether the run executed steps: only a never-started run
+# proves the split regressed.
 #
 # NO dispatch loop: the relay's if: excludes the two legs it dispatches
 # into, so a converge run can never re-enter the relay. (workflow_dispatch

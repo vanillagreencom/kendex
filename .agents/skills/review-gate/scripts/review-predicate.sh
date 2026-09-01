@@ -129,13 +129,9 @@ ladder and exceptions in references/settings.md; list values pack with ';'):
   REVIEW_GATE_SHA_PREFIX_FLOOR              (c) shortest sha prefix a comment
                                             may bind (4..40; default 7)
   REVIEW_GATE_OVERRIDE_CONTEXT              (d) operator override status
-                                            context, v2 name; when present
-                                            anywhere — even empty, which
-                                            disables the source — it wins
-                                            over the legacy name
-  REVIEW_GATE_OUTAGE_CONTEXT                (d) LEGACY override-context name
-                                            (default kendex-reviewer-outage);
-                                            empty disables
+                                            context (default
+                                            kendex-reviewer-outage); empty
+                                            disables
   REVIEW_GATE_STATUS_PUBLISHER_REJECT       (b,d) commit-status creator logins
                                             whose statuses are never
                                             evidence; while configured, a
@@ -297,18 +293,11 @@ TRUSTED_CONTEXTS="$(rg_setting REVIEW_GATE_TRUSTED_STATUS_CONTEXTS "")" || exit 
 SKIP_PATTERNS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;skipped;queued")" || exit 2
 COMMENT_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")" || exit 2
 SHA_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 2
-# Operator override context, v2 name, resolved HERE (not only in the writer):
-# every live gate read — the writer, consumers' heavy-job gate jobs, the
-# selftest — goes through this predicate, so an adopter who sets only the v2
-# key must not silently lose their override. Presence is detected with a
-# sentinel default: a key set nowhere leaves the legacy resolution untouched;
-# a key set anywhere (even to the empty string, which disables the source)
-# wins over the legacy name.
-override_sentinel="__review-gate-override-unset__"
-OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OVERRIDE_CONTEXT "$override_sentinel")" || exit 2
-if [ "$OUTAGE_CONTEXT" = "$override_sentinel" ]; then
-  OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "kendex-reviewer-outage")" || exit 2
-fi
+# Operator override context, resolved HERE (not only in the writer): every
+# live gate read — the writer, consumers' heavy-job gate jobs, the selftest —
+# goes through this predicate, so an adopter's override is read the same way
+# everywhere. Empty disables the source.
+OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OVERRIDE_CONTEXT "kendex-reviewer-outage")" || exit 2
 PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" || exit 2
 TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 2
 MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 2
@@ -447,7 +436,7 @@ if [ -z "$GATE_CONTEXT_SELF" ]; then
   exit 2
 fi
 if [ "$OUTAGE_CONTEXT" = "$GATE_CONTEXT_SELF" ]; then
-  echo "::error::review-predicate: REVIEW_GATE_OUTAGE_CONTEXT equals REVIEW_GATE_CONTEXT ('$GATE_CONTEXT_SELF') — the gate's own status cannot attest a reviewer outage to itself" >&2
+  echo "::error::review-predicate: REVIEW_GATE_OVERRIDE_CONTEXT equals REVIEW_GATE_CONTEXT ('$GATE_CONTEXT_SELF') — the gate's own status cannot attest a reviewer outage to itself" >&2
   exit 2
 fi
 while IFS= read -r ctx; do

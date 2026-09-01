@@ -36,8 +36,8 @@
 # read-only no-op, EVERY invocation enumerates and converges EVERY open PR.
 # The writer's single concurrency group means bursts evict pending runs;
 # because whichever run survives converges everyone, eviction is harmless
-# rather than silently stranding the evicted events' heads until the cron
-# (8 evictions observed in one sandbox replay, zero stranded). Per-head work
+# rather than silently stranding the evicted events' heads until the cron.
+# Per-head work
 # happens in a recursive single-head invocation (PR_NUMBER + HEAD_SHA set),
 # an internal contract rather than a workflow input.
 #

@@ -68,8 +68,8 @@ run. It answers repo-own questions only — the engine is installed and
 runnable here, the committed `REVIEW_GATE_*` values are legal, the
 carry-forward exclusions still match tracked paths, and the adopted workflow
 still meets this template's contract. It re-runs no engine test suite: the
-selftest, the wrapper suites and the sandbox replay are the ENGINE's proofs
-and run in the kendex repo on every change to it.
+selftest and the wrapper suites are the ENGINE's proofs and run in the kendex
+repo on every change to it.
 
 Value rules come from the engine, not from a copy of it: the settings half
 calls `review-predicate.sh --check-config`, which resolves and validates
@@ -168,7 +168,7 @@ here. Full key table: [settings.md](settings.md).
 | `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` | Default closes the rate-limited-pass gap everywhere; empty is an explicit opt-out. |
 | `REVIEW_GATE_COMMENT_REVIEWERS` | Only for repos with a comment-form reviewer (login + binding prefix); empty otherwise. |
 | `REVIEW_GATE_SHA_PREFIX_FLOOR` | Only where a comment-form reviewer binds by SHA prefix. |
-| `REVIEW_GATE_OVERRIDE_CONTEXT` | The operator override context (legacy alias `REVIEW_GATE_OUTAGE_CONTEXT` still resolves; new installs set only the v2 key). |
+| `REVIEW_GATE_OVERRIDE_CONTEXT` | The operator override context. Empty disables the source. |
 | `REVIEW_GATE_STATUS_PUBLISHER_REJECT` | Set `github-actions[bot]` wherever PR workflows hold `statuses: write`. Requires the override to be posted by a non-Actions identity (operator PAT). Empty disables. |
 | `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | Empty = any non-author. List trusted reviewer logins to restrict. |
 | `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` counts COMMENTED reviews (for bots that never APPROVE); `approved` requires an APPROVED verdict. |
@@ -243,6 +243,3 @@ outstanding — the audit form.
   correctly blocks — read before resolving anything). A location-bound
   reviewer's threads are recorded, not graded
   ([vendored-paths.md](vendored-paths.md) § Verifying on a real re-vendor PR).
-- For engine changes (not adoptions): the live sandbox replay
-  (`.agents/skills/review-gate/tests/e2e-sandbox.sh`) against the org
-  sandbox.

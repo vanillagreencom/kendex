@@ -37,8 +37,7 @@ REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 # Substitutes for MISSING evidence only; the description must carry a
 # reason (enforced). SECURITY: same trusted-publisher model as the
 # contexts above.
-# Alias over legacy REVIEW_GATE_OUTAGE_CONTEXT; set only this key in new
-# installs. Empty disables.
+# Empty disables.
 REVIEW_GATE_OVERRIDE_CONTEXT = "kendex-reviewer-outage"
 
 # Creator logins whose commit statuses are never evidence. SECURITY:

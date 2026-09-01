@@ -34,21 +34,6 @@ for v in $vars; do
   # assignment in the example would advertise a per-invocation seam as a
   # repo setting, so it must FAIL here.
   case "$v" in
-    # Legacy alias TARGET (v2, plan Change 2 / finding F6): still read by
-    # the predicate so old installs keep working, but the example models
-    # the v2 posture and assigns ONLY REVIEW_GATE_OVERRIDE_CONTEXT — two
-    # live keys for one knob invites drift. Documented in
-    # references/settings.md; deliberately NOT assigned in the example.
-    REVIEW_GATE_OUTAGE_CONTEXT)
-      if ! grep -q "$v" "$SKILL_DIR/references/settings.md"; then
-        echo "FAIL: $v (legacy alias target) must stay documented in references/settings.md"
-        fail=1
-      fi
-      if forbidden_assignment_matches "$v" "$EXAMPLE"; then
-        echo "FAIL: $v is the legacy alias target; the example must assign REVIEW_GATE_OVERRIDE_CONTEXT instead ($EXAMPLE)"
-        fail=1
-      fi
-      continue ;;
     REVIEW_GATE_SETTINGS_FILE|REVIEW_GATE_STATUS_SNAPSHOT_FILE)
       # Whitespace/quote-tolerant: any TOML spelling of an assignment for
       # this name must fail, not just the canonical `KEY = ` shape.

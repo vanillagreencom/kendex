@@ -20,17 +20,16 @@ Paths are as installed in a consuming repo, under
 | `scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate; `--heal` also dispatches the writer once on a stale gate. |
 | `scripts/merged-sweep.sh` | The post-merge half of that reducer: "did a review or a review thread land after a merge with nobody answering it?" Same line shape and exit codes as `pr-watch.sh`, so one consumer reads both; its own per-repo state file makes each finding surface once. |
 | `scripts/review-predicate-selftest.sh` | Offline proof of the decision table. An ENGINE proof: it runs here, in the catalog repo, on every change. |
-| `tests/predicate-re2-engine.test.sh` | The predicate's thread jq, run through the engine that actually ships it: the real `gh --jq` (Go's RE2), pointed at a local HTTP stub. Every other proof that runs unattended reads that program through the local jq, whose Oniguruma accepts lookaround RE2 will not compile; the live replay below does reach RE2, but it skips without `E2E_REPO`, so nothing ran it. Needs `gh`, `python3` and `jq`, and refuses rather than skipping without them. |
-| `tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |
+| `tests/predicate-re2-engine.test.sh` | The predicate's thread jq, run through the engine that actually ships it: the real `gh --jq` (Go's RE2), pointed at a local HTTP stub. Every other proof reads that program through the local jq, whose Oniguruma accepts lookaround RE2 will not compile. Needs `gh`, `python3` and `jq`, and refuses rather than skipping without them. |
 
 ## Where each proof runs
 
 The split is deliberate, and it is the line between a tool and a test suite.
 
-- **Engine proofs run here.** The selftest, the wrapper suites under
-  `tests/`, and the sandbox replay all prove that this package behaves. A
-  consumer re-running them would be re-testing vendored content that already
-  passed on the commit that shipped it.
+- **Engine proofs run here.** The selftest and the suites under `tests/`
+  prove that this package behaves. A consumer re-running them would be
+  re-testing vendored content that already passed on the commit that shipped
+  it.
 - **Repo-own checks run in the consumer.** `validate.sh` asks only questions
   whose answer depends on the calling repository: its files, its committed
   settings, its tracked paths, its adopted workflow. It re-runs no engine
@@ -160,9 +159,9 @@ values. The two per-repo knobs it once held are gone —
   `REVIEW_GATE_CHECK_RUN_NAME`, read by a term the relay's `if:` already
   carries, so opting in is uncommenting the trigger and setting a variable.
 
-`tests/review-writer-template.test.sh` pins both, against the template and
-against this repo's own adopted copy — that suite is where the workflow's
-MEANING is asserted, and it runs here, upstream, on every change. A consumer
-asserts nothing about meaning: `validate-workflow.sh` asks only whether its
-copy is still this file. The two questions live in the two places that can
-answer them.
+`tests/review-writer-template.test.sh` EXECUTES the relay step against a gh
+stub, over both copies, and that is where the step's meaning is asserted; it
+runs here, upstream, on every change. Nothing greps the YAML for the
+expressions GitHub evaluates — `validate-workflow.sh` answers that whole
+class by equality against this template, in the catalog and in every
+consumer, and equality has no spelling a pin could miss.
