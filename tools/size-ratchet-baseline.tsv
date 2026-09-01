@@ -119,7 +119,7 @@ skills/review-gate/scripts/validate.sh	581
 skills/review-gate/templates/review-gate-writer.yml	658
 skills/review-gate/tests/pr-watch.test.sh	1158
 skills/review-gate/tests/review-writer-template.test.sh	829
-skills/second-opinion/scripts/second-opinion	2684
+skills/second-opinion/scripts/second-opinion	2683
 skills/second-opinion/tests/cli-failure-gate.test.sh	1211
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999
 skills/second-opinion/tests/review-dual-model.test.sh	1516

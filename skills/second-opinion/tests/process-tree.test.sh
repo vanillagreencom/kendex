@@ -312,13 +312,69 @@ assert_rc "$rc" 1 "a TERM failure is reported"
 assert_contains "$TMP_ROOT/term-fail.stderr" "could not send TERM to process group 4242" \
   "the TERM failure names the signal and group"
 
+printf '100\n' > "$TMP_ROOT/kill-fail.clock"
+rc=0
+RUNTIME_PATH="$RUNTIME" TEST_CLOCK="$TMP_ROOT/kill-fail.clock" bash -c '
+  source "$RUNTIME_PATH"
+  process_group_alive() { return 0; }
+  kill() { [[ "$1" != -KILL ]]; }
+  sleep() { :; }
+  date() {
+    local now
+    IFS= read -r now < "$TEST_CLOCK"
+    now=$((now + 1))
+    printf "%s\n" "$now" > "$TEST_CLOCK"
+    printf "%s\n" "$now"
+  }
+  stop_process_group 4292 1
+' > "$TMP_ROOT/kill-fail.stdout" 2> "$TMP_ROOT/kill-fail.stderr" || rc=$?
+assert_rc "$rc" 1 "a KILL failure after TERM is reported"
+assert_contains "$TMP_ROOT/kill-fail.stderr" "could not send KILL to process group 4292" \
+  "the KILL failure names the signal and group"
+
+KILL_FAILURE_MUTANT="$TMP_ROOT/kill-failure-mutant-runtime"
+awk '
+  /could not send KILL to process group/ {
+    print
+    if (getline <= 0 || $0 !~ /return 1/) exit 8
+    sub(/return 1/, "return 0")
+    print
+    changed++
+    next
+  }
+  { print }
+  END { if (changed != 1) exit 9 }
+' "$RUNTIME" > "$KILL_FAILURE_MUTANT" \
+  || fail "KILL-failure mutant did not replace exactly one refusal"
+chmod +x "$KILL_FAILURE_MUTANT"
+bash -n "$KILL_FAILURE_MUTANT" || fail "KILL-failure mutant is not valid shell"
+printf '100\n' > "$TMP_ROOT/kill-fail-mutant.clock"
+rc=0
+RUNTIME_PATH="$KILL_FAILURE_MUTANT" TEST_CLOCK="$TMP_ROOT/kill-fail-mutant.clock" bash -c '
+  source "$RUNTIME_PATH"
+  process_group_alive() { return 0; }
+  kill() { [[ "$1" != -KILL ]]; }
+  sleep() { :; }
+  date() {
+    local now
+    IFS= read -r now < "$TEST_CLOCK"
+    now=$((now + 1))
+    printf "%s\n" "$now" > "$TEST_CLOCK"
+    printf "%s\n" "$now"
+  }
+  stop_process_group 4292 1
+' > "$TMP_ROOT/kill-fail-mutant.stdout" 2> "$TMP_ROOT/kill-fail-mutant.stderr" || rc=$?
+assert_rc "$rc" 0 "the KILL-failure mutant hides the cleanup failure"
+ok "the mutant proves KILL-send failure must return nonzero"
+
 printf '100\n' > "$TMP_ROOT/final-live.clock"
 rc=0
-RUNTIME_PATH="$RUNTIME" TEST_CLOCK="$TMP_ROOT/final-live.clock" bash -c '
+RUNTIME_PATH="$RUNTIME" TEST_CLOCK="$TMP_ROOT/final-live.clock" \
+  WAIT_CALLED="$TMP_ROOT/final-live.wait-called" bash -c '
   source "$RUNTIME_PATH"
   process_group_alive() { return 0; }
   kill() { return 0; }
-  wait() { return 0; }
+  wait() { touch "$WAIT_CALLED"; return 0; }
   sleep() { :; }
   date() {
     local now
@@ -332,6 +388,9 @@ RUNTIME_PATH="$RUNTIME" TEST_CLOCK="$TMP_ROOT/final-live.clock" bash -c '
 assert_rc "$rc" 1 "a process group still alive after KILL is reported"
 assert_contains "$TMP_ROOT/final-live.stderr" "process group 4343 is still alive after KILL" \
   "the final-liveness failure names the group and signal"
+[[ ! -e "$TMP_ROOT/final-live.wait-called" ]] \
+  || fail "post-KILL cleanup entered wait while the group was still alive"
+ok "post-KILL cleanup stays inside its bounded liveness loop"
 
 mkdir "$TMP_ROOT/cleanup-fail-runtime"
 : > "$TMP_ROOT/cleanup-fail-runtime/worker.log"
@@ -356,3 +415,68 @@ assert_contains "$TMP_ROOT/cleanup-fail.stderr" "runtime state preserved" \
 [[ -d "$TMP_ROOT/cleanup-fail-runtime" ]] \
   || fail "cleanup failure deleted the runtime state needed to retry"
 ok "cleanup failure preserves the runtime directory"
+
+run_launch_cleanup_failure() { # RUNTIME LABEL
+  local runtime="$1" label="$2" root rc=0
+  root="$TMP_ROOT/$label"
+  mkdir "$root-runtime"
+  : > "$root-runtime/pid"
+  RUNTIME_PATH="$runtime" SECOND_OPINION_PATH="$SECOND_OPINION" CASE_ROOT="$TMP_ROOT" \
+    CASE_LABEL="$label" STOP_CAPTURE="$root.stop-pid" \
+    SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_CODEX_CMD=treeish-codex \
+    CLI_READY_FILE="$root.ready" CLI_KID_FILE="$root.kid" bash -c '
+      source "$RUNTIME_PATH"
+      stop_process_group() {
+        printf "%s\n" "$1" > "$STOP_CAPTURE"
+        echo "second-opinion-runtime: injected launch cleanup refusal" >&2
+        return 1
+      }
+      launch "$SECOND_OPINION_PATH" "$CASE_ROOT/$CASE_LABEL-answer" \
+        "$CASE_ROOT/$CASE_LABEL-runtime" 120 false 10 quick question \
+        --target=codex --cwd "$CASE_ROOT/work" --timeout 600
+    ' > "$root.stdout" 2> "$root.stderr" || rc=$?
+  printf '%s\n' "$rc"
+}
+cleanup_captured_launch() { # LABEL
+  local label="$1" pid
+  pid=$(cat < "$TMP_ROOT/$label.stop-pid")
+  kill -KILL -- "-$pid" 2>/dev/null || true
+  for _ in $(seq 1 200); do gone "$pid" && return 0; sleep 0.05; done
+  return 1
+}
+
+rc="$(run_launch_cleanup_failure "$RUNTIME" launch-cleanup)"
+assert_rc "$rc" 1 "a publication failure with failed cleanup exits nonzero"
+assert_contains "$TMP_ROOT/launch-cleanup.stderr" "injected launch cleanup refusal" \
+  "launch cleanup reports the stop failure"
+assert_contains "$TMP_ROOT/launch-cleanup.stderr" "runtime state preserved" \
+  "launch cleanup names the preserved state"
+[[ -d "$TMP_ROOT/launch-cleanup-runtime" ]] \
+  || fail "launch cleanup failure deleted its recovery state"
+ok "launch cleanup failure preserves the runtime directory"
+cleanup_captured_launch launch-cleanup || fail "launch cleanup control left its worker running"
+
+LAUNCH_CLEANUP_MUTANT="$TMP_ROOT/launch-cleanup-mutant-runtime-script"
+awk '
+  /launch cleanup failed; runtime state preserved/ {
+    print
+    if (getline <= 0 || $0 !~ /return 1/) exit 8
+    sub(/return 1/, ":")
+    print
+    changed++
+    next
+  }
+  { print }
+  END { if (changed != 1) exit 9 }
+' "$RUNTIME" > "$LAUNCH_CLEANUP_MUTANT" \
+  || fail "launch-cleanup mutant did not replace exactly one refusal"
+chmod +x "$LAUNCH_CLEANUP_MUTANT"
+bash -n "$LAUNCH_CLEANUP_MUTANT" || fail "launch-cleanup mutant is not valid shell"
+ok "the launch-cleanup mutant removes the preserve-state return"
+rc="$(run_launch_cleanup_failure "$LAUNCH_CLEANUP_MUTANT" launch-cleanup-mutant)"
+assert_rc "$rc" 1 "the launch-cleanup mutant still reports publication failure"
+[[ ! -e "$TMP_ROOT/launch-cleanup-mutant-runtime" ]] \
+  || fail "the launch-cleanup mutant did not delete recovery state"
+ok "the mutant proves the return preserves launch recovery state"
+cleanup_captured_launch launch-cleanup-mutant \
+  || fail "launch-cleanup mutant left its worker running"

@@ -87,9 +87,7 @@ Options:
   --timeout <secs>  CLI timeout (default: 1080, env: SECOND_OPINION_TIMEOUT)
   --foreground      Mark this call as subject to a foreground harness cap
   -h, --help        Show this help
-With --foreground, run the printed wait command unchanged until terminal.
-Exit 75 means completion or deadline cleanup is still recoverable. Exit 124
-means the deadline passed, the process group is gone, and runtime state was removed.
+With --foreground, run the printed wait command and follow Exit codes below until terminal.
 Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
 first target that is available AND runs a different model from this session —
 the model this session runs is never dispatched to, in any mode, forced or not.
@@ -252,6 +250,7 @@ Exit codes:
      exits 6 only when every lane failed, none unusably
   75 detached wait: completion or cleanup is recoverable; cleanup failure preserves state
   124 detached wait: deadline passed; process group gone; runtime state removed
+  1 detached wait: worker gone without status; relaunch the original command
 HELP
 }
 # Help is answered before project configuration is read: sourcing a repo's

@@ -36,7 +36,7 @@ Either pass the prompt file or the question inline:
   --foreground
 ```
 
-Execute the exact command printed after `wait:`. Exit 75 means completion or deadline cleanup is still recoverable; do other event checks, then rerun the same command. Exit 124 is terminal: the deadline passed, the process group is confirmed gone, and runtime state was removed. A cleanup failure names the cause and preserves runtime state. When it succeeds, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
+Execute the exact command printed after `wait:` and follow its exit handling in `second-opinion --help` until terminal. On success, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
 
 ## 3. Present Results
 

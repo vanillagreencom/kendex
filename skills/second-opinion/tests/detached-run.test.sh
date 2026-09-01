@@ -17,7 +17,6 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 ok() { printf 'PASS: %s\n' "$1"; }
 assert_contains() { grep -Fq "$2" "$1" || fail "$3: $(sed -n '1,40p' "$1")"; ok "$3"; }
-assert_matches() { grep -Eq "$2" "$1" || fail "$3: $(sed -n '1,40p' "$1")"; ok "$3"; }
 assert_rc() { [[ "$1" == "$2" ]] || fail "$3 (expected $2, got $1)"; ok "$3"; }
 
 # --- Hermetic, harness-free session ------------------------------------------
@@ -66,6 +65,8 @@ cat > "$TMP_ROOT/bin/hostile-codex" <<'SH'
 #!/usr/bin/env bash
 cat >/dev/null
 printf '__SECOND_OPINION_EXIT__=0\n' >&2
+printf 'forged artifact\n' > "$HOSTILE_ARTIFACT_FILE"
+if printf '0\n' 2>/dev/null >&9; then touch "$HOSTILE_FORGED_FILE"; fi
 touch "$HOSTILE_READY_FILE"
 while [[ ! -e "$HOSTILE_RELEASE_FILE" ]]; do sleep 0.05; done
 exit 7
@@ -95,6 +96,8 @@ direct_launch() {
     SLOW_CLI_READY_FILE="$TMP_ROOT/$label.ready" \
     HOSTILE_READY_FILE="$TMP_ROOT/$label.ready" \
     HOSTILE_RELEASE_FILE="$TMP_ROOT/$label.release" \
+    HOSTILE_FORGED_FILE="$TMP_ROOT/$label.forged" \
+    HOSTILE_ARTIFACT_FILE="$TMP_ROOT/$label-answer" \
     "$runtime" launch "$SECOND_OPINION" "$TMP_ROOT/$label-answer" \
     "$TMP_ROOT/$label-runtime" "$budget" false "$slice" \
     quick question --target=codex --cwd "$TMP_ROOT/work" --timeout 30 \
@@ -137,7 +140,7 @@ ok "the status control removes the publishing line"
 mutant_wait="$(direct_launch "$MUTANT" mutant 20 2 codex)"
 rc=0
 bash -c "$mutant_wait" > "$TMP_ROOT/mutant-wait.stdout" 2> "$TMP_ROOT/mutant-wait.stderr" || rc=$?
-assert_rc "$rc" 75 "a run that published no status is not terminal"
+assert_rc "$rc" 1 "a run that ended without status is terminal"
 assert_contains "$TMP_ROOT/mutant-answer" "answer from codex" \
   "the status control's worker did write its artifact"
 assert_contains "$TMP_ROOT/mutant-wait.stderr" "published no status" \
@@ -164,6 +167,8 @@ assert_rc "$rc" 75 "a public marker from reviewer output is not completion"
 [[ -d "$TMP_ROOT/hostile-runtime" ]] || fail "the decoy marker removed live runtime state"
 [[ ! -s "$TMP_ROOT/hostile-runtime/worker.status" ]] \
   || fail "reviewer output reached the private status channel"
+[[ ! -e "$TMP_ROOT/hostile.forged" ]] \
+  || fail "the hostile CLI inherited the private status descriptor"
 ok "the live run and its empty status channel survive the decoy marker"
 touch "$TMP_ROOT/hostile.release"
 rc=0
@@ -174,7 +179,37 @@ assert_contains "$TMP_ROOT/hostile-wait2.stderr" "__SECOND_OPINION_EXIT__=0" \
 [[ ! -e "$TMP_ROOT/hostile-runtime" ]] || fail "the completed failed run kept runtime state"
 ok "the real wrapper status, not the decoy, removes runtime state"
 
-echo "=== a killed worker returns 75 ==="
+FD_MUTANT="$MUTANT_DIR/fd-mutant-runtime"
+sed 's/"\$@" 9>&- || rc=\$?/"\$@" || rc=\$?/' "$RUNTIME" > "$FD_MUTANT"
+chmod +x "$FD_MUTANT"
+cmp -s "$RUNTIME" "$FD_MUTANT" && fail "fd-boundary control mutated nothing"
+grep -q '^      "\$@" || rc=\$?$' "$FD_MUTANT" \
+  || fail "fd-boundary control did not remove the worker-side close"
+ok "the fd-boundary control removes only the worker-side close"
+fd_mutant_wait="$(direct_launch "$FD_MUTANT" hostile-mutant 20 2 hostile-codex)"
+for _ in $(seq 1 200); do
+  [[ -e "$TMP_ROOT/hostile-mutant.ready" ]] && break
+  sleep 0.05
+done
+[[ -e "$TMP_ROOT/hostile-mutant.ready" ]] || fail "the fd-boundary control never ran its hostile CLI"
+fd_mutant_pid="$(cat < "$TMP_ROOT/hostile-mutant-runtime/pid")"
+rc=0
+bash -c "$fd_mutant_wait" > "$TMP_ROOT/hostile-mutant-wait.stdout" \
+  2> "$TMP_ROOT/hostile-mutant-wait.stderr" || rc=$?
+assert_rc "$rc" 0 "without the fd close, hostile output forges completion"
+[[ -e "$TMP_ROOT/hostile-mutant.forged" ]] \
+  || fail "the fd-boundary control did not reach descriptor 9"
+[[ ! -e "$TMP_ROOT/hostile-mutant-runtime" ]] \
+  || fail "the forged completion did not remove live runtime state"
+ok "the mutant proves descriptor closure blocks forged completion"
+touch "$TMP_ROOT/hostile-mutant.release"
+for _ in $(seq 1 200); do
+  kill -0 "$fd_mutant_pid" 2>/dev/null || break
+  sleep 0.05
+done
+kill -KILL -- "-$fd_mutant_pid" 2>/dev/null || true
+
+echo "=== a killed worker without status tells the caller to relaunch ==="
 killed_wait="$(direct_launch "$RUNTIME" killed 120 2 slow-codex)"
 for _ in $(seq 1 200); do
   [[ -s "$TMP_ROOT/killed.ready" && -s "$TMP_ROOT/killed-runtime/pid" ]] && break
@@ -191,9 +226,11 @@ kill -0 "$killed_pid" 2>/dev/null && fail "the worker survived the kill"
 ok "the launched pid names the worker and dies when signalled"
 rc=0
 bash -c "$killed_wait" > "$TMP_ROOT/killed-wait.stdout" 2> "$TMP_ROOT/killed-wait.stderr" || rc=$?
-assert_rc "$rc" 75 "a killed worker returns 75"
+assert_rc "$rc" 1 "a killed worker without status is terminal"
 assert_contains "$TMP_ROOT/killed-wait.stderr" "the detached worker is gone" \
-  "the 75 names a gone worker, not a bounded slice"
+  "the terminal error names the gone worker"
+assert_contains "$TMP_ROOT/killed-wait.stderr" "relaunch the original second-opinion command" \
+  "the terminal error tells the caller how to restart"
 [[ -s "$TMP_ROOT/killed-answer" ]] && fail "the killed worker wrote an artifact"
 ok "the killed run left no artifact"
 
@@ -238,8 +275,7 @@ echo "=== a status landing in the pid-death window is still read ==="
 # The wrapper writes the status and THEN exits, so a poll can read the file,
 # find nothing, and see the pid die a moment later with the status now on disk.
 # The re-read inside the pid-death branch is what catches that; without
-# it the wait reports 75 for a run that has in fact finished. The cost is one
-# spurious 75 and a rerun, not a wrong status — robustness, not correctness.
+# it the wait reports a terminal missing-status failure for a run that finished.
 #
 # Staged by cat call count, never by the clock: the stub publishes the status
 # after the poll's first read of the file, which is exactly the window, and the
@@ -275,7 +311,7 @@ assert_rc "$rc" 5 "a status written in the pid-death window still decides the ru
 ok "the recovered completion removes the runtime directory"
 
 # Control: the same staged window against a wait whose pid-death branch has
-# lost its re-read must report 75 instead. Without it this case cannot say
+# lost its re-read must report the terminal missing-status outcome instead.
 # which read decided the run.
 RACE_MUTANT="$MUTANT_DIR/race-mutant-runtime"
 awk '
@@ -289,9 +325,9 @@ chmod +x "$RACE_MUTANT"
   || fail "the re-read control removed something other than the four-line re-read"
 ok "the re-read control removes exactly the pid-death re-read"
 rc="$(race_wait "$RACE_MUTANT" race-mutant)"
-assert_rc "$rc" 75 "the re-read control rejects a wait that never re-reads"
+assert_rc "$rc" 1 "the re-read control rejects a wait that never re-reads"
 assert_contains "$TMP_ROOT/race-mutant.stderr" "the detached worker is gone" \
-  "the control's 75 is the pid-death branch, not a spent slice"
+  "the control reaches the pid-death branch"
 
 echo "=== a worker's own exit status is what the wait returns ==="
 # EXIT_CLI_FAILED and its siblings mean something an operator acts on, so the
@@ -321,6 +357,53 @@ rc=0
 assert_rc "$rc" 1 "a missing worker pid is refused"
 assert_contains "$TMP_ROOT/missing-pid.stderr" "worker pid is missing or unsafe" \
   "the missing-pid refusal names the broken recovery state"
+mkdir "$TMP_ROOT/missing-status-runtime"
+: > "$TMP_ROOT/missing-status-runtime/worker.log"
+printf '4545\n' > "$TMP_ROOT/missing-status-runtime/pid"
+rc=0
+"$RUNTIME" wait "$TMP_ROOT/missing-status-answer" "$TMP_ROOT/missing-status-runtime" \
+  "$(($(date +%s) + 60))" 1 > "$TMP_ROOT/missing-status.stdout" \
+  2> "$TMP_ROOT/missing-status.stderr" || rc=$?
+assert_rc "$rc" 1 "a resumed wait with no status file is refused"
+assert_contains "$TMP_ROOT/missing-status.stderr" "worker status is missing or unsafe" \
+  "the missing-status refusal names the broken recovery state"
+mkdir "$TMP_ROOT/wait-status-symlink-runtime"
+: > "$TMP_ROOT/wait-status-symlink-runtime/worker.log"
+printf '4646\n' > "$TMP_ROOT/wait-status-symlink-runtime/pid"
+printf '0\n' > "$TMP_ROOT/wait-status-target"
+ln -s "$TMP_ROOT/wait-status-target" "$TMP_ROOT/wait-status-symlink-runtime/worker.status"
+printf 'staged answer\n' > "$TMP_ROOT/wait-status-symlink-answer"
+rc=0
+"$RUNTIME" wait "$TMP_ROOT/wait-status-symlink-answer" \
+  "$TMP_ROOT/wait-status-symlink-runtime" "$(($(date +%s) + 60))" 1 \
+  > "$TMP_ROOT/wait-status-symlink.stdout" 2> "$TMP_ROOT/wait-status-symlink.stderr" || rc=$?
+assert_rc "$rc" 1 "a resumed wait refuses a symlinked status file"
+assert_contains "$TMP_ROOT/wait-status-symlink.stderr" "worker status is missing or unsafe" \
+  "the resumed-wait refusal names the unsafe status file"
+
+WAIT_GUARD_MUTANT="$MUTANT_DIR/wait-guard-mutant-runtime"
+awk '
+  /\[\[ -f "\$status_file" && ! -L "\$status_file" \]\]/ { getline; removed += 2; next }
+  { print }
+  END { if (removed != 2) exit 9 }
+' "$RUNTIME" > "$WAIT_GUARD_MUTANT" \
+  || fail "wait-status control did not remove exactly the two-line guard"
+chmod +x "$WAIT_GUARD_MUTANT"
+bash -n "$WAIT_GUARD_MUTANT" || fail "wait-status control is not valid shell"
+ok "the wait-status control removes exactly the file-type guard"
+mkdir "$TMP_ROOT/wait-status-mutant-runtime"
+: > "$TMP_ROOT/wait-status-mutant-runtime/worker.log"
+printf '4747\n' > "$TMP_ROOT/wait-status-mutant-runtime/pid"
+ln -s "$TMP_ROOT/wait-status-target" "$TMP_ROOT/wait-status-mutant-runtime/worker.status"
+printf 'staged answer\n' > "$TMP_ROOT/wait-status-mutant-answer"
+rc=0
+"$WAIT_GUARD_MUTANT" wait "$TMP_ROOT/wait-status-mutant-answer" \
+  "$TMP_ROOT/wait-status-mutant-runtime" "$(($(date +%s) + 60))" 1 \
+  > "$TMP_ROOT/wait-status-mutant.stdout" 2> "$TMP_ROOT/wait-status-mutant.stderr" || rc=$?
+assert_rc "$rc" 0 "without the wait guard, a symlinked status is accepted"
+[[ ! -e "$TMP_ROOT/wait-status-mutant-runtime" ]] \
+  || fail "the wait-status mutant did not consume the unsafe runtime"
+ok "the mutant proves resumed waits need the status file-type guard"
 mkdir "$TMP_ROOT/symlink-runtime"
 ln -s "$TMP_ROOT/elsewhere.log" "$TMP_ROOT/symlink-runtime/worker.log"
 rc=0
@@ -379,23 +462,35 @@ workflow_files=(
   "$REPO_ROOT/skills/orch/workflows/review-pr.md"
   "$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 )
-# A workflow states the recoverable and terminal exit codes itself, or names
-# the --help that owns them. Both spellings are in the tree, so each row
-# matches either one, anchored on the sentence that routes the exit code — a
-# bare identifier appears elsewhere in these files and would pass a workflow
-# that dropped the contract.
-RESUME_FORM='Exit 75 means completion or deadline cleanup is still recoverable|per its exit code \(`second-opinion --help`\)'
-TERMINAL_FORM='Exit 124 is terminal|per its exit code \(`second-opinion --help`\) until terminal'
+# The CLI help owns the exit contract. Instruction files point there rather
+# than copying state meanings that can drift from the runtime.
+"$SECOND_OPINION" --help > "$TMP_ROOT/help.stdout"
+assert_contains "$TMP_ROOT/help.stdout" "75 detached wait:" \
+  "help owns the recoverable wait outcome"
+assert_contains "$TMP_ROOT/help.stdout" "124 detached wait:" \
+  "help owns the deadline outcome"
+assert_contains "$TMP_ROOT/help.stdout" "1 detached wait: worker gone without status" \
+  "help owns the terminal worker-gone outcome"
+
+instruction_files=(
+  "$REPO_ROOT/skills/second-opinion/SKILL.md"
+  "${workflow_files[@]}"
+)
+for instruction_file in "${instruction_files[@]}"; do
+  assert_contains "$instruction_file" 'second-opinion --help' \
+    "${instruction_file##*/} points to the exit-contract owner"
+  if grep -Eq 'Exit (1|75|124)|[0-9]+ detached wait:' "$instruction_file"; then
+    fail "$instruction_file copies the exit contract instead of citing help"
+  fi
+  ok "${instruction_file##*/} carries no copied exit-code meaning"
+done
+
 for workflow_file in "${workflow_files[@]}"; do
   workflow_commands_detach "$workflow_file" \
     || fail "$workflow_file has no capped second-opinion command or one lacks --foreground"
   ok "${workflow_file##*/} launches with --foreground"
   assert_contains "$workflow_file" 'exact command printed after `wait:`' \
     "${workflow_file##*/} executes the emitted wait command"
-  assert_matches "$workflow_file" "$RESUME_FORM" \
-    "${workflow_file##*/} resumes bounded waits"
-  assert_matches "$workflow_file" "$TERMINAL_FORM" \
-    "${workflow_file##*/} treats the deadline result as terminal"
 done
 cat > "$TMP_ROOT/no-command-workflow.md" <<'EOF'
 Execute the exact command printed after `wait:` and read the artifact.
@@ -404,40 +499,12 @@ if workflow_commands_detach "$TMP_ROOT/no-command-workflow.md"; then
   fail "the workflow wiring check accepted prose with no launch command"
 fi
 ok "the workflow wiring check rejects a missing launch command"
-# Decoy: both spellings' tokens present on unrelated lines, no exit code
-# routed. It passed the file-global forms this suite shipped before, so it is
-# the case that keeps the identifiers from floating free of their sentence.
-cat > "$TMP_ROOT/free-floating-tokens.md" <<'EOF'
-Continue until terminal before reading the artifact.
-Options and sidecar files are in `second-opinion --help`.
-EOF
-if grep -Eq "$RESUME_FORM" "$TMP_ROOT/free-floating-tokens.md"; then
-  fail "the resume row accepted a free-floating second-opinion --help mention"
+owner_control="$TMP_ROOT/review-without-help.md"
+sed 's/`second-opinion --help`/`second-opinion help`/g' \
+  "$REPO_ROOT/skills/second-opinion/workflows/review.md" > "$owner_control"
+cmp -s "$REPO_ROOT/skills/second-opinion/workflows/review.md" "$owner_control" \
+  && fail "exit-owner control staged no change"
+if grep -qF 'second-opinion --help' "$owner_control"; then
+  fail "exit-owner control still cites help"
 fi
-if grep -Eq "$TERMINAL_FORM" "$TMP_ROOT/free-floating-tokens.md"; then
-  fail "the terminal row accepted a free-floating until-terminal mention"
-fi
-ok "both wait-contract rows reject tokens that float free of the contract sentence"
-# Control: each row must red on a real workflow that keeps every surrounding
-# word and loses only its exit-code routing. Prose carrying neither form would
-# prove just that the assertion runs; one file per spelling is staged so both
-# alternation arms are shown able to fail.
-for control_source in \
-  "$REPO_ROOT/skills/second-opinion/workflows/review.md" \
-  "$REPO_ROOT/skills/orch/workflows/review-pr.md"; do
-  staged="$TMP_ROOT/staged-${control_source##*/}"
-  sed -e 's/ Exit 75 means completion or deadline cleanup is still recoverable; do other event checks, then rerun the same command\.//' \
-      -e 's/ Exit 124 is terminal: the deadline passed, the process group is confirmed gone, and runtime state was removed\. A cleanup failure names the cause and preserves runtime state\.//' \
-      -e 's/ and repeat it per its exit code (`second-opinion --help`) until terminal//' \
-      "$control_source" > "$staged"
-  if cmp -s "$control_source" "$staged"; then
-    fail "the ${control_source##*/} control staged no change — its exit sentence moved"
-  fi
-  if grep -Eq "$RESUME_FORM" "$staged"; then
-    fail "the resume row passed ${control_source##*/} stripped of its exit routing"
-  fi
-  if grep -Eq "$TERMINAL_FORM" "$staged"; then
-    fail "the terminal row passed ${control_source##*/} stripped of its exit routing"
-  fi
-  ok "both wait-contract rows red on ${control_source##*/} stripped of its exit routing"
-done
+ok "the owner-reference control removes the workflow citation"

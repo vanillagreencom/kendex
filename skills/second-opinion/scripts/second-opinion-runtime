@@ -30,7 +30,6 @@ stop_process_group() {
         echo "second-opinion-runtime: could not send KILL to process group $leader" >&2
         return 1
       fi
-      wait "$leader" 2>/dev/null || true
       end=$((now + 5))
       while process_group_alive "$leader"; do
         now=$(date +%s)
@@ -40,6 +39,11 @@ stop_process_group() {
         fi
         sleep 0.1
       done
+      if kill -0 "$leader" 2>/dev/null; then
+        echo "second-opinion-runtime: process $leader is still alive after its group stopped" >&2
+        return 1
+      fi
+      wait "$leader" 2>/dev/null || true
       return 0
     fi
     sleep 0.1
@@ -297,8 +301,8 @@ wait_for_run() {
       status=$(completion_status "$status_file") || status_rc=$?
       [[ $status_rc -ne 2 ]] || die "cannot read worker status: $status_file"
       [[ -z "$status" ]] || continue
-      echo "second-opinion: the detached worker is gone and published no status; rerun the same wait command" >&2
-      exit 75
+      echo "second-opinion: the detached worker is gone and published no status; relaunch the original second-opinion command" >&2
+      exit 1
     fi
     if [[ $now -ge $attempt_deadline ]]; then
       status_rc=0
