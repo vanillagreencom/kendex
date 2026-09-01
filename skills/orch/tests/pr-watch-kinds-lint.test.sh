@@ -32,7 +32,7 @@ echo "=== orch pr-watch kind coverage lint ==="
 kinds() { # pr-watch
   "$1" --help 2>/dev/null \
     | sed -n '/^Attention kinds:/,/^$/p' \
-    | sed -n 's/^  \([a-z][a-z-]*\) \+[^ ].*/\1/p' \
+    | sed -n 's/^  \([a-z][a-z-]*\) \{1,\}[^ ].*/\1/p' \
     | sort -u
 }
 
