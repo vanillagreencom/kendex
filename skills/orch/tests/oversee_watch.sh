@@ -215,7 +215,7 @@ else
   out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
   chmod 700 "$STATE_DIR/owner_repo__none"
   assert_eq "$rc" "2" "a state file that cannot be written exits 2" "$err"
-  assert_eq "$out" "" "a failed state write prints no EVENT" "$err"
+  assert_eq "$out" "" "a failed state write on a pass with no event prints no EVENT" "$err"
   assert_contains "$(cat "$err")" "could not write the pr-watch state file" \
     "the failure names what could not be written"
   assert_eq "$(ls -1 "$STATE_DIR" | grep -c '\.tmp$' || true)" "0" \
@@ -338,6 +338,20 @@ else
     "and it carries the line that raised it" "$err"
   assert_contains "$(cat "$err")" "could not write the pr-watch state file" \
     "the write failure is still reported"
+  assert_eq "$(cat "$STATE_DIR/owner_repo__none")" "$(printf '12\tthreads-open')" \
+    "the baseline of the repo that raised the event does not advance over it" "$err"
+  assert_eq "$(ls -1 "$STATE_DIR" | grep -c '\.tmp$' || true)" "0" \
+    "a failed commit leaves no temp file behind" "$err"
+
+  # run 5: everything healthy again — the event run 4 raised is still an event
+  chmod 700 "$STATE_DIR/other_repo__none"
+  rmdir "$STATE_DIR/other_repo__none"
+  err="$TMP_ROOT/e1m5"
+  out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+  assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
+    "the run after a failed commit reports that event again" "$err"
+  assert_contains "$out" "$(printf 'owner/repo\t34\tcccc0000\tthreads-open')" \
+    "and carries the line whose baseline never advanced" "$err"
 fi
 
 # 1n. each repo's rising edge is measured against its OWN baseline: a standing

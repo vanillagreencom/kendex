@@ -58,8 +58,8 @@
 #      unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
 #      the pr-watch state directory or file unusable, lanes given outside
 #      tmux). A state file that cannot be written is judged AFTER the event it
-#      would have consumed is printed, so this status can follow an EVENT line
-#      on stdout: that event is delivered, its baseline is not
+#      would have consumed is printed and before any baseline moves, so this
+#      status can follow an EVENT line on stdout: the next run repeats it
 #
 # Environment:
 #   OVERSEE_WATCH_PR_WATCH   path to the pr-watch reducer (default:
@@ -176,8 +176,8 @@ Exit codes:
      unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
      the pr-watch state directory or file unusable, lanes given outside tmux.
      A state file that cannot be written is judged after the event it would
-     have consumed is printed, so this status can follow an EVENT line: that
-     event is delivered, its baseline is not
+     have consumed is printed and before any baseline moves, so this status
+     can follow an EVENT line: no baseline advanced, the next run repeats it
 
 Environment:
   OVERSEE_WATCH_PR_WATCH   path to pr-watch.sh (default: the review-gate
