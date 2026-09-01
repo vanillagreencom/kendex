@@ -516,21 +516,6 @@ format_children_recursive() {
     '
 }
 
-# Format mutation response to consistent structure
-# Returns: {success: bool, id: "CC-XXX", url: "...", data: {...}}
-format_mutation_response() {
-    local result="$1"
-    local operation="$2"
-    local entity="$3"
-
-    echo "$result" | jq --arg op "$operation" --arg ent "$entity" '{
-        success: .[$op].success,
-        id: (.[$op][$ent].identifier // .[$op][$ent].id),
-        url: (.[$op][$ent].url // ""),
-        data: .[$op][$ent]
-    }'
-}
-
 # Format users list to safe structure
 format_users_list() {
     local raw="$1"

@@ -103,54 +103,6 @@ cache_worktree_repair_script() {
 }
 
 # =============================================================================
-# TEST-FIXTURE POLLUTION GUARD (kendex#43)
-# =============================================================================
-# A test that forgets to isolate PROJECT_ROOT/CACHE_DIR into a throwaway dir
-# resolves the real project's `.cache/linear` instead of a fixture root, and
-# any write-through (create/update) merges synthetic fixture ids into the
-# live cache. That is exactly the kendex#43 incident: fake ids
-# (`child-uuid`/`issue-uuid`/`uuid-1`) landed in the real cache, and Linear's
-# `id: {in: [...]}` existence check rejects the whole `sync` on one
-# non-UUID/non-identifier entry — one unisolated test bricked every sync
-# thereafter.
-#
-# LINEAR_API_KEY_OVERRIDE is the inline auth channel tests rely on — but it
-# is also documented for legitimate one-off inline keys, so the combination
-# below is a strong heuristic, not proof: an override key plus a CACHE_DIR
-# that resolves inside a real, cloned checkout (a configured git `origin`
-# remote) that already has synced issue data almost always means an
-# unisolated test about to write fixtures into real data. An isolated test
-# root (`mktemp -d` + `git init`, no remote added) never matches. Fail
-# closed rather than silently pollute; a human running a deliberate inline
-# key against a real checkout sets LINEAR_INLINE_KEY_CACHE_OK=1 (the
-# refusal says so) — a marker no test sets.
-cache_test_isolation_violation() {
-    [[ -n "${LINEAR_API_KEY_OVERRIDE:-}" ]] || return 1
-    [[ "${LINEAR_INLINE_KEY_CACHE_OK:-}" != "1" ]] || return 1
-    [[ -f "$CACHE_DIR/issues.json" ]] || return 1
-    local dir="$CACHE_DIR"
-    while [[ ! -d "$dir" && "$dir" != "/" && -n "$dir" ]]; do
-        dir="$(dirname "$dir")"
-    done
-    [[ -n "$dir" && -d "$dir" ]] || return 1
-    git -C "$dir" remote get-url origin >/dev/null 2>&1
-}
-
-cache_test_isolation_refusal() {
-    {
-        echo "Refusing: LINEAR_API_KEY_OVERRIDE is set (the inline auth channel"
-        echo "tests rely on) and CACHE_DIR resolves inside a real checkout with a"
-        echo "configured git 'origin' remote and existing synced issues (kendex#43):"
-        echo "  CACHE_DIR: $CACHE_DIR"
-        echo "An unisolated test would write fixture data into the real Linear"
-        echo "cache. Tests: isolate PROJECT_ROOT/CACHE_DIR to a throwaway"
-        echo "'mktemp -d' + 'git init' root before invoking linear.sh."
-        echo "Deliberately using an inline key against this real checkout?"
-        echo "Set LINEAR_INLINE_KEY_CACHE_OK=1 to proceed."
-    } >&2
-}
-
-# =============================================================================
 # DIRECTORY & LIFECYCLE
 # =============================================================================
 
@@ -259,27 +211,10 @@ cache_jq_file() {
     printf '%s\n' "$out"
 }
 
-cache_read() {
-    local file="$1" filter="${2:-.}"
-    cache_jq_file "$CACHE_DIR/$file" "[]" "$filter"
-}
-
-cache_read_issues() { cache_read "issues.json" "${1:-.}"; }
-cache_read_projects() { cache_read "projects.json" "${1:-.}"; }
-cache_read_cycles() { cache_read "cycles.json" "${1:-.}"; }
-cache_read_initiatives() { cache_read "initiatives.json" "${1:-.}"; }
-cache_read_labels() { cache_read "labels.json" "${1:-.}"; }
-
 cache_get_issue() {
     local id="$1"
     cache_jq_file "$CACHE_DIR/issues.json" "" --arg id "$id" \
         '[.[] | select(.id == $id or .identifier == $id)] | first // empty'
-}
-
-cache_get_children() {
-    local parent="$1"
-    cache_jq_file "$CACHE_DIR/issues.json" "[]" --arg p "$parent" \
-        '[.[] | select(.parent.identifier == $p)]'
 }
 
 cache_get_children_recursive() {

@@ -307,15 +307,6 @@ ISSUE_RETURN_FIELDS='
     trashed
 '"$ISSUE_RELATION_FIELDS"
 
-linear_mutation_success() {
-    local normalized="$1"
-    [ "$(echo "$normalized" | jq -r '.success // false' 2>/dev/null || echo false)" = "true" ]
-}
-
-emit_linear_issue_activity() { return 0; }
-
-emit_linear_relation_activity() { return 0; }
-
 read_description_file() {
     local description_file="$1"
     if [[ -z "$description_file" ]]; then
@@ -328,21 +319,6 @@ read_description_file() {
     fi
     description=$(<"$description_file")
 }
-
-linear_update_activity_type() {
-    local normalized="$1"
-    local state state_type
-    # An unparseable response classifies as the generic update: the activity
-    # type is presentation, never a gate.
-    state=$(echo "$normalized" | jq -r '.data.issue.state.name // empty' 2>/dev/null) || state=""
-    state_type=$(echo "$normalized" | jq -r '.data.issue.state.type // empty' 2>/dev/null) || state_type=""
-    case "$(printf '%s' "$state_type:$state" | tr '[:upper:]' '[:lower:]')" in
-        completed:*|*:done|*:complete|*:completed) printf 'linear.issue_finished success\n' ;;
-        canceled:*|cancelled:*|*:canceled|*:cancelled|*:canceled*|*:cancelled*) printf 'linear.issue_cancelled warning\n' ;;
-        *) printf 'linear.issue_updated info\n' ;;
-    esac
-}
-
 
 list_issues() {
     local with_relations="false"
@@ -1059,10 +1035,6 @@ upload_attach_paths() {
 }
 
 create_issue() {
-    if cache_test_isolation_violation; then
-        cache_test_isolation_refusal
-        exit 1
-    fi
     local title=""
     local team=""
     local description=""
@@ -1492,7 +1464,6 @@ create_issue() {
     fi
     local normalized
     normalized=$(normalize_mutation_response "$result" "issueCreate" "issue")
-    emit_linear_issue_activity "linear.issue_created" "info" "$normalized"
     # --format=ids mirrors the query-command contract: print ONLY the created
     # identifier (one per line, nothing else) so workflows can capture it
     # deterministically. Any other/absent format keeps the default JSON output.
@@ -1507,10 +1478,6 @@ create_issue() {
 }
 
 update_issue() {
-    if cache_test_isolation_violation; then
-        cache_test_isolation_refusal
-        exit 1
-    fi
     local issue_id="$1"
     shift
 
@@ -1976,12 +1943,6 @@ update_issue() {
     fi
     local normalized
     normalized=$(normalize_mutation_response "$result" "issueUpdate" "issue")
-    if [ -n "$state" ]; then
-        local activity_type activity_severity
-        read -r activity_type activity_severity < <(linear_update_activity_type "$normalized")
-        emit_linear_issue_activity "$activity_type" "$activity_severity" "$normalized"
-    fi
-
     # Output format. Default (no --format) preserves the historical mutation
     # summary so existing callers that parse .success/.identifier/.data keep
     # working. When --format is passed explicitly, emit the updated issue in the
@@ -2318,80 +2279,6 @@ list_relations() {
     esac
 }
 
-# Parent levels selected per ancestor query. A chain that comes back with
-# exactly this many parents may be cut off by the query depth rather than
-# rooted; extend_ancestor_chain keeps fetching until a short chunk proves a
-# true root (null parent).
-ANCESTOR_FETCH_DEPTH=5
-ANCESTOR_FETCH_MAX_CHUNKS=20
-
-# build_parent_selection DEPTH — nested GraphQL parent selection, DEPTH levels
-build_parent_selection() {
-    local depth="$1" selection="" i
-    for ((i = 0; i < depth; i++)); do
-        selection="parent { id identifier $selection }"
-    done
-    printf '%s' "$selection"
-}
-
-# extend_ancestor_chain IDENTIFIER_CHAIN ID_CHAIN
-# Complete a possibly-truncated ancestor chain (newline-separated identifiers,
-# self first). A chain shorter than ANCESTOR_FETCH_DEPTH+1 entries already
-# ends at a true root; a full-length chain may instead be cut off by the
-# query depth, so follow up with chunked ancestor queries for the deepest
-# entry until a chunk comes back short. Prints the completed chain. Fails
-# (error on stderr) when the hierarchy exceeds the chunk bound or a lookup
-# misbehaves — callers must treat failure as "do not derive remediation",
-# never as "chain is complete".
-extend_ancestor_chain() {
-    local chain="$1"
-    local id_chain="$2"
-    local full=$((ANCESTOR_FETCH_DEPTH + 1))
-    local chunks=0
-    local segment="$chain"
-    local deepest deepest_id chunk_result rest segment_ids rest_ids
-
-    while [ "$(printf '%s\n' "$segment" | grep -c '')" -ge "$full" ]; do
-        chunks=$((chunks + 1))
-        if [ "$chunks" -gt "$ANCESTOR_FETCH_MAX_CHUNKS" ]; then
-            echo "{\"error\": \"Hierarchy too deep to validate: no root issue within $((ANCESTOR_FETCH_DEPTH + ANCESTOR_FETCH_MAX_CHUNKS * ANCESTOR_FETCH_DEPTH)) ancestor levels. Refusing to validate the blocking relation against a truncated ancestor chain.\"}" >&2
-            return 1
-        fi
-        deepest=$(printf '%s\n' "$chain" | tail -n 1)
-        deepest_id=$(printf '%s\n' "$id_chain" | tail -n 1)
-        local chunk_query="
-        query AncestorChunk(\$id: String!) {
-            issue(id: \$id) { id identifier $(build_parent_selection "$ANCESTOR_FETCH_DEPTH") }
-        }"
-        chunk_result=$(graphql_query "$chunk_query" "{\"id\": \"$deepest\"}") || return 1
-        local chunk_issue
-        chunk_issue=$(echo "$chunk_result" | jq -c '.issue')
-        validate_parent_chain_shape "$chunk_issue" "$ANCESTOR_FETCH_DEPTH" "$deepest" || return 1
-        segment=$(echo "$chunk_result" | jq -r '.issue | recurse(.parent; . != null) | .identifier')
-        segment_ids=$(echo "$chunk_result" | jq -r '.issue | recurse(.parent; . != null) | .id')
-        if [ "$(printf '%s\n' "$segment" | sed -n '1p')" != "$deepest" ] \
-            || [ "$(printf '%s\n' "$segment_ids" | sed -n '1p')" != "$deepest_id" ]; then
-            echo "{\"error\": \"Ancestor lookup for $deepest returned an unexpected issue; refusing to validate the blocking relation against an incomplete ancestor chain.\"}" >&2
-            return 1
-        fi
-        rest=$(printf '%s\n' "$segment" | tail -n +2)
-        rest_ids=$(printf '%s\n' "$segment_ids" | tail -n +2)
-        if hierarchy_chains_overlap "$rest" "$chain" \
-            || hierarchy_chains_overlap "$rest_ids" "$id_chain"; then
-            echo "{\"error\": \"Hierarchy validation failed closed: parent cycle detected while extending '$deepest'.\"}" >&2
-            return 1
-        fi
-        if [ -n "$rest" ]; then
-            chain="$chain
-$rest"
-            id_chain="$id_chain
-$rest_ids"
-        fi
-    done
-
-    printf '%s\n' "$chain"
-}
-
 add_relation() {
     local issue_ref="$1"
     shift
@@ -2481,50 +2368,31 @@ add_relation() {
     # Validation for blocking relations: the blocking-level rule
     # (blocking relations connect peers of one bundle — see issue-validation.sh)
     if [ "$relation_type" = "blocks" ]; then
-        # The parent chain is fetched ANCESTOR_FETCH_DEPTH levels per query and
-        # extended chunk-by-chunk to a proven root when remediation needs it.
-        local ancestor_selection
-        ancestor_selection=$(build_parent_selection "$ANCESTOR_FETCH_DEPTH")
+        # The rule reads one level: each issue's own direct parent. One query,
+        # no ancestor walk. issue1 = blocker (from), issue2 = blocked (to).
         local validation_query="
         query ValidateBlocking(\$id1: String!, \$id2: String!) {
-            issue1: issue(id: \$id1) { id identifier $ancestor_selection }
-            issue2: issue(id: \$id2) { id identifier $ancestor_selection }
+            issue1: issue(id: \$id1) { id identifier parent { id identifier } }
+            issue2: issue(id: \$id2) { id identifier parent { id identifier } }
         }"
         local validation_result
         validation_result=$(graphql_query "$validation_query" "{\"id1\": \"$issue_id\", \"id2\": \"$related_issue_uuid\"}")
 
-        local issue1_json issue2_json
-        issue1_json=$(echo "$validation_result" | jq -c '.issue1')
-        issue2_json=$(echo "$validation_result" | jq -c '.issue2')
-        validate_parent_chain_shape "$issue1_json" "$ANCESTOR_FETCH_DEPTH" "$issue_id" || return 1
-        validate_parent_chain_shape "$issue2_json" "$ANCESTOR_FETCH_DEPTH" "$related_issue_uuid" || return 1
-
-        local issue1_id issue2_id
-        issue1_id=$(echo "$validation_result" | jq -r '.issue1.identifier')
-        issue2_id=$(echo "$validation_result" | jq -r '.issue2.identifier')
-
-        # Blocking-level rule — a blocking relation connects peers of
-        # one bundle: same direct parent, or both top-level. The rejection
-        # message derives its remediation from the same predicate
-        # (blocking_level_ok), so a prescribed command is never itself rejected.
-        # issue1 = blocker (from), issue2 = blocked (to)
-        local chain1 chain2 id_chain1 id_chain2 parent1_id parent2_id
-        chain1=$(echo "$validation_result" | jq -r '.issue1 | recurse(.parent; . != null) | .identifier')
-        chain2=$(echo "$validation_result" | jq -r '.issue2 | recurse(.parent; . != null) | .identifier')
-        id_chain1=$(echo "$validation_result" | jq -r '.issue1 | recurse(.parent; . != null) | .id')
-        id_chain2=$(echo "$validation_result" | jq -r '.issue2 | recurse(.parent; . != null) | .id')
-
-        # A full eager selection may hide one more parent edge. Prove both
-        # chains terminate at explicit validated roots before any same-parent
-        # shortcut can accept the relation. Shallow chains return unchanged.
-        chain1=$(extend_ancestor_chain "$chain1" "$id_chain1") || return 1
-        chain2=$(extend_ancestor_chain "$chain2" "$id_chain2") || return 1
-        parent1_id=$(sed -n '2p' <<<"$chain1")
-        parent2_id=$(sed -n '2p' <<<"$chain2")
+        local issue1_id issue2_id parent1_id parent2_id
+        issue1_id=$(jq -r '.issue1.identifier? // ""' <<<"$validation_result" 2>/dev/null)
+        issue2_id=$(jq -r '.issue2.identifier? // ""' <<<"$validation_result" 2>/dev/null)
+        # An absent side would otherwise read as "no parent" and pass as a
+        # top-level pair, so the missing issue refuses instead.
+        if [ -z "$issue1_id" ] || [ -z "$issue2_id" ]; then
+            echo "{\"error\": \"Hierarchy validation failed closed: Linear returned no issue for one side of the blocking relation.\"}" >&2
+            return 1
+        fi
+        parent1_id=$(jq -r '.issue1.parent.identifier? // ""' <<<"$validation_result" 2>/dev/null)
+        parent2_id=$(jq -r '.issue2.parent.identifier? // ""' <<<"$validation_result" 2>/dev/null)
 
         if ! blocking_level_ok "$parent1_id" "$parent2_id"; then
             local violation_message
-            violation_message=$(blocking_level_violation_message "$issue1_id" "$issue2_id" "$chain1" "$chain2")
+            violation_message=$(blocking_level_violation_message "$issue1_id" "$issue2_id" "$parent1_id" "$parent2_id")
             echo "{\"error\": \"$violation_message\"}" >&2
             return 1
         fi
@@ -2575,7 +2443,6 @@ add_relation() {
     cache_refresh_issues "$issue_id" "$related_issue_uuid" 2>/dev/null || true
     local normalized
     normalized=$(normalize_mutation_response "$result" "issueRelationCreate" "issueRelation")
-    emit_linear_relation_activity "$normalized"
     echo "$normalized"
 }
 

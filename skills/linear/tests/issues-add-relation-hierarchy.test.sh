@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
-# Regression test for #557: the add-relation blocking-level guard must emit
-# self-consistent remediation. Any command it prescribes must itself pass the
-# guard, and ancestor/descendant pairs get a single explanation instead of a
-# prescription (there is no valid replacement pair for them).
+# The add-relation blocking-level guard: a blocking relation connects peers of
+# one bundle (same direct parent, or both top-level). The guard reads one
+# level — each issue's own direct parent — in a single query.
 #
 # Fixture hierarchy:
 #   CC-761 (root)
 #     ├── CC-763 ── CC-766, CC-768
 #     └── CC-764 ── CC-767
 #   CC-780 (root)
-#   CC-799 (missing parent key; fail-closed fixture)
-#   CC-800 (non-object parent; fail-closed fixture)
-#   CC-801 (non-object issue; fail-closed fixture)
-#   CC-802 (empty parent ID; fail-closed fixture)
-#   CC-830, CC-831 (same-parent P-A-P-A-P cycle; fail-closed fixture)
+#   CC-999 (no such issue; the fail-closed fixture)
 #   CC-870..CC-873 (top-level pairs spanning two projects, and a project
 #                   paired with none)
 
@@ -44,22 +39,16 @@ printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
 # identifier -> uuid used by the resolve query; validate/mutation see uuids
 uuid_for() { printf 'uuid-%s' "${1#CC-}"; }
 
-# Issue node with a 5-level parent chain, as ValidateBlocking selects
+# Issue node with the direct parent ValidateBlocking selects.
 issue_node() {
-  local cycle_parent='{"id":"uuid-p","identifier":"CC-P","parent":{"id":"uuid-a","identifier":"CC-A","parent":{"id":"uuid-p","identifier":"CC-P","parent":{"id":"uuid-a","identifier":"CC-A","parent":{"id":"uuid-p","identifier":"CC-P"}}}}}'
   case "$1" in
   uuid-761) printf '%s' '{"id":"uuid-761","identifier":"CC-761","parent":null}' ;;
-  uuid-763) printf '%s' '{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}' ;;
-  uuid-764) printf '%s' '{"id":"uuid-764","identifier":"CC-764","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}' ;;
-  uuid-766) printf '%s' '{"id":"uuid-766","identifier":"CC-766","parent":{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' ;;
-  uuid-767) printf '%s' '{"id":"uuid-767","identifier":"CC-767","parent":{"id":"uuid-764","identifier":"CC-764","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' ;;
-  uuid-768) printf '%s' '{"id":"uuid-768","identifier":"CC-768","parent":{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' ;;
+  uuid-763) printf '%s' '{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761"}}' ;;
+  uuid-764) printf '%s' '{"id":"uuid-764","identifier":"CC-764","parent":{"id":"uuid-761","identifier":"CC-761"}}' ;;
+  uuid-766) printf '%s' '{"id":"uuid-766","identifier":"CC-766","parent":{"id":"uuid-763","identifier":"CC-763"}}' ;;
+  uuid-767) printf '%s' '{"id":"uuid-767","identifier":"CC-767","parent":{"id":"uuid-764","identifier":"CC-764"}}' ;;
+  uuid-768) printf '%s' '{"id":"uuid-768","identifier":"CC-768","parent":{"id":"uuid-763","identifier":"CC-763"}}' ;;
   uuid-780) printf '%s' '{"id":"uuid-780","identifier":"CC-780","parent":null}' ;;
-  uuid-799) printf '%s' '{"id":"uuid-799","identifier":"CC-799"}' ;;
-  uuid-800) printf '%s' '{"id":"uuid-800","identifier":"CC-800","parent":"uuid-761"}' ;;
-  uuid-801) printf '[]' ;;
-  uuid-802) printf '%s' '{"id":"uuid-802","identifier":"CC-802","parent":{"id":"","identifier":"CC-761","parent":null}}' ;;
-  uuid-830 | uuid-831) printf '{"id":"%s","identifier":"CC-%s","parent":%s}' "$1" "${1#uuid-}" "$cycle_parent" ;;
   uuid-870) printf '{"id":"uuid-870","identifier":"CC-870","project":{"id":"%s","name":"Alpha"},"parent":null}' "${FIXTURE_PROJECT_A:?}" ;;
   uuid-871) printf '{"id":"uuid-871","identifier":"CC-871","project":{"id":"%s","name":"Beta"},"parent":null}' "${FIXTURE_PROJECT_B:?}" ;;
   uuid-872) printf '{"id":"uuid-872","identifier":"CC-872","project":{"id":"%s","name":"Alpha"},"parent":null}' "${FIXTURE_PROJECT_A:?}" ;;
@@ -121,30 +110,11 @@ run_add_relation() {
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues add-relation "$@"
 }
 
-# Extract a prescribed replacement command ("use 'A --blocks B'") from stderr.
-# Prints "A B" or nothing.
-extract_prescription() {
-  sed -n "s/.*[Uu]se '\([A-Z][A-Z]*-[0-9][0-9]*\) --blocks \([A-Z][A-Z]*-[0-9][0-9]*\)'.*/\1 \2/p" "$1"
-}
-
 # A rejection must not have created the relation.
 assert_no_mutation() {
   local payload_log="$1" label="$2"
   assert_not "$label: the rejected relation sent no issueRelationCreate" \
     jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$payload_log" >/dev/null
-}
-
-# Rejected commands may only prescribe replacements the guard accepts: drive
-# every prescription back through the guard (issue #557 regression).
-assert_prescription_satisfiable() {
-  local err_file="$1" label="$2"
-  local prescription
-  prescription="$(extract_prescription "$err_file")"
-  [ -n "$prescription" ] || return 0
-  local from to
-  read -r from to <<<"$prescription"
-  assert "$label: the prescribed '$from --blocks $to' is itself accepted" \
-    run_add_relation "$TMP_ROOT/prescription-payloads.jsonl" "$from" --blocks "$to"
 }
 
 reject() {
@@ -155,7 +125,10 @@ reject() {
 
   assert_ne "$label: the relation is rejected" "$rc" 0
   assert_no_mutation "$TMP_ROOT/payloads.jsonl" "$label"
-  assert_prescription_satisfiable "$TMP_ROOT/err" "$label"
+  assert "$label: the rejection is exactly one line" \
+    test "$(wc -l <"$TMP_ROOT/err")" -eq 1
+  assert "$label: the rejection line is a JSON error" \
+    jq -e '.error' "$TMP_ROOT/err"
 }
 
 accept() {
@@ -167,61 +140,39 @@ accept() {
     jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
 }
 
-# --- (b) ancestor/descendant pairs: one clear explanation, no prescription ---
-for args in "CC-766 --blocks CC-763" "CC-766 --blocks CC-761" "CC-761 --blocks CC-766" "CC-763 --blocked-by CC-766"; do
-  # shellcheck disable=SC2086
-  reject "ancestor case ($args)" $args
-  assert "ancestor case ($args): missing ancestor explanation" \
-    grep -q "cannot carry a blocking relation against its own ancestor" "$TMP_ROOT/err"
-  assert_not "ancestor case ($args): explanation must not prescribe a --blocks command" \
-    grep -q -- "--blocks" "$TMP_ROOT/err"
-  assert_eq "ancestor case ($args): the rejection is exactly one line" \
-    "$(wc -l <"$TMP_ROOT/err")" "1"
-  assert "ancestor case ($args): the rejection line is a JSON error" \
-    jq -e '.error' "$TMP_ROOT/err"
-done
+# --- the rule's outcomes, read one level up ---
 
-# --- (a)+(c) hoistable cases: the correct accepted pair is prescribed ---
-reject "cousins (CC-766 --blocks CC-767)" CC-766 --blocks CC-767
-assert_eq "cousins: the prescribed pair is the hoisted one" \
-  "$(extract_prescription "$TMP_ROOT/err")" "CC-763 CC-764"
-
-reject "depth mismatch (CC-766 --blocks CC-764)" CC-766 --blocks CC-764
-assert_eq "depth mismatch: the prescribed pair is the hoisted one" \
-  "$(extract_prescription "$TMP_ROOT/err")" "CC-763 CC-764"
-
-reject "different roots (CC-766 --blocks CC-780)" CC-766 --blocks CC-780
-assert_eq "different roots: the prescribed pair is the hoisted one" \
-  "$(extract_prescription "$TMP_ROOT/err")" "CC-761 CC-780"
-
-# Missing/wrong-typed hierarchy shapes must fail before issueRelationCreate.
-reject "missing parent key" CC-799 --blocks CC-780
-assert "missing parent key: missing fail-closed diagnostic" \
-  grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"
-
-reject "non-object parent" CC-800 --blocks CC-780
-assert "non-object parent: missing fail-closed diagnostic" \
-  grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"
-
-reject "non-object issue" CC-801 --blocks CC-780
-assert "non-object issue: missing fail-closed diagnostic" \
-  grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"
-
-reject "empty parent ID" CC-802 --blocks CC-780
-assert "empty parent ID: missing fail-closed diagnostic" \
-  grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"
-
-reject "same-parent repeated ancestor cycle" CC-830 --blocks CC-831
-assert "same-parent repeated ancestor cycle: missing cycle diagnostic" \
-  grep -q "parent cycle detected" "$TMP_ROOT/err"
-
-# --- (d) relations the rule blesses still pass ---
+# Peers of one bundle: the pair the parent one level up makes valid.
 accept "siblings (CC-763 --blocks CC-764)" CC-763 --blocks CC-764
 accept "leaf siblings (CC-766 --blocks CC-768)" CC-766 --blocks CC-768
 accept "top-level (CC-761 --blocks CC-780)" CC-761 --blocks CC-780
 accept "blocked-by siblings (CC-764 --blocked-by CC-763)" CC-764 --blocked-by CC-763
 
-# --- (e) a bundle peer pair may span projects ---
+# A parent/child pair: the hierarchy already carries the dependency.
+for args in "CC-766 --blocks CC-763" "CC-763 --blocks CC-766" "CC-763 --blocked-by CC-766"; do
+  # shellcheck disable=SC2086
+  reject "parent pair ($args)" $args
+  assert "parent pair ($args): missing ancestor explanation" \
+    grep -q "cannot carry a blocking relation against its own ancestor" "$TMP_ROOT/err"
+  assert_not "parent pair ($args): the explanation must not prescribe a --blocks command" \
+    grep -q -- "--blocks" "$TMP_ROOT/err"
+done
+
+# Different parents: a child of a child, a cousin, and two different roots.
+for args in "CC-766 --blocks CC-761" "CC-766 --blocks CC-767" "CC-766 --blocks CC-780"; do
+  # shellcheck disable=SC2086
+  reject "different parents ($args)" $args
+  assert "different parents ($args): the rejection states the rule" \
+    grep -q "must connect peers of one bundle (same direct parent, or both top-level)" "$TMP_ROOT/err"
+done
+
+# An issue the validation query does not return would otherwise read as
+# top-level and pass; it refuses instead.
+reject "issue missing at validation (CC-999)" CC-766 --blocks CC-999
+assert "issue missing at validation: missing fail-closed diagnostic" \
+  grep -q "Hierarchy validation failed closed" "$TMP_ROOT/err"
+
+# --- a bundle peer pair may span projects ---
 # Control first: the cases below only exercise a project boundary if the
 # fixtures sit on opposite sides of one. Assert that before trusting them —
 # if the fixtures ever collapse onto one project, fail here rather than
@@ -234,4 +185,3 @@ accept "top-level across two projects" CC-870 --blocks CC-871
 accept "top-level across two projects (blocked-by)" CC-871 --blocked-by CC-870
 accept "top-level, one project and one without" CC-872 --blocks CC-873
 accept "top-level, one project and one without (blocked-by)" CC-873 --blocked-by CC-872
-

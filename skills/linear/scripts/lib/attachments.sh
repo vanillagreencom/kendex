@@ -497,31 +497,3 @@ attach_create_issue_attachment() {
     result=$(graphql_query "$mutation" "$variables") || return 1
     echo "$result" | jq -e '.attachmentCreate.success == true' >/dev/null || return 1
 }
-
-# Prune manifest entries where local file is missing
-attach_prune() {
-    [[ -f "$ATTACH_MANIFEST" ]] || return 0
-    (
-        flock 203
-        local pruned=0
-        local manifest
-        manifest=$(cat "$ATTACH_MANIFEST")
-        local cleaned="$manifest"
-
-        while IFS= read -r url; do
-            local path
-            path=$(echo "$manifest" | jq -r --arg url "$url" '.[$url].local_path')
-            if [[ ! -f "$path" ]]; then
-                cleaned=$(echo "$cleaned" | jq --arg url "$url" 'del(.[$url])')
-                (( pruned++ )) || true
-            fi
-        done < <(echo "$manifest" | jq -r 'keys[]')
-
-        if (( pruned > 0 )); then
-            echo "$cleaned" > "$ATTACH_MANIFEST.tmp"
-            mv "$ATTACH_MANIFEST.tmp" "$ATTACH_MANIFEST"
-            echo "Pruned $pruned stale manifest entries" >&2
-        fi
-        echo "$pruned"
-    ) 203>"$ATTACH_MANIFEST.lock"
-}

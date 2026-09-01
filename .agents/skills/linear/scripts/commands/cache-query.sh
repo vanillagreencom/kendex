@@ -38,7 +38,6 @@ Issues:
   issues get <ID> [--with-bundle] [--format=safe|compact|raw]
   issues children <ID> [--recursive] [--pending] [--format=safe|ids]
   issues list-relations <ID>
-  issues validate-completion <ID> [--include-children-of <ID>] [--container]
   issues bulk-get <ID1> <ID2> ...
 
 Projects:
@@ -574,154 +573,6 @@ cache_list_relations() {
     echo "$result"
 }
 
-cache_validate_completion() {
-    local issue_ids=()
-    # Roles parallel issue_ids: positional targets are managed session roots
-    # (container parents under --container); bundle-expanded children (below)
-    # are bundle sub-issues.
-    local roles=()
-    local include_children_of=""
-    local container_mode="false"
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-        --include-children-of)
-            include_children_of="$2"
-            shift 2
-            ;;
-        --include-children-of=*)
-            include_children_of="${1#--include-children-of=}"
-            shift
-            ;;
-        --container)
-            container_mode="true"
-            shift
-            ;;
-        *)
-            issue_ids+=("$1")
-            roles+=("session-root")
-            shift
-            ;;
-        esac
-    done
-
-    if [[ ${#issue_ids[@]} -eq 0 ]]; then
-        echo '{"error": "At least one issue ID required"}' >&2
-        return 1
-    fi
-
-    # --container asserts "this bundle may complete now", so it fails CLOSED
-    # on any invocation that cannot prove it: exactly one positional target,
-    # a paired --include-children-of naming that same target, and (checked
-    # after expansion below) at least one non-canceled child. The flag may
-    # appear after the positionals, so the role is assigned post-parse.
-    # Container parents close LAST (each child is its own PR unit): any live
-    # state passes, canceled fails closed, no pre-posted summary is required.
-    # Mirrors the live issues.sh path.
-    if [[ "$container_mode" == "true" ]]; then
-        if [[ ${#issue_ids[@]} -ne 1 ]]; then
-            echo '{"error": "--container requires exactly one issue ID"}' >&2
-            return 1
-        fi
-        if [[ -z "$include_children_of" || "$include_children_of" != "${issue_ids[0]}" ]]; then
-            echo "{\"error\": \"--container requires --include-children-of naming the same issue (got target '${issue_ids[0]}', expansion '${include_children_of:-none}')\"}" >&2
-            return 1
-        fi
-        roles[0]="container"
-    fi
-
-    # If --include-children-of specified, fetch the bundle from cache and expand
-    # its children as bundle-child validation targets. Per the documented bundle
-    # contract each child is expected to be "Done", so COMPLETED children must be
-    # INCLUDED (they are exactly what validates as Done) — not dropped. Only
-    # CANCELED children are excluded: abandoned work can never be "Done", is not
-    # a pending gap, and including it would permanently fail any bundle that
-    # legitimately canceled a sub-issue. Mirrors the live issues.sh path.
-    if [[ -n "$include_children_of" ]]; then
-        local bundle
-        if ! bundle=$(cache_get_issue "$include_children_of" --with-bundle); then
-            echo "{\"error\": \"Failed to fetch bundle for: $include_children_of\"}" >&2
-            return 1
-        fi
-        if [[ -z "$bundle" ]]; then
-            echo "{\"error\": \"Failed to fetch bundle for: $include_children_of\"}" >&2
-            return 1
-        fi
-        # Container fail-closed, part 1b (parity with issues.sh): the
-        # (one PR) marker always wins — an explicit single-PR bundle must
-        # never validate under the permissive container role.
-        if [[ "$container_mode" == "true" ]]; then
-            local bundle_title
-            bundle_title=$(echo "$bundle" | jq -r '.title // ""')
-            if printf '%s' "$bundle_title" | grep -qi '(one PR)'; then
-                echo "{\"error\": \"--container fail-closed: $include_children_of carries the (one PR) marker — an explicit single-PR bundle validates with plain validate-completion, never as a container\"}" >&2
-                return 1
-            fi
-        fi
-        local child_ids
-        child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type != "canceled") | .id] | .[]' 2>/dev/null)
-        for child_id in $child_ids; do
-            issue_ids+=("$child_id")
-            roles+=("bundle-child")
-        done
-    fi
-
-    # Container fail-closed, part 2: a bundle that expanded to zero
-    # non-canceled children proves nothing about "children all Done" — a
-    # leaf mistakenly validated as a container must error, not pass.
-    if [[ "$container_mode" == "true" && ${#issue_ids[@]} -le 1 ]]; then
-        echo "{\"error\": \"--container fail-closed: no non-canceled children found under $include_children_of\"}" >&2
-        return 1
-    fi
-
-    local results="[]"
-    local all_ok="true"
-
-    local i
-    for i in "${!issue_ids[@]}"; do
-        local issue_id="${issue_ids[$i]}"
-        local role="${roles[$i]}"
-        local issue
-        issue=$(cache_jq_file "$CACHE_DIR/issues.json" "" --arg id "$issue_id" \
-            '.[] | select(.identifier == $id or .id == $id)') || return 1
-
-        # An issue the cache has never seen cannot be judged against the
-        # completion contract. Reporting it as a state failure is
-        # indistinguishable from "synced, but not Done".
-        if [[ -z "$issue" ]]; then
-            jq -cn --arg id "$issue_id" \
-                '{error: ("Issue not in cache: " + $id + " — cannot validate completion against a snapshot that does not contain it. Run: linear.sh sync")}' >&2
-            return 1
-        fi
-
-        local state state_type parent_id identifier
-        state=$(echo "$issue" | jq -r '.state.name // ""')
-        state_type=$(echo "$issue" | jq -r '.state.type // ""')
-        parent_id=$(echo "$issue" | jq -r '.parent.identifier // ""')
-        # Comment files are keyed by identifier; a caller may have passed a UUID.
-        identifier=$(echo "$issue" | jq -r '.identifier // ""')
-
-        # Check comments cache for Completion Summary
-        local has_summary="false"
-        local comment_file="$CACHE_DIR/comments/${identifier:-$issue_id}.json"
-        if [[ -f "$comment_file" ]]; then
-            has_summary=$(cache_jq_file "$comment_file" "false" \
-                'any(.[]; .body | (contains("Completion Summary") or contains("Bundle Complete")))') || return 1
-        fi
-
-        local result
-        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role" "$state_type")
-
-        if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
-            all_ok="false"
-        fi
-
-        results=$(echo "$results" | jq --argjson result "$result" '. + [$result]')
-    done
-
-    echo "$results" | jq --argjson all_ok "$all_ok" '{results: ., all_ok: $all_ok}'
-}
-
 cache_bulk_get_issues() {
     local identifiers=()
     FORMAT="${DEFAULT_FORMAT}"
@@ -1217,7 +1068,6 @@ main() {
         children) cache_list_children "$@" ;;
         list-relations | relations) cache_list_relations "${1:-}" ;;
         list-comments) cache_list_comments "$@" ;;
-        validate-completion) cache_validate_completion "$@" ;;
         bulk-get) cache_bulk_get_issues "$@" ;;
         --help | -h) show_help ;;
         view | show)

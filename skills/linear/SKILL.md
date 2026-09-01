@@ -109,7 +109,7 @@ Where `LINEAR_REQUIRE_REACH` is set, `issues create` refuses — before any API 
 | Issue A blocked by Issue B (both in Linear) | Relation: `--blocked-by` |
 | Issue blocked by an external factor (vendor, license) | `blocked` label + comment |
 
-Blocking relations must connect peers of one bundle: same direct parent, or both top-level. The two issues need not share a project. An issue cannot block its own ancestor or descendant; use `--related` for traceability. Rejections for cross-subtree pairs prescribe the valid pair at the level where the subtrees separate. Incomplete, cyclic, or malformed hierarchy data is rejected before mutation.
+Blocking relations must connect peers of one bundle: same direct parent, or both top-level. The two issues need not share a project. An issue cannot block its own ancestor or descendant; use `--related` for traceability. The check reads each issue's own direct parent in one query.
 
 A blocking relation pointing at a Done or Canceled issue is **satisfied history, not stale metadata** — Linear itself already treats the dependent issue as unblocked. The relation stays for provenance; never remove or "fix" it, and audits must never classify it as stale. The only legitimate audit output for a completed-blocker relation is a scheduling signal ("gates cleared, ready to schedule").
 
