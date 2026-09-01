@@ -56,12 +56,11 @@ jobs:
 
       # THE load-bearing shard guard, and the only check in this job with no
       # `if:`: a check that carries one can be switched off by the very drift
-      # it reports, so the rule lives here rather than in a suite. Both
-      # directions are read out of the file. A step naming a shard the matrix
-      # dropped is skipped on every run and reads as one that passed; a shard
-      # no step names runs this guard and nothing else, green and empty.
-      # package-policy.test.mjs executes THIS script against mutated copies —
-      # it carries the control, never a second copy of the rule.
+      # it reports, so the rule lives here rather than in a suite. A step
+      # naming a shard the matrix dropped is skipped on every run and reads as
+      # one that passed; a shard no step names runs this guard and nothing
+      # else, green and empty. package-policy.test.mjs executes THIS script
+      # against mutated copies — it carries the control, not a second rule.
       - name: shard names agree with the matrix
         env:
           SHARD: ${{ matrix.shard }}
@@ -69,10 +68,11 @@ jobs:
           set -u
           wf=.github/workflows/skill-tests.yml
           declared="$(sed -n 's/^ \{8\}shard: \[\(.*\)\]$/\1/p' "$wf" | tr -d ' ' | tr ',' '\n' | sort -u)"
-          # -o prints EVERY comparison on a line, so a compound condition is
-          # read whole; `|| true` sends a no-match to the floor below, which
-          # says so, rather than aborting the step with no diagnostic.
-          used="$(grep -oE "matrix\.shard == '[^']+'" "$wf" | cut -d"'" -f2 | sort -u || true)"
+          # Stage one keeps `if:` keys only, so a shard named in a comment or
+          # a script is not a step that runs it; stage two's -o prints EVERY
+          # comparison, so a compound condition is read whole. `|| true` sends
+          # a no-match to the floor below, which says so, not to a bare abort.
+          used="$(grep -oE "^ +if: .*" "$wf" | grep -oE "matrix\.shard == '[^']+'" | cut -d"'" -f2 | sort -u || true)"
           [ -n "$declared" ] && [ -n "$used" ] || { echo "no shard list, or no shard condition, read from $wf"; exit 1; }
           diff <(printf '%s\n' "$declared") <(printf '%s\n' "$used") || { echo "shard names disagree: '<' the matrix declares and no step names; '>' a step names and the matrix does not run"; exit 1; }
           printf '%s\n' "$declared" | grep -qxF "$SHARD" || { echo "this leg's shard '$SHARD' is not in the matrix"; exit 1; }

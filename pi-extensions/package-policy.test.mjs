@@ -268,6 +268,18 @@ test("the workflow's shard guard reds on every direction of shard-name drift", (
 			workflow.replace("matrix.shard == 'node' || matrix.shard == 'pi-claude-bridge'", "matrix.shard == 'node' || matrix.shard == 'pi-claude-brige'"),
 		],
 		["the matrix list cannot be read at all", workflow.replace(/^ {8}shard: \[.+\]$/m, "        shard: unreadable")],
+		// Every case above mutates a step condition, so all of them pass under
+		// a reader that takes any occurrence in the file. This one names the
+		// new shard ONLY in a comment: the shard is declared, no step runs it,
+		// and the leg would be green and empty unless the reader keeps `if:`
+		// keys alone. The comment goes directly above the guard because that
+		// is where a later author would write such an example.
+		[
+			"a matrix shard is named only by a comment",
+			workflow
+				.replace(/^( {8}shard: \[.+)\]$/m, "$1, ghost]")
+				.replace("      - name: shard names agree with the matrix\n", "      # e.g. matrix.shard == 'ghost'\n      - name: shard names agree with the matrix\n"),
+		],
 	];
 	for (const [drift, mutated] of cases) {
 		assert.notEqual(mutated, workflow, `the mutation for "${drift}" matched nothing`);
