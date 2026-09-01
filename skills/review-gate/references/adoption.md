@@ -218,10 +218,12 @@ pr-watch reduces OPEN PRs only, and the gate opens on the first non-author
 review with no quiet period — so a review round landing in the queue's final
 minutes merges before anyone reads it. `merged-sweep.sh` sweeps
 recently-merged PRs for that, emitting one `post-merge-findings` line per
-merged PR carrying a review, or a review thread comment, created after its
-`mergedAt` with no disposition reply. It emits that same line when one PR's
-read cannot prove itself — reviews or threads past the page bound, a
-timestamp that will not parse — which asks for a manual re-read. A window
+merged PR carrying a review, or a review thread comment, PUBLISHED after its
+`mergedAt` with no disposition reply — published, not created, so work
+drafted in the queue and submitted after the merge counts. It emits that same
+line when one PR's read cannot prove itself — reviews or threads past the
+page bound, a timestamp that will not parse, a time equal to `mergedAt` —
+which asks for a manual re-read. A window
 holding more merged PRs than one query read is a second kind,
 `sweep:window-truncated`, which belongs to no single PR.
 

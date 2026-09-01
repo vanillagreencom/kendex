@@ -439,3 +439,62 @@ assert_slug_injective_arms() {
     "acme%2Ffoo_bar acme_foo%2Fbar " \
     "ms43: two distinct accepted GH_REPO values, two distinct state files"
 }
+
+# STAGE, deliver, PUBLISH — and a path that starts with a dash (ms44/ms45).
+# Delivery is failed by CLOSING stdout, which gives a deterministic EBADF
+# rather than the SIGPIPE a closed reader would raise, so the arm asserts the
+# scripts own exit code. The dash arm runs with stdin from /dev/null: without
+# an option terminator the read misparses the path as flags, and a variant
+# that read stdin instead would hang a poll loop forever, so the suite must
+# not be able to hang either.
+assert_delivery_and_path_arms() {
+  local one two
+  one="$(envelope "$(pr 24 "$MERGED_AT" dev \
+    "[$(review REV_d1 "$AFTER_MERGE" COMMENTED "P1: the first" codex Bot)]" '[]' '[]')")"
+  two="$(envelope "$(pr 24 "$MERGED_AT" dev \
+    "[$(review REV_d1 "$AFTER_MERGE" COMMENTED "P1: the first" codex Bot),$(review REV_d2 "$LATER" COMMENTED "P2: the second" codex Bot)]" '[]' '[]')")"
+  fresh_state
+  fixture "$one"
+  run_split
+  assert_eq "$SPLIT_RC" "1" "ms44: the first pass reports and publishes its baseline"
+  fixture "$two"
+  set +e
+  (cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
+     env GH_REPO=acme/widgets STUB_FIXTURE="$TMP_ROOT/fixture.json" \
+         REVIEW_GATE_MERGED_SWEEP_STATE_DIR="$TMP_ROOT/state" \
+     "$SWEEP") >&- 2>"$TMP_ROOT/split.err"
+  SPLIT_RC=$?
+  set -e
+  assert_eq "$SPLIT_RC" "2" "ms44: a pass whose delivery fails exits 2"
+  assert_contains "$(cat "$TMP_ROOT/split.err")" "the baseline is unchanged" "ms44: saying the baseline did not move"
+  run_split
+  assert_eq "$SPLIT_RC" "1" "ms44: so the NEXT pass reports the undelivered finding again, never marking it seen"
+  assert_contains "$SPLIT_OUT" "2 review(s)" "ms44: with both findings standing"
+  fresh_state
+  fixture "$one"
+  set +e
+  (cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
+     env GH_REPO=acme/widgets STUB_FIXTURE="$TMP_ROOT/fixture.json" \
+     "$SWEEP" --state-file -dash-state) >"$TMP_ROOT/split.out" 2>&1 </dev/null
+  SPLIT_RC=$?
+  set -e
+  assert_eq "$SPLIT_RC" "1" "ms45: a --state-file path starting with a dash is written, not parsed as flags"
+  set +e
+  (cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
+     env GH_REPO=acme/widgets STUB_FIXTURE="$TMP_ROOT/fixture.json" \
+     "$SWEEP" --state-file -dash-state) >"$TMP_ROOT/split.out" 2>&1 </dev/null
+  SPLIT_RC=$?
+  set -e
+  assert_eq "$SPLIT_RC" "0" "ms45: and READ back on the next pass, which is where a missing terminator misparses it"
+  rm -f -- "$TMP_ROOT/cwd/-dash-state"
+}
+
+# The three contract claims that have drifted on this PR (ms23c), each
+# pinned to the wording of the arm named beside it. This catches a REVERT of
+# the text; it cannot catch a future fix that moves behavior past a sentence,
+# which is why the usage lib header says to read the block whole.
+assert_contract_claims() { # --help output
+  assert_contains "$1" "EFFECTIVE PUBLICATION" "ms23c: the kind is publication-timed (ms35), not creation-timed"
+  assert_contains "$1" "BY PUBLICATION TIME" "ms23c: the standing reply is time-picked (ms42), not the array tail"
+  assert_contains "$1" "overflow:<causes>" "ms23c: the overflow key names its causes (ms40), not the PR alone"
+}

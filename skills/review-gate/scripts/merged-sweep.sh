@@ -11,9 +11,9 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Both libs are SOURCED, and under set -e a missing one ends the run at
+# Every lib is SOURCED, and under set -e a missing one ends the run at
 # exit 1 — the code promising attention lines — with nothing on stdout,
-# which a consumer reads as "nothing to do". Both fail closed at 2 instead.
+# which a consumer reads as "nothing to do". All fail closed at 2 instead.
 lib_readable() { # PATH
   [ -r "$1" ] || { echo "::error::merged-sweep: cannot read $1 — the skill install is incomplete; re-run kendex refresh, or check the file mode" >&2; exit 2; }
 }
@@ -26,6 +26,10 @@ lib_readable "$script_dir/lib/settings.sh"
 # shellcheck source=lib/settings.sh
 . "$script_dir/lib/settings.sh"
 lib_defines "$script_dir/lib/settings.sh" rg_setting
+lib_readable "$script_dir/lib/merged-sweep-usage.sh"
+# shellcheck source=lib/merged-sweep-usage.sh
+. "$script_dir/lib/merged-sweep-usage.sh"
+lib_defines "$script_dir/lib/merged-sweep-usage.sh" print_usage
 
 # Both scratch paths go on ANY exit, signals included: an interrupted pass
 # leaves neither a half-written state file nor the read's stderr capture.
@@ -33,105 +37,6 @@ gh_err=""
 state_tmp=""
 cleanup() { [ -z "$gh_err" ] || rm -f -- "$gh_err"; [ -z "$state_tmp" ] || rm -f -- "$state_tmp"; }
 trap cleanup EXIT
-
-print_usage() {
-  cat <<'USAGE'
-Usage: merged-sweep.sh [--window SECS] [--limit N] [--no-state]
-                       [--state-file PATH]
-
-Sweep recently-merged PRs for reviews and review thread comments that landed
-AFTER the merge and carry no disposition reply. One invocation answers: did a
-finding arrive too late for anyone to read it?
-
-  --window SECS      only PRs merged within this many seconds (default
-                     172800 — 48h); at most 9 digits
-  --limit N          how many merged PRs the one query reads (default 20,
-                     max 80). The ceiling is where the query still
-                     completes, not where GraphQL stops counting: measured
-                     2026-09-01 on one busy repo, 40 in ~4s and 80 in ~8s
-                     over six runs with none failing, 100 failing once in
-                     two. Load-dependent, so re-measure before trusting it
-                     elsewhere
-  --no-state         report every current finding, deduping nothing — the
-                     audit form; the sweep writes no state file
-  --state-file PATH  override the per-repo state file (default:
-                     <state-dir>/<repo-slug>, the state dir being
-                     REVIEW_GATE_MERGED_SWEEP_STATE_DIR, default
-                     tmp/review-gate-merged-sweep). A relative state dir is
-                     anchored on the REPOSITORY ROOT, not the cwd, so a
-                     caller that changes directory keeps its baseline.
-                     GITIGNORE it: the default writes inside the repository
-
-Attention kinds (column 3):
-  post-merge-findings  a merged PR carries a review, or a review thread
-                       COMMENT, created after its mergedAt with no disposition
-                       reply (Fixed in <sha>, Declined: <reason>, or a
-                       track-word NAMING an issue — a bare track-word is not an
-                       answer), so nothing has read it. Approvals and
-                       dismissals are not findings; the PR author's own reviews
-                       are not findings. A thread counts on its newest
-                       post-merge comment that is not itself a reply form,
-                       never on the thread opening: a reviewer re-raising on a
-                       line it already flagged lands in a PRE-merge thread, and
-                       a thread whose only post-merge comment IS a reply is
-                       answered. The STANDING reply is the LAST non-bot one in
-                       a reply form, as in review-predicate.sh, so an older
-                       canonical reply never outranks a newer bare one; bots
-                       are exempt because they quote each other. The two
-                       surfaces differ deliberately: INSIDE a thread a human
-                       comment that is not a reply form is new content and
-                       reopens the finding, while on the PR CONVERSATION the
-                       same comment is chatter and the standing disposition
-                       holds. What the read cannot prove fails CLOSED: a
-                       truncated reviewThreads page (no documented ordering), a
-                       review or comment page entirely post-merge, an
-                       unparsable timestamp, and a time equal to mergedAt. One
-                       gap is invisible and so uncovered: search is eventually
-                       consistent, so a PR the index has not caught up with is
-                       absent from the page AND uncounted. A loop recovers what
-                       one shot misses
-  sweep:window-truncated  the window holds more merged PRs than this page
-                       read, so the sweep cannot answer for the remainder.
-                       Belongs to no single PR, so it carries "-" and
-                       "--------" in the first two columns
-
-Dedupe: per-repo state, the same rising-edge mechanism as oversee-watch's
-PW_SEEN. A finding is keyed by the node id of its review or thread, the per-PR
-fail-closed arm by a synthetic <number>:overflow. A key present in the previous
-pass is not re-emitted; one that clears and recurs is news. So a finding
-surfaces ONCE and stays quiet while unchanged, and silence means "nothing NEW
-needs you" — use --no-state to re-read what is still outstanding.
-sweep:window-truncated is EXEMPT: a shortfall no reply can clear is a standing
-property, not an event, so it carries no key and REPEATS every pass while it
-holds. Announce-once there would leave the gap, and a gap that worsens, silent
-from the second pass on.
-
-Output: one tab-separated attention line, the same shape pr-watch.sh
-emits, so one reducer consumes both:
-  <pr-number> <TAB> <head-sha-8> <TAB> <kind> <TAB> <detail>
-
-Exit codes:
-  0  nothing new needs attention
-  1  at least one attention line
-  2  a read or config failure — always GLOBAL (missing or malformed GH_REPO, a
-     bad flag, a repository the read could not reach, a broken merged-PR
-     listing, an unusable state file). One query answers for the whole sweep,
-     so there is no per-PR failure to isolate: exit 2 reports on stderr and
-     prints NO lines on stdout at all. Surface stderr, never stdout alone.
-     Attention lines are buffered until the state file is written, so a state
-     write that fails exits 2 with nothing printed rather than looking like
-     ordinary attention
-
-Env (required): GH_TOKEN (or ambient gh auth), GH_REPO — OWNER/REPO, and
-only letters, digits, '.', '_' and '-' either side of the slash, because it
-is spliced into the search query where a qualifier would change the set
-Settings: REVIEW_GATE_MERGED_SWEEP_STATE_DIR — the directory holding the
-per-repo state files, resolved like every other engine key (env >
-.env.local > .kendex/settings.toml > kendex.settings.toml > the built-in
-tmp/review-gate-merged-sweep), except that the settings FILES are read from
-the REPOSITORY ROOT, so the key is anchored the way the path it names is.
-USAGE
-}
 
 for arg in "$@"; do
   case "$arg" in
@@ -237,7 +142,7 @@ if [ "$USE_STATE" = "1" ] && [ -z "$STATE_FILE" ]; then
       state_dir="$repo_root/$state_dir"
       ;;
   esac
-  mkdir -p "$state_dir" || {
+  mkdir -p -- "$state_dir" || {
     echo "::error::merged-sweep: could not create the state directory $state_dir ($SETTING_HINT)" >&2
     exit 2
   }
@@ -250,7 +155,7 @@ if [ "$USE_STATE" = "1" ] && [ -z "$STATE_FILE" ]; then
 fi
 seen=""
 if [ "$USE_STATE" = "1" ] && [ -e "$STATE_FILE" ]; then
-  seen="$(cat "$STATE_FILE")" || {
+  seen="$(cat -- "$STATE_FILE")" || {
     echo "::error::merged-sweep: cannot read the state file $STATE_FILE ($SETTING_HINT)" >&2
     exit 2
   }
@@ -385,16 +290,32 @@ while IFS=$'\t' read -r number head kind keys detail; do
 done <<<"$rows"
 set +f
 
+# STAGE, deliver, then PUBLISH. Both orderings are required and only this
+# one satisfies both: staging precedes every line, so a state failure still
+# exits 2 with empty stdout, which is what check_pr_watch reads as a failure
+# rather than as findings; and the baseline lands only after the lines are
+# out, so a killed process or a closed pipe leaves the OLD baseline and the
+# next pass repeats instead of marking undelivered findings seen forever.
 if [ "$USE_STATE" = "1" ]; then
   state_tmp="$STATE_FILE.$$.tmp"
-  { printf '%s' "$current" > "$state_tmp" && mv -f "$state_tmp" "$STATE_FILE"; } || {
+  printf '%s' "$current" > "$state_tmp" || {
+    echo "::error::merged-sweep: could not write the state file $STATE_FILE ($SETTING_HINT)" >&2
+    exit 2
+  }
+fi
+
+if ! { [ -z "$out" ] || printf '%s' "$out"; }; then
+  echo "::error::merged-sweep: could not deliver the attention lines; the baseline is unchanged, so the next pass reports them again" >&2
+  exit 2
+fi
+
+if [ "$USE_STATE" = "1" ]; then
+  mv -f -- "$state_tmp" "$STATE_FILE" || {
     echo "::error::merged-sweep: could not write the state file $STATE_FILE ($SETTING_HINT)" >&2
     exit 2
   }
   state_tmp=""
 fi
-
-[ -z "$out" ] || printf '%s' "$out"
 
 if [ "$attention" = "1" ]; then exit 1; fi
 exit 0

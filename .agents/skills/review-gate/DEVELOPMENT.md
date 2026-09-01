@@ -21,6 +21,7 @@ Paths are as installed in a consuming repo, under
 | `scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate; `--heal` also dispatches the writer once on a stale gate. |
 | `scripts/merged-sweep.sh` | The post-merge half of that reducer: "did a review or a review thread land after a merge with nobody answering it?" Same line shape and exit codes as `pr-watch.sh`, but NOT the same triggering: pr-watch is level-triggered and stateless, this one is edge-triggered off a per-repo state file and announces each finding once, so exit 0 means "nothing new". Its sweep-level coverage row is the exception and repeats while the gap holds. `--no-state` is the standing audit form. |
 | `scripts/lib/merged-sweep-reduce.sh` | The one jq program the sweep runs, sourced by it. Inputs and output shape are its header. |
+| `scripts/lib/merged-sweep-usage.sh` | The sweep's `--help` text, sourced by it. It is the authoritative contract, so it is read against the reduction whenever an arm changes. |
 | `scripts/review-predicate-selftest.sh` | Offline proof of the decision table. An ENGINE proof: it runs here, in the catalog repo, on every change. |
 | `tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |
 

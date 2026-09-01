@@ -49,6 +49,7 @@
 #   ms41.  a ghost author on both sides       -> a finding, not a self-review
 #   ms42.  creation order vs publication order-> the standing reply is by TIME
 #   ms43.  acme/foo_bar vs acme_foo/bar       -> two state files, never one
+#   ms44/45. delivery fails; a dash path      -> the baseline holds; a path is a path
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -545,6 +546,7 @@ assert_contains "$out" "Usage: merged-sweep.sh" "ms23: --help prints usage"
 assert_contains "$out" "post-merge-findings" "ms23: --help names the attention kind"
 assert_contains "$out" "always GLOBAL" "ms23: --help carries the one exit-2 shape"
 assert_not_contains "$out" "error\` lines on" "ms23: and promises no per-PR error lines, which no path emits"
+assert_contract_claims "$out"
 set +e
 out=$( (cd "$TMP_ROOT/cwd" && env -u GH_REPO "$SWEEP" -h) ); rc=$?
 set -e
@@ -789,6 +791,7 @@ assert_overflow_cause_arms
 assert_ghost_author_arms
 assert_standing_by_time_arms
 assert_slug_injective_arms
+assert_delivery_and_path_arms
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
