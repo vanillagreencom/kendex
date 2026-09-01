@@ -28,8 +28,6 @@ set -euo pipefail
 TC=" — complete means the PR is MERGED and the worktree cleaned up, not merely opened"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/sealed-bin.sh
-. "$TEST_DIR/lib/sealed-bin.sh"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
@@ -117,8 +115,9 @@ exit 0
 EOF
 chmod +x "$BIN/ghostty" "$BIN/gh" "$BIN/tmux"
 
-# open_gui reaches for $TERMINAL first, so it names the stub rather than the
-# developer's own terminal. $SEALED is what answers once the stub tree is gone.
+# $TERMINAL is what open_gui reaches for first, so it is PINNED to the stub on
+# PATH here: unset, the branch below it would resolve whatever terminal the
+# developer's desktop provides and this suite would open real windows.
 export TERMINAL=ghostty
 
 # Stub worktree CLI: `create <item>` makes and prints a temp dir.
@@ -209,7 +208,7 @@ echo "=== open-terminal claude handoff: per-task launch flags ==="
 # Case 1: linear:claude renders the autonomy flag by default.
 CAP1="$TMP_ROOT/cap1"
 set +e
-c1_out=$(OT_CAPTURE="$CAP1" PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model opus[1m] --effort max --dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c1.err")
+c1_out=$(OT_CAPTURE="$CAP1" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model opus[1m] --effort max --dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c1.err")
 c1_code=$?
 set -e
 assert_eq "$c1_code" "0" "linear:claude launch succeeds"
@@ -227,7 +226,7 @@ assert_not_contains "$(cat "$TMP_ROOT/c1.err")" "WARNING" \
 # Case 2: github:claude renders the same flag.
 CAP2="$TMP_ROOT/cap2"
 set +e
-c2_out=$(OT_CAPTURE="$CAP2" PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness claude --launch-flags "--effort max --dangerously-skip-permissions" 42 2>"$TMP_ROOT/c2.err")
+c2_out=$(OT_CAPTURE="$CAP2" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness claude --launch-flags "--effort max --dangerously-skip-permissions" 42 2>"$TMP_ROOT/c2.err")
 c2_code=$?
 set -e
 assert_eq "$c2_code" "0" "github:claude launch succeeds"
@@ -245,7 +244,7 @@ fi
 # settings file participates.
 CAP3="$TMP_ROOT/cap3"
 set +e
-c3_out=$(OT_CAPTURE="$CAP3" PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model sonnet --permission-mode bypassPermissions" cc-737 2>"$TMP_ROOT/c3.err")
+c3_out=$(OT_CAPTURE="$CAP3" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model sonnet --permission-mode bypassPermissions" cc-737 2>"$TMP_ROOT/c3.err")
 c3_code=$?
 set -e
 assert_eq "$c3_code" "0" "a second launch with different flags succeeds"
@@ -266,7 +265,7 @@ assert_not_contains "$(cat "$TMP_ROOT/c3.err")" "WARNING" \
 # would type — no stored model, effort, or permission default appears.
 CAP3B="$TMP_ROOT/cap3b"
 set +e
-OT_CAPTURE="$CAP3B" PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c3b.err"
+OT_CAPTURE="$CAP3B" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c3b.err"
 set -e
 if wait_capture "$CAP3B"; then
   c3b_cmd="$(cat "$CAP3B")"
@@ -285,7 +284,7 @@ assert_contains "$(cat "$TMP_ROOT/c3b.err")" "handoff autonomy is void" \
 # autonomy is void.
 CAP4="$TMP_ROOT/cap4"
 set +e
-c4_out=$(OT_CAPTURE="$CAP4" PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--permission-mode plan" cc-737 2>"$TMP_ROOT/c4.err")
+c4_out=$(OT_CAPTURE="$CAP4" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--permission-mode plan" cc-737 2>"$TMP_ROOT/c4.err")
 c4_code=$?
 set -e
 assert_eq "$c4_code" "0" "prompting flags still launch"
@@ -305,7 +304,7 @@ echo "=== open-terminal claude handoff: tmux brief delivery ==="
 new_tmux_state c5
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
 set +e
-c5_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude --launch-flags "--dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c5.err")
+c5_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude --launch-flags "--dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c5.err")
 c5_code=$?
 set -e
 assert_eq "$c5_code" "0" "tmux delivered-first-pass exits 0"
@@ -328,7 +327,7 @@ printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/1"
 printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/2"
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/3"
 set +e
-c6_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c6.err")
+c6_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c6.err")
 c6_code=$?
 set -e
 assert_eq "$c6_code" "0" "tmux re-delivery path exits 0"
@@ -350,7 +349,7 @@ printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/3"
 printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/4"
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/5"
 set +e
-c6b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=2 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c6b.err")
+c6b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=2 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c6b.err")
 c6b_code=$?
 set -e
 assert_eq "$c6b_code" "0" "dialog-then-ready path exits 0"
@@ -371,7 +370,7 @@ printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/1"
 printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/2"
 printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/3"
 set +e
-c7_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c7.err")
+c7_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c7.err")
 c7_code=$?
 set -e
 assert_eq "$c7_code" "1" "undelivered brief exits nonzero"
@@ -388,7 +387,7 @@ assert_eq "$c7_resends" "1" "re-send is attempted exactly once before failing"
 new_tmux_state c8
 printf '%s\n' "$COMPOSER_SCREEN" > "$OT_TMUX_CAPTURES/1"
 set +e
-c8_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c8.err")
+c8_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c8.err")
 c8_code=$?
 set -e
 assert_eq "$c8_code" "1" "composer-only screen exits nonzero"
@@ -406,7 +405,7 @@ assert_eq "$c8_resends" "1" "composer-only screen still gets exactly one re-send
 new_tmux_state c8b
 { printf '%s\n' "$DELIVERED_SCREEN"; awk 'BEGIN { for (i = 0; i < 20000; i++) print "transcript filler line" }'; } > "$OT_TMUX_CAPTURES/1"
 set +e
-c8b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c8b.err")
+c8b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c8b.err")
 c8b_code=$?
 set -e
 assert_eq "$c8b_code" "0" "huge scrollback with an early delivered brief exits 0"
@@ -421,7 +420,7 @@ echo "=== open-terminal claude handoff: tmux failure detection ==="
 new_tmux_state c9
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
 set +e
-c9_out=$(TMUX=stub,1,0 OT_TMUX_FAIL=new-window ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c9.err")
+c9_out=$(TMUX=stub,1,0 OT_TMUX_FAIL=new-window ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c9.err")
 c9_code=$?
 set -e
 assert_eq "$c9_code" "1" "new-window failure exits nonzero"
@@ -434,7 +433,7 @@ assert_not_contains "$c9_out" "Done: launched 1" \
 # early return must not count a window whose launch keystrokes failed.
 new_tmux_state c10
 set +e
-c10_out=$(TMUX=stub,1,0 OT_TMUX_FAIL=send-keys ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness codex cc-737 2>"$TMP_ROOT/c10.err")
+c10_out=$(TMUX=stub,1,0 OT_TMUX_FAIL=send-keys ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness codex cc-737 2>"$TMP_ROOT/c10.err")
 c10_code=$?
 set -e
 assert_eq "$c10_code" "1" "send-keys failure exits nonzero on a briefless lane"
@@ -449,7 +448,7 @@ echo "=== open-terminal claude handoff: config validation ==="
 # command, so it must never pass through unvalidated.
 CAP11="$TMP_ROOT/cap11"
 set +e
-c11_out=$(OT_CAPTURE="$CAP11" PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--flag; touch $TMP_ROOT/pwned" cc-737 2>"$TMP_ROOT/c11.err")
+c11_out=$(OT_CAPTURE="$CAP11" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--flag; touch $TMP_ROOT/pwned" cc-737 2>"$TMP_ROOT/c11.err")
 c11_code=$?
 set -e
 assert_eq "$c11_code" "1" "metacharacter launch flags refuse to launch"
@@ -466,7 +465,7 @@ fi
 # Case 11b: a bracketed model id is an ordinary flag value, not a shell hazard.
 CAP11B="$TMP_ROOT/cap11b"
 set +e
-OT_CAPTURE="$CAP11B" PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model opus[1m] --dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c11b.err"
+OT_CAPTURE="$CAP11B" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model opus[1m] --dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c11b.err"
 c11b_code=$?
 set -e
 assert_eq "$c11b_code" "0" "a bracketed model id is accepted"
@@ -487,7 +486,7 @@ printf '%s\n' "$@" > "$OT_ARGV_CAPTURE"
 EOF
   chmod +x "$BIN/claude"
   c11c_argv="$TMP_ROOT/c11c.argv"
-  (cd "$c11c_dir" && OT_ARGV_CAPTURE="$c11c_argv" PATH="$BIN:$SEALED:$PATH" bash -lc "${c11c_cmd##*&& }") >/dev/null 2>&1 || true
+  (cd "$c11c_dir" && OT_ARGV_CAPTURE="$c11c_argv" PATH="$BIN:$PATH" bash -lc "${c11c_cmd##*&& }") >/dev/null 2>&1 || true
   assert_contains "$(cat "$c11c_argv" 2>/dev/null || true)" "opus[1m]" \
     "the bracketed model id survives the shell that runs the launch command"
   assert_not_contains "$(cat "$c11c_argv" 2>/dev/null || true)" "opus1" \
@@ -503,7 +502,7 @@ fi
 new_tmux_state c12
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
 set +e
-c12_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=abc PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c12.err")
+c12_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=abc PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c12.err")
 c12_code=$?
 set -e
 assert_eq "$c12_code" "1" "non-integer verify secs exits nonzero"
@@ -516,7 +515,7 @@ assert_not_contains "$(cat "$TMP_ROOT/c12.err")" "brief undelivered" \
 new_tmux_state c13
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
 set +e
-c13_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=0 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13.err")
+c13_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=0 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13.err")
 c13_code=$?
 set -e
 assert_eq "$c13_code" "1" "zero verify secs exits nonzero"
@@ -528,7 +527,7 @@ assert_contains "$(cat "$TMP_ROOT/c13.err")" "ORCH_TMUX_VERIFY_SECS" \
 new_tmux_state c13b
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
 set +e
-c13b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=08 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13b.err")
+c13b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=08 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13b.err")
 c13b_code=$?
 set -e
 assert_eq "$c13b_code" "0" "leading-zero verify secs is base-10 and launches"
@@ -540,7 +539,7 @@ assert_not_contains "$(cat "$TMP_ROOT/c13b.err")" "value too great" \
 new_tmux_state c13c
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
 set +e
-c13c_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=10000000000000000000 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13c.err")
+c13c_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=10000000000000000000 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13c.err")
 c13c_code=$?
 set -e
 assert_eq "$c13c_code" "0" "overflow-sized verify secs still launches (clamped)"
@@ -553,7 +552,7 @@ assert_eq "$c13c_resends" "0" "no instant resend from a zero-pass verify loop"
 # never reads it.
 CAP13D="$TMP_ROOT/cap13d"
 set +e
-c13d_out=$(ORCH_TMUX_VERIFY_SECS=abc OT_CAPTURE="$CAP13D" PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c13d.err")
+c13d_out=$(ORCH_TMUX_VERIFY_SECS=abc OT_CAPTURE="$CAP13D" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c13d.err")
 c13d_code=$?
 set -e
 assert_eq "$c13d_code" "0" "invalid verify secs does not abort a GUI launch"
@@ -564,7 +563,7 @@ assert_not_contains "$(cat "$TMP_ROOT/c13d.err")" "ORCH_TMUX_VERIFY_SECS" \
 # only Claude verification lanes read the timeout.
 new_tmux_state c13e
 set +e
-c13e_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=abc PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness codex cc-737 2>"$TMP_ROOT/c13e.err")
+c13e_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=abc PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness codex cc-737 2>"$TMP_ROOT/c13e.err")
 c13e_code=$?
 set -e
 assert_eq "$c13e_code" "0" "invalid verify secs does not abort a tmux codex launch"
@@ -576,7 +575,7 @@ assert_not_contains "$(cat "$TMP_ROOT/c13e.err")" "ORCH_TMUX_VERIFY_SECS" \
 new_tmux_state c14
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
 set +e
-c14_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=99999 PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c14.err")
+c14_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=99999 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c14.err")
 c14_code=$?
 set -e
 assert_eq "$c14_code" "0" "clamped verify secs still launches"

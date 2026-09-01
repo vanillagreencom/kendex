@@ -12,8 +12,6 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/sealed-bin.sh
-. "$TEST_DIR/lib/sealed-bin.sh"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
@@ -59,8 +57,9 @@ exit 1
 EOF
 chmod +x "$BIN/ghostty" "$BIN/gh"
 
-# open_gui reaches for $TERMINAL first, so it names the stub rather than the
-# developer's own terminal. $SEALED is what answers once the stub tree is gone.
+# $TERMINAL is what open_gui reaches for first, so it is PINNED to the stub on
+# PATH here: unset, the branch below it would resolve whatever terminal the
+# developer's desktop provides and this suite would open real windows.
 export TERMINAL=ghostty
 
 # Stub worktree CLI: `create <item>` makes and prints a temp dir.
@@ -102,14 +101,14 @@ OT_A="$(make_ot_repo "$REPO_A")"
 
 # Case 1: default pattern normalizes lowercase and uppercase input to uppercase.
 set +e
-c1a_out=$(PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' cc-737 2>"$TMP_ROOT/c1a.err")
+c1a_out=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' cc-737 2>"$TMP_ROOT/c1a.err")
 c1a_code=$?
 set -e
 assert_eq "$c1a_code" "0" "default pattern: lowercase input accepted"
 assert_contains "$c1a_out" "Opened terminal 'CC-737'" "default pattern: cc-737 normalizes to CC-737"
 
 set +e
-c1b_out=$(PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' CC-737 2>"$TMP_ROOT/c1b.err")
+c1b_out=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' CC-737 2>"$TMP_ROOT/c1b.err")
 c1b_code=$?
 set -e
 assert_eq "$c1b_code" "0" "default pattern: uppercase input accepted"
@@ -125,14 +124,14 @@ GH_ISSUE_PATTERN = "ZZ-[0-9]+"')"
 
 # Case 2: lowercase pattern normalizes uppercase and lowercase input to lowercase.
 set +e
-c2a_out=$(GH_ISSUE_PATTERN='cc-[0-9]+' PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --cmd 'echo {item}' CC-737 2>"$TMP_ROOT/c2a.err")
+c2a_out=$(GH_ISSUE_PATTERN='cc-[0-9]+' PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --cmd 'echo {item}' CC-737 2>"$TMP_ROOT/c2a.err")
 c2a_code=$?
 set -e
 assert_eq "$c2a_code" "0" "lowercase pattern (parent env wins over settings): uppercase input accepted"
 assert_contains "$c2a_out" "Opened terminal 'cc-737'" "lowercase pattern: CC-737 normalizes to cc-737"
 
 set +e
-c2b_out=$(GH_ISSUE_PATTERN='cc-[0-9]+' PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --cmd 'echo {item}' cc-737 2>"$TMP_ROOT/c2b.err")
+c2b_out=$(GH_ISSUE_PATTERN='cc-[0-9]+' PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --cmd 'echo {item}' cc-737 2>"$TMP_ROOT/c2b.err")
 c2b_code=$?
 set -e
 assert_eq "$c2b_code" "0" "lowercase pattern: lowercase input accepted"
@@ -140,7 +139,7 @@ assert_contains "$c2b_out" "Opened terminal 'cc-737'" "lowercase pattern: cc-737
 
 # Case 3: an id that matches no case of the default pattern is rejected.
 set +e
-c3_out=$(PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' 12ab 2>"$TMP_ROOT/c3.err")
+c3_out=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' 12ab 2>"$TMP_ROOT/c3.err")
 c3_code=$?
 set -e
 assert_eq "$c3_code" "1" "invalid id exits nonzero"

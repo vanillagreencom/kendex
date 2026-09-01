@@ -16,8 +16,6 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/sealed-bin.sh
-. "$TEST_DIR/lib/sealed-bin.sh"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="${OPEN_TERMINAL_UNDER_TEST:-$SCRIPTS_DIR/open-terminal}"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
@@ -61,11 +59,9 @@ EOF
 chmod +x "$BIN/term" "$BIN/xdg-terminal-exec" "$BIN/tmux" "$BIN/gh"
 
 # $TERMINAL is the terminal open_gui reaches for first — the owner's ruling
-# that a GUI launch honours the user's own choice — so each run names a stub
-# and pins the branch, $OT_TERMINAL choosing which. A BARE name, never a path
-# into this mktemp tree: a path bypasses PATH resolution, and with it the seal
-# that answers once the tree is gone. On fallthrough the seal takes the branch
-# below instead.
+# that a GUI launch honours the user's own choice — so each run names a stub on
+# PATH and pins the branch, $OT_TERMINAL choosing which. Every rung below it is
+# stubbed here too, so no case can resolve the developer's own terminal.
 
 # Stub worktree CLI, one shape per $STUB_MODE:
 #   empty    exits 0 printing nothing (a stub that escaped its fixture)
@@ -106,7 +102,7 @@ run() {
   : > "$term_log"
   : > "$tmux_log"
   set +e
-  PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" STUB_MODE="$mode" \
+  PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" STUB_MODE="$mode" \
     OT_TERM_LOG="$term_log" OT_TMUX_LOG="$tmux_log" TMUX="${OT_TMUX_VALUE:-}" \
     TERMINAL="${OT_TERMINAL:-term}" \
     "$ot" --cmd 'echo {item}' "$@" >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"

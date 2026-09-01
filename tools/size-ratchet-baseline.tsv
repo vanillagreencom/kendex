@@ -108,7 +108,7 @@ skills/orch/scripts/workflow-state	704
 skills/orch/scripts/worktree-push	421
 skills/orch/tests/approval_wait.sh	1557
 skills/orch/tests/dev_artifact_check.sh	815
-skills/orch/tests/lanes.sh	890
+skills/orch/tests/lanes.sh	888
 skills/orch/tests/oversee_watch_lanes.sh	815
 skills/orch/tests/queue_wait.sh	896
 skills/orch/tests/worktree-cwd-precondition-lint.test.sh	940

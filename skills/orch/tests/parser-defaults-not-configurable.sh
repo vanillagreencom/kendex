@@ -25,8 +25,6 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/sealed-bin.sh
-. "$TEST_DIR/lib/sealed-bin.sh"
 SKILLS_SRC="$(cd "$TEST_DIR/../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -43,12 +41,19 @@ bad() {
 }
 
 # A stub gh so no case reaches the network; every command here fails before or
-# at auth, and none of them may decide the outcome by talking to GitHub. Every
-# other name a case could reach for is answered by $SEALED, which is why this
-# file stubs no terminal of its own.
+# at auth, and none of them may decide the outcome by talking to GitHub.
+#
+# And a stub for every terminal open_gui can resolve BELOW $TERMINAL. The rows
+# further down leave TERMINAL unset, because it is a name they measure, so the
+# ladder falls to these two — unstubbed they are the developer's own desktop,
+# and this file's fixtures reach a real GUI launch (KEN-1084). A test that
+# proves a parser property must not be able to open a window while doing it.
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/no-lanes"
 printf '#!/bin/sh\nexit 1\n' >"$TMP_ROOT/bin/gh"
-chmod +x "$TMP_ROOT/bin/gh"
+for stub in ghostty xdg-terminal-exec; do
+  printf '#!/bin/sh\nexit 0\n' >"$TMP_ROOT/bin/$stub"
+done
+chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/ghostty" "$TMP_ROOT/bin/xdg-terminal-exec"
 
 # run SCRIPT DIR ARGS... — one hermetic invocation, combined output.
 #
@@ -63,7 +68,7 @@ run() {
   shift 2
   # The command's own status is returned, not swallowed: the empty-value sweep
   # below asserts on it. Callers that only read the output append `|| true`.
-  (cd "$dir" && PATH="$TMP_ROOT/bin:$SEALED:$PATH" \
+  (cd "$dir" && PATH="$TMP_ROOT/bin:$PATH" \
     env -u TMUX -u TERMINAL ORCH_LANES_FETCH_CMD=true \
       ORCH_LANE_DIRS="$TMP_ROOT/no-lanes" \
       "$dir/.agents/skills/orch/scripts/$script" "$@") 2>&1
