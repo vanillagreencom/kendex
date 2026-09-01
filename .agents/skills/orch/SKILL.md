@@ -16,19 +16,6 @@ metadata:
 tags: [automation]
 ---
 
-<!-- kendex:project-instructions:start -->
-## Project Instructions
-
-## Benchmarking orchestration changes
-
-The orch-drill ablation rig A/B-benchmarks orchestration changes: launch a
-drill per its README and compare wall clock and phase timings against the
-recorded baselines before shipping a workflow change. It is a separate
-repository, `bmethod/orch-drill`, not part of this checkout. Clone it wherever
-you keep repositories and run the drill from there.
-
-<!-- kendex:project-instructions:end -->
-
 # Orchestration
 
 > **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
