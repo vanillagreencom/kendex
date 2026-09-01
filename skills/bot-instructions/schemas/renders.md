@@ -95,11 +95,22 @@ derived from the copy taken before it. So the splice's bound is the one above,
 and it is that bound because the ownership check, the region, and the bytes
 spliced all come from one open.
 
-That one open also decodes strictly. The text a read-modify-write is handed is
-the write payload, not a string read and thrown away, so a file holding a byte
-that is not UTF-8 is refused naming the path before anything is written.
-Substituting that byte would write U+FFFD over content this package does not
-own, in the file whose non-owned bytes belong to the repo, and report success.
+That one open also decodes strictly, and only that one. **A read this run
+judges by, or writes back, must round-trip; a read it throws away need not.**
+So a read-modify-write refuses a file holding a byte that is not UTF-8, naming
+the path, before anything is written: substituting it would put U+FFFD into
+content this package does not own, in the file whose non-owned bytes belong to
+the repo, and report success. Every validator read refuses on the same rule,
+in the working tree and in the index alike, or the pre-commit lane passes a
+commit no render can produce.
+
+The replacement of a generated file substitutes instead, and has to. Its bytes
+come from the scratch tree; the file's own text is read for the marker test
+and discarded, and `errors="replace"` touches only invalid bytes, so it can
+neither destroy nor fabricate the ASCII marker line. Refusing there would take
+away the repair: a file this package owns that picked up a stray byte would
+fail the write phase on every run, leaving the manifest pending with no verb
+able to put the repo back.
 
 **Write phase.** The generator builds and validates a complete scratch tree,
 writes a manifest of every path it is about to replace, then replaces them.

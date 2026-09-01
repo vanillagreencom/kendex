@@ -89,7 +89,7 @@ props = d["properties"]["reviews"]["properties"]
 props["summary_high_level"] = props.pop("high_level_summary")
 json.dump(d, open(p, "w"), indent=2)
 PY
-expect_message "defines no such property" \
+expect_red coderabbit-schema \
   'an override naming a property the vendored schema renamed' render --dry-run --repo "$repo"
 git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json
 

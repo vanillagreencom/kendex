@@ -321,6 +321,56 @@ glob = "src/[z-a].rs"
 reason = "a range no engine reads"
 EOF
 
+# The same clause names WHICH key it read, like every other clause in
+# `globs.check`. A message that only quotes the pattern leaves an operator
+# with several surfaces and several globs nothing to grep, and the glob it
+# quotes is the one the author wrote rather than the collapsed form `re` saw:
+# `**/**/` becomes `**/` before the compile, and quoting that names a string
+# no file in the repo holds.
+expect_finding() {
+  local want carries label
+  want="$1"; carries="$2"; label="$3"; shift 3
+  bi_run "$@"
+  if [ "$bi_status" -eq 0 ]; then
+    bad "$label" "expected $want to red; the run passed"
+  elif ! printf '%s\n' "$bi_out" | grep -q "^$want:"; then
+    bad "$label" "expected '$want:'; got: $(printf '%s' "$bi_out" | head -1)"
+  elif printf '%s\n' "$bi_out" | grep -qF -- "$carries"; then
+    ok "$label"
+  else
+    bad "$label" "expected the finding to carry '$carries'; got: $(printf '%s' "$bi_out" | head -1)"
+  fi
+}
+
+repo="$(bi_minimal_repo reversed-class-surface)"
+{ printf '%s' "$BI_MIN_HEAD"; cat <<'EOF'
+[[surface]]
+name = "tests"
+globs = ["src/**/**/[z-a].rs"]
+reviewer_only = true
+instructions = """
+A surface whose glob compiles nowhere.
+"""
+EOF
+} > "$repo/bot-instructions.toml"
+expect_finding toml-schema '[[surface]][0] globs[0]:' \
+  'a surface glob that compiles nowhere names the key it came from' \
+  check --repo "$repo"
+expect_finding toml-schema "glob 'src/**/**/[z-a].rs'" \
+  'and quotes the glob as written, not the collapsed pattern' \
+  check --repo "$repo"
+
+# The derived side: a manifest row is the one glob source no author wrote as a
+# glob, and the refusal has to name the row that produced it.
+repo="$(bi_new_repo reversed-class-derived)"
+mkdir -p "$repo/.agents/skills/zw"
+printf 'x\n' > "$repo/.agents/skills/zw/SKILL.md"
+printf '\n[skills."z[y-a]w"]\nsource = "."\nenabled = true\n' >> "$repo/kendex.toml"
+git -C "$repo" add -A >/dev/null 2>&1
+expect_finding exclusion-consistency '[skills.z[y-a]w]' \
+  'a derived glob that compiles nowhere names the manifest row' \
+  check --repo "$repo"
+
 # § Cross-file sets: the content-refusal table is the single statement, and
 # three structures encode it. Held against them here, so a row or a marked
 # cell added on one side without the other reds rather than being noticed by a

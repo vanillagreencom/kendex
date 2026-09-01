@@ -24,6 +24,7 @@ class Worktree:
     def __init__(self, root):
         self.root = root
         self.fd = fsutil.open_root(root)
+        self._paths = None
 
     def read(self, rel):
         return fsutil.read_text(self.fd, rel)
@@ -35,7 +36,13 @@ class Worktree:
         return _subdirs(self.tracked(), rel)
 
     def tracked(self):
-        return _git(self.root, ["ls-files", "-z"])
+        # Memoised, the way `Index.tracked` is. `manifest.derive` asks per
+        # harness row and runs twice per check, so an uncached read here spawns
+        # git once per row per pass instead of once per run. Nothing reads the
+        # list after the write phase: `render_verb` validates, then writes.
+        if self._paths is None:
+            self._paths = _git(self.root, ["ls-files", "-z"])
+        return self._paths
 
 
 class Index:
@@ -72,7 +79,11 @@ class Index:
             # absent from the index — which is a state, and the one `--staged`
             # exists to judge.
             return None
-        return done.stdout.decode("utf-8", "replace")
+        # The same strict decode `Worktree.read` uses. Two trees that answer
+        # differently would be the worst version of this: `--staged` is the
+        # pre-commit lane, so a lossy read there green-lights a commit whose
+        # bytes no `render` can produce and whose `check` reds.
+        return fsutil.decode_text(done.stdout, rel)
 
     def walk(self, prefix):
         return [p for p in self.tracked() if p.startswith(prefix + "/")]
@@ -132,6 +143,12 @@ def _run(root, args):
 
 
 def _git(root, args):
+    # This decode stays lossy, and it is the one place that is right. A path
+    # is bytes to git, and `ls-files -z` emits whatever the repo holds; a repo
+    # tracking one such name is a working repo, not a repo to refuse. The
+    # substituted name matches no glob and reads as an odd name in a report,
+    # where refusing would take the whole run down. File CONTENT is the other
+    # question, and `fsutil.decode_text` answers it strictly.
     return [p for p in _run(root, args).stdout.decode("utf-8", "replace").split("\0") if p]
 
 

@@ -23,7 +23,6 @@ from .constants import (
     CODERABBIT_TOP_LEVEL,
     DEFAULT_TONE,
 )
-from .errors import RenderError
 from .model import exclude_sentence
 from . import yamlemit
 
@@ -182,18 +181,28 @@ def unresolved(schema, chosen):
     return sorted(k for k in chosen if k not in defined)
 
 
+def unresolved_message(missing):
+    """What `coderabbit-schema` says about the keys `unresolved` returned.
+
+    The refusal is that validator's clause rather than a raise from here: a
+    `RenderError` out of the render escapes `run._as_finding`, which catches
+    the input family, and reaches the operator with no validator naming it —
+    the one thing every other rejection in this package carries, and the thing
+    § Controls requires a control to assert on. `render_verb` validates before
+    it writes, so the refusal is no less fail-closed for being a finding.
+    """
+    return (
+        f"{', '.join(repr(k) for k in missing)} "
+        f"{'is a value' if len(missing) == 1 else 'are values'} this package chooses "
+        f"and the vendored {CODERABBIT_SCHEMA_PATH} defines no such property. "
+        "A dropped override resolves to the vendor default with nothing said, "
+        "and a refreshed schema that renames a property is how that happens. "
+        "Refresh this package's overrides against the vendored copy"
+    )
+
+
 def render(model, schema):
     chosen = overrides(model)
-    missing = unresolved(schema, chosen)
-    if missing:
-        raise RenderError(
-            f"{missing[0]!r} is a value this package chooses and the vendored "
-            f"{CODERABBIT_SCHEMA_PATH} defines no such property"
-            + (f" (and {len(missing) - 1} more)" if len(missing) > 1 else "")
-            + ". A dropped override resolves to the vendor default with nothing said, "
-            "and a refreshed schema that renames a property is how that happens. "
-            "Refresh this package's overrides against the vendored copy"
-        )
     body = full_state(schema, chosen)
     ordered = {k: body[k] for k in CODERABBIT_TOP_LEVEL if k in body}
     for key in body:

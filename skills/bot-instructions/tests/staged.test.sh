@@ -114,4 +114,34 @@ expect_red doctrine-routing 'a staged doctrine source against an unstaged routin
   check --staged --repo "$repo" --spec "$SPEC"
 reset
 
+# The index and the working tree answer the same question about the same
+# bytes. `--staged` is the pre-commit lane, so a read that substitutes there
+# while the worktree read refuses passes a commit whose state `check` reds on
+# and no `render` can produce. `drift` cannot catch it: it compares the owned
+# region, which the substitution leaves equal.
+reset
+python3 - "$repo/AGENTS.md" <<'BYTE'
+import sys
+p = sys.argv[1]
+b = open(p, "rb").read()
+assert b.endswith(b"\n"), "fixture shape changed"
+open(p, "wb").write(b + b"\nCaf\xe9 rules.\n")
+BYTE
+git -C "$repo" add -A >/dev/null 2>&1
+bi_run check --repo "$repo" --spec "$SPEC"
+worktree_status="$bi_status"
+worktree_out="$bi_out"
+bi_run check --staged --repo "$repo" --spec "$SPEC"
+if [ "$bi_status" -eq 0 ] || [ "$worktree_status" -eq 0 ]; then
+  bad 'a byte that is not UTF-8 refuses in the index as it does in the working tree' \
+    "worktree exited $worktree_status; --staged exited $bi_status: $bi_out"
+elif printf '%s\n' "$bi_out" | grep -qF 'AGENTS.md: is not UTF-8' &&
+     printf '%s\n' "$worktree_out" | grep -qF 'AGENTS.md: is not UTF-8'; then
+  ok 'a byte that is not UTF-8 refuses in the index as it does in the working tree'
+else
+  bad 'a byte that is not UTF-8 refuses in the index as it does in the working tree' \
+    "worktree: $worktree_out; --staged: $bi_out"
+fi
+reset
+
 bi_summary

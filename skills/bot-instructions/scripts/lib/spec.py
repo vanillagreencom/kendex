@@ -47,7 +47,10 @@ def check_marker_path(path):
     An `InputError` rather than a `SpecError`: this judges a render input
     path, not the spec copy, and `run._as_finding` catches the input family,
     so the refusal reaches the operator naming the validator whose clause it
-    is instead of as a bare message.
+    is instead of as a bare message. WHICH validator is the caller's to say,
+    because only the caller knows where the path came from — `model.build`
+    re-raises the manifest-derived ones as `ManifestError`, which is
+    `exclusion-consistency`'s domain rather than the TOML's.
     """
     if not _PATH_CLASS.match(path):
         raise InputError(

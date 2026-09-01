@@ -44,7 +44,7 @@ def _identity(st):
     return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
 
 
-def _gate(dir_fd, leaf, rel, require_marker):
+def _gate(dir_fd, leaf, rel, require_marker, strict):
     """Read the marker, and the bytes, off the file opened for the replacement.
 
     Returns `(identity, existing text)` — the identity to re-check before the
@@ -57,10 +57,16 @@ def _gate(dir_fd, leaf, rel, require_marker):
     `(None, None)` when the path is absent — a path this package is creating
     has nothing to protect.
 
-    The decode is strict, and a file that does not round-trip is refused
-    before anything is written. The text this returns is the write payload,
-    not just the string the marker test reads, so a substituted byte here
-    would be a substituted byte in the file.
+    `strict` is the caller's content mode, and it is the whole of what the
+    decode policy turns on. Under `transform=` this text IS the write payload,
+    so a byte that does not round-trip would be written back as U+FFFD and the
+    read is strict. Under `data=` the text feeds `at_canonical_position` and
+    is then discarded, every written byte coming from the scratch tree, so the
+    read substitutes: `errors="replace"` touches only invalid bytes and can
+    neither destroy nor fabricate the ASCII marker line. Refusing there would
+    cost the repair `render` exists to perform — a generated file this package
+    owns that picked up a stray byte would fail the write phase on every run,
+    with no verb able to put the repo back.
     """
     try:
         fd = os.open(leaf, os.O_RDONLY | _NOFOLLOW, dir_fd=dir_fd)
@@ -74,7 +80,8 @@ def _gate(dir_fd, leaf, rel, require_marker):
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise ContainmentError(f"{rel}: is not a regular file")
-        existing = decode_text(_read_all(fd), rel)
+        raw = _read_all(fd)
+        existing = decode_text(raw, rel) if strict else raw.decode("utf-8", "replace")
         if require_marker and not marker_mod.at_canonical_position(rel, existing):
             raise RenderError(
                 f"{rel}: carries no {MARKER_TOKEN!r} marker at its canonical position, so "
@@ -99,7 +106,9 @@ def replace(root_fd, rel, data=None, require_marker=True, transform=None):
     replacement come from one open. Returns True when a write happened.
 
     Exactly one of `data` and `transform`, and the pair is checked before the
-    temp file exists.
+    temp file exists. It also settles the decode: only the read-modify-write
+    form has to round-trip, because only there is the text read the text
+    written.
     """
     if (data is None) == (transform is None):
         # Neither is a caller that would reach `os.write(fd, None)` with the
@@ -114,7 +123,7 @@ def replace(root_fd, rel, data=None, require_marker=True, transform=None):
     dir_fd, leaf = _walk_to_parent(root_fd, parts, create=True)
     tmp = f".{leaf}.bot-instructions-tmp.{os.getpid()}"
     try:
-        before, existing = _gate(dir_fd, leaf, rel, require_marker)
+        before, existing = _gate(dir_fd, leaf, rel, require_marker, transform is not None)
         if transform is not None:
             data = transform(existing)
             if data is None:

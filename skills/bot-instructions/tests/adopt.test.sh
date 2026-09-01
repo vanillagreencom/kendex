@@ -186,6 +186,54 @@ else
     "$(od -c "$repo/AGENTS.md" | tr '\n' ' ')"
 fi
 
+# `adopt` is the verb whose OUTPUT is the point: what each file held is the
+# diff the TOML has to absorb, and the pointer list is what the operator is
+# told to read against it. A failure part way through has to carry that report
+# out, the way `render_verb` carries its partial-set lines — a second adopt
+# finishes the set and finds neither, because those files now hold the marker.
+repo="$(bi_new_repo adopt-partial-report)"
+mkdir -p "$repo/.github"
+printf '# hand-written\n\nSee [the guide](GUIDE.md).\n' > "$repo/.github/copilot-instructions.md"
+printf 'reviews:\n  profile: chill\n' > "$repo/.coderabbit.yaml"
+printf 'x\n' > "$repo/GUIDE.md"
+printf '[config]\nstray = "\xe9"\n' > "$repo/.pr_agent.toml"
+git -C "$repo" add -A >/dev/null 2>&1
+bi_run adopt --repo "$repo"
+if [ "$bi_status" -eq 0 ]; then
+  bad 'a failed adopt still reports what it took over' 'adopt passed'
+else
+  for want in 'adopted .coderabbit.yaml' \
+              'adopted .github/copilot-instructions.md' \
+              'points at GUIDE.md' \
+              're-run adopt to finish the set'; do
+    if printf '%s\n' "$bi_out" | grep -qF "$want"; then
+      ok "a failed adopt still reports what it took over: $want"
+    else
+      bad "a failed adopt still reports what it took over: $want" "$bi_out"
+    fi
+  done
+fi
+
+# The other half of the decode rule, and the reason it is stated by content
+# mode. A generated file this package OWNS that picked up a stray byte is
+# `render`'s to repair: the bytes written come from the scratch tree and the
+# file's own text is read only for the marker test, so the read substitutes
+# and the render goes through. Refusing here would fail the write phase after
+# some of the set, leave the manifest pending, and fail the same way on every
+# re-run, with `check` red on the same path and no verb able to put the repo
+# back.
+repo="$(bi_rendered_repo adopt-stray-byte-owned)" || exit 1
+cp "$repo/REVIEW.md" "$BI_TMP/rendered-review.md"
+printf 'stray \xe9\n' >> "$repo/REVIEW.md"
+expect_green 'a generated file holding a stray byte is repaired by render, not refused' \
+  render --repo "$repo"
+if cmp -s "$repo/REVIEW.md" "$BI_TMP/rendered-review.md"; then
+  ok 'and it holds the fresh render afterwards'
+else
+  bad 'and it holds the fresh render afterwards' "$(head -3 "$repo/REVIEW.md")"
+fi
+expect_green 'so the repo checks clean again' check --repo "$repo"
+
 # `writer.replace` takes exactly one of its two content modes, and says so.
 # Neither would reach `os.write(fd, None)` with the temp file already made;
 # both would drop `data` in the transform branch without a word. Driven at the

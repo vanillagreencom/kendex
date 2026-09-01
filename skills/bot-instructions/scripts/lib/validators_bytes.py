@@ -10,6 +10,7 @@ import tomllib
 
 from .constants import (
     ALL_BLOCK_COLUMNS,
+    CODERABBIT_SCHEMA_PATH,
     MARKER_TOKEN,
     QODO_VERBS,
     ROUTING_COLUMNS,
@@ -61,6 +62,14 @@ def coderabbit_schema(ctx, out):
     if not ctx.config.bots["coderabbit"]:
         return
     schema = ctx.schema
+    chosen = render_coderabbit.overrides(ctx.model)
+    # Before the early returns below: an override the vendored copy no longer
+    # defines is a question about the schema and the overrides, and neither a
+    # missing render nor an unreadable one makes it go away.
+    missing = render_coderabbit.unresolved(schema, chosen)
+    if missing:
+        out.append(Finding(v, render_coderabbit.unresolved_message(missing),
+                           CODERABBIT_SCHEMA_PATH))
     text = ctx.build.files.get(".coderabbit.yaml")
     if text is None:
         out.append(Finding(v, "[bots] coderabbit is true and no .coderabbit.yaml was rendered"))
@@ -76,7 +85,7 @@ def coderabbit_schema(ctx, out):
     except jsonschema.Unimplemented as exc:
         out.append(Finding(v, str(exc)))
         return
-    _completeness(v, doc, schema, render_coderabbit.overrides(ctx.model), "", out)
+    _completeness(v, doc, schema, chosen, "", out)
 
 
 def _completeness(v, doc, schema, chosen, path, out):

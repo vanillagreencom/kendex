@@ -79,8 +79,11 @@ def check(glob, where):
     # permits `[` and `]` and says nothing about what goes between them, and a
     # `[...]` here reaches a regex character class. Proving it compiles at
     # input is what makes a reversed range a `toml-schema` finding rather than
-    # a traceback out of the dead-exclusion clause much later.
-    _translate(glob)
+    # a traceback out of the dead-exclusion clause much later. `where` is what
+    # makes it this clause's finding like the rest: without it the message
+    # names no key, and `manifest._checked` cannot say which manifest row
+    # produced the glob.
+    _translate(glob, where)
 
 
 def check_list(globs, where):
@@ -110,7 +113,7 @@ def _collapse(pattern):
     return pattern
 
 
-def _translate(pattern):
+def _translate(pattern, where=None):
     """Dialect glob to regex. `**` crosses `/`; `*` and `?` do not.
 
     `a/**` matches `a` itself, which is how every engine here reads "this
@@ -121,9 +124,16 @@ def _translate(pattern):
     a regex character class: `[z-a]` is made of permitted bytes and is a
     reversed range `re` refuses. A raw traceback there would be the one
     refusal in this package that does not name the clause that refused it.
+
+    The refusal quotes the glob AS WRITTEN, not the collapsed pattern `re`
+    saw: `_collapse` rewrites `**/**/` to `**/`, and quoting that names a
+    string no file in the repo holds, so grepping for what the message says
+    finds nothing. `where` is the key it came from, which `check` carries and
+    the `matching()` entry point has none of.
     """
     from .errors import InputError
 
+    as_written = pattern
     pattern = _collapse(pattern)
     out = ["^"]
     i, n = 0, len(pattern)
@@ -160,10 +170,11 @@ def _translate(pattern):
     try:
         return re.compile("".join(out))
     except re.error as exc:
+        head = f"{where}: " if where is not None else ""
         raise InputError(
-            f"glob {pattern!r} is in the dialect's character class but is not a pattern "
-            f"this package can match ({exc}). A `[...]` class here reaches a regex "
-            "character class, where a reversed range is an error"
+            f"{head}glob {as_written!r} is in the dialect's character class but is not "
+            f"a pattern this package can match ({exc}). A `[...]` class here reaches a "
+            "regex character class, where a reversed range is an error"
         ) from exc
 
 

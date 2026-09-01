@@ -107,13 +107,18 @@ def _read_all(fd):
 
 
 def decode_text(raw, rel):
-    """The one strict decode, for reads and for rewrites alike.
+    """The one strict decode: text this run judges by, or writes back.
 
-    A lossy decode is safe only while the text is read and thrown away. The
-    write phase derives the new bytes from this text, so a substituted byte
-    there is written back over the file: every byte a file holds has to
-    round-trip before any of it is rewritten, or `render` and `adopt` corrupt
-    content outside the region this package owns and report success.
+    A lossy decode is safe only where the text is read and thrown away. Two
+    places it is not. A read a validator judges by: a substituted byte makes
+    the run report on bytes the repo does not hold. And a read-modify-write:
+    the new bytes are derived from this text, so the substitution is written
+    back over content outside the region this package owns.
+
+    Both tree implementations read through here, so `check` and
+    `check --staged` answer the same question about the same repo. The write
+    phase asks for it by content mode — `writer._gate`, whose `data=` form
+    decodes lossily for the marker test and writes none of it.
     """
     try:
         return raw.decode("utf-8")

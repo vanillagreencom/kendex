@@ -127,11 +127,11 @@ def render_with(mod, name, hook):
 # separate read computes its bytes from the copy taken before the edit, agrees
 # with itself at the recheck, and drops the edit reporting success.
 once = []
-def before_gate(original, dir_fd, leaf, rel, require_marker):
+def before_gate(original, dir_fd, leaf, rel, *rest):
     if rel == "AGENTS.md" and not once:
         once.append(True)
         edit()
-    return original(dir_fd, leaf, rel, require_marker)
+    return original(dir_fd, leaf, rel, *rest)
 
 failed = render_with(writer, "_gate", before_gate)
 if not once:
@@ -225,7 +225,10 @@ fi
 # PRINTS. The refusal firing is half the clause; the other half is that it
 # reaches the operator attributed to a validator, which is what § Controls
 # requires of every rejection and what a class-level assertion here cannot
-# see.
+# see. The validator asserted is the one that owns the INJECTED source: this
+# probe injects through the manifest read, so `exclusion-consistency` is the
+# clause, and a message blaming `bot-instructions.toml` would send the reader
+# to a file holding nothing wrong.
 if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
 import contextlib, io, os, sys
 PKG, repo = sys.argv[1], sys.argv[2]
@@ -250,12 +253,65 @@ if status == 0:
     sys.exit("a marker input path outside the class was accepted")
 if "refuses" not in printed:
     sys.exit(f"refused, but not by the marker-path clause: {printed.strip()}")
-if not printed.startswith("toml-schema:"):
+if not printed.startswith("exclusion-consistency:"):
     sys.exit(f"refused without naming the validator whose clause it is: {printed.strip()}")
 PROBE
   ok 'a marker input path outside the class is refused, naming its validator'
 else
   bad 'a marker input path outside the class is refused, naming its validator'
+fi
+
+# One `ls-files` per run, whichever tree the verb reads. `manifest.derive`
+# asks for the tracked list per harness row and runs twice per check under the
+# independent-derivation design, so an uncached read here spawns git once per
+# row per pass. `Index` caches; `Worktree` has to answer the same way, or the
+# two implementations of one interface disagree on cost alone.
+repo="$(bi_rendered_repo one-ls-files)" || exit 1
+python3 - "$repo/kendex.toml" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read().replace('harnesses = ["claude"]',
+                           'harnesses = ["claude", "codex", "cursor", "gemini"]')
+open(p, "w").write(s)
+PY
+for h in .codex .cursor .gemini; do
+  mkdir -p "$repo/$h/x"
+  printf 'x\n' > "$repo/$h/x/f.md"
+done
+git -C "$repo" add -A >/dev/null 2>&1
+# Re-rendered against the wider harness list, so the run being counted is a
+# clean one. A run that reds part way through reads fewer trees than a whole
+# one and the count would prove nothing.
+bi_must render --repo "$repo" || exit 1
+bi_commit "$repo"
+if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
+import contextlib, io, os, sys
+PKG, repo = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import cli, tree
+
+calls = []
+original = tree._git
+
+def counted(root, args):
+    calls.append(list(args))
+    return original(root, args)
+
+tree._git = counted
+try:
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        status = cli.main(["check", "--repo", repo, "--spec", PKG])
+finally:
+    tree._git = original
+if status != 0:
+    sys.exit("the fixture did not check clean, so the count proves nothing")
+listings = [c for c in calls if c[0] == "ls-files"]
+if len(listings) != 1:
+    sys.exit(f"four harness rows spawned {len(listings)} ls-files reads, not one")
+PROBE
+  ok 'the tracked list is read once per run, whatever the harness count'
+else
+  bad 'the tracked list is read once per run, whatever the harness count'
 fi
 
 bi_summary

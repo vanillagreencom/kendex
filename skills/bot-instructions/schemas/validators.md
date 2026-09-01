@@ -258,6 +258,15 @@ transcribed key list, which is why a property the vendor *adds* arrives at its
 own default and shows in the diff rather than being caught here. What this
 clause holds is the other direction: a renderer regression that drops one.
 
+**Rejects, the unresolved-override clause.** An override this package chooses
+that the vendored copy defines no property for. The render consults overrides
+by dotted path, so such a key is not applied — it is dropped, and the setting
+resolves to the vendor default with nothing said. Renaming a property is what
+a vendored-schema refresh does, and refreshing that copy is a checklist step.
+This clause runs before the ones above, which read the rendered file: an
+override naming nothing is a question about the schema and the overrides, and
+neither a missing render nor an unreadable one answers it.
+
 **Rejects, also.** A missing, unreadable or unparseable
 `.bot-instructions/coderabbit-schema.json`, whenever `[bots] coderabbit` is
 true, on both verbs. Never a skipped validator: no verb writes that file, so

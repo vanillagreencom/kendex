@@ -113,14 +113,28 @@ def adopt_verb(ctx, root):
     # marker-plus-pre-render bytes over a file the render had just produced,
     # and the next `check` would red on a path nobody edited.
     with writer.RenderLock(root_fd):
-        for path in sorted(ctx.build.files):
-            held = _adopt_file(ctx, root_fd, path)
-            if held is None:
-                continue
-            lines.append(f"adopted {path} ({len(held.splitlines())} lines it held)")
-            pointers |= points_at(held)
-        if ctx.build.region_body is not None:
-            lines.extend(_adopt_region(ctx, root_fd, pointers))
+        try:
+            for path in sorted(ctx.build.files):
+                held = _adopt_file(ctx, root_fd, path)
+                if held is None:
+                    continue
+                lines.append(f"adopted {path} ({len(held.splitlines())} lines it held)")
+                pointers |= points_at(held)
+            if ctx.build.region_body is not None:
+                lines.extend(_adopt_region(ctx, root_fd, pointers))
+        except BaseException as exc:
+            # The report IS the output of this verb, the way `render_verb`'s
+            # partial-set lines are: what each file held is the diff the TOML
+            # has to absorb, and the pointer list is what the operator is told
+            # to read against it. A second adopt finishes the set and finds
+            # neither, because those files now carry the marker.
+            raise RenderError("\n".join(
+                lines
+                + [f"points at {t} — read it against the TOML" for t in sorted(pointers)]
+                + [f"adopt failed: {exc}",
+                   "the paths named above were taken over before the failure and "
+                   "nothing else was — re-run adopt to finish the set"]
+            )) from exc
     for target in sorted(pointers):
         lines.append(f"points at {target} — read it against the TOML")
     if not lines:

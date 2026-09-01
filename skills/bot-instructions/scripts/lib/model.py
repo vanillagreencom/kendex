@@ -13,17 +13,20 @@ from .constants import (
     MARKER_TOKEN,
     TOML_PATH,
 )
-from .errors import InputError
+from .errors import InputError, ManifestError
 from . import manifest, spec
 
 
 class RenderModel:
     def __init__(self, config, doctrine, exclusions, inputs):
         # Every path here is interpolated into the marker comment, so every
-        # path here meets the class that cannot close one. They are this
-        # package's own constants today; the check is what keeps the claim in
-        # `spec.py` and `renders.md` § Common rules true if the list ever
-        # becomes operator- or repo-derived, which is the direction it grows.
+        # path here meets the class that cannot close one, which is what
+        # keeps `spec.py`'s claim and `renders.md` § Common rules true as the
+        # list grows repo-derived members. This is the backstop for the paths
+        # that are this package's own constants: `build` has already checked
+        # the manifest-derived ones against their own source, because a
+        # refusal naming the wrong file is the failure `errors.py` calls out
+        # by name.
         for path in inputs:
             spec.check_marker_path(path)
         self.config = config
@@ -99,6 +102,17 @@ def build(tree, config, doctrine, spec_paths):
     if config.exclusions["derive_render"]:
         resolved, read = manifest.resolve(tree)
         exclusions.extend(manifest.derive(tree, resolved))
+        # The one member of the input list a repo decides, so the one whose
+        # marker-path refusal is a manifest finding. Checked here, where the
+        # source is still known: the sweep in `RenderModel.__init__` sees a
+        # flat list and would report a manifest-derived path as a
+        # `bot-instructions.toml` defect, sending the reader to a file holding
+        # nothing wrong.
+        for path in read:
+            try:
+                spec.check_marker_path(path)
+            except InputError as exc:
+                raise ManifestError(str(exc)) from exc
         inputs.extend(read)
     for entry in config.exclusions["path"]:
         exclusions.append({"glob": entry["glob"], "reason": entry["reason"], "derived": False})
