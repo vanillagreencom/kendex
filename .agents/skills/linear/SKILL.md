@@ -137,6 +137,6 @@ Available states: Backlog, Todo, In Progress, In Review, Done, Canceled (not "Ca
 
 ## validate-completion
 
-The pre-merge check on state plus summary comment. The expected-state matrix — session root vs bundle children vs `--container` parents, and the fail-closed flag pairing — is in `issues --help` § Validate-Completion.
+The pre-merge check on state plus summary comment, live only — `issues validate-completion`, with no `cache` spelling. The expected-state matrix — session root vs bundle children vs `--container` parents, and the fail-closed flag pairing — is in `issues --help` § Validate-Completion.
 
 A "labelIds not exclusive child labels" error means two labels from one exclusive group. Requires Bash 4.0+ (macOS system Bash 3.2 is unsupported), `curl`, and `jq`.

@@ -13,7 +13,6 @@ source "$SCRIPT_DIR/../lib/common.sh"
 unset LINEAR_SKIP_API_KEY_RESOLUTION
 source "$SCRIPT_DIR/../lib/cache.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
-source "$SCRIPT_DIR/../lib/issue-validation.sh"
 
 show_help() {
     cat <<'EOF'

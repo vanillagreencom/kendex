@@ -139,16 +139,11 @@ blocking_level_ok() {
 
 # blocking_level_violation_message BLOCKER BLOCKED BLOCKER_PARENT BLOCKED_PARENT
 # Compose the plain-text rejection message for a blocking-level violation.
-# A parent/child pair gets its own explanation: the hierarchy already encodes
-# that dependency, so no replacement pair exists. Every other violation states
-# the rule the pair failed.
+# Two outcomes: a parent/child pair gets its own explanation, because the
+# hierarchy already encodes that dependency and no replacement pair exists;
+# every other pair gets the rule it failed.
 blocking_level_violation_message() {
 	local blocker="$1" blocked="$2" p1="$3" p2="$4"
-
-	if [[ "$blocker" == "$blocked" ]]; then
-		printf 'Hierarchy violation: %s cannot block itself.' "$blocker"
-		return 0
-	fi
 
 	local ancestor="" descendant=""
 	if [[ -n "$p1" && "$p1" == "$blocked" ]]; then

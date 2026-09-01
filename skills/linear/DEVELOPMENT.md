@@ -63,7 +63,7 @@ for t in skills/linear/tests/*.test.sh; do bash "$t" || echo "FAIL $t"; done
 skills/linear/tests/must-fail-controls.sh
 ```
 
-Each test stands up its own fixture root and a `curl` shim on `PATH`, so none reaches the network. `LINEAR_API_KEY_OVERRIDE` is the inline auth channel they use; `cache.sh` refuses to write when that override is paired with a cache dir inside a real checkout, so a test that forgets to isolate `PROJECT_ROOT` fails instead of polluting live cache data.
+Each test stands up its own fixture root and a `curl` shim on `PATH`, so none reaches the network. `LINEAR_API_KEY_OVERRIDE` is the inline auth channel they use. Isolating `PROJECT_ROOT`/`CACHE_DIR` to that fixture root is the test author's own obligation: nothing refuses on its behalf, so a test that forgets writes its fixture ids into the real `.cache/linear`.
 
 ### Assertions
 

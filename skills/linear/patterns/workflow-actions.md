@@ -32,7 +32,7 @@ scripts/linear.sh issues remove-relation [ISSUE_ID] --blocks|--blocked-by [OTHER
 
 A `make_parent` action carrying `retitle` applies the retitle alongside the reparenting.
 
-Blocking-relation shape: SKILL.md § Blocked Label vs Issue Relations; a rejection names the valid replacement pair.
+Blocking-relation shape: SKILL.md § Blocked Label vs Issue Relations; a rejection states the rule the pair failed.
 
 Never drop a valid dependency. Lift child-level dependencies to the parent level when bundles are involved, and use `--related` when the dependency is informational rather than blocking.
 
