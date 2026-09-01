@@ -5,7 +5,7 @@ Paths are ordinary joins under a root the caller already resolved.
 
 import os
 
-from .errors import RenderError
+from .errors import RenderError, SourceUnavailable
 
 
 def read_file(root, rel):
@@ -41,8 +41,17 @@ def walk(root, rel):
     by the tree under judgment, and a symlinked directory there is a read out
     of the repo.
     """
+    def unreadable(exc):
+        # `os.walk` reports a scandir failure here and otherwise skips the
+        # tree, which would hand `orphan` an empty list for a tree nobody
+        # could read and let `check` pass. Absence is the one definite empty
+        # answer; everything else is `SourceUnavailable`'s rule.
+        if isinstance(exc, FileNotFoundError):
+            return
+        raise SourceUnavailable(f"walk {rel}", f"cannot read ({exc.strerror})")
+
     out = []
-    for dirpath, dirnames, filenames in os.walk(os.path.join(root, rel)):
+    for dirpath, dirnames, filenames in os.walk(os.path.join(root, rel), onerror=unreadable):
         dirnames.sort()
         prefix = os.path.relpath(dirpath, root).replace(os.sep, "/")
         out.extend(f"{prefix}/{name}" for name in filenames)

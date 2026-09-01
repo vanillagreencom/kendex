@@ -339,6 +339,42 @@ expect_red orphan 'the same marker under a prologue the path DOES carry is owned
   check --repo "$prologue_repo"
 
 # --- the walk that feeds orphan ---------------------------------------------
+# A tree the walk cannot READ is not an empty tree. `os.walk` reports the
+# scandir failure and otherwise skips it, which hands `orphan` an empty list
+# for a tree nobody could read and lets `check` pass. Absence is the one
+# definite empty answer. Root reads a mode-000 directory, so the probe says so
+# rather than passing without having run.
+if [ "$(id -u)" -eq 0 ]; then
+  bad 'an unreadable scanned tree raises rather than reading as empty' \
+    'run as root: a mode-000 directory is readable, so this probe cannot run'
+elif python3 - "$BI_ROOT/skills/bot-instructions" "$BI_TMP" <<'PROBE'; then
+import os, sys, tempfile
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from lib import fsutil
+from lib.errors import SourceUnavailable
+
+root = tempfile.mkdtemp(dir=sys.argv[2])
+os.makedirs(os.path.join(root, "t", "sub"))
+open(os.path.join(root, "t", "sub", "f.md"), "w").write("x")
+if fsutil.walk(root, "t") != ["t/sub/f.md"]:
+    sys.exit("the readable tree did not walk")
+if fsutil.walk(root, "gone") != []:
+    sys.exit("an absent tree is a definite empty answer and must stay one")
+os.chmod(os.path.join(root, "t", "sub"), 0)
+try:
+    got = fsutil.walk(root, "t")
+except SourceUnavailable:
+    pass
+else:
+    sys.exit(f"an unreadable tree read as {got!r} instead of raising")
+finally:
+    os.chmod(os.path.join(root, "t", "sub"), 0o755)
+PROBE
+  ok 'an unreadable scanned tree raises rather than reading as empty'
+else
+  bad 'an unreadable scanned tree raises rather than reading as empty'
+fi
+
 # A symlinked SCANNED TREE, walked rather than reported as empty: an empty
 # walk leaves `orphan`'s only enumeration source with no input and the run
 # reports a clean pass. The pair is the identical file in a real directory.
