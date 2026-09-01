@@ -217,11 +217,13 @@ than a render its own guard rejects.
 **Missing section.** An error. The generator never creates `AGENTS.md` and
 never adds the heading.
 
-**The bootstrap is add-the-heading, then `adopt`, then `render`.** A hand-added
-heading leaves an unmarked region at a generated path, and `render` refuses to
-replace one of those — the rule that stops it destroying hand-written bot
-files. `adopt` is the verb that makes an unmanaged thing managed, and a region
-is no different from a file in that respect, so it takes the region over and
+**The bootstrap is add-the-heading, set `[bots] codex`, `adopt`, then
+`render`.** The flag precedes the `adopt` because `adopt` takes a region over
+only for a capability that is on. A hand-added heading leaves an unmarked region
+at a generated path, and `render` refuses to replace one of those — the rule
+that stops it destroying hand-written bot files. `adopt` is the verb that makes
+an unmanaged thing managed, and a region is no different from a file in that
+respect, so it takes the region over and
 names it in what it prints. No bootstrap exemption: an exemption would need a
 boundary between a region `render` may write unmarked and a hand-written one it
 must refuse, and every boundary anyone can state there reopens the overwrite the
@@ -400,7 +402,9 @@ requests targeting the default branch, and the wildcard also covers stacked
 pull requests.
 
 **`reviews.path_filters`.** The exclusion set, each entry prefixed `!`, each
-preceded by a comment carrying its `reason`. Exclusion-only: a single entry
+preceded by a comment carrying its reason — the entry's own `reason` where it
+has one, and the fixed string `repo-toml.md` § `[exclusions]` states for a
+derived entry, which has no TOML row to carry one. Exclusion-only: a single entry
 without `!` turns the list into an allowlist and un-reviews every unlisted file
 in the repo. The glob dialect is what keeps these patterns usable by `git
 sparse-checkout`, which CodeRabbit feeds them to. Both rules are enforced by
@@ -537,9 +541,11 @@ commit on the pull request, except for a fork pull request, which reads the
 default branch.
 
 **`.macroscope/ignore.md`.** The marker as an HTML comment, then one glob per
-line and nothing else. Each glob's `reason` is an HTML comment on the line
-above it. Macroscope documents no grammar for this file, so the render assumes
-the strictest reading, that every non-blank line is a pattern, and keeps every
+line and nothing else. Each glob's reason is an HTML comment on the line above
+it, taken from the same two sources `path_filters` uses: the entry's `reason`,
+or the fixed derived string. Macroscope documents no grammar for this file, so
+the render assumes the strictest reading, that every non-blank line is a
+pattern, and keeps every
 non-pattern line inside a comment. Confirming that assumption once per repo is
 a checklist line.
 

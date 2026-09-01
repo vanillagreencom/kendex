@@ -143,9 +143,11 @@ generator owns exactly the slice from the `## Code Review Rules` heading to the
 next heading at that level or above, and never the rest, and it opens that slice
 with the marker so the region is as identifiable as a whole file. It never
 creates `AGENTS.md` and never adds the heading: a repo without that section is
-an error telling the author to add the heading, `adopt`, then render. The
-`adopt` step is not optional there — a hand-added heading is an unmarked region
-at a generated path, which is exactly what `render` refuses.
+an error telling the author to add the heading, set `[bots] codex`, `adopt`,
+then render. The flag comes before the `adopt` because `adopt` takes a region
+over only for a capability that is on, and the `adopt` is not optional because a
+hand-added heading is an unmarked region at a generated path, which is exactly
+what `render` refuses.
 
 Codex also reads the nearest nested `AGENTS.md` covering each changed file. The
 generator writes only the root section, so a nested `AGENTS.md` carrying a
@@ -407,7 +409,8 @@ recommend parsing them.
 ## Adding a repo
 
 The procedure is [references/checklist.md](references/checklist.md) § Adding a
-repo, beside the settings work it runs into. It is six steps, and the two worth
-knowing before you start are that a repo with `[bots] codex` adds the
-`## Code Review Rules` heading by hand before `adopt`, and that `adopt` is what
-makes both that region and any existing bot file managed.
+repo, beside the settings work it runs into, and it derives its order from
+`toml-schema`'s cross-flag clauses and `adopt`'s rule rather than restating one.
+The shape worth knowing before you start: nothing that depends on a flag is
+written before the flag, so a capability's surfaces, `adopt` and `render` all
+happen in the pass that turns it on.

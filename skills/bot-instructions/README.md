@@ -86,13 +86,12 @@ bot output has to do about it.
 
 ## Adding a repo
 
-Write `bot-instructions.toml` at the repo root, moving each existing bot file's
-repo-specific claims into it and letting doctrine carry the rest. Add the
-`## Code Review Rules` heading to `AGENTS.md` by hand if `codex` is on, since
-the generator never adds it. Run `adopt`, which takes that region and every
-existing bot file over, and read what it names against the TOML. Render, read
-the diff, then work the settings. A bot whose install or enablement step is
-skipped reviews nothing while every file in the repo looks correct.
+The sequence is [references/checklist.md](references/checklist.md) § Adding a
+repo, and it is not a preference: `toml-schema`'s cross-flag clauses and
+`adopt`'s own rule fix the order, so that file derives it from them rather than
+asserting it. Two passes — a repo-wide TOML with every bot off, then one pass
+per capability that enables it, adopts its paths and renders them.
 
-The six steps in full, and the settings that follow them:
-[references/checklist.md](references/checklist.md).
+What a reader coming here for the shape needs: nothing that depends on a flag
+is written before the flag, and a bot whose install or enablement step is
+skipped reviews nothing while every file in the repo looks correct.

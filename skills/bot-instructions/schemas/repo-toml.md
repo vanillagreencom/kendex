@@ -280,15 +280,32 @@ read to decide where the install state lives and the sibling only when it says
 so. SKILL.md § The render inputs states the pair; the marker names each by the
 path actually read.
 
+**A derived entry's reason is fixed, and this is the only place it is written:**
+
+> harness render output, owned upstream — a defect here is fixed at the source
+> and arrives by re-render
+
+Every derived entry carries that exact string, because every derived entry is
+excluded for that one reason and nothing about the tree distinguishes them. A
+render rule that wants a reason takes it from here rather than restating it, and
+the string is single-line ASCII with no `-->` and no `#`, so it satisfies every
+constraint a rendered comment is under by construction rather than by check.
+Without it the render rules would demand bytes the schema never supplies:
+`reason` is a required key on `[[exclusions.path]]` entries alone, and a derived
+entry has no TOML row to carry one.
+
 `[[exclusions.path]]` entries add repo-specific paths.
 
 | Key | Type | Required | Meaning |
 |-----|------|----------|---------|
 | `glob` | string | yes | A pattern in the dialect above |
-| `reason` | string | yes | Why this path is not reviewable. Rendered as a comment beside the entry in every surface that supports comments |
+| `reason` | string | yes | Why this path is not reviewable. Rendered as a comment beside the entry on the surfaces whose render rules say so |
 
 A reason is required because an exclusion with no stated reason is
-indistinguishable from a mistake at the next read.
+indistinguishable from a mistake at the next read. That argument covers derived
+entries too, which is why they carry the fixed string above rather than nothing;
+what they do not have is a TOML row, so the required key stays on
+`[[exclusions.path]]` and the generator supplies the rest.
 
 ### `[[surface]]`
 
