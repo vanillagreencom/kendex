@@ -338,6 +338,18 @@ git -C "$prologue_repo" add -A >/dev/null 2>&1
 expect_red orphan 'the same marker under a prologue the path DOES carry is owned' \
   check --repo "$prologue_repo"
 
+# A generated file COPIED to a destination whose format comments differently
+# keeps the marker it was written with. `orphan` asks whether the file carries
+# one, not whether it carries the one this destination would write; the
+# replacement gate still asks the strict question. `renders.md` § Marker names
+# this copy orphan's case rather than an exotic one.
+copied_repo="$(bi_rendered_repo copied-across-syntaxes)" || exit 1
+mkdir -p "$copied_repo/.macroscope"
+cp "$copied_repo/.macroscope/ignore.md" "$copied_repo/.macroscope/approvability.md"
+git -C "$copied_repo" add -A >/dev/null 2>&1
+expect_red orphan 'a hash-marked render copied to an html-comment path is an orphan' \
+  check --repo "$copied_repo"
+
 # --- the walk that feeds orphan ---------------------------------------------
 # A tree the walk cannot READ is not an empty tree. `os.walk` reports the
 # scandir failure and otherwise skips it, which hands `orphan` an empty list

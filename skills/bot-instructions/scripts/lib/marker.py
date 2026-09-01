@@ -71,6 +71,22 @@ def owns(path, text):
     return body.lstrip("\n").startswith(_OPENER[style_for(path)])
 
 
+def carries_marker(text):
+    """Does `text` carry this package's marker, whatever wrote it?
+
+    `orphan`'s question, and the one place the destination does not decide.
+    A rendered file copied between destinations whose formats comment
+    differently keeps the marker it was written with, and `renders.md`
+    § Marker names that copy orphan's case rather than an exotic one. Writes
+    stay destination-strict: `owns` is what the replacement gate asks.
+    """
+    if text is None:
+        return False
+    _, body = _split_prologue(text)
+    body = body.lstrip("\n")
+    return any(body.startswith(opener) for opener in _OPENER.values())
+
+
 def insert(text, marker_text):
     """Put the marker where `owns` looks for it.
 

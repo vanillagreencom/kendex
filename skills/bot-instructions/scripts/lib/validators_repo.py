@@ -69,7 +69,7 @@ def orphan(ctx, out):
         if path in produced:
             continue
         text = ctx.read(path)
-        if marker.owns(path, text):
+        if marker.carries_marker(text):
             out.append(Finding(v, "carries this package's marker and the current TOML does "
                                   "not produce it. Retiring one is delete-then-render, in "
                                   "that order", path))
