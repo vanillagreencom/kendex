@@ -256,6 +256,29 @@ Declined: out.of.scope
 Declined: pre_existing
 Declined: nothing-to-do
 
+# --- two unrelated labels joined by a held separator -----------------------
+# The punctuation pass holds a dot, underscore or hyphen between two
+# alphanumerics, so two single-word labels written that way arrive at the
+# word lists as ONE token rather than two. Both lists bound their entries on
+# alphanumerics, so each label is still read and what is left is the
+# separator, which the flatten takes.
+#
+# Anchor the lists on \b instead and the underscore alone defeats both
+# matches, because `\b` reads `_` as a word character where it reads `.` and
+# `-` as boundaries. Every underscore line below then clears the gate while
+# its dot and hyphen spelling reds; that asymmetry is what these hold.
+# `frozen_3` is the same fault reaching one pass further: the number pass
+# runs after the flatten, so the digit goes either way and the label is what
+# is left standing.
+Declined: clean_frozen
+Declined: clean-frozen
+Declined: clean.frozen
+Declined: ci_green
+Declined: tests_pass
+Declined: build_passes
+Declined: frozen_cap
+Declined: frozen_3
+
 # --- a label phrase the path strip reaches first --------------------------
 # The derivation EXCLUDES `n a`, for the same reason it excludes `nothing to
 # do` one section up: every word after its head — here just `a` — is one the

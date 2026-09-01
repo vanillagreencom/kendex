@@ -1418,6 +1418,11 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # flattened afterwards. Widening that hold to the apostrophe would break
 # "won't fix", which the lists read as "won t fix".
 #
+# Both lists are bounded on ALPHANUMERICS rather than on \b for the same
+# reason, so a held separator is a boundary for them as it is for the
+# strips: `\b` reads `_` as a word character. The corpus section "two
+# unrelated labels joined by a held separator" is what holds that.
+#
 # Position is the only thing that separates a suite name from prose — both
 # are ordinary English, so any SET of names is a word ban on whatever the
 # repo happens to name its files after, and "the guard refuses this path" is
@@ -1436,8 +1441,8 @@ t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decli
     | gsub("[A-Z][A-Z0-9]+-[0-9]+|#[0-9]+"; " ")
     | ascii_downcase
     | gsub("[^\\p{L}\\p{N}/._-]|(?<![\\p{L}\\p{N}])[._-]|[._-](?![\\p{L}\\p{N}])"; " ")
-    | gsub("\\b(frozen|freezes?|freezing|cap|capped|round[ ._-][0-9]+|round|rounds|tests?|suites?|pass|passes|passed|passing|green|count|checks?|checking|ci|runs?|builds?|building|built|compiles?|compiled|pipelines?|lints?|linter|linting|workflows?|jobs?|typechecks?|validation|coverage|everything|fine|clean|out[ ._-]of[ ._-]scope|scope|pre[ ._-]existing|preexisting|existing|flagged[ ._-]separately|flagged|separately|as[ ._-]discussed|discussed|noted|won[ ._-]?t[ ._-]?fix|false[ ._-]positives?|by[ ._-]design|design|not[ ._-]applicable|n[ /._-]a|actionable|no[ ._-]change|nothing[ ._-]to[ ._-]do|later|known|intentional|deliberate|works[ ._-]as[ ._-]intended|as[ ._-]intended|intended|owners?|instruction(s|ed)?|previous|pushe[sd]?|push|last|head|disposition(ed|s)?|findings?|fix(es|ed)?|track(s|ed|ing|er)?|filed|filing|logged)\\b"; " ")
-    | gsub("\\b(a|an|the|this|that|these|those|it|its|is|are|was|were|be|been|for|in|on|at|to|of|and|or|but|so|we|i|you|your|pr|prs|here|now|all|full|whole|entire|complete|still|already|yes|no|not|do|does|did|has|have|had|under|per|within|as|after|rather|than|see|every|set|s|t)\\b"; " ")
+    | gsub("(?<![\\p{L}\\p{N}])(frozen|freezes?|freezing|cap|capped|round[ ._-][0-9]+|round|rounds|tests?|suites?|pass|passes|passed|passing|green|count|checks?|checking|ci|runs?|builds?|building|built|compiles?|compiled|pipelines?|lints?|linter|linting|workflows?|jobs?|typechecks?|validation|coverage|everything|fine|clean|out[ ._-]of[ ._-]scope|scope|pre[ ._-]existing|preexisting|existing|flagged[ ._-]separately|flagged|separately|as[ ._-]discussed|discussed|noted|won[ ._-]?t[ ._-]?fix|false[ ._-]positives?|by[ ._-]design|design|not[ ._-]applicable|n[ /._-]a|actionable|no[ ._-]change|nothing[ ._-]to[ ._-]do|later|known|intentional|deliberate|works[ ._-]as[ ._-]intended|as[ ._-]intended|intended|owners?|instruction(s|ed)?|previous|pushe[sd]?|push|last|head|disposition(ed|s)?|findings?|fix(es|ed)?|track(s|ed|ing|er)?|filed|filing|logged)(?![\\p{L}\\p{N}])"; " ")
+    | gsub("(?<![\\p{L}\\p{N}])(a|an|the|this|that|these|those|it|its|is|are|was|were|be|been|for|in|on|at|to|of|and|or|but|so|we|i|you|your|pr|prs|here|now|all|full|whole|entire|complete|still|already|yes|no|not|do|does|did|has|have|had|under|per|within|as|after|rather|than|see|every|set|s|t)(?![\\p{L}\\p{N}])"; " ")
     | gsub("\\S+\\s+[0-9]+\\s*/\\s*[0-9]+"; " ")
     | gsub("[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)+"; " ")
     | gsub("[/._-]"; " ")

@@ -62,14 +62,6 @@ Declined: frozen at a1fa74dca; the checks pass and .github/workflows/skill-tests
 # owner rule closes — nobody writes it by accident, and an author wanting a
 # green gate already has one by adding any word neither list carries.
 Declined: out of/scope
-# The underscore is the same shape, and it reaches further than the other two
-# held separators. `_` is a word character to the regex engine where `.` and
-# `-` are not, so every entry being \b-anchored, an underscore joining two
-# listed words defeats BOTH matches while the other two leave them intact:
-# "clean-frozen" and "clean.frozen" are caught, "clean_frozen" is not. Narrow
-# by construction — every multi-word entry spells its own separator class, so
-# only two UNRELATED single-word labels joined this way reach here.
-Declined: clean_frozen
 # The same boundary from the other side: a label written out as a sentence is
 # prose, and prose is where the vocabulary stops. "flagged separately" is
 # caught; the same promise spelled as a sentence is not.
