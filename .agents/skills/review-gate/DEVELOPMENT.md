@@ -19,7 +19,7 @@ Paths are as installed in a consuming repo, under
 | `scripts/validate-workflow.sh` | Is the adopted copy still the shipped template? Equality, not re-derivation: see § Equality, not re-derivation. Usable on its own when only the workflow copy changed. |
 | `scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate; `--heal` also dispatches the writer once on a stale gate. |
 | `scripts/review-predicate-selftest.sh` | Offline proof of the decision table. An ENGINE proof: it runs here, in the catalog repo, on every change. |
-| `tests/predicate-re2-engine.test.sh` | The predicate's thread jq, run through the engine that actually ships it: the real `gh --jq` (Go's RE2), pointed at a local HTTP stub. Every other proof here runs that program through the local jq, whose Oniguruma accepts lookaround RE2 will not compile. Needs `gh` and `python3`, and refuses rather than skipping without them. |
+| `tests/predicate-re2-engine.test.sh` | The predicate's thread jq, run through the engine that actually ships it: the real `gh --jq` (Go's RE2), pointed at a local HTTP stub. Every proof that runs unattended reads that program through the local jq, whose Oniguruma accepts lookaround RE2 will not compile; the live replay below does reach RE2, but it skips without `E2E_REPO`, so nothing ran it. Needs `gh`, `python3` and `jq`, and refuses rather than skipping without them. |
 | `tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |
 
 ## Where each proof runs

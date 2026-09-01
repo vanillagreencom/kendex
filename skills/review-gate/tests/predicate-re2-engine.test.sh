@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
 # The predicate hands its thread jq to `gh --jq`, and gh's regex engine is
-# Go's RE2: no lookaround, at all. Every other suite beside this one runs
-# that same program through the LOCAL jq, whose Oniguruma accepts patterns
-# RE2 refuses to compile — so a green battery proved nothing about the path
-# that actually runs. #1930 shipped a lookbehind on exactly that seam: local
-# jq took it, and every live evaluation of a PR carrying a `Declined:` reply
-# died with `invalid regular expression`, which the gate reports as a read
-# failure and fails closed on.
+# Go's RE2: no lookaround, at all. Every proof that runs unattended puts that
+# same program through the LOCAL jq, whose Oniguruma accepts patterns RE2
+# refuses to compile. One proof here does reach RE2 — e2e-sandbox.sh replays
+# the writer live, and the writer runs the predicate — but it skips without
+# E2E_REPO, so nothing in CI ran it. That is how #1930 shipped a lookbehind:
+# local jq took it, and every live evaluation of a PR carrying a `Declined:`
+# reply died with `invalid regular expression`, leaving the writer to red
+# without posting anything and the gate status frozen where it stood.
 #
 # This suite is the missing half: the SHIPPED program, through the SHIPPED
-# engine. The real `gh` (not the tests' shim) is pointed at a local HTTP
-# stub, so `gh api --jq` runs with no network and no credentials, and its
-# verdict for every corpus reply must equal the local jq's.
+# engine, with no opt-in. The real `gh` (not the tests' shim) is pointed at a
+# local HTTP stub, so `gh api --jq` runs with no network and no credentials,
+# and its verdict for every fixture reply must equal the local jq's.
 #
-# Two controls, because "the outputs matched" is a claim a broken harness
+# Three controls, because "the outputs matched" is a claim a broken harness
 # also makes:
-#   1. a planted `(?<!` must red the RE2 run while local jq stays green —
-#      the #1930 defect, reproduced on demand;
-#   2. a planted word-list edit must make the comparison REPORT a
-#      difference — proof the differ is looking at anything.
+#   1. a planted `(?<!` in the reason pass must red the RE2 run while local
+#      jq stays green — the #1930 defect, reproduced on demand;
+#   2. a planted `(?<!` in the untracked-claim test must red it too — that
+#      regex is only ever compiled if a fixture reply reaches it, and no
+#      corpus reply does;
+#   3. a planted word-list edit must make the SAME comparison the assertion
+#      runs report a difference — proof the differ is looking at anything.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRED="$SCRIPT_DIR/../scripts/review-predicate.sh"
@@ -27,9 +31,11 @@ PASS=0 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok    $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        got: $2"; }
 
-# Both are hard requirements, never a skip: this suite exists because the
-# engine that matters was never exercised, and a suite that quietly opts out
-# when a tool is missing recreates that hole with a green tick on it.
+# All three are hard requirements, never a skip: gh is the engine under
+# proof, python3 serves the stub it reads, and jq builds the fixture and is
+# the other half of the comparison. This suite exists because the engine that
+# matters was never exercised, and a suite that quietly opts out when a tool
+# is missing recreates that hole with a green tick on it.
 for tool in gh python3 jq; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "review-gate predicate-re2-engine: FAIL — $tool is required; this suite proves the shipped jq against gh's RE2 engine and cannot be satisfied without it" >&2
@@ -51,10 +57,22 @@ cleanup() {
 trap cleanup EXIT
 
 # ---------------------------------------------------------------- fixture ---
-# One page envelope per corpus reply, so the comparison is per reply rather
-# than one aggregate count two divergences could cancel inside. The corpus
-# files are the fixtures here as everywhere else in this directory.
-cat "$CORPUS"/*.txt | grep -v '^#' | grep -v '^[[:space:]]*$' \
+# One page envelope per reply, so the comparison is per reply rather than one
+# aggregate count two divergences could cancel inside. The corpus files are
+# the fixtures here as everywhere else in this directory.
+#
+# THE TWO APPENDED REPLIES ARE COVERAGE, NOT VOCABULARY. gojq compiles a
+# regex when the program reaches it, not when it parses, so this suite proves
+# only the patterns a fixture actually drives. Every corpus reply opens with
+# a decline, so `standing` is always a disposition, `select(disposition|not)`
+# drops it, and the untracked-claim `test(...)` behind that filter is never
+# compiled — a lookbehind planted there shipped green through this very
+# suite. A tracking reply with no issue id and one naming an id take the arm
+# in both directions. They belong here rather than in tests/corpus/, which is
+# the unreasoned-decline term's contract and nothing else's.
+{ cat "$CORPUS"/*.txt
+  printf '%s\n' 'Tracking this one for later.' 'Tracked: KEN-1081'
+} | grep -v '^#' | grep -v '^[[:space:]]*$' \
   | jq -R -s '{pages: (split("\n") | map(select(length > 0)) | map(
       {data: {repository: {pullRequest: {reviewThreads: {
         pageInfo: {hasNextPage: false, endCursor: null},
@@ -137,15 +155,22 @@ else
 fi
 
 if [ "$(wc -l <"$work/re2.out")" = "$replies" ]; then
-  ok "RE2 answered every one of the $replies corpus replies"
+  ok "RE2 answered every one of the $replies fixture replies"
 else
-  bad "RE2 answered every one of the $replies corpus replies" "$(wc -l <"$work/re2.out") verdicts"
+  bad "RE2 answered every one of the $replies fixture replies" "$(wc -l <"$work/re2.out") verdicts"
 fi
 
-if diff -u "$work/local.out" "$work/re2.out" >"$work/engine.diff" 2>&1; then
-  ok "both engines return the same verdict for every corpus reply"
+# THE assertion, in a function, because control three has to be able to kill
+# it. A control running its own parallel diff proves the fixture is sensitive
+# and nothing about the line under it: misdirect that line and the control
+# stays green. Control three overwrites re2.out with a mutant's output and
+# calls this, so a comparison that has stopped comparing reds there.
+engines_agree() { diff -u "$work/local.out" "$work/re2.out" >"$work/engine.diff" 2>&1; }
+
+if engines_agree; then
+  ok "both engines return the same verdict for every fixture reply"
 else
-  bad "both engines return the same verdict for every corpus reply" "$(head -20 "$work/engine.diff")"
+  bad "both engines return the same verdict for every fixture reply" "$(head -20 "$work/engine.diff")"
 fi
 
 # ------------------------------------------------------------- control one ---
@@ -178,16 +203,44 @@ else
 fi
 
 # ------------------------------------------------------------- control two ---
-# A compile-time control alone would pass with the comparison above deleted.
-# This one changes a word the corpus exercises, in a way BOTH engines
-# compile, and requires the differ to say so.
+# Control one plants into a pass every reply reaches. This one plants into the
+# untracked-claim test, which sits behind `select(disposition | not)` and is
+# compiled only when a reply reaches it — no corpus reply does, and a
+# lookbehind planted there once passed this suite 9 for 9. The two appended
+# fixture replies are what make it reachable, so this is also the assertion
+# that they still are.
+claimtest="$(printf '%s' "$prog" | plant \
+  'select(test("([A-Z][A-Z0-9]+-[0-9]+' \
+  'select(test("(?<![a-z])([A-Z][A-Z0-9]+-[0-9]+')" || claimtest=""
+if [ -z "$claimtest" ] || [ "$claimtest" = "$prog" ]; then
+  bad "control: a lookbehind can be planted in the untracked-claim test" \
+      "the anchor matched nothing in the extracted program"
+else
+  ok "control: a lookbehind can be planted in the untracked-claim test"
+  if re2 "$claimtest" >/dev/null 2>"$work/ct.re2.err"; then
+    bad "control: RE2 rejects a lookbehind in the untracked-claim test" \
+        "the RE2 run succeeded — no fixture reply reaches that regex, so it is never compiled"
+  elif grep -q 'invalid regular expression' "$work/ct.re2.err"; then
+    ok "control: RE2 rejects a lookbehind in the untracked-claim test"
+  else
+    bad "control: RE2 rejects a lookbehind in the untracked-claim test" \
+        "failed for some other reason: $(head -1 "$work/ct.re2.err")"
+  fi
+fi
+
+# ----------------------------------------------------------- control three ---
+# The compile-time controls would both pass with the comparison above gone or
+# misdirected. This one changes a word the corpus exercises, in a way BOTH
+# engines compile, then re-runs `engines_agree` itself — the same line the
+# assertion runs — and requires it to say no. re2.out is overwritten on
+# purpose; nothing reads it after this.
 worded="$(printf '%s' "$prog" | plant '"frozen|freezes?' '"frozzen|freezes?')" || worded=""
 if [ -z "$worded" ] || [ "$worded" = "$prog" ]; then
   bad "control: a word-list edit can be planted" "the anchor matched nothing in the extracted program"
 else
   ok "control: a word-list edit can be planted"
-  if re2 "$worded" >"$work/worded.out" 2>"$work/worded.err"; then
-    if diff -q "$work/local.out" "$work/worded.out" >/dev/null 2>&1; then
+  if re2 "$worded" >"$work/re2.out" 2>"$work/worded.err"; then
+    if engines_agree; then
       bad "control: the comparison reports a real divergence" \
           "a corpus-visible word-list edit produced identical output — the differ is inert"
     else
@@ -198,6 +251,23 @@ else
         "the mutant did not run under RE2: $(head -1 "$work/worded.err")"
   fi
 fi
+
+# -------------------------------------------------------- no lookaround at all ---
+# Everything above proves ONE program, located by the `t_threads_page_jq`
+# anchor. The mechanism that produced the bug is wider than that program: any
+# regex written against local jq and handed to gh fails the same way, and a
+# second such program would sit outside the proof. This scan costs nothing and
+# reds wherever a lookaround lands in these two scripts. `(?<name>` is a named
+# capture, not lookaround, and gh translates it, so it is not matched here.
+for f in "$PRED" "$SCRIPT_DIR/../scripts/pr-watch.sh"; do
+  hits="$(grep -nE '\(\?<!|\(\?<=|\(\?=|\(\?!' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+  if [ -z "$hits" ]; then
+    ok "no lookaround in ${f##*/}"
+  else
+    bad "no lookaround in ${f##*/}" \
+        "gh's RE2 compiles none of these, and a jq program carrying one aborts the read: $hits"
+  fi
+done
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ] || exit 1

@@ -1424,17 +1424,20 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # unrelated labels joined by a held separator" is what holds that.
 #
 # THIS PROGRAM RUNS UNDER `gh --jq`, AND THAT ENGINE IS GO'S RE2: no
-# lookaround compiles, and a pattern carrying one aborts the read, which the
-# gate reports as a failure. The local jq is Oniguruma and takes it, so only
-# the engine says so — `(?<!` shipped here once and every PR with a decline
-# stopped converging. So the boundary is spelled by `word_strip`, which
-# consumes the reason in run-aligned pieces — a separator run, a listed word
-# plus the one character ending it, or an unlisted run — leaving every match
-# to start where the last ended, at a run start, which is the set of
-# positions a lookbehind allows. The space padded onto each end is how a word
-# at either edge meets that one-character boundary, and the closing trim
-# takes it back. Anything added here has to compile under both engines;
-# tests/predicate-re2-engine.test.sh is what says so.
+# lookaround compiles. A pattern carrying one aborts the read, so this script
+# exits 2, the writer prints "taking no action" and reds without posting a
+# status, and the gate keeps whatever it already held. That is why a decline
+# stopped a PR converging rather than turning it red. The local jq is
+# Oniguruma and takes lookaround, and every proof that runs unattended reads
+# through that jq, so `(?<!` shipped here once and nothing caught it. The
+# boundary is therefore spelled by `word_strip`, which consumes the reason in
+# run-aligned pieces (a separator run, a listed word plus the one character
+# ending it, or an unlisted run), leaving every match to start where the last
+# ended, at a run start, which is the set of positions a lookbehind allows.
+# The space padded onto the END is how a word in the last position meets that
+# one-character boundary; nothing is asked of the left, and the closing trim
+# takes both pads back. Anything added here has to compile under both
+# engines, and tests/predicate-re2-engine.test.sh is what says so.
 #
 # Position is the only thing that separates a suite name from prose — both
 # are ordinary English, so any SET of names is a word ban on whatever the
