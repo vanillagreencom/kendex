@@ -113,8 +113,8 @@ Create Options:
 
   Reach guard: with LINEAR_REQUIRE_REACH set in kendex.settings.toml [env],
   create refuses a description whose `Reached by:` line is missing or names no
-  producer, and a `--review-born --priority 2` description with no `Symptom:`
-  line. The rule is the project-management skill's SKILL.md, § Disposition.
+  producer, and a `--review-born --priority 2` one with no `Symptom:` line.
+  The rule: project-management SKILL.md, § Disposition, Name what reaches it.
 
 Update Options:
   --state <name>        New state

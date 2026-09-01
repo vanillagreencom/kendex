@@ -19,7 +19,7 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
 
 ## Label Contract
 
-`create_fields.labels[]` is the complete set to pass to create after preflight; a label finding on an existing issue names its operation (`add`, `replace_category`, or explicit full replacement). `agent` and `agent_label` are derived fields, never sufficient for mutation. All labels are issue labels.
+`create_fields.labels[]` is the complete set to pass to create after preflight; a label finding on an existing issue names its operation (`add`, `replace_category`, or explicit full replacement). `agent` and `agent_label` are derived fields, never sufficient for mutation. All labels are issue labels. `create_fields.reach` and `create_fields.review_born` are required on every `create`, and `create_fields.symptom` on a `review_born` create at priority 2 — an output missing one is invalid. Where each value comes from is [tpm-audit](../workflows/tpm-audit.md) § 10.
 
 ## PROJECT Mode
 
@@ -112,8 +112,9 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
       "create_fields": {
         "description": "Issue body summary",
         "recommendation": "* Requirements bullets",
-        "reach": "the user action, run, check, or shipped producer that arrives at the defect",
+        "reach": "who hits this, on what real path — the input item's impact",
         "review_born": false,
+        "symptom": "review_born at priority 2 only — the run, user, or red check that already showed it",
         "location": "path or component",
         "estimate": 3,
         "priority": 2,

@@ -39,7 +39,7 @@ Confirm before creating issues.
 
 **Linear** — per accepted item, then the relations:
 
-Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's label preflight). Then search existing issues (all states) for the same problem or component change and flag a likely duplicate to the user (related relation + comment) instead of creating blind. The preview also derives a priority (1–4, from the plan's ordering; 3 when it states none) and an estimate (1–5 points per PR unit) for every item. Create in dependency order and attach each item's blocking relations immediately after its own create — never all creates first.
+Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's label preflight). Then search existing issues (all states) for the same problem or component change and flag a likely duplicate to the user (related relation + comment) instead of creating blind. The preview also derives a priority (1–4, from the plan's ordering; 3 when it states none) and an estimate (1–5 points per PR unit) for every item. `[BODY]` follows project-management's [issue-description-template.md](../../project-management/templates/issue-description-template.md), whose `Reached by:` line names what the plan says arrives at the work. Create in dependency order and attach each item's blocking relations immediately after its own create — never all creates first.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --priority [PRIORITY] --estimate [ESTIMATE] --format=ids

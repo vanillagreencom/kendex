@@ -457,7 +457,7 @@ Omit empty sections.
 
 Discovered Work bullets matching `^-\s+(handoff_to_submit_pr|handoff_to_merge_pr|current_workflow_action):\s` are already in flight in this workflow — drop them silently. The filter applies to Discovered Work only.
 
-Nothing clears the bar → § 9. Otherwise build the audit-input file per `.agents/skills/project-management/schemas/audit-issues-input.md` at `[WORKTREE_PATH]/tmp/audit-start-YYYYMMDD-HHMMSS.json`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Set `tracker.type` to the resolved `TRACKER`, plus `tracker.repository` for GitHub items.
+Nothing clears the bar → § 9. Otherwise build the audit-input file per `.agents/skills/project-management/schemas/audit-issues-input.md` at `[WORKTREE_PATH]/tmp/audit-review-YYYYMMDD-HHMMSS.json` with `source: "review"`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Set `tracker.type` to the resolved `TRACKER`, plus `tracker.repository` for GitHub items.
 
 **Run Workflow**: `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 8 tail`. audit-issues is a primary-session wrapper holding the interactive approval gate: run it in this session, never delegated to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
 

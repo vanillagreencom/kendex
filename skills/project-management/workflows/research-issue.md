@@ -49,8 +49,10 @@ Write the description to a file, then:
 
 `--state "Backlog"` is mandatory, never the team-default Triage.
 
+`[REACH]` is the ask, run, or decision that raised the question.
+
 ```markdown
-**Reached by**: [the ask, run, or decision that raised the question]
+**Reached by**: [REACH]
 
 ## Summary
 [1-2 sentences on TOPIC]

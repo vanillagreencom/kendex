@@ -4,7 +4,7 @@ Input file for `audit-issues --issues`, written by the caller at `[worktree-path
 
 ```json
 {
-  "source": "review|pr-comments|research-complete|roadmap",
+  "source": "review|pr-comments|local-review|research-complete|roadmap",
   "parent_issue": "PROJ-456",
   "tracker": {"type": "linear|github", "repository": "owner/repo"},
   "worktree": "/path/to/worktree",
@@ -23,7 +23,9 @@ Input file for `audit-issues --issues`, written by the caller at `[worktree-path
       "index": 1,
       "title": "Issue title (5-10 words)",
       "location": "file.rs (`fn_name`)",
-      "description": "2-3 sentences: what, why, impact",
+      "description": "2-3 sentences: what and why",
+      "impact": "who hits this, on what real path",
+      "symptom": "the run, user, or red check that already showed it",
       "recommendation": "* Bullet-list requirements, each actionable",
       "priority": 2,
       "estimate": 2,
@@ -44,7 +46,7 @@ Input file for `audit-issues --issues`, written by the caller at `[worktree-path
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `source` | Yes | Calling workflow name. `review` and `pr-comments` make every item review-born, which the analysis carries out as `create_fields.review_born` |
+| `source` | Yes | Calling workflow name, one of the values above. Which are review-born, and what that sets, is [tpm-audit](../workflows/tpm-audit.md) § 10 |
 | `parent_issue` | Yes | The issue being worked on — a hierarchy hint |
 | `tracker` | No | Execution tracker context — see § Tracker |
 | `worktree` | Yes | Worktree path for code analysis |
@@ -61,7 +63,9 @@ Input file for `audit-issues --issues`, written by the caller at `[worktree-path
 | `index` | Yes | Sequential, 1-based |
 | `title` | Yes | Concise title |
 | `location` | Yes | File path — **never line numbers**; name the function or struct |
-| `description` | Yes | 2-3 sentences: what, why, impact. Becomes the issue body |
+| `description` | Yes | 2-3 sentences: what and why. Becomes the issue body |
+| `impact` | Yes | Who hits this, on what real path — the reviewer skill's `review-finding` field, carried through as the issue's reach |
+| `symptom` | P2 review items | The run, user, or red check that already showed it. Required where a review-born source files at priority 2 |
 | `recommendation` | Yes | Bullet-list requirements. Becomes the requirements section |
 | `priority` | Yes | 1-4 |
 | `estimate` | Yes | 1-5 points |

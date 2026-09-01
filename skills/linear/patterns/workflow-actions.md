@@ -77,4 +77,4 @@ scripts/linear.sh issues create \
   --priority [PRIORITY] --estimate [ESTIMATE] --description-file [PATH]
 ```
 
-`[VALIDATED_LABELS]` is the full preflighted label set including the project's required agent/domain/workflow categories, not a bare agent label. Add any blocking relations the new issue should impose after it exists.
+`[PATH]` holds a body built from project-management's `templates/issue-description-template.md`, including the `Reached by:` line. `[VALIDATED_LABELS]` is the full preflighted label set including the project's required agent/domain/workflow categories, not a bare agent label. Add any blocking relations the new issue should impose after it exists.
