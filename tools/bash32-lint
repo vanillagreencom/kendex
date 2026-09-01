@@ -22,25 +22,26 @@
 set -uo pipefail
 
 # --- the roster ---------------------------------------------------------
-# Discovered, not enumerated: every skill's scripts/ is scanned, so a new
-# skill is covered the day it lands rather than the day someone remembers to
-# add it. Two directories outside that shape join them: review-gate's tests/,
-# because that skill's suites are themselves run on macOS system bash, and
-# orch's tests/lib, whose shared reader every orch doc lint sources — a Bash 4
-# construct entering it breaks every suite that sources it on a 3.2 host.
+# Discovered, not enumerated: every skill's scripts/ and tests/ are scanned,
+# so a new skill is covered the day it lands rather than the day someone
+# remembers to add it. tests/ is in the shape because skill suites run on
+# macOS system bash — a Bash 4 construct in a suite, or in the lib a suite
+# sources, breaks the run on a 3.2 host as surely as one in a script.
 #
-# The two exceptions are declared, with the reason, because a roster that
+# The exceptions are declared, with the reason, because a roster that
 # discovers its members cannot tell a directory that is exempt from one that
-# quietly emptied out. A stale entry ends the run for either of them, checked
+# quietly emptied out. A stale entry ends the run for any of them, checked
 # below. The reason is checked below for NO_SHELL only; NO_SCAN's is held
 # elsewhere, named with it.
 #
 # NO_SCAN — the skill demands the runtime this set forbids. That demand is
 # what skills/linear/tests/bash4-runtime-contract.test.sh asserts, so the
-# reason expiring reds there rather than here.
+# reason expiring reds there rather than here. The skill's tests/ is scanned:
+# the suites themselves must start on a 3.2 host to print the runtime
+# diagnostic that contract promises.
 NO_SCAN="skills/linear/scripts"
-# NO_SHELL — a scripts/ that legitimately holds no shell file at all.
-NO_SHELL="skills/deep-research/scripts"
+# NO_SHELL — a roster directory that legitimately holds no shell file at all.
+NO_SHELL="skills/deep-research/scripts skills/deep-research/tests"
 
 # --- pattern set: begin ------------------------------------------------
 # What it names, and only that. Parameter transformations (${x@Q}),
@@ -169,7 +170,7 @@ fi
 ROOT="$(git rev-parse --show-toplevel)" || die "not in a git repository"
 if [ "$#" -eq 0 ]; then
   cd "$ROOT" || die "cannot enter $ROOT"
-  set -- skills/*/scripts skills/review-gate/tests skills/orch/tests/lib
+  set -- skills/*/scripts skills/*/tests
 fi
 
 at_root() { # at_root PATH — a roster path, read from the toplevel.

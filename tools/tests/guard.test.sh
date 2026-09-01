@@ -535,5 +535,131 @@ reply_run
   && ok "AGENTS.md holding the forms and both bot files pointing at it passes" \
   || bad "AGENTS.md holding the forms and both bot files pointing at it passes" "rc=$RC out=$OUT"
 
+echo "=== the skill tree is 3.2-clean and renders land with their sources ==="
+# The lint reads its exception entries relative to the repository it runs in,
+# so the fixture carries those directories — derived from the lint itself,
+# because a copy of the list here would go stale with it.
+while IFS= read -r e; do
+  [ -n "$e" ] || continue
+  mkdir -p "$R/$e"
+  printf 'not shell\n' >"$R/$e/README.md"
+done < <(sed -n 's#^NO_\(SCAN\|SHELL\)="\(.*\)"$#\2#p' "$REPO/tools/bash32-lint" | tr ' ' '\n')
+mkdir -p "$R/skills/demo/scripts" "$R/skills/demo/tests" \
+  "$R/.agents/skills/demo/scripts" "$R/.agents/skills/demo/tests" \
+  "$R/agents" "$R/.claude/agents" "$R/.codex/agents" "$R/.pi/agents"
+printf '#!/usr/bin/env bash\necho demo\n' >"$R/skills/demo/scripts/demo.sh"
+printf '#!/usr/bin/env bash\necho tested\n' >"$R/skills/demo/tests/demo.test.sh"
+cp "$R/skills/demo/scripts/demo.sh" "$R/.agents/skills/demo/scripts/demo.sh"
+cp "$R/skills/demo/tests/demo.test.sh" "$R/.agents/skills/demo/tests/demo.test.sh"
+printf '# demo agent\n' >"$R/agents/demo.md"
+printf '# demo agent render\n' >"$R/.claude/agents/demo.md"
+printf 'name = "demo"\n' >"$R/.codex/agents/demo.toml"
+printf '# demo agent render\n' >"$R/.pi/agents/demo.md"
+git -C "$R" add -A
+git -C "$R" commit -q -m "chore: a skill with renders, and an agent with three"
+
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "a 3.2-clean skill tree with every render in step passes" \
+  || bad "a 3.2-clean skill tree with every render in step passes" "rc=$RC out=$OUT"
+
+# The controls below each delete one check from a copy of guard and expect
+# the defect to pass, proving the red above it came from that check and not
+# from a neighbour. The copy sits beside a copy of bash32-lint because guard
+# resolves its sibling tools next to itself.
+MUTANT_TOOLS="$TMP/mutant-tools"
+mkdir -p "$MUTANT_TOOLS"
+cp "$REPO/tools/bash32-lint" "$MUTANT_TOOLS/bash32-lint"
+mutant_guard() { # SED-EXPR — stage a guard copy with the named lines deleted
+  sed "$1" "$GUARD" >"$MUTANT_TOOLS/guard"
+  chmod +x "$MUTANT_TOOLS/guard"
+  ! cmp -s "$GUARD" "$MUTANT_TOOLS/guard"
+}
+run_mutant() { # — sets OUT and RC
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" 2>&1)" || RC=$?
+}
+
+BASH4_LINE='mapfile -t demo_lines <"$0"'
+printf '%s\n' "$BASH4_LINE" >>"$R/skills/demo/tests/demo.test.sh"
+printf '%s\n' "$BASH4_LINE" >>"$R/.agents/skills/demo/tests/demo.test.sh"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"tools/bash32-lint refused the tree"* ]] \
+  && [[ "$OUT" == *"Bash 4+ constructs in shell that must run under Bash 3.2"* ]] \
+  && [[ "$OUT" != *"without its tracked render"* ]] \
+  && ok "a Bash 4 construct in a skill test reds the guard through the lint lane" \
+  || bad "a Bash 4 construct in a skill test reds the guard through the lint lane" "rc=$RC out=$OUT"
+if mutant_guard '/bash32-lint/d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the bash32-lint lane deleted the construct passes" \
+    || bad "control: with the bash32-lint lane deleted the construct passes" "rc=$RC out=$OUT"
+else
+  bad "control: the bash32-lint lane could not be deleted from a guard copy"
+fi
+git -C "$R" checkout -q -- skills .agents
+
+printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"a render source changed without its tracked render"* ]] \
+  && [[ "$OUT" == *"skills/demo/scripts/demo.sh -> .agents/skills/demo/scripts/demo.sh"* ]] \
+  && ok "a source-only skill edit reds, naming the render left behind" \
+  || bad "a source-only skill edit reds, naming the render left behind" "rc=$RC out=$OUT"
+if mutant_guard '/\.agents\/\$f/d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the skills arm deleted the source-only edit passes" \
+    || bad "control: with the skills arm deleted the source-only edit passes" "rc=$RC out=$OUT"
+else
+  bad "control: the skills render arm could not be deleted from a guard copy"
+fi
+printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "the same edit with its render in the change passes" \
+  || bad "the same edit with its render in the change passes" "rc=$RC out=$OUT"
+git -C "$R" checkout -q -- skills .agents
+
+printf '#!/usr/bin/env bash\necho local\n' >"$R/skills/demo/tests/local-only.sh"
+git -C "$R" add skills/demo/tests/local-only.sh
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "a source with no tracked render passes" \
+  || bad "a source with no tracked render passes" "rc=$RC out=$OUT"
+git -C "$R" reset -q HEAD -- skills/demo/tests/local-only.sh
+rm -f "$R/skills/demo/tests/local-only.sh"
+
+AGENT_RENDERS=(.claude/agents/demo.md .codex/agents/demo.toml .pi/agents/demo.md)
+for r in "${AGENT_RENDERS[@]}"; do
+  git -C "$R" checkout -q -- agents .claude/agents .codex .pi
+  printf '# amended\n' >>"$R/agents/demo.md"
+  for other in "${AGENT_RENDERS[@]}"; do
+    [ "$other" = "$r" ] || printf '# amended\n' >>"$R/$other"
+  done
+  run_guard
+  [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/demo.md -> $r"* ]] \
+    && ok "an agent edit leaving $r behind reds, naming it" \
+    || bad "an agent edit leaving $r behind reds, naming it" "rc=$RC out=$OUT"
+done
+git -C "$R" checkout -q -- agents .claude/agents .codex .pi
+printf '# amended\n' >>"$R/agents/demo.md"
+if mutant_guard '/agents\/\$n/d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the agent render lines deleted the lone agent edit passes" \
+    || bad "control: with the agent render lines deleted the lone agent edit passes" "rc=$RC out=$OUT"
+else
+  bad "control: the agent render lines could not be deleted from a guard copy"
+fi
+for other in "${AGENT_RENDERS[@]}"; do
+  printf '# amended\n' >>"$R/$other"
+done
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "an agent edit landing all three renders passes" \
+  || bad "an agent edit landing all three renders passes" "rc=$RC out=$OUT"
+git -C "$R" checkout -q -- agents .claude/agents .codex .pi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

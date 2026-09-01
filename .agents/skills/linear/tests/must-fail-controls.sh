@@ -119,7 +119,10 @@ run_one() {
 		printf 'BADCTRL  %-52s control did not apply cleanly\n' "$suite"
 		return 1
 	fi
-	mapfile -t CONTROL_EXPECTED <"$CONTROL_EXPECT_FILE"
+	CONTROL_EXPECTED=()
+	while IFS= read -r expected_line; do
+		CONTROL_EXPECTED+=("$expected_line")
+	done <"$CONTROL_EXPECT_FILE"
 
 	if [[ ${#CONTROL_EXPECTED[@]} -eq 0 ]]; then
 		printf 'NOEXPECT %-52s control declares no expected assertion\n' "$suite"

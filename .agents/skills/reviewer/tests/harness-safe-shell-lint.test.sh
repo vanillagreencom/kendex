@@ -100,7 +100,7 @@ scan_cmd_blocks() {
 
       reason = ""
       if      (stripped ~ />\/dev\/null/)               reason = "redirect-to-/dev/null"
-      else if (stripped ~ /([[:space:]]>>?|[0-9]>|&>)/) reason = "output/error redirection"
+      else if (stripped ~ /(&>|[[:space:]]>>?|[0-9]>)/) reason = "output/error redirection"
       else if (stripped ~ /\$\(/)                       reason = "command substitution $("
       else if (index(stripped, "`") > 0)                reason = "backtick command substitution"
       else if (stripped ~ /&&/)                         reason = "&& composition"

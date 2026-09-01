@@ -10,6 +10,9 @@
 # Checks the working tree, not the staged index — accepted trade-off:
 # agents commit whole files; partial staging is out of scope.
 set -uo pipefail
+# Resolved before the cd below: the sibling tools this script runs live
+# beside it, not necessarily in the repository it judges.
+TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)" || exit 1
 cd "$(git rev-parse --show-toplevel)"
 fail=0
 say() {
@@ -181,6 +184,50 @@ fi
 [ -n "$temp_fixture_hits" ] && {
   show "$temp_fixture_hits" | head -5
   say 'temporary fixture bypasses rooted(): import crates/test_util.rs and bind the canonical root on the next source line'
+}
+
+# Bash 3.2 portability over the skill tree. The roster and the pattern set
+# are the lint's own; exit 1 is a construct, exit 2 a scan that could not
+# run, and neither is a pass. One line on purpose: the must-fail control in
+# tools/tests/guard.test.sh removes this lane by deleting it.
+[ ! -d skills ] || "$TOOLS_DIR/bash32-lint" || say "tools/bash32-lint refused the tree — a Bash 4+ construct, or a scan that could not run"
+
+# A render source lands its tracked renders in the same change:
+# skills/<x>/<p> renders to .agents/skills/<x>/<p>, and an agent definition
+# to one file per harness. Presence, not byte equality — a render can carry
+# an injected block the source has no copy of, so bytes cannot be compared.
+# Only tracked renders are required: a source with no committed render has
+# nothing to land, and a render-only change is the sync direction and passes.
+if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
+  render_changed=$(git diff --name-only --no-renames HEAD) ||
+    { render_changed=""; say "the changed-file set for the render rule could not be read"; }
+else
+  render_changed=$(git diff --cached --name-only --no-renames) ||
+    { render_changed=""; say "the changed-file set for the render rule could not be read"; }
+fi
+render_hits=""
+require_render() { # SOURCE RENDER — a tracked RENDER changes with SOURCE
+  git ls-files --error-unmatch -- "$2" >/dev/null 2>&1 || return 0
+  grep -Fxq -- "$2" <<<"$render_changed" ||
+    render_hits="$render_hits$1 -> $2
+"
+}
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  case "$f" in
+  skills/*/*) require_render "$f" ".agents/$f" ;;
+  agents/*.md)
+    n="${f#agents/}"
+    n="${n%.md}"
+    require_render "$f" ".claude/agents/$n.md"
+    require_render "$f" ".codex/agents/$n.toml"
+    require_render "$f" ".pi/agents/$n.md"
+    ;;
+  esac
+done <<<"$render_changed"
+[ -n "$render_hits" ] && {
+  show "$render_hits" | head -5
+  say "a render source changed without its tracked render — land the render in the same change"
 }
 
 # Structural invariants.

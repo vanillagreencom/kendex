@@ -808,7 +808,7 @@ if portable_watch "$ORCH/scripts/merge-queue-watch"; then ok "head normalization
 cp "$ORCH/scripts/merge-queue-watch" "$TMP/nonportable-watch"
 count=$(grep -Fc "head=\$(printf '%s' \"\$head\" | tr '[:upper:]' '[:lower:]')" "$TMP/nonportable-watch")
 [[ "$count" -eq 1 ]] || { bad "portability mutation fixture count"; exit 1; }
-sed -i.bak 's/head=$(printf '\''%s'\'' "$head" | tr '\''\[:upper:\]'\'' '\''\[:lower:\]'\'')/head="${head,,}"/' "$TMP/nonportable-watch"
+sed -i.bak 's/head=$(printf '\''%s'\'' "$head" | tr '\''\[:upper:\]'\'' '\''\[:lower:\]'\'')/head="${head'',,}"/' "$TMP/nonportable-watch" # the quote split keeps the Bash 4 spelling out of this file's own text, which tools/bash32-lint scans
 rm -f "$TMP/nonportable-watch.bak"
 if portable_watch "$TMP/nonportable-watch"; then bad "Bash 4 lowercase mutant survived"; else ok "Bash 4 lowercase mutant is killed"; fi
 

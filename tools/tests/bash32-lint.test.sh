@@ -72,19 +72,20 @@ else
 fi
 
 # The roster is discovered, so it must actually cover the tree: every
-# skills/*/scripts is scanned or named in one of the lint's exception lists.
+# skills/*/scripts and skills/*/tests is scanned or named in one of the
+# lint's exception lists.
 # Read out of the lint rather than restated here — a second copy of the
 # exceptions is the duplication this whole change removes.
 NL='
 '
 declared=""
 status=0
-declared="$(sed -n 's#^NO_\(SCAN\|SHELL\)="\(.*\)"$#\2#p' "$LINT")" || status=$?
+declared="$(sed -n 's#^NO_\(SCAN\|SHELL\)="\(.*\)"$#\2#p' "$LINT" | tr ' ' '\n')" || status=$?
 if [ "$status" -ne 0 ] || [ -z "$declared" ]; then
   bad "the lint's exception lists could not be read, so roster coverage is unproven"
 else
   ok "the lint declares its exceptions: $(printf '%s' "$declared" | tr '\n' ' ')"
-  for d in skills/*/scripts; do
+  for d in skills/*/scripts skills/*/tests; do
     case "$NL$ROSTER$NL$declared$NL" in
     *"$NL$d$NL"*) continue ;;
     esac
@@ -341,7 +342,7 @@ fi
 # And the other direction: a NO_SHELL directory that grows a shell file must
 # stop being excused rather than staying silently unscanned.
 noshell_dir=""
-noshell_dir="$(sed -n 's#^NO_SHELL="\(.*\)"$#\1#p' "$LINT" | head -n 1)" || noshell_dir=""
+noshell_dir="$(sed -n 's#^NO_SHELL="\(.*\)"$#\1#p' "$LINT" | tr ' ' '\n' | head -n 1)" || noshell_dir=""
 if [ -n "$noshell_dir" ] && [ -d "$noshell_dir" ]; then
   ok "the NO_SHELL exception names $noshell_dir"
   probe_lint="$TMP/probe-noshell"

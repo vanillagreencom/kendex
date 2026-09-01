@@ -593,8 +593,8 @@ echo "=== a consumer's own trusted shebang survives the rewrite ==="
 R56="$(new_repo bash-consumer)"
 FOREIGN_BASH="$R56/.git/hooks/pre-commit"
 printf '#!/bin/bash
-declare -A m=([a]=1)
-echo "consumer ${m[a]}"
+m=(state)
+echo "consumer ${m[0]}"
 ' >"$FOREIGN_BASH"
 chmod +x "$FOREIGN_BASH"
 install_in "$R56"
@@ -605,7 +605,7 @@ case "$(sed -n '2p' "$FOREIGN_BASH")" in
   *"# kendex-guards-hook") ok "and the delegate is installed at line 2 above it" ;;
   *) bad "delegate not at line 2" "$(cat "$FOREIGN_BASH")" ;;
 esac
-[ "$(tail -n +3 "$FOREIGN_BASH")" = "$(printf 'declare -A m=([a]=1)\necho "consumer ${m[a]}"')" ] \
+[ "$(tail -n +3 "$FOREIGN_BASH")" = "$(printf 'm=(state)\necho "consumer ${m[0]}"')" ] \
   && ok "and the bash-only body below it is byte for byte what it was" \
   || bad "consumer body altered" "$(cat "$FOREIGN_BASH")"
 

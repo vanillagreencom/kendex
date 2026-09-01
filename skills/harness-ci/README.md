@@ -117,7 +117,8 @@ There is no flag that turns any of these into a `true`.
 Run one locally with `bash skills/harness-ci/tests/path-set.test.sh`.
 
 Bash 4+ syntax in the shipped script is `tools/bash32-lint`, which scans every
-skill's `scripts/` at once — consumer runners include macOS system Bash 3.2.
+skill's `scripts/` and `tests/` at once — consumer runners include macOS
+system Bash 3.2.
 
 ## Upgrades
 

@@ -14,7 +14,7 @@
 # what every Linux run can say on its own.
 #
 # Bash 4 syntax in the shipped scripts is `tools/bash32-lint`, run over every
-# skill's scripts/ at once.
+# skill's scripts/ and tests/ at once.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
