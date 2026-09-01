@@ -59,8 +59,8 @@ Attention kinds:
                      non-reason tokens (frozen, cap, round N, tests pass,
                      out of scope, pre-existing and the like). Read by
                      shape, so a decline written without the colon counts
-                     too. Cleared by a reply carrying a reason form orch's
-                     references/finding-disposition.md sets out. Needs the
+                     too. Cleared by a reply naming a passing state, a
+                     false premise, or an excluded class. Needs the
                      predicate (evaluate mode only)
   gate-stale         the predicate and the gate context's newest row
                      disagree, in either mismatch direction — the writer

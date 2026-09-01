@@ -240,7 +240,7 @@ AWAITING="verdict=awaiting detail=$AWAITING_DETAIL"
 APPROVED="verdict=approved detail=reviewed at head with no unresolved threads"
 CR="verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
 THREADS="verdict=threads-open detail=2 unresolved review thread(s)"
-UNREASONED_DETAIL="1 decline(s) name no mechanism — give a reason form from orch's references/finding-disposition.md"
+UNREASONED_DETAIL="1 decline(s) name no mechanism — give a passing state, a false premise, or an excluded class; orch's references/finding-disposition.md"
 UNREASONED="verdict=unreasoned-decline detail=$UNREASONED_DETAIL"
 
 # created_at anchors: OLD predates every stub run's start (RUN_START =

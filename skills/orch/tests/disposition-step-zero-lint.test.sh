@@ -28,7 +28,7 @@
 # claim is verified; that the diff's authorship does not reopen it; that
 # § Recurrence runs behind rather than ahead of it; that the three doors named
 # in § Filing bar run it rather than bypass it; the membership of the class
-# list; the security exception's route to Step 1; and Step 1's remedy for code
+# list; the two exceptions' route to Step 1; and Step 1's remedy for code
 # the Done-when does not name. Each was mutated with every pinned token kept
 # and this suite stayed green. The `order` rule pins document position, not the
 # sentence claiming it.

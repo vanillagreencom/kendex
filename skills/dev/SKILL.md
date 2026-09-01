@@ -37,7 +37,7 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
 - An `else` that "shouldn't happen" is a bug: assert or return an error, never continue silently.
 - Plain words over jargon: name things by what they do. Comments say why, never what or when — no temporal markers, no references to the change that wrote them. Commit bodies explain intent, never narrate the diff.
 - Delete unused code completely — no compat shims, no `_renamed` vars, no "removed" comments.
-- No migration or compat code: write no reader for an artifact an older version wrote, and decline a finding that asks you to carry one forward. A layout, schema or cache change is one changelog line and a fresh install.
+- No migration or compat code for this project's own formats — its manifest, settings, lock and cache shapes, never another tool's on-disk state, which an adapter may have to keep recognising: write no reader for an artifact an older version of this project wrote, and decline a finding that asks you to carry one forward. A layout, schema or cache change is one changelog line and a fresh install.
 - Before adding a function, parser, stub or loop, grep the repo for the verb it performs; before stating a rule, grep for the rule. A second copy of that verb, in any language, is a twin and never delegation, and so is a second statement of a rule another file owns, in prose, config or a table: call or cite the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.
 - Stale docs are bugs: contradicting a committed doc means updating it in the same change.
 
