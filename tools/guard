@@ -113,16 +113,19 @@ done)
   say 'fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox'
 }
 
+# What the diff-scoped rules below diff against: HEAD, or on an unborn
+# branch the index against nothing, so the first commit is judged too.
+if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
+  diff_against=(HEAD)
+else
+  diff_against=(--cached)
+fi
+
 # New integration-test temp roots take their canonical spelling immediately
 # through the shared rooted() helper. Older fixtures stay out of this
 # diff-scoped rule.
-if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
-  temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff --text HEAD -- 'crates/*/tests/*.rs') ||
-    say "test fixture changes could not be read"
-else
-  temp_fixture_diff=$(git diff --cached --no-color --unified=100000 --no-ext-diff --text -- 'crates/*/tests/*.rs') ||
-    say "test fixture changes could not be read"
-fi
+temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff --text "${diff_against[@]}" -- 'crates/*/tests/*.rs') ||
+  say "test fixture changes could not be read"
 if ! temp_fixture_hits=$(awk '
   function flush() {
     if (pending != "") print file ":" pending_line ": " pending_text
@@ -190,38 +193,48 @@ fi
 # are the lint's own; exit 1 is a construct, exit 2 a scan that could not
 # run, and neither is a pass. One line on purpose: the must-fail control in
 # tools/tests/guard.test.sh removes this lane by deleting it.
-[ ! -d skills ] || "$TOOLS_DIR/bash32-lint" || say "tools/bash32-lint refused the tree — a Bash 4+ construct, or a scan that could not run"
+"$TOOLS_DIR/bash32-lint" || say "tools/bash32-lint refused the tree — a Bash 4+ construct, or a scan that could not run"
 
-# A render source lands its tracked renders in the same change:
-# skills/<x>/<p> renders to .agents/skills/<x>/<p>, and an agent definition
-# to one file per harness. Presence, not byte equality — a render can carry
-# an injected block the source has no copy of, so bytes cannot be compared.
-# Only tracked renders are required: a source with no committed render has
-# nothing to land, and a render-only change is the sync direction and passes.
-if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
-  render_changed=$(git diff --name-only --no-renames HEAD) ||
-    { render_changed=""; say "the changed-file set for the render rule could not be read"; }
-else
-  render_changed=$(git diff --cached --name-only --no-renames) ||
-    { render_changed=""; say "the changed-file set for the render rule could not be read"; }
-fi
+# A render source lands its renders in the same change: skills/<x>/<p>
+# renders to .agents/skills/<x>/<p>, and an agent definition to one file per
+# harness. Presence, not byte equality — a render can carry an injected block
+# the source has no copy of, so bytes cannot be compared. Rendered is judged
+# at the tree: a skill with anything tracked under .agents/skills/<x> renders
+# every file, so a new source there owes a new render, and an agent owes a
+# file to each harness directory that tracks any. A skill with no tracked
+# render has nothing to land, and a render-only change is the sync direction
+# and passes. Path quoting is off on both reads: a quoted path matches
+# neither the case arms nor its own render.
+render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}") ||
+  { render_changed=""; say "the changed-file set for the render rule could not be read"; }
+render_tracked=$(git -c core.quotePath=false ls-files -- .agents/skills .claude/agents .codex/agents .pi/agents) ||
+  { render_tracked=""; say "the tracked render set could not be read"; }
+rendered_skills=$(sed -n 's#^\.agents/skills/\([^/]*\)/.*#\1#p' <<<"$render_tracked" | sort -u)
 render_hits=""
-require_render() { # SOURCE RENDER — a tracked RENDER changes with SOURCE
-  git ls-files --error-unmatch -- "$2" >/dev/null 2>&1 || return 0
+require_render() { # SOURCE RENDER — RENDER changes with SOURCE
   grep -Fxq -- "$2" <<<"$render_changed" ||
     render_hits="$render_hits$1 -> $2
 "
 }
+require_agent_render() { # SOURCE HARNESS-DIR RENDER — when HARNESS-DIR tracks anything
+  grep -q -- "^$2/" <<<"$render_tracked" || return 0
+  require_render "$1" "$3"
+}
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   case "$f" in
-  skills/*/*) require_render "$f" ".agents/$f" ;;
+  skills/*/*)
+    x="${f#skills/}"
+    x="${x%%/*}"
+    grep -Fxq -- "$x" <<<"$rendered_skills" || continue
+    require_render "$f" ".agents/$f"
+    ;;
   agents/*.md)
     n="${f#agents/}"
     n="${n%.md}"
-    require_render "$f" ".claude/agents/$n.md"
-    require_render "$f" ".codex/agents/$n.toml"
-    require_render "$f" ".pi/agents/$n.md"
+    require_agent_render "$f" .claude/agents ".claude/agents/$n.md"
+    require_agent_render "$f" .codex/agents ".codex/agents/$n.toml"
+    require_agent_render "$f" .pi/agents ".pi/agents/$n.md"
     ;;
   esac
 done <<<"$render_changed"

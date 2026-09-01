@@ -87,6 +87,29 @@ printf '%s\n' \
   '    let tmp = tempfile::tempdir().unwrap();' \
   '    drop(tmp);' \
   '}' >"$R/crates/core/tests/existing_temp.rs"
+# The bash32-lint lane runs on every pass and reads its exception entries
+# relative to the repository it runs in, so the fixture carries those
+# directories from the first commit — derived from the lint itself, because
+# a copy of the list here would go stale with it. Beside them, one rendered
+# skill and one agent with a render per harness, in step.
+while IFS= read -r e; do
+  [ -n "$e" ] || continue
+  mkdir -p "$R/$e"
+  printf 'not shell\n' >"$R/$e/README.md"
+done < <(sed -n 's#^NO_\(SCAN\|SHELL\)="\(.*\)"$#\2#p' "$REPO/tools/bash32-lint" | tr ' ' '\n')
+mkdir -p "$R/skills/demo/scripts" "$R/skills/demo/tests" \
+  "$R/.agents/skills/demo/scripts" "$R/.agents/skills/demo/tests" \
+  "$R/agents" "$R/.claude/agents" "$R/.codex/agents" "$R/.pi/agents"
+printf '#!/usr/bin/env bash\necho demo\n' >"$R/skills/demo/scripts/demo.sh"
+printf '#!/usr/bin/env bash\necho tested\n' >"$R/skills/demo/tests/demo.test.sh"
+printf '#!/usr/bin/env bash\necho accented\n' >"$R/skills/demo/scripts/frappé.sh"
+cp "$R/skills/demo/scripts/demo.sh" "$R/.agents/skills/demo/scripts/demo.sh"
+cp "$R/skills/demo/tests/demo.test.sh" "$R/.agents/skills/demo/tests/demo.test.sh"
+cp "$R/skills/demo/scripts/frappé.sh" "$R/.agents/skills/demo/scripts/frappé.sh"
+printf '# demo agent\n' >"$R/agents/demo.md"
+printf '# demo agent render\n' >"$R/.claude/agents/demo.md"
+printf 'name = "demo"\n' >"$R/.codex/agents/demo.toml"
+printf '# demo agent render\n' >"$R/.pi/agents/demo.md"
 git -C "$R" add -A
 git -C "$R" commit -q -m fixture
 
@@ -536,41 +559,21 @@ reply_run
   || bad "AGENTS.md holding the forms and both bot files pointing at it passes" "rc=$RC out=$OUT"
 
 echo "=== the skill tree is 3.2-clean and renders land with their sources ==="
-# The lint reads its exception entries relative to the repository it runs in,
-# so the fixture carries those directories — derived from the lint itself,
-# because a copy of the list here would go stale with it.
-while IFS= read -r e; do
-  [ -n "$e" ] || continue
-  mkdir -p "$R/$e"
-  printf 'not shell\n' >"$R/$e/README.md"
-done < <(sed -n 's#^NO_\(SCAN\|SHELL\)="\(.*\)"$#\2#p' "$REPO/tools/bash32-lint" | tr ' ' '\n')
-mkdir -p "$R/skills/demo/scripts" "$R/skills/demo/tests" \
-  "$R/.agents/skills/demo/scripts" "$R/.agents/skills/demo/tests" \
-  "$R/agents" "$R/.claude/agents" "$R/.codex/agents" "$R/.pi/agents"
-printf '#!/usr/bin/env bash\necho demo\n' >"$R/skills/demo/scripts/demo.sh"
-printf '#!/usr/bin/env bash\necho tested\n' >"$R/skills/demo/tests/demo.test.sh"
-cp "$R/skills/demo/scripts/demo.sh" "$R/.agents/skills/demo/scripts/demo.sh"
-cp "$R/skills/demo/tests/demo.test.sh" "$R/.agents/skills/demo/tests/demo.test.sh"
-printf '# demo agent\n' >"$R/agents/demo.md"
-printf '# demo agent render\n' >"$R/.claude/agents/demo.md"
-printf 'name = "demo"\n' >"$R/.codex/agents/demo.toml"
-printf '# demo agent render\n' >"$R/.pi/agents/demo.md"
-git -C "$R" add -A
-git -C "$R" commit -q -m "chore: a skill with renders, and an agent with three"
-
+git -C "$R" checkout -q -- .
+git -C "$R" clean -qfd
 run_guard
 [ "$RC" -eq 0 ] \
   && ok "a 3.2-clean skill tree with every render in step passes" \
   || bad "a 3.2-clean skill tree with every render in step passes" "rc=$RC out=$OUT"
 
-# The controls below each delete one check from a copy of guard and expect
+# The controls below each remove one check from a copy of guard and expect
 # the defect to pass, proving the red above it came from that check and not
 # from a neighbour. The copy sits beside a copy of bash32-lint because guard
 # resolves its sibling tools next to itself.
 MUTANT_TOOLS="$TMP/mutant-tools"
 mkdir -p "$MUTANT_TOOLS"
 cp "$REPO/tools/bash32-lint" "$MUTANT_TOOLS/bash32-lint"
-mutant_guard() { # SED-EXPR — stage a guard copy with the named lines deleted
+mutant_guard() { # SED-EXPR — stage a guard copy with that edit applied
   sed "$1" "$GUARD" >"$MUTANT_TOOLS/guard"
   chmod +x "$MUTANT_TOOLS/guard"
   ! cmp -s "$GUARD" "$MUTANT_TOOLS/guard"
@@ -621,14 +624,57 @@ run_guard
   || bad "the same edit with its render in the change passes" "rc=$RC out=$OUT"
 git -C "$R" checkout -q -- skills .agents
 
-printf '#!/usr/bin/env bash\necho local\n' >"$R/skills/demo/tests/local-only.sh"
-git -C "$R" add skills/demo/tests/local-only.sh
+# A path with a non-ASCII byte: git quotes it unless told not to, and the
+# quoted spelling would slip past the case arm.
+printf 'echo more\n' >>"$R/skills/demo/scripts/frappé.sh"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/scripts/frappé.sh -> .agents/skills/demo/scripts/frappé.sh"* ]] \
+  && ok "a source-only edit to a non-ASCII path reds, naming the render left behind" \
+  || bad "a source-only edit to a non-ASCII path reds, naming the render left behind" "rc=$RC out=$OUT"
+if mutant_guard 's/-c core.quotePath=false //g'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with path quoting left on the non-ASCII edit passes" \
+    || bad "control: with path quoting left on the non-ASCII edit passes" "rc=$RC out=$OUT"
+else
+  bad "control: path quoting could not be turned back on in a guard copy"
+fi
+git -C "$R" checkout -q -- skills .agents
+
+# Rendered is judged at the tree, so a new file in a rendered skill owes a
+# render the tree does not track yet.
+printf '#!/usr/bin/env bash\necho added\n' >"$R/skills/demo/scripts/added.sh"
+git -C "$R" add skills/demo/scripts/added.sh
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/scripts/added.sh -> .agents/skills/demo/scripts/added.sh"* ]] \
+  && ok "a new script in a rendered skill with no render reds, naming it" \
+  || bad "a new script in a rendered skill with no render reds, naming it" "rc=$RC out=$OUT"
+if mutant_guard '/\.agents\/\$f/d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the skills arm deleted the new script passes" \
+    || bad "control: with the skills arm deleted the new script passes" "rc=$RC out=$OUT"
+else
+  bad "control: the skills render arm could not be deleted from a guard copy"
+fi
+cp "$R/skills/demo/scripts/added.sh" "$R/.agents/skills/demo/scripts/added.sh"
+git -C "$R" add .agents/skills/demo/scripts/added.sh
 run_guard
 [ "$RC" -eq 0 ] \
-  && ok "a source with no tracked render passes" \
-  || bad "a source with no tracked render passes" "rc=$RC out=$OUT"
-git -C "$R" reset -q HEAD -- skills/demo/tests/local-only.sh
-rm -f "$R/skills/demo/tests/local-only.sh"
+  && ok "the new script with its render staged beside it passes" \
+  || bad "the new script with its render staged beside it passes" "rc=$RC out=$OUT"
+git -C "$R" reset -q HEAD -- skills .agents
+rm -f "$R/skills/demo/scripts/added.sh" "$R/.agents/skills/demo/scripts/added.sh"
+
+mkdir -p "$R/skills/other/scripts"
+printf '#!/usr/bin/env bash\necho local\n' >"$R/skills/other/scripts/local-only.sh"
+git -C "$R" add skills/other/scripts/local-only.sh
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "a source in a skill with no tracked render passes" \
+  || bad "a source in a skill with no tracked render passes" "rc=$RC out=$OUT"
+git -C "$R" reset -q HEAD -- skills/other
+rm -rf "$R/skills/other"
 
 AGENT_RENDERS=(.claude/agents/demo.md .codex/agents/demo.toml .pi/agents/demo.md)
 for r in "${AGENT_RENDERS[@]}"; do
