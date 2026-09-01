@@ -121,6 +121,11 @@ pub fn observed(path: &Path) -> Result<Manifest> {
     }
 }
 
+/// Persist a manifest, in place. The file is the person's own writing, so
+/// the serialization below is not what lands: it is folded into the
+/// document already there ([`super::edit::merged`]), and only the keys
+/// whose values changed are touched. A write that changes nothing writes
+/// nothing, the way a structured config edit does.
 pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
     // Stamped at the write, the way the lock stamps its version: the
     // schema is a fact about the build doing the writing, and two places
@@ -130,10 +135,23 @@ pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
         schema: MANIFEST_SCHEMA,
         ..manifest.clone()
     };
-    let text = toml::to_string_pretty(manifest).map_err(|e| CoreError::TomlParse {
+    let desired = toml::to_string_pretty(manifest).map_err(|e| CoreError::TomlParse {
         path: path.to_path_buf(),
         message: e.to_string(),
     })?;
+    let current = read_if_exists(path)?;
+    let text = match &current {
+        Some(current) => {
+            super::edit::merged(current, &desired).map_err(|e| CoreError::TomlParse {
+                path: path.to_path_buf(),
+                message: e.to_string(),
+            })?
+        }
+        None => desired,
+    };
+    if current.as_deref() == Some(text.as_str()) {
+        return Ok(());
+    }
     atomic_write(path, &text)
 }
 

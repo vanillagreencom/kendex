@@ -102,16 +102,16 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
     assert!(project_body.contains("B, revised."), "{project_body}");
 }
 
-/// The half of the #1308 class kendex.toml still keeps: the file a write
-/// leaves behind ends in exactly one terminator, and every pass after it
-/// leaves the bytes alone. A repair that ran on every pass is how the file
-/// grew a blank line per apply.
+/// The #1308 class on kendex.toml: the file a write leaves behind ends in
+/// exactly one terminator, and every pass after it leaves the bytes alone.
+/// A repair that ran on every pass is how the file grew a blank line per
+/// apply.
 ///
-/// Not byte-faithfulness, which kendex.toml does not get. Every write of
-/// it serializes the manifest kendex read (`Op::WriteManifest` ->
-/// `manifest::save`), so comments and key order go, on an add as much as
-/// on any other write — invariant 10 says so. A fixture with a comment in
-/// it would fail here rather than test anything.
+/// The fixture carries a comment because it must survive: a write folds
+/// the changed keys into the document that is there rather than
+/// serializing over it, which is what invariant 10 asks of every file
+/// kendex edits. `byte_faithful.rs` holds that claim across the four
+/// verbs that write; here it is the terminator that is under test.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_manifest_write_ends_in_one_terminator_and_settles() {
@@ -126,7 +126,7 @@ fn a_manifest_write_ends_in_one_terminator_and_settles() {
     fs::write(
         &manifest_path,
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"",
+            "# mine\nschema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"",
             source_path(&w.home.join("cat"))
         ),
     )
@@ -146,6 +146,7 @@ fn a_manifest_write_ends_in_one_terminator_and_settles() {
 
     let written = fs::read_to_string(&manifest_path).unwrap();
     assert!(written.contains("[skills.gh]"), "{written}");
+    assert!(written.starts_with("# mine\n"), "{written}");
     assert!(
         written.ends_with('\n') && !written.ends_with("\n\n"),
         "exactly one terminator: {written:?}"

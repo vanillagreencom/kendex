@@ -133,11 +133,10 @@ lives in one capability table read by core and UI.
    the only writable surface; kendex never stages, commits, or resets in
    a repository it did not create. Work that must produce a commit runs
    in a disposable clone.
-10. Writes are byte-faithful where kendex edits in place: a structured
-    edit changes the keys it names and nothing else, newline included,
-    and a file it cannot read is refused, not rewritten. Change detection
-    compares exact bytes. kendex.toml is not edited in place: a write
-    serializes the manifest kendex read, losing comments and key order.
+10. Writes are byte-faithful: every file kendex writes it edits in place,
+    kendex.toml included — a write changes the keys it names and nothing
+    else, newline included, and a file it cannot read is refused, not
+    rewritten. Change detection compares exact bytes.
 11. Validation precedes mutation. Every input check for an operation runs
     before its first durable write, and a rejected operation leaves
     manifest, lock, and install tree byte-identical. Every rendering is

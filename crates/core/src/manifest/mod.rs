@@ -5,6 +5,7 @@ use specta::Type;
 
 use crate::model::HarnessId;
 
+mod edit;
 mod file;
 mod validate;
 pub use file::{

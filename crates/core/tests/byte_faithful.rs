@@ -5,7 +5,7 @@
 
 #[path = "../../test_util.rs"]
 mod test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -193,4 +193,192 @@ fn a_written_tree_keeps_shebang_files_executable() {
         doc.permissions().mode() & 0o100 == 0,
         "a plain document must not"
     );
+}
+
+/// The manifest as somebody keeps it: a header comment, comments against
+/// two of the tables, hand spacing, a trailing comment on a value, and a
+/// key order no serializer would choose. Every case below asserts the
+/// whole file, so any byte a write disturbs shows up.
+fn kept_manifest(source: &std::path::Path) -> String {
+    format!(
+        "# what this project installs\nschema = 6\n\n# the catalog we read\n[sources.cat]\nenabled = true\n{}\n\n[install]\nmethod   = \"symlink\"\nharnesses = [\"claude\"]\n\n# the one we actually use\n[skills.gh]\nsource = \"cat\"   # from the catalog\nenabled = true\n",
+        source_path(source)
+    )
+}
+
+struct Kept {
+    _tmp: tempfile::TempDir,
+    env: Env,
+    scope: Scope,
+    project: std::path::PathBuf,
+    manifest: std::path::PathBuf,
+    original: String,
+}
+
+#[allow(clippy::unwrap_used)]
+fn kept() -> Kept {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let source = home.join("catalog");
+    for name in ["gh", "fmt"] {
+        fs::create_dir_all(source.join("skills").join(name)).unwrap();
+        fs::write(
+            source.join("skills").join(name).join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: about {name}\n---\nBody.\n"),
+        )
+        .unwrap();
+    }
+    let manifest = project.join("kendex.toml");
+    let original = kept_manifest(&source);
+    fs::write(&manifest, &original).unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let report = audit(&env, &scope).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
+    assert_eq!(
+        fs::read_to_string(&manifest).unwrap(),
+        original,
+        "installing what the file already declares writes nothing"
+    );
+    Kept {
+        env,
+        scope,
+        project,
+        manifest,
+        original,
+        _tmp: tmp,
+    }
+}
+
+/// `add` declares one more skill and leaves every other byte where it was
+/// (invariant 10): the comments, the blank lines, the hand spacing, the
+/// key order inside `[sources.cat]`, and the trailing comment on the
+/// declaration it did not touch.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn adding_a_skill_edits_kendex_toml_in_place() {
+    let k = kept();
+    let report = kendex_core::engine::ops::add(
+        &k.env,
+        &k.scope,
+        &kendex_core::engine::ops::AddRequest {
+            source: Some("cat".into()),
+            skills: vec!["fmt".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&k.env, &report.plan).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&k.manifest).unwrap(),
+        format!(
+            "{}\n[skills.fmt]\nsource = \"cat\"\nenabled = true\n",
+            k.original
+        )
+    );
+}
+
+/// `fork` rebinds the declaration it names and records the provenance.
+/// The value it rewrites keeps the comment that sat beside it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn forking_a_skill_edits_kendex_toml_in_place() {
+    let k = kept();
+    fs::write(
+        k.project.join(".agents/skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: about gh\n---\nMine now.\n",
+    )
+    .unwrap();
+    let plan = kendex_core::engine::fork::fork(
+        &k.env,
+        &k.scope,
+        kendex_core::model::ItemKind::Skill,
+        "gh",
+        kendex_core::model::HarnessId::Claude,
+    )
+    .unwrap();
+    apply::execute(&k.env, &plan).unwrap();
+
+    let written = fs::read_to_string(&k.manifest).unwrap();
+    assert_eq!(
+        written,
+        rebound(&k.original) + &forks_table(&written),
+        "{written}"
+    );
+}
+
+/// `adopt` takes an unmanaged skill into the manifest; the file it appends
+/// to is otherwise untouched.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn adopting_a_skill_edits_kendex_toml_in_place() {
+    let k = kept();
+    let mine = k.project.join(".claude/skills/mine");
+    fs::create_dir_all(&mine).unwrap();
+    fs::write(
+        mine.join("SKILL.md"),
+        "---\nname: mine\ndescription: my own\n---\nMine.\n",
+    )
+    .unwrap();
+    let plan = kendex_core::engine::adopt::adopt(
+        &k.env,
+        &k.scope,
+        kendex_core::model::ItemKind::Skill,
+        "mine",
+        &[kendex_core::model::HarnessId::Claude],
+    )
+    .unwrap();
+    apply::execute(&k.env, &plan).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&k.manifest).unwrap(),
+        format!(
+            "{}\n[skills.mine]\nsource = \"in-place\"\nenabled = true\n",
+            k.original
+        )
+    );
+}
+
+/// `detach` drops the source declaration and rebinds what read from it.
+/// The comment written against the table that goes leaves with it, and
+/// nothing above or below it moves.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn detaching_a_source_edits_kendex_toml_in_place() {
+    let k = kept();
+    let plan = kendex_core::engine::detach::source(&k.env, &k.scope, "cat").unwrap();
+    apply::execute(&k.env, &plan).unwrap();
+
+    let written = fs::read_to_string(&k.manifest).unwrap();
+    let source_block = &k.original[k.original.find("# the catalog we read").unwrap_or_default()
+        ..k.original.find("[install]").unwrap_or_default()];
+    assert_eq!(
+        written,
+        rebound(&k.original.replace(source_block, "")) + &forks_table(&written),
+        "{written}"
+    );
+}
+
+/// The declaration after a verb rebinds it to the person's own copy: the
+/// one value changed, the comment beside it untouched.
+fn rebound(manifest: &str) -> String {
+    manifest.replace(
+        "source = \"cat\"   # from the catalog",
+        "source = \"local\"   # from the catalog",
+    )
+}
+
+/// The `[forks.skill.gh]` block as written, so a case can assert the whole
+/// file without transcribing a timestamp it cannot know.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn forks_table(written: &str) -> String {
+    let at = written
+        .find("\n[forks.skill.gh]\n")
+        .expect("the fork is recorded");
+    written[at..].to_owned()
 }
