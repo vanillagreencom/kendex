@@ -73,6 +73,11 @@ run_hook "tar -cf - $REPO/target | tar -xf - -C /tmp"; assert_eq "$rc" 2 'a tar 
 # still this copy's.
 run_hook "$(printf 'tar -cf - %s/target |\n  tar -xf - -C /tmp' "$REPO")"
 assert_eq "$rc" 2 'and wrapping that pipe after the | is still one copy'
+# The same wrap one space later. The newline may stand at any distance from the
+# `|`, which is what an editor leaves when a long pipe is wrapped by hand, so
+# the blanks between them are a class of their own and this row is what pins it.
+run_hook "$(printf 'tar -cf - %s/target | \n  tar -xf - -C /tmp' "$REPO")"
+assert_eq "$rc" 2 'and a blank between the | and the newline does not unbind it'
 run_hook "mkdir -p /tmp/x && cp -a $REPO/.git /tmp/x"; assert_eq "$rc" 2 'the copy is found in a chained command'
 # The verb is a word, not a substring: a path in front of it is a prefix the
 # class allows, a letter is not.
@@ -144,8 +149,30 @@ assert_eq "$rc" 2 'and the same words within one command are one copy'
 # above as its partner: the same wrapping, one character earlier.
 run_hook "$(printf 'cp -r %s/.git \\\n  /tmp/copy' "$REPO")"
 assert_eq "$rc" 2 'a backslash continuation before the destination is one copy'
+# The same copy with the continuation unindented. The separator standing before
+# the destination is then the binding newline itself and no blank follows it,
+# so this row and the indented one above are what keep the two spellings from
+# reaching different verdicts. The two rows after it are the marker's own edges
+# read the same way: its left edge when the marker opens the continuation line,
+# and its right edge when the backslash follows the marker with no blank
+# between them. One row per edge, because each is a separator of its own and
+# the indented spelling hides all three at once.
+run_hook "$(printf 'cp -r %s/.git \\\n/tmp/copy' "$REPO")"
+assert_eq "$rc" 2 'and the destination alone at column 0 is the same one copy'
+run_hook "$(printf 'cp -r \\\n.git /tmp/x')"
+assert_eq "$rc" 2 'a marker opening the continuation line is still the marker'
+run_hook "$(printf 'cp -r %s/.git\\\n/tmp/x' "$REPO")"
+assert_eq "$rc" 2 'and a backslash straight after the marker is still its right edge'
 run_hook "$(printf 'rsync -a \\\n  %s/target \\\n  /tmp/out' "$REPO")"
 assert_eq "$rc" 2 'and so is an rsync wrapped over three lines'
+# A doubled pipe is two pipes: the first is crossed as ordinary text because the
+# pipe is the one separator deliberately left out of ENDERS, and the second
+# carries the binding newline. So a wrapped or-list binds exactly as a single
+# pipe does, and its fallback's temp path is read as this copy's destination —
+# the same trade as the redirection row below, recorded here so revisiting the
+# pipe decision reds rather than moving this shape in silence.
+run_hook "$(printf 'cp -r %s/.git /srv/keep ||\n  echo /tmp' "$REPO")"
+assert_eq "$rc" 2 'a wrapped or-list binds across the || as one command'
 
 echo "=== block-repo-copy: commands that are not copies at all ==="
 run_hook "git status --short";               assert_eq "$rc" 0 'a non-copy command passes'
