@@ -457,12 +457,13 @@ fn a_published_section_the_rewrite_makes_identical_is_not_taken() {
     apply::execute(&w.env, &plan).unwrap();
     resettle(&w);
 
+    // Kept, and kept in the words the catalog published them in.
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
     for line in [
         "## Launch Instructions",
-        "Use the read_file tool.",
+        "Use the Read tool.",
         "## Additional Instructions",
-        "Use the run_shell_command tool.",
+        "Use the Bash tool.",
         "My body.",
     ] {
         assert_eq!(
@@ -471,6 +472,7 @@ fn a_published_section_the_rewrite_makes_identical_is_not_taken() {
             "{line} is the publisher's own prose and the capture took it for the wrapper's: {source}"
         );
     }
+    assert_eq!(times(&source, "Use the read_file tool."), 0, "{source}");
 
     let text = fs::read_to_string(&file).unwrap();
     for line in [

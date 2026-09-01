@@ -526,3 +526,131 @@ fn an_indented_first_line_keeps_its_indentation() {
         "the code block lost its indentation: {source:?}"
     );
 }
+
+/// Every harness but Claude says an agent's tool references in its own
+/// words, so a body captured off a Gemini rendering is Gemini's vocabulary
+/// rather than the person's. Kept as source it renders in Gemini's words
+/// everywhere, and the harnesses that never had those names read a tool
+/// they do not have.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn forking_a_gemini_agent_captures_the_words_its_prose_was_written_in() {
+    let w = agent_world(
+        "\"claude\", \"gemini\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUse the Read tool.\n\nUpstream body.\n",
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("Use the read_file tool."),
+        "the fixture must render Gemini's own word for the tool"
+    );
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert!(
+        source.contains("Use the Read tool.") && !source.contains("read_file"),
+        "the capture kept Gemini's vocabulary as the fork's source: {source}"
+    );
+    let claude = fs::read_to_string(rendered(&w, HarnessId::Claude, "rev")).unwrap();
+    assert!(
+        claude.contains("Use the Read tool.") && !claude.contains("read_file"),
+        "Claude renders the fork in Gemini's words: {claude}"
+    );
+    let gemini = fs::read_to_string(&file).unwrap();
+    assert!(
+        gemini.contains("Use the read_file tool.") && gemini.contains("My body."),
+        "the Gemini rendering must still read in Gemini's words: {gemini}"
+    );
+    assert_eq!(banners(&gemini), 1, "{gemini}");
+}
+
+/// The same class through Pi, whose word for the tool is a third spelling
+/// again: a fork taken from one harness must not teach every other harness
+/// that harness's names. The sections the renderer appends travel into the
+/// manifest with it, so each of them stands once in each rendering.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn forking_a_pi_agent_captures_the_words_its_prose_was_written_in() {
+    let w = agent_world(
+        "\"claude\", \"pi\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUse the WebFetch tool.\n\nUpstream body.\n",
+        "",
+        "[agent-launch-instructions]\nrev = \"Read the brief first.\"\n\n[agent-additional-instructions]\nrev = \"Say what you changed.\"\n",
+    );
+    let file = rendered(&w, HarnessId::Pi, "rev");
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("Use the webfetch tool."),
+        "the fixture must render Pi's own word for the tool"
+    );
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Pi).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert!(
+        source.contains("Use the WebFetch tool."),
+        "the capture kept Pi's vocabulary as the fork's source: {source}"
+    );
+    let claude = fs::read_to_string(rendered(&w, HarnessId::Claude, "rev")).unwrap();
+    assert!(
+        claude.contains("Use the WebFetch tool."),
+        "Claude renders the fork in Pi's words: {claude}"
+    );
+    let pi = fs::read_to_string(&file).unwrap();
+    assert!(
+        pi.contains("Use the webfetch tool.") && pi.contains("My body."),
+        "the Pi rendering must still read in Pi's words: {pi}"
+    );
+    for text in [&claude, &pi] {
+        for section in ["## Launch Instructions", "## Additional Instructions"] {
+            assert_eq!(times(text, section), 1, "{section} count wrong: {text}");
+        }
+        assert_eq!(banners(text), 1, "{text}");
+    }
+}
+
+/// A harness may say two of Claude's tools with one word — Gemini's
+/// `replace` is Edit and MultiEdit alike — and the rendering keeps no
+/// record of which one it stood for. The capture leaves such a line as the
+/// rendering says it rather than picking one, because picking puts a tool
+/// the person never named into their prose.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_word_that_stands_for_two_tools_is_left_as_the_rendering_says_it() {
+    let w = agent_world(
+        "\"claude\", \"gemini\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUse the Edit tool.\n\nUse the MultiEdit tool.\n\nUpstream body.\n",
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    assert_eq!(
+        times(&fs::read_to_string(&file).unwrap(), "Use the replace tool."),
+        2,
+        "the fixture must render both tools as Gemini's one word"
+    );
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert_eq!(
+        times(&source, "Use the replace tool."),
+        2,
+        "the capture named a tool the rendering could not tell apart: {source}"
+    );
+}

@@ -1,7 +1,13 @@
-//! Taking the generated wrapper off an edited body. A rendering on disk is
-//! the person's prose inside everything the renderer wrote around it, and
-//! a fork keeps the prose alone: whatever the next render writes again out
-//! of the manifest this fork carries would otherwise stand twice.
+//! Taking the generated wrapper off an edited body, and giving the prose
+//! left inside it back the words it was written in. A rendering on disk is
+//! the person's prose inside everything the renderer wrote around it and
+//! said in that harness's own vocabulary; a fork keeps the prose alone, in
+//! the words the catalog published it in. Whatever the next render writes
+//! again out of the manifest this fork carries would otherwise stand
+//! twice, and whatever it said in one harness's words would be what every
+//! other harness renders.
+
+use std::collections::HashMap;
 
 use crate::render::agent::GENERATED_BANNER;
 use crate::render::inside_a_block;
@@ -26,6 +32,11 @@ use super::wrapper::Wrapper;
 /// is what stands in its place. Nothing in the text tells the two apart,
 /// so the count does: the wrapper may take a section only where the body
 /// holds more copies of it than the publisher brought.
+///
+/// What is left is then said back in the words the catalog published it
+/// in, line by line, because the rendering said those lines in this
+/// harness's vocabulary and the fork's source is what every harness
+/// renders from next.
 pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
     let lines: Vec<&str> = body.lines().collect();
     let kept: Vec<&str> = match wrapper {
@@ -48,15 +59,48 @@ pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
             .copied()
             .collect(),
     };
+    let said = wrapper.map(authored).unwrap_or_default();
     let mut out = String::new();
     for line in kept {
-        out.push_str(line);
+        out.push_str(said.get(line).copied().flatten().unwrap_or(line));
         out.push('\n');
     }
     // Only the blank separators go. A first line indented into a code
     // block is the person's own content, and trimming it would render
     // their block as ordinary prose.
     format!("{}\n", out.trim_start_matches('\n').trim_end())
+}
+
+/// The publisher's own lines, each keyed by what this harness renders it
+/// as. Only the lines the rewrite said differently are in it — one it left
+/// alone gives the same text back — so a body the rewrite never touched
+/// costs nothing and a line the person wrote themselves is looked up and
+/// missed.
+///
+/// A rendering two published lines both stand for is left out. `replace`
+/// is Gemini's word for Edit and for MultiEdit alike, and picking one of
+/// them would put a tool the person never named into their prose.
+///
+/// The reading is a whole line at a time, which is what the pairing can
+/// prove: a line as rendered is a line as published, said differently, so
+/// swapping one for the other is what this harness renders back. A line
+/// the person edited is theirs and stands as they wrote it, harness words
+/// and all — nothing here knows which half of it they changed.
+fn authored(wrapper: &Wrapper) -> HashMap<&str, Option<&str>> {
+    let mut said: HashMap<&str, Option<&str>> = HashMap::new();
+    for (rendered, published) in wrapper.published.lines().zip(wrapper.authored.lines()) {
+        if rendered == published {
+            continue;
+        }
+        said.entry(rendered)
+            .and_modify(|held| {
+                if *held != Some(published) {
+                    *held = None;
+                }
+            })
+            .or_insert(Some(published));
+    }
+    said
 }
 
 /// One line a section is identified by. `inside` is a line standing
