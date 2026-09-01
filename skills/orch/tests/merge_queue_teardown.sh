@@ -309,9 +309,9 @@ case "$census_err" in *"could not enumerate processes"*) ok "the failed census n
 
 # What the refusal is FOR, read where it lands: a consumer finds nothing to
 # route. Asserted through consume rather than through the artifact file,
-# because the refusal skips the publishing teardown by design — its home is
-# gone, so there is nothing to publish into. What can go wrong is the refusal
-# publishing on its way out, and consume is where that shows.
+# because the teardown publishes no fallback once the home is gone: there is
+# nothing to publish into. What can go wrong is the refusal publishing on its
+# way out, and consume is where that shows.
 consume_after_refusal() {
   local sb="$1" issue="$2"
   (
@@ -332,8 +332,8 @@ build_sandbox "$publishing"
 mkdir -p "$publishing/main/altroot"
 edit_once "$ORCH/scripts/lib/merge-queue-supervisor.sh" \
   "$publishing/orch/scripts/lib/merge-queue-supervisor.sh" \
-  'report_home_lost; trap - EXIT TERM HUP INT; return 1' \
-  'publish_unknown home_lost 1; report_home_lost; trap - EXIT TERM HUP INT; return 1' \
+  'then report_home_lost; return 1; fi' \
+  'then publish_unknown home_lost 1; report_home_lost; return 1; fi' \
   || { bad "publishing-refusal mutation did not apply"; exit 1; }
 IFS=$'\t' read -r ppid _prt _part _plog _pstate pmain < <(launch_supervisor "$publishing" KEN-995-publishing "$publishing/main/altroot")
 break_repository "" "" "$pmain" "$publishing"
@@ -344,19 +344,39 @@ if [[ "$(jq -r '.diagnostic.cause' <<<"$publishing_consume")" != watch_lost ]]; 
 else bad "the publishing mutant still consumed as watch_lost"; fi
 mq_reap "$publishing" || bad "reaper reported survivors under the publishing sandbox"
 
-echo "=== a supervisor that returns still runs its teardown ==="
+echo "=== every supervisor exit runs its teardown ==="
 
-# An EXIT trap fires when the shell exits, after `return` has popped the
-# supervisor's locals — so a path that ends in `return` must run cleanup
-# itself while they are live (KEN-1060). The worker-liveness check is forced
-# false with a real worker running, so the supervisor takes its `return 1`
-# path holding everything teardown exists to retire: a live worker, an open
-# runtime, and the promise of a consumable artifact.
+# The teardown is an EXIT trap reading state the function once declared
+# local. An EXIT trap fires when the shell exits, after `return` and a set -e
+# failure have both popped the function's frame, so the trap ran empty on
+# every such exit: no worker reaped, no unknown fallback, no terminal file
+# (KEN-1060). The state is process-scoped now. Each case below forces one
+# exit kind while the supervisor holds everything teardown exists to retire
+# (a live worker, an open runtime, the promise of a consumable artifact) and
+# asserts the teardown ran; its control re-plants `local` on the worker's
+# pid, which is the original defect, and asserts the same teardown did not.
+
+# The worker alone: the process whose executed script is the sandbox's
+# queue-wait. The supervisor's own argv carries that path too (the waiter is
+# its seventh argument), and so does the worker subshell forked from it, so a
+# substring census would count them both as workers.
 workers_under() {
   ps -e -ww -o pid=,args= > "$TMP/ps.worker.snapshot" 2>/dev/null || true
-  awk -v root="$1" 'index($0, "queue-wait") && index($0, root) { print $1 }' "$TMP/ps.worker.snapshot"
+  awk -v script="$1/orch/scripts/queue-wait" '$3 == script { print $1 }' "$TMP/ps.worker.snapshot"
 }
 count_workers() { workers_under "$1" | grep -c . || true; }
+
+# $1 sandbox, then needle/replacement pairs applied in order to the sandbox's
+# supervisor copy; each must apply exactly once.
+plant() {
+  local sb="$1" src="$ORCH/scripts/lib/merge-queue-supervisor.sh" dst
+  dst="$sb/orch/scripts/lib/merge-queue-supervisor.sh"; shift
+  build_sandbox "$sb"
+  while (($# >= 2)); do
+    edit_once "$src" "$dst.next" "$1" "$2" || return 1
+    mv -- "$dst.next" "$dst"; src="$dst"; shift 2
+  done
+}
 
 # $1 sandbox, $2 issue: launch under the sandbox's supervisor copy. The caller
 # arranges for the supervisor to exit or be held before the worker-liveness
@@ -381,60 +401,64 @@ launch_return_path() {
     | jq -r '[.runtime_dir, .artifact_path] | @tsv'
 }
 
-retpath="$TMP/return-path"
-build_sandbox "$retpath"
-edit_once "$ORCH/scripts/lib/merge-queue-supervisor.sh" \
-  "$retpath/orch/scripts/lib/merge-queue-supervisor.sh" \
-  'kill -0 "$worker_pid" 2>/dev/null || { cleanup 1; return 1; }' \
-  'false || { cleanup 1; return 1; }' \
+# $1 sandbox, $2 runtime, $3 artifact, $4 label.
+assert_teardown_ran() {
+  local i
+  wait_exists "$2/terminal" && ok "$4: the terminal file is written" || bad "$4: no terminal file"
+  eq "$(jq -r '.verdict // "missing"' "$3" 2>/dev/null || echo missing)" unknown "$4: the unknown fallback is published"
+  eq "$(jq -r '.cause // "missing"' "$3" 2>/dev/null || echo missing)" supervisor_exit "$4: the fallback names the supervisor exit"
+  for ((i=0;i<100;i++)); do [[ "$(count_workers "$1")" -eq 0 && "$(count_supervisors "$1")" -eq 0 ]] && break; sleep 0.05; done
+  eq "$(count_workers "$1")" 0 "$4: the worker is reaped"
+  eq "$(count_supervisors "$1")" 0 "$4: no supervisor outlives the exit"
+}
+# The same four facts, negated: this is the silent no-op the assertions
+# above must catch, so a control that fails any of them frees an assertion.
+assert_teardown_skipped() {
+  [[ ! -e "$2/terminal" ]] && ok "$4: the empty trap writes no terminal" || bad "$4: the control wrote a terminal; that assertion is free"
+  [[ ! -e "$3" ]] && ok "$4: the empty trap publishes no fallback" || bad "$4: the control published a fallback; that assertion is free"
+  [[ "$(count_workers "$1")" -gt 0 ]] && ok "$4: the empty trap leaks the worker" || bad "$4: the control leaked no worker; that assertion is free"
+  mq_reap "$1" || bad "$4: reaper reported survivors under the control sandbox"
+}
+# $1 sandbox, $2 issue, $3 label, $4 ran|skipped: launch, then assert.
+teardown_case() {
+  local sb="$1" issue="$2" label="$3" expect="$4" runtime="" artifact=""
+  if IFS=$'\t' read -r runtime artifact < <(launch_return_path "$sb" "$issue"); then
+    ok "$label: the launch fails"
+  else
+    bad "$label: the launch did not fail; the assertions below prove nothing"; return 0
+  fi
+  case "$expect" in
+    ran) assert_teardown_ran "$sb" "$runtime" "$artifact" "$label" ;;
+    skipped) assert_teardown_skipped "$sb" "$runtime" "$artifact" "$label" ;;
+  esac
+}
+
+RETURN_SITE='kill -0 "$worker_pid" 2>/dev/null || return 1'
+SET_E_SITE=': > "$runtime/ready"; chmod 600 "$runtime/ready"'
+LOCAL_PID='  worker_pid="" worker_rc=0 event="" watchdog_pid=""'
+
+# A `return` after the worker is forked: the liveness check forced false.
+plant "$TMP/return-path" "$RETURN_SITE" 'false || return 1' \
   || { bad "return-path mutation did not apply"; exit 1; }
-rp_runtime="" rp_artifact=""
-if IFS=$'\t' read -r rp_runtime rp_artifact < <(launch_return_path "$retpath" KEN-1060-return); then
-  ok "the worker-liveness return path fails the launch"
-else
-  bad "the forced return path did not fail the launch; the assertions below prove nothing"
-fi
-if [[ -n "$rp_runtime" ]]; then
-  wait_exists "$rp_runtime/terminal" && ok "the return path writes the runtime terminal file" \
-    || bad "the return path left no terminal file"
-  eq "$(jq -r '.verdict // "missing"' "$rp_artifact" 2>/dev/null || echo missing)" unknown "the return path publishes the unknown fallback"
-  eq "$(jq -r '.cause // "missing"' "$rp_artifact" 2>/dev/null || echo missing)" supervisor_exit "the fallback names the supervisor exit"
-  for ((i=0;i<100;i++)); do [[ "$(count_workers "$retpath")" -eq 0 && "$(count_supervisors "$retpath")" -eq 0 ]] && break; sleep 0.05; done
-  eq "$(count_workers "$retpath")" 0 "the return path reaps its live worker"
-  eq "$(count_supervisors "$retpath")" 0 "no supervisor outlives the return path"
-fi
-
-# Control: the same forced path with the explicit call cut leaves only the
-# EXIT trap, which fires after the locals are gone — no terminal, no fallback,
-# a leaked worker. This is the silent no-op the assertions above must catch.
-noclean="$TMP/return-path-noclean"
-build_sandbox "$noclean"
-edit_once "$ORCH/scripts/lib/merge-queue-supervisor.sh" \
-  "$noclean/orch/scripts/lib/merge-queue-supervisor.sh" \
-  'kill -0 "$worker_pid" 2>/dev/null || { cleanup 1; return 1; }' \
-  'false || return 1' \
+teardown_case "$TMP/return-path" KEN-1060-return "return" ran
+plant "$TMP/return-path-local" "$RETURN_SITE" 'false || return 1' "$LOCAL_PID" "  local$LOCAL_PID" \
   || { bad "return-path control mutation did not apply"; exit 1; }
-nc_runtime="" nc_artifact=""
-if IFS=$'\t' read -r nc_runtime nc_artifact < <(launch_return_path "$noclean" KEN-1060-noclean); then
-  ok "the control's forced return path fails the launch"
-else
-  bad "the control launch did not fail; the control proves nothing"
-fi
-if [[ -n "$nc_runtime" ]]; then
-  [[ ! -e "$nc_runtime/terminal" ]] && ok "without the explicit call the empty trap writes no terminal" \
-    || bad "the control wrote a terminal; the terminal assertion above is free"
-  [[ ! -e "$nc_artifact" ]] && ok "without the explicit call no fallback is published" \
-    || bad "the control published a fallback; the fallback assertion above is free"
-  [[ "$(count_workers "$noclean")" -gt 0 ]] && ok "without the explicit call the worker leaks" \
-    || bad "the control leaked no worker; the reap assertion above is free"
-fi
-mq_reap "$noclean" || bad "reaper reported survivors under the control sandbox"
+teardown_case "$TMP/return-path-local" KEN-1060-return-local "return control" skipped
 
-# The other guarded return: the post-registration currency recheck, driven
-# with no mutation. The supervisor is held at its event fifo, so the launch
-# command times out waiting for worker liveness and claims launch_failed;
-# released, the supervisor's recheck refuses and returns 1. That launch_failed
-# state still admits the unknown fallback — the reason publish accepts it.
+# A set -e exit after the worker is forked: the ready marker's write fails.
+plant "$TMP/set-e" "$SET_E_SITE" ': > "$runtime/missing/ready"; chmod 600 "$runtime/ready"' \
+  || { bad "set -e mutation did not apply"; exit 1; }
+teardown_case "$TMP/set-e" KEN-1060-set-e "set -e" ran
+plant "$TMP/set-e-local" "$SET_E_SITE" ': > "$runtime/missing/ready"; chmod 600 "$runtime/ready"' "$LOCAL_PID" "  local$LOCAL_PID" \
+  || { bad "set -e control mutation did not apply"; exit 1; }
+teardown_case "$TMP/set-e-local" KEN-1060-set-e-local "set -e control" skipped
+
+# The `return` before the worker is forked, driven with no mutation: the
+# post-registration currency recheck. The supervisor is held at its event
+# fifo, so the launch command times out waiting for worker liveness and
+# claims launch_failed; released, the supervisor's recheck refuses and
+# returns 1. That launch_failed state still admits the unknown fallback,
+# which is the reason publish accepts it.
 regate="$TMP/recheck"
 build_sandbox "$regate"
 TD_REAL_MKFIFO="$(command -v mkfifo)"
@@ -452,20 +476,13 @@ chmod +x "$regate/bin/mkfifo"
 touch "$TD_MKFIFO_GATE.enabled"
 rg_runtime="" rg_artifact=""
 if IFS=$'\t' read -r rg_runtime rg_artifact < <(launch_return_path "$regate" KEN-1060-recheck); then
-  ok "the held supervisor's launch claims its failure"
+  ok "recheck: the held supervisor's launch claims its failure"
 else
-  bad "the held launch did not fail; the recheck assertions below prove nothing"
+  bad "recheck: the held launch did not fail; the assertions below prove nothing"
 fi
-wait_exists "$TD_MKFIFO_GATE.entered" || bad "the supervisor never reached its event fifo"
+wait_exists "$TD_MKFIFO_GATE.entered" || bad "recheck: the supervisor never reached its event fifo"
 touch "$TD_MKFIFO_GATE.release"
-if [[ -n "$rg_runtime" ]]; then
-  wait_exists "$rg_runtime/terminal" && ok "the refused recheck still runs its teardown" \
-    || bad "the refused recheck left no terminal file"
-  eq "$(jq -r '.verdict // "missing"' "$rg_artifact" 2>/dev/null || echo missing)" unknown "the refused recheck publishes the unknown fallback"
-  eq "$(jq -r '.cause // "missing"' "$rg_artifact" 2>/dev/null || echo missing)" supervisor_exit "the recheck fallback names the supervisor exit"
-  for ((i=0;i<100;i++)); do [[ "$(count_supervisors "$regate")" -eq 0 ]] && break; sleep 0.05; done
-  eq "$(count_supervisors "$regate")" 0 "no supervisor outlives the refused recheck"
-fi
+[[ -z "$rg_runtime" ]] || assert_teardown_ran "$regate" "$rg_runtime" "$rg_artifact" "recheck"
 rm -f -- "$TD_MKFIFO_GATE.enabled" "$TD_MKFIFO_GATE.entered" "$TD_MKFIFO_GATE.release"
 
 echo "=== a wait whose repository is deleted refuses to keep polling ==="

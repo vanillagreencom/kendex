@@ -14,10 +14,13 @@
 # and consume terminalizes it as watch_lost.
 
 merge_queue_supervise() {
-  local state_file="$1" watch_id="$2" attempt_id="$3" runtime="$4" artifact="$5" deadline="$6"
-  local waiter="$7" poll="$8" max_wait="$9"
-  local repo pr head main_root log temp output worker_pid="" worker_rc=0 event=""
-  local event_fifo owner_fifo watchdog_pid="" published=false process_token="${MERGE_QUEUE_SUPERVISOR_TOKEN:-}"
+  # Process-scoped on purpose, never local: the __supervise process exists
+  # only to run this function, and the EXIT trap that tears it down fires
+  # when the shell exits, after `return` and a set -e failure have both
+  # popped the function's frame. A trap reading locals runs empty on either.
+  state_file="$1" watch_id="$2" attempt_id="$3" runtime="$4" artifact="$5" deadline="$6"
+  waiter="$7" poll="$8" max_wait="$9"
+  worker_pid="" worker_rc=0 event="" watchdog_pid="" published=false process_token="${MERGE_QUEUE_SUPERVISOR_TOKEN:-}"
   repo=$(jq -r .repository "$state_file"); pr=$(jq -r .pr_number "$state_file")
   head=$(jq -r .head_sha "$state_file")
   main_root=$(jq -r .main_repo_root "$state_file")
@@ -73,21 +76,16 @@ merge_queue_supervise() {
         worker_exit_code:$rc,diagnostic_path:$log}' > "$output" || return 1
     publish_output && published=true
   }
-  # An EXIT trap fires when the SHELL exits, after `return` has already popped
-  # this function's locals, so a path that ends in `return` must call cleanup
-  # itself while they are still live. The trap covers only the exits that
-  # happen mid-function — signals and set -e — and cleanup clears it first so
-  # a teardown that already ran cannot run again empty at shell exit. The
-  # terminal file it writes last is the durable sign that teardown, including
-  # the publication fallback, is over.
+  # The one teardown, on every exit (return, set -e, exit, signal), with the
+  # exit status as $?. A home that is gone gets no fallback: there is nothing
+  # left to publish into. The terminal file written last is the durable sign
+  # that teardown, including the publication fallback, is over.
   cleanup() {
-    local rc="${1-$?}"
-    trap - EXIT TERM HUP INT
+    local rc=$?
     exec 6>&- 7>&- 8>&- 9>&- 2>/dev/null || true
     [[ -z "$watchdog_pid" ]] || { kill "$watchdog_pid" 2>/dev/null || true; wait "$watchdog_pid" 2>/dev/null || true; }
-    watchdog_pid=""
-    stop_worker; worker_pid=""
-    $published || publish_unknown supervisor_exit "$rc" || true
+    stop_worker
+    if ! $published && home_present; then publish_unknown supervisor_exit "$rc" || true; fi
     { printf '%s\n' "$rc" > "$runtime/terminal" && chmod 600 "$runtime/terminal"; } 2>/dev/null || true
   }
   trap cleanup EXIT
@@ -114,7 +112,7 @@ merge_queue_supervise() {
     [[ $(date +%s) -lt "$deadline" ]] || printf 'deadline\n' >&7
   ) & watchdog_pid=$!
   printf '%s\n' "$$" > "$runtime/supervisor.pid"; chmod 600 "$runtime/supervisor.pid"
-  attempt_is_current || { cleanup 1; return 1; }
+  attempt_is_current || return 1
   set -m
   (
     exec 7>"$event_fifo"
@@ -125,26 +123,23 @@ merge_queue_supervise() {
     rc=$?; printf '%s\n' "$rc" > "$runtime/worker.status"; printf 'worker\n' >&7; exit "$rc"
   ) & worker_pid=$!
   set +m
-  kill -0 "$worker_pid" 2>/dev/null || { cleanup 1; return 1; }
+  kill -0 "$worker_pid" 2>/dev/null || return 1
   : > "$runtime/ready"; chmod 600 "$runtime/ready"
   IFS= read -r event < "$event_fifo" || true
   exec 6>&- 7>&-
   wait "$watchdog_pid" 2>/dev/null || true; watchdog_pid=""
-  # Named refusal, and nothing published: once the home is gone there is
-  # nothing left to publish into.
-  if [[ "$event" == home_lost ]] || ! home_present; then
-    stop_worker; worker_pid=""; report_home_lost; trap - EXIT TERM HUP INT; return 1
-  fi
-  if [[ "$event" == deadline && ! -f "$runtime/worker.status" ]]; then stop_worker; worker_pid=""; publish_unknown supervisor_deadline 124; cleanup 0; return 0; fi
+  # Named refusal; the teardown reaps the worker and, with the home gone,
+  # publishes nothing.
+  if [[ "$event" == home_lost ]] || ! home_present; then report_home_lost; return 1; fi
+  if [[ "$event" == deadline && ! -f "$runtime/worker.status" ]]; then stop_worker; worker_pid=""; publish_unknown supervisor_deadline 124; return 0; fi
   wait "$worker_pid" || worker_rc=$?; worker_pid=""
   if ! jq -e 'type=="object" and (.status|IN("complete","timeout","error")) and
       (.verdict|IN("merged","conflicting","ejected","disarmed","dequeued","closed","queued","not_queued","unknown"))' "$temp" >/dev/null 2>&1; then
-    publish_unknown worker_output_invalid "$worker_rc"; cleanup 0; return 0
+    publish_unknown worker_output_invalid "$worker_rc"; return 0
   fi
   jq --arg repo "$repo" --argjson pr "$pr" --arg head "$head" --arg watch "$watch_id" --arg attempt "$attempt_id" --arg log "$log" \
     '. + {schema_version:1,repository:$repo,pr_number:$pr,expected_head:$head,
       watch_id:$watch,launch_attempt_id:$attempt,diagnostic_path:$log}' "$temp" > "$output"
-  publish_output || { cleanup 1; return 1; }
+  publish_output || return 1
   published=true
-  cleanup "$worker_rc"
 }
