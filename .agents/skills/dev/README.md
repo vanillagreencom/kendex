@@ -19,14 +19,6 @@ Agent-type names, the commit prefix, and QA-label triggers are project-configura
 
 `DEV_VALIDATE_CMD` (`kendex.settings.toml` `[env]`, read via `orch-env`) names the project's validation command for the Validate step of both workflows — point it at a diff-scoped validator where one exists (kendex itself sets `tools/validate-changed`); unset, the workflows fall back to the project's documented build/test/lint command.
 
-## Tests
-
-```bash
-find skills/dev/tests -type f -name '*.test.sh' -exec bash {} \;
-```
-
-These are documentation lints. They pin contracts the agent relies on finding in the workflow text: the Linear cache preflight and its ordering, the required-mode QA label gate, the supported decider issue lookup, and the tmp-file route for multiline tracker comments.
-
 ## License
 
 MIT

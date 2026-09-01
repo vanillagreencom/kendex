@@ -32,8 +32,8 @@ when a run applies more than one surface — one working copy per surface branch
 ## Operating policy (the contract with the product owner)
 
 Each rule has a key. The key is the contract's handle — an inventory owner-rule
-cites it, and `tests/policy-contract-lint.test.sh` pins it. The wording in the
-second column may be edited; dropping or renaming a key changes the contract.
+cites it. The wording in the second column may be edited; dropping or renaming
+a key changes the contract.
 
 | Rule | Contract |
 |---|---|

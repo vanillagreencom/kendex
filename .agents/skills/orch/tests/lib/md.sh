@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # The one markdown reader the doc lints share. It lives under orch because
-# orch's lints were its first callers, not because they are its only ones: a
-# suite in any skill may source it, and `skills/dev/tests` does.
+# orch's lints are its callers; a suite in any skill may source it by path.
 #
 # Before this file every lint carried its own HTML-comment stripper, heading
 # slicer and planted-control scaffolding, and each grew to pin the sentences of

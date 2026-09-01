@@ -11,7 +11,7 @@ bash skills/orch/tests/run-all.sh workflow_helpers   # subset by name fragment
 
 Each `tests/*.sh` is self-contained: it builds its own sandbox with parametrized CLI stubs on `PATH`, prints `pass: N fail: M`, and exits 0 only when every assertion passed. `run-all.sh` discovers them at execution time, so a new suite needs no registration.
 
-Every test the runner discovers ships with the installed skill and must pass in a downstream project with no access to the kendex source checkout. Source-only generator and install regressions live in `cli/scripts/integration-check.sh`, which validates install/refresh byte identity, markdownlint, idempotence, the refreshed downstream `run-all.sh`, and the installed dev cache-preflight contract.
+Every test the runner discovers ships with the installed skill and must pass in a downstream project with no access to the kendex source checkout. Byte identity and idempotence of what an apply writes are covered upstream of the installed tree, in `crates/core/tests/byte_faithful.rs`.
 
 ## Invariants the tests pin
 
