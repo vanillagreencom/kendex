@@ -274,6 +274,14 @@ Process creates in dependency order — every issue after the issues it is block
 | cancel | workflow-actions § State Transitions |
 | skip, valid | No action |
 
+A `create` whose `create_fields.review_born` is true came from a review finding, and passes `--review-born` so the creation bar holds it to a reported `Symptom:` at priority 2:
+
+```bash
+.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description-file [BODY_FILE] --project "[PROJECT]" --labels "[VALIDATED_FINAL_LABELS]" --priority [PRIORITY] --review-born
+```
+
+A `create` whose `review_born` is false is the same command without that flag.
+
 **GitHub route (TRACKER=github)** — `gh issue` against `[OWNER/REPO]`; label mutations on existing issues go through the github skill's `label-add`/`label-remove`:
 
 | Action | Execution |
@@ -282,7 +290,7 @@ Process creates in dependency order — every issue after the issues it is block
 | expand, update | Fetch with `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`, edit in a tmp file, then `gh issue edit [N] --repo [OWNER/REPO] --body-file [BODY_FILE]`. Title: `gh issue edit [N] --repo [OWNER/REPO] --title "[TITLE]"`. Labels: `.agents/skills/github/scripts/github.sh label-add [N] "[LABEL]" --issue` / `label-remove` |
 | supersede, combine, cancel | `gh issue comment [N] --repo [OWNER/REPO] --body "[REASON]"`, then `gh issue close [N] --repo [OWNER/REPO] --reason "not planned"` |
 
-**Create template**: [issue-description-template.md](../templates/issue-description-template.md), or [parent-issue-template.md](../templates/parent-issue-template.md) for a bundle parent (`create_fields.is_bundle_parent: true`). Write the body to a file and pass it by file — Linear `--description-file`, GitHub `--body-file`. Never an inline string or heredoc. In `analyzed` mode the create fields come from `issues[].create_fields`, with `create_fields.labels[]` authoritative, `source_path` supplying `[ORIGIN_CONTEXT]`, and `reach` supplying `[REACH]`. When creating a child, carry the parent's `**Research**:` and `**Decision**:` lines to the top of the child's description.
+**Create template**: [issue-description-template.md](../templates/issue-description-template.md), or [parent-issue-template.md](../templates/parent-issue-template.md) for a bundle parent (`create_fields.is_bundle_parent: true`). Write the body to a file and pass it by file — Linear `--description-file`, GitHub `--body-file`. Never an inline string or heredoc. In `analyzed` mode the create fields come from `issues[].create_fields`, with `create_fields.labels[]` authoritative, `source_path` supplying `[ORIGIN_CONTEXT]`, `reach` supplying `[REACH]`, and `review_born` deciding the `--review-born` flag. When creating a child, carry the parent's `**Research**:` and `**Decision**:` lines to the top of the child's description.
 
 **Superseded issues — Linear**: fetch children (`cache issues children [SUPERSEDED_ID]`), detach any child whose scope the replacement does not cover (`issues update [CHILD_ID] --remove-parent`), comment `"Superseded by [ISSUE_ID]. Scope fully covered."`, then `issues update [SUPERSEDED_ID] --state "Canceled"` — remaining children cascade-cancel.
 

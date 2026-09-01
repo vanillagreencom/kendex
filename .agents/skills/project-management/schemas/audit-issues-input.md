@@ -44,7 +44,7 @@ Input file for `audit-issues --issues`, written by the caller at `[worktree-path
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `source` | Yes | Calling workflow name |
+| `source` | Yes | Calling workflow name. `review` and `pr-comments` make every item review-born, which the analysis carries out as `create_fields.review_born` |
 | `parent_issue` | Yes | The issue being worked on — a hierarchy hint |
 | `tracker` | No | Execution tracker context — see § Tracker |
 | `worktree` | Yes | Worktree path for code analysis |

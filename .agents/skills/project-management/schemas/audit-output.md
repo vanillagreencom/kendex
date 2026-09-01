@@ -113,6 +113,7 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
         "description": "Issue body summary",
         "recommendation": "* Requirements bullets",
         "reach": "the user action, run, check, or shipped producer that arrives at the defect",
+        "review_born": false,
         "location": "path or component",
         "estimate": 3,
         "priority": 2,

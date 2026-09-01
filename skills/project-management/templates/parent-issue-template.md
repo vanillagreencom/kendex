@@ -36,4 +36,5 @@ A **single-PR bundle** — one session, one PR covering every child — is the e
 4. Label the parent with the project's multi-agent label (for example `agent:multi`) when children span 2+ agent domains. A `(one PR)` title marker outranks the label.
 5. A coordination-only parent carries no estimate. Clear it with `issues update [ISSUE_ID] --clear-estimate`; Linear stores "no estimate" and formatters render it as `0`.
 6. Drop any header line with no value; `**Reached by**` is filled or the parent is not created ([issue-description-template.md](issue-description-template.md) § Field Mapping). Omit Acceptance Criteria when the children have none.
-7. After any hierarchy change, regenerate Summary, Sub-Issues, and Acceptance Criteria from the current children.
+7. A coordination parent has no defect of its own, so its `[REACH]` is the run that produced it — the roadmap layer, the audit, or the merge-pr rebundle that detached its children — named as that run, not as a defect. Such a parent is structural and never `--review-born`.
+8. After any hierarchy change, regenerate Summary, Sub-Issues, and Acceptance Criteria from the current children.
