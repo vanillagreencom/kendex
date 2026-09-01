@@ -294,9 +294,15 @@ REACH_RULE='An issue names what reaches it: the user action, run, check, or ship
 # words they refuse `could not` in a report of what a user actually hit.
 REACH_REFUSED_WORDS='(^|[^a-z0-9])((copilot|codex|reviewer|bot|pr|pull request|pull-request) (review|comment|thread|suggestion)|review (thread|comment|round)|code review|prrt_|(the|this) finding|in theory|hypothetical)'
 
-# A value describing an input FORM is a shape, not a producer: no run emits it
-# and no user performs it.
-REACH_REFUSED_SHAPES='^(a|an) .*(containing|starting with|ending with|matching) |^(a|an) (empty|missing|malformed|invalid|unset|blank|null) '
+# A value that IS an input form is a shape, not a producer: no run emits it and
+# no user performs it. Both patterns are anchored end to end and their parts
+# bounded, the same whole-value discipline the words list above needed: a shape
+# word appearing somewhere after a leading article says nothing about the
+# value, and matching on that refused `a user entering a filename containing
+# spaces` and `an invalid cache entry emitted by kendex sync`, each of which
+# names the user action or shipped producer this guard asks for. A value that
+# goes on past the form to name where it comes from is no longer only a form.
+REACH_REFUSED_SHAPES='^(a|an) [a-z]+ (containing|starting with|ending with|matching) [a-z]+( [a-z]+){0,2}$|^(a|an) (empty|missing|malformed|invalid|unset|blank|null) [a-z_]+( [a-z_]+)?$'
 
 # An unsubstituted template placeholder, and a token whose whole meaning is
 # "nothing here", name no more than a blank line does. Both resolve to the

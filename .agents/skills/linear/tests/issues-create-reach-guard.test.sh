@@ -143,8 +143,12 @@ assert_refused_before_api "a reach naming only a shape"
 assert_contains "the shape refusal comes from the value branch" "$ERR" "names no producer"
 
 run_linear issues create --title "From review" \
-  --description "$(printf 'Reached by: an empty state directory the loader never sees\n')"
+  --description "$(printf 'Reached by: an empty state directory\n')"
 assert_refused_before_api "a reach naming an input form"
+
+run_linear issues create --title "From review" \
+  --description "$(printf 'Reached by: a title starting with a dash\n')"
+assert_refused_before_api "a reach naming an input form by its leading character"
 
 run_linear issues create --title "From review" \
   --description "$(printf 'Reached by: a hypothetical second writer\n')"
@@ -171,6 +175,17 @@ assert_created "a reach reporting what a user could not do"
 run_linear issues create --title "Harness install" \
   --description "$(printf 'Reached by: kendex install --harness codex on a fresh project\n')"
 assert_created "a reach naming a harness install command"
+
+# A shape word is not a verdict on the value: both of these name the user
+# action or the shipped producer the rule asks for, and go on past the form to
+# say where it comes from.
+run_linear issues create --title "Spaces in a filename" \
+  --description "$(printf 'Reached by: a user entering a filename containing spaces\n')"
+assert_created "a reach whose user action ends in an input form"
+
+run_linear issues create --title "Bad cache entry" \
+  --description "$(printf 'Reached by: an invalid cache entry emitted by kendex sync\n')"
+assert_created "a reach whose input form names the run that emits it"
 
 # The artifact is what the list refuses, never the words around it: a pull
 # request a user opens, and the pr-comments workflow, are both producers.
