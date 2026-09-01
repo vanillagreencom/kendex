@@ -100,7 +100,9 @@ pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> Result<String, Str
 /// to be small enough to line up against each other at all, because
 /// [`aligned`] holds a cell for every pair of lines and the bodies the
 /// catalog door admits reach far past what that affords. Either one is a
-/// refusal rather than a guess, the way an unreadable wrapper is.
+/// refusal rather than a guess, the way an unreadable wrapper is — and
+/// neither is asked of a rendering that already says the catalog's own
+/// words, which has no pairing to do and so no size to be refused over.
 fn as_authored<'a>(
     kept: &[&'a str],
     rendered: &[&'a str],
@@ -113,6 +115,13 @@ fn as_authored<'a>(
             if rendered.len() == 1 { "" } else { "s" },
             authored.len()
         ));
+    }
+    // Where the rendering says the prose in the catalog's own words there
+    // is nothing to say back: every pair the alignment could make writes
+    // the text already standing there. Answering before the table is what
+    // keeps a body it never needed from being refused over its size.
+    if rendered == authored {
+        return Ok(kept.to_vec());
     }
     let cells = (kept.len() + 1).saturating_mul(rendered.len() + 1);
     if cells > CELLS {
@@ -129,13 +138,13 @@ fn as_authored<'a>(
     Ok(words)
 }
 
-/// The most cells [`aligned`] will hold, which is what bounds the body it
-/// will line up. A rendering the catalog door admits runs to a hundred
+/// The most cells [`aligned`] will hold, which is what bounds the bodies
+/// it will line up. A rendering the catalog door admits runs to a hundred
 /// thousand lines and more, and a cell for every pair of lines is a table
-/// no allocator serves — an abort where this module refuses. The largest
-/// agent rendering in circulation is under two hundred lines, so this
-/// stands orders of magnitude above any body and still inside what one
-/// machine can hold.
+/// no allocator serves — an abort where this module refuses. The bound is
+/// on the two line counts multiplied, so it admits a rendering and a
+/// published prose of two thousand lines each, ten times the longest
+/// agent in circulation, and holds fifteen megabytes doing it.
 const CELLS: usize = 4_000_000;
 
 /// Each kept line paired with the rendered line it stands for, as
@@ -317,8 +326,11 @@ mod tests {
     /// rather than aborting the process the allocator cannot serve.
     #[test]
     fn a_body_too_large_to_line_up_is_refused_before_the_table() {
-        let many = vec!["Use the read_file tool."; 2_001];
-        let problem = as_authored(&many, &many, &many).unwrap_err();
+        // The rendering and the prose have to differ, or there is no
+        // pairing to do and the size is never asked.
+        let rendered = vec!["Use the read_file tool."; 2_001];
+        let authored = vec!["Use the Read tool."; 2_001];
+        let problem = as_authored(&rendered, &rendered, &authored).unwrap_err();
         assert_eq!(
             problem,
             "lining its 2001 rendered lines up against the 2001 kept would take 4008004 cells, past the 4000000 this pairing holds"

@@ -314,3 +314,31 @@ fn deleting_one_of_two_paragraphs_a_harness_renders_alike_keeps_the_survivor() {
     );
     assert_eq!(times(&source, "Use the glob tool."), 0, "{source}");
 }
+
+/// Claude renders a body as it was authored, so there is nothing to line
+/// up and the pairing is never asked for. A body longer than the pairing's
+/// own ceiling still forks, because that ceiling bounds a table this fork
+/// never needs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_body_past_the_pairings_ceiling_forks_where_nothing_was_said_differently() {
+    let long: String = (0..2_100).map(|at| format!("Line {at}.\n")).collect();
+    let w = agent_world(
+        "\"claude\"",
+        &format!("---\nname: rev\ndescription: agent rev\n---\n{long}\nUpstream body.\n"),
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert!(
+        source.contains("Line 2099.") && source.contains("My body."),
+        "the capture lost the body it was asked to keep"
+    );
+}

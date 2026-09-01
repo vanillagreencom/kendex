@@ -261,10 +261,10 @@ pub enum CoreError {
     #[error("keeping '{name}' as your own cannot carry {problem} — nothing was written")]
     ForkWidensAccess { name: String, problem: String },
 
-    /// A fork refused before writing anything: the rendering does not read
-    /// back as what the renderer wrote — its sections do not, so a capture
-    /// could not tell the person's words from the generated ones, or its
-    /// prose does not stand line for line against the catalog's.
+    /// A fork refused before writing anything: the capture could not pair
+    /// this agent's rendering against the prose the catalog publishes,
+    /// which is what tells the person's own words from the generated ones
+    /// and says each line back in the words it was written in.
     #[error("keeping '{name}' as your own cannot read its {harness} rendering: {problem}")]
     ForkWrapperUnreadable {
         name: String,
