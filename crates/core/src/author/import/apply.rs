@@ -85,7 +85,7 @@ pub fn apply(
 /// copied unchanged whatever they are renamed to.
 fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelection) -> Result<()> {
     let wanted = crate::names::leaf(&selection.destination);
-    if wanted == crate::names::leaf(&selection.name) {
+    if wanted == declared_leaf(&selection.name) {
         return Ok(());
     }
     // A candidate name is read off a directory on disk, and the inventory
@@ -100,7 +100,7 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
                 shown(&selection.name),
                 shown(&selection.destination),
                 shown(at),
-                shown(crate::names::leaf(&selection.name)),
+                shown(declared_leaf(&selection.name)),
             ),
         })
     };
@@ -139,6 +139,22 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
         }
     }
     Ok(())
+}
+
+/// The leaf a file inside the item declares: the segment after the last
+/// `/`, whatever the rest of the name is.
+///
+/// Deliberately not [`crate::names::leaf`], which answers whether a name
+/// is installable and hands back the whole string when it is not. The
+/// inventory keeps illegal names on purpose so the wizard can offer them
+/// under a legal destination, and that repair renames nothing — a
+/// declaration inside an item never carried the namespace, so `-bad/foo`
+/// landing at `foo` finds `foo` already written in. Asking the legality
+/// question here made the common repair look like a rename. The
+/// destination keeps `names::leaf`, because `apply` has already put it
+/// past `item_problem` before any of this runs.
+fn declared_leaf(name: &str) -> &str {
+    name.rsplit_once('/').map_or(name, |(_, leaf)| leaf)
 }
 
 /// What to call the file a refusal is about. Shown, never decided on: an

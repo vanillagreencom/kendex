@@ -307,6 +307,51 @@ fn a_renamed_agent_declares_its_destination_and_the_name_less_kinds_are_copied_v
     }
 }
 
+/// An illegal namespace is not a rename. The inventory keeps illegal names
+/// on purpose so the wizard can offer them under a legal destination, and
+/// that is the path here: `-bad/tuned` landing at `tuned` changes no leaf,
+/// because a file inside an item only ever declares its leaf.
+///
+/// The Codex agent is the case that made it matter. For a frontmatter file
+/// the needless rewrite is only wasted work; for that one it refuses an
+/// import that asked for no rename at all.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_illegal_namespace_over_the_same_leaf_is_no_rename() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    let toml = "name = \"tuned\"\ndescription = \"about tuned\"\n";
+    file_item(&root.join(".codex/agents/-bad"), "tuned.toml", toml);
+    let declared = "---\nname: kept\ndescription: about kept\n---\nAgent body.\n";
+    file_item(&root.join(".claude/agents/-bad"), "kept.md", declared);
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-illegal");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let landing = |name: &str, destination: &str| {
+        let mut chosen = selection(find(&candidates, name), false);
+        chosen.destination = destination.to_owned();
+        chosen
+    };
+
+    // A plain leaf and a legal namespace, the two repairs the wizard offers.
+    let selections = [
+        landing("-bad/tuned", "tuned"),
+        landing("-bad/kept", "good/kept"),
+    ];
+    apply(&env, &scopes, &target, &selections).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(target.join("agents/tuned.md")).unwrap(),
+        toml,
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("agents/good/kept.md")).unwrap(),
+        declared,
+    );
+}
+
 /// A parked agent keeps its content at `<name>.md.disabled`, so the file
 /// the bytes come from ends in a suffix that is not a format at all. The
 /// bytes are the frontmatter they always were, so it renames like any
