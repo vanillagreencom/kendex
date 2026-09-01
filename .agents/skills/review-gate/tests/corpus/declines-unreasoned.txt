@@ -205,6 +205,23 @@ Declined: frozen at a1fa74dca; lifecycle.sh 104/104 and the full tools/guard pas
 # the dot, so "tools/guard.sh" goes whole where it used to leave "sh".
 Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard.sh pass at this head.
 
+# --- a path a listed phrase can reach across ------------------------------
+# The path strip runs after both word lists, so a path reaches it only while
+# the lists leave it whole. Every multi-word entry spells its own separator
+# class and none of them carries the slash, which is what keeps
+# "pre existing" from matching across one and lets the strip take
+# "docs/pre/existing" as a single token.
+#
+# This line is the guard on that. Put `/` in those separator classes — the
+# one change that closes the "out of/scope" limit without touching
+# normalization, and so the one a maintainer reaching for that pin will try
+# — and the phrase is eaten out of the middle, "docs/" stops being a path
+# and "docs" stands. Nothing else here moves under that change. The one
+# other red it raises is the "out of/scope" pin becoming caught, which the
+# suite asks the maintainer to move into this file; once moved, the suite is
+# green and the fail-open ships. This line is what still reds after it.
+Declined: frozen at a1fa74dca; docs/pre/existing is green and the full tools/guard pass
+
 # --- a filler word, then a count ------------------------------------------
 # The same shape as the label-phrase section below, with a FILLER word doing
 # the shielding. Both lists run ahead of the strips for one reason, so both
