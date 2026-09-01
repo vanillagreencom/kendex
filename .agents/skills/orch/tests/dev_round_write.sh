@@ -15,6 +15,9 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
 CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
 RETURN_WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
+STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -109,6 +112,9 @@ git -C "$worktree" config user.name Test
 git -C "$worktree" config commit.gpgsign false
 git -C "$worktree" commit -q --allow-empty -m base
 base_sha="$(git -C "$worktree" rev-parse HEAD)"
+init_growth_state "$STATE" "$worktree" issue-1230 1000000
+init_growth_state "$STATE" "$worktree" i 1000000
+init_growth_state "$STATE" "$worktree" issue-826 1000000
 RID="1750000000-77"
 adds_file="$TMP_ROOT/adds.json"
 printf '%s' '["crates/parser/src/lib.rs","skills/orch/scripts/new-check"]' > "$adds_file"
@@ -156,6 +162,67 @@ assert_eq "$(jq -c '[.items[].n]' "$out")" "[1,2]" "identical re-invocation leav
 assert_exit2 "a different item set under the same round id exits 2 (immutable round)" \
   --worktree "$worktree" --issue issue-1230 --round-id "$RID" --item 3 "replacement"
 assert_eq "$(jq -c '[.items[].n]' "$out")" "[1,2]" "the refused rewrite left the original record intact"
+
+# The first implementation receipt fixes the baseline before any push. A fix
+# round at exactly 2x remains valid; the next line refuses on either side of
+# the first push.
+growth_wt="$TMP_ROOT/growth-wt"
+growth_remote="$TMP_ROOT/growth-remote.git"
+mkdir -p "$growth_wt"
+git -C "$growth_wt" init -q -b main
+git -C "$growth_wt" config user.email test@example.com
+git -C "$growth_wt" config user.name Test
+git -C "$growth_wt" config commit.gpgsign false
+git -C "$growth_wt" commit -q --allow-empty -m base
+git -C "$growth_wt" switch -q -c growth
+printf 'one\ntwo\n' > "$growth_wt/change.txt"
+git -C "$growth_wt" add change.txt
+git -C "$growth_wt" commit -q -m implementation
+"$STATE" --state-dir "$growth_wt/tmp" init KEN-GROWTH --worktree "$growth_wt" --branch growth >/dev/null
+growth_head="$(git -C "$growth_wt" rev-parse HEAD)"
+"$RETURN_WRITE" --worktree "$growth_wt" --kind implement --issue KEN-GROWTH --round-id 1-1 \
+  --branch growth --commit "$growth_head" --validate pass >/dev/null
+assert_eq "$("$STATE" --state-dir "$growth_wt/tmp" get KEN-GROWTH .pr.baseline_lines)" "2" \
+  "round 1 records a two-line branch baseline"
+printf 'three\nfour\n' >> "$growth_wt/change.txt"
+git -C "$growth_wt" add change.txt
+git -C "$growth_wt" commit -q -m at-limit
+"$WRITE" --worktree "$growth_wt" --issue KEN-GROWTH --round-id 2-2 --item 1 at-limit >/dev/null
+assert_eq "$([[ -f "$growth_wt/tmp/dev-round-KEN-GROWTH-2-2.json" ]] && echo yes)" "yes" \
+  "a fix round at exactly twice the baseline is unchanged"
+printf 'five\n' >> "$growth_wt/change.txt"
+git -C "$growth_wt" add change.txt
+git -C "$growth_wt" commit -q -m over-limit
+set +e
+growth_error="$("$WRITE" --worktree "$growth_wt" --issue KEN-GROWTH --round-id 3-3 --item 1 over-limit 2>&1)"
+growth_rc=$?
+set -e
+assert_eq "$growth_rc" "2" "a pre-push fix round past twice the baseline is refused"
+assert_eq "$([[ "$growth_error" == *"branch diffstat is 5 lines"* && "$growth_error" == *"round-1 baseline is 2 lines"* && "$growth_error" == *"2x"* ]] && echo yes)" \
+  "yes" "the refusal prints both numbers and the rule"
+git init -q --bare "$growth_remote"
+git -C "$growth_wt" remote add origin "$growth_remote"
+git -C "$growth_wt" push -q origin main growth
+set +e
+"$WRITE" --worktree "$growth_wt" --issue KEN-GROWTH --round-id 4-4 --item 1 after-push >/dev/null 2>&1
+after_push_rc=$?
+set -e
+assert_eq "$after_push_rc" "2" "the same oversized branch is refused after its first push"
+
+# Must-fail control: remove the one live tripwire call and the oversized round
+# writes successfully. The substitution proves its one match and changed file.
+mutant_root="$TMP_ROOT/tripwire-mutant"
+mkdir -p "$mutant_root"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$mutant_root/"
+mutant_write="$mutant_root/scripts/dev-round-write"
+assert_eq "$(grep -Fc 'enforce_size_tripwire "$worktree" "$issue" "$SCRIPT_DIR"' "$mutant_write")" "1" \
+  "tripwire control finds exactly one live gate call"
+sed -i.bak 's|^enforce_size_tripwire "$worktree" "$issue" "$SCRIPT_DIR".*$|: # tripwire removed by must-fail control|' "$mutant_write"
+assert_eq "$([[ "$(grep -Fc 'enforce_size_tripwire "$worktree" "$issue" "$SCRIPT_DIR"' "$mutant_write")" == 0 ]] && ! cmp -s "$mutant_write" "$WRITE" && echo yes)" \
+  "yes" "tripwire control removes the gate only from its private copy"
+"$mutant_write" --worktree "$growth_wt" --issue KEN-GROWTH --round-id 5-5 --item 1 mutant >/dev/null
+assert_eq "$([[ -f "$growth_wt/tmp/dev-round-KEN-GROWTH-5-5.json" ]] && echo yes)" "yes" \
+  "must-fail control goes red when the size check is removed"
 
 # A partial record pair is never repaired after delegation. The orchestrator
 # mints a fresh round instead of recreating authorization or baseline state.
@@ -335,6 +402,7 @@ git -C "$linked_main" config user.name Test
 git -C "$linked_main" config commit.gpgsign false
 git -C "$linked_main" commit -q --allow-empty -m base
 git -C "$linked_main" worktree add -q -b linked "$linked_wt"
+init_growth_state "$STATE" "$linked_wt" issue-826 1000000
 "$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 30-30 --item 1 linked >/dev/null
 linked_auth="$linked_main/.git/kendex/dev-round-authorizations/issue-826-30-30.json"
 assert_eq "$([[ -f "$linked_auth" && ! -e "$linked_wt/.git/kendex/dev-round-authorizations/issue-826-30-30.json" ]] && echo yes)" \
@@ -524,6 +592,7 @@ git -C "$wait_round" config user.email test@example.com
 git -C "$wait_round" config user.name Test
 git -C "$wait_round" config commit.gpgsign false
 git -C "$wait_round" commit -q --allow-empty -m base
+init_growth_state "$STATE" "$wait_round" issue-826 1000000
 wait_head="$(git -C "$wait_round" rev-parse HEAD)"
 "$WRITE" --worktree "$wait_round" --issue issue-826 --round-id 21-21 --item 1 wait >/dev/null
 ( sleep 2; "$RETURN_WRITE" --worktree "$wait_round" --kind fix --issue issue-826 --round-id 21-21 \

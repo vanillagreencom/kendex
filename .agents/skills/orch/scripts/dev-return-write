@@ -84,6 +84,10 @@
 set -euo pipefail
 
 PROG="dev-return-write"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=lib/branch-growth.sh
+source "$SCRIPT_DIR/lib/branch-growth.sh"
 
 # Path-safe token grammar for --issue / --round-id: no '/', no '..', no
 # whitespace, so a value can never escape the tmp/ directory.
@@ -106,6 +110,8 @@ Usage:
     [--qa-label LABEL]... [--no-summary]
 
 Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
+The first implement receipt records additions plus deletions against the base
+branch as workflow state pr.baseline_lines; later receipts preserve it.
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
 REASONING must be non-empty. --validate is "pass" or begins with "FAILING:".
 --validate-note carries a qualified result the enumeration cannot express (a lane
@@ -319,6 +325,11 @@ if [[ "$kind" == "fix" || "$bundled" == "true" ]]; then
   if (( ${#item_n[@]} == 0 )); then
     die "at least one --item is required for --kind fix or --bundled"
   fi
+fi
+
+if [[ "$kind" == "implement" ]]; then
+  record_branch_baseline "$worktree" "$issue" "$SCRIPT_DIR" \
+    || die "$BRANCH_GROWTH_ERROR"
 fi
 
 # --- Build the two variable-length arrays deterministically with jq ---

@@ -23,6 +23,7 @@ mkdir -p "$WT"
 git -C "$WT" init -q -b main
 git -C "$WT" -c user.email=t@t -c user.name=t commit -q --allow-empty -m seed
 SHA="$(git -C "$WT" rev-parse HEAD)"
+"$SCRIPTS/workflow-state" --state-dir "$WT/tmp" init T-1 --worktree "$WT" --branch main >/dev/null
 
 # --- dev-artifact-check verdicts ---
 v() { "$SCRIPTS/dev-artifact-check" --worktree "$WT" --issue T-1 --round-id "$1" 2>/dev/null | jq -r '.verdict'; }

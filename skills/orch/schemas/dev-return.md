@@ -4,6 +4,8 @@ The on-disk record a dev or QA agent writes at the end of an implement, fix, or 
 
 Written **only** by `dev-return-write` — never hand-authored, never composed with a file-write tool. The writer builds the JSON with `jq` and writes it atomically; its `--help` is the flag reference. Validation gates live in `dev-artifact-check --help`; round-closure routing in [`../references/artifact-checks.md`](../references/artifact-checks.md).
 
+The first `implement` receipt also records the branch's additions plus deletions in workflow state as `pr.baseline_lines`. Later implementation receipts preserve that baseline.
+
 ## Identity: the round id
 
 Each delegation stamps a unique token (`workflow-state new-round-id [ISSUE] dev_round_id`) and embeds it in the delegation. The artifact is bound to that token twice: its filename is `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json`, and it carries `"round_id": ROUND_ID` inside. `dev-artifact-check --round-id RID` resolves that exact path and requires the internal token to match.

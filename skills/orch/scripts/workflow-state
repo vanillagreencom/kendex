@@ -134,6 +134,9 @@ cmd_init() {
         fixed_items: [],
         escalated_items: [],
         audit_issues_created: [],
+        pr: {
+          baseline_lines: null
+        },
         pr_review_baseline: null,
         pr_comment_review: {
           iterations: 0,

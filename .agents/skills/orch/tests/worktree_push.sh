@@ -16,6 +16,8 @@ STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 ROUND_WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
 RETURN_WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
 ARTIFACT_CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -188,6 +190,7 @@ git -C "$restack_wt" config user.name Test
 git -C "$restack_wt" config commit.gpgsign false
 git -C "$restack_wt" commit -q --allow-empty -m delegation-base
 restack_old="$(git -C "$restack_wt" rev-parse HEAD)"
+init_growth_state "$STATE" "$restack_wt" KEN-RESTACK 1000000
 "$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 1-1 --item 1 restack >/dev/null
 mkdir -p "$restack_wt/tools"
 printf 'upstream\n' > "$restack_wt/tools/upstream-tool"
@@ -431,6 +434,7 @@ git -C "$wt" config user.email test@example.com
 git -C "$wt" config user.name Test
 git -C "$wt" commit -q --allow-empty -m alias-base
 alias_old="$(git -C "$wt" rev-parse HEAD)"
+init_growth_state "$STATE" "$wt" issue-7 1000000
 "$ROUND_WRITE" --worktree "$wt" --issue issue-7 --round-id 5-5 --item 1 alias >/dev/null
 git -C "$wt" commit -q --allow-empty -m alias-restack
 alias_new="$(git -C "$wt" rev-parse HEAD)"
@@ -478,6 +482,7 @@ printf 'first\n' >"$duplicate_wt/first.txt"
 git -C "$duplicate_wt" add first.txt
 git -C "$duplicate_wt" commit -q -m 'same subject'
 duplicate_first="$(git -C "$duplicate_wt" rev-parse HEAD)"
+init_growth_state "$STATE" "$duplicate_wt" KEN-DUPLICATE 1000000
 "$ROUND_WRITE" --worktree "$duplicate_wt" --issue KEN-DUPLICATE --round-id 1-1 --item 1 duplicate >/dev/null
 printf 'second\n' >"$duplicate_wt/second.txt"
 git -C "$duplicate_wt" add second.txt

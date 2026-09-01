@@ -2,6 +2,8 @@
 
 The on-disk record of a fix round's delegated items, starting commit, and allowed protected additions. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation.
 
+Before writing either record, `dev-round-write` compares the branch's additions plus deletions with workflow state `pr.baseline_lines`. A branch above twice its first implementation round is refused and must be cut before another fix round can start.
+
 ## Identity: the round id
 
 The recovery copy is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`. The authorization is `<git-common-dir>/kendex/dev-round-authorizations/[ISSUE_ID]-[ROUND_ID].json`, outside the delegated worktree. Both carry `"round_id": ROUND_ID`; readers require both regular files and exact equality across issue, round id, base SHA, additions, and items. The external authorization alone carries Boolean `live`, initially `true`.

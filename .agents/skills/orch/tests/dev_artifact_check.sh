@@ -13,13 +13,14 @@
 # accepted on the return message plus the pushed fix commit rather than on a
 # stale artifact.
 set -euo pipefail
-
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
+STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-
 PASS=0
 FAIL=0
 
@@ -279,6 +280,7 @@ set -e
 WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
 rt_wt="$TMP_ROOT/rt"
 mkdir -p "$rt_wt"
+init_growth_state "$STATE" "$rt_wt" issue-9 1000000
 rt_impl="$("$WRITE" --worktree "$rt_wt" --kind implement --issue issue-9 --round-id 5-6 --branch b --commit c --validate pass)"
 assert_eq "$([[ -f "$rt_impl" ]] && echo yes)" "yes" "writer produced the round-scoped implement artifact"
 assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 5-6)" "valid" "writer implement output round-trips as valid"
@@ -300,6 +302,7 @@ git -C "$rr_wt" config user.email test@example.com
 git -C "$rr_wt" config user.name Test
 git -C "$rr_wt" config commit.gpgsign false
 git -C "$rr_wt" commit -q --allow-empty -m base
+init_growth_state "$STATE" "$rr_wt" issue-9 1000000
 rr_head="$(git -C "$rr_wt" rev-parse HEAD)"
 "$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 \
   --item 1 "fix nil deref" --item 2 "cover expiry" >/dev/null
@@ -382,6 +385,7 @@ git -C "$adds_wt" config user.email test@example.com
 git -C "$adds_wt" config user.name Test
 git -C "$adds_wt" config commit.gpgsign false
 git -C "$adds_wt" commit -q --allow-empty -m base
+init_growth_state "$STATE" "$adds_wt" issue-826 1000000
 
 "$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 1-1 --item 1 "fix finding" >/dev/null
 mkdir -p "$adds_wt/.agents/skills/orch/scripts" "$adds_wt/crates/new-parser" "$adds_wt/helpers" \
@@ -454,6 +458,7 @@ git -C "$diverge_wt" config user.email test@example.com
 git -C "$diverge_wt" config user.name Test
 git -C "$diverge_wt" config commit.gpgsign false
 git -C "$diverge_wt" commit -q --allow-empty -m base
+init_growth_state "$STATE" "$diverge_wt" issue-826 1000000
 "$ROUND_WRITE" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --item 1 compare >/dev/null
 git -C "$diverge_wt" checkout -q --orphan divergent
 git -C "$diverge_wt" commit -q --allow-empty -m divergent
