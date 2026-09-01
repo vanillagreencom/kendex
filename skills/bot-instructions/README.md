@@ -9,10 +9,15 @@ the contract the generator will be built against.
 
 Five bots read four incompatible surfaces. Codex reads `AGENTS.md` § Code
 Review Rules and nothing else. Copilot code review reads
-`.github/copilot-instructions.md` and path-scoped
-`.github/instructions/*.instructions.md`. CodeRabbit reads a single
-`.coderabbit.yaml` that outranks its dashboard. Qodo reads `.pr_agent.toml` and
-`best_practices.md`. Macroscope reads a `.macroscope/` tree. Written by hand,
+`.github/copilot-instructions.md`, path-scoped
+`.github/instructions/*.instructions.md`, and `AGENTS.md`. CodeRabbit reads a
+single `.coderabbit.yaml` that outranks its dashboard, plus `AGENTS.md` where
+that file points it. Qodo reads `.pr_agent.toml` and `best_practices.md`.
+Macroscope reads a `.macroscope/` tree.
+
+Three of the five reach that `AGENTS.md` section, which is why it is the
+doctrine root and why a TOML turning `codex` off with `copilot` or `coderabbit`
+on is a schema error rather than a supported configuration. Written by hand,
 one repo's review doctrine drifts from the next repo's, and an exclusion list
 falls behind the tree it excludes without anything saying so.
 

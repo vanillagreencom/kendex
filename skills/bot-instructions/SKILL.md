@@ -246,6 +246,13 @@ whether a render validates. This list is the one statement of it; the checklist
 line points here rather than repeating it, so the two cannot drift.
 
 - Every render input above.
+- This package's own installed tree: the generator and the validators, not only
+  the doctrine source and routing table the render inputs already name. They
+  decide whether a render validates, which is half the definition above. The
+  trusted CI checkout is why an edit to them cannot fool `check` in CI — that
+  lane runs the default branch's copy — but the local verbs run the head's, and
+  a policy path is about what a push invalidates rather than about what one
+  lane happens to read.
 - Every generated path.
 - Every `AGENTS.md` in the repo. Codex reads the nearest nested one, so a file
   the root render never touches still reaches it.

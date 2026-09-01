@@ -184,6 +184,15 @@ can reach. Lengths count Unicode code points, which is what the schema's
 `maxLength` counts; `[tone] coderabbit` is required to be ASCII so the local
 count and the vendor's cannot disagree.
 
+**Rejects, the completeness clause.** A top-level property the vendored schema
+defines that the render does not carry. Schema validation alone judges what is
+present and says nothing about what is absent, so a render that dropped a
+property would validate while that setting silently resumed resolving down the
+unversioned ladder — which is the whole thing full state exists to stop.
+`renders.md` promises every top-level property; this is what holds the promise,
+and it is what makes the next schema refresh report a newly added property
+instead of quietly widening the gap.
+
 **Rejects, also.** A missing, unreadable or unparseable
 `.bot-instructions/coderabbit-schema.json`, whenever `[bots] coderabbit` is
 true, on both verbs. Never a skipped validator: no verb writes that file, so

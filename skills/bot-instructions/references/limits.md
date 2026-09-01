@@ -1,17 +1,25 @@
 # Vendor limits and read semantics
 
-Every number the generator enforces is here with the page that states it. A
-limit the generator holds that this file does not carry is a defect: the
-generator's job is to encode what a vendor documents, not what someone
-remembers.
+Every number the generator enforces that comes from a vendor is here with the
+page that states it. One the generator holds and this file does not carry is a
+defect: the generator's job is to encode what a vendor documents, not what
+someone remembers.
+
+A number the package derives from a file format rather than from a vendor is
+out of scope here and lives with the rule it belongs to. There is one: the
+heading predicate's three-or-fewer leading spaces, which is markdown's, and
+which `schemas/repo-toml.md` § The content refusals states once for every reader
+of it.
 
 **Two kinds of number, and a row says which it is.** A **cap** is a boundary the
 vendor rejects on: exceed it and the vendor discards or refuses the input, so
 the generator holds it because the alternative is a silent failure. A
 **recommendation** is writing guidance the vendor gives with no stated
-consequence; where the generator holds one, it is this package's own budget
-taken from that guidance, and the row says so. Presenting a recommendation as a
-cap would tell a reader a render was rejected for a reason no vendor states.
+consequence. Where the generator holds a number taken from one, that is a
+**package budget** and gets its own row saying so, beside the recommendation it
+came from, so a reader meeting the number in a failure message can find both.
+Presenting a recommendation as a cap would tell a reader a render was rejected
+for a reason no vendor states.
 
 Vendor caps move. When a render fails on a limit that looks wrong, re-read the
 cited page before raising the number in code.
@@ -23,15 +31,15 @@ Source of truth is the published schema itself,
 rather than fetching at check time. Prose reference:
 <https://docs.coderabbit.ai/reference/configuration>.
 
-| What | Value | Where |
-|------|-------|-------|
-| `tone_instructions` | 250 characters | schema `maxLength` |
-| `reviews.path_instructions[].instructions` | 20,000 characters | schema `maxLength` |
-| `reviews.labeling_instructions[].instructions` | 3,000 characters | schema `maxLength` |
-| `reviews.finishing_touches.custom[].instructions` | 10,000 characters, 5 entries | schema `maxLength`, `maxItems` |
-| `reviews.pre_merge_checks.custom_checks[].instructions` | 10,000 characters, 50 entries | schema `maxLength`, `maxItems` |
-| `reviews.profile` | `quiet`, `chill`, `assertive` | schema `enum` |
-| Unknown top-level key | rejected | root `additionalProperties: false` |
+| What | Value | Where | Kind |
+|------|-------|-------|------|
+| `tone_instructions` | 250 characters | schema `maxLength` | cap |
+| `reviews.path_instructions[].instructions` | 20,000 characters | schema `maxLength` | cap |
+| `reviews.labeling_instructions[].instructions` | 3,000 characters | schema `maxLength` | cap |
+| `reviews.finishing_touches.custom[].instructions` | 10,000 characters, 5 entries | schema `maxLength`, `maxItems` | cap |
+| `reviews.pre_merge_checks.custom_checks[].instructions` | 10,000 characters, 50 entries | schema `maxLength`, `maxItems` | cap |
+| `reviews.profile` | `quiet`, `chill`, `assertive` | schema `enum` | cap |
+| Unknown top-level key | rejected | root `additionalProperties: false` | cap |
 
 Only the first two are reachable from this package's renders. The rest are
 listed because a future render that reaches them inherits a real cap.
@@ -68,13 +76,14 @@ sparse-checkout.
 <https://docs.github.com/en/copilot/reference/custom-instructions-support> and
 <https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions>
 
-| What | Value |
-|------|-------|
-| Character cap on instruction files | none is documented. Third-party writeups still cite a 4,000-character cut-off on `copilot-instructions.md` and `*.instructions.md`; GitHub removed it |
-| Size guidance | "Instructions must be no longer than 2 pages" |
-| `excludeAgent` values | `code-review`, `cloud-agent`. The value names the agent the file is hidden **from**, so `cloud-agent` keeps a file from the working agent and leaves code review reading it, and `code-review` does the reverse. They are not interchangeable |
-| `applyTo` on an empty or absent value | the file matches nothing and never loads |
-| `applyTo` | a single string holding comma-separated globs |
+| What | Value | Kind |
+|------|-------|------|
+| Character cap on instruction files | none is documented. Third-party writeups still cite a 4,000-character cut-off on `copilot-instructions.md` and `*.instructions.md`; GitHub removed it | — |
+| Size guidance | "Instructions must be no longer than 2 pages" | recommendation |
+| `[budgets] copilot_chars` | 6000 characters, this package's reading of two pages, and the default a repo may raise | package budget |
+| `excludeAgent` values | `code-review`, `cloud-agent`. The value names the agent the file is hidden **from**, so `cloud-agent` keeps a file from the working agent and leaves code review reading it, and `code-review` does the reverse. They are not interchangeable | — |
+| `applyTo` on an empty or absent value | the file matches nothing and never loads | — |
+| `applyTo` | a single string holding comma-separated globs | — |
 
 **What code review reads.** On GitHub.com: `.github/copilot-instructions.md`,
 `.github/instructions/**/*.instructions.md`, agent instructions (`AGENTS.md`),
@@ -135,7 +144,7 @@ Merge, which is why the render writes both.
 
 | What | Value | Kind | Line |
 |------|-------|------|------|
-| `best_practices.md` per file | "Keep files relatively short (under ~800 lines)" | recommendation | Review, and the same words on the Merge page at `/v1/features/best-practices` |
+| `best_practices.md` per file | "Keep files relatively short (under ~800 lines)" | recommendation, held unchanged as the package budget `qodo-best-practices` fails over | Review, and the same words on the Merge page at `/v1/features/best-practices` |
 | Automatic `best_practices.md` loading | a Qodo Merge (commercial) feature, absent from open-source PR-Agent | — | Merge |
 
 **The 800 is a recommendation, and the budget built on it is this package's.**
