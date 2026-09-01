@@ -313,6 +313,12 @@ fn its_own_catalog(home: &Path) -> std::path::PathBuf {
 /// the record belongs to another tree: verify refuses at the door, and past
 /// that every row reads as an install rebound to a source nobody moved.
 /// Nothing composing these verbs in a worktree can then be checked at all.
+///
+/// The verify assertions dominate the whole case: verify errors at the door
+/// on any refusal, so they are what reds first for every implementation
+/// that fails this. The check assertions below say the same thing in the
+/// verb whose exit code composes into a session hook, and the section-title
+/// one is the more specific message of the two.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock() {
@@ -348,14 +354,14 @@ fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock()
 
     let checked = kendex(home, &worktree, &["check"]);
     let printed = String::from_utf8_lossy(&checked.stdout).into_owned();
+    assert!(
+        !printed.contains("could not check"),
+        "no could-not-check section stands in for the answer: {printed}"
+    );
     assert_eq!(
         checked.status.code(),
         Some(0),
         "check reads the same record and reaches the same verdict: {printed}"
-    );
-    assert!(
-        !printed.contains("could not check"),
-        "no could-not-check section stands in for the answer: {printed}"
     );
 }
 

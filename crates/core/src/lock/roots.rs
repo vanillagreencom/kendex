@@ -177,13 +177,17 @@ fn same_directory(recorded: &Path, root: &Path) -> bool {
 /// root and waves through whatever happens to sit under it, a person's own
 /// file among it.
 ///
-/// The last arm is the invariant itself rather than a case: whatever the
-/// remainder turns out to be, what this hands back sits under the root
-/// reading. `Path::join` drops its base when handed an absolute path, so a
-/// remainder that is not relative would otherwise carry a position across
-/// untouched and call it resolved. [`resolve`] refuses a recorded root
-/// that could produce one, which leaves this arm proving that guard rather
-/// than waiting for a record to reach it.
+/// The last arm is the invariant itself rather than a case, and no test
+/// reaches it. `Path::join` drops its base when handed an absolute path,
+/// so a remainder that is not relative would carry a position across
+/// untouched and call it resolved — and `strip_prefix` returns an absolute
+/// remainder in exactly one shape, an empty prefix, which is a recorded
+/// root [`resolve`] refuses before this is ever called. A `..` remainder
+/// is relative and still starts with the reading root, which is
+/// [`refuse_foreign_paths`]'s to judge, not this one's. So the arm states
+/// that nothing this produces can leave the reading root, rather than that
+/// no caller currently hands it one, and a reader should not go looking
+/// for a fixture that cannot be built.
 fn rejoined(
     path: &Path,
     key: &str,
@@ -274,32 +278,39 @@ fn resolve_provenance(root: &Path, reading: &Path, provenance: &mut String) {
 /// say: a remainder can itself walk back out. Provenance is the looser
 /// half, and [`resolve_provenance`] says where it stops.
 ///
-/// Three roots leave nothing to state a remainder against, and reading the
+/// Some roots leave nothing to state a remainder against, and reading the
 /// paths as this project's anyway is exactly the guess the refusal exists
 /// to stop. One the record does not name. One that is no path on this
 /// machine, a relative root naming a different place per process. And one
-/// the record names relatively or not at all, which is worse than useless
-/// as a prefix: `strip_prefix("")` matches every path and hands it back
-/// whole, so the rebase would come out the identity function while the
-/// record was stamped as this project's. The global lock names no root
-/// because it has none, each harness owning a directory of its own, and
-/// has nothing to resolve against.
+/// no project could sit at, which is worse than useless as a prefix:
+/// `strip_prefix("")` matches every path and hands it back whole, and `/`
+/// prefixes every absolute path, so either way the rebase comes out the
+/// identity function while the record is stamped as this project's. The
+/// global lock names no root because it has none, each harness owning a
+/// directory of its own, and has nothing to resolve against.
 fn resolve(path: &Path, reading: &Path, lock: &mut Lock) -> Result<()> {
     let Some(recorded) = lock.root.clone() else {
         return Err(CoreError::LockWithoutProject {
             path: path.to_path_buf(),
         });
     };
-    // Spelling, not directory identity. What the rebase strips off each
-    // position is the prefix the record spells, so a root that names this
-    // directory in another spelling still has positions to move: leave
-    // `/old`, a link to `/new`, standing and both sides canonicalize to
-    // `/new` while every position the record holds is still spelled under
-    // `/old`.
+    // Spelling, not directory identity, because what the rebase strips off
+    // each position is the prefix the record spells. A root that names this
+    // same directory in another spelling still has every position to move:
+    // a record rooted at `via`, a link to `real`, spells its positions
+    // under `via` too, so read at `real` it must strip `via` and rejoin. Ask
+    // whether the two roots resolve alike and the strip is skipped while
+    // those positions keep the other spelling, and every one of them is
+    // then outside the root reading.
     if recorded == reading {
         return Ok(());
     }
-    if !recorded.is_absolute() || !reading.is_absolute() {
+    // A root has to be one a project could sit at before it can be stripped
+    // off anything. Absolute rules out the empty and relative spellings; a
+    // parent rules out `/`, which is absolute and just as vacuous — every
+    // absolute position states a remainder of it, so the rebase would hand
+    // back each one unmoved and stamp the record as this project's.
+    if !recorded.is_absolute() || recorded.parent().is_none() || !reading.is_absolute() {
         return Err(CoreError::LockFromAnotherProject {
             path: path.to_path_buf(),
             recorded,

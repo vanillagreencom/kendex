@@ -81,13 +81,13 @@ pub(super) fn fold_commit_hooks(
         let (class, text) = match kendex_core::guard::locally_armed(&repo) {
             // No helper, so nothing here is ours to run and the package
             // has nothing to be asked about. The sentence says the one
-            // thing that was measured and stops. It used to add that
-            // nothing had armed the repository, which the helper's absence
-            // does not establish — the lane hooks are three files and this
-            // reads one — and before that it named `kendex guard install`,
-            // a remedy that stands down under a configured `core.hooksPath`
-            // and would have been offered every session for ever. What the
-            // state means is the package's to say, and it is invited.
+            // thing that was measured and stops. Not that nothing armed the
+            // repository, which the helper's absence does not establish —
+            // the lane hooks are three files and this reads one. And no
+            // remedy: `kendex guard install` stands down under a configured
+            // `core.hooksPath`, so offering it here would offer it every
+            // session for ever. What the state means is the package's to
+            // say, and it is invited.
             Ok(false) => (
                 Class::Drift,
                 Text::Own(format!(
@@ -109,19 +109,18 @@ pub(super) fn fold_commit_hooks(
                 // A declaration with nothing at all to run is a missing
                 // render: the lock already records the package, so
                 // `kendex add` would be advice about a state the reader is
-                // not in. Drift with a remedy, which is what it was before
-                // this fold delegated. A search that could not be made says
-                // so instead.
+                // not in. Drift with a remedy. A search that could not be
+                // made says so instead.
                 //
-                // And it stops at the two things that were read. It used to
-                // add that every commit therefore fails, which the license
-                // above does not establish: that is one stat on the helper,
-                // and the lanes that invoke the helper are separate files
-                // nothing here opens. Delete those and leave the helper,
-                // and commits go through while this line says they cannot.
-                // What git does next is the package's to report, and
-                // reading the lane files to find out is the second grammar
-                // this module exists to be rid of.
+                // And it stops at the two things that were read. Not that
+                // every commit therefore fails, which the license above
+                // does not establish: that is one stat on the helper, and
+                // the lanes that invoke it are separate files nothing here
+                // opens. Delete those and leave the helper, and commits go
+                // through while this line says they cannot. What git does
+                // next is the package's to report, and reading the lane
+                // files to find out is the second grammar this module
+                // exists to be rid of.
                 Err(error) => match kendex_core::guard::installer_present(&repo) {
                     Ok(false) => (
                         Class::Drift,
@@ -185,17 +184,16 @@ fn relayed(producer: &str, line: String) -> kendex_core::drift::report::Text {
 /// that ordering is the point. A summary line is the one thing the package
 /// promises on stdout, and it promises it only once `--check` has run:
 /// arriving without one means the script died before reaching it, and no
-/// exit code it happens to carry makes that a measurement. Read exit-first,
-/// an `install-git-hooks` truncated at a clean `}` boundary exits 0 and the
-/// whole fold reported `all clear` about a repository it never checked;
-/// exit 1 became the package's "not armed"; and every arm added later would
-/// have had to remember the same thing again.
+/// exit code it happens to carry makes that a measurement. An
+/// `install-git-hooks` truncated at a clean `}` boundary exits 0, which
+/// read exit-first is `all clear` about a repository nothing checked.
+/// Asking here rather than in each arm is what keeps every later arm from
+/// having to remember it.
 ///
 /// What is asked is whether the line IS the summary, not whether stdout
 /// held anything. Silence is one way to arrive without a verdict and not
-/// the only one: a half-synced installer that prints something of its own
-/// and exits 0 walked straight past a guard that only tested for emptiness,
-/// and `all clear` came back about hooks nobody had looked at.
+/// the only one: a half-synced installer prints something of its own and
+/// exits 0, which a guard testing only for emptiness waves through.
 fn verdict_of(
     report: &kendex_core::guard::GuardReport,
 ) -> Option<(

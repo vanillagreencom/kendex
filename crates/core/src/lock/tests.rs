@@ -347,17 +347,18 @@ fn a_travelled_record_claiming_a_position_its_own_root_never_held_is_refused() {
     );
 }
 
-/// A root the record names relatively, or not at all, is refused before
-/// anything is stripped with it.
+/// A root no project could sit at is refused before anything is stripped
+/// with it.
 ///
-/// It is worse than useless as a prefix. `strip_prefix("")` matches every
-/// path and hands it back whole, so the rebase would come out the identity
-/// function: every position carried across naming the checkout that wrote
-/// it, under a record now stamped as this project's. The containment check
-/// behind it only asks whether a position sits under the reading root, so
-/// a claim on a person's own file inside this project would pass.
+/// Each of these is worse than useless as a prefix. `strip_prefix("")`
+/// matches every path and hands it back whole, and `/` prefixes every
+/// absolute path there is, so the rebase comes out the identity function:
+/// every position carried across naming the checkout that wrote it, under
+/// a record now stamped as this project's. The containment check behind it
+/// only asks whether a position sits under the reading root, so a claim on
+/// a person's own file inside this project would pass.
 #[test]
-fn a_project_lock_naming_its_root_relatively_is_refused() {
+fn a_project_lock_naming_a_root_no_project_could_sit_at_is_refused() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("here");
     std::fs::create_dir_all(root.join("vendor")).unwrap();
@@ -365,7 +366,9 @@ fn a_project_lock_naming_its_root_relatively_is_refused() {
     // A position inside the project reading the record, which is what a
     // vacuous prefix would wave through.
     let mine = root.join("vendor/mine");
-    for spelling in ["", "wrote/here"] {
+    // `/` is the third: absolute, so it passes the test the other two
+    // fail, and a prefix of every absolute path there is.
+    for spelling in ["", "wrote/here", "/"] {
         recording(&path, "skill:gh:claude", &mine, Some(Path::new(spelling)));
         let refused = load(&path).unwrap_err();
         assert!(
@@ -407,6 +410,48 @@ fn a_lock_read_at_a_relative_path_that_resolves_to_nothing_is_refused() {
         ),
         "{refused:?}"
     );
+}
+
+/// One directory reached through two spellings is still two prefixes.
+///
+/// A record written under `via`, a link to `real`, spells every position it
+/// holds under `via` as well. Read at `real` the two roots resolve to one
+/// directory, so a comparison asking that question skips the strip and
+/// leaves every position spelled under `via` — outside the root reading,
+/// and refused. What settles it is the spelling, because the spelling is
+/// what comes off the front of each position.
+#[test]
+#[cfg(unix)]
+fn a_record_rooted_through_a_link_resolves_onto_the_spelling_reading_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let via = tmp.path().join("via");
+    std::os::unix::fs::symlink(&real, &via).unwrap();
+    assert_eq!(
+        crate::paths::canonical(&via).unwrap(),
+        crate::paths::canonical(&real).unwrap(),
+        "the two spellings are one directory, which is what makes this the case"
+    );
+
+    // Written under `via`, positions and root alike, and read at `real`.
+    recording(
+        &real.join(LOCK_FILE),
+        "skill:gh:claude",
+        &via.join(".agents/skills/gh"),
+        Some(&via),
+    );
+    let lock = load(&real.join(LOCK_FILE)).unwrap();
+    assert_eq!(
+        lock.entries["skill:gh:claude"]
+            .emitted
+            .as_ref()
+            .unwrap()
+            .paths,
+        vec![real.join(".agents/skills/gh")],
+        "the position comes off `via` and lands under the spelling reading it"
+    );
+    assert_eq!(lock.root, Some(crate::paths::canonical(&real).unwrap()));
 }
 
 /// Provenance is resolved wherever the record keeps it, not only on the

@@ -32,19 +32,25 @@ gg_shell_quote() { # VALUE -> the value, safe inside single quotes
   printf '%s' "${1//$sq/$sq\\$sq$sq}"
 }
 
-# What one checkout bakes in, which another checkout of the same repository
-# bakes differently.
+# The one baked value another checkout of the same project bakes
+# differently.
 #
-# `installed_scripts` and `project_rel` both name where THIS install sits,
-# and a linked worktree shares one hooks directory with the checkout that
-# armed it — so the helper a worktree would write differs from the armed one
-# in exactly these lines while running exactly the same program. A verifier
-# that compared them would call every worktree's helper unverifiable
-# forever, which is what [`GG_PER_CHECKOUT_KEYS`] in lib/hook-check.sh
-# exists to stop.
+# A linked worktree shares one hooks directory with the checkout that armed
+# it, and `installed_scripts` is where THAT install sits — so the helper a
+# worktree would write differs here and nowhere else while running exactly
+# the same program. Comparing it would call every worktree's armed helper
+# unverifiable forever, which is what this list exists to stop.
+#
+# `project_rel` is NOT on it and must not be. It names the project that
+# armed the repository, which is the only thing telling two kendex projects
+# in one repository apart: the helper is what licenses a session to run a
+# checkout-supplied installer, so a project whose own `project_rel` differs
+# from the armed one has not been armed and must not be served. Excusing it
+# hands project B the consent project A gave. `skill_roots` is the
+# package's own list and is not per-anything.
 #
 # Names, not line numbers: the check finds each line by its key.
-GG_PER_CHECKOUT_KEYS='installed_scripts project_rel'
+GG_PER_CHECKOUT_KEYS='installed_scripts'
 
 # The head this install would bake. Split from the program below because
 # only the program is the same bytes everywhere.

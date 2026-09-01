@@ -19,33 +19,119 @@ set -euo pipefail
 # the summary still learns what is wrong and where. The remedy is the other
 # stream's: a core.hooksPath stand-down puts git's report on stderr, because
 # it is as many lines as git gives and stdout stays one line.
-# What this installer would write, with the per-checkout values the helper
-# on disk carries instead of this checkout's.
+# The value a baked line carries, if the line is one this installer's
+# quoter wrote.
 #
-# Every byte still has to match — the program, the comments, the roots this
-# package bakes — except the values [`GG_PER_CHECKOUT_KEYS`] names, which say
-# where the install that armed the repository sits. A linked worktree shares
-# one hooks directory with the checkout that armed it, so a helper compared
-# against what the worktree itself would write differs in those lines and
-# nowhere else, and comparing them called every worktree's hooks
-# unverifiable while they were armed and running.
+# By round trip, never by reading the line as shell. What sits between the
+# first quote and the last is unescaped and then re-escaped, and the line
+# has to come back byte for byte — so a value carrying a closing quote and
+# anything after it, a reopened quote, or a bare backslash rebuilds
+# differently and is refused. A path holding an apostrophe rebuilds exactly,
+# which a substitution through awk did not: awk read the escape as an escape
+# sequence, and every checkout whose directory carried one went unverifiable.
+gg_baked_value() { # LINE KEY -> the value, on stdout; 1 if the line is not ours
+  local line="$1" key="$2" inner value sq="'" esc
+  esc="'\\''"
+  case "$line" in
+    "$key=$sq"*"$sq") ;;
+    *) return 1 ;;
+  esac
+  inner="${line#"$key=$sq"}"
+  inner="${inner%"$sq"}"
+  value="${inner//"$esc"/"$sq"}"
+  [ "$(gg_shell_quote "$value")" = "$inner" ] || return 1
+  printf '%s' "$value"
+}
+
+# Where a directory sits: which repository owns it, and where it stands
+# inside that repository's checkout.
 #
-# A helper missing one of those lines, or carrying it somewhere the
-# generated head does not, substitutes nothing and fails the comparison,
-# which is the answer for a file this installer did not write.
-helper_as_baked_there() { # HELPER -> the bytes to compare against, on stdout
-  local helper="$1" key line body
-  body="$(helper_body)" || return 1
-  for key in $GG_PER_CHECKOUT_KEYS; do
-    line="$(grep -m 1 -e "^$key='" -- "$helper")" || continue
-    # awk prints the replacement literally; sed would read the value as a
-    # replacement expression, and a checkout path may hold any byte.
-    body="$(printf '%s\n' "$body" | awk -v k="$key='" -v repl="$line" '
-      index($0, k) == 1 { print repl; next }
-      { print }
-    ')" || return 1
+# Both answers come from git with its redirects unset, because --check may
+# be running inside a hook, where GIT_DIR is exported and git honours it
+# over the directory it was asked about — every directory would then answer
+# with this repository's.
+gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
+  local __c="$1" __r="$2" dir="$3" real="" common="" top=""
+  real="$(cd -- "$dir" 2>/dev/null && pwd -P)" || return 1
+  common="$(
+    unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+    cd -- "$real" 2>/dev/null && git rev-parse --git-common-dir 2>/dev/null && printf x
+  )" || return 1
+  common="${common%x}"
+  common="${common%"$GG_NL"}"
+  [ -n "$common" ] || return 1
+  common="$(cd -- "$real" 2>/dev/null && cd -- "$common" 2>/dev/null && pwd -P)" || return 1
+  top="$(
+    unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+    cd -- "$real" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null && printf x
+  )" || return 1
+  top="${top%x}"
+  top="${top%"$GG_NL"}"
+  top="$(cd -- "$top" 2>/dev/null && pwd -P)" || return 1
+  case "$real" in
+    "$top") eval "$__r=''" ;;
+    "$top"/*) eval "$__r=\${real#\"\$top/\"}" ;;
+    *) return 1 ;;
+  esac
+  eval "$__c=\$common"
+}
+
+# Whether a baked scripts directory is THIS project's, in another checkout of
+# this repository.
+#
+# That is the one difference a helper may carry: a linked worktree shares the
+# hooks directory of the checkout that armed it and holds its own render, so
+# the same project stands at the same place in a different checkout.
+#
+# Two other differences look the same at a glance and are not. A scripts
+# directory outside this repository would run another package's lanes as this
+# repository's gate. And a SECOND project inside this repository stands
+# somewhere else in the same checkout: one repository has one helper, so
+# arming project A would otherwise read to project B as consent B was never
+# given, and B would run its own checkout-supplied lanes under it. Both are
+# refused by asking where the directory stands rather than only which
+# repository holds it.
+gg_same_project_elsewhere() { # DIR -> 0 when it is this project's, elsewhere
+  local dir="$1" lane="" there_common="" there_rel="" here_common="" here_rel=""
+  [ -d "$dir" ] || return 1
+  for lane in pre-commit commit-msg; do
+    [ -x "$dir/$lane" ] || return 1
   done
-  printf '%s\n' "$body"
+  gg_checkout_place there_common there_rel "$dir" || return 1
+  gg_checkout_place here_common here_rel "$SCRIPT_DIR" || return 1
+  [ "$there_common" = "$here_common" ] || return 1
+  [ "$there_rel" = "$here_rel" ]
+}
+
+# Whether the head a helper carries is one this installer would bake.
+#
+# Line for line against this checkout's own head, so the shebang, every
+# comment, and every value this checkout dictates are held exactly. A line
+# may differ only where it bakes a key in GG_PER_CHECKOUT_KEYS, and then
+# only as a value this installer's quoter would have written, naming this
+# same project's scripts directory in another checkout of this repository.
+#
+# Structural, and nothing from the helper is ever copied into what it is
+# compared against. A comparison built out of the bytes it is judging
+# matches whatever it is handed: a value closing its quote and appending a
+# command read as armed while that command ran at commit time.
+check_helper_head() { # HELPER -> 0 ours, 1 not
+  local helper="$1" want="" got="" key="" value="" line=0 excused=1
+  while IFS= read -r want; do
+    line=$((line + 1))
+    got="$(sed -e "${line}!d" <"$helper")" || return 1
+    [ "$want" = "$got" ] && continue
+    excused=1
+    for key in $GG_PER_CHECKOUT_KEYS; do
+      case "$want" in "$key='"*) ;; *) continue ;; esac
+      value="$(gg_baked_value "$got" "$key")" || continue
+      gg_same_project_elsewhere "$value" || continue
+      excused=0
+      break
+    done
+    [ "$excused" -eq 0 ] || return 1
+  done < <(helper_head)
+  return 0
 }
 
 CHECK_REASONS=""
@@ -85,7 +171,17 @@ check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
   # while bypassing every guard. `--check` is READ-ONLY, so "the installer
   # rewrites this file" is not something it gets to assume about the copy
   # sitting there right now. Only the bytes settle what the helper does.
-  if ! helper_as_baked_there "$helper" 2>/dev/null | cmp -s - "$helper"; then
+  #
+  # The program is those bytes exactly. The head is where one checkout of a
+  # project differs from another, so it is judged line for line against this
+  # checkout's own instead — which is what lets a worktree recognize the
+  # helper the main checkout armed, and what refuses a second project in the
+  # same repository relaying under the first one's consent.
+  local head_lines=""
+  head_lines="$(helper_head 2>/dev/null | wc -l | tr -d ' ')" || head_lines=""
+  if [ -z "$head_lines" ] \
+    || ! check_helper_head "$helper" 2>/dev/null \
+    || ! helper_program 2>/dev/null | cmp -s - <(sed -e "1,${head_lines}d" <"$helper"); then
     add_reason "helper $HELPER_NAME is not the one this installer generates, so what it runs cannot be verified"
     return 3
   fi
