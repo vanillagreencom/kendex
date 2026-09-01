@@ -469,8 +469,14 @@ assert_contains "$TMP_ROOT/help.stdout" "75 detached wait:" \
   "help owns the recoverable wait outcome"
 assert_contains "$TMP_ROOT/help.stdout" "124 detached wait:" \
   "help owns the deadline outcome"
-assert_contains "$TMP_ROOT/help.stdout" "1 detached wait: worker gone without status" \
-  "help owns the terminal worker-gone outcome"
+assert_contains "$TMP_ROOT/help.stdout" "1 detached wait: follow its diagnostic" \
+  "help routes shared exit 1 by its diagnostic"
+assert_contains "$TMP_ROOT/help.stdout" "relaunch for vanished worker, invalid recovery state, or missing artifact" \
+  "help limits relaunch to unrecoverable wait state"
+assert_contains "$TMP_ROOT/help.stdout" "keep completed artifact on replay/runtime-removal failure" \
+  "help preserves completed output on local wait failure"
+assert_contains "$TMP_ROOT/help.stdout" "otherwise act on replayed worker cause" \
+  "help routes ordinary worker exit 1 by its replayed cause"
 
 instruction_files=(
   "$REPO_ROOT/skills/second-opinion/SKILL.md"
