@@ -194,6 +194,24 @@ This repo's own convention is the precedent for the no-follow half — it opens
 without following and re-checks the opened file's type rather than the name. The
 walk from a root descriptor is the part it does not have.
 
+## Every rendered config excludes the render trees
+
+**A render-only diff opens no bot rounds.** That is the requirement, and it is
+what the exclusion set is for: a tracked tree this repo renders from an upstream
+package is not its code, so a finding on one costs a round nobody here can
+spend. Every config this package renders excludes those trees, and a surface
+with no file-based review exclusion carries the paths as prose, so the
+instruction names something rather than gesturing at it.
+
+**Two of the five subtract for real; three are asked.** CodeRabbit's
+`path_filters` and Macroscope's `ignore.md` remove the files from review. Codex,
+Copilot and Qodo receive the paths as prose, and **a bot asked to skip a path
+may still comment on it** — none of the three has a file-based review exclusion
+this package can reach. Naming the paths there makes the instruction actionable;
+it is not enforcement. `schemas/renders.md` § Doctrine routing says which
+surface gets which mechanism, and `references/checklist.md` says where
+enforcement for the three has to come from instead.
+
 ## A pull request changing its own review
 
 Copilot, CodeRabbit and Macroscope read their instruction files from the pull
@@ -372,8 +390,8 @@ nothing but a label it knows.
 A tracked tree this repo renders from an upstream package is not this repo's
 code. A review comment on it cannot be acted on here: the fix lands upstream
 and arrives by re-render, and an in-repo edit is erased. Report nothing on
-those paths, on any surface, in any round. The repo's own instruction file
-names which trees these are.
+those paths, on any surface, in any round. The paths themselves follow this
+block wherever a surface has no other way to receive them.
 
 ### trust-model
 

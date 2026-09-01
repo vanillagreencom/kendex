@@ -249,6 +249,12 @@ would otherwise derive nothing and pass.
 **Rejects, also.** An exclusion entry present in one rendered surface and
 absent from another, where both surfaces have an exclusion mechanism.
 
+**Rejects, also.** A non-empty exclusion set that a destination the routing
+table marks as carrying the paths does not carry: `AGENTS.md`, `pr_agent
+issues`, `pr_agent extra`. That is what holds the requirement in SKILL.md
+§ Every rendered config excludes the render trees — without it a render could
+drop the paths from the one surface Codex reads and violate nothing checkable.
+
 **What it does not establish.** That the bots exclude the same files. Codex has
 no exclusion mechanism at all, Copilot's lives in a settings page no repo file
 can read, Qodo's `[ignore]` governs `/improve` rather than what the review
@@ -511,8 +517,9 @@ failing on bytes nobody is committing.
 **Controls.** The hand-edit fixture, a fixture whose only change is a deleted
 marker line, and one pair per render input for the mode. Per input — the TOML,
 the spec copy, the vendored schema, each install manifest read — a staged,
-consistent set with a divergent worktree copy of that input, asserted green; and a staged
-copy of that input that its staged outputs are stale against, asserted red. Plus
+consistent set with a divergent worktree copy of that input, asserted green;
+and a staged copy of that input that its staged outputs are stale against,
+asserted red. Plus
 one for absence: an input staged as absent, asserted on the absence rather than
 on its worktree copy.
 

@@ -128,6 +128,36 @@ of this knowledge, and two copies drift.
 every block. Everywhere else it follows the last block — both `pr_agent`
 `[review_agent]` keys, `pr_agent extra`, and `macroscope doctrine.md`.
 
+**The exclusion set's placement.** Where it is rendered, it follows the
+`render-out-of-scope` block immediately, in the same bullet or paragraph that
+block renders as, in the exclusion set's own fixed order. Three destinations
+carry it: `AGENTS.md`, `pr_agent issues`, and `pr_agent extra` — the columns
+whose `render-out-of-scope` cell carries a number and whose bot has no
+file-based review exclusion. Copilot needs no fourth, because note (b) already
+routes this block to it through `AGENTS.md`, which it reads.
+
+`.coderabbit.yaml` and `macroscope doctrine.md` carry the block without the
+paths: `path_filters` and `ignore.md` subtract them for real a few keys away,
+and a second copy of a list the same file enforces is the drift this spec spends
+a rule avoiding. `REVIEW.md` omits the block entirely, which note (c) records.
+
+What that buys, per surface, since the five do not get the same thing:
+
+| Surface | Mechanism | Enforced |
+|---------|-----------|----------|
+| CodeRabbit | `reviews.path_filters`, exclusion-only | yes, the files are not reviewed |
+| Macroscope | `.macroscope/ignore.md` | yes, repo-wide across check runs |
+| Codex | the rendered paths in the `AGENTS.md` owned region | no |
+| Copilot | the same rendered paths, since it reads `AGENTS.md` | no |
+| Qodo | the rendered paths in `issues` and `extra` | no |
+
+The three unenforced rows are why the paths are rendered at all. Codex has no
+file-based exclusion, Copilot's is a settings page no repo file reaches, and
+Qodo's `[ignore]` governs `/improve` analysis rather than review content. Naming
+the paths makes the instruction actionable; SKILL.md § Every rendered config
+excludes the render trees carries the requirement and the plain statement that
+those three may comment anyway.
+
 **(a) `.coderabbit.yaml` carries one block.** CodeRabbit reaches the rest
 through `knowledge_base.code_guidelines.filePatterns` naming `AGENTS.md`.
 `render-out-of-scope` is the exception because it rides the `path: "**"`
@@ -205,6 +235,14 @@ part of it away from the one bot that reads nothing else.
 One block renders as exactly one bullet, its paragraphs joined by a space and
 no blank line inside. A repo guard that pins the reply contract reads it as a
 single bullet, and a blank line ends that read.
+
+The `render-out-of-scope` bullet is the one that carries data as well as
+doctrine: the exclusion set follows its text in the same bullet, comma-joined in
+the set's fixed order. It stays inside the owned region like everything else the
+generator writes there, so the region's rules are unchanged — one bullet, no
+blank line, no line a heading predicate would catch — and a path is not a
+heading, so nothing about the region's boundaries moves. This is the only place
+Codex can receive those paths, since it reads no second file.
 
 A repo whose guard pins the tracked reply form needs `[repo] tracker` set.
 kendex's does: it matches `Tracked: KEN-<n>` literally inside the `- Author
@@ -419,7 +457,10 @@ property `qodo-parity` checks.
 
 `render-out-of-scope` takes position 1 in the two columns that carry it, which
 is the one place doctrine is rendered ahead of everything else; the table says
-which those are. Qodo has no per-path exclusion for review content: its ignore
+which those are. In `issues` and `extra` it carries the exclusion paths after
+its text, because Qodo's `[ignore]` filters what it analyzes for `/improve`
+rather than what the review agent reads, so prose is the only route those paths
+have to it. Qodo has no per-path exclusion for review content: its ignore
 surface is pull-request level plus `allow_only_specific_folders`, an
 allowlist gating whether analysis runs at all. Prose is the only exclusion
 mechanism this bot has.

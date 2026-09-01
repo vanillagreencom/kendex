@@ -142,6 +142,19 @@ can still change what the file means.
       `.github/copilot-instructions.md` is absent, so `[bots] copilot = false`
       there means moving what that guard reads before removing the file.
 
+## Excluding the render trees
+
+- [ ] The exclusion set actually covers this repo's render trees. `render` fails
+      when it does not, but only where `[exclusions] derive_render` is on, so a
+      repo deriving nothing checks this by reading the rendered `path_filters`
+      against `.agents/`.
+- [ ] Enforcement for Codex, Copilot and Qodo comes from the merge gate, not
+      from here. Those three receive the paths as an instruction and may comment
+      on them anyway; a gate that passes a render-only diff needs no bot to
+      cooperate, which is the only thing that makes "a render-only diff opens no
+      bot rounds" true rather than requested. CodeRabbit and Macroscope subtract
+      for real and need nothing from the gate.
+
 ## If the repo's gate reads bot output
 
 - [ ] Every path in SKILL.md § A pull request changing its own review's policy
