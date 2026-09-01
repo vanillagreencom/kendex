@@ -63,7 +63,7 @@ for t in skills/linear/tests/*.test.sh; do bash "$t" || echo "FAIL $t"; done
 skills/linear/tests/must-fail-controls.sh
 ```
 
-Each test stands up its own fixture root and a `curl` shim on `PATH`, so none reaches the network. `LINEAR_API_KEY_OVERRIDE` is the inline auth channel they use. Isolating `PROJECT_ROOT`/`CACHE_DIR` to that fixture root is the test author's own obligation: nothing refuses on its behalf, so a test that forgets writes its fixture ids into the real `.cache/linear`.
+Each test stands up its own fixture root and a `curl` shim on `PATH`, so none reaches the network. `LINEAR_API_KEY_OVERRIDE` is the inline auth channel they use. Isolating the cache is the test author's own obligation and nothing refuses on its behalf: `CACHE_DIR` resolves from `git rev-parse --show-toplevel` of the invoking cwd — `common.sh` recomputes `PROJECT_ROOT` on every source and `cache.sh` derives `CACHE_DIR` from it, so exporting either does nothing. `git init` a throwaway root and `cd` into it before invoking a script; a test that forgets writes its fixture ids into the real `.cache/linear`.
 
 ### Assertions
 
