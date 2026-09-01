@@ -2,7 +2,7 @@
 
 The on-disk record of a fix round's delegated items, starting commit, and allowed protected additions. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation.
 
-Before writing either record, `dev-round-write` compares the branch with workflow state `pr.baseline_lines`. A fresh standalone review route with no implementation receipt captures a candidate, writes both round records, then records the baseline only if the active round still owns the same current HEAD. A branch above twice the recorded line count exits 3 and must be cut before another fix round can start.
+Before writing either record, `dev-round-write` compares the branch with workflow state `pr.baseline_lines`; a null or invalid value refuses without writing either record. A branch above twice the recorded line count exits 3 and must be cut before another fix round can start.
 
 ## Identity: the round id
 

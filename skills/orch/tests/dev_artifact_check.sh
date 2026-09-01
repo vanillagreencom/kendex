@@ -73,6 +73,8 @@ mkdir -p "$worktree/tmp"
 issue="issue-770"
 R="1750000000-4242"
 artifact="$worktree/tmp/dev-return-$issue-$R.json"
+"$STATE" --state-dir "$worktree/tmp" init "$issue" --worktree "$worktree" --branch test >/dev/null
+export ORCH_STATE_DIR="$worktree/tmp"
 
 # A complete implement-kind receipt (round-scoped, all required fields present).
 valid_impl='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","baseline_lines":1,"validate":"pass","qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
@@ -294,10 +296,6 @@ rt_head="$(git -C "$rt_wt" rev-parse HEAD)"
 rt_impl="$("$WRITE" --worktree "$rt_wt" --kind implement --issue issue-9 --round-id 5-6 --branch b --commit "$rt_head" --validate pass)"
 assert_eq "$([[ -f "$rt_impl" ]] && echo yes)" "yes" "writer produced the round-scoped implement artifact"
 assert_eq "$(env ORCH_STATE_DIR="$rt_wt/tmp" "$CHECK" --worktree "$rt_wt" --issue issue-9 --round-id 5-6 | jq -r '.reason')" "valid" "writer implement output round-trips as valid"
-assert_eq "$("$STATE" --state-dir "$rt_wt/tmp" get issue-9 '.pr.baseline_lines // "null"')" "null" \
-  "Check A does not publish the baseline"
-assert_eq "$(env ORCH_STATE_DIR="$rt_wt/tmp" "$CHECK" --worktree "$rt_wt" --issue issue-9 \
-  --round-id 5-6 --record-baseline | jq -r '.reason')" "valid" "post-B acceptance records the baseline"
 assert_eq "$("$STATE" --state-dir "$rt_wt/tmp" get issue-9 .pr.baseline_lines)" "1" \
   "the baseline has one authoritative workflow-state value"
 "$WRITE" --worktree "$rt_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
@@ -616,7 +614,6 @@ dev_start="$REPO_ROOT/skills/orch/workflows/dev-start.md"
 assert_file_contains "$dev_start" "$WATCHDOG_STAMP" "dev-start still stamps dev_delegated_at (watchdog deadline)"
 assert_file_contains "$dev_start" "$ROUND_STAMP" "dev-start mints dev_round_id before delegation"
 assert_file_contains "$dev_start" "$ROUND_CHECK" "dev-start § 3 accepts via dev-artifact-check round mode"
-assert_file_contains "$dev_start" "--record-baseline" "dev-start records the baseline only after A and B pass"
 assert_file_contains "$dev_start" "Round ID: [DEV_ROUND_ID]" "dev-start delegation carries the Round ID line"
 assert_file_contains "$dev_start" "$ARTIFACT_KEY_LINE" "dev-start delegation carries the Artifact Key line (normalized state key)"
 
@@ -717,8 +714,6 @@ assert_contains_str "$check_help" "comparison_failed" "--help documents Git comp
 assert_contains_str "$check_help" "classifier_failed" "--help documents classifier failures"
 assert_contains_str "$check_help" "--expect-items (--file mode only)" "--help confines the weaker item-list flag to file mode"
 assert_contains_str "$check_help" "incomplete" "--help documents the incomplete reason"
-assert_contains_str "$check_help" "baseline_unbindable" "--help documents baseline retry routing"
-assert_contains_str "$check_help" "--record-baseline" "--help documents post-B baseline acceptance"
 artifact_checks_ref="$REPO_ROOT/skills/orch/references/artifact-checks.md"
 assert_file_contains "$artifact_checks_ref" "--help" "artifact-checks reference routes to the help contracts"
 assert_file_not_contains "$dev_return_schema" "reason \`incomplete\`" "dev-return schema does not duplicate the verdict vocabulary"

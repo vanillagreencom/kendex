@@ -29,13 +29,3 @@ growth_round_write() {
   fi
   env ORCH_STATE_DIR="$worktree/tmp" "$writer" "$@"
 }
-
-init_growth_repo() {
-  local worktree="$1" branch="${2:-main}"
-  mkdir -p "$worktree"
-  git -C "$worktree" init -q -b "$branch"
-  git -C "$worktree" config user.email test@example.com
-  git -C "$worktree" config user.name Test
-  git -C "$worktree" config commit.gpgsign false
-  git -C "$worktree" commit -q --allow-empty -m base
-}
