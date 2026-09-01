@@ -151,16 +151,20 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
     Ok(())
 }
 
-/// The extension an agent's bytes arrived under, when it is not the
-/// markdown a catalog keeps an agent as (`source::local_slot`). An
-/// unmanaged scan is the origin that offers another shape: Codex reads
+/// The extension an agent's bytes arrived under, when nothing here can
+/// write a name into that format. An unmanaged scan offers agent files as
+/// their harness keeps them, which is not always markdown: Codex reads
 /// `.codex/agents/*.toml`, whose name is a TOML key rather than a
-/// frontmatter line. Nothing here can write that one, and answering "it
-/// has no frontmatter" about a file that never had any sends the person
-/// off to add one to a format that would then refuse to load.
+/// frontmatter line, while Cursor's `.mdc` rules do carry frontmatter and
+/// are renamed like any other agent. The extension does not decide that —
+/// [`crate::render::agent::declared_at_ext`] does, off what each harness's
+/// renderer writes — and an extension no harness claims is refused rather
+/// than guessed at. Answering "it has no frontmatter" about a file that
+/// never had any sends the person off to add one to a format that would
+/// then refuse to load.
 fn foreign_agent_file(read_from: Option<&Path>) -> Option<String> {
     let ext = read_from?.extension()?.to_str()?.to_ascii_lowercase();
-    (ext != "md").then_some(ext)
+    (crate::render::agent::declared_at_ext(&ext) != Some(true)).then_some(ext)
 }
 
 /// Whether a selection already taken occupies the place this one wants.

@@ -243,6 +243,55 @@ pub fn file_name(harness: HarnessId, agent_name: &str) -> String {
     }
 }
 
+/// What an agent file at this extension declares its name in. `Some(true)`
+/// is YAML frontmatter, the one shape [`crate::render::skill::with_name`]
+/// can write a name into; `Some(false)` is a format of the harness's own,
+/// Codex's TOML `name = "..."` being the one there is; `None` is an
+/// extension no harness writes an agent as, whose shape nothing here
+/// knows.
+///
+/// Asked of every harness rather than listed, so a harness that gains an
+/// agent format joins the answer without anyone remembering to. The
+/// extension comes from [`file_name`], what the renderer writes under, and
+/// whether that is frontmatter comes from a match no new harness can skip.
+/// One frontmatter harness settles an extension: those bytes take a
+/// written-in name whoever else shares it.
+///
+/// Matched as the tail of that filename rather than as its last component,
+/// because an extension is not always one: Copilot's loader looks for
+/// `<name>.agent.md`, and both that and the `md` a path hands back name
+/// the same file.
+pub fn declared_at_ext(ext: &str) -> Option<bool> {
+    let ext = ext.to_ascii_lowercase();
+    let mut claimed = None;
+    for harness in HarnessId::ALL {
+        let own = file_name(harness, "a").to_ascii_lowercase();
+        if !own.strip_suffix(&ext).is_some_and(|to| to.ends_with('.')) {
+            continue;
+        }
+        if declares_in_frontmatter(harness) {
+            return Some(true);
+        }
+        claimed = Some(false);
+    }
+    claimed
+}
+
+/// Whether the agent file this harness reads carries its name as YAML
+/// frontmatter, read off what its renderer above emits: every arm but
+/// Codex opens with a `---` block, and Codex writes TOML.
+fn declares_in_frontmatter(harness: HarnessId) -> bool {
+    match harness {
+        HarnessId::Codex => false,
+        HarnessId::Claude
+        | HarnessId::Opencode
+        | HarnessId::Cursor
+        | HarnessId::Pi
+        | HarnessId::Gemini
+        | HarnessId::Copilot => true,
+    }
+}
+
 /// Skills prose section for harnesses without a native skills field.
 pub fn skills_prose(agent: &EffectiveAgent, skill_root_hint: &str) -> Option<String> {
     if agent.skills.is_empty() {
@@ -294,6 +343,46 @@ pub fn kind() -> ItemKind {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// Every agent file a harness can put in front of the import has an
+    /// answer here. A harness that gains an agent format reds this rather
+    /// than being silently refused a rename, which is what a list of
+    /// extensions kept by hand would have done.
+    ///
+    /// Both answers have to come out of the real surfaces, or a run that
+    /// read no surface at all would pass saying nothing.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn every_agent_surface_extension_has_an_answer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = crate::env::Env::fake(tmp.path(), crate::env::FakeOs::Linux);
+        let root = tmp.path().join("root");
+        let mut answers = std::collections::BTreeSet::new();
+        for adapter in crate::harness::all_adapters() {
+            let both = [
+                adapter.global_surfaces(ItemKind::Agent, &root, &env),
+                adapter.project_surfaces(ItemKind::Agent, &root, &env),
+            ];
+            for surface in both.into_iter().flatten() {
+                let crate::harness::Surface::FileDir { exts, .. } = surface else {
+                    continue;
+                };
+                answers.extend(exts.iter().map(|ext| (*ext, declared_at_ext(ext))));
+            }
+        }
+        let unanswered: Vec<&str> = answers
+            .iter()
+            .filter(|(_, answer)| answer.is_none())
+            .map(|(ext, _)| *ext)
+            .collect();
+        assert!(unanswered.is_empty(), "no answer for {unanswered:?}");
+        for expected in [Some(true), Some(false)] {
+            assert!(
+                answers.iter().any(|(_, answer)| *answer == expected),
+                "the surfaces were not read: {answers:?}"
+            );
+        }
+    }
 
     #[test]
     fn shared_instructions_render_first_inside_markers() {

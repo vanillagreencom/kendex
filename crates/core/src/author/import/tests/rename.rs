@@ -307,6 +307,38 @@ fn a_renamed_agent_declares_its_destination_and_the_name_less_kinds_are_copied_v
     }
 }
 
+/// What decides is the format, not the extension it wears. A Cursor rule
+/// is `.mdc` and carries frontmatter, so it is renamed like any other
+/// agent: it lands in the catalog's markdown slot declaring the
+/// destination, and refusing it would take away a rename that worked.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_renamed_cursor_agent_declares_its_destination() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    file_item(
+        &root.join(".cursor/rules"),
+        "ruler.mdc",
+        "---\ndescription: about ruler\nalwaysApply: false\n---\nRule body.\n",
+    );
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-cursor");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let mut renamed = selection(find(&candidates, "ruler"), false);
+    renamed.destination = "measured".to_owned();
+
+    apply(&env, &scopes, &target, &[renamed]).unwrap();
+
+    let written = fs::read_to_string(target.join("agents/measured.md")).unwrap();
+    assert!(written.contains("name: measured"), "{written}");
+    assert!(
+        written.contains("description: about ruler") && written.contains("Rule body."),
+        "only the name line changes: {written}"
+    );
+}
+
 /// An agent is not always frontmatter: Codex reads its agents as TOML and
 /// an unmanaged scan offers those like any other, so a rename arrives here
 /// with bytes that carry a `name` key and no frontmatter at all. The
