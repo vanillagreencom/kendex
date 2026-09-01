@@ -90,6 +90,60 @@ describe("a Community row's Subscribed marker", () => {
     expect(listed.repoKey !== null && held.has(listed.repoKey)).toBe(true);
   });
 
+  // A subscribe plans the whole scope, so its plan can take a package away
+  // as well as bring one — a rendering the engine refuses drops that
+  // package whatever the planning options say. What its uninstaller ran is
+  // the subscribe's own account to give.
+  it("says what a subscribe ran in the repository", async () => {
+    vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
+      status: "ok",
+      data: {
+        name: "kit",
+        reference: "https://github.com/Acme/Kit.git",
+        rev: null,
+        lead: null,
+        notes: [],
+        undone: ["guards: running scripts/arm --uninstall"],
+      },
+    });
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+
+    await useMarketplacesStore
+      .getState()
+      .subscribe({ scope: "global" }, "https://github.com/Acme/Kit.git", null);
+
+    expect(toast.message).toHaveBeenCalledWith(
+      "guards: running scripts/arm --uninstall",
+    );
+  });
+
+  it("stays quiet when a subscribe took no armed package away", async () => {
+    vi.mocked(toast.message).mockClear();
+    vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
+      status: "ok",
+      data: {
+        name: "kit",
+        reference: "https://github.com/Acme/Kit.git",
+        rev: null,
+        lead: null,
+        notes: [],
+      },
+    });
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+
+    await useMarketplacesStore
+      .getState()
+      .subscribe({ scope: "global" }, "https://github.com/Acme/Kit.git", null);
+
+    expect(toast.message).not.toHaveBeenCalled();
+  });
+
   it("ignores path subscriptions, which are no repository", () => {
     expect(subscribedKeys([row("", null)]).size).toBe(0);
   });
@@ -133,7 +187,7 @@ describe("a Community row's Subscribed marker", () => {
     });
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "ok",
-      data: [],
+      data: {},
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",
@@ -161,7 +215,11 @@ describe("a Community row's Subscribed marker", () => {
     });
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "ok",
-      data: ["growth-guards: running scripts/install-git-hooks --uninstall"],
+      data: {
+        undone: [
+          "growth-guards: running scripts/install-git-hooks --uninstall",
+        ],
+      },
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",
@@ -184,7 +242,7 @@ describe("a Community row's Subscribed marker", () => {
     });
     vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
       status: "ok",
-      data: [],
+      data: {},
     });
     vi.mocked(commands.marketplacesOverview).mockResolvedValue({
       status: "ok",

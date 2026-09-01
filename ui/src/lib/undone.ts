@@ -21,16 +21,33 @@ export function sayUndone(undone: string[] | undefined) {
   if (rest > 0) toast.message(`and ${rest} more line${rest === 1 ? "" : "s"}`);
 }
 
-/** The account an answer carries, wherever the command puts it: on the
- *  answer itself, or on the standing that answer nests. Read here rather
- *  than at each call site, so a command added later is announced by the
- *  write it goes through instead of by somebody remembering. */
+/** The lines of `value`, or nothing if it is not a list of them. */
+function lines(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((line): line is string => typeof line === "string");
+}
+
+/** The account an answer carries, wherever the command puts it: as the
+ *  answer itself, on the answer, or on the standing the answer nests. Read
+ *  here rather than at each call site, so a command added later is
+ *  announced by the write it goes through instead of by somebody
+ *  remembering.
+ *
+ *  First NON-EMPTY, not first non-nullish. `??` prefers an outer empty
+ *  list over a populated nested one, which would silence exactly the
+ *  answers that carry both. A shape with no account anywhere returns
+ *  nothing, and that branch is written out so the silence is a decision
+ *  rather than a fall-through. */
 function accountIn(data: unknown): string[] {
+  const bare = lines(data);
+  if (bare.length > 0) return bare;
   if (typeof data !== "object" || data === null) return [];
   const held = data as { undone?: unknown; view?: { undone?: unknown } | null };
-  const found = held.undone ?? held.view?.undone;
-  if (!Array.isArray(found)) return [];
-  return found.filter((line): line is string => typeof line === "string");
+  const own = lines(held.undone);
+  if (own.length > 0) return own;
+  const nested = lines(held.view?.undone);
+  if (nested.length > 0) return nested;
+  return [];
 }
 
 /** Say what a write's answer accounts for, and hand the answer straight

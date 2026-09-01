@@ -180,6 +180,57 @@ describe("editor store", () => {
     expect(toast.message).not.toHaveBeenCalled();
   });
 
+  /// A refusal is not always "nothing happened": the uninstaller of a
+  /// leaving package runs before the plan writes, so a save that refused
+  /// after that point left the repository disarmed. The reload notice on
+  /// its own would say the opposite.
+  it("says what a refused save had already undone", async () => {
+    vi.mocked(toast.message).mockClear();
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    await useEditorStore.getState().load();
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "error",
+      error: {
+        kind: "stale",
+        undone: ["guards: running scripts/arm --uninstall"],
+      },
+    });
+    useEditorStore
+      .getState()
+      .edit((draft) => setInstruction(draft, "skill-instructions", "gh", "x"));
+
+    await useEditorStore.getState().save();
+
+    expect(useEditorStore.getState().stale).toBe(true);
+    expect(toast.message).toHaveBeenCalledWith(
+      "guards: running scripts/arm --uninstall",
+    );
+  });
+
+  it("stays quiet when a refused save had undone nothing", async () => {
+    vi.mocked(toast.message).mockClear();
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    await useEditorStore.getState().load();
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "error",
+      error: { kind: "stale" },
+    });
+    useEditorStore
+      .getState()
+      .edit((draft) => setInstruction(draft, "skill-instructions", "gh", "x"));
+
+    await useEditorStore.getState().save();
+
+    expect(useEditorStore.getState().stale).toBe(true);
+    expect(toast.message).not.toHaveBeenCalled();
+  });
+
   /// The manifest is not the settings file: a settings change reconciles
   /// the scope against the manifest on disk, and sending the copy on
   /// screen back would rewrite a kendex.toml nobody touched.

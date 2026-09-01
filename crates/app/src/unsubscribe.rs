@@ -53,13 +53,24 @@ pub fn marketplace_unsubscribe_preview(
     })
 }
 
+/// What unsubscribing did about the repository effects of the packages
+/// that left with the source — the same account the terminal prints.
+///
+/// A struct rather than the bare list it used to be, spelling the account
+/// `undone` like every other command that can make one. The window reads
+/// the account off an answer by that name, so a bare list is a shape it
+/// can only be told about by hand, and the day this write goes through
+/// the shared one it would fall silent with nothing going red.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Unsubscribed {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub undone: Vec<String>,
+}
+
 /// Unsubscribe, removing or keeping the packages. `keep` converts each
 /// installation to a local fork; otherwise they are uninstalled, and
 /// `discard_edits` takes hand edits along instead of refusing.
-///
-/// Answers with what the removal did about the repository effects of the
-/// packages that left with the source — the same account the terminal
-/// prints, for the window to show.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn marketplace_unsubscribe(
@@ -67,7 +78,7 @@ pub fn marketplace_unsubscribe(
     source: String,
     keep: bool,
     discard_edits: bool,
-) -> Result<Vec<String>, String> {
+) -> Result<Unsubscribed, String> {
     unsubscribe(&env()?, &scope, &source, keep, discard_edits)
 }
 
@@ -78,7 +89,7 @@ pub fn unsubscribe(
     source: &str,
     keep: bool,
     discard_edits: bool,
-) -> Result<Vec<String>, String> {
+) -> Result<Unsubscribed, String> {
     use kendex_core::engine::detach;
     let manifest = engine_ops::manifest_for_mutation(env, scope).map_err(|e| e.to_string())?;
     let closure = detach::closure(env, scope, source, &manifest).map_err(|e| e.to_string())?;
@@ -111,5 +122,5 @@ pub fn unsubscribe(
         .map_err(|e| e.to_string())?;
         undone.extend(crate::repo_effects::write(env, &resync)?);
     }
-    Ok(undone)
+    Ok(Unsubscribed { undone })
 }

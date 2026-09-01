@@ -34,9 +34,10 @@ pub struct SourcesAfter {
 /// Write a source action's report and answer with what stands after it.
 ///
 /// Through the one executor, like every report. Removing or disabling a
-/// source can take its packages with it; adding one does not. Neither
-/// command has to know which it is, and that is the point of there being
-/// one door.
+/// source takes its packages with it, and adding one can too — a rendering
+/// the engine refuses drops that package's lock entry whatever the
+/// planning options say. No command here has to know which it is, and that
+/// is the point of there being one door.
 fn run_and_list(
     env: &Env,
     report: kendex_core::engine::EngineReport,
@@ -132,8 +133,9 @@ pub fn install_bundle(
         ..AddRequest::default()
     };
     let report = engine_ops::add(env, scope, &request).map_err(|e| e.to_string())?;
-    // The one executor, as everywhere: a set install is an add and takes
-    // nothing away today, and no command here is written to depend on that.
+    // The one executor, as everywhere. A set install is an add, which is
+    // not the same as taking nothing away: a refused rendering removes the
+    // package it refused, and nothing here is written to depend otherwise.
     let undone = crate::repo_effects::write(env, &report)?;
     let repo_effects = kendex_core::repo_effects::offers_for(env, scope, &report.repo_effects)
         .map_err(|e| e.to_string())?;

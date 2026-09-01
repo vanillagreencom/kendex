@@ -13,6 +13,16 @@
 //! long call over four lines and does not join it back, and a plan bound
 //! to a local puts the two halves in different statements — both shapes
 //! are the defect, and a scan that misses them is guard code failing open.
+//!
+//! What it rests on, said plainly so nobody mistakes it for total: the
+//! call is found by the literal text `apply::execute(`. An unqualified
+//! `use kendex_core::apply::execute;` followed by a bare `execute(env,
+//! &report.plan)`, or a function pointer bound to it, passes unseen.
+//! Neither exists anywhere in `crates/app/src` or `crates/cli/src`, and
+//! module-path style is the house convention, so evading this takes a
+//! deliberate import rather than an accident — which is why the rule is
+//! written against the shape people actually type and no machinery
+//! chases the other one.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -53,28 +63,140 @@ fn exempt(path: &Path, root: &Path) -> bool {
     )
 }
 
-/// The source with its line comments cut away, so prose describing this
-/// rule cannot trip the scan and a call commented out cannot hide from it.
-/// Quoting is tracked, so a `//` inside a string literal stays put.
-fn without_line_comments(text: &str) -> String {
+/// The source with everything that is not code blanked out: line comments,
+/// block comments, and the insides of string and character literals.
+///
+/// Blanked rather than deleted, so every byte offset and line number still
+/// points where it did. Comments were the first half of this — prose
+/// describing the rule must not trip a scan of the rule, in either
+/// direction — and literals are the other half, for two reasons. A message
+/// quoting `apply::execute(env, &report.plan)` is exactly what a
+/// diagnostic about this rule looks like, and `write_nothing_leaving`
+/// already names its own rule that way. And a paren or a semicolon inside
+/// a string is not one this parser should be counting.
+fn code_only(text: &str) -> String {
+    #[derive(PartialEq)]
+    enum In {
+        Code,
+        Line,
+        Block(usize),
+        Str,
+        Raw(usize),
+        Chr,
+    }
+    let mut state = In::Code;
     let mut out = String::with_capacity(text.len());
-    for line in text.lines() {
-        let bytes = line.as_bytes();
-        let (mut quoted, mut cut, mut i) = (false, line.len(), 0);
-        while i < bytes.len() {
-            match bytes[i] {
-                b'\\' if quoted => i += 1,
-                b'"' => quoted = !quoted,
-                b'/' if !quoted && bytes.get(i + 1) == Some(&b'/') => {
-                    cut = i;
-                    break;
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    // Kept verbatim only in `Code`; everywhere else a byte becomes a space
+    // and a newline stays a newline.
+    let keep = |out: &mut String, byte: u8, verbatim: bool| {
+        match (byte, verbatim) {
+            (b'\n', _) => out.push('\n'),
+            (_, true) => out.push(byte as char),
+            (_, false) => out.push(' '),
+        };
+    };
+    while i < bytes.len() {
+        let byte = bytes[i];
+        let next = bytes.get(i + 1).copied();
+        match state {
+            In::Code => {
+                // A raw string: `r`, any number of `#`, then the quote.
+                let raw = byte == b'r' && {
+                    let mut j = i + 1;
+                    while bytes.get(j) == Some(&b'#') {
+                        j += 1;
+                    }
+                    bytes.get(j) == Some(&b'"')
+                        && !text[..i].chars().next_back().is_some_and(is_ident)
+                };
+                if raw {
+                    let mut hashes = 0;
+                    while bytes.get(i + 1 + hashes) == Some(&b'#') {
+                        hashes += 1;
+                    }
+                    for _ in 0..=hashes + 1 {
+                        keep(&mut out, b' ', false);
+                    }
+                    i += hashes + 2;
+                    state = In::Raw(hashes);
+                    continue;
                 }
-                _ => {}
+                match (byte, next) {
+                    (b'/', Some(b'/')) => state = In::Line,
+                    (b'/', Some(b'*')) => state = In::Block(1),
+                    (b'"', _) => state = In::Str,
+                    // A character literal, not a lifetime: `'a'` and
+                    // `'\n'` close, `'a` in `&'a str` never does.
+                    (b'\'', Some(b'\\')) => state = In::Chr,
+                    (b'\'', _) if bytes.get(i + 2) == Some(&b'\'') => state = In::Chr,
+                    _ => {}
+                }
+                keep(&mut out, byte, state == In::Code);
+                i += 1;
             }
-            i += 1;
+            In::Line => {
+                keep(&mut out, byte, false);
+                if byte == b'\n' {
+                    state = In::Code;
+                }
+                i += 1;
+            }
+            In::Block(depth) => {
+                if (byte, next) == (b'/', Some(b'*')) {
+                    state = In::Block(depth + 1);
+                    keep(&mut out, byte, false);
+                    keep(&mut out, b' ', false);
+                    i += 2;
+                    continue;
+                }
+                if (byte, next) == (b'*', Some(b'/')) {
+                    state = match depth {
+                        1 => In::Code,
+                        _ => In::Block(depth - 1),
+                    };
+                    keep(&mut out, byte, false);
+                    keep(&mut out, b' ', false);
+                    i += 2;
+                    continue;
+                }
+                keep(&mut out, byte, false);
+                i += 1;
+            }
+            In::Str | In::Chr => {
+                let closing = match state {
+                    In::Str => b'"',
+                    _ => b'\'',
+                };
+                if byte == b'\\' {
+                    keep(&mut out, byte, false);
+                    if let Some(escaped) = next {
+                        keep(&mut out, escaped, false);
+                    }
+                    i += 2;
+                    continue;
+                }
+                if byte == closing {
+                    state = In::Code;
+                }
+                keep(&mut out, byte, false);
+                i += 1;
+            }
+            In::Raw(hashes) => {
+                let closes =
+                    byte == b'"' && (0..hashes).all(|n| bytes.get(i + 1 + n) == Some(&b'#'));
+                keep(&mut out, byte, false);
+                i += 1;
+                if closes {
+                    for _ in 0..hashes {
+                        keep(&mut out, b' ', false);
+                    }
+                    i += hashes;
+                    state = In::Code;
+                }
+            }
         }
-        out.push_str(&line[..cut]);
-        out.push('\n');
     }
     out
 }
@@ -83,16 +205,49 @@ fn is_ident(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// Every `apply::execute(...)` in `text`: the line it opens on, and its
-/// whole argument list with continuation lines joined — so a call rustfmt
-/// spread over four lines reads exactly like one written on a single line.
+/// Whether `text` names a report's `plan` field rather than some longer
+/// name that merely begins with it — `planned_at`, `plans`, `plan_b`.
+fn names_a_plan(text: &str) -> bool {
+    text.match_indices(".plan").any(|(at, _)| {
+        !text[at + ".plan".len()..]
+            .chars()
+            .next()
+            .is_some_and(is_ident)
+    })
+}
+
+/// The file split at each `fn`, so a local bound in one function cannot
+/// explain a call in another. Everything before the first `fn` is a span
+/// of its own, so nothing at module scope is skipped.
+fn functions(text: &str) -> Vec<(usize, &str)> {
+    let mut bounds = vec![0usize];
+    let mut from = 0;
+    while let Some(at) = text[from..].find("fn ") {
+        let at = from + at;
+        from = at + 3;
+        if text[..at].chars().next_back().is_some_and(is_ident) {
+            continue;
+        }
+        bounds.push(at);
+    }
+    bounds.push(text.len());
+    bounds.dedup();
+    bounds
+        .windows(2)
+        .map(|pair| (pair[0], &text[pair[0]..pair[1]]))
+        .collect()
+}
+
+/// Every `apply::execute(...)` in `text`: where it opens, and its whole
+/// argument list with continuation lines joined — so a call rustfmt spread
+/// over four lines reads exactly like one written on a single line.
 fn calls(text: &str) -> Vec<(usize, String)> {
     const NEEDLE: &str = "apply::execute(";
     let mut found = Vec::new();
     let mut from = 0;
     while let Some(at) = text[from..].find(NEEDLE) {
         let open = from + at + NEEDLE.len();
-        found.push((text[..open].lines().count(), balanced(&text[open..])));
+        found.push((from + at, balanced(&text[open..])));
         from = open;
     }
     found
@@ -118,9 +273,34 @@ fn balanced(text: &str) -> String {
     out
 }
 
+/// Where the statement beginning at `text` ends: the first `;` outside any
+/// bracket.
+///
+/// The first `;` of any depth is a different thing, and taking it read
+/// `let plan = match kind { A => &a.plan, B => { warn(); &b.plan } };` as
+/// ending inside the block — so the local went unrecorded and the call
+/// that passed it went unnamed.
+fn statement_end(text: &str) -> usize {
+    let mut depth = 0i32;
+    for (at, c) in text.char_indices() {
+        match c {
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => depth -= 1,
+            ';' if depth <= 0 => return at,
+            _ => {}
+        }
+    }
+    text.len()
+}
+
 /// Locals bound to a report's plan — `let plan = &report.plan;` — whose
 /// call site then names only the local, so the word `plan` never appears
 /// beside `apply::execute` at all.
+///
+/// Read per function, never per file. File-scoped, a `let plan =
+/// row.planned_at();` in one function condemned a legitimately bare
+/// `apply::execute(env, plan)` in another, which `commands.rs` is one
+/// rename away from today.
 fn plan_locals(text: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     let mut from = 0;
@@ -132,11 +312,11 @@ fn plan_locals(text: &str) -> BTreeSet<String> {
             continue;
         }
         let statement = &text[from..];
-        let statement = &statement[..statement.find(';').unwrap_or(statement.len())];
+        let statement = &statement[..statement_end(statement)];
         let Some((bound, value)) = statement.split_once('=') else {
             continue;
         };
-        if !value.contains(".plan") {
+        if !names_a_plan(value) {
             continue;
         }
         // The name alone: a type annotation is not part of it, and a
@@ -173,10 +353,14 @@ fn offenders(root: &Path) -> Vec<String> {
     files.sort();
     let mut found = Vec::new();
     for path in files.iter().filter(|path| !exempt(path, root)) {
-        let text = without_line_comments(&std::fs::read_to_string(path).unwrap_or_default());
-        let locals = plan_locals(&text);
-        for (line, args) in calls(&text) {
-            if args.contains(".plan") || locals.iter().any(|name| passes(&args, name)) {
+        let text = code_only(&std::fs::read_to_string(path).unwrap_or_default());
+        for (start, body) in functions(&text) {
+            let locals = plan_locals(body);
+            for (at, args) in calls(body) {
+                if !names_a_plan(&args) && !locals.iter().any(|name| passes(&args, name)) {
+                    continue;
+                }
+                let line = text[..start + at].lines().count();
                 found.push(format!(
                     "{}:{line}: apply::execute({})",
                     path.display(),
@@ -279,24 +463,100 @@ fn the_scan_names_every_shape_of_a_report_s_plan_and_spares_a_bare_one() {
     assert_eq!(found.len(), 4, "{found:#?}");
 }
 
-/// A `//` inside a string literal is not a comment, and a call the scan
-/// would catch is not hidden by commenting it out.
+/// Nothing that is not code condemns a file, in any of the three ways it
+/// can look like code.
+///
+/// Guard code that cries wolf is guard code somebody turns off. The
+/// rule-quoting string is not hypothetical: `write_nothing_leaving` names
+/// its own rule in its own refusal message, and a diagnostic about THIS
+/// rule would be spelled exactly like the one planted here.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn comments_are_cut_and_string_literals_are_not() {
+fn nothing_outside_code_is_read_as_code() {
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     std::fs::write(
-        root.join("commented.rs"),
+        root.join("innocent.rs"),
         "fn go() {\n\
          \x20   // apply::execute(env, &report.plan);\n\
-         \x20   let url = \"https://example.invalid/x\";\n}\n",
+         \x20   /* and again:\n\
+         \x20      apply::execute(env, &report.plan);\n\
+         \x20   */\n\
+         \x20   let msg = \"call apply::execute(env, &report.plan) never\";\n\
+         \x20   let url = \"https://example.invalid/x\";\n\
+         \x20   let raw = r#\"apply::execute(env, &report.plan)\"#;\n}\n",
     )
     .unwrap();
 
-    assert!(offenders(&root).is_empty());
-    assert!(
-        without_line_comments("let url = \"http://a\"; // gone\n").contains("http://a"),
-        "the scheme's slashes were read as a comment"
-    );
+    assert!(offenders(&root).is_empty(), "{:?}", offenders(&root));
+    // And the blanking leaves code alone: a scheme's slashes are not a
+    // comment, and the file still parses as the statements it holds.
+    let kept = code_only("let url = \"http://a\"; // gone\nlet n = 1;\n");
+    assert!(kept.contains("let url ="), "{kept:?}");
+    assert!(kept.contains("let n = 1;"), "{kept:?}");
+    assert!(!kept.contains("gone"), "{kept:?}");
+    assert!(!kept.contains("http://a"), "{kept:?}");
+}
+
+/// A local bound to a plan in one function does not condemn a bare call in
+/// another, and a name that merely starts with `plan` binds nothing.
+///
+/// Both have live reach: `commands.rs` holds a `.plan`-derived local and a
+/// legitimately bare `apply::execute` in the same file today, kept apart
+/// only by their names.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_plan_local_condemns_only_its_own_function() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    std::fs::write(
+        root.join("commands.rs"),
+        // The same NAME in both functions: one bound off a report, one a
+        // plain parameter. File-scoped, the first condemns the second.
+        "fn peek(report: &EngineReport) -> Plan {\n\
+         \x20   let plan = report.plan.clone();\n\
+         \x20   plan\n}\n\
+         fn go(env: &Env, plan: &Plan) {\n\
+         \x20   apply::execute(env, plan).unwrap();\n}\n\
+         fn later(env: &Env, row: &Row) {\n\
+         \x20   let plan = row.planned_at();\n\
+         \x20   apply::execute(env, plan).unwrap();\n}\n\
+         fn beside(env: &Env, row: &Row) {\n\
+         \x20   apply::execute(env, &row.planned).unwrap();\n}\n",
+    )
+    .unwrap();
+
+    assert!(offenders(&root).is_empty(), "{:?}", offenders(&root));
+}
+
+/// The two shapes that used to slip past: a semicolon inside the value a
+/// local is bound to, and a paren inside a string in the argument list.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_statement_is_read_to_its_own_end() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    std::fs::write(
+        root.join("audit.rs"),
+        "fn go(env: &Env, report: &EngineReport, kind: Kind) {\n\
+         \x20   let plan = match kind { A => { warn(); &a.plan }, B => &b.plan };\n\
+         \x20   apply::execute(env, plan).unwrap();\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("sources.rs"),
+        "fn go(env: &Env, report: &EngineReport) {\n\
+         \x20   apply::execute(env, closer(\")\"), &report.plan).unwrap();\n}\n",
+    )
+    .unwrap();
+
+    let found = offenders(&root);
+    for want in ["audit.rs:3", "sources.rs:2"] {
+        assert!(
+            found.iter().any(|hit| hit.contains(want)),
+            "{want} went uncaught:\n{}",
+            found.join("\n")
+        );
+    }
+    assert_eq!(found.len(), 2, "{found:#?}");
 }

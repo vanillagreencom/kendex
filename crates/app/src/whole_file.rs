@@ -22,7 +22,17 @@ pub enum WriteRefused {
     /// The file is no longer the one this copy was read from. Something
     /// else wrote it — a fork, a hold, an install, another window — and
     /// writing this copy would put that back.
-    Stale,
+    ///
+    /// Carries whatever the write already did to the repository before it
+    /// refused. A plan runs a leaving package's uninstaller before it
+    /// touches the files, so a refusal landing after that point is a
+    /// refusal with a disarmed repository behind it — and a reload notice
+    /// on its own would send somebody away believing nothing happened.
+    /// Empty on the base check, which refuses before anything runs.
+    Stale {
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        undone: Vec<String>,
+    },
     Failed {
         message: String,
     },
@@ -43,7 +53,7 @@ impl From<String> for WriteRefused {
 /// went wrong.
 pub fn refusal(error: CoreError) -> WriteRefused {
     match error {
-        CoreError::PlanStale { .. } => WriteRefused::Stale,
+        CoreError::PlanStale { .. } => WriteRefused::Stale { undone: Vec::new() },
         other => WriteRefused::Failed {
             message: other.to_string(),
         },
@@ -72,7 +82,7 @@ mod tests {
         let path = PathBuf::from("/w/app/kendex.toml");
         assert!(matches!(
             refusal(CoreError::PlanStale { path }),
-            WriteRefused::Stale
+            WriteRefused::Stale { .. }
         ));
         assert!(matches!(
             refusal(CoreError::LegacyManifest {

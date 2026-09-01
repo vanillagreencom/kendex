@@ -271,7 +271,7 @@ fn a_save_from_a_stale_copy_is_refused_and_the_newer_file_stands() {
         panic!("a stale save must be refused");
     };
 
-    assert!(matches!(refused, WriteRefused::Stale), "{refused:?}");
+    assert!(matches!(refused, WriteRefused::Stale { .. }), "{refused:?}");
     let (kept, _) = manifest::read_for_mutation(&path).unwrap();
     let kept = kept.unwrap();
     assert_eq!(
@@ -295,7 +295,7 @@ fn a_copy_predating_the_first_save_is_refused_once_a_file_exists() {
     let Err(refused) = write_customize(&env, scope, Some((empty, Base::absent())), None) else {
         panic!("a no-file claim against an existing file must be refused");
     };
-    assert!(matches!(refused, WriteRefused::Stale), "{refused:?}");
+    assert!(matches!(refused, WriteRefused::Stale { .. }), "{refused:?}");
 }
 
 fn manifest() -> Manifest {
@@ -493,7 +493,7 @@ fn a_stale_settings_copy_refuses_and_takes_the_manifest_edit_with_it() {
     ) else {
         panic!("a stale settings copy must be refused");
     };
-    assert!(matches!(refused, WriteRefused::Stale), "{refused:?}");
+    assert!(matches!(refused, WriteRefused::Stale { .. }), "{refused:?}");
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), newer);
     let (kept, _) = manifest::read_for_mutation(&manifest_path).unwrap();
     assert!(kept.unwrap().skill_instructions.is_empty());
@@ -555,11 +555,41 @@ fn scope_carrying_a_declaring_package() -> (tempfile::TempDir, Env, Scope) {
     )
     .unwrap();
     std::fs::set_permissions(scripts.join("arm"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    // An agent whose role gains a skill upstream between the two phases,
+    // so a later plan writes the manifest itself. That write is the one op
+    // binding `manifest_base`, and so the only way to drive a refusal that
+    // lands after the uninstaller has already run.
+    let skill = |name: &str| {
+        std::fs::create_dir_all(catalog.join("skills").join(name)).unwrap();
+        std::fs::write(
+            catalog.join("skills").join(name).join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: skill {name}\n---\nBody.\n"),
+        )
+        .unwrap();
+    };
+    skill("recon");
+    skill("probe");
+    std::fs::create_dir_all(catalog.join("agents")).unwrap();
+    std::fs::write(
+        catalog.join("agents/rev.md"),
+        "---\nname: rev\ndescription: agent rev\nrole: reviewer\n---\nBody.\n",
+    )
+    .unwrap();
+    let role_skills = |carried: &str| {
+        std::fs::write(
+            catalog.join("kendex.toml"),
+            format!("is_source_catalog = true\n\n[role-skills]\nreviewer = [{carried}]\n"),
+        )
+        .unwrap();
+    };
+    role_skills("\"recon\"");
     std::fs::write(
         project.join("kendex.toml"),
         format!(
             "schema = {MANIFEST_SCHEMA}\n\n[sources.cat]\n{}\n\n\
-             [install]\nharnesses = [\"claude\"]\n\n[skills.guards]\nsource = \"cat\"\n",
+             [install]\nharnesses = [\"claude\"]\n\n\
+             [skills.guards]\nsource = \"cat\"\n\n[agents.rev]\nsource = \"cat\"\n\n\
+             [skills.recon]\nsource = \"cat\"\n\n[agent-skills]\nrev = [\"recon\"]\n",
             source_path(&catalog)
         ),
     )
@@ -578,22 +608,25 @@ fn scope_carrying_a_declaring_package() -> (tempfile::TempDir, Env, Scope) {
         project.join(".agents/skills/guards/scripts/arm").is_file(),
         "the fixture did not install the package"
     );
+    // And the role gains its second skill, so the next plan writes the
+    // manifest itself — the one op that binds `manifest_base`, and so the
+    // only way to drive a refusal landing AFTER the uninstaller has run.
+    role_skills("\"recon\", \"probe\"");
     (tmp, env, Scope::Project { root: project })
 }
 
-/// What the editor's own save does about a package the draft deletes.
+/// Dropping a declaration is not the same as removing the package.
 ///
-/// The reason `ExecuteError::Apply` carries the lines already said is that
-/// a repository disarmed before a failed write is a fact somebody is owed.
-/// This route plans with `PlanOptions::default()`, so orphan removal is
-/// off and a package dropped from the manifest keeps its lock entry — the
-/// save reconciles the declaration away and takes nothing off disk. That
-/// makes the account empty here, and the assertion is what holds it that
-/// way: if this route ever starts removing, the doc on the stale arm has
-/// to carry `said` through rather than discard it.
+/// With orphan removal off, a package taken out of the manifest keeps its
+/// lock entry and its files, so this save reconciles the declaration away
+/// and runs nothing. That is a fact about THIS door only — a refused
+/// rendering drops the entry regardless, which
+/// `an_uninstaller_that_ran_before_a_refusal_is_still_reported` proves
+/// below. Both are here because one of them used to stand for the whole
+/// route, and a doc comment rested on it.
 #[cfg(unix)]
 #[test]
-fn a_save_that_drops_a_package_removes_nothing_and_so_accounts_for_nothing() {
+fn dropping_a_declaration_leaves_the_package_and_runs_nothing() {
     let (tmp, env, scope) = scope_carrying_a_declaring_package();
     let manifest_path = manifest::manifest_path(&env, &scope);
     let (current, base) = manifest::read_for_mutation(&manifest_path).unwrap();
@@ -614,5 +647,117 @@ fn a_save_that_drops_a_package_removes_nothing_and_so_accounts_for_nothing() {
             .join("dev/app/.agents/skills/guards/scripts/arm")
             .is_file(),
         "the save took the package off disk after all"
+    );
+}
+
+/// The other door a package leaves by, and the one that makes the account
+/// worth carrying through a refusal.
+///
+/// A refused rendering drops its lock entry whatever `remove_orphans`
+/// says — `plan_refusals` re-inserts the entry on one arm only — so this
+/// route can run an uninstaller without anybody asking for a removal. A
+/// catalog tree carrying both spellings of its skill file is the cheapest
+/// way to make the engine refuse one.
+#[cfg(unix)]
+fn scope_whose_package_stops_rendering(
+    from: &(tempfile::TempDir, Env, Scope),
+) -> std::path::PathBuf {
+    let catalog = from.0.path().join("catalog");
+    let disabled = catalog.join("skills/guards/SKILL.md.disabled");
+    std::fs::write(
+        &disabled,
+        "---\nname: guards\ndescription: gates the commits\n---\n",
+    )
+    .unwrap();
+    disabled
+}
+
+/// A refusal that lands after the uninstaller ran keeps its account.
+///
+/// This is the issue's own end state reached from the other direction: the
+/// repository is disarmed, the write does not land, and a bare reload
+/// notice would tell the person nothing happened. The lines ride on the
+/// refusal instead.
+#[cfg(unix)]
+#[test]
+fn an_uninstaller_that_ran_before_a_refusal_is_still_reported() {
+    let held = scope_carrying_a_declaring_package();
+    let (_tmp, env, scope) = (&held.0, &held.1, &held.2);
+    scope_whose_package_stops_rendering(&held);
+
+    // Planned and applied whole, the way the editor's save does: the
+    // refused rendering drops the package, and its uninstaller runs.
+    let view = crate::audit::apply_scope(env, scope, false).unwrap();
+
+    assert_eq!(
+        view.undone,
+        vec![
+            "guards: running scripts/arm --uninstall".to_owned(),
+            "guards: disarmed".to_owned()
+        ],
+        "a refused rendering removed the package without saying what it ran"
+    );
+}
+
+/// And the account survives the refusal itself.
+///
+/// The uninstaller runs before the plan writes, so a refusal landing after
+/// that point is a refusal with a disarmed repository behind it. Dropping
+/// the lines into a unit variant told the person only to reload, which is
+/// the one shape where "nothing happened" is a lie — and it is this
+/// issue's own end state reached from the other direction.
+///
+/// Driven through the real executor against a real moved precondition:
+/// the manifest the plan binds is rewritten after the report is built, so
+/// the apply rolls back with the uninstaller already run.
+#[cfg(unix)]
+#[test]
+fn a_refusal_after_the_uninstaller_ran_still_carries_the_account() {
+    let held = scope_carrying_a_declaring_package();
+    let (_tmp, env, scope) = (&held.0, &held.1, &held.2);
+    scope_whose_package_stops_rendering(&held);
+    let path = manifest::manifest_path(env, scope);
+    let (read, base) = manifest::read_for_mutation(&path).unwrap();
+    let editor_copy = read.unwrap();
+    let lock = load_lock(&lock_path(env, scope)).unwrap();
+    let report = engine::plan_scope(
+        env,
+        scope,
+        &editor_copy,
+        &lock,
+        &PlanOptions {
+            manifest_base: Some(base),
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        !report.repo_effects_leaving.is_empty(),
+        "the fixture built a report with nothing leaving"
+    );
+
+    // The writer in between: lands after the report was built, so the
+    // apply rolls back on the precondition it bound.
+    let original = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        format!("{original}\n[skill-instructions]\nall = \"kept\"\n"),
+    )
+    .unwrap();
+
+    let refused = crate::repo_effects::execute(env, &report).unwrap_err();
+    let refused = refused_write(refused, std::slice::from_ref(&path));
+
+    let undone = match refused {
+        WriteRefused::Stale { undone } => undone,
+        other => panic!("expected a stale refusal, got {other:?}"),
+    };
+    assert_eq!(
+        undone,
+        vec![
+            "guards: running scripts/arm --uninstall".to_owned(),
+            "guards: disarmed".to_owned(),
+        ],
+        "the refusal reported a reload over a repository it had just disarmed"
     );
 }

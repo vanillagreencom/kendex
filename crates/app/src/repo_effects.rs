@@ -54,21 +54,34 @@ pub fn apply(env: &Env, scope: &Scope, declared: &DeclaredEffects) -> Result<Sai
             kendex_core::names::shown(&declared.name)
         ));
     }
+    // Escaped on the way out, both channels and both outcomes. These are a
+    // third party's bytes and the window renders the installer's last
+    // stdout line as a bare toast the moment somebody authorizes an
+    // arming, so a bidi override or a line phrased in kendex's voice would
+    // read as kendex's verdict on what they just approved. The departing
+    // half of this module is held to the same rule; one door each would
+    // mean the rule holds wherever it was last reviewed.
+    let shown = |lines: &[String]| -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| kendex_core::names::shown(line))
+            .collect()
+    };
     match kendex_core::repo_effects::arm(scope, declared) {
         Ok(report) => Ok(Said {
-            stdout: report.stdout,
-            stderr: report.stderr,
+            stdout: shown(&report.stdout),
+            stderr: shown(&report.stderr),
         }),
         // The one wording, with the package's own lines under it where the
         // installer got far enough to say anything — the account of a
         // possibly half-written repository has to reach the person whole.
         Err(error) => {
-            let said: Vec<&str> = match &error {
+            let said: Vec<String> = match &error {
                 ArmError::Failed { report, .. } => report
                     .stderr
                     .iter()
                     .chain(&report.stdout)
-                    .map(String::as_str)
+                    .map(|line| kendex_core::names::shown(line))
                     .collect(),
                 _ => Vec::new(),
             };
@@ -102,13 +115,13 @@ pub enum ExecuteError {
     /// then failed is a fact the person is still owed. Boxed: a refusal is
     /// the rare path, and the common `Ok` should not carry its size.
     ///
-    /// One caller drops them: the editor maps a stale precondition to the
-    /// reload choice it draws, which is a unit answer with nowhere to put
-    /// a line. Sound there and only there, because that route plans with
-    /// `PlanOptions::default()` and so removes nothing — held by
-    /// `a_save_that_drops_a_package_removes_nothing_and_so_accounts_for_nothing`
-    /// rather than by this sentence. Any other caller that reads this
-    /// variant owes the lines.
+    /// Every caller carries them, the editor's stale answer included: its
+    /// `WriteRefused::Stale` holds an `undone` for exactly this. No route
+    /// is exempt on the grounds that its own plan cannot remove anything,
+    /// because none of them can show that — a rendering the engine refuses
+    /// drops the package's lock entry whatever the planning options say
+    /// about orphans, so an uninstaller runs on a path nobody asked for a
+    /// removal on.
     Apply {
         said: Vec<String>,
         error: Box<kendex_core::error::CoreError>,
@@ -127,6 +140,19 @@ impl std::fmt::Display for ExecuteError {
             }
         }
     }
+}
+
+/// What stands in for the lines of one package's output that were not
+/// carried. Said rather than dropped: an account that quietly stops is one
+/// nobody knows to go and read in full.
+fn elided(lines: usize) -> String {
+    format!(
+        "and {lines} more line{} from that package",
+        match lines {
+            1 => "",
+            _ => "s",
+        }
+    )
 }
 
 /// Execute a report's plan — the one way a desktop command holding an
@@ -151,27 +177,62 @@ impl std::fmt::Display for ExecuteError {
 /// order leaves the repository in the state this exists to prevent.
 pub fn execute(env: &Env, report: &EngineReport) -> Result<Vec<String>, ExecuteError> {
     let mut said = Vec::new();
+    // How many lines of one package's own output are carried. A departing
+    // package chooses its own output length and core relays it whole, so
+    // an account with no ceiling is a third party deciding how long the
+    // window is busy. Per package rather than over the whole account,
+    // because the budget is about one program being chatty.
+    const PACKAGE_LINES: usize = 10;
+    let mut spent = 0usize;
+    let mut dropped = 0usize;
     if let Err(error) = kendex_core::repo_effects::undo(
         &report.plan.scope,
         &report.repo_effects_leaving,
+        // Two rules, and both need the tag core attached — which is why
+        // the budget is spent here rather than over the flat list the
+        // window receives.
+        //
+        // Every Note is kept, whatever a neighbour printed. They are
+        // kendex's own account and the ONLY place it says an effect was
+        // left standing and names the manual remedy; a package that
+        // pushed a sibling's stand-down notice past a cap would be
+        // suppressing the one line nothing else can recover. Their count
+        // is bounded by the number of packages leaving, so keeping them
+        // all cannot restore the drain the budget exists to stop.
+        //
         // The package's own two streams go out escaped, the way the
         // terminal escapes them. This is a departing third party's output
         // landing in a toast that carries no attribution, so a line of
         // bidi overrides or one phrased in kendex's voice would read as
-        // kendex talking. core already escapes its own Note lines, and
-        // `shown` over escaped text is the same text.
+        // kendex talking. `shown` over core's already-escaped Note lines
+        // is the same text, so only the streams need it.
         //
         // The terminal's stdout door stays unescaped for the reason it
         // exists: those bytes are a pipe's answer. A window has no pipe.
-        &mut |spoken| {
-            said.push(match spoken {
-                kendex_core::repo_effects::Spoken::Note(line) => line,
-                other => kendex_core::names::shown(&other.into_line()),
-            });
+        &mut |spoken| match spoken {
+            kendex_core::repo_effects::Spoken::Note(line) => {
+                if dropped > 0 {
+                    said.push(elided(dropped));
+                    dropped = 0;
+                }
+                spent = 0;
+                said.push(line);
+            }
+            other if spent < PACKAGE_LINES => {
+                spent += 1;
+                said.push(kendex_core::names::shown(&other.into_line()));
+            }
+            _ => dropped += 1,
         },
     ) {
+        if dropped > 0 {
+            said.push(elided(dropped));
+        }
         said.push(error.to_string());
         return Err(ExecuteError::Undo(said.join("\n")));
+    }
+    if dropped > 0 {
+        said.push(elided(dropped));
     }
     match kendex_core::apply::execute(env, &report.plan) {
         Ok(_) => Ok(said),

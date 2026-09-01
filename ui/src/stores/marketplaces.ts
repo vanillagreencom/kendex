@@ -18,7 +18,7 @@ import {
 } from "@/lib/read-state";
 import { rescanEverything } from "@/lib/rescan";
 import { settled } from "@/lib/settled";
-import { sayUndone } from "@/lib/undone";
+import { saying, sayUndone } from "@/lib/undone";
 import { catalogReads } from "./marketplaces-catalog-reads";
 import { type InstallActions, installActions } from "./marketplaces-install";
 import { dropCatalogCaches, openLead } from "./marketplaces-shared";
@@ -162,7 +162,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
         ? `Unsubscribed from '${source}' — its packages are yours now`
         : `Unsubscribed from '${source}'`,
     );
-    sayUndone(response.data);
+    saying(response);
     // A page carried on as this subscription must stop pointing at it, and
     // every other derived read goes with it.
     dropCatalogCaches(set);

@@ -165,7 +165,9 @@ fn write_customize(
         None => None,
         Some((draft, claimed)) => {
             if now != claimed {
-                return Err(WriteRefused::Stale);
+                // Before anything ran: the copy is refused on the base
+                // check, so there is no account to carry.
+                return Err(WriteRefused::Stale { undone: Vec::new() });
             }
             let mut manifest = match current.is_some() {
                 true => draft,
@@ -236,18 +238,43 @@ fn write_customize(
     // checks give — so it reaches the editor as the same choice.
     // Through the one executor: a manifest saved with a package deleted out
     // of it takes that package away, and its declared uninstaller has to run
-    // while its scripts are still on disk. A stale precondition still reads
-    // as the same refusal — the executor hands core's error on as its text.
-    let undone = crate::repo_effects::execute(env, &report).map_err(|refused| match &refused {
-        ExecuteError::Apply { error, .. } if stale_at(error, &targets) => WriteRefused::Stale,
-        _ => WriteRefused::Failed {
-            message: refused.to_string(),
-        },
-    })?;
+    // while its scripts are still on disk.
+    //
+    // A stale precondition still reads as the same refusal, and it takes
+    // the account with it. The uninstaller ran before the plan wrote
+    // anything, so this is a refusal with a disarmed repository behind it —
+    // the one shape where "nothing happened, reload" is a lie. Which is
+    // also why nothing here reasons about whether this route can remove:
+    // it can, through a refused rendering, whatever the planning options
+    // say about orphans.
+    let undone = crate::repo_effects::execute(env, &report)
+        .map_err(|refused| refused_write(refused, &targets))?;
     Ok(AuditView {
         undone,
         ..view(env, &scope)
     })
+}
+
+/// How a write the executor refused reaches the page.
+///
+/// A precondition that moved is the reload choice the editor already
+/// draws, and it carries whatever the write had already done: the
+/// uninstaller of a leaving package runs before the plan writes anything,
+/// so a refusal landing after that point is a refusal with a disarmed
+/// repository behind it. A bare reload notice there says nothing happened,
+/// which is the one thing that is not true.
+///
+/// Named rather than inlined so the mapping can be driven with a real
+/// stale error rather than inferred from the branch.
+pub(super) fn refused_write(refused: ExecuteError, targets: &[std::path::PathBuf]) -> WriteRefused {
+    match refused {
+        ExecuteError::Apply { said, error } if stale_at(&error, targets) => {
+            WriteRefused::Stale { undone: said }
+        }
+        other => WriteRefused::Failed {
+            message: other.to_string(),
+        },
+    }
 }
 
 /// The project root a settings file would sit in. Global has none: skills

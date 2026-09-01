@@ -110,7 +110,7 @@ export const commands = {
 	 *  window — would put the older file back over it. A copy of a file that
 	 *  is no longer there is refused, never applied.
 	 */
-	updateSettings: (settings: AppSettings, base: string | null) => typedError<SettingsRead, WriteRefused>(__TAURI_INVOKE("update_settings", { settings, base })),
+	updateSettings: (settings: AppSettings, base: string | null) => typedError<SettingsRead, WriteRefused_Serialize>(__TAURI_INVOKE("update_settings", { settings, base })),
 	/**
 	 *  The size on screen, written on its own. Nothing else in the file moves
 	 *  with it, and nothing else can move it: a size the person is looking at
@@ -181,7 +181,7 @@ export const commands = {
 } | null, settings: {
 	edits: SettingsEdit[],
 	base: string | null,
-} | null) => typedError<AuditView_Serialize, WriteRefused>(__TAURI_INVOKE("save_customize", { scope, manifest, settings })),
+} | null) => typedError<AuditView_Serialize, WriteRefused_Serialize>(__TAURI_INVOKE("save_customize", { scope, manifest, settings })),
 	editorInventory: (scope: Scope) => typedError<EditorInventory, string>(__TAURI_INVOKE("editor_inventory", { scope })),
 	/**
 	 *  Per-hook, per-harness delivery for the hooks as currently drafted in the
@@ -298,12 +298,8 @@ export const commands = {
 	 *  Unsubscribe, removing or keeping the packages. `keep` converts each
 	 *  installation to a local fork; otherwise they are uninstalled, and
 	 *  `discard_edits` takes hand edits along instead of refusing.
-	 * 
-	 *  Answers with what the removal did about the repository effects of the
-	 *  packages that left with the source — the same account the terminal
-	 *  prints, for the window to show.
 	 */
-	marketplaceUnsubscribe: (scope: Scope, source: string, keep: boolean, discardEdits: boolean) => typedError<string[], string>(__TAURI_INVOKE("marketplace_unsubscribe", { scope, source, keep, discardEdits })),
+	marketplaceUnsubscribe: (scope: Scope, source: string, keep: boolean, discardEdits: boolean) => typedError<Unsubscribed_Serialize, string>(__TAURI_INVOKE("marketplace_unsubscribe", { scope, source, keep, discardEdits })),
 	/**
 	 *  The directory as the tab shows it. `refresh` forces a revalidation;
 	 *  otherwise the cached list is served within its TTL.
@@ -2887,6 +2883,46 @@ export type UnsubscribePreview = {
 	bundles: string[],
 };
 
+/**
+ *  What unsubscribing did about the repository effects of the packages
+ *  that left with the source — the same account the terminal prints.
+ * 
+ *  A struct rather than the bare list it used to be, spelling the account
+ *  `undone` like every other command that can make one. The window reads
+ *  the account off an answer by that name, so a bare list is a shape it
+ *  can only be told about by hand, and the day this write goes through
+ *  the shared one it would fall silent with nothing going red.
+ */
+export type Unsubscribed = Unsubscribed_Serialize | Unsubscribed_Deserialize;
+
+/**
+ *  What unsubscribing did about the repository effects of the packages
+ *  that left with the source — the same account the terminal prints.
+ * 
+ *  A struct rather than the bare list it used to be, spelling the account
+ *  `undone` like every other command that can make one. The window reads
+ *  the account off an answer by that name, so a bare list is a shape it
+ *  can only be told about by hand, and the day this write goes through
+ *  the shared one it would fall silent with nothing going red.
+ */
+export type Unsubscribed_Deserialize = {
+	undone: string[],
+};
+
+/**
+ *  What unsubscribing did about the repository effects of the packages
+ *  that left with the source — the same account the terminal prints.
+ * 
+ *  A struct rather than the bare list it used to be, spelling the account
+ *  `undone` like every other command that can make one. The window reads
+ *  the account off an answer by that name, so a bare list is a shape it
+ *  can only be told about by hand, and the day this write goes through
+ *  the shared one it would fall silent with nothing going red.
+ */
+export type Unsubscribed_Serialize = {
+	undone?: string[],
+};
+
 /**  One declared package's update standing. */
 export type UpdateRow = {
 	scope: Scope,
@@ -3081,13 +3117,47 @@ export type Withheld = {
  *  here, not a failure, so it is a shape the page can act on rather than
  *  a message it would have to recognise by its words.
  */
-export type WriteRefused = 
+export type WriteRefused = WriteRefused_Serialize | WriteRefused_Deserialize;
+
+/**
+ *  Why a whole-file write did not happen. Refusing is a normal answer
+ *  here, not a failure, so it is a shape the page can act on rather than
+ *  a message it would have to recognise by its words.
+ */
+export type WriteRefused_Deserialize = 
 /**
  *  The file is no longer the one this copy was read from. Something
  *  else wrote it — a fork, a hold, an install, another window — and
  *  writing this copy would put that back.
+ * 
+ *  Carries whatever the write already did to the repository before it
+ *  refused. A plan runs a leaving package's uninstaller before it
+ *  touches the files, so a refusal landing after that point is a
+ *  refusal with a disarmed repository behind it — and a reload notice
+ *  on its own would send somebody away believing nothing happened.
+ *  Empty on the base check, which refuses before anything runs.
  */
-{ kind: "stale" } | { kind: "failed"; message: string };
+({ kind: "stale"; undone: string[] }) & { message?: never } | ({ kind: "failed"; message: string }) & { undone?: never };
+
+/**
+ *  Why a whole-file write did not happen. Refusing is a normal answer
+ *  here, not a failure, so it is a shape the page can act on rather than
+ *  a message it would have to recognise by its words.
+ */
+export type WriteRefused_Serialize = 
+/**
+ *  The file is no longer the one this copy was read from. Something
+ *  else wrote it — a fork, a hold, an install, another window — and
+ *  writing this copy would put that back.
+ * 
+ *  Carries whatever the write already did to the repository before it
+ *  refused. A plan runs a leaving package's uninstaller before it
+ *  touches the files, so a refusal landing after that point is a
+ *  refusal with a disarmed repository behind it — and a reload notice
+ *  on its own would send somebody away believing nothing happened.
+ *  Empty on the base check, which refuses before anything runs.
+ */
+({ kind: "stale"; undone?: string[] }) & { message?: never } | ({ kind: "failed"; message: string }) & { undone?: never };
 
 /**  One path the package writes, where it actually lands. */
 export type Written = {

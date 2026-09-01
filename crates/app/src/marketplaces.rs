@@ -205,11 +205,10 @@ pub fn marketplace_subscribe(
     let env = env()?;
     let subscribed = source_ops::subscribe(&env, &scope, &reference, name.as_deref())
         .map_err(|e| e.to_string())?;
-    // Through the one executor, like every report. Not because a subscribe
-    // is expected to drop a package — orphan removal is off here, so it
-    // does not — but because that is the invariant: no path reasons about
-    // whether its own plan can take a package away, so none of them has to
-    // be re-reasoned about when its planning options change.
+    // Through the one executor, like every report, precisely because no
+    // path can prove its own plan takes nothing away. Orphan removal being
+    // off does not settle it: a rendering the engine refuses drops the
+    // package's lock entry regardless, and its uninstaller runs.
     let undone = crate::repo_effects::write(&env, &subscribed.report)?;
     let mut notes = subscribed.report.notes;
     // Fetch so counts and browsing land right away; a failure costs the

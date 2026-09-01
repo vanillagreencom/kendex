@@ -1,201 +1,18 @@
-//! The desktop's account of what a package does to the repository, and the
-//! yes that is separate from installing it.
+//! The desktop's account of what a package does to the repository, and
+//! the yes that is separate from installing it.
 //!
 //! An install from the window is one command that plans and writes. The
 //! effect a package declares must come back out of it unrun, with what a
-//! person needs in order to decide — and arming is a second command, so a
-//! window that closes the dialog leaves the repository as it was.
+//! person needs in order to decide — and arming is a second command, so
+//! a window that closes the dialog leaves the repository as it was.
+//!
+//! What either half of the module does to a third party's own output is
+//! `repo_effects_escaping.rs`.
 #![cfg(unix)]
 
-#[path = "../../test_util.rs"]
-mod test_util;
-use test_util::source_path;
-
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-
-use kendex_app::marketplaces::install::{InstallItem, Installed, install};
-use kendex_core::env::{Env, FakeOs};
-use kendex_core::model::{ItemKind, Scope};
-
-struct Fixture {
-    _tmp: tempfile::TempDir,
-    env: Env,
-    scope: Scope,
-    project: PathBuf,
-}
-
-/// One empty git configuration for this whole test binary, global and
-/// system alike.
-///
-/// Not the developer's. A maintainer's own config decides what a git this
-/// file runs does — `commit.gpgsign` reds every case here on a fixture
-/// with no signing key — and none of that has anything to do with this
-/// code.
-///
-/// Named on each command this file builds. It does NOT reach the installer
-/// kendex spawns, whose argv belongs to core and whose environment is
-/// whatever this process hands down; covering that one means writing the
-/// variables onto the process, and the workspace forbids `unsafe`, which
-/// `std::env::set_var` now requires. So a maintainer who has configured a
-/// hooks path still sees the arming cases stand down — the same shape
-/// `crates/cli/tests/install_ux/guarding.rs` has, and a suite-wide
-/// property rather than anything this file introduced.
-fn empty_git_config() -> &'static Path {
-    static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    PATH.get_or_init(|| {
-        let path = std::env::temp_dir().join("kendex-app-repo-effects-empty.gitconfig");
-        let _ = fs::write(&path, "");
-        path
-    })
-    .as_path()
-}
-
-/// The fixture's own git: as little of the developer's as reaches it.
-///
-/// Three variables and two config files. A pre-commit hook exports
-/// `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` at the repository being
-/// committed to, so a child that clears only the first writes its staged
-/// entries into that repository's index. The config files are the empty
-/// pair above.
-fn own_git(args: &[&str], dir: &Path) -> std::process::Command {
-    let mut command = std::process::Command::new("git");
-    command
-        .env("GIT_CONFIG_GLOBAL", empty_git_config())
-        .env("GIT_CONFIG_SYSTEM", empty_git_config())
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
-        .args(args)
-        .current_dir(dir);
-    command
-}
-
-#[allow(clippy::unwrap_used)]
-fn git(dir: &Path, args: &[&str]) {
-    let output = own_git(args, dir).output().unwrap();
-    assert!(
-        output.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[allow(clippy::unwrap_used)]
-fn copy_tree(from: &Path, to: &Path) {
-    fs::create_dir_all(to).unwrap();
-    for entry in fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_tree(&entry.path(), &target);
-        } else {
-            fs::copy(entry.path(), &target).unwrap();
-        }
-    }
-}
-
-/// A git project subscribed to a catalog that offers the repository's own
-/// growth-guards and size-ratchet packages beside an inert one, plus a
-/// bundle carrying growth-guards, with Claude on the machine.
-#[allow(clippy::unwrap_used)]
-fn fixture() -> Fixture {
-    empty_git_config();
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().canonicalize().unwrap();
-    let project = home.join("dev/app");
-    let catalog = home.join("catalog");
-    let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../skills")
-        .canonicalize()
-        .unwrap();
-    for skill in ["growth-guards", "size-ratchet"] {
-        copy_tree(&shipped.join(skill), &catalog.join("skills").join(skill));
-    }
-    fs::create_dir_all(catalog.join("skills/deploy")).unwrap();
-    fs::write(
-        catalog.join("skills/deploy/SKILL.md"),
-        "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n",
-    )
-    .unwrap();
-    // A package whose installer exits clean and writes to both channels —
-    // the shipped shape of growth-guards skipping its work: the summary on
-    // stdout, the reason and the remedy on stderr.
-    let noisy = catalog.join("skills/noisy/scripts");
-    fs::create_dir_all(&noisy).unwrap();
-    fs::write(
-        catalog.join("skills/noisy/SKILL.md"),
-        "---\nname: noisy\ndescription: says something on both channels\n\
-         repo-effects:\n  summary: \"arms nothing here\"\n  \
-         installer: \"scripts/arm\"\n---\nBody.\n",
-    )
-    .unwrap();
-    fs::write(
-        noisy.join("arm"),
-        "#!/bin/sh\necho 'core.hooksPath is set; unset it and run this again' >&2\n\
-         echo 'hooks: skipped'\n",
-    )
-    .unwrap();
-    fs::set_permissions(noisy.join("arm"), fs::Permissions::from_mode(0o755)).unwrap();
-    fs::write(
-        catalog.join("kendex.toml"),
-        "[bundles.guards]\ndescription = \"the commit gate\"\nskills = [\"growth-guards\"]\n",
-    )
-    .unwrap();
-    fs::create_dir_all(home.join(".claude")).unwrap();
-    fs::create_dir_all(project.join(".agents")).unwrap();
-    git(&project, &["init", "--quiet", "-b", "main"]);
-    fs::write(project.join("README.md"), "the app\n").unwrap();
-    git(&project, &["add", "."]);
-    git(&project, &["commit", "--quiet", "-m", "start"]);
-    fs::write(
-        project.join("kendex.toml"),
-        format!("schema = 6\n\n[sources.cat]\n{}\n", source_path(&catalog)),
-    )
-    .unwrap();
-    Fixture {
-        env: Env::fake(&home, FakeOs::Linux),
-        scope: Scope::Project {
-            root: project.clone(),
-        },
-        project,
-        _tmp: tmp,
-    }
-}
-
-fn install_skills(f: &Fixture, names: &[&str], bundle: Option<&str>) -> Installed {
-    install(
-        &f.env,
-        f.scope.clone(),
-        "cat".to_owned(),
-        names
-            .iter()
-            .map(|name| InstallItem {
-                kind: ItemKind::Skill,
-                name: (*name).to_owned(),
-            })
-            .collect(),
-        bundle.map(str::to_owned),
-        None,
-        false,
-        None,
-        None,
-    )
-    .unwrap_or_else(|error| panic!("install {names:?} {bundle:?}: {error}"))
-}
-
-fn companion<'a>(
-    offer: &'a kendex_core::repo_effects::Disclosure,
-    name: &str,
-) -> &'a kendex_core::repo_effects::Companion {
-    offer
-        .companions
-        .iter()
-        .find(|c| c.name == name)
-        .unwrap_or_else(|| panic!("no companion {name}: {:?}", offer.companions))
-}
+#[path = "repo_effects/fixture.rs"]
+mod fixture;
+use fixture::*;
 
 /// Installing writes the package and hands back its account — what
 /// changes, where it writes, which companions are here, how to undo it —
@@ -277,37 +94,6 @@ fn a_clean_exit_carries_both_channels() {
     assert_eq!(
         said.stderr,
         vec!["core.hooksPath is set; unset it and run this again".to_owned()]
-    );
-}
-
-/// The yes is for the package the window was shown, not for whatever root
-/// comes back with it. Arming confines a program to the root it is handed,
-/// so a root the caller chose would confine nothing.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_root_this_scope_never_installed_is_refused() {
-    let f = fixture();
-    let installed = install_skills(&f, &["growth-guards"], None);
-    let [offer] = installed.repo_effects.shown.as_slice() else {
-        panic!("one offer: {:?}", installed.repo_effects);
-    };
-
-    let forged = kendex_core::repo_effects::DeclaredEffects {
-        root: PathBuf::from("/"),
-        effects: kendex_core::repo_effects::RepoEffects {
-            installer: Some("bin/sh -c id".to_owned()),
-            ..offer.declared.effects.clone()
-        },
-        ..offer.declared.clone()
-    };
-    let error = kendex_app::repo_effects::apply(&f.env, &f.scope, &forged).unwrap_err();
-    assert!(
-        error.contains("no record of installing it there"),
-        "{error}"
-    );
-    assert!(
-        !f.project.join(".git/hooks/kendex-guards").exists(),
-        "the forged root armed the hooks"
     );
 }
 
@@ -458,6 +244,7 @@ fn unsubscribing_disarms_the_packages_that_leave_with_the_source() {
     );
     assert!(
         undone
+            .undone
             .iter()
             .any(|line| line.starts_with("growth-guards: running")),
         "{undone:?}"
@@ -575,53 +362,6 @@ fn removing_an_inert_package_says_nothing() {
     assert!(view.undone.is_empty(), "{:?}", view.undone);
 }
 
-/// A departing package's own output reaches the window escaped.
-///
-/// The lines land in a toast carrying no attribution, so a package that
-/// writes a bidi override or a line phrased in kendex's voice would be
-/// read as kendex talking. The terminal escapes them; this proves the
-/// window does too, which is what makes the three places claiming both
-/// surfaces show the same lines true.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_departing_package_s_output_reaches_the_window_escaped() {
-    let f = fixture();
-    let scripts = f.project.join(".agents/skills/loud/scripts");
-    let catalog_scripts = f.env.home.join("catalog/skills/loud/scripts");
-    fs::create_dir_all(&catalog_scripts).unwrap();
-    fs::write(
-        f.env.home.join("catalog/skills/loud/SKILL.md"),
-        "---\nname: loud\ndescription: writes a deceptive line\n\
-         repo-effects:\n  summary: \"says something on the way out\"\n  \
-         uninstaller: \"scripts/out\"\n---\nBody.\n",
-    )
-    .unwrap();
-    // U+202E, the override that reverses everything printed after it.
-    fs::write(
-        catalog_scripts.join("out"),
-        "#!/bin/sh\nprintf 'loud: \\342\\200\\256done\\n'\n",
-    )
-    .unwrap();
-    fs::set_permissions(
-        catalog_scripts.join("out"),
-        fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
-    install_skills(&f, &["loud"], None);
-    assert!(scripts.join("out").is_file(), "the fixture did not install");
-
-    let view = kendex_app::audit::remove(&f.env, &f.scope, ItemKind::Skill, "loud")
-        .unwrap_or_else(|error| panic!("remove: {error}"));
-
-    let said = view.undone.join("\n");
-    assert!(said.contains("loud: running"), "{said:?}");
-    assert!(
-        !said.contains('\u{202E}'),
-        "the override reached the window raw: {said:?}"
-    );
-    assert!(said.contains("\\u{202e}"), "{said:?}");
-}
-
 /// A write that must take nothing away refuses when it would, rather than
 /// running an uninstaller whose account nobody would see.
 #[test]
@@ -660,4 +400,82 @@ fn a_write_that_must_remove_nothing_refuses_when_it_would() {
         f.project.join(".git/hooks/kendex-guards").is_file(),
         "the refusal ran the uninstaller anyway"
     );
+}
+
+/// A chatty package cannot bury the notice its neighbour is owed.
+///
+/// The account interleaves kendex's own lines with unbounded output from
+/// each departing package, in name order. A budget spent across the whole
+/// list lets the first package's chatter push the second's notice off the
+/// end — and "declares no uninstaller — what it changed stays" is the only
+/// place kendex says an effect was left standing and names the manual
+/// remedy. A verbose uninstaller does that by accident; an installed
+/// package can do it on purpose.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_chatty_package_cannot_bury_a_neighbour_s_stand_down() {
+    let f = fixture();
+    let catalog = f.env.home.join("catalog");
+    // Sorted first, so its output is emitted before the other's notice.
+    let loud = catalog.join("skills/aaa-loud/scripts");
+    fs::create_dir_all(&loud).unwrap();
+    fs::write(
+        catalog.join("skills/aaa-loud/SKILL.md"),
+        "---\nname: aaa-loud\ndescription: says a great deal on the way out\n\
+         repo-effects:\n  summary: \"talks\"\n  uninstaller: \"scripts/out\"\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::write(
+        loud.join("out"),
+        "#!/bin/sh\ni=0\nwhile [ $i -lt 200 ]; do echo \"chatter $i\"; i=$((i+1)); done\n",
+    )
+    .unwrap();
+    fs::set_permissions(loud.join("out"), fs::Permissions::from_mode(0o755)).unwrap();
+    // Sorted second, and it declares no uninstaller — so its one line is
+    // the only word anybody gets about what it left behind.
+    fs::create_dir_all(catalog.join("skills/zzz-quiet")).unwrap();
+    fs::write(
+        catalog.join("skills/zzz-quiet/SKILL.md"),
+        "---\nname: zzz-quiet\ndescription: leaves something standing\n\
+         repo-effects:\n  summary: \"changes the repository\"\n  \
+         removal: \"undo it by hand\"\n---\nBody.\n",
+    )
+    .unwrap();
+    install_skills(&f, &["aaa-loud", "zzz-quiet"], None);
+
+    // Both leave together: the manifest stops declaring either.
+    let manifest = f.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    let kept: String = text
+        .split("\n[")
+        .enumerate()
+        .filter(|(n, block)| {
+            *n == 0
+                || !(block.starts_with("skills.aaa-loud]")
+                    || block.starts_with("skills.zzz-quiet]"))
+        })
+        .map(|(n, block)| match n {
+            0 => block.to_owned(),
+            _ => format!("\n[{block}"),
+        })
+        .collect();
+    fs::write(&manifest, kept).unwrap();
+
+    let view = kendex_app::audit::apply_scope(&f.env, &f.scope, true)
+        .unwrap_or_else(|error| panic!("apply_scope: {error}"));
+
+    let said = view.undone.join("\n");
+    assert!(
+        said.contains("zzz-quiet: declares no uninstaller"),
+        "the chatty package buried its neighbour's stand-down:\n{said}"
+    );
+    assert!(said.contains("to undo: undo it by hand"), "{said}");
+    // And the chatter itself is still bounded, with the count said rather
+    // than the tail dropped in silence.
+    assert!(
+        view.undone.len() < 40,
+        "the account carried {} lines",
+        view.undone.len()
+    );
+    assert!(said.contains("more lines from that package"), "{said}");
 }

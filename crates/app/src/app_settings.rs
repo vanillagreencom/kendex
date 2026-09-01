@@ -268,7 +268,7 @@ mod tests {
         };
         let refused = update_settings_at(&env, stale, &held).unwrap_err();
 
-        assert!(matches!(refused, WriteRefused::Stale), "{refused:?}");
+        assert!(matches!(refused, WriteRefused::Stale { .. }), "{refused:?}");
         let stored = settings::load(&env).unwrap();
         assert_eq!(stored.zoom, 150);
         assert_eq!(stored.appearance, kendex_core::settings::Appearance::System);

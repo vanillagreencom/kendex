@@ -174,10 +174,10 @@ pub fn install(
         _ => engine_ops::add(env, &target, &request),
     }
     .map_err(|e| e.to_string())?;
-    // Through the one executor, like every report: no path here reasons
-    // about whether its own plan can take a package away. An add's does
-    // not today — orphan removal is off — and that is a planning option
-    // rather than a property of this command.
+    // Through the one executor, like every report, because no path here
+    // can prove its own plan takes nothing away. An add is not exempt: a
+    // rendering the engine refuses drops that package's lock entry
+    // whatever the planning options say, and its uninstaller runs.
     let undone = crate::repo_effects::write(env, &report)?;
     // After the write, because the script an effect runs is the one this
     // install just put on disk.
