@@ -624,6 +624,29 @@ run_guard
   || bad "the same edit with its render in the change passes" "rc=$RC out=$OUT"
 git -C "$R" checkout -q -- skills .agents
 
+# A deletion is in the changed set too, so a render removed beside a living
+# source has to red; both gone together is a clean removal.
+printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
+rm -f "$R/.agents/skills/demo/scripts/demo.sh"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/scripts/demo.sh -> .agents/skills/demo/scripts/demo.sh"* ]] \
+  && ok "a skill source edited with its render deleted reds, naming the render" \
+  || bad "a skill source edited with its render deleted reds, naming the render" "rc=$RC out=$OUT"
+if mutant_guard 's/ && { \[ ! -e "\$1" \] || \[ -e "\$2" \]; }//'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the outlives clause deleted the deleted render passes" \
+    || bad "control: with the outlives clause deleted the deleted render passes" "rc=$RC out=$OUT"
+else
+  bad "control: the outlives clause could not be deleted from a guard copy"
+fi
+rm -f "$R/skills/demo/scripts/demo.sh"
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "a skill source deleted with its render passes" \
+  || bad "a skill source deleted with its render passes" "rc=$RC out=$OUT"
+git -C "$R" checkout -q -- skills .agents
+
 # A path with a non-ASCII byte: git quotes it unless told not to, and the
 # quoted spelling would slip past the case arm.
 printf 'echo more\n' >>"$R/skills/demo/scripts/frappé.sh"
@@ -705,6 +728,17 @@ run_guard
 [ "$RC" -eq 0 ] \
   && ok "an agent edit landing all three renders passes" \
   || bad "an agent edit landing all three renders passes" "rc=$RC out=$OUT"
+git -C "$R" checkout -q -- agents .claude/agents .codex .pi
+
+printf '# amended\n' >>"$R/agents/demo.md"
+printf '# amended\n' >>"$R/.codex/agents/demo.toml"
+printf '# amended\n' >>"$R/.pi/agents/demo.md"
+rm -f "$R/.claude/agents/demo.md"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/demo.md -> .claude/agents/demo.md"* ]] \
+  && [[ "$OUT" != *"-> .codex/agents/demo.toml"* ]] && [[ "$OUT" != *"-> .pi/agents/demo.md"* ]] \
+  && ok "an agent edit with one harness render deleted reds, naming that render alone" \
+  || bad "an agent edit with one harness render deleted reds, naming that render alone" "rc=$RC out=$OUT"
 git -C "$R" checkout -q -- agents .claude/agents .codex .pi
 
 # A new agent definition owes a render to every harness directory that

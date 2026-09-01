@@ -203,8 +203,9 @@ fi
 # every file, so a new source there owes a new render, and an agent owes a
 # file to each harness directory that tracks any. A skill with no tracked
 # render has nothing to land, and a render-only change is the sync direction
-# and passes. Path quoting is off on both reads: a quoted path matches
-# neither the case arms nor its own render.
+# and passes. A deletion is in the changed set too, so the render must also
+# still exist wherever its source does. Path quoting is off on both reads:
+# a quoted path matches neither the case arms nor its own render.
 render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}") ||
   { render_changed=""; say "the changed-file set for the render rule could not be read"; }
 render_tracked=$(git -c core.quotePath=false ls-files -- .agents/skills .claude/agents .codex/agents .pi/agents) ||
@@ -213,8 +214,8 @@ render_hits=""
 renders_under() { # DIR — anything is tracked under DIR
   grep -q -- "^$1/" <<<"$render_tracked"
 }
-require_render() { # SOURCE RENDER — RENDER changes with SOURCE
-  grep -Fxq -- "$2" <<<"$render_changed" ||
+require_render() { # SOURCE RENDER — RENDER changes with SOURCE and outlives it
+  { grep -Fxq -- "$2" <<<"$render_changed" && { [ ! -e "$1" ] || [ -e "$2" ]; }; } ||
     render_hits="$render_hits$1 -> $2
 "
 }
