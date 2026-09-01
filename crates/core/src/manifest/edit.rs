@@ -25,14 +25,17 @@
 //! rewritten into the other.
 //!
 //! List entries are paired by what an entry is — a hook by its name, a
-//! scalar by its own value — and everything identity could not place
-//! pairs by where it sits. What somebody wrote about an entry then
-//! travels with that entry through a removal or a re-sort. The positional
-//! half is what keeps an edit an edit rather than a drop and an append,
-//! and it has a price: an entry paired that way inherits what was written
-//! about whatever stood in its slot, which
+//! scalar by its own value — and what identity could not place takes the
+//! slot it sat in, where identity has not already claimed that slot. What
+//! somebody wrote about an entry then travels with that entry through a
+//! removal or a re-sort. The positional half is what keeps an edit an
+//! edit rather than a drop and an append, and it has a price: an entry
+//! paired that way inherits what was written about whatever stood in its
+//! slot. Where a list holds one value twice, identity claims the earlier
+//! slot first and an edited neighbour is left none, so its own line's
+//! annotation goes with nobody rather than moving. Both are asserted in
 //! `tests::a_value_paired_by_position_keeps_the_note_written_in_its_slot`
-//! holds to.
+//! and `tests::a_repeated_value_leaves_an_edited_neighbour_unpaired`.
 //!
 //! Where those bytes are is not where they look. An array of values keeps
 //! them in [`layout`]'s four places, an entry and its annotation always
@@ -206,13 +209,20 @@ fn paired(standing: &[Item], target: &[Item]) -> Vec<Option<usize>> {
 /// pair first-unclaimed, which the caller's `taken` sweep already decides.
 ///
 /// Nothing here identifies an entry whose value changed, and nothing can:
-/// a value edited in place is a different value. It pairs by position, so
-/// it lands on the slot it replaced and keeps the note written there —
-/// which is what makes an edit an edit, and what makes `"Write", # no
-/// writing files` read `"WebFetch", # no writing files` afterwards. Both
-/// halves of that are asserted in
-/// `tests::a_value_paired_by_position_keeps_the_note_written_in_its_slot`,
-/// so the trade is a fixture rather than a sentence.
+/// a value edited in place is a different value. It pairs by the slot it
+/// sat in, so it keeps the note written there — which is what makes an
+/// edit an edit, and what makes `"Write", # no writing files` read
+/// `"WebFetch", # no writing files` afterwards.
+///
+/// That holds while the slot is still free. Identity runs over the whole
+/// target before position places anything, so where a list holds one
+/// value twice the surviving copy claims the earlier slot, the edited
+/// entry finds none and lands as a gained one, and the annotation on the
+/// slot nobody claimed is dropped rather than moved. Both readings are
+/// asserted, in
+/// `tests::a_value_paired_by_position_keeps_the_note_written_in_its_slot`
+/// and `tests::a_repeated_value_leaves_an_edited_neighbour_unpaired`, so
+/// the trade is a fixture rather than a sentence.
 fn identity(entry: &Item) -> Option<String> {
     if let Some(table) = entry.as_table_like() {
         if let Some(name) = text(table, "name") {

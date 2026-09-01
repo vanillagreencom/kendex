@@ -618,3 +618,26 @@ fn a_value_paired_by_position_keeps_the_note_written_in_its_slot() {
         "and the price of it: delta stands under what was written about beta"
     );
 }
+
+/// The other reading of the same pairing, measured rather than argued.
+/// Identity places every target entry it can before position places any,
+/// so a list holding one value twice hands the earlier slot to the copy
+/// that survived; the entry edited out of that slot finds it taken, lands
+/// as one the list did not have, and the annotation on the slot nobody
+/// claimed goes with nobody.
+///
+/// It is not a defect the fold can see: a value edited in place and a
+/// value that was always there are the same bytes. Pinned here so the
+/// sentence in `identity` has the case it describes under it, and so the
+/// day the pairing changes this reads red rather than surprising
+/// somebody.
+#[test]
+fn a_repeated_value_leaves_an_edited_neighbour_unpaired() {
+    let current = "schema = 6\n\n[suppressed]\nskill = [\n  \"a\",  # first a\n  \"a\",  # second a\n  \"b\",  # only b\n]\n";
+    let desired = "schema = 6\n\n[suppressed]\nskill = [\"pi\", \"a\", \"b\"]\n";
+    assert_eq!(
+        fold(current, desired),
+        "schema = 6\n\n[suppressed]\nskill = [\n  \"pi\",\n  \"a\",  # first a\n  \"b\",  # only b\n]\n",
+        "the surviving copy keeps the earlier slot, and second a's line goes"
+    );
+}
