@@ -1635,8 +1635,18 @@ baseline_moved() { # CANDIDATE-BASELINE — violations on stdout
 # and duplicates are the governing copy's business, and a file that fails them
 # is still the row set this change carried away.
 blob_is_row_set() { # FILE
-  local status=0
-  [ "$(count_nonempty_lines "$1")" -gt 0 ] || return 1
+  # Captured and status-checked, never read inside the test. count_nonempty_lines
+  # exits loudly when grep cannot read the file, and that exit ends only the
+  # substitution — the caller would see an empty capture, `[ "" -gt 0 ]` would
+  # error, and this would answer "not a row set" for a file it never read.
+  # count_head_row_sets takes that answer with `|| continue`, so HEAD's real
+  # baseline would drop out of the count, the count would fall to zero, and the
+  # repoint check would take its bootstrap arm and pass.
+  # `rows` is assigned on its own line: `local rows="$(...)"` reports LOCAL's
+  # status and swallows the failure this guard exists to catch.
+  local status=0 rows
+  rows="$(count_nonempty_lines "$1")" || collection_error "could not count the lines of $1 to tell whether it holds baseline rows"
+  [ "$rows" -gt 0 ] || return 1
   grep -qEv -- "$BASELINE_ROW_RE" "$1" || status=$?
   case "$status" in
     0) return 1 ;; # a line that is not a row

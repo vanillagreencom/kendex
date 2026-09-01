@@ -307,5 +307,47 @@ RAISE=1 run_frozen --staged
   && ok "control: without the shim the same tree gets the ordinary refusal" \
   || bad "control: the same tree without the shim is refused normally" "rc=$RC out=$OUT"
 
+
+# The same swallowed exit one level down. blob_is_row_set counts the lines of
+# each candidate HEAD blob; an unguarded count answers "not a row set" for a
+# file it never read, count_head_row_sets takes that with `|| continue`, and
+# HEAD's real baseline drops out. The count falls from one to zero, the repoint
+# check takes its BOOTSTRAP arm, and the commit passes.
+#
+# $TMP/rowish.blob is written and read at exactly one place in the script, so
+# failing grep for that name alone lands on the guarded site and nowhere else.
+# It is reused across loop iterations, which does not matter here: the first
+# unreadable candidate is the one that has to be loud.
+mkdir -p "$TMP/shim2"
+cat >"$TMP/shim2/grep" <<'SHIM'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in
+    */rowish.blob) echo "grep: $a: Permission denied" >&2; exit 2 ;;
+  esac
+done
+exec "$SR_REAL_GREP" "$@"
+SHIM
+chmod +x "$TMP/shim2/grep"
+REAL_GREP2="$(command -v grep)"
+relocating_repo repointrowsetguard x.test.txt 15 15
+mkfile x.test.txt 20
+copy_repoint x.test.txt 20
+OUT=""
+RC=0
+OUT="$(cd "$R" && PATH="$TMP/shim2:$PATH" SR_REAL_GREP="$REAL_GREP2" \
+  SIZE_RATCHET_THRESHOLD=10 SIZE_RATCHET_FROZEN_CLASSES='*.test.*' RATCHET_RAISE=1 \
+  "$SR" --staged 2>&1)" || RC=$?
+case "$OUT" in *"rowish.blob: Permission denied"*) ok "the injected read failure really fired inside the row-set scan" ;; *) bad "the injected read failure fired in the row-set scan" "$OUT" ;; esac
+[ "$RC" -eq 2 ] && case "$OUT" in *"to tell whether it holds baseline rows"*) true ;; *) false ;; esac \
+  && ok "a candidate blob that cannot be counted exits loudly instead of dropping out" \
+  || bad "an uncountable candidate blob exits loudly" "rc=$RC out=$OUT"
+# The control that the shim is what did it, and that this tree is otherwise a
+# refusal rather than a pass — so the red above is the guard, not the fixture.
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "control: without the shim the same tree gets the ordinary refusal" \
+  || bad "control: the row-set tree without the shim is refused normally" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
