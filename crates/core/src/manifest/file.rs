@@ -121,11 +121,11 @@ pub fn observed(path: &Path) -> Result<Manifest> {
     }
 }
 
-/// Persist a manifest, in place. The file is the person's own writing, so
-/// the serialization below is not what lands: it is folded into the
-/// document already there ([`super::edit::merged`]), and only the keys
-/// whose values changed are touched. A write that changes nothing writes
-/// nothing, the way a structured config edit does.
+/// Persist a manifest, in place. The file is written by hand, so the
+/// serialization below is not what lands: it is folded into the document
+/// already there ([`super::edit::merged`]), which touches only the keys
+/// that changed and the keys the manifest gained or dropped. A write that
+/// changes nothing writes nothing, the way a structured config edit does.
 pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
     // Stamped at the write, the way the lock stamps its version: the
     // schema is a fact about the build doing the writing, and two places
@@ -142,7 +142,12 @@ pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
     let current = read_if_exists(path)?;
     let text = match &current {
         Some(current) => {
-            super::edit::merged(current, &desired).map_err(|e| CoreError::TomlParse {
+            // What this file already gives the model, taken the same way
+            // the target was. A key outside it — a note somebody left
+            // inside a declaration — is not kendex's to drop, and the fold
+            // needs that to tell it from a key kendex really did drop.
+            let held = held_by_model(path, current)?;
+            super::edit::merged(current, &held, &desired).map_err(|e| CoreError::TomlParse {
                 path: path.to_path_buf(),
                 message: e.to_string(),
             })?
@@ -153,6 +158,25 @@ pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
         return Ok(());
     }
     atomic_write(path, &text)
+}
+
+/// The keys this text gives the manifest model, as the same serializer
+/// spells them. Read back and written out again rather than diffed by
+/// hand, so the vocabulary can never drift from the one the target was
+/// written with. The plan read these exact bytes through [`parse_text`]
+/// and the write's precondition holds them, so a refusal here is a file
+/// that stopped being a manifest between the two, and it is refused
+/// rather than written over.
+fn held_by_model(path: &Path, current: &str) -> Result<String> {
+    let held: Manifest =
+        toml::from_str(current).map_err(|e: toml::de::Error| CoreError::TomlParse {
+            path: path.to_path_buf(),
+            message: e.to_string(),
+        })?;
+    toml::to_string_pretty(&held).map_err(|e| CoreError::TomlParse {
+        path: path.to_path_buf(),
+        message: e.to_string(),
+    })
 }
 
 /// Load for mutation. Only the current schema loads at all, so there is

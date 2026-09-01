@@ -194,7 +194,10 @@ pub struct CustomHook {
     /// Harness allowlist; `None` = every declared harness.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harnesses: Option<Vec<String>>,
-    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    // Spelled out on every write, the way every other declaration's
+    // `enabled` is: this one used to be skipped at its default, which is
+    // one more spelling of the same field for no gain.
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_hook_agents")]
     pub agents: HookAgents,
@@ -210,10 +213,6 @@ pub enum HookAgents {
 
 fn default_hook_agents() -> HookAgents {
     HookAgents::One("all".to_owned())
-}
-
-fn is_true(value: &bool) -> bool {
-    *value
 }
 
 /// Where a fork came from. A fork keeps the item's installed name — the

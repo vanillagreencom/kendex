@@ -12,9 +12,9 @@ kendex-core = { path = "crates/core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 toml = "1.1"
-# The format-preserving half of the same parser: kendex.toml is the one
-# file in the product the person writes by hand, so a write folds the
-# changed keys into their document instead of re-serializing over it.
+# The format-preserving half of the same parser: kendex.toml is written by
+# hand, so a write folds the changed keys into that document instead of
+# re-serializing over it.
 toml_edit = "0.25"
 dirs = "6"
 thiserror = "2"

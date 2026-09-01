@@ -3,10 +3,16 @@
 //! kendex.toml, and the assertion is on the bytes.
 
 use super::merged;
+use crate::manifest::Manifest;
 
+/// A fold with `held` derived the way `manifest::save` derives it: the
+/// manifest this very document reads back as, spelled by the serializer
+/// that spelled the target.
 #[allow(clippy::unwrap_used)]
 fn fold(current: &str, desired: &str) -> String {
-    merged(current, desired).unwrap()
+    let held: Manifest = toml::from_str(current).unwrap();
+    let held = toml::to_string_pretty(&held).unwrap();
+    merged(current, &held, desired).unwrap()
 }
 
 /// The whole point: a document whose values already say what kendex holds
@@ -118,5 +124,174 @@ fn the_files_own_terminator_survives() {
 /// this into the same parse error a read would have raised.
 #[test]
 fn an_unparsable_document_is_refused() {
-    assert!(merged("not = [valid", "schema = 6\n").is_err());
+    assert!(merged("not = [valid", "schema = 6\n", "schema = 6\n").is_err());
+}
+
+/// A hook as the serializer spells one, so a case says what it is testing
+/// rather than transcribing the model's every field.
+fn hook(event: &str, command: &str) -> String {
+    format!("event = \"{event}\"\ncommand = \"{command}\"\nenabled = true\nagents = \"all\"\n")
+}
+
+/// An inline `custom-hooks` array is edited inline. The comment above it
+/// is written once, where it was, and not once per entry the serializer
+/// would have generated.
+#[test]
+fn an_inline_hook_array_is_edited_inline() {
+    let current = "schema = 6\n\n# my hooks\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" }]\n";
+    let changed = format!(
+        "schema = 6\n\n[[custom-hooks]]\n{}",
+        hook("Stop", "./finished.sh")
+    );
+    assert_eq!(
+        fold(current, &changed),
+        "schema = 6\n\n# my hooks\ncustom-hooks = [{ event = \"Stop\", command = \"./finished.sh\" , enabled = true, agents = \"all\"}]\n"
+    );
+
+    let gained = format!(
+        "schema = 6\n\n[[custom-hooks]]\n{}\n[[custom-hooks]]\n{}",
+        hook("Stop", "./done.sh"),
+        hook("PreToolUse", "./guard.sh")
+    );
+    assert_eq!(
+        fold(current, &gained),
+        "schema = 6\n\n# my hooks\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\" , enabled = true, agents = \"all\"}, { event = \"PreToolUse\", command = \"./guard.sh\", enabled = true, agents = \"all\" }]\n"
+    );
+}
+
+/// An empty inline array gaining its first entry stays an inline array,
+/// with no header generated out of the key's own decoration.
+#[test]
+fn an_empty_inline_array_gains_its_first_entry_inline() {
+    let current = "schema = 6\n\n# my hooks\ncustom-hooks = []\n";
+    let desired = format!(
+        "schema = 6\n\n[[custom-hooks]]\n{}",
+        hook("Stop", "./done.sh")
+    );
+    assert_eq!(
+        fold(current, &desired),
+        "schema = 6\n\n# my hooks\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\", enabled = true, agents = \"all\" }]\n"
+    );
+}
+
+/// A multi-line array gains an element without losing the layout or the
+/// comment written inside it.
+#[test]
+fn a_multiline_array_keeps_its_shape_and_its_inner_comment() {
+    let current = "schema = 6\n\n[install]\nharnesses = [\n  # the one I use\n  \"claude\",\n]\n";
+    let desired =
+        "schema = 6\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"symlink\"\n";
+    assert_eq!(
+        fold(current, desired),
+        "schema = 6\n\n[install]\nharnesses = [\n  # the one I use\n  \"claude\", \"codex\",\n]\nmethod = \"symlink\"\n"
+    );
+}
+
+/// Removing a hook takes that hook's comment and leaves every other
+/// comment over the hook it describes. By position the survivors would
+/// shift up under comments that belong to what was removed.
+#[test]
+fn removing_a_hook_leaves_every_comment_over_its_own_hook() {
+    let two = "schema = 6\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n\n# says we are done\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n";
+    let keep_second = format!(
+        "schema = 6\n\n[[custom-hooks]]\n{}",
+        hook("Stop", "./done.sh")
+    );
+    assert_eq!(
+        fold(two, &keep_second),
+        format!(
+            "schema = 6\n\n# says we are done\n[[custom-hooks]]\n{}",
+            hook("Stop", "./done.sh")
+        )
+    );
+
+    let three = "schema = 6\n\n# first\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./a.sh\"\n\n# second\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./b.sh\"\n\n# third\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./c.sh\"\n";
+    let drop_middle = format!(
+        "schema = 6\n\n[[custom-hooks]]\n{}\n[[custom-hooks]]\n{}",
+        hook("Stop", "./a.sh"),
+        hook("Stop", "./c.sh")
+    );
+    assert_eq!(
+        fold(three, &drop_middle),
+        format!(
+            "schema = 6\n\n# first\n[[custom-hooks]]\n{}\n# third\n[[custom-hooks]]\n{}",
+            hook("Stop", "./a.sh"),
+            hook("Stop", "./c.sh")
+        )
+    );
+}
+
+/// Reordering hooks moves each comment with the hook it was written
+/// against, and the entries take the places the array already held.
+#[test]
+fn reordering_hooks_carries_every_comment_with_its_hook() {
+    let three = "schema = 6\n\n# one\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./a.sh\"\n\n# two\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./b.sh\"\n\n# three\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./c.sh\"\n";
+    let reversed = format!(
+        "schema = 6\n\n[[custom-hooks]]\n{}\n[[custom-hooks]]\n{}\n[[custom-hooks]]\n{}",
+        hook("Stop", "./c.sh"),
+        hook("Stop", "./b.sh"),
+        hook("Stop", "./a.sh")
+    );
+    assert_eq!(
+        fold(three, &reversed),
+        format!(
+            "schema = 6\n\n# three\n[[custom-hooks]]\n{}\n# two\n[[custom-hooks]]\n{}\n# one\n[[custom-hooks]]\n{}",
+            hook("Stop", "./c.sh"),
+            hook("Stop", "./b.sh"),
+            hook("Stop", "./a.sh")
+        )
+    );
+}
+
+/// A key the manifest model does not carry is not the model's to drop. It
+/// stays exactly where it was written while the keys around it change.
+#[test]
+fn a_key_the_model_does_not_hold_is_left_alone() {
+    let current =
+        "schema = 6\n\n[skills.gh]\nsource = \"cat\"\nnote = \"why I keep this\"\nenabled = true\n";
+    let desired = "schema = 6\n\n[skills.gh]\nsource = \"local\"\nenabled = true\n";
+    assert_eq!(
+        fold(current, desired),
+        "schema = 6\n\n[skills.gh]\nsource = \"local\"\nnote = \"why I keep this\"\nenabled = true\n"
+    );
+}
+
+/// A hand-written `enabled = true` inside a hook survives an edit to the
+/// hook beside it. The target here is the real serializer's, not a
+/// fixture's, because what a declaration field spells out is exactly the
+/// question: a field the serialization leaves out must not read as a field
+/// the manifest dropped.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hand_written_enabled_flag_survives_a_hook_edit() {
+    let current = "schema = 6\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nenabled = true   # still on\n";
+    let mut manifest: Manifest = toml::from_str(current).unwrap();
+    manifest.custom_hooks[0].command = "./finished.sh".to_owned();
+    let desired = toml::to_string_pretty(&manifest).unwrap();
+    // `[install]` comes with it: the serializer spells that table out
+    // whether or not the file had one, which is the declaration-default
+    // exception invariant 10 names.
+    assert_eq!(
+        fold(current, &desired),
+        "schema = 6\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./finished.sh\"\nenabled = true   # still on\nagents = \"all\"\n\n[install]\nharnesses = []\nmethod = \"symlink\"\n"
+    );
+}
+
+/// A list written in two places with another table between them keeps
+/// those places. Filling the array's entries into the first slots would
+/// pull a surviving hook above a table that has nothing to do with it.
+#[test]
+fn a_split_hook_list_keeps_the_places_it_was_written_in() {
+    let split = "schema = 6\n\n# first\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./a.sh\"\n\n[install]\nmethod = \"copy\"\n\n# second\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./b.sh\"\n";
+    let keep_second = format!(
+        "schema = 6\n\n[[custom-hooks]]\n{}\n[install]\nmethod = \"copy\"\n",
+        hook("Stop", "./b.sh")
+    );
+    assert_eq!(
+        fold(split, &keep_second),
+        format!(
+            "schema = 6\n\n[install]\nmethod = \"copy\"\n\n# second\n[[custom-hooks]]\n{}",
+            hook("Stop", "./b.sh")
+        )
+    );
 }

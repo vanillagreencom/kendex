@@ -1006,7 +1006,7 @@ export type CustomHook_Serialize = {
 	timeout?: number | null,
 	/**  Harness allowlist; `None` = every declared harness. */
 	harnesses?: string[] | null,
-	enabled?: boolean,
+	enabled: boolean,
 	agents: HookAgents,
 };
 
