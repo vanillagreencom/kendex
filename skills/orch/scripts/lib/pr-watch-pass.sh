@@ -26,11 +26,13 @@ PW_HAD_STATE=()
 pw_slug() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'; }
 pw_state_file() { printf '%s/%s__%s' "$PW_STATE_DIR" "$(pw_slug "$1")" "$(pw_slug "${SINCE:-none}")"; }
 
-# The pass commits every repo's baseline or none of them: pw_stage_state
-# checks a repo's target and writes its temp file, renaming nothing, and
-# pw_commit_state does the rename once every repo has staged. Everything that
-# can be judged about a target is judged in the staging phase, so a failure
-# there advances no baseline at all and leaves no temp behind.
+# The flush is two phases: pw_stage_state judges a repo's target and writes its
+# temp file, renaming nothing, and pw_commit_state renames once every repo has
+# staged. Everything that can be judged about a target is judged while staging,
+# so a staging failure advances no baseline and leaves no temp. A rename that
+# fails after staging is the one path that can leave the fleet split, the repos
+# ahead of it advanced and the rest not; it drops the temps it can and dies,
+# and nothing recovers the split.
 pw_stage_state() {
   local file="$1" tmp="$1.$$.tmp"
   [[ ! -e "$file" || -f "$file" ]] \
@@ -41,11 +43,12 @@ pw_stage_state() {
 
 pw_commit_state() {
   mv -f "$1.$$.tmp" "$1" \
-    || die "could not replace the pr-watch state file $1 (set OVERSEE_WATCH_STATE_DIR)"
+    || { pw_discard_temps; die "could not replace the pr-watch state file $1 (set OVERSEE_WATCH_STATE_DIR)"; }
 }
 
-# Every temp this pass may have staged, dropped when staging fails: nothing is
-# renamed, so nothing is left behind either.
+# Every temp this pass may have staged. Sweeping the whole fleet is right from
+# either caller: a repo already renamed has no temp left for rm -f to remove,
+# and the names carry this pid, so no later run would clean one up.
 pw_discard_temps() {
   local repo
   for repo in "${REPOS[@]}"; do
@@ -134,12 +137,12 @@ check_pr_watch() {
   PW_OUT="${out_all%$'\n'}"
   PW_ERR="${err_all%$'\n'}"
   # The invariant: no baseline is committed before the pass has DELIVERED the
-  # event it raised, and the fleet's baselines advance together or not at all.
-  # The event prints here, ahead of every write, and the commit below stages
-  # every repo before renaming any, so a failure leaves the event delivered
-  # with no baseline advanced — the next run repeats the event, which is the
-  # safe direction; a baseline advanced over an undelivered event loses that
-  # line for good.
+  # event it raised. The event prints here, ahead of every write, so however
+  # the flush below ends the line has already reached stdout and none is lost;
+  # a baseline advanced over an undelivered event loses that line for good.
+  # A staging failure then advances no baseline and the next run repeats the
+  # event, which is the safe direction. A rename failure can leave the fleet
+  # split, and only the repos it did advance suppress their duplicate.
   if [[ "$event" -eq 1 ]]; then
     echo "EVENT pr-watch rc=$PW_RC"
     [[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"

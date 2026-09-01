@@ -199,16 +199,19 @@ else
     "the failure names the state file path"
 fi
 
-# 1j'. a state file that cannot be written exits 2 and leaves no temp behind.
-# Root writes anywhere, so the case cannot run there.
+# 1j'. a state file that cannot be written exits 2, on the staging guard here
+# and on the rename if that guard is ever dropped. Root writes anywhere, so the
+# case cannot run there.
 new_case prwatch_state_unwritable_file
 if [[ "$(id -u)" -eq 0 ]]; then
   printf '  skip  unwritable state file (running as root)\n'
 else
   printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
   printf '1' > "$STUB_DIR/prwatch.rc"
-  # A read-only directory in the state file's place: the temp write lands, the
-  # rename into it does not.
+  # A read-only directory in the state file's place: staging rejects the target
+  # before any temp is written, and the mode keeps the rename failing too if
+  # that guard is ever dropped. The discard has nothing to remove on this pass
+  # (one repo, no temp yet), so 1m run 4 owns that behaviour.
   mkdir -p "$STATE_DIR/owner_repo__none"
   chmod 500 "$STATE_DIR/owner_repo__none"
   err="$TMP_ROOT/e1j3"
@@ -218,8 +221,6 @@ else
   assert_eq "$out" "" "a failed state write on a pass with no event prints no EVENT" "$err"
   assert_contains "$(cat "$err")" "could not write the pr-watch state file" \
     "the failure names what could not be written"
-  assert_eq "$(ls -1 "$STATE_DIR" | grep -c '\.tmp$' || true)" "0" \
-    "the temp file is removed before the failure" "$err"
 fi
 
 # 1k. the reducer covers EVERY --repo: attention on a second repo is the event,
@@ -341,7 +342,7 @@ else
   assert_eq "$(cat "$STATE_DIR/owner_repo__none")" "$(printf '12\tthreads-open')" \
     "the baseline of the repo that raised the event does not advance over it" "$err"
   assert_eq "$(ls -1 "$STATE_DIR" | grep -c '\.tmp$' || true)" "0" \
-    "a failed commit leaves no temp file behind" "$err"
+    "a staging failure discards the temp an earlier repo already staged" "$err"
 
   # run 5: everything healthy again — the event run 4 raised is still an event
   chmod 700 "$STATE_DIR/other_repo__none"
@@ -349,7 +350,7 @@ else
   err="$TMP_ROOT/e1m5"
   out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
   assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
-    "the run after a failed commit reports that event again" "$err"
+    "the run after a failed state write reports that event again" "$err"
   assert_contains "$out" "$(printf 'owner/repo\t34\tcccc0000\tthreads-open')" \
     "and carries the line whose baseline never advanced" "$err"
 fi
