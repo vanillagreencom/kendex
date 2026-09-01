@@ -121,8 +121,7 @@ fn an_import_that_keeps_the_leaf_copies_the_bytes_untouched() {
 }
 
 /// The rename is decided with every other refusal, before the first byte:
-/// bytes no name can be written into refuse the whole apply rather than
-/// land a copy that still answers to the old name.
+/// a file with no supported frontmatter block refuses the whole apply.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rename_no_declaration_can_carry_refuses_and_writes_nothing() {
@@ -137,11 +136,11 @@ fn a_rename_no_declaration_can_carry_refuses_and_writes_nothing() {
     let message = apply(&env, &scopes, &target, &selections)
         .unwrap_err()
         .to_string();
-    assert!(message.contains("it has no frontmatter"), "{message}");
+    assert!(message.contains("no supported frontmatter"), "{message}");
     assert!(message.contains("'clothed'"), "{message}");
     assert!(
-        message.contains("still call itself 'bare'"),
-        "and what the copy would have answered to: {message}"
+        message.contains("literal YAML `name:`"),
+        "the refusal names the supported rewrite form: {message}"
     );
     assert!(
         !target.join("skills").exists(),
@@ -446,8 +445,8 @@ fn a_renamed_agent_in_another_format_is_refused_by_that_format() {
         .to_string();
     assert!(message.contains("'codexer.toml'"), "{message}");
     assert!(
-        message.contains("still call itself 'codexer'"),
-        "and what the copy would have answered to: {message}"
+        message.contains("literal YAML `name:`"),
+        "the refusal names the only rename form it handles: {message}"
     );
     // Never the instruction to add one: a Codex agent with a frontmatter
     // block on top is an agent Codex will not load.

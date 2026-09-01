@@ -70,11 +70,10 @@ pub fn apply(
 /// A copy taken under a new name declares that name.
 ///
 /// A skill's SKILL.md and an agent's own file carry the name its tool
-/// answers to, so bytes copied verbatim under a different destination
-/// still spell the candidate's name and the import calls that a success.
-/// What is written in is the destination's *leaf*: a nested destination
-/// puts the item in a directory, and the leaf is the whole of what a file
-/// inside the item can declare.
+/// answers to. When the destination changes, the literal `name:` form
+/// kendex writes is replaced with the destination's leaf. Another YAML
+/// spelling is not normalized and may be refused when the imported catalog
+/// is checked.
 ///
 /// Only where that leaf really changes. This is a copy and not a repair,
 /// so an import keeping the candidate's name copies its bytes untouched:
@@ -96,11 +95,10 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
     let renamed = |bytes: &[u8], at: &str| {
         crate::render::skill::bytes_named(bytes, wanted).map_err(|problem| CoreError::Authoring {
             message: format!(
-                "'{}' cannot be imported as '{}' — {problem} in '{}', so the copy would still call itself '{}'. Import it under its own name: a copy is renamed only where the file it comes from carries a frontmatter block a name can be written into.",
+                "'{}' cannot be imported as '{}' — {problem} in '{}'. Import it under its own name; renaming handles only the literal YAML `name:` frontmatter form kendex writes.",
                 shown(&selection.name),
                 shown(&selection.destination),
                 shown(at),
-                shown(declared_leaf(&selection.name)),
             ),
         })
     };

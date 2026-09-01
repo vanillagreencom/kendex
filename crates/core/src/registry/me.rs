@@ -54,7 +54,9 @@ struct WireMe {
 /// misbehaving server serves the cached identity as `Offline`, and errors
 /// only with nothing cached to serve. The cache key names the sign-in this
 /// read opened with rather than either token, so a refresh rotation leaves
-/// it readable.
+/// it readable. The store gets no final read after the authenticated call:
+/// a sign-out or account switch landing in that final request window does
+/// not change this call's answer.
 pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<AccountState> {
     let Some(credential) = store.load()? else {
         return Ok(AccountState::SignedOut);
@@ -76,10 +78,10 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
         // Logout won a race with this read: the re-login state without
         // refreshing, exactly as if the credential had been gone up front.
         Err(CoreError::NotSignedIn) => return Ok(AccountState::SignedOut),
-        // Producing this removed the rejected credential, or said in `why`
-        // that the store would not give it up. Either way the identity it
-        // named has no reason to outlive it on disk, and the next sign-in
-        // would find it keyed to this one and discard it unread.
+        // Producing this removed whichever credential was current when the
+        // removal lock was acquired, or said in `why` that the store would
+        // not give it up. The identity this read opened with is forgotten;
+        // another sign-in would discard it by key anyway.
         Err(CoreError::SignInExpired { .. }) => {
             cache.forget()?;
             return Ok(AccountState::Expired);

@@ -1,17 +1,15 @@
-//! Every skill name a scope can supply, read across all of its sources.
+//! Skill names offered by the current checkout of each source in a scope.
 //!
 //! An agent's declared assignment is made across sources, not inside the
 //! one catalog the agent came from, and a fork rebound to `local` keeps
-//! reading it. So the set it resolves against is scope-wide, and getting
-//! that set wrong in either direction is a defect with teeth: too narrow
-//! refuses a fork over a skill that is right there, too wide renders one
-//! pointing at instructions nothing can load.
+//! reading it. Item-level pinned revisions do not widen this inventory, so
+//! a skill found only at such a pin is unavailable to assignment and fork
+//! resolution even when the plan installs it.
 //!
-//! What a source offers is what it can supply. Every declaration reading
-//! that source reads it here, an assignment naming one of its skills is
-//! answered by declaring it, and what a source adds to an agent's
-//! assignment merges into the manifest and arrives declared on the next
-//! pass.
+//! Each source's current checkout contributes everything it offers,
+//! installed or not. An assignment naming one of those skills is answered
+//! by declaring it, and what a source adds to an agent's assignment merges
+//! into the manifest and arrives declared on the next pass.
 
 use crate::env::Env;
 use crate::error::Result;
@@ -20,7 +18,8 @@ use crate::model::{ItemKind, Scope};
 use crate::source::{SourceState, list_items, resolve, source_config_for};
 use crate::source_read::SealedSource;
 
-/// Every skill name this scope can supply, sorted and deduplicated.
+/// Every skill name the scope's current source checkouts offer, sorted and
+/// deduplicated.
 ///
 /// Every constructor reads the whole scope. Nothing can hand a narrower set
 /// to a resolution that has to see all of it, and two readings of one scope
@@ -28,17 +27,15 @@ use crate::source_read::SealedSource;
 pub struct ScopeSkills(Vec<String>);
 
 impl ScopeSkills {
-    /// The scope as it stands.
+    /// What the scope's current source checkouts offer.
     pub fn of(env: &Env, scope: &Scope, manifest: &Manifest) -> Result<ScopeSkills> {
         ScopeSkills::after(env, scope, manifest, &[])
     }
 
-    /// The scope as an operation will leave it: read from the manifest it
-    /// will write, plus names it is about to place in the local source and
-    /// has not written yet. An operation that removes a source and reasons
-    /// from the scope it started in plans an assignment against a catalog
-    /// it is taking away. `arriving` can only widen the set, never narrow
-    /// it, so it cannot be used to hide a skill from the resolution.
+    /// What the manifest's current source checkouts offer, plus names the
+    /// operation is about to place in the local source and has not written
+    /// yet. An operation that removes a source and reasons from its output
+    /// manifest therefore drops that source from the inventory.
     pub fn after(
         env: &Env,
         scope: &Scope,

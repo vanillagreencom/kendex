@@ -9,8 +9,9 @@ use crate::registry::{Fetch, FetchResponse, base_url};
 
 /// Run one authenticated call, refreshing a rejected access token once.
 /// Refresh rotation is locked across processes and saved before retry.
-/// Every path that answers `SignInExpired` removes the credential first and
-/// says in `why` when the store would not give it up.
+/// Every path that answers `SignInExpired` removes the credential current
+/// when its removal lock is acquired, and says in `why` when the store
+/// would not give it up.
 pub fn with_access(
     fetch: &dyn Fetch,
     store: &dyn CredentialStore,
@@ -133,7 +134,8 @@ fn required(credential: Option<Credential>) -> Result<Credential> {
 }
 
 /// The server rejected the access token used by this call. Re-take the
-/// credential transaction before clearing the rejected sign-in.
+/// credential transaction, then clear whichever sign-in is current. A login
+/// completed while the rejected request was in flight is current here too.
 fn rejected_access(store: &dyn CredentialStore) -> CoreError {
     let removal = match store.refresh_guard() {
         Ok(_guard) => match store.clear() {
@@ -148,7 +150,7 @@ fn rejected_access(store: &dyn CredentialStore) -> CoreError {
     )
 }
 
-/// What removing the rejected sign-in did.
+/// What removing the current sign-in did.
 enum Removal {
     Done,
     /// It may still be installed: the store refused the guard or delete.
@@ -156,10 +158,10 @@ enum Removal {
 }
 
 /// The one verdict both producers answer with. A store that would not give
-/// the credential up never replaces the server's refusal, because the
-/// sign-in is dead either way and only `why` grows. The remedy rides in
-/// `why` because it depends on what the removal did: a credential still
-/// installed makes `kendex login` refuse, and the next attempt removes it.
+/// the current credential up never replaces the server's refusal; only
+/// `why` grows. The remedy rides in `why` because it depends on what the
+/// removal did: a credential still installed makes `kendex login` refuse,
+/// and the next attempt removes it.
 fn expired(removal: Removal, why: String) -> CoreError {
     match removal {
         Removal::Done => CoreError::SignInExpired {

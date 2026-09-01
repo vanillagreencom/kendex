@@ -56,7 +56,7 @@ pub enum SettingsRefusal {
         problem: String,
     },
 
-    #[error("{path} is not a regular file, and settings are never written through one")]
+    #[error("{path} is not a regular file; replace that entry before saving settings")]
     NotRegularFile { path: PathBuf },
 
     #[error(

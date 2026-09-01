@@ -73,22 +73,14 @@ pub(super) fn plan_manifest_write(
 /// precondition can hold; per-edit preconditions against the same original
 /// bytes cannot.
 pub(super) fn plan_config_edits(
-    env: &Env,
-    scope: &Scope,
     config_edits: config_edits::ConfigEditPlan,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     for (path, (labels, edits)) in config_edits.by_file {
-        // A settings file of somebody's own may be a link they made, and
-        // kendex edits it in place, link kept and target updated. The
-        // registries it writes for pi's carrier are not that: a link
-        // there is refused when the plan is made, so the op binds that
-        // proof along with the bytes rather than leaving the window
-        // between the two open.
-        let pre = match crate::harness::pi::is_hook_registry(env, scope, &path) {
-            true => crate::apply::Pre::observed(&path)?,
-            false => crate::apply::Pre::observed(&path)?,
-        };
+        // Config edits bind to the bytes reachable at planning. A link
+        // already there is kept and its target updated; a same-byte link
+        // arriving later also satisfies this precondition.
+        let pre = crate::apply::Pre::observed(&path)?;
         let file = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())

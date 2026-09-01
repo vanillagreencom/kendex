@@ -123,7 +123,9 @@ lives in one capability table read by core and UI.
    from a project record another root wrote or naming a position outside its own root. A link the user put at a shared config file or a manifest
    (dotfiles) is not foreign: the edit goes through it, link kept, and the
    precondition binds to the bytes reachable there; whether a link may sit
-   at a position is decided at plan time, never by the write.
+   at a position is decided at plan time, never by the write. The
+   precondition binds bytes, not the entry type: a same-byte link arriving
+   after planning passes and the write follows it.
 7. Applies are transactional: preconditions revalidate against observed
    hashes immediately before mutation; pre-images are journaled first; any
    failure rolls back and interrupted applies recover on next launch.
@@ -495,9 +497,11 @@ lives in one capability table read by core and UI.
   time. Holds flow through derivation — a pinned bundle pins its members, a
   pinned skill's dependencies read the pinned catalog, two parents
   demanding different revisions of one dependency conflict and write
-  nothing. A held item hashes clean against its held tree; the Updates page
-  asks the mirror (pinned sources too) what newer content exists, its
-  timeline listing only commits that touched the package's files,
+  nothing. Agent skill availability is separate and reads each source's
+  current checkout; an assignment found only at an item pin is unavailable
+  to rendering and fork resolution. A held item hashes clean against its
+  held tree; the Updates page asks the mirror (pinned sources too) what newer
+  content exists, its timeline listing only commits that touched the package's files,
   tag-decorated, never tag-replaced. `UpdatesReport::last_fetched` dates
   the standing — the newest successful fetch among the sources the scope
   installs from, the newest across scopes in the overview — so "Everything
@@ -667,10 +671,16 @@ lives in one capability table read by core and UI.
   under `Env::registry_cache_dir`, a failed refresh serving the last fetch as
   stale. `cache.rs` adds the directory's one-hour TTL; the identity (`me.rs`)
   has none, is keyed to its sign-in, and is forgotten on sign-in, sign-out and
-  expiry. All reads go through the `Fetch` trait (curl via `Hardened`, plain
-  http only under `KENDEX_API`); tests inject transports. Bearer calls route
+  expiry. An identity read settles under the sign-in it started with. It
+  performs no final credential check after the authenticated call, so a
+  sign-out or account switch landing in that final request window does not
+  change the answer. All reads go through the `Fetch` trait (curl via
+  `Hardened`, plain http only under `KENDEX_API`); tests inject transports.
+  Bearer calls route
   through `registry/client.rs`: one named cross-process lock serializes login,
-  logout and refresh rotation, saving rotations before retry. `skillssh.rs`
+  logout and refresh rotation, saving rotations before retry. A rejected
+  request re-takes that lock and clears the credential current then, including
+  a login completed while the request was in flight. `skillssh.rs`
   pins its public wire schema and kill switch (`KENDEX_SKILLSSH=off`); a hit
   is a lead, never an identity, and installs through the same subscribe path.
   Collections and deep links arrive with W3/W4.
@@ -698,9 +708,11 @@ lives in one capability table read by core and UI.
   from plugin-registry-shaped catalogs are `<plugin>/<item>` in manifest,
   lock and UI. The `/` never reaches disk: the halves are joined — `__` by
   default, `-` where names must be lower-kebab — by a rule beside the name
-  rule in `harness/caps.rs` and checked against it, and rendered copies
-  carry the installed name (SKILL.md and agent frontmatter rewritten; the
-  catalog keeps what it wrote). Two declarations landing on one file — `a/b`
+  rule in `harness/caps.rs` and checked against it. A skill copy replaces a
+  literal `name:` frontmatter line or inserts one when absent; other YAML
+  spellings are not normalized and may fail target validation. Agent
+  renderings carry the installed name through the agent renderer. The
+  catalog keeps what it wrote. Two declarations landing on one file — `a/b`
   against a literal `a__b`, or two names a filesystem folds (case, trailing
   dots and spaces, Unicode composition) — install neither, naming both. Only
   agents, commands and skills may carry a plugin segment; a `/` in a hook or

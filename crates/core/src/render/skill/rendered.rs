@@ -1,15 +1,18 @@
 //! A rendered skill tree and the two renames that operate on it: the name
 //! a skill installs under, and the `.disabled` spelling a switched-off one
-//! keeps its content under. The first is `with_name`, which rewrites the
-//! frontmatter entry a tool reads the name from, and a fork asks it of
-//! bytes that have no tree around them yet.
+//! keeps its content under. The first is `with_name`, which handles the
+//! literal frontmatter form kendex writes and a fork asks it of bytes that
+//! have no tree around them yet.
 //!
 //! Kept apart from `skill.rs`, which renders the bytes. Whatever holds a
 //! tree after that is asking one of these two questions, and both are here.
 
 use std::path::PathBuf;
 
-/// Set the frontmatter `name`, preserving the file's line ending.
+/// Replace a literal `name:` line, or insert one when no such line exists,
+/// preserving the file's line ending. Other valid YAML key spellings and
+/// multiline values are not interpreted; target validation decides whether
+/// the resulting document can load.
 pub(crate) fn with_name(text: &str, installed: &str) -> Option<String> {
     let newline = if text.starts_with("---\r\n") {
         "\r\n"
@@ -52,12 +55,10 @@ impl Rendered {
         self.files
     }
 
-    /// Give the tree the name the skill installs under. Every tool keys a
-    /// skill on its directory and answers to the name the file gives, so
-    /// the two have to agree — and a plugin-registry catalog's file knows
-    /// only its leaf name, never the plugin the item is installed under.
-    /// The catalog keeps the name it wrote; the copy carries the installed
-    /// one.
+    /// Attempt to give the tree the name the skill installs under. The
+    /// literal frontmatter form kendex writes is replaced or inserted; a
+    /// source using another YAML spelling may be refused by target
+    /// validation. The catalog keeps the bytes it wrote.
     pub fn set_skill_name(&mut self, installed: &str) {
         for (rel, bytes) in self.files.iter_mut() {
             if !super::carries_name(rel) {

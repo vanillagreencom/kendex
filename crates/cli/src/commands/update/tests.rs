@@ -74,9 +74,7 @@ const INSTALLED: &[u8] = b"the command already here";
 /// nothing else gets written.
 const OFFERED: &[u8] = SIGNED_BYTES;
 
-/// The one arm every refusal below is read against, so that a green
-/// refusal is the check turning the release away rather than a fixture
-/// that could never have installed anything.
+/// Run the direct-install path used by the refusal cases below.
 fn direct(env: &Env, feed_url: &str, installed: &Path) -> CliResult {
     run_on(
         env,

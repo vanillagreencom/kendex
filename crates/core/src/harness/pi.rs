@@ -39,13 +39,6 @@ fn hook_surfaces(root: &Path) -> Vec<Surface> {
     }]
 }
 
-/// Whether this path is the registry kendex writes for the carrier. It is
-/// never written through a link: what a link points at is outside the
-/// directory kendex manages.
-pub fn is_hook_registry(env: &Env, scope: &Scope, path: &Path) -> bool {
-    path == hook_registry(&scope_root(env, scope))
-}
-
 /// Where hook scripts live inside a scope root, slash-separated: the one
 /// spelling both a `Path` and a POSIX command line are built from.
 fn hook_rel_dir() -> String {

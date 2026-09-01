@@ -25,21 +25,17 @@ pub(crate) fn carries_name(rel: &Path) -> bool {
     rel.to_str().is_some_and(|rel| NAME_FILES.contains(&rel))
 }
 
-/// The bytes answering to `name`. A tool knows a skill or an agent by the
-/// name its frontmatter gives, and the loader validators refuse a
-/// rendering whose file calls it something other than the name it
-/// installs under — so a copy landing under a new name says that name.
-/// A frontmatter without a name gets one, exactly as rendering would give
-/// it one.
+/// The bytes after replacing or inserting the literal `name:` form kendex
+/// writes. Other YAML spellings are left for target validation, which may
+/// refuse the renamed copy.
 ///
-/// `Err` covers bytes that are not text and files with no closed frontmatter
-/// block. Every caller refuses rather than landing a copy that still answers
-/// to the old name.
+/// `Err` covers bytes that are not text and files outside the frontmatter
+/// block form this rewrite accepts.
 pub(crate) fn bytes_named(bytes: &[u8], name: &str) -> std::result::Result<Vec<u8>, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| "the file is not text".to_owned())?;
     with_name(text, name)
         .map(String::into_bytes)
-        .ok_or_else(|| "it has no frontmatter or the block is not closed".to_owned())
+        .ok_or_else(|| "it has no supported frontmatter block".to_owned())
 }
 
 pub const INSTRUCTIONS_START: &str = "<!-- kendex:project-instructions:start -->";

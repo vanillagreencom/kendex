@@ -230,9 +230,9 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
     })
 }
 
-/// The bytes answering to `name`, refused as a fork's own refusal: bytes
-/// whose name no single scalar can carry stop the whole operation rather
-/// than land a copy that still answers to the old one.
+/// Apply the literal frontmatter name rewrite and turn an unsupported block
+/// into the fork operation's own refusal. Other YAML name spellings may be
+/// refused by target validation later.
 fn named_bytes(bytes: Vec<u8>, name: &str) -> Result<Vec<u8>> {
     crate::render::skill::bytes_named(&bytes, name).map_err(|problem| CoreError::ForkNameUnusable {
         name: crate::names::shown(name),
