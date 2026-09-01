@@ -16,6 +16,8 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/sealed-bin.sh
+. "$TEST_DIR/lib/sealed-bin.sh"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="${OPEN_TERMINAL_UNDER_TEST:-$SCRIPTS_DIR/open-terminal}"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
@@ -27,6 +29,10 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || bad "$3" "expected: $2   got: $1"; }
+assert_not_contains() {
+  grep -qF -- "$2" <<<"$1" && bad "$3" "forbidden substring: $2
+        in: $1" || ok "$3"
+}
 assert_contains() {
   grep -qF -- "$2" <<<"$1" && ok "$3" || bad "$3" "wanted substring: $2
         in: $1"
@@ -41,6 +47,18 @@ cat > "$BIN/term" <<'EOF'
 printf 'term %s\n' "$*" >> "$OT_TERM_LOG"
 exit 0
 EOF
+# The desktop's launcher, for the case where $TERMINAL names nothing, and a
+# launcher that refuses its arguments the way the GTK family refuses -e bash -lc.
+cat > "$BIN/xdg-terminal-exec" <<'EOF'
+#!/usr/bin/env bash
+printf 'xdg %s\n' "$*" >> "$OT_TERM_LOG"
+exit 0
+EOF
+cat > "$BIN/badterm" <<'EOF'
+#!/usr/bin/env bash
+echo "badterm: unrecognised option -lc" >&2
+exit 3
+EOF
 cat > "$BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf 'tmux %s\n' "$*" >> "$OT_TMUX_LOG"
@@ -50,12 +68,14 @@ cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 exit 1
 EOF
-chmod +x "$BIN/term" "$BIN/tmux" "$BIN/gh"
+chmod +x "$BIN/term" "$BIN/xdg-terminal-exec" "$BIN/badterm" "$BIN/tmux" "$BIN/gh"
 
 # $TERMINAL is the terminal open_gui reaches for first — the owner's ruling
-# that a GUI launch honours the user's own choice — so pointing it at the stub
-# both pins the branch and keeps every case in this file off the real desktop.
-export TERMINAL="$BIN/term"
+# that a GUI launch honours the user's own choice — so each run names a stub
+# and pins the branch, $OT_TERMINAL choosing which. A BARE name, never a path
+# into this mktemp tree: a path bypasses PATH resolution, and with it the seal
+# that answers once the tree is gone. On fallthrough the seal takes the branch
+# below instead.
 
 # Stub worktree CLI, one shape per $STUB_MODE:
 #   empty    exits 0 printing nothing (a stub that escaped its fixture)
@@ -96,12 +116,14 @@ run() {
   : > "$term_log"
   : > "$tmux_log"
   set +e
-  PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" STUB_MODE="$mode" \
+  PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" STUB_MODE="$mode" \
     OT_TERM_LOG="$term_log" OT_TMUX_LOG="$tmux_log" TMUX="${OT_TMUX_VALUE:-}" \
+    TERMINAL="${OT_TERMINAL:-term}" \
     "$ot" --cmd 'echo {item}' "$@" >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
   RC=$?
   set -e
   ERR="$(cat "$TMP_ROOT/$name.err")"
+  OUT_TEXT="$(cat "$TMP_ROOT/$name.out")"
   # open_gui detaches the launch (`setsid ... &`), so the stub's line can land
   # after open-terminal has already exited — on a loaded box it did, and the
   # case read an empty log. Which wait to take is DERIVED from the script's own
@@ -154,6 +176,37 @@ assert_eq "$TMUX_LOG_TEXT" "" "tmux was never called for the deleted directory"
 run real "$REPO/scripts/open-terminal" real --ghostty CC-1
 assert_eq "$RC" "0" "premise: a launch at a real directory succeeds"
 assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" "premise: and \$TERMINAL is the terminal it launched"
+# Only the ghostty arm has a --title flag and it is the last one tried, so the
+# title is written from inside the launched shell or it is not written at all.
+assert_contains "$TERM_LOG_TEXT" "printf '\033]0;%s\007' 'CC-1'" \
+  "the launched shell sets the window title to the item"
+
+echo
+echo "=== a launcher nothing observed is not a launch to report ==="
+
+# The exit code is the orchestrator's only signal that a lane started, so a
+# launcher that refuses its arguments must fail the item rather than be counted.
+OT_TERMINAL=badterm
+run badterm "$REPO/scripts/open-terminal" real --ghostty CC-1
+OT_TERMINAL=""
+assert_eq "$RC" "1" "a launcher that exits non-zero fails the item"
+assert_contains "$ERR" "Error: badterm exited 3 launching 'CC-1'" \
+  "the failure names the launcher and its status"
+assert_contains "$ERR" "unrecognised option -lc" "and carries the launcher's own words"
+assert_contains "$ERR" "1 handoff lane(s) failed" "the batch summary counts it as failed"
+assert_not_contains "$OUT_TEXT" "Opened terminal" "and no success line is printed for it"
+
+# A $TERMINAL naming nothing on PATH is substituted; saying so is the difference
+# between an operator's choice being honoured and being quietly overridden.
+OT_TERMINAL=no-such-terminal-anywhere
+run unresolved "$REPO/scripts/open-terminal" real --ghostty CC-1
+OT_TERMINAL=""
+assert_eq "$RC" "0" "an unresolvable \$TERMINAL still launches through the fallback"
+assert_contains "$ERR" "Warning: \$TERMINAL 'no-such-terminal-anywhere' does not resolve to an executable; launching 'CC-1' with xdg-terminal-exec instead" \
+  "the substitution names the value and the terminal used instead"
+assert_contains "$TERM_LOG_TEXT" "xdg bash -lc" "and the fallback launcher is the one that ran"
+assert_contains "$TERM_LOG_TEXT" "printf '\033]0;%s\007' 'CC-1'" \
+  "the title survives the fallback branch too"
 
 echo
 echo "=== the refusal can fail: with the guard gone the window opens ==="

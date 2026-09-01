@@ -25,6 +25,8 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/sealed-bin.sh
+. "$TEST_DIR/lib/sealed-bin.sh"
 SKILLS_SRC="$(cd "$TEST_DIR/../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -41,29 +43,19 @@ bad() {
 }
 
 # A stub gh so no case reaches the network; every command here fails before or
-# at auth, and none of them may decide the outcome by talking to GitHub.
-#
-# And a stub for every terminal open_gui can resolve. No assertion in this file
-# measures a launch, but the SKILLS_DIR leak control below drops the very export
-# it is proving, so its stubbed worktree CLI exits 0 printing no path and the
-# launch that follows used to reach the real ghostty on PATH — a window on the
-# operator's desktop at a directory that was already deleted (KEN-1084). A test
-# that proves a parser property must not be able to open one while doing it.
+# at auth, and none of them may decide the outcome by talking to GitHub. Every
+# other name a case could reach for is answered by $SEALED, which is why this
+# file stubs no terminal of its own.
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/no-lanes"
 printf '#!/bin/sh\nexit 1\n' >"$TMP_ROOT/bin/gh"
-for stub in ghostty xdg-terminal-exec stub-terminal; do
-  printf '#!/bin/sh\nexit 0\n' >"$TMP_ROOT/bin/$stub"
-done
-chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/ghostty" \
-  "$TMP_ROOT/bin/xdg-terminal-exec" "$TMP_ROOT/bin/stub-terminal"
+chmod +x "$TMP_ROOT/bin/gh"
 
 # run SCRIPT DIR ARGS... — one hermetic invocation, combined output.
 #
 # TMUX is unset because oversee-watch's lane-window check only fires outside
 # tmux, and this suite must not pass merely because the developer ran it from a
-# tmux pane. That also makes every open-terminal case here a GUI launch, so
-# TERMINAL names the stub above: it is the first thing open_gui resolves, and
-# pinning it is what keeps a case off the real desktop whatever PATH holds.
+# tmux pane. TERMINAL is unset for a second reason: it is a name the TERMINAL
+# rows below measure, and the developer's own value would decide them.
 # ORCH_LANE_DIRS points at an empty directory so `lanes` never reads the real
 # accounts on this machine.
 run() {
@@ -71,8 +63,8 @@ run() {
   shift 2
   # The command's own status is returned, not swallowed: the empty-value sweep
   # below asserts on it. Callers that only read the output append `|| true`.
-  (cd "$dir" && PATH="$TMP_ROOT/bin:$PATH" \
-    env -u TMUX TERMINAL=stub-terminal ORCH_LANES_FETCH_CMD=true \
+  (cd "$dir" && PATH="$TMP_ROOT/bin:$SEALED:$PATH" \
+    env -u TMUX -u TERMINAL ORCH_LANES_FETCH_CMD=true \
       ORCH_LANE_DIRS="$TMP_ROOT/no-lanes" \
       "$dir/.agents/skills/orch/scripts/$script" "$@") 2>&1
 }
@@ -225,6 +217,27 @@ for exe in worktree/scripts/worktree review-gate/scripts/pr-watch.sh; do
   printf '#!/bin/sh\necho "EXECUTED FROM THE CONFIGURED SKILLS_DIR" >&2\nexit 0\n' >"$evil/$exe"
   chmod +x "$evil/$exe"
 done
+# TERMINAL is the third name of this shape: open_gui EXECUTES it. It exits
+# non-zero so open-terminal relays its words — a launcher's stdout and stderr
+# go to a scratch file that is only printed when the launch failed, which is
+# also the only way a marker written here can reach the assertion.
+printf '#!/bin/sh\necho "EXECUTED FROM THE CONFIGURED TERMINAL" >&2\nexit 3\n' >"$evil/evilterm"
+chmod +x "$evil/evilterm"
+
+# terminal_fixture DIR — a fixture whose worktree CLI succeeds, so a case can
+# REACH the GUI launch. The generic rows never get that far: the real CLI
+# refuses an empty repository, and a TERMINAL row that stopped there would pass
+# without executing anything.
+terminal_fixture() {
+  local wt="$1/.agents/skills/worktree/scripts/worktree"
+  fixture "$1"
+  cat >"$wt" <<EOF
+#!/bin/sh
+[ "\$1" = create ] || exit 1
+mkdir -p "$1/wt" && printf '%s\n' "$1/wt"
+EOF
+  chmod +x "$wt"
+}
 
 # name_cases NAME MARKER — SCRIPT|ARGS rows for one injected name.
 script_dir_cases='
@@ -276,6 +289,14 @@ for source_kind in dotenv settings; do
 $rows
 EOF
   done
+done
+
+for source_kind in dotenv settings; do
+  dir="$TMP_ROOT/own-TERMINAL-$source_kind"
+  terminal_fixture "$dir"
+  write_config "$dir" "$source_kind" TERMINAL "$evil/evilterm"
+  refute "open-terminal: a TERMINAL in $source_kind never chooses which terminal is executed" \
+    "$dir" open-terminal "EXECUTED FROM THE CONFIGURED TERMINAL" --cmd true KEN-1
 done
 
 # approval-wait is the one CLI holding parse state across its load, and it is
@@ -355,6 +376,16 @@ if drop_export "$leak_skills" open-terminal SKILLS_DIR; then
     "$leak_skills" open-terminal "EXECUTED FROM THE CONFIGURED SKILLS_DIR" --harness claude KEN-1
 else
   bad "the export SKILLS_DIR mutation did not land, so it proves nothing"
+fi
+
+leak_term="$TMP_ROOT/leak-terminal"
+terminal_fixture "$leak_term"
+write_config "$leak_term" settings TERMINAL "$evil/evilterm"
+if drop_export "$leak_term" open-terminal TERMINAL; then
+  must_leak "dropping export TERMINAL lets open-terminal execute the configured one" \
+    "$leak_term" open-terminal "EXECUTED FROM THE CONFIGURED TERMINAL" --cmd true KEN-1
+else
+  bad "the export TERMINAL mutation did not land, so it proves nothing"
 fi
 
 # approval-wait has no export to drop: what protects it is that the branch

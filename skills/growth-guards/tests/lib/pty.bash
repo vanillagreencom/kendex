@@ -57,6 +57,18 @@ printf '%s\n' "$gg_pgid" >"$GG_PTY_SID_FILE"
 # down the moment the session it guards is gone, so it can neither become the
 # leak it exists to prevent nor signal a process group that was recycled after
 # this one ended. On a healthy run the caller's cap fires first.
+#
+# `kill -9 "-PGID"`, with no `--`. This runs under /bin/sh, which is dash on
+# every Debian-family host including the CI runner, and dash's kill builtin
+# takes the word after the signal as a pid: `--` becomes number('-'), it prints
+# `Illegal number: -`, exits 2 and reaps nothing. Measured in ubuntu:24.04. The
+# bare form is a process-group target in dash, bash 3.2.57 and bash 5 alike.
+# The caller-side kills below run in bash and keep their `--`.
+#
+# The marker beside the body file is what makes the kill provable: the caller's
+# cap leaves none, so a case that finds one knows the SESSION's deadline fired
+# rather than something upstream. It sits beside a path the caller chose, since
+# this scratch directory is the caller's to remove and it does not survive.
 gg_session=$$
 if [ -n "$gg_pgid" ]; then
   (
@@ -65,7 +77,10 @@ if [ -n "$gg_pgid" ]; then
       sleep 1
       i=$((i + 1))
     done
-    [ "$i" -lt "$GG_PTY_DEADLINE" ] || kill -9 -- "-$gg_pgid"
+    if [ "$i" -ge "$GG_PTY_DEADLINE" ]; then
+      printf 'fired\n' >"$GG_PTY_BODY_FILE.watchdog"
+      kill -9 "-$gg_pgid"
+    fi
   ) >/dev/null 2>&1 &
 fi
 echo GG-PTY-BEGIN

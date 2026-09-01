@@ -21,6 +21,8 @@ set -euo pipefail
 TC=" — complete means the PR is MERGED and the worktree cleaned up, not merely opened"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/sealed-bin.sh
+. "$TEST_DIR/lib/sealed-bin.sh"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
@@ -80,9 +82,8 @@ exit 1
 EOF
 chmod +x "$BIN/ghostty" "$BIN/gh"
 
-# $TERMINAL is what open_gui reaches for first, so it is PINNED to the stub on
-# PATH here: unset, the branch below it would resolve whatever terminal the
-# developer's desktop provides and this suite would open real windows.
+# open_gui reaches for $TERMINAL first, so it names the stub rather than the
+# developer's own terminal. $SEALED is what answers once the stub tree is gone.
 export TERMINAL=ghostty
 
 # Stub worktree CLI: `create <item>` makes and prints a temp dir.
@@ -128,7 +129,7 @@ echo "=== open-terminal codex kickoff prompt ==="
 # downstream shell layer could expand.
 CAP1="$TMP_ROOT/cap1"
 set +e
-c1_out=$(OT_CAPTURE="$CAP1" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness codex cc-737 2>"$TMP_ROOT/c1.err")
+c1_out=$(OT_CAPTURE="$CAP1" PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness codex cc-737 2>"$TMP_ROOT/c1.err")
 c1_code=$?
 set -e
 assert_eq "$c1_code" "0" "linear:codex launch succeeds"
@@ -146,7 +147,7 @@ fi
 # Case 2: github:codex — same prose shape carrying repo#item.
 CAP2="$TMP_ROOT/cap2"
 set +e
-c2_out=$(OT_CAPTURE="$CAP2" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness codex 42 2>"$TMP_ROOT/c2.err")
+c2_out=$(OT_CAPTURE="$CAP2" PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness codex 42 2>"$TMP_ROOT/c2.err")
 c2_code=$?
 set -e
 assert_eq "$c2_code" "0" "github:codex launch succeeds"

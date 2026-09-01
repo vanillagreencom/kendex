@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Launch one or more work item worktrees in a separate terminal/window.
 # This is a handoff helper only; it does not monitor spawned sessions.
-# In-app harnesses (Codex app, Claude desktop, drovr) never use this script:
-# they hand off through the harness's own tooling — oversee.md § 1.
+# This is the tmux surface's launcher (oversee.md § 1). Where $TMUX is unset and
+# the harness ships its own session or thread launching, the handoff goes
+# through that instead.
 
 set -euo pipefail
 
@@ -145,6 +146,14 @@ export SKILLS_DIR
 # Writing where the readers do not look would silently defeat the claims.
 CLAIM_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export CLAIM_ROOT
+# open_gui EXECUTES $TERMINAL, so it belongs with the names above rather than
+# with the settings a project may state: the loader below assigns any name a
+# kendex.settings.toml [env] table carries, and a repo choosing which binary a
+# handoff runs is code execution, not a changed answer. Pinning it to the
+# environment — empty when the operator set nothing — makes the loader skip the
+# key while the operator's own value still decides.
+TERMINAL="${TERMINAL:-}"
+export TERMINAL
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
@@ -524,19 +533,53 @@ open_tmux() {
 # explicit choice, xdg-terminal-exec the desktop's, and ghostty only where a
 # desktop names neither. Nothing is hardcoded ahead of what the user set.
 open_gui() {
-  local dir="$1" title="$2" cmd="$3"
-  local shell_cmd="cd '$dir' && $cmd"
+  local dir="$1" title="$2" cmd="$3" chosen=""
+  # The title is written from inside the launched shell, so it survives whichever
+  # launcher runs: only the ghostty arm carries --title, and it is tried last.
+  # The title is the item id, validated against GH_ISSUE_PATTERN before it
+  # reaches here — the premise `cd '$dir'` already rests on.
+  local shell_cmd="printf '\033]0;%s\007' '$title'; cd '$dir' && $cmd"
   launchable_dir "$dir" "$title" || return 1
+  local -a launcher=()
   if [[ -n "${TERMINAL:-}" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
-    setsid env -u CLAUDECODE "$TERMINAL" -e bash -lc "$shell_cmd" </dev/null >/dev/null 2>&1 &
+    chosen="$TERMINAL"
+    launcher=(env -u CLAUDECODE "$TERMINAL" -e bash -lc "$shell_cmd")
   elif command -v xdg-terminal-exec >/dev/null 2>&1; then
-    setsid env -u CLAUDECODE xdg-terminal-exec bash -lc "$shell_cmd" </dev/null >/dev/null 2>&1 &
+    chosen="xdg-terminal-exec"
+    launcher=(env -u CLAUDECODE xdg-terminal-exec bash -lc "$shell_cmd")
   elif command -v ghostty >/dev/null 2>&1; then
-    setsid env -u CLAUDECODE ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd" </dev/null >/dev/null 2>&1 &
+    chosen="ghostty"
+    launcher=(env -u CLAUDECODE ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd")
   else
     echo "Error: no GUI terminal found; set \$TERMINAL to one, or install xdg-terminal-exec" >&2
     return 1
   fi
+  # A $TERMINAL naming nothing on PATH — a typo, an uninstalled terminal, a value
+  # carrying arguments — is otherwise substituted in silence.
+  [[ -z "${TERMINAL:-}" || "$chosen" == "$TERMINAL" ]] ||
+    echo "Warning: \$TERMINAL '$TERMINAL' does not resolve to an executable; launching '$title' with $chosen instead" >&2
+  # A launch nothing observed is not a launch to report: this exit code is the
+  # orchestrator's only signal that a lane started, and `-e bash -lc CMD` is
+  # ghostty/xterm grammar the GTK family and wezterm do not take. The job gets a
+  # beat — alive means the window is up, exit 0 means the launcher handed off,
+  # any other status is this item's failure carrying the launcher's own words.
+  # setsid execs rather than forks here (a backgrounded job in a shell without
+  # job control is no group leader), so $! is the launcher itself.
+  local err gui_pid gui_rc=0 said
+  err="$(mktemp)" || { echo "Error: no scratch file for '$title'; not launching" >&2; return 1; }
+  setsid "${launcher[@]}" </dev/null >/dev/null 2>"$err" &
+  gui_pid=$!
+  sleep 1
+  if ! kill -0 "$gui_pid" 2>/dev/null; then
+    wait "$gui_pid" || gui_rc=$?
+    if [[ "$gui_rc" -ne 0 ]]; then
+      said="$(tr '\n' ' ' <"$err" 2>/dev/null || true)"
+      rm -f "$err"
+      echo "Error: $chosen exited $gui_rc launching '$title'${said:+: $said}" >&2
+      return 1
+    fi
+  fi
+  rm -f "$err"
   echo "Opened terminal '$title' in $dir"
 }
 

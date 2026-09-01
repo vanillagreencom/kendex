@@ -9,17 +9,8 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH="$(cd "$TEST_DIR/.." && pwd)"
-# Relative first, so an exported tree that is no git checkout still runs
-# these suites — the mutation harness extracts one with git archive.
-SEALED="$(cd "$TEST_DIR/../../.." && pwd)/tools/tests/lib/sealed-bin"
-# git's own failure must not become this script's: in a non-git tree the
-# substitution exits 128, and under set -e that would end the run before the
-# named error below ever printed.
-if [[ ! -x "$SEALED/gh" ]]; then
-  REPO_TOP="$(git -C "$TEST_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
-  SEALED="$REPO_TOP/tools/tests/lib/sealed-bin"
-fi
-[[ -x "$SEALED/gh" ]] || { echo "merge_queue_rearm_e2e: sealed-bin fixture is missing: $SEALED" >&2; exit 1; }
+# shellcheck source=lib/sealed-bin.sh
+. "$TEST_DIR/lib/sealed-bin.sh"
 TMP="$(mktemp -d)"
 # This suite launches real detached supervisors; teardown owns their pids.
 # shellcheck source=lib/merge-queue-reaper.sh

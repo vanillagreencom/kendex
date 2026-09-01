@@ -22,17 +22,8 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH="$(cd "$TEST_DIR/.." && pwd)"
-# Relative first, so an exported tree that is no git checkout still runs
-# these suites — the mutation harness extracts one with git archive.
-SEALED="$(cd "$TEST_DIR/../../.." && pwd)/tools/tests/lib/sealed-bin"
-# git's own failure must not become this script's: in a non-git tree the
-# substitution exits 128, and under set -e that would end the run before the
-# named error below ever printed.
-if [[ ! -x "$SEALED/gh" ]]; then
-  REPO_TOP="$(git -C "$TEST_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
-  SEALED="$REPO_TOP/tools/tests/lib/sealed-bin"
-fi
-[[ -x "$SEALED/gh" ]] || { echo "merge_queue_teardown: sealed-bin fixture is missing: $SEALED" >&2; exit 1; }
+# shellcheck source=lib/sealed-bin.sh
+. "$TEST_DIR/lib/sealed-bin.sh"
 TMP="$(mktemp -d)"
 # shellcheck source=lib/merge-queue-reaper.sh
 . "$TEST_DIR/lib/merge-queue-reaper.sh"
@@ -664,10 +655,15 @@ suite_arms_teardown() {
   traps=$(exit_traps_in "$1") || return 2
   [[ "$traps" == 'trap mq_reap_teardown EXIT' ]]
 }
+# Either spelling of obtaining SEALED counts — the directory named outright, or
+# lib/sealed-bin.sh sourced, which is where that name now resolves. What the
+# check is FOR is the second half: obtaining it and never putting it behind the
+# stubs on PATH seals nothing.
 suite_seals_path() {
   local body
   body=$(grep -v '^[[:space:]]*#' "$1") || return 1
-  grep -q 'tools/tests/lib/sealed-bin' <<<"$body" && grep -qF '$SEALED:$PATH' <<<"$body"
+  grep -qE 'tools/tests/lib/sealed-bin|lib/sealed-bin\.sh' <<<"$body" \
+    && grep -qF '$SEALED:$PATH' <<<"$body"
 }
 
 roster=$(launching_suites "$TEST_DIR")
@@ -751,6 +747,12 @@ trap mq_reap_teardown EXIT
 cat > /dev/null <<NEVERCLOSED
 UNTERM
 printf '#!/usr/bin/env bash\n# trap mq_reap_teardown EXIT\n# tools/tests/lib/sealed-bin and "$SEALED:$PATH"\n' > "$planted/comment_decoy.sh"
+# The two halves of the sealing check, each planted without the other: a suite
+# that sources the helper and never reaches PATH, and one that builds a PATH
+# from a SEALED it never obtained.
+printf '#!/usr/bin/env bash\n. "$TEST_DIR/lib/sealed-bin.sh"\nPATH="$BIN:$PATH"\n' > "$planted/sourced_unsealed_suite.sh"
+printf '#!/usr/bin/env bash\nPATH="$BIN:$SEALED:$PATH"\n' > "$planted/pathed_unsourced_suite.sh"
+printf '#!/usr/bin/env bash\n. "$TEST_DIR/lib/sealed-bin.sh"\nPATH="$BIN:$SEALED:$PATH"\n' > "$planted/sourced_sealed_suite.sh"
 
 if suite_arms_teardown "$planted/armed_suite.sh"; then ok "a suite that installs the reaping teardown passes the arming check"
 else bad "the arming check rejects a suite that is armed"; fi
@@ -771,6 +773,12 @@ case "$unterm_err" in *"could not complete"*) ok "the incomplete scan names the 
   *) bad "the incomplete scan is unnamed: $unterm_err" ;; esac
 if suite_seals_path "$planted/comment_decoy.sh"; then bad "a comment naming the sealed directory passed the sealing check"
 else ok "a comment naming the sealed directory does not pass for a statement"; fi
+if suite_seals_path "$planted/sourced_sealed_suite.sh"; then ok "sourcing lib/sealed-bin.sh and sealing PATH passes the check"
+else bad "a suite that sources the helper and seals its PATH was rejected"; fi
+for half in sourced_unsealed_suite pathed_unsourced_suite; do
+  if suite_seals_path "$planted/$half.sh"; then bad "$half passed the sealing check with only half of it"
+  else ok "the sealing check rejects $half"; fi
+done
 
 printf 'merge-queue-teardown: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

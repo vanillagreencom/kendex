@@ -13,6 +13,8 @@ set -uo pipefail
 # (.agents/skills/orch/tests/...), where a `<root>/skills/orch/...` path does not
 # exist. Same reason the sibling open-terminal test does it this way.
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/sealed-bin.sh
+. "$TEST_DIR/lib/sealed-bin.sh"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 LANES="$SCRIPTS_DIR/lanes"
 OPEN_TERMINAL="$SCRIPTS_DIR/open-terminal"
@@ -538,7 +540,7 @@ chmod +x "$OT_STUB_BIN/worktree" "$OT_STUB_BIN/gh" "$OT_STUB_BIN/tmux"
 # the repository: a test must never write into the checkout it is testing.
 OT_STATE="$TMP_ROOT/ot-state"
 OT_TMUX_PANES="$TMP_ROOT/ot-panes"
-run_ot() { TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
+run_ot() { TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" PATH="$OT_STUB_BIN:$SEALED:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
 
 # Assert against what a user actually sees, not against a parse of the source.
 # --help must work with no git repository in sight. It used to die with git's
@@ -546,7 +548,7 @@ run_ot() { TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_T
 # failed under `set -e` before argument parsing ever ran.
 NOREPO="$TMP_ROOT/norepo"; mkdir -p "$NOREPO"
 help_rc=0
-HELP_OUT="$( (cd "$NOREPO" && PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+HELP_OUT="$( (cd "$NOREPO" && PATH="$OT_STUB_BIN:$SEALED:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$OPEN_TERMINAL" --help) 2>&1 )" || help_rc=$?
 assert_eq "$help_rc" "0" "open-terminal --help exits 0 outside a git repository"
 assert_contains "$HELP_OUT" "--lane <spec>" "open-terminal --help documents --lane"
@@ -587,7 +589,7 @@ fi
 # than whatever issue convention the surrounding checkout happens to configure.
 run_ot_aliased() { LANES_HOME="$H" ORCH_LANE_ALIASES="$1" ORCH_LANES_FETCH_CMD="$FETCHER" \
   GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
-  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "${@:2}"; }
+  PATH="$OT_STUB_BIN:$SEALED:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "${@:2}"; }
 
 set +e
 alias_out=$(run_ot_aliased "eclaude=work" --harness claude --lane work --cmd "true" CC-1 2>&1)
@@ -614,7 +616,7 @@ set +e
 collide_out=$( (cd "$COLLIDE" && LANES_HOME="$H" ORCH_LANE_ALIASES="eclaude=work" \
   ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
   TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
-  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  PATH="$OT_STUB_BIN:$SEALED:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$OPEN_TERMINAL" --harness claude --lane work --cmd "true" CC-1) 2>&1 )
 collide_rc=$?
 set -e
@@ -635,7 +637,7 @@ set +e
 bare_out=$( (cd "$BARE" && LANES_HOME="$H" ORCH_LANE_ALIASES="eclaude=work" \
   ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
   TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
-  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  PATH="$OT_STUB_BIN:$SEALED:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$OPEN_TERMINAL" --harness claude --lane somelane --cmd "true" CC-1) 2>&1 )
 bare_rc=$?
 set -e
@@ -658,20 +660,18 @@ assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f2)" "%1" \
 rm -rf "$OT_STATE"
 noclaim_out=$(OVERSEE_WATCH_STATE_DIR="$OT_STATE" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
   TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" \
-  PATH="$OT_STUB_BIN:$PATH" \
+  PATH="$OT_STUB_BIN:$SEALED:$PATH" \
   WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" --harness claude --cmd "true" CC-3 2>&1)
 assert_contains "$noclaim_out" "Opened tmux window" "the laneless launch still opened its window"
 assert_eq "$(ls -1 "$OT_STATE/claims" 2>/dev/null | wc -l | tr -d '[:space:]')" "0" \
   "a launch with no --lane records no claim"
 
-# `--lane auto` over a batch: the claim each launch records must move the
-# next item off that account, or one invocation puts the fleet on one lane.
-# $TERMINAL pins the stub open_gui reaches for first: no window opens here.
+# `--lane auto` over a batch: each recorded claim must move the next item off that lane.
 rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
 run_ot_auto() { LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
   GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
   OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
-  PATH="$OT_STUB_BIN:$PATH" TERMINAL=ghostty WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
+  PATH="$OT_STUB_BIN:$SEALED:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
 set +e
 auto_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-4 CC-5 2>&1)
 auto_rc=$?
@@ -759,7 +759,7 @@ owned_out=$(LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OWNED_COUNT="$TMP_RO
   OWNED_ROOT="$TMP_ROOT" \
   GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
   OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
-  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OWNED_STUB" \
+  PATH="$OT_STUB_BIN:$SEALED:$PATH" WORKTREE_CLI="$OWNED_STUB" \
   "$OPEN_TERMINAL" --harness claude --lane auto --cmd "true" CC-17 CC-18 2>&1)
 set -e
 assert_contains "$owned_out" "on lane CLAUDE_CONFIG_DIR=$H/.claude" \
@@ -798,7 +798,7 @@ set +e
 tabpick_out=$(LANES_HOME="$H9" FIXTURE_DIR="$TABFIX" ORCH_LANES_FETCH_CMD="$FETCHER" \
   GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
   OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
-  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  PATH="$OT_STUB_BIN:$SEALED:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$OPEN_TERMINAL" --harness claude --lane auto --cmd "true" CC-22 CC-23 2>&1)
 tabpick_rc=$?
 set -e
@@ -821,7 +821,7 @@ set +e
 ( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
   GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
   OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" \
-  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  PATH="$OT_STUB_BIN:$SEALED:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto --cmd "true" CC-20 ) >/dev/null 2>&1
 set -e
 assert_eq "$(ls -1 "$CALLERREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]')" "1" \
@@ -835,7 +835,7 @@ cat > "$OT_STUB_BIN/ghostty" <<'STUBEOF'
 #!/usr/bin/env bash
 exit 0
 STUBEOF
-chmod +x "$OT_STUB_BIN/ghostty"
+chmod +x "$OT_STUB_BIN/ghostty"; export TERMINAL=ghostty  # open_gui reads it first
 rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
 set +e
 gui_out=$(run_ot_auto --ghostty --harness claude --lane auto --cmd "true" CC-10 CC-11 2>&1)
@@ -868,7 +868,7 @@ stop_out=$(LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch-flaky" \
   FLAKY_COUNT="$TMP_ROOT/flaky-count" FLAKY_OK=3 \
   GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
   OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
-  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  PATH="$OT_STUB_BIN:$SEALED:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$OPEN_TERMINAL" --harness claude --lane auto --cmd "true" CC-6 CC-7 2>&1)
 stop_rc=$?
 set -e

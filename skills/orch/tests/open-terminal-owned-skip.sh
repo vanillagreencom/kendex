@@ -20,6 +20,8 @@
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/sealed-bin.sh
+. "$TEST_DIR/lib/sealed-bin.sh"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="${OPEN_TERMINAL_UNDER_TEST:-$SCRIPTS_DIR/open-terminal}"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
@@ -76,9 +78,8 @@ exit 1
 EOF
 chmod +x "$BIN/ghostty" "$BIN/gh"
 
-# $TERMINAL is what open_gui reaches for first, so it is PINNED to the stub on
-# PATH here: unset, the branch below it would resolve whatever terminal the
-# developer's desktop provides and this suite would open real windows.
+# open_gui reaches for $TERMINAL first, so it names the stub rather than the
+# developer's own terminal. $SEALED is what answers once the stub tree is gone.
 export TERMINAL=ghostty
 
 # Stub worktree CLI:
@@ -131,7 +132,7 @@ run_case() {
   : "${EXISTS_DIR:=$TMP_ROOT/exists-none}"
   mkdir -p "$EXISTS_DIR"
   set +e
-  OUT=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" \
+  OUT=$(PATH="$BIN:$SEALED:$PATH" WORKTREE_CLI="$STUB" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" \
     STUB_EXISTS_DIR="$EXISTS_DIR" \
     "$OT" --ghostty --cmd 'echo {item}' "$@" 2>"$TMP_ROOT/$name.err")
   RC=$?
