@@ -179,18 +179,42 @@ else
     # eyes and keys the PR so the ask is not repeated every pass.
     | (([ ($pr.reviews.nodes // [])[] | select(at == $merged) ] | length)
        + ([ ($pr.reviewThreads.nodes // [])[] | (.comments.nodes // [])[] | select(at == $merged) ] | length)) as $ties
-    | (($pr.reviews.totalCount > ($pr.reviews.nodes | length) and $post_reviews == ($pr.reviews.nodes | length))
-       or ($pr.reviewThreads.totalCount > ($pr.reviewThreads.nodes | length))
-       or ([ ($pr.reviewThreads.nodes // [])[]
-             | select(.comments.totalCount > (.comments.nodes | length))
-             | select([ (.comments.nodes // [])[] | select(at != null) | select(at <= $merged) ] | length == 0) ] | length > 0)
-       or $bad_ts > 0 or $ties > 0) as $overflow
+    # Each cause is bound BY NAME so the KEY can carry the ones that fired.
+    # A key naming only the PR cannot represent a SECOND cause arriving while
+    # the first still holds: the pass that found it recomputes the first key,
+    # matches the seen set and says nothing, over a PR whose reason for
+    # needing eyes has changed. The names are whitespace-free deliberately —
+    # merged-sweep.sh splits the keys column on spaces.
+    | (($pr.reviews.totalCount > ($pr.reviews.nodes | length))
+       and ($post_reviews == ($pr.reviews.nodes | length))) as $rv_bound
+    | ($pr.reviewThreads.totalCount > ($pr.reviewThreads.nodes | length)) as $th_bound
+    | ([ ($pr.reviewThreads.nodes // [])[]
+         | select(.comments.totalCount > (.comments.nodes | length))
+         | select([ (.comments.nodes // [])[] | select(at != null) | select(at <= $merged) ] | length == 0) ] | length > 0) as $cm_bound
+    | ([ if $rv_bound then "reviews-page" else empty end,
+         if $th_bound then "threads-page" else empty end,
+         if $cm_bound then "thread-comments" else empty end,
+         if $bad_ts > 0 then "unparsable-time" else empty end,
+         if $ties > 0 then "merge-tie" else empty end ]) as $causes
+    | (($causes | length) > 0) as $overflow
     | select(($late_reviews | length) > 0 or ($late_threads | length) > 0 or $overflow)
-    # ASSUMES every review and thread carries the node id the query asks for
-    # by name. A null id joins as an empty segment, so two findings on one PR
-    # could share a key and the second would dedupe away. What would break
-    # it: a response omitting a requested id on a node it returned.
-    | ($late_reviews + $late_threads + (if $overflow then ["\($pr.number):overflow"] else [] end)) as $keys
+    # ONE RULE for every key here: a key names what would have to CHANGE for
+    # the report to be news, and where nothing about the condition can
+    # change, there is no key at all. A review key is its own node id
+    # because a review IS one finding; a thread key is the comment that
+    # produced the finding, never the thread, because a thread takes more
+    # than one; an overflow key is the PR AND the causes, because a PR
+    # accumulates causes; and the coverage row carries "-" because a
+    # shortfall is standing, not an event, so announce-once would go silent
+    # while the gap held. A key naming the container instead of the finding
+    # is the defect this file has had three times.
+    # This one ASSUMES every review and thread carries the node id the query
+    # asks for by name. A null id joins as an empty segment, so two findings
+    # on one PR could share a key and the second would dedupe away. What
+    # would break it: a response omitting a requested id on a node it
+    # returned.
+    | ($late_reviews + $late_threads
+       + (if $overflow then ["\($pr.number):overflow:\($causes | join("+"))"] else [] end)) as $keys
     | [ ($pr.number | tostring), ($pr.headRefOid[0:8]), "post-merge-findings",
         ($keys | join(" ")),
         (if $bad_ts > 0

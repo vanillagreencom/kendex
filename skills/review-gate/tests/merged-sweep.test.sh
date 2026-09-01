@@ -45,6 +45,7 @@
 #   ms36.  a decline with no reason        -> answers nothing, both arms
 #   ms37.  a time equal to mergedAt         -> fail closed, neither side
 #   ms38.  a 2nd finding in a seen thread    -> reports; the key is the comment
+#   ms40.  a 2nd overflow CAUSE on a PR       -> reports; the key names causes
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -777,22 +778,11 @@ for w in 172800 3600; do
   assert_sent_query "ms34 (--window $w)" "$w"
 done
 
-# --- ms35: the EFFECTIVE PUBLICATION time, not the creation time ---------
-# A reviewer drafting during the merge queue and submitting just after it
-# is the ordinary shape of this finding, and that review carries createdAt
-# < mergedAt. One fixture drives all three cases; the counts pin each.
-fresh_state
-LATE_SUB="$(review REV_q "$BEFORE_MERGE" COMMENTED "P1: drafted in the queue" codex Bot "$AFTER_MERGE")"
-NO_FIELD="$(review REV_nf "$AFTER_MERGE" COMMENTED "P2: late, older shape" codex Bot none)"
-LATE_PUB="$(thread THR_q 1 "$(comment "$BEFORE_MERGE" "P2: drafted in the queue" codex Bot "$LATER")")"
-fixture "$(envelope "$(pr 14 "$MERGED_AT" dev "[$LATE_SUB,$NO_FIELD]" '[]' "[$LATE_PUB]")")"
-run_split
-assert_eq "$SPLIT_RC" "1" "ms35: work drafted before the merge and PUBLISHED after it is a finding"
-assert_contains "$SPLIT_OUT" "2 review(s) and 1 review thread(s)" "ms35: the review by submittedAt, the thread comment by publishedAt, a field-less shape by createdAt"
-
+assert_publication_time_arms
 assert_decline_reason_arms
 assert_merge_tie_arms
 assert_thread_key_arms
+assert_overflow_cause_arms
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
