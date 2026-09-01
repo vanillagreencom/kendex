@@ -310,18 +310,18 @@ these — `toml-schema`, `agents-section`, and the Escaping paragraphs in
 `renders.md` — cites this table rather than restating it, so a predicate written
 here is the only predicate.
 
-| Input string | heading | frontmatter | marker | comment-close | toml-delimiter | character class |
-|--------------|---------|-------------|--------|---------------|----------------|-----------------|
-| `[repo] name` | – | – | – | – | – | single line, `[A-Za-z0-9._-]` |
-| `[repo] tracker` | – | – | – | – | – | single line, `[A-Za-z0-9._-]` |
-| `[repo] summary` | yes | yes | yes | – | yes | – |
-| `[[surface]] instructions` | yes | yes | yes | – | – | – |
-| `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | yes | – | yes | – |
-| doctrine block text | yes | yes | yes | – | yes | – |
-| `[[exclusions.path]] reason` | – | – | yes | yes | – | single line |
-| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | – | non-empty, the glob dialect above, and its path-shape rule |
-| `[tone] coderabbit` | – | – | – | – | – | ASCII only |
-| `[cadence] qodo_commands` entries | – | – | – | – | – | a verb from the set above, no whitespace, no `--` |
+| Input string | heading | frontmatter | marker | comment-close | toml-delimiter | control | character class |
+|--------------|---------|-------------|--------|---------------|----------------|---------|-----------------|
+| `[repo] name` | – | – | – | – | – | – | single line, `[A-Za-z0-9._-]` |
+| `[repo] tracker` | – | – | – | – | – | – | single line, `[A-Za-z0-9._-]` |
+| `[repo] summary` | yes | yes | yes | – | yes | yes | – |
+| `[[surface]] instructions` | yes | yes | yes | – | – | yes | – |
+| `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | yes | – | yes | yes | – |
+| doctrine block text | yes | yes | yes | – | yes | yes | – |
+| `[[exclusions.path]] reason` | – | – | yes | yes | – | yes | single line |
+| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | – | – | non-empty, the glob dialect above, and its path-shape rule |
+| `[tone] coderabbit` | – | – | – | – | – | – | ASCII only |
+| `[cadence] qodo_commands` entries | – | – | – | – | – | – | a verb from the set above, no whitespace, no `--` |
 
 The predicates, written once:
 
@@ -342,11 +342,25 @@ The predicates, written once:
   closes its own string and the rest of it becomes TOML. Marked on exactly the
   values that reach a TOML string; `[[surface]] instructions` reaches Qodo
   through `best_practices.md`, which is markdown.
+- **control** — any C0 control character other than tab and newline, and DEL
+  (`U+007F`). One predicate for both structured targets, because the values
+  reaching them are the same set: a TOML basic multi-line string permits tab
+  and newline and no other control, and so does a YAML scalar. TOML's own
+  escapes are how one arrives — `summary = "\u0000"` parses cleanly and yields
+  a literal NUL — so the value is already decoded by the time this sees it, and
+  the four rows with a character class need no mark because their classes admit
+  no control to begin with.
 - **character class** — as stated for `[repo] name`, for globs, for `[tone]
   coderabbit` and for `qodo_commands` above. `[tone]` is ASCII so the local
   length count and the vendor's cannot disagree about what one character is,
   which matters there and nowhere else: `tone_instructions` is the cap
   CodeRabbit discards the whole file over.
+
+**Refusals, not escapes.** Every class here is refused at input. The render
+escapes only what a format requires of text already known to be legal — a
+backslash in a TOML basic string — and rewrites nothing else. An escape for one
+of these would mean the generator silently altering an author's words to make
+them fit a file, which is worse than telling the author the words do not fit.
 
 **Render-side second checks.** `renders.md` re-checks the heading class when it
 assembles the `AGENTS.md` region and the Copilot file, because doctrine text

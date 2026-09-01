@@ -377,9 +377,12 @@ them.
 `AGENTS.md` is the only way it reads that file.
 
 **Escaping.** Every string is emitted as a block or folded scalar with explicit
-indentation, never a quoted one-line scalar. Repo text is passed through with
-no escaping, which block scalars make safe. A repo string containing a line
-that would terminate the block is refused.
+indentation, never a quoted one-line scalar. Repo text is passed through with no
+escaping, which block scalars make safe for everything a YAML scalar can hold. A
+repo string containing a line that would terminate the block is refused, and so
+is one carrying a control character, by the same refusal `.pr_agent.toml` relies
+on: a block scalar cannot carry one either, and one predicate covers both
+targets because the values reaching them are the same set.
 
 ## `.pr_agent.toml`
 
@@ -427,9 +430,12 @@ the `!` prefix CodeRabbit needs. This filters what Qodo analyzes for
 exists as well.
 
 **Escaping.** Guidance strings are TOML basic multi-line (`"""`), which is why
-every value reaching one is under the toml-delimiter refusal in `repo-toml.md`
-§ The content refusals — that table marks which, and carries the predicate.
-Backslashes are escaped; TOML basic strings interpret them.
+every value reaching one is under that table's toml-delimiter and control
+refusals in `repo-toml.md` § The content refusals — the table marks which
+values, and carries both predicates. A backslash is escaped, which is the only
+rewriting done here: it is a legal character a format requires escaping, not
+content the render is deciding to change. Everything the format cannot carry is
+refused at input instead.
 
 ## `best_practices.md`
 
