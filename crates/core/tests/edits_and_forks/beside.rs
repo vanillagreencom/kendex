@@ -8,6 +8,8 @@ use kendex_core::error::CoreError;
 
 use super::*;
 
+const REV_AGENT: &str = "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n";
+
 /// Installing beside: the edits become the user's own package under the
 /// new name, answering to it, and the original name goes back to its
 /// source — the newest version when the hold moves along.
@@ -92,6 +94,79 @@ fn fork_beside_keeps_the_edit_under_a_new_name_and_lands_the_source_under_the_ol
     assert!(!gh.blocked_by_local_edit && !gh.update_available, "{gh:?}");
     let own = rows.iter().find(|row| row.name == "gh-edited").unwrap();
     assert!(own.forked && !own.update_available, "{own:?}");
+}
+
+#[allow(clippy::unwrap_used)]
+fn moved_revision_world() -> (World, String) {
+    let w = agent_world("\"claude\", \"pi\"", REV_AGENT, "", "");
+    write_agent(&w.upstream, "rev", "Moved body.");
+    commit(&w.upstream, "two");
+    let two = head_commit(&w.upstream);
+    let manifest = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &manifest).unwrap();
+    (w, two)
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn fork_beside_refuses_mismatched_and_missing_recorded_revisions() {
+    for missing in [false, true] {
+        let (w, two) = moved_revision_world();
+        let path = lock_path(&w.env, &w.scope);
+        let mut lock = load_lock(&path).unwrap();
+        let key = |harness| kendex_core::lock::entry_key(ItemKind::Agent, "rev", harness);
+        lock.entries
+            .get_mut(&key(HarnessId::Claude))
+            .unwrap()
+            .source_commit = Some(two.clone());
+        if missing {
+            lock.entries
+                .get_mut(&key(HarnessId::Pi))
+                .unwrap()
+                .source_commit = None;
+        }
+        kendex_core::lock::save(&path, &lock).unwrap();
+
+        let error = fork::fork_beside(
+            &w.env,
+            &w.scope,
+            ItemKind::Agent,
+            "rev",
+            HarnessId::Claude,
+            "rev-mine",
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains(HarnessId::Pi.display_name()), "{error}");
+        assert_eq!(error.contains("does not record"), missing, "{error}");
+        assert!(!captured(&w, "rev-mine").exists());
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_local_agent_with_no_recorded_revisions_still_forks_beside() {
+    let w = agent_world("\"claude\", \"pi\"", REV_AGENT, "", "");
+    edit_body(&rendered(&w, HarnessId::Claude, "rev"));
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+    let plan = fork::fork_beside(
+        &w.env,
+        &w.scope,
+        ItemKind::Agent,
+        "rev",
+        HarnessId::Claude,
+        "rev-mine",
+        None,
+    )
+    .unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+    assert!(captured(&w, "rev-mine").is_file());
 }
 
 /// Everything is proven before anything is written: a refused install

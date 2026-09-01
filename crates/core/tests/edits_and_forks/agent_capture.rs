@@ -2,15 +2,19 @@ use std::fs;
 
 use super::*;
 
-/// The rendered body is the fork's source. A Gemini tool name therefore
-/// stays a Gemini tool name when Claude renders the fork, while generated
-/// sections still come from the manifest exactly once.
+/// The rendered body is the fork's source. Generated sections are owned
+/// independently, so editing one and removing another neither duplicates
+/// their unchanged siblings nor deletes an authored banner example.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section() {
     let w = world();
     write_skill(&w.upstream, "recon", "Recon.");
-    write_agent(&w.upstream, "rev", "Use the Read tool.\n\nUpstream body.");
+    write_agent(
+        &w.upstream,
+        "rev",
+        &format!("Use the Read tool.\n\nUpstream body.\n\nExample:\n\n{BANNER}"),
+    );
     fs::write(
         w.upstream.join("kendex.toml"),
         "[agent-skills]\nrev = [\"recon\"]\n",
@@ -32,7 +36,16 @@ fn a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section() {
     let gemini_path = rendered(&w, HarnessId::Gemini, "rev");
     let before = fs::read_to_string(&gemini_path).unwrap();
     assert!(before.contains("Use the read_file tool."), "{before}");
-    edit_body(&gemini_path);
+    let hook = "\n## Safety: PreToolUse on every match\n\nRun: `./scripts/check.sh`\n";
+    assert!(before.contains(hook), "{before}");
+    fs::write(
+        &gemini_path,
+        before
+            .replace("Upstream body.", "My body.")
+            .replace("Read the brief first.", "Edited generated launch.")
+            .replace(hook, ""),
+    )
+    .unwrap();
 
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
     apply::execute(&w.env, &plan).unwrap();
@@ -41,8 +54,10 @@ fn a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section() {
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
     assert!(source.contains("Use the read_file tool."), "{source}");
     assert!(!source.contains("Use the Read tool."), "{source}");
+    assert!(source.contains("Edited generated launch."), "{source}");
+    assert_eq!(banners(&source), 1, "{source}");
+    assert_eq!(times(&source, "## Launch Instructions"), 1, "{source}");
     for section in [
-        "## Launch Instructions",
         "## Additional Instructions",
         "## Required Skills",
         "## Safety: PreToolUse on every match",
@@ -51,8 +66,8 @@ fn a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section() {
     }
 
     let gemini = fs::read_to_string(&gemini_path).unwrap();
+    assert_eq!(times(&gemini, "## Launch Instructions"), 2, "{gemini}");
     for section in [
-        "## Launch Instructions",
         "## Additional Instructions",
         "## Required Skills",
         "## Safety: PreToolUse on every match",
@@ -63,7 +78,7 @@ fn a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section() {
     let claude = fs::read_to_string(rendered(&w, HarnessId::Claude, "rev")).unwrap();
     assert!(claude.contains("Use the read_file tool."), "{claude}");
     for text in [&gemini, &claude] {
-        assert_eq!(banners(text), 1, "{text}");
+        assert_eq!(banners(text), 2, "{text}");
         assert_eq!(times(text, "My body."), 1, "{text}");
     }
 }

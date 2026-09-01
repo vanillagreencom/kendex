@@ -1,0 +1,1 @@
+- Forking an edited agent preserves authored banner examples and avoids duplicating untouched generated sections when another section was edited or removed.
