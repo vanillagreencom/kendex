@@ -35,5 +35,5 @@ A **single-PR bundle** — one session, one PR covering every child — is the e
 3. Sequence dependent children with sibling child-blocks-child relations; cross-bundle dependencies go on the parents.
 4. Label the parent with the project's multi-agent label (for example `agent:multi`) when children span 2+ agent domains. A `(one PR)` title marker outranks the label.
 5. A coordination-only parent carries no estimate. Clear it with `issues update [ISSUE_ID] --clear-estimate`; Linear stores "no estimate" and formatters render it as `0`.
-6. Drop any header line with no value — except `**Reached by**`, which every issue carries ([issue-description-template.md](issue-description-template.md) § Field Mapping); omit Acceptance Criteria when the children have none.
+6. Drop any header line with no value; `**Reached by**` is filled or the parent is not created ([issue-description-template.md](issue-description-template.md) § Field Mapping). Omit Acceptance Criteria when the children have none.
 7. After any hierarchy change, regenerate Summary, Sub-Issues, and Acceptance Criteria from the current children.

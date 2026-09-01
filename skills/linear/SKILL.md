@@ -84,9 +84,7 @@ Never create a tracked issue directly from an orchestration or review session �
 
 Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses — before any API call — a create carrying no agent label from that set, including a typoed `agent:*` name. `--no-agent-label` permits a deliberate bare create.
 
-Where `LINEAR_REQUIRE_REACH` is set, `issues create` refuses — before any API call — a description with no `Reached by:` line naming the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask), and a value naming only the thread a finding came from, or a shape. An unsubstituted template placeholder and a null token (`TBD`, `n/a`, `none`, `-`) count as no value. An item with nothing to name is a decline, not an issue.
-
-`--review-born` marks a create that came from a review finding: with it, `--priority 2` also needs a `Symptom:` line naming the run, user, or red check that already showed the defect. Priority 2 minted structurally — a planner, a roadmap layer, the merge-pr rebundle, a research spike — omits the flag and is not symptom-checked.
+Where `LINEAR_REQUIRE_REACH` is set, `issues create` refuses — before any API call — a description whose `Reached by:` line is missing or names no producer, and, with `--review-born`, a `--priority 2` description with no `Symptom:` line. Each refusal states the rule it enforces; the rule itself is the project-management skill's SKILL.md § Disposition, which is also where a create decides whether it is review-born.
 
 ## Attachments
 

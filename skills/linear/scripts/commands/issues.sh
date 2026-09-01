@@ -108,18 +108,13 @@ Create Options:
                         skill), which owns labels, project, priority, and
                         relations — do not create tracked issues directly.
 
-  --review-born         This create came from a review finding. With
-                        LINEAR_REQUIRE_REACH set, `--priority 2` then needs a
-                        `Symptom:` line in the body naming the run, user, or
-                        red check that already showed the defect. Priority 2
-                        minted structurally (planners, roadmap layers, the
-                        merge-pr rebundle, a research spike) omits the flag
-                        and is not symptom-checked.
+  --review-born         This create came from a review finding, which is what
+                        subjects it to the `Symptom:` half of the bar below.
 
   Reach guard: with LINEAR_REQUIRE_REACH set in kendex.settings.toml [env],
-  create refuses a description with no `Reached by:` line naming the user
-  action, run, check, or shipped producer that arrives at the defect, and one
-  whose value names only the thread a finding came from, or a shape.
+  create refuses a description whose `Reached by:` line is missing or names no
+  producer, and a `--review-born --priority 2` description with no `Symptom:`
+  line. The rule is the project-management skill's SKILL.md, § Disposition.
 
 Update Options:
   --state <name>        New state

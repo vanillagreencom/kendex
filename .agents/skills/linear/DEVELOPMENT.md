@@ -14,7 +14,7 @@ skills/linear/
 │       ├── cache.sh            # Cache reads, merges, write-through
 │       ├── formatters.sh       # safe / table / ids / raw output
 │       ├── attachments.sh      # Attachment upload and download
-│       └── issue-validation.sh # Completion-role state rules
+│       └── issue-validation.sh # Issue rules at create and transition time
 └── patterns/workflow-actions.md
 ```
 

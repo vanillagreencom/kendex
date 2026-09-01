@@ -15,6 +15,8 @@ Ask only for the details that are missing: title, expected outcome, tracker, pro
 
 Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's label preflight). Then search existing issues (all states) for the same problem or component change and flag a likely duplicate to the user (related relation + comment) instead of creating blind.
 
+`[BODY]` follows project-management's [issue-description-template.md](../../project-management/templates/issue-description-template.md), including the `Reached by:` line naming what arrives at the defect.
+
 ```bash
 .agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --format=ids
 ```

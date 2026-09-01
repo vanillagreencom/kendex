@@ -381,7 +381,7 @@ Any invariant failing sends you back before the JSON is built.
 - [ ] No completed-blocker relation appears in `remove_relations[]` or under any stale-metadata framing (§ 4.1)
 - [ ] The § 6 cancellation sweep ran against the full comparison set
 - [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix
-- [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip` and a complete `create_fields.labels[]` on each `create` (§ 10)
+- [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip`, and a complete `create_fields.labels[]` plus a `create_fields.reach` on each `create` (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
 
 ---

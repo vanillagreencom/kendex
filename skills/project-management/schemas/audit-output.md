@@ -112,6 +112,7 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
       "create_fields": {
         "description": "Issue body summary",
         "recommendation": "* Requirements bullets",
+        "reach": "the user action, run, check, or shipped producer that arrives at the defect",
         "location": "path or component",
         "estimate": 3,
         "priority": 2,

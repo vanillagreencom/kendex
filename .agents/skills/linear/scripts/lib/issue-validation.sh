@@ -270,14 +270,18 @@ blocking_level_violation_message() {
 #
 # The reply grammar makes filing the cheap disposition: `Declined:` needs a
 # disproof a gate checks, `Tracked: <ID>` needs only an issue to exist, so a
-# hypothetical gets an issue where it should have got a decline. Every
-# `Tracked:` passes through issue creation, so creation is the one chokepoint
-# the filing bar can hold. Under LINEAR_REQUIRE_REACH (kendex.settings.toml
-# [env]) a create refuses, before any API call, a description that names
-# nothing the defect reaches through. Empty or unset keeps the guard off.
+# hypothetical gets an issue where it should have got a decline. Every Linear
+# `Tracked:` passes through this create, so it is where the filing bar can be
+# held on this tracker; a `Tracked: #<n>` filed with `gh issue create` never
+# reaches here and is unguarded. Under LINEAR_REQUIRE_REACH
+# (kendex.settings.toml [env]) a create refuses, before any API call, a
+# description that names nothing the defect reaches through. Empty or unset
+# keeps the guard off. The bar itself is project-management SKILL.md,
+# § Disposition.
 
-# The rule every refusal quotes, so message and docs cannot drift apart.
-REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). A value naming only the thread a finding came from, or a shape, is not a reach.'
+# The rule both refusals that judge a `Reached by:` value quote, so message
+# and rule cannot drift apart. The symptom refusal below states its own rule.
+REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). A value naming only the thread a finding came from, a shape, or something true in theory is not a reach, and an unsubstituted placeholder or a null token is no value at all.'
 
 # Values naming the thread a finding came from rather than a producer. Every
 # entry needs a leading word boundary, and each bot or role name is qualified
