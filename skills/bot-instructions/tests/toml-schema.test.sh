@@ -483,6 +483,13 @@ bi_reason() {
     printf '[exclusions]\n[[exclusions.path]]\nglob = "a/**"\nreason = "a generated%s tree"\n' "$1"
   } > "$repo/bot-instructions.toml"
 }
+# Each control asserts WHICH PREDICATE fired, not only the validator. This row
+# carries `control` and `single-line` both, `apply` raises on the first to
+# match, and `splitlines` inside `single-line` breaks on these same three
+# characters — so a bare `expect_red toml-schema` here passes whichever of the
+# two is doing the work, and narrowing `_CONTROL` back to C0 left all three
+# green. `apply` puts the predicate's own name in the message, so that is what
+# the assertion reads.
 for cp in u0085 u2028 u2029; do
   bi_reason ''
   expect_green "an ordinary [[exclusions.path]] reason, the pair for \\$cp" \
@@ -490,7 +497,31 @@ for cp in u0085 u2028 u2029; do
   bi_reason "\\$cp"
   expect_red toml-schema "a line separator \\$cp in [[exclusions.path]] reason" \
     check --repo "$repo"
+  if printf '%s\n' "$bi_out" | grep -qF '(control refusal,'; then
+    ok "and \\$cp is the control predicate's refusal, not single-line's"
+  else
+    bad "and \\$cp is the control predicate's refusal, not single-line's" "$bi_out"
+  fi
 done
+
+# `single-line`'s own clause, and the one character of it that carries weight.
+# `splitlines` DROPS a trailing break, so the predicate appends a `.` before
+# counting: without it `"a\n"` and `"a"` both read as one line and a reason
+# ending in a newline passes. Every other width `splitlines` has over a
+# `\n`/`\r` test is refused first by `control` on this row and by
+# `name-class` on the two others carrying this mark, so the `.` is the part
+# with a behaviour of its own, and this is its control.
+bi_reason ''
+expect_green 'an ordinary [[exclusions.path]] reason, the pair below' check --repo "$repo"
+{ printf '%s' "$BI_MIN_HEAD"
+  printf '[exclusions]\n[[exclusions.path]]\nglob = "a/**"\nreason = "a generated tree\\n"\n'
+} > "$repo/bot-instructions.toml"
+expect_red toml-schema 'a [[exclusions.path]] reason ending in a newline' check --repo "$repo"
+if printf '%s\n' "$bi_out" | grep -qF '(single-line refusal,'; then
+  ok 'and it is the single-line predicate that refuses it'
+else
+  bad 'and it is the single-line predicate that refuses it' "$bi_out"
+fi
 
 # The same character in `[[surface]] instructions`, which reaches
 # `.coderabbit.yaml` inside a block scalar: the text after it would be emitted

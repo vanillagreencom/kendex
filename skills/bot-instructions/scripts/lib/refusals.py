@@ -98,10 +98,16 @@ def control(value):
 
 
 def _single_line(value):
-    # `splitlines` rather than a `\n`/`\r` test: it breaks on every character
-    # a reader treats as a line break, this table's wider class included. The
-    # appended `.` keeps a TRAILING break visible, which `splitlines` drops on
-    # its own — `"a\n"` and `"a"` would otherwise both read as one line.
+    # The appended `.` is the load-bearing part, and it has its own control:
+    # `splitlines` DROPS a trailing break, so without it `"a\n"` and `"a"`
+    # both read as one line and a `reason` ending in a newline passes.
+    #
+    # `splitlines` over a `\n`/`\r` test is defence in depth rather than a
+    # clause of its own. Every row marked `single-line` pairs it with a
+    # predicate that already refuses the rest of the break set — `control` on
+    # `[[exclusions.path]] reason`, `name-class` on `[repo] name` and
+    # `[repo] tracker` — so no input distinguishes the two forms, and a
+    # control for that width would need a row this table does not have.
     if len(f"{value}.".splitlines()) > 1:
         return "must be a single line"
     return None
