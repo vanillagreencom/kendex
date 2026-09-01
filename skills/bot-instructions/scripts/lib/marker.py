@@ -20,7 +20,10 @@ from .constants import (CODERABBIT_SCHEMA_LINE, MACROSCOPE_IGNORE_PATH,
 HTML = "html"
 HASH = "hash"
 
-_OPENER = {HTML: f"<!-- {MARKER_TOKEN}", HASH: f"# {MARKER_TOKEN}"}
+# The trailing space is the token's word boundary, and `comment` always
+# writes one: without it `bot-instructions-not-owned` reads as this
+# package's own file, which is the denial `writer` promises to honour.
+_OPENER = {HTML: f"<!-- {MARKER_TOKEN} ", HASH: f"# {MARKER_TOKEN} "}
 
 
 def style_for(path):

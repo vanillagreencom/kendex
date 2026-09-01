@@ -247,6 +247,12 @@ quoted() {
   body="${body//@HTML_MARKER@/$html}"
   body="${body//@HASH_MARKER@/$hash}"
   body="${body//@HASH_HEAD@/${hash#\# }}"
+  # The token alone, read from the package's own constant rather than spelled
+  # here: it is the part of the marker that does not move between versions.
+  body="${body//@TOKEN@/$(python3 -c 'import sys
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from lib.constants import MARKER_TOKEN
+print(MARKER_TOKEN)' "$BI_ROOT/skills/bot-instructions")}"
   printf '%s' "$body" > "$repo/$path"
   printf '%s' "$body" > "$BI_TMP/quoted-$1.expected"
   git -C "$repo" add -A >/dev/null 2>&1
@@ -302,6 +308,17 @@ language: en-US
 # verbatim, so nothing short of an exact match tells the two apart.
 quoted disclaimer 'a first line saying the file is NOT generated' .pr_agent.toml \
 '# not @HASH_HEAD@
+
+[config]
+model = "gpt-5"
+'
+
+# A first line that opens with the token and then keeps going as one word.
+# The check is the token, not a prefix of a longer word: without its trailing
+# space `bot-instructions-not-owned` reads as a claim rather than the denial
+# it is, and render overwrites a file nobody adopted.
+quoted suffix 'a first line whose token runs on into another word' .pr_agent.toml \
+'# @TOKEN@-not-owned, and hand-written
 
 [config]
 model = "gpt-5"
