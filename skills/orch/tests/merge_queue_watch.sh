@@ -493,18 +493,18 @@ export WATCH_RELEASE="$old_release"
 prep=$(prepare ejected); watch=$(jq -r .watch_id <<<"$prep"); artifact=$(jq -r .artifact_path <<<"$prep")
 launch_bounded "$watch"
 state_path=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
-stale_supervisor_pid=$(jq -r .supervisor_pid "$state_path")
+stale_runtime=$(jq -r .runtime_dir "$state_path")
 jq '.status="launch_failed"|.action="launch"|.supervisor_pid=null' "$state_path" > "$TMP/publication-state.json"
 chmod 600 "$TMP/publication-state.json"; mv "$TMP/publication-state.json" "$state_path"
 export WATCH_RELEASE="$new_release"
 launch_bounded "$watch"
 publication_replacement=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .artifact_path)
 touch "$new_release"; wait_file "$publication_replacement" || bad "publication-fence replacement verdict missing"
-# The stale supervisor sits on its worker until this release, then makes the one
-# publication attempt this fence has to refuse and exits, so waiting for that
-# process is waiting for exactly that attempt to be over.
+# The stale supervisor sits on its worker until this release, then makes the
+# publication attempts this fence has to refuse; its teardown writes the
+# runtime terminal file after the last of them, so that file ends the attempt.
 touch "$old_release"
-wait_gone "$stale_supervisor_pid" || bad "stale started supervisor never finished its publication attempt"
+wait_file "$stale_runtime/terminal" || bad "stale started supervisor never finished its publication attempt"
 [[ ! -e "$artifact" ]] && ok "stale started supervisor cannot publish after replacement" || bad "publication fence admitted the stale started supervisor"
 eq "$(jq -r .verdict "$publication_replacement")" ejected "stale publication leaves the replacement verdict intact"
 result=$("$SCRIPTS/merge-queue-watch" consume --root "$MAIN" --issue KEN-829)
