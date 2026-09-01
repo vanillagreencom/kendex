@@ -54,6 +54,8 @@ Findings are a JSON artifact per [`schemas/review-finding.md`](./schemas/review-
 .agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] 0
 ```
 
+Write a control's files under a `mktemp -d` of your own, the way [`scripts/mutation-stability`](./scripts/mutation-stability) does: stubs, fixtures, mutants, logs. The scratchpad root is shared with the parallel panel, where a sibling overwrites a fixed name mid-review.
+
 Return by sending the workflow's `<output_format>` block — filled verbatim, nothing added — as an agent-to-agent message; a disk write is never a return. Shell commands follow orch SKILL.md § Harness-Safe Shell.
 
 ## Re-Review Rounds
