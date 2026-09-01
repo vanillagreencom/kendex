@@ -82,7 +82,13 @@ def orphan(ctx, out):
         if path in produced:
             continue
         text = ctx.read(path)
-        if marker.at_canonical_position(path, text):
+        # The READ question, not the write one: this clause exists to find a
+        # generated file the TOML no longer produces, and a file that was
+        # MOVED is that case. Judging it by the destination's prologue rule
+        # missed a rendered correctness surface copied to
+        # `.macroscope/approvability.md`, which keeps its frontmatter and
+        # stays live.
+        if marker.carries_marker(path, text):
             out.append(Finding(v, "carries this package's marker and the current TOML does "
                                   "not produce it. Retiring one is delete-then-render, in "
                                   "that order", path))

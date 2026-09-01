@@ -91,6 +91,21 @@ check_run_agents() {
   mkdir -p "$1/.macroscope/check-run-agents"
   marker "$1" > "$1/.macroscope/check-run-agents/moved.md"
 }
+# The same two destinations reached by COPYING a rendered surface rather than
+# by writing a bare marker line, which is the difference the two ownership
+# questions turn on: a `.macroscope/correctness/<surface>.md` carries YAML
+# frontmatter above its marker, and neither destination's own format allows
+# one. Judged by the destination path the file read as unmarked and `orphan`
+# said nothing about a live file carrying this package's marker — the
+# validator blind in exactly the case it exists for. `orphan` asks where the
+# file CAME FROM, not where it sits.
+copied_approvability() {
+  cp "$1/.macroscope/correctness/docs.md" "$1/.macroscope/approvability.md"
+}
+copied_check_run() {
+  mkdir -p "$1/.macroscope/check-run-agents"
+  cp "$1/.macroscope/correctness/tests.md" "$1/.macroscope/check-run-agents/copied.md"
+}
 codex_off() {
   python3 - "$1/bot-instructions.toml" <<'PY'
 import sys
@@ -106,6 +121,11 @@ o retired-surface 'a marked .instructions.md no current surface produces' retire
 o retired-bot 'a marked root file of a bot whose flag went false' retired_bot
 o nested 'a marked file one directory down, at no path the generator writes' nested_move
 o check-run 'a marked file moved under .macroscope/check-run-agents' check_run_agents
+o copied-approvability \
+  'a rendered surface copied to .macroscope/approvability.md, frontmatter and all' \
+  copied_approvability
+o copied-check-run \
+  'and the same copy under .macroscope/check-run-agents' copied_check_run
 
 # Out of `o`, because this one breaches a second clause and says so: turning
 # three flags off leaves the marked region orphaned AND leaves every file
