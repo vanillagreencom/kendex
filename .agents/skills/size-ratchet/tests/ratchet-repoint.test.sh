@@ -258,5 +258,54 @@ RAISE=1 run_frozen
   && ok "control: a settings touch with the baseline still in place is an ordinary raise" \
   || bad "control: rows at the configured path stay an ordinary raise" "rc=$RC out=$OUT"
 
+
+# count_nonempty_lines exits loudly when grep cannot read a file, but that exit
+# ends only the command substitution it runs in. The outer shell survives with
+# an EMPTY capture, and a test reading that capture directly takes its false
+# arm — which is the arm that skips the repoint check. An unreadable file would
+# have waved through the very commit this suite exists to refuse.
+#
+# No CLI input reaches that line with an unreadable file: $TMP/moved.tsv is
+# written by the script into its own mktemp directory moments before the read,
+# and a caller's unreadable baseline is refused earlier by validate_baseline_rows.
+# So the failure is injected where a permission or I/O error would land — a grep
+# on PATH that fails for moved.tsv alone and defers to the real grep for
+# everything else. The script under test is the shipped one, unmodified, and
+# moved.tsv is read at exactly one place in it.
+mkdir -p "$TMP/shim"
+cat >"$TMP/shim/grep" <<'SHIM'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in
+    */moved.tsv) echo "grep: $a: Permission denied" >&2; exit 2 ;;
+  esac
+done
+exec "$SR_REAL_GREP" "$@"
+SHIM
+chmod +x "$TMP/shim/grep"
+REAL_GREP="$(command -v grep)"
+# A copy-and-repoint raising a frozen row: refused when the count is trusted,
+# and silently admitted when a failed count reads as zero.
+relocating_repo repointcountguard x.test.txt 15 15
+mkfile x.test.txt 20
+copy_repoint x.test.txt 20
+OUT=""
+RC=0
+OUT="$(cd "$R" && PATH="$TMP/shim:$PATH" SR_REAL_GREP="$REAL_GREP" \
+  SIZE_RATCHET_THRESHOLD=10 SIZE_RATCHET_FROZEN_CLASSES='*.test.*' RATCHET_RAISE=1 \
+  "$SR" --staged 2>&1)" || RC=$?
+# The injection really happened: the shim's own line proves grep failed, so a
+# green result here cannot come from the failure never being induced.
+case "$OUT" in *"moved.tsv: Permission denied"*) ok "the injected read failure really fired at the guarded count" ;; *) bad "the injected read failure fired" "$OUT" ;; esac
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not count what the move scan reported"*) true ;; *) false ;; esac \
+  && ok "a count that cannot be read exits loudly instead of skipping the repoint check" \
+  || bad "an unreadable count exits loudly" "rc=$RC out=$OUT"
+# The control that the shim is what did it: the same tree, the same run, no
+# shim on PATH, reaches the ordinary refusal.
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "control: without the shim the same tree gets the ordinary refusal" \
+  || bad "control: the same tree without the shim is refused normally" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -1719,8 +1719,17 @@ snapshot_rows_at() { # PATH — 0 when the snapshot still holds a row set there
 # changed paths. A commit that touches no settings source never reaches the
 # scan, and that is every ordinary commit.
 baseline_repointed() { # CANDIDATE-BASELINE — violations on stdout
+  # The count is CAPTURED and its status checked, never read inside the test.
+  # count_nonempty_lines exits loudly when grep cannot read the file, and that
+  # exit ends only the substitution: the outer shell survives with an empty
+  # capture, `[ "" -gt 0 ]` errors, and the `||` arm skips this whole check.
+  # A file the gate could not read would have waved the repoint through.
+  # `local` is on its own line, because `local n="$(...)"` reports LOCAL's
+  # status and swallows the failure a `||` here is meant to catch.
+  local rows
   head_is_born "looking for a repointed baseline" || return 0
-  [ "$(count_nonempty_lines "$1")" -gt 0 ] || return 0 # no rows arriving to judge
+  rows="$(count_nonempty_lines "$1")" || collection_error "could not count the candidate baseline's rows — refusing to treat this change as no repoint"
+  [ "$rows" -gt 0 ] || return 0 # no rows arriving to judge
   diff_touches_settings || return 0
   count_head_row_sets
   case "$HEAD_ROW_SETS" in
@@ -1931,6 +1940,7 @@ rows_raised() { # CURRENT-BASELINE — violations on stdout
 # Both halves of the judgment over one candidate baseline, so the --staged
 # rewrite below can ask what its candidate earns before anything is written.
 run_verdict() { # BASELINE-TSV — fills $TMP/violations.tsv, sets VIOLATIONS
+  local moved_rows
   evaluate "$1" >"$TMP/violations.tsv" || collection_error "could not evaluate the baseline against the collected counts"
   rows_raised "$1" >>"$TMP/violations.tsv" || collection_error "could not judge the baseline rows against HEAD's baseline"
   # A named move and a bare repoint are one root cause, so the second only
@@ -1938,7 +1948,10 @@ run_verdict() { # BASELINE-TSV — fills $TMP/violations.tsv, sets VIOLATIONS
   # twice would name one commit's single mistake as two.
   baseline_moved "$1" >"$TMP/moved.tsv" || collection_error "could not tell whether this change moves the baseline"
   cat -- "$TMP/moved.tsv" >>"$TMP/violations.tsv" || collection_error "could not record whether this change moves the baseline"
-  if [ "$(count_nonempty_lines "$TMP/moved.tsv")" -eq 0 ]; then
+  # Captured, not read inside the test: an unreadable moved.tsv would take the
+  # false arm and never call baseline_repointed at all.
+  moved_rows="$(count_nonempty_lines "$TMP/moved.tsv")" || collection_error "could not count what the move scan reported — refusing to skip the repoint check"
+  if [ "$moved_rows" -eq 0 ]; then
     baseline_repointed "$1" >>"$TMP/violations.tsv" || collection_error "could not tell whether this change repoints the baseline"
   fi
   VIOLATIONS="$(count_nonempty_lines "$TMP/violations.tsv")"
