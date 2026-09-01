@@ -169,19 +169,20 @@ expect_message "exactly one is required" 'two `## Doctrine` sections' \
   render --dry-run --repo "$repo" --spec "$spec"
 
 # Doctrine text is under the same content refusals as repo text, applied where
-# it is read: `renders.md` § Render-side second checks. A `---` line in a
-# doctrine block renders into `.github/copilot-instructions.md`, where blocks
-# are `##` subsections with paragraphs preserved, and markdown reads `---`
-# under a text line as a setext heading underline — forging a section in the
-# one file whose escaping rule exists to stop exactly that.
-spec="$(new_spec doctrine-frontmatter)"
+# it is read: `renders.md` § Render-side second checks. A `---` line under a
+# text line in a doctrine block renders into `.github/copilot-instructions.md`,
+# where blocks are `##` subsections with paragraphs preserved, and markdown
+# reads that pair as a setext heading — forging a section in the one file whose
+# escaping rule exists to stop exactly that. The HEADING refusal owns the pair;
+# the frontmatter one below owns a `---` that underlines nothing.
+spec="$(new_spec doctrine-setext)"
 python3 - "$spec/SKILL.md" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read().replace("### scope\n\nRaise a defect", "### scope\n\nForged\n---\n\nRaise a defect", 1)
 open(p, "w").write(s)
 PY
-expect_message "frontmatter refusal" 'a `---` line in doctrine text, which forges a section' \
+expect_message "heading refusal" 'a `---` line under text in doctrine, which forges a section' \
   render --dry-run --repo "$repo" --spec "$spec"
 
 spec="$(new_spec doctrine-heading)"
@@ -195,6 +196,19 @@ s = open(p).read().replace("### scope\n\nRaise a defect", "### scope\n\n  #### F
 open(p, "w").write(s)
 PY
 expect_message "heading refusal" 'a heading line in doctrine text, which ends the owned region' \
+  render --dry-run --repo "$repo" --spec "$spec"
+
+# The frontmatter refusal's own shape, which no setext reading covers: a
+# `---` after a BLANK line underlines nothing and is a thematic break to a
+# reader, while at byte 0 of a markdown output it opens frontmatter.
+spec="$(new_spec doctrine-frontmatter)"
+python3 - "$spec/SKILL.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read().replace("### scope\n\nRaise a defect", "### scope\n\n---\n\nRaise a defect", 1)
+open(p, "w").write(s)
+PY
+expect_message "frontmatter refusal" 'a `---` line under a blank line in doctrine text' \
   render --dry-run --repo "$repo" --spec "$spec"
 
 # The other side of that predicate: `#` with NO whitespace after it is a

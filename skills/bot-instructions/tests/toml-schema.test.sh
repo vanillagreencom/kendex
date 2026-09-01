@@ -142,6 +142,26 @@ text
   ## forged
 """
 EOF
+# A setext heading, which is the half an ATX-only refusal missed. It became
+# reachable when the render correctly stopped reflowing a multiline summary:
+# until then the join meant `===` never began a line of its own, and after it
+# the pair reaches `.github/copilot-instructions.md` and
+# `.macroscope/correctness/doctrine.md` as an H1.
+w 'a setext heading in [repo] summary' <<'EOF'
+schema = 1
+[repo]
+name = "fixture"
+summary = """
+Injected
+===
+"""
+EOF
+if printf '%s\n' "$bi_out" | grep -q 'heading refusal'; then
+  ok 'and the heading refusal is the clause that names it'
+else
+  bad 'and the heading refusal is the clause that names it' "$bi_out"
+fi
+
 w 'a frontmatter line in [repo] summary' <<'EOF'
 schema = 1
 [repo]

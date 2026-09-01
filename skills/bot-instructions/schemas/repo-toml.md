@@ -377,9 +377,9 @@ an error. There is no separate check for a path collision, because the name
 a second check could never red.
 
 `instructions` is under the heading, frontmatter and marker refusals below.
-Each restructures at least one output: a heading ends the `AGENTS.md` owned
-region, `---` opens frontmatter, and the marker decides which files this package
-owns. It is also required to be non-empty, which is a rule about the surface
+Each restructures at least one output: a heading — `#` or an underline — ends
+the `AGENTS.md` owned region or forges a section, `---` opens frontmatter, and
+the marker decides which files this package owns. It is also required to be non-empty, which is a rule about the surface
 rather than about the string: whitespace renders a `path_instructions` entry
 with no text, a `.instructions.md` carrying a marker and nothing under it, and
 a best-practices section with no body — a surface that costs its bots a read
@@ -429,17 +429,27 @@ nothing there implements.
 
 The predicates, written once:
 
-- **heading** — a line `scripts/lib/markdown.py` reads as an ATX heading: one
-  to six `#` after three or fewer leading spaces, followed by whitespace or the
-  end of the line. Wide about the indentation, because a line indented two
-  spaces ends the `AGENTS.md` owned region as surely as one in column zero and
-  a narrower input rule would pass a value the render then refuses. Exact about
-  the whitespace, because `#1917` is a heading to no reader — refusing it here
-  made a doctrine block carrying a pull request number unrenderable while the
-  render and `tools/guard` both read that line as ordinary prose. One
-  predicate, so the input rule and the render cannot drift apart.
+- **heading** — a line markdown reads as a heading, in **either** of the two
+  forms `scripts/lib/markdown.py` states. ATX is one to six `#` after three or
+  fewer leading spaces, followed by a space, a tab, or the end of the line.
+  Wide about the indentation, because a line indented two spaces ends the
+  `AGENTS.md` owned region as surely as one in column zero and a narrower input
+  rule would pass a value the render then refuses. Exact about the delimiter,
+  in both directions: `#1917` is a heading to no reader, and refusing it here
+  made a doctrine block carrying a pull request number unrenderable, while `##`
+  before a no-break space is a heading to no reader either and reading it as
+  one ended the owned region early.
+  Setext is a run of `=` or of `-`, indented at most three spaces with only
+  whitespace after it, **under a non-blank line** — `Injected` over `===` is an
+  H1 to every CommonMark reader. This half is wide on purpose: it does not ask
+  whether the line above is a paragraph or the opener of a fenced block,
+  because a refusal that is too wide costs an author a rewrite while one that
+  is too narrow puts a structural heading into a generated file. The section
+  terminators read ATX alone and `markdown.py` says why; what makes that safe
+  is this row, which keeps a setext underline out of every string they parse.
 - **frontmatter** — a line that is exactly `---`, which opens or closes YAML
-  frontmatter in a `.instructions.md` file.
+  frontmatter in a `.instructions.md` file. Its own shape rather than the
+  heading row's: a `---` under a blank line underlines nothing.
 - **marker** — a line carrying the marker text, which is what decides which
   files this package owns.
 - **comment-close** — `-->`, which would end the HTML comment a `reason` is
@@ -503,11 +513,11 @@ that value is read — when the generator parses the `## Doctrine` section — a
 carries **every** class the row marks, not the heading class alone. Doctrine
 text does not come through this file, so no input refusal covers it, and each
 of the three markdown classes is reachable on its own route: a heading line
-ends the `AGENTS.md` owned region at the next render; a line that is exactly
-`---` renders into `.github/copilot-instructions.md`, where blocks are `##`
-subsections with paragraphs preserved and markdown reads `---` under a text
-line as a setext heading underline, forging a section in the one file whose
-Escaping paragraph exists so a repo string cannot forge one; and the marker
+ends the `AGENTS.md` owned region at the next render, and an underline under a
+text line renders into `.github/copilot-instructions.md`, where blocks are `##`
+subsections with paragraphs preserved, forging a section in the one file whose
+Escaping paragraph exists so a repo string cannot forge one; a line that is
+exactly `---` opens frontmatter where a block reaches byte 0; and the marker
 text would forge ownership of a file the repo wrote. Doctrine text reaches no
 `.instructions.md` file on any route — the routing table gives it eight
 destinations and that is not one of them — so nothing about the generator

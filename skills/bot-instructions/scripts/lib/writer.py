@@ -182,17 +182,28 @@ def replace(root_fd, rel, data=None, require_marker=True, transform=None, notes=
         if isinstance(data, str):
             data = data.encode("utf-8")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=dir_fd)
+        # From the open that created the temp to the rename that consumes it:
+        # every exit that is not the rename removes it. A `finally` rather
+        # than an `except` per failure, because the per-failure form covers
+        # the raises that exist the day it is written and misses the next one
+        # added between them. `_write_all` was such an addition — it put a
+        # raise on a span that until then could only fail after the write —
+        # and the ENOSPC it exists to report left a PID-named temp behind, so
+        # the retry that would have finished the render died on EEXIST
+        # instead: the second attempt refused by the debris of the first.
+        renamed = False
         try:
-            _write_all(fd, data, rel)
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        try:
+            try:
+                _write_all(fd, data, rel)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
             _recheck(dir_fd, leaf, rel, before)
             os.rename(tmp, leaf, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
-        except BaseException:
-            _unlink_quiet(dir_fd, tmp)
-            raise
+            renamed = True
+        finally:
+            if not renamed:
+                _unlink_quiet(dir_fd, tmp)
         _fsync_dir(dir_fd)
         return True
     finally:

@@ -26,14 +26,15 @@ from .constants import MARKER_TOKEN
 from .errors import InputError
 from . import markdown
 
-# `markdown.heading_level` is the one statement of this: a run of `#`
-# FOLLOWED BY WHITESPACE, indented at most three spaces. Wide about the
-# indentation, because a line indented two spaces ends the `AGENTS.md` owned
-# region as surely as one in column zero; exact about the whitespace, because
-# `#1917` is how this repo writes a pull request number and it is a heading to
-# no reader — refusing it here made a legitimate `reason` or doctrine block
-# unrenderable while `render` and `tools/guard` both read it as ordinary
-# prose.
+# `markdown.py` is the one statement of this: `heading_level` for a run of `#`
+# FOLLOWED BY A SPACE OR TAB, indented at most three spaces, and `setext_level`
+# for the underline form, which this row reads together with the line above it.
+# Wide about the indentation, because a line indented two spaces ends the
+# `AGENTS.md` owned region as surely as one in column zero; exact about the
+# delimiter, because `#1917` is how this repo writes a pull request number and
+# it is a heading to no reader — refusing it here made a legitimate `reason` or
+# doctrine block unrenderable while `render` and `tools/guard` both read it as
+# ordinary prose.
 # C0 less tab and newline, DEL, and the three characters ABOVE the C0 range
 # that a reader still breaks a line on: NEL, LINE SEPARATOR and PARAGRAPH
 # SEPARATOR. YAML 1.1 lists all three as line breaks, and PyYAML, libyaml,
@@ -53,9 +54,28 @@ _NAME_CLASS = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def _heading(value):
+    """ATX and setext alike: no repo or doctrine string carries a heading.
+
+    Setext is the half this had missed. `Injected` over a line of `===` is an
+    H1 to every CommonMark reader, and while `[repo] summary` was reflowed on
+    its way out the underline never began a line of its own — so the moment
+    that reflow was correctly removed, repo text could put a structural
+    heading into the Copilot and Macroscope outputs past the refusal that
+    exists to stop exactly that.
+
+    Wide on purpose: any underline under a non-blank line is refused, without
+    asking whether that line is a paragraph or the opener of a fenced block.
+    A refusal is the direction where being wide is safe, and `markdown.py`
+    says why the section terminators cannot take the same reading.
+    """
+    previous = ""
     for line in value.splitlines():
         if markdown.heading_level(line):
             return f"line {line.strip()!r} is a markdown heading"
+        if previous.strip() and markdown.setext_level(line):
+            return (f"line {line.strip()!r} underlines {previous.strip()!r}, "
+                    "which is a markdown heading")
+        previous = line
     return None
 
 

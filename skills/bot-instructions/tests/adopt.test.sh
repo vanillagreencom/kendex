@@ -392,6 +392,74 @@ else
   bad 'a short write is finished rather than renamed as a truncated file'
 fi
 
+# The temp file is removed after every failure past its creation, not only
+# after the two that used to be the only ones possible there. `_write_all`
+# raising — ENOSPC and EDQUOT are the realistic causes, and reporting them is
+# why it exists — left a PID-named temp behind, and the retry that would have
+# finished the render hit EEXIST on it instead. Same process for the retry,
+# because the name carries the pid and a fresh process would not collide.
+repo="$(bi_rendered_repo write-enospc)" || exit 1
+if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
+import errno, os, sys
+PKG, repo = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import writer
+
+PAYLOAD = ("x" * 4000 + "\n")
+real = os.write
+state = {"hit": False}
+
+
+def enospc(fd, data):
+    """Half of it, then the error a full disk gives, mid-write."""
+    if not state["hit"] and len(data) > 100:
+        state["hit"] = True
+        real(fd, data[: len(data) // 2])
+        raise OSError(errno.ENOSPC, "No space left on device")
+    return real(fd, data)
+
+
+def debris():
+    found = []
+    for base, _dirs, files in os.walk(repo):
+        found += [os.path.join(base, f) for f in files if "bot-instructions-tmp" in f]
+    return found
+
+
+before = open(os.path.join(repo, "README.md")).read()
+root_fd = os.open(repo, os.O_RDONLY)
+os.write = enospc
+try:
+    writer.replace(root_fd, "README.md", data=PAYLOAD, require_marker=False)
+except OSError as exc:
+    if exc.errno != errno.ENOSPC:
+        sys.exit(f"the write failed for the wrong reason: {exc}")
+else:
+    sys.exit("the stubbed write did not fail the replacement")
+finally:
+    os.write = real
+if not state["hit"]:
+    sys.exit("the stub never raised, so this probe proved nothing")
+if open(os.path.join(repo, "README.md")).read() != before:
+    sys.exit("the target was left holding a partial write")
+left = debris()
+if left:
+    sys.exit(f"a temp file survived the failure: {left[0]}")
+
+# The half the debris broke: the retry, in THIS process, with the same
+# pid-named temp path.
+if not writer.replace(root_fd, "README.md", data=PAYLOAD, require_marker=False):
+    sys.exit("the retry reported that it wrote nothing")
+if open(os.path.join(repo, "README.md")).read() != PAYLOAD:
+    sys.exit("the retry did not install the whole payload")
+if debris():
+    sys.exit("the retry left a temp file behind")
+PROBE
+  ok 'a write that fails mid-way leaves no temp, and the retry finishes'
+else
+  bad 'a write that fails mid-way leaves no temp, and the retry finishes'
+fi
+
 # A symlink at a generated path is never followed and never replaced: the
 # containment rule is about the open rather than about the write.
 repo="$(bi_rendered_repo adopt-symlink)" || exit 1

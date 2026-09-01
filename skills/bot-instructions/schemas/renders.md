@@ -158,7 +158,10 @@ something to compare and `check` has something to report. It matters most for
 phase — a truncate-then-write interrupted midway would leave the repo's own file
 cut off, and that file is the doctrine root three of the five bots read. This
 repo's own convention is the mechanism: write a temp file and rename it over the
-target, one temp name per write.
+target, one temp name per write. The temp name carries the writing process's
+pid, so a failure that leaves one behind is debris the same process collides
+with on its retry: every exit from the span between creating the temp and
+renaming it removes the temp, whichever step raised.
 
 The rest of the write path: the lock is `.bot-instructions/render.lock`, created
 exclusively and removed when the render ends, and a second render refuses
