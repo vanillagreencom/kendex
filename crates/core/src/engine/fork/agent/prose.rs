@@ -208,9 +208,11 @@ const CELLS: usize = 4_000_000;
 /// Each kept line paired with the rendered line it stands for, as
 /// `(kept, rendered)` indices in order. The pairing is the longest
 /// subsequence of lines the two hold in common without reordering either,
-/// so a line the person edited, added, deleted or moved drops out of it
-/// and every line around it still pairs where it stands. A cell per kept
-/// line per rendered line is the cost, which [`CELLS`] bounds.
+/// so a line the person edited, added or deleted drops out of it and
+/// every line around it still pairs where it stands. A moved line may
+/// drop out instead: two that exchange places keep one and drop the
+/// other, so one is said back and one keeps the harness's word. A cell
+/// per kept line per rendered line is the cost, which [`CELLS`] bounds.
 ///
 /// Where the rendering says two lines alike the walk pairs them in the
 /// order they stand. Ties exist and it takes one of them, so that order
