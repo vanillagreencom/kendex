@@ -38,6 +38,10 @@ mkdir -p "$R/tools"
 # ran. No call site interpolates a path into its snippet — it names $SRC and
 # lets this function quote it, so a later case cannot bring the shape back.
 #
+# %q is the right quoting HERE, where pty.bash's spawn string cannot use it:
+# this file is run by `bash`, which is the shell %q quotes for, so the
+# ANSI-C form it emits for a control byte is a form its reader parses.
+#
 # What the session refuses to measure, each with a status of its own, so a
 # case that never reached the code under test cannot satisfy a negative
 # assertion about it:
@@ -218,12 +222,12 @@ gg_pty_run 20 "$ROOT/die-case.sh" && [ "$GG_PTY_STATE" = gone ] && [ -z "$GG_PTY
   && ok "control: a session that dies before its last line reports no status" \
   || bad "control: a session that dies before its last line reports no status" "state=$GG_PTY_STATE rc=$GG_PTY_RC out=$GG_PTY_OUT err=$GG_PTY_ERR"
 
-# Every path handed to a shell goes through %q, and this case drives that rule
-# by giving the probe a scratch root and a source whose NAMES are a space and
-# a command substitution: unquoted anywhere on the way in, the substitution
-# runs. What it reaches is whatever the helper derives from TMPDIR or from a
-# caller's argument; what it does not reach is the fixture repository this
-# suite makes for itself, which no caller supplies.
+# A scratch root and a source whose NAMES are a space and a command
+# substitution, run end to end. pty.bash hands the spawner a constant command
+# and passes its paths in the environment, so there is nothing to quote on
+# that side; what this drives is the case body pty_call writes, which bash
+# reads, and the paths gg_pty_run exports reaching the session as values.
+# Unquoted at either, the substitution runs.
 hostile="$ROOT/a q\$(touch $ROOT/PWNED)x dir"
 mkdir -p "$hostile"
 printf 'FROM A HOSTILE PATH\n' >"$hostile/src.tsv"

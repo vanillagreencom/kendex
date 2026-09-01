@@ -34,16 +34,26 @@ gg_pty_run() { # CAP_SECONDS SCRIPT_FILE
   }
   # The session writes its own process group first, because nothing on this
   # side can derive it — the spawner is in between; then a marker where its
-  # output starts; then its status in a file. %q at every path written into a
-  # shell: these come from TMPDIR and from the caller, and an unquoted one
-  # lands in a script as syntax.
-  {
-    printf 'ps -o pgid= -p $$ >%q 2>/dev/null || true\n' "$dir/sid"
-    printf 'echo GG-PTY-BEGIN\n'
-    printf 'bash %q\n' "$body"
-    printf 'printf %%s\\\\n "$?" >%q\n' "$dir/rc"
-  } >"$dir/session.sh"
-  printf -v cmd '/bin/sh %q' "$dir/session.sh"
+  # output starts; then its status in a file.
+  #
+  # Not one path is interpolated into it, and the command handed to the
+  # spawner is a constant: every caller-controlled path travels in the
+  # ENVIRONMENT instead. bash's %q emits ANSI-C quoting — $'a\nb' — for a
+  # path carrying a newline or a control byte, and that is a bash extension
+  # /bin/sh need not parse; dash did not before 0.5.12. A legal TMPDIR would
+  # then stop the session starting. Passing the paths as values rather than
+  # as syntax removes the question instead of answering it.
+  cat >"$dir/session.sh" <<'SESSION'
+ps -o pgid= -p $$ >"$GG_PTY_SID_FILE" 2>/dev/null || true
+echo GG-PTY-BEGIN
+bash "$GG_PTY_BODY_FILE"
+printf '%s\n' "$?" >"$GG_PTY_RC_FILE"
+SESSION
+  cmd='/bin/sh "$GG_PTY_SESSION_FILE"'
+  # Exported, not prefixed onto the spawn: the two grammars below would
+  # otherwise carry four assignments each. Every call overwrites them.
+  export GG_PTY_SESSION_FILE="$dir/session.sh" GG_PTY_SID_FILE="$dir/sid" \
+    GG_PTY_BODY_FILE="$body" GG_PTY_RC_FILE="$dir/rc"
   # The grammar is SELECTED, not probed: util-linux takes the command through
   # -e -c, BSD (macOS) after the typescript file. `set -m` gives the spawner a
   # process group of its own where the platform provides one, and </dev/null
