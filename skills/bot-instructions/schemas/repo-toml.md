@@ -322,7 +322,7 @@ here is the only predicate.
 | doctrine block text | yes | yes | yes | – | yes | yes | – |
 | `[[exclusions.path]] reason` | – | – | yes | yes | – | yes | single line |
 | `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | – | – | non-empty, the glob dialect above, and its path-shape rule |
-| `[tone] coderabbit` | – | – | – | – | – | – | ASCII only |
+| `[tone] coderabbit` | – | – | – | – | – | yes | ASCII only |
 | `[cadence] qodo_commands` entries | – | – | – | – | – | – | a verb from the set above, no whitespace, no `--` |
 
 The predicates, written once:
@@ -349,14 +349,27 @@ The predicates, written once:
   reaching them are the same set: a TOML basic multi-line string permits tab
   and newline and no other control, and so does a YAML scalar. TOML's own
   escapes are how one arrives — `summary = "\u0000"` parses cleanly and yields
-  a literal NUL — so the value is already decoded by the time this sees it, and
-  the four rows with a character class need no mark because their classes admit
-  no control to begin with.
-- **character class** — as stated for `[repo] name`, for globs, for `[tone]
-  coderabbit` and for `qodo_commands` above. `[tone]` is ASCII so the local
-  length count and the vendor's cannot disagree about what one character is,
-  which matters there and nowhere else: `tone_instructions` is the cap
-  CodeRabbit discards the whole file over.
+  a literal NUL — so the value is already decoded by the time this sees it.
+
+  A character class exempts a row from this mark only when it **enumerates the
+  permitted characters**, because then no control is among them. A class that
+  names an encoding does not: ASCII contains NUL and every C0 control, so
+  `[tone] coderabbit` carries the mark despite having a class. Neither does a
+  class constraining one dimension only: `single line` says nothing about the
+  controls that are not newlines, which is why `[[exclusions.path]] reason`
+  carries it too. Read the test against each class rather than counting the
+  rows that have one.
+- **character class** — as stated per row above. Three enumerate their
+  permitted characters and so need no `control` mark: `[repo] name` and
+  `[repo] tracker` take `[A-Za-z0-9._-]`, the globs take the dialect's own
+  class, and `qodo_commands` takes a verb from a closed literal set. `[tone]
+  coderabbit` is ASCII so the local length count and the vendor's cannot
+  disagree about what one character is — which matters there and nowhere else,
+  since `tone_instructions` is the cap CodeRabbit discards the whole file over —
+  and ASCII is an encoding rather than an enumeration, so that row is marked
+  `control` as well. Tab and newline stay legal there: the documented way to
+  author a tone is a TOML multi-line string, and the render collapses its
+  newlines to single spaces.
 
 **Refusals, not escapes.** Every class here is refused at input. The render
 escapes only what a format requires of text already known to be legal — a
