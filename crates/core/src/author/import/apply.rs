@@ -92,6 +92,7 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
     // keeps illegal spellings so the wizard can offer them under another
     // destination — which is the path that reaches this refusal.
     let shown = crate::names::shown;
+    let foreign = foreign_agent_file(answer.read_from.as_deref());
     let renamed = |bytes: &[u8]| {
         crate::render::skill::bytes_named(bytes, wanted).map_err(|problem| CoreError::Authoring {
             message: format!(
@@ -111,7 +112,19 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
                 *bytes = renamed(bytes)?;
             }
         }
-        (ItemKind::Agent, Bytes::File(bytes)) => *bytes = renamed(bytes)?,
+        (ItemKind::Agent, Bytes::File(bytes)) => match foreign {
+            Some(ext) => {
+                return Err(CoreError::Authoring {
+                    message: format!(
+                        "'{}' cannot be imported as '{}' — a .{ext} agent carries its name in a shape kendex cannot write a new one into, so the copy would still call itself '{}'. Import it under its own name.",
+                        shown(&selection.name),
+                        shown(&selection.destination),
+                        shown(crate::names::leaf(&selection.name)),
+                    ),
+                });
+            }
+            None => *bytes = renamed(bytes)?,
+        },
         // Named rather than fallen through to, because "nothing to
         // declare" and "a shape we did not expect" are different answers
         // and only one of them is safe to be silent about. Their bytes go
@@ -136,6 +149,18 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
         }
     }
     Ok(())
+}
+
+/// The extension an agent's bytes arrived under, when it is not the
+/// markdown a catalog keeps an agent as (`source::local_slot`). An
+/// unmanaged scan is the origin that offers another shape: Codex reads
+/// `.codex/agents/*.toml`, whose name is a TOML key rather than a
+/// frontmatter line. Nothing here can write that one, and answering "it
+/// has no frontmatter" about a file that never had any sends the person
+/// off to add one to a format that would then refuse to load.
+fn foreign_agent_file(read_from: Option<&Path>) -> Option<String> {
+    let ext = read_from?.extension()?.to_str()?.to_ascii_lowercase();
+    (ext != "md").then_some(ext)
 }
 
 /// Whether a selection already taken occupies the place this one wants.

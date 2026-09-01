@@ -87,8 +87,7 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
         "notes.md",
         "Body file. No frontmatter here.\n",
     );
-    // A tree no name can be written into, and two kinds that are not
-    // skills.
+    // A tree no name can be written into, and two other kinds.
     raw_skill(
         &project.join(".claude/skills"),
         "bare",
@@ -523,9 +522,9 @@ fn an_in_place_skill_is_an_own_candidate_read_from_its_tree() {
 }
 
 /// What the catalog check makes of what one import wrote, read as the
-/// person's own marketplace: how many items it found, and every breakage
-/// over them. The count is half the answer — a check that read nothing
-/// reports no breakage either.
+/// person's own marketplace: the items it found, and every breakage over
+/// them. The count is half the answer — a check that read nothing reports
+/// no breakage either.
 #[allow(clippy::unwrap_used)]
 fn checked(target: &Path) -> (usize, Vec<String>) {
     let sealed = crate::source_read::SealedSource::open(target).unwrap();
@@ -574,9 +573,8 @@ fn a_renamed_skill_declares_its_destination_and_leaves_the_catalog_whole() {
         "only the name line changes: {flat_md}"
     );
     // The rest of the tree is a copy. A rewrite reaching a body file would
-    // refuse the whole import, because a file with no frontmatter has no
-    // line to carry a name, so a skill with a references/ directory could
-    // not be imported under a new name at all.
+    // refuse the whole import — no frontmatter, no line to carry a name —
+    // so a skill with a references/ directory could not be renamed at all.
     let Scope::Project { root } = &scope else {
         unreachable!()
     };
@@ -663,11 +661,12 @@ fn a_rename_no_declaration_can_carry_refuses_and_writes_nothing() {
 }
 
 /// The refusal spells the names it quotes rather than replaying them. A
-/// candidate name is read off a directory on disk, so it can hold anything
-/// a filesystem accepts — an escape sequence included — and the inventory
-/// keeps illegal spellings on purpose, so the wizard can offer them under
-/// a legal destination. That offer is the path into this refusal, and a
-/// raw escape reaching a terminal is the terminal's to obey.
+/// candidate name is read off a directory on disk, and the inventory keeps
+/// illegal spellings so the wizard can offer them under a legal
+/// destination — which is the path into this refusal. The name carries
+/// U+202E, the right-to-left override that would let one package read as
+/// another: the threat `names::shown` exists for, and, unlike a control
+/// character, a filename every platform this runs on will create.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_refusal_escapes_the_candidate_name_it_quotes() {
@@ -677,20 +676,20 @@ fn a_refusal_escapes_the_candidate_name_it_quotes() {
     };
     raw_skill(
         &root.join(".claude/skills"),
-        "ba\u{1b}[31mre",
+        "ba\u{202e}re",
         "No frontmatter at all.\n",
     );
     let scopes = [scope.clone()];
     let target = target(&env, &tmp, "mine-escaped");
     let candidates = inventory(&env, &scopes).unwrap();
-    let mut renamed = selection(find(&candidates, "ba\u{1b}[31mre"), false);
+    let mut renamed = selection(find(&candidates, "ba\u{202e}re"), false);
     renamed.destination = "clothed".to_owned();
 
     let message = apply(&env, &scopes, &target, &[renamed])
         .unwrap_err()
         .to_string();
-    assert!(message.contains("ba\\u{1b}[31mre"), "{message}");
-    assert!(!message.contains('\u{1b}'), "{message:?}");
+    assert!(message.contains("ba\\u{202e}re"), "{message}");
+    assert!(!message.contains('\u{202e}'), "{message:?}");
 }
 
 /// A namespaced candidate landing under its own name is no rename. What a
