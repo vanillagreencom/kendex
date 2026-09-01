@@ -268,9 +268,9 @@ fn a_hand_written_enabled_flag_survives_a_hook_edit() {
     let mut manifest: Manifest = toml::from_str(current).unwrap();
     manifest.custom_hooks[0].command = "./finished.sh".to_owned();
     let desired = toml::to_string_pretty(&manifest).unwrap();
-    // `[install]` comes with it: the serializer spells that table out
-    // whether or not the file had one, which is the declaration-default
-    // exception invariant 10 names.
+    // `[install]` comes with it. That table has no skip of its own, so the
+    // serializer spells it out whether or not the file had one — the one
+    // place a write still lands a table the operation did not name.
     assert_eq!(
         fold(current, &desired),
         "schema = 6\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./finished.sh\"\nenabled = true   # still on\nagents = \"all\"\n\n[install]\nharnesses = []\nmethod = \"symlink\"\n"
@@ -293,5 +293,67 @@ fn a_split_hook_list_keeps_the_places_it_was_written_in() {
             "schema = 6\n\n[install]\nmethod = \"copy\"\n\n# second\n[[custom-hooks]]\n{}",
             hook("Stop", "./b.sh")
         )
+    );
+}
+
+/// The four things a declaration's `enabled` flag has to do. Every target
+/// here comes from the real serializer, because what the serialization
+/// spells out is the whole question: a flag reads as true when it is
+/// absent, so writing it out puts a key in somebody's file that says
+/// nothing the file did not already say.
+#[allow(clippy::unwrap_used)]
+fn rebound(current: &str, enabled: bool) -> String {
+    let mut manifest: Manifest = toml::from_str(current).unwrap();
+    let skill = manifest.skills.get_mut("gh").unwrap();
+    skill.source = "local".to_owned();
+    skill.enabled = enabled;
+    let desired = toml::to_string_pretty(&manifest).unwrap();
+    fold(current, &desired)
+}
+
+/// A declaration that left the flag out still leaves it out. This is the
+/// Done-when: a write touches the keys the operation names and no others.
+#[test]
+fn a_declaration_that_omits_enabled_keeps_omitting_it() {
+    let current = "schema = 6\n\n# mine\n[skills.gh]\nsource = \"cat\"\n";
+    assert_eq!(
+        rebound(current, true),
+        "schema = 6\n\n# mine\n[skills.gh]\nsource = \"local\"\n\n[install]\nharnesses = []\nmethod = \"symlink\"\n"
+    );
+}
+
+/// A flag somebody typed by hand stays, comment and spacing included. The
+/// serialization leaves it out, and a key the serialization leaves out is
+/// never read as a key the manifest dropped.
+#[test]
+fn a_hand_written_enabled_flag_stays_where_it_was_typed() {
+    let current = "schema = 6\n\n[skills.gh]\nsource = \"cat\"\nenabled = true   # on purpose\n";
+    assert_eq!(
+        rebound(current, true),
+        "schema = 6\n\n[skills.gh]\nsource = \"local\"\nenabled = true   # on purpose\n\n[install]\nharnesses = []\nmethod = \"symlink\"\n"
+    );
+}
+
+/// A declaration switched off stays switched off: `false` is not the
+/// default, so the serialization says it and the fold leaves it be.
+#[test]
+fn a_disabled_declaration_keeps_its_flag() {
+    let current = "schema = 6\n\n[skills.gh]\nsource = \"cat\"\nenabled = false\n";
+    assert_eq!(
+        rebound(current, false),
+        "schema = 6\n\n[skills.gh]\nsource = \"local\"\nenabled = false\n\n[install]\nharnesses = []\nmethod = \"symlink\"\n"
+    );
+}
+
+/// Switching a disabled declaration back on deletes the line rather than
+/// writing `enabled = true` over it. The flag is a key the manifest really
+/// did hold and really did drop, so the sweep takes it — which is what
+/// keeps the sweep from being a rule that only ever preserves.
+#[test]
+fn re_enabling_a_declaration_deletes_the_flag() {
+    let current = "schema = 6\n\n[skills.gh]\nsource = \"cat\"\nenabled = false\n";
+    assert_eq!(
+        rebound(current, true),
+        "schema = 6\n\n[skills.gh]\nsource = \"local\"\n\n[install]\nharnesses = []\nmethod = \"symlink\"\n"
     );
 }

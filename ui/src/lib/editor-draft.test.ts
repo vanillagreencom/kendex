@@ -40,12 +40,7 @@ describe("toDraft", () => {
       agents: { orch: { source: "kendex", enabled: true } },
       "agent-frontmatter": { claude: { orch: { model: "opus" } } },
       "custom-hooks": [
-        {
-          event: "PreToolUse",
-          command: "./g.sh",
-          enabled: true,
-          agents: "all",
-        },
+        { event: "PreToolUse", command: "./g.sh", agents: "all" },
       ],
     });
 

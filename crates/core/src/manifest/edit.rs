@@ -10,11 +10,14 @@
 //!
 //! Three things the walk is careful about.
 //!
-//! A key kendex never held is not kendex's to drop. `held` is the same
-//! serialization taken of the manifest read back out of this very file, so
-//! a key the model does not carry — a note somebody left inside a
-//! declaration — is absent from it, and the sweep passes over the key
-//! instead of reading it as one kendex dropped.
+//! What a write may remove is settled by `held`, a third document: the
+//! same serialization taken of the manifest read back out of this very
+//! file. A key it names and the target does not is a key the manifest
+//! really did drop, and the sweep takes it. A key it never names was
+//! never the manifest's — a note somebody left inside a declaration, or a
+//! flag the serializer omits at its default — and the sweep passes over
+//! it. Nothing has to know which keys the model can spell, and nothing
+//! the serializer chooses to leave out reads as a deletion.
 //!
 //! Containers are edited in the shape they were written in. An inline
 //! `custom-hooks = [{ … }]` and a `[[custom-hooks]]` array say the same
@@ -24,12 +27,6 @@
 //! List entries are paired by what they are, not by where they sit. A
 //! comment above a hook describes that hook, so removing or reordering
 //! hooks has to carry each comment with its own entry.
-//!
-//! A write still adds one thing nobody asked for: a declaration field
-//! serde spells out at its default, `enabled = true` under a declaration
-//! that omitted it. Invariant 10 names that exception. Nothing is lost to
-//! it, because `held` is what decides a removal: a field the serialization
-//! leaves out is never read as a field the manifest dropped.
 
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, TableLike, Value};
 

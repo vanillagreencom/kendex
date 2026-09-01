@@ -67,12 +67,23 @@ pub struct SourceDecl {
     /// repository's default branch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub enabled: bool,
 }
 
 fn default_true() -> bool {
     true
+}
+
+/// Why every `enabled` skips at its default: the flag reads as true when
+/// it is absent, so writing it out says nothing the file did not already
+/// say, and kendex.toml is edited in place — a key the serialization
+/// spells out is a key the write puts in somebody's file. A hand-written
+/// one is safe either way: what a write may remove is decided by what the
+/// manifest read back out of that same file, never by what the serializer
+/// left out.
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
@@ -100,7 +111,7 @@ pub struct ItemDecl {
     /// follows the source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub enabled: bool,
 }
 
@@ -163,7 +174,7 @@ pub struct FrontmatterOverrides {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct PluginDecl {
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub enabled: bool,
     #[serde(default = "default_plugin_harness")]
     pub harness: HarnessId,
@@ -194,10 +205,7 @@ pub struct CustomHook {
     /// Harness allowlist; `None` = every declared harness.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harnesses: Option<Vec<String>>,
-    // Spelled out on every write, the way every other declaration's
-    // `enabled` is: this one used to be skipped at its default, which is
-    // one more spelling of the same field for no gain.
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub enabled: bool,
     #[serde(default = "default_hook_agents")]
     pub agents: HookAgents,

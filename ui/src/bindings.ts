@@ -1006,7 +1006,7 @@ export type CustomHook_Serialize = {
 	timeout?: number | null,
 	/**  Harness allowlist; `None` = every declared harness. */
 	harnesses?: string[] | null,
-	enabled: boolean,
+	enabled?: boolean,
 	agents: HookAgents,
 };
 
@@ -1695,7 +1695,7 @@ export type ItemDecl_Serialize = {
 	 *  follows the source.
 	 */
 	rev?: string | null,
-	enabled: boolean,
+	enabled?: boolean,
 };
 
 export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension";
@@ -1878,7 +1878,7 @@ export type Manifest_Deserialize = {
 	 *  Plugins are observe + enable/disable only; the key is
 	 *  `name@marketplace`, provenance lives in the lock.
 	 */
-	plugins?: { [key in string]: PluginDecl },
+	plugins?: { [key in string]: PluginDecl_Deserialize },
 	/**
 	 *  Installed bundles: a curated set the catalog offers under one name.
 	 *  What the set holds is the catalog's to say and derives on every plan;
@@ -1928,7 +1928,7 @@ export type Manifest_Serialize = {
 	 *  Plugins are observe + enable/disable only; the key is
 	 *  `name@marketplace`, provenance lives in the lock.
 	 */
-	plugins?: { [key in string]: PluginDecl },
+	plugins?: { [key in string]: PluginDecl_Serialize },
 	/**
 	 *  Installed bundles: a curated set the catalog offers under one name.
 	 *  What the set holds is the catalog's to say and derives on every plan;
@@ -2370,9 +2370,36 @@ export type PackagesUpdate_Serialize = {
  *  Code — the only tool whose plugin switch kendex ever wrote — so that is
  *  what an older manifest reads back as, and the next write records it.
  */
-export type PluginDecl = {
+export type PluginDecl = PluginDecl_Serialize | PluginDecl_Deserialize;
+
+/**
+ *  One declared plugin. The harness is part of the declaration because more
+ *  than one tool reads an `enabledPlugins` map of its own: without it, a
+ *  plugin meant for one tool would be switched on in every tool's settings,
+ *  which is a claim about software the user never installed there.
+ * 
+ *  A declaration written before the harness was part of it belongs to Claude
+ *  Code — the only tool whose plugin switch kendex ever wrote — so that is
+ *  what an older manifest reads back as, and the next write records it.
+ */
+export type PluginDecl_Deserialize = {
 	enabled?: boolean,
 	harness?: HarnessId,
+};
+
+/**
+ *  One declared plugin. The harness is part of the declaration because more
+ *  than one tool reads an `enabledPlugins` map of its own: without it, a
+ *  plugin meant for one tool would be switched on in every tool's settings,
+ *  which is a claim about software the user never installed there.
+ * 
+ *  A declaration written before the harness was part of it belongs to Claude
+ *  Code — the only tool whose plugin switch kendex ever wrote — so that is
+ *  what an older manifest reads back as, and the next write records it.
+ */
+export type PluginDecl_Serialize = {
+	enabled?: boolean,
+	harness: HarnessId,
 };
 
 /**
@@ -2689,7 +2716,7 @@ export type SourceDecl_Serialize = {
 	 *  repository's default branch.
 	 */
 	rev?: string | null,
-	enabled: boolean,
+	enabled?: boolean,
 };
 
 /**  Everything the Sources page shows for one declared source in one scope. */

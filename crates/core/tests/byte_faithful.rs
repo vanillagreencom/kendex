@@ -290,10 +290,7 @@ fn adding_a_skill_edits_kendex_toml_in_place() {
 
     assert_eq!(
         fs::read_to_string(&k.manifest).unwrap(),
-        declaring(
-            &k.original,
-            "[skills.fmt]\nsource = \"cat\"\nenabled = true\n"
-        )
+        declaring(&k.original, "[skills.fmt]\nsource = \"cat\"\n")
     );
 }
 
@@ -351,10 +348,7 @@ fn adopting_a_skill_edits_kendex_toml_in_place() {
 
     assert_eq!(
         fs::read_to_string(&k.manifest).unwrap(),
-        declaring(
-            &k.original,
-            "[skills.mine]\nsource = \"in-place\"\nenabled = true\n"
-        )
+        declaring(&k.original, "[skills.mine]\nsource = \"in-place\"\n")
     );
 }
 

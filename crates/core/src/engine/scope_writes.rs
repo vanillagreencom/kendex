@@ -39,12 +39,11 @@ pub(super) fn manifest_pre(base: Option<&Base>, path: &Path) -> Result<Pre> {
 
 /// The plan's one manifest write, when anything needs it: skills an agent
 /// gained upstream. Nothing else asks for the file — only the current
-/// schema loads, so there is no upgrade to plan, and a pass that wrote the
-/// manifest for its own sake would stamp the serializer's declaration
-/// defaults into a file that leaves them out, on a pass nobody asked to
-/// change anything. One write whatever put it there: a second manifest
-/// write could never run, its precondition binds to the bytes the first
-/// one replaces.
+/// schema loads, so there is no upgrade to plan, and a write planned for
+/// its own sake would put a precondition and a plan line in front of the
+/// person for a write that lands nothing. One write whatever put it
+/// there: a second manifest write could never run, its precondition binds
+/// to the bytes the first one replaces.
 pub(super) fn plan_manifest_write(
     env: &Env,
     scope: &Scope,
