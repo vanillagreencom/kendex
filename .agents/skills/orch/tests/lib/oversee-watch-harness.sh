@@ -200,20 +200,35 @@ fi
 cat "$STUB_DIR/kids-$ppid.txt"
 EOF
 
-# Fake pr-watch: records GH_REPO, counts calls in prwatch.calls, prints
-# prwatch.out.<N> (else prwatch.out) on stdout and prwatch.err.<N> (else
-# prwatch.err) on stderr, exits with prwatch.rc.<N> (else prwatch.rc).
+# Fake pr-watch: records GH_REPO in prwatch.repo (the latest call) and appends
+# it to prwatch.repos (every call), counts calls per repo in
+# prwatch.calls.<SLUG>, and answers from the first fixture that exists —
+# prwatch.out.<SLUG>.<N>, prwatch.out.<SLUG>, prwatch.out.<N>, prwatch.out —
+# on stdout, the same ladder for prwatch.err on stderr and prwatch.rc as the
+# exit status. <SLUG> is GH_REPO with everything outside [A-Za-z0-9._-]
+# replaced by `_`, so a multi-repo case answers each repo separately while a
+# single-repo case reads the same as a global call count.
 cat > "$TMP_ROOT/bin/pr-watch-stub.sh" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "${GH_REPO:-<unset>}" > "$STUB_DIR/prwatch.repo"
-n=0; [[ -f "$STUB_DIR/prwatch.calls" ]] && n="$(cat "$STUB_DIR/prwatch.calls")"
-n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/prwatch.calls"
-out="$STUB_DIR/prwatch.out.$n"; [[ -f "$out" ]] || out="$STUB_DIR/prwatch.out"
-err="$STUB_DIR/prwatch.err.$n"; [[ -f "$err" ]] || err="$STUB_DIR/prwatch.err"
-rcf="$STUB_DIR/prwatch.rc.$n"; [[ -f "$rcf" ]] || rcf="$STUB_DIR/prwatch.rc"
-[[ -f "$out" ]] && cat "$out"
-[[ -f "$err" ]] && cat "$err" >&2
-rc=0; [[ -f "$rcf" ]] && rc="$(cat "$rcf")"
+repo="${GH_REPO:-<unset>}"
+slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
+printf '%s\n' "$repo" > "$STUB_DIR/prwatch.repo"
+printf '%s\n' "$repo" >> "$STUB_DIR/prwatch.repos"
+n=0; [[ -f "$STUB_DIR/prwatch.calls.$slug" ]] && n="$(cat "$STUB_DIR/prwatch.calls.$slug")"
+n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/prwatch.calls.$slug"
+pick() {
+  local f
+  for f in "$STUB_DIR/$1.$slug.$n" "$STUB_DIR/$1.$slug" "$STUB_DIR/$1.$n" "$STUB_DIR/$1"; do
+    [[ -f "$f" ]] && { printf '%s' "$f"; return 0; }
+  done
+  return 1
+}
+out="$(pick prwatch.out || true)"
+err="$(pick prwatch.err || true)"
+rcf="$(pick prwatch.rc || true)"
+[[ -n "$out" ]] && cat "$out"
+[[ -n "$err" ]] && cat "$err" >&2
+rc=0; [[ -n "$rcf" ]] && rc="$(cat "$rcf")"
 exit "$rc"
 EOF
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" "$TMP_ROOT/bin/pr-watch-stub.sh"
@@ -241,10 +256,18 @@ new_case() {
 }
 
 # run_watch [ENV=VAL ...] -- ARGS...   (fast cadence; TMUX set unless NO_TMUX=1)
+# `--repo owner/repo` is supplied only when ARGS name no repo of their own:
+# --repo is repeatable, so injecting it beside a case's own would make that
+# case a two-repo fleet with owner/repo first.
 run_watch() {
-  local env_args=()
+  local env_args=() repo_args=(--repo owner/repo) arg
   while [[ $# -gt 0 && "$1" != "--" ]]; do env_args+=("$1"); shift; done
   shift || true
+  for arg in "$@"; do
+    [[ "$arg" == --repo || "$arg" == --repo=* ]] || continue
+    repo_args=()
+    break
+  done
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
@@ -252,5 +275,6 @@ run_watch() {
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
            ${env_args[@]+"${env_args[@]}"} \
-           .agents/skills/orch/scripts/oversee-watch --interval 0 --max-loops 2 --repo owner/repo "$@")
+           .agents/skills/orch/scripts/oversee-watch --interval 0 --max-loops 2 \
+             ${repo_args[@]+"${repo_args[@]}"} "$@")
 }
