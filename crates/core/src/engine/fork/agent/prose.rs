@@ -197,10 +197,12 @@ const CELLS: usize = 4_000_000;
 /// line per rendered line is the cost, which [`CELLS`] bounds.
 ///
 /// Where the rendering says two lines alike the walk pairs them in the
-/// order they stand, which is what the body holding a copy for every copy
-/// the rendering says makes right. Short of that nothing in the text says
-/// which copy is which, and [`ambiguous`] holds them back rather than let
-/// the walk decide.
+/// order they stand. Ties exist and it takes one of them, so that order
+/// is the best reading available rather than the only one; what the body
+/// holding a copy for every copy the rendering says settles is that every
+/// alignment it can take is a match. Short of that nothing in the text
+/// says which copy is which, and [`ambiguous`] holds them back rather
+/// than let the walk decide.
 fn aligned(kept: &[&str], rendered: &[&str]) -> Vec<(usize, usize)> {
     let width = rendered.len() + 1;
     let mut common = vec![0u32; (kept.len() + 1) * width];
