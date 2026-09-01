@@ -2,14 +2,16 @@
 # merged-sweep.test.sh's harness: one stubbed gh over one GraphQL fixture,
 # the builders that shape that fixture, the assertions and the runners. It
 # lives here so the suite file is arms alone — reading what a case asserts
-# should not mean scrolling the machinery that sets it up. The caller sets
-# TMP_ROOT and SWEEP before sourcing, and owns PASS/FAIL.
+# should not mean scrolling the machinery that sets it up. The exception is
+# at the foot: ms36's arms are here because the suite file is at its size
+# ceiling. The caller sets TMP_ROOT and SWEEP before sourcing, owns
+# PASS/FAIL, and calls that one arm set by name.
 #
 # shellcheck disable=SC2034 # every name here is read by the suite that sources it
 
 # The assertion primitives live here with the rest of the machinery, and
-# with the two composite assertions below that call them: PASS and FAIL are
-# the caller's, every one of these adds to exactly one of them.
+# with the composite assertions below that call them: PASS and FAIL are the
+# caller's, every one of these adds to exactly one of them.
 assert_eq() {
   local got="$1" want="$2" name="$3"
   if [[ "$got" == "$want" ]]; then
@@ -74,14 +76,22 @@ OLD_AFTER="$(iso -863000)"
 HEAD_A="0123456789abcdef0123456789abcdef01234567"
 HEAD_A8="01234567"
 
-review() { # id, createdAt, state, body, login, [typename]
+# The last argument of each is the EFFECTIVE PUBLICATION time, which is
+# what the reduction places either side of the merge. Left empty it equals
+# createdAt, the shape GitHub returns for anything already published; give
+# it a later value for work drafted before the merge and published after
+# it; give it "none" to omit the field and drive the createdAt fallback.
+review() { # id, createdAt, state, body, login, [typename], [submittedAt|none]
   jq -n --arg id "$1" --arg at "$2" --arg st "$3" --arg body "$4" \
-    --arg login "$5" --arg tn "${6:-Bot}" \
-    '{id:$id, createdAt:$at, state:$st, body:$body, author:{login:$login, __typename:$tn}}'
+    --arg login "$5" --arg tn "${6:-Bot}" --arg sub "${7:-}" \
+    '{id:$id, createdAt:$at, state:$st, body:$body, author:{login:$login, __typename:$tn}}
+     | if $sub == "none" then . else .submittedAt = (if $sub == "" then $at else $sub end) end'
 }
-comment() { # createdAt, body, login, [typename]
+comment() { # createdAt, body, login, [typename], [publishedAt|none]
   jq -n --arg at "$1" --arg body "$2" --arg login "$3" --arg tn "${4:-User}" \
-    '{createdAt:$at, body:$body, author:{login:$login, __typename:$tn}}'
+    --arg pub "${5:-}" \
+    '{createdAt:$at, body:$body, author:{login:$login, __typename:$tn}}
+     | if $pub == "none" then . else .publishedAt = (if $pub == "" then $at else $pub end) end'
 }
 thread() { # id, comments-totalCount, comment-json...
   local id="$1" total="$2"; shift 2
@@ -145,6 +155,8 @@ assert_sent_query() { # name, expected --window seconds
   assert_contains "$q" "sort:updated-desc" "$name: newest-updated first, so a late review keeps its PR on the page"
   assert_contains "$doc" 'search(query:$q, type:ISSUE, first:$limit)' "$name: the search CALL, so a decoy in a document comment cannot satisfy it"
   assert_contains "$doc" 'repository(owner:$owner, name:$name)' "$name: beside the probe that proves the repository itself was read"
+  assert_contains "$doc" "id createdAt submittedAt state" "$name: reviews carry submittedAt, the only field separating a draft from a submission"
+  assert_contains "$doc" "createdAt publishedAt body" "$name: and comments carry publishedAt, which is null while their review is pending"
   sent="$(sed -n 's/.*merged:>=\([0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\).*/\1/p' <<<"$q")"
   if [ -z "$sent" ]; then
     FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        no merged:>= with a full YYYY-MM-DDTHH:MM:SSZ in: %s\n' "$name" "$q"
@@ -211,3 +223,31 @@ run_sweep() { # env-tokens... [-- flags...]
        "$SWEEP" ${flags[@]+"${flags[@]}"} 2>&1)
 }
 
+
+# The DECLINE-REASON arms (ms36): a composite assertion, here for the same
+# reason assert_sent_query is here, and because the suite file is at its
+# size ceiling. The contract is `Declined: <reason>`; a decline with nothing
+# after the colon answers nothing, and this sweep is the LAST net over these
+# replies, since the merge gate that rejects an empty reason never reads
+# post-merge activity. One body drives BOTH finding arms, because the one
+# `answered` decides for both.
+decline_arm() { # want-rc, reply-body, name
+  local want="$1" body="$2" name="$3" reply
+  reply="$(comment "$LATER" "$body" dev User)"
+  fresh_state
+  fixture "$(envelope "$(pr 15 "$MERGED_AT" dev \
+    "[$(review REV_dr "$AFTER_MERGE" COMMENTED "P1: this leaks" codex Bot)]" "[$reply]" '[]')")"
+  run_split
+  assert_eq "$SPLIT_RC" "$want" "ms36: $name, over a late review"
+  fresh_state
+  fixture "$(envelope "$(pr 15 "$MERGED_AT" dev '[]' '[]' \
+    "[$(thread THR_dr 2 "$(comment "$AFTER_MERGE" "P1: this leaks" codex Bot)" "$reply")]")")"
+  run_split
+  assert_eq "$SPLIT_RC" "$want" "ms36: $name, over a late thread comment"
+}
+
+assert_decline_reason_arms() {
+  decline_arm 1 "Declined:" "a bare decline answers nothing"
+  decline_arm 1 $'Declined: \t\n ' "a decline followed only by whitespace answers nothing"
+  decline_arm 0 "Declined: the handle is closed on the error path" "a decline WITH a reason answers"
+}

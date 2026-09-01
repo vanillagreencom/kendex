@@ -19,19 +19,40 @@ MERGED_SWEEP_REDUCE_JQ='
 # reads them: the STANDING reply is the LAST non-bot reply in a
 # `Fixed in <sha>` / `Declined:` form or carrying a track-word, and an
 # older reply never outranks a newer one. This asks only "did anyone answer
-# this", so it does not re-run the predicate'"'"'s narrower untracked-claim and
-# unreasoned-decline reductions.
+# this", so the judgment it leaves to the predicate and the merge gate is
+# the corpus-driven one — whether a stated reason is a REAL reason, and
+# whether a tracking claim names a live issue.
 def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
+def declined: test("^\\s*declined:"; "i");
+def reasoned_decline: test("^\\s*declined:\\s*\\S"; "i");
 def tracking: test("(?i)\\btrack(ed|ing|s)?\\b");
 def names_an_issue: test("([A-Z][A-Z0-9]+-[0-9]+|#[0-9]+)\\b");
-# A track-word alone is NOT an answer here: the predicate files that as an
-# untracked-claim finding, this sweep has no second finding to file, and a
-# bare "tracking that separately" would silence the last net over a late
-# finding. The narrowing composes ON TOP of the standing-reply rule.
-def answered: disposition or (tracking and names_an_issue);
+# Two narrowings compose ON TOP of the standing-reply rule, each closing a
+# reply shape that would otherwise silence the last net over a late finding.
+# A track-word alone is NOT an answer: the predicate files that as an
+# untracked-claim finding and this sweep has no second finding to file, so a
+# bare "tracking that separately" would answer nothing at all. Nor is a bare
+# `Declined:` — the contract is `Declined: <reason>` and the gate rejects an
+# empty one, but the gate never sees these replies, because this sweep'"'"'s
+# whole population is post-merge activity. Recognising an EMPTY reason needs
+# no corpus, so it belongs here; recognising a BAD one does, so it does not.
+def answered: (disposition and ((declined | not) or reasoned_decline))
+              or (tracking and names_an_issue);
 def human: (.author.__typename // "User") != "Bot";
 def epoch: if type == "string" then (try (sub("\\.[0-9]+";"") | fromdateiso8601) catch null) else null end;
-def at: (.createdAt | epoch);
+# The EFFECTIVE PUBLICATION time, and the ONE definition every arm shares.
+# createdAt is when a review was STARTED: a reviewer drafting during the
+# merge queue and submitting just after the merge — the ordinary shape of
+# the finding this sweep exists to catch — leaves createdAt < mergedAt, so
+# placing the review by it drops the finding silently. Measured on a real
+# PENDING review, 2026-09-01: submittedAt was null while publishedAt
+# EQUALLED createdAt, so only submittedAt separates a draft review from a
+# submitted one; that review'"'"'s inline comment had publishedAt null, so
+# publishedAt is the field that does it for a comment. One expression
+# covers both, because a review carries no publishedAt worth having and a
+# comment carries no submittedAt at all. createdAt remains the fallback, so
+# a response shape carrying neither field behaves exactly as before.
+def at: ((.submittedAt // .publishedAt // .createdAt) | epoch);
 def is_reply: human and ((.body // "") | (disposition or tracking));
 
 if (.errors? // [] | length) > 0 then error("graphql errors present")

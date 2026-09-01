@@ -12,8 +12,8 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Both libs are SOURCED, and under set -e a missing one ends the run at
-# exit 1 — the code that promises attention lines — with nothing on stdout,
-# which a consumer reduces to "nothing to do". Both fail closed at 2.
+# exit 1 — the code promising attention lines — with nothing on stdout,
+# which a consumer reads as "nothing to do". Both fail closed at 2 instead.
 lib_readable() { # PATH
   [ -r "$1" ] || { echo "::error::merged-sweep: cannot read $1 — the skill install is incomplete; re-run kendex refresh, or check the file mode" >&2; exit 2; }
 }
@@ -210,9 +210,8 @@ fi
 # --- state --------------------------------------------------------------
 # One file per repo, the same shape oversee-watch keeps for PW_SEEN: the
 # keys of the previous pass, one per line, replaced atomically. Anchored on
-# the REPOSITORY ROOT, never the process cwd, as oversee-watch anchors its
-# equivalent — a poll loop that changed directory would otherwise start
-# from an empty baseline and re-announce everything with nothing said.
+# the REPOSITORY ROOT, never the cwd, as oversee-watch anchors its own — a
+# poll loop that changed directory would otherwise re-announce everything.
 SETTING_HINT="set REVIEW_GATE_MERGED_SWEEP_STATE_DIR, pass --state-file, or pass --no-state"
 if [ "$USE_STATE" = "1" ] && [ -z "$STATE_FILE" ]; then
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
@@ -263,14 +262,18 @@ fi
 # never prove it covered the window, which is the silence this sweep exists
 # to end. search bounds the set by mergedAt and counts it, so coverage is a
 # comparison, not a premise; sort:updated-desc truncates at the end a late
-# review has not touched. The bound needs the FULL timestamp: on
-# vanillagreencom/kendex, 2026-09-01, the Z-suffixed merged:>= counted 78
-# for a 48h window where the date-only form counted 95. A malformed
-# qualifier degrades search to free text, so ms34 asserts what was sent.
+# review has not touched. The bound needs the FULL timestamp: measured on
+# vanillagreencom/kendex 2026-09-01, the Z-suffixed merged:>= counted 78 in
+# a 48h window where the date-only form counted 95. A malformed qualifier
+# degrades search to free text, so ms34 asserts what was sent.
+# submittedAt and publishedAt ride along because createdAt is when a review
+# was STARTED: measured on a real PENDING review the same day, submittedAt
+# was null while publishedAt EQUALLED createdAt, and that review's inline
+# comment had publishedAt null. def at in the reduce lib resolves both.
 # Nested bounds are `last:` because a post-merge review or thread comment
 # is newer than every pre-merge one, so truncation hides only content that
-# could neither BE a post-merge finding nor ANSWER one. reviewThreads is
-# the exception: no documented ordering, so any truncation fails closed.
+# could neither BE a finding nor ANSWER one. reviewThreads is the
+# exception: no documented ordering, so any truncation fails closed.
 # repository(owner,name){id} rides along as the POSITIVE proof that the
 # named repo was READ. search answers a misspelled, renamed or
 # no-longer-authorized repository with issueCount 0, no errors and gh exit
@@ -287,10 +290,10 @@ query='query($owner:String!,$name:String!,$q:String!,$limit:Int!){
         author{login}
         reviews(last:30){
           totalCount
-          nodes{ id createdAt state body author{login __typename} }
+          nodes{ id createdAt submittedAt state body author{login __typename} }
         }
         comments(last:50){
-          nodes{ createdAt body author{login __typename} }
+          nodes{ createdAt publishedAt body author{login __typename} }
         }
         reviewThreads(last:50){
           totalCount
@@ -298,7 +301,7 @@ query='query($owner:String!,$name:String!,$q:String!,$limit:Int!){
             id
             comments(last:30){
               totalCount
-              nodes{ createdAt body author{login __typename} }
+              nodes{ createdAt publishedAt body author{login __typename} }
             }
           }
         }
@@ -348,9 +351,8 @@ rows="$(jq -r --argjson cutoff "$cutoff" --argjson limit "$LIMIT" \
 # --- reduce to lines, then persist, then print ---------------------------
 # Nothing reaches stdout until the state file is on disk. Exit 2 is the
 # GLOBAL failure shape and consumers key on it: oversee-watch's
-# check_pr_watch reads a non-zero run that printed lines as findings and
-# one that printed none as a hard failure, so a sweep whose state write
-# failed must print nothing or its stderr is never surfaced.
+# check_pr_watch reads a non-zero run that printed lines as findings and one
+# that printed none as a failure, so a failed state write must print nothing.
 attention=0
 current=""
 out=""

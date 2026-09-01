@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Behavioral tests for the SHIPPED skills/review-gate/scripts/merged-sweep.sh
 # — the post-merge half of the needs-attention reducer (KEN-1021). One
-# stubbed gh serving one GraphQL fixture, every reduction arm driven
-# offline.
+# stubbed gh serving one GraphQL fixture, every reduction arm driven offline.
 #
 # Reduction table:
 #   ms1.  late bot review, no answer        -> post-merge-findings, exit 1
@@ -42,6 +41,8 @@
 #   ms33.  a missing reduction lib          -> exit 2, never bash's exit 1
 #   ms33c. a lib readable but truncated     -> exit 2, naming the symbol
 #   ms34.  the QUERY actually sent          -> qualifiers, type, probe, merged:
+#   ms35.  drafted pre-merge, published later-> a finding, not createdAt
+#   ms36.  a decline with no reason        -> answers nothing, both arms
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -106,8 +107,7 @@ assert_eq "$rc" "1" "ms5: --no-state re-reports a known finding"
 assert_contains "$out" "post-merge-findings" "ms5: with the same kind"
 
 # From a FRESH baseline, so a --no-state pass that wrongly wrote state would
-# change the next pass's answer. Running it after a stateful pass over the
-# same fixture could not: the keys would already match.
+# change the next pass's answer; run after a stateful one it could not.
 fresh_state
 set +e
 out=$(run_sweep -- --no-state); rc=$?
@@ -255,10 +255,9 @@ set -e
 assert_eq "$rc" "1" "ms14b: a human post-merge comment is a finding, not a reply"
 assert_contains "$out" "0 review(s) and 1 review thread(s)" "ms14b: counted as a thread finding"
 
-# ms14c: inside a THREAD, a human comment that is not a disposition is
-# content on a line, so it is a finding even when it follows a real reply —
-# the fail-closed reading, and deliberately unlike the review arm, where an
-# issue comment is conversation and ms9c keeps the standing disposition.
+# ms14c: inside a THREAD a human non-disposition comment is content on a
+# line, so it is a finding even after a real reply — the fail-closed
+# reading, and deliberately unlike ms9c's conversation arm.
 fresh_state
 CHATTER="$(thread THR_chatter 3 \
   "$(comment "$AFTER_MERGE" "P2: this leaks" codex Bot)" \
@@ -293,9 +292,9 @@ set -e
 assert_eq "$rc" "1" "ms16: a thread past the comment bound fails closed even when answered"
 assert_contains "$out" "beyond the read bound" "ms16: and says so"
 
-# ms16b (finding #5): a merged PR whose only long thread opened AND closed
-# before the merge has no post-merge activity to hide — comments are read
-# newest-first, so the truncation drops only older pre-merge comments.
+# ms16b (finding #5): a long thread that opened AND closed before the merge
+# hides nothing — comments are read newest-first, so truncation drops only
+# older pre-merge ones.
 fresh_state
 PRE_DEEP="$(thread THR_predeep 60 \
   "$(comment "$BEFORE_MERGE" "a long pre-merge argument" codex Bot)" \
@@ -422,8 +421,7 @@ printf 'x\n' > "$TMP_ROOT/state/acme_widgets"
 chmod 000 "$TMP_ROOT/state/acme_widgets"
 if [ -r "$TMP_ROOT/state/acme_widgets" ]; then
   # Running as root (or on a filesystem that ignores the mode) makes this
-  # arm unreachable; say so rather than assert a pass the environment
-  # cannot produce.
+  # arm unreachable; say so rather than assert an unproducible pass.
   echo "  skip  ms22: the state file stayed readable at mode 000 (root, or a permissionless filesystem)"
 else
   set +e
@@ -435,7 +433,7 @@ fi
 chmod 644 "$TMP_ROOT/state/acme_widgets"
 fresh_state
 
-# ms22c: an unwritable state DIRECTORY fails at mkdir, before any read.
+# ms22c: an unwritable state DIR fails at mkdir, before any read.
 mkdir -p "$TMP_ROOT/ro"
 chmod 500 "$TMP_ROOT/ro"
 if [ -w "$TMP_ROOT/ro" ]; then
@@ -454,9 +452,8 @@ run_split REVIEW_GATE_MERGED_SWEEP_STATE_DIR=""
 assert_eq "$SPLIT_RC" "2" "ms22d: an explicitly empty state directory is a config error"
 assert_contains "$SPLIT_ERR" "explicitly empty" "ms22d: and says so"
 
-
-# A state write that fails must exit 2 with NOTHING on stdout: a consumer
-# that sees lines beside a non-zero exit reads findings, not a failure.
+# A failed state write must exit 2 with NOTHING on stdout: lines beside a
+# non-zero exit read as findings, not as a failure.
 fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
 set +e
 out=$( (cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
@@ -498,9 +495,8 @@ assert_eq "$rc" "0" "ms28b: and the second pass dedupes against it"
 rm -f -- "${TMP_ROOT:?}/explicit-state"
 
 # --- ms29: a RELATIVE state dir is anchored on the repository root -------
-# The rising edge is the whole point of the state layer, and a poll loop or
-# cron that runs from a different directory between passes must not silently
-# start from an empty baseline.
+# The rising edge is the whole point of the state layer, so a loop running
+# from a different directory must not silently start from an empty baseline.
 git init -q "$TMP_ROOT/repo" 2>/dev/null
 mkdir -p "$TMP_ROOT/repo/sub"
 AT_REL=(REVIEW_GATE_MERGED_SWEEP_STATE_DIR="sweep-state")
@@ -567,8 +563,7 @@ assert_eq "$(grep -c 'post-merge-findings' <<<"$out")" "2" "ms24: one line per P
 
 # --- ms25 (finding #8): the re-raise shape -------------------------------
 # A reviewer commenting again on a line it already flagged lands in a
-# PRE-merge thread. Reading only the thread's first comment reported
-# silence over exactly that.
+# PRE-merge thread; reading only the opening reported silence over that.
 fresh_state
 RERAISE="$(thread THR_reraise 2 \
   "$(comment "$BEFORE_MERGE" "nit: name this" codex Bot)" \
@@ -632,8 +627,7 @@ assert_contains "$out" "UNSWEPT" "ms27: and saying the remainder is unswept"
 assert_contains "$out" "raise --limit (max 80)" "ms27: naming the remedy that applies below the ceiling"
 assert_row ms27 "$out" "-" "--------" "sweep:window-truncated" "UNSWEPT"
 
-# ms27b: a STANDING condition, not an event — keyed through the rising
-# edge it fired once, then went silent with the gap still open.
+# ms27b: a STANDING condition, not an event — keyed, it fires once only.
 set +e
 out=$(run_sweep); rc=$?
 set -e
@@ -722,7 +716,7 @@ assert_eq "$rc" "1" "ms31b: a name using every allowed character is accepted"
 
 # --- ms32: the KEY resolves from the repository root, like the path ------
 # The value was anchored, the key was not, so an off-root settings-file
-# consumer took the built-in default and anchored a DIFFERENT directory.
+# consumer took the default and anchored a DIFFERENT directory.
 git init -q "$TMP_ROOT/repo2" 2>/dev/null
 mkdir -p "$TMP_ROOT/repo2/sub"
 if [ -d "$TMP_ROOT/repo2/.git" ]; then
@@ -775,8 +769,7 @@ SWEEP="$SWEEP_REAL"
 
 # --- ms34: the REQUEST the coverage claim rests on -----------------------
 # Every arm above feeds the stub a fixture, which proves nothing about what
-# was asked for. Replacing the qualifier set with "repo:X is:pr", or
-# type:ISSUE with type:REPOSITORY, left the whole suite green.
+# was ASKED for: replacing the qualifier set once left the suite green.
 fresh_state
 fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
 for w in 172800 3600; do
@@ -786,6 +779,21 @@ for w in 172800 3600; do
   set -e
   assert_sent_query "ms34 (--window $w)" "$w"
 done
+
+# --- ms35: the EFFECTIVE PUBLICATION time, not the creation time ---------
+# A reviewer drafting during the merge queue and submitting just after it
+# is the ordinary shape of this finding, and that review carries createdAt
+# < mergedAt. One fixture drives all three cases; the counts pin each.
+fresh_state
+LATE_SUB="$(review REV_q "$BEFORE_MERGE" COMMENTED "P1: drafted in the queue" codex Bot "$AFTER_MERGE")"
+NO_FIELD="$(review REV_nf "$AFTER_MERGE" COMMENTED "P2: late, older shape" codex Bot none)"
+LATE_PUB="$(thread THR_q 1 "$(comment "$BEFORE_MERGE" "P2: drafted in the queue" codex Bot "$LATER")")"
+fixture "$(envelope "$(pr 14 "$MERGED_AT" dev "[$LATE_SUB,$NO_FIELD]" '[]' "[$LATE_PUB]")")"
+run_split
+assert_eq "$SPLIT_RC" "1" "ms35: work drafted before the merge and PUBLISHED after it is a finding"
+assert_contains "$SPLIT_OUT" "2 review(s) and 1 review thread(s)" "ms35: the review by submittedAt, the thread comment by publishedAt, a field-less shape by createdAt"
+
+assert_decline_reason_arms
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
