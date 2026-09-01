@@ -62,15 +62,6 @@ run_sr() { # [args...] — run in $R at threshold 10; sets OUT and RC
   OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" "$@" 2>&1)" || RC=$?
 }
 
-run_wc_failing_from() { # N [args...] — run_sr with the wc shim failing from call N
-  local from="$1"
-  shift
-  rm -f "$TMP/wc-calls"
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && PATH="$WC_RECOUNT_SHIM:$PATH" SR_WC_FAIL_FROM="$from" SIZE_RATCHET_THRESHOLD=10 "$SR" "$@" 2>&1)" || RC=$?
-}
-
 run_sr_shimmed() { # SHIMDIR [args...] — run_sr with SHIMDIR first on PATH
   local shimdir="$1"
   shift
@@ -138,32 +129,6 @@ exit 1
 EOF
 chmod +x "$WC_SHIM/wc"
 
-# wc shim: pass calls through until $SR_WC_FAIL_FROM, then fail. Exit 7 on
-# purpose: a raw tool status escaping instead of the contract's exit 2 must be
-# visible. Reset $TMP/wc-calls before each run.
-#
-# The ordinal is COUPLED to how many times a run measures things, so it is
-# passed in per case rather than hardcoded. For the two-tracked-file fixtures
-# below the collection loop burns call 1 (both files in one batch), then
-# --update measures the candidate TWICE: call 2 reconciles the baseline's own
-# row against the candidate's length, call 3 recounts it afterwards for the
-# counts row. Each of those two sites gets its own case, so adding a third
-# measurement fails a named assertion here instead of silently retargeting one.
-WC_RECOUNT_SHIM="$TMP/wc-recount-shim"
-mkdir -p "$WC_RECOUNT_SHIM"
-cat >"$WC_RECOUNT_SHIM/wc" <<EOF
-#!/usr/bin/env bash
-n="\$(cat "$TMP/wc-calls" 2>/dev/null)" || n=0
-n=\$((n + 1))
-printf '%s\n' "\$n" >"$TMP/wc-calls"
-if [ "\$n" -ge "\${SR_WC_FAIL_FROM:-3}" ]; then
-  echo "wc: simulated recount failure" >&2
-  exit 7
-fi
-exec "$REAL_WC" "\$@"
-EOF
-chmod +x "$WC_RECOUNT_SHIM/wc"
-
 # wc shim: succeed while printing nothing. The batch invocation then comes
 # back empty (a shortfall, not a measurement) and each single-file re-read
 # yields no count at all — an empty count arithmetically evaluates to 0,
@@ -200,27 +165,6 @@ fi
 exec "$REAL_WC" "\$@"
 EOF
 chmod +x "$WC_DROPLAST_SHIM/wc"
-
-# awk shim: die silently with status 1 on the --update counts scan (its
-# program uniquely contains the yes/no verdict print), delegating every
-# other awk. Exit 1 on purpose: awk reserves no status for "not found",
-# so a status-1 execution failure is exactly the value a manufactured
-# not-found convention would collide with.
-AWK_SHIM="$TMP/awk-shim"
-mkdir -p "$AWK_SHIM"
-cat >"$AWK_SHIM/awk" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-  case "\$a" in
-    # Both spellings of the counts scan: the current stdout-verdict
-    # program and the old manufactured-status one, so this shim also
-    # reproduces the historic misread when pointed at a pre-fix engine.
-    *'print f ? "yes" : "no"'* | *'exit found ? 0 : 1'*) exit 1 ;;
-  esac
-done
-exec "$REAL_AWK" "\$@"
-EOF
-chmod +x "$AWK_SHIM/awk"
 
 # mv shim: fail only the replace onto the repo baseline (relative path is
 # an argument verbatim); the engine's internal \$TMP moves pass through.
@@ -363,62 +307,6 @@ run_sr --update
   && ok "shim-free control: the same fixture really tightens 20 -> 15, proving the abort case would detect a mutation" \
   || bad "shim-free control: the same fixture really tightens 20 -> 15" "rc=$RC row=$(cat "$R/tools/size-ratchet-baseline.tsv") out=$OUT"
 
-echo "=== fail-closed: a broken post-update recount aborts BEFORE the replace, exit 2 not raw status ==="
-# Same genuinely-tightening fixture (loose row 20 for a 15-line file). The
-# recount of the baseline's own counts row now reads the candidate before
-# the replace: a wc failure there must exit 2 per the collection-error
-# contract — never wc's raw status 7 — with the original row intact.
-new_repo updrecount
-mkfile big.txt 15
-mkdir -p "$R/tools"
-printf 'big.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
-git -C "$R" add -A
-run_wc_failing_from 3 --update
-[ "$RC" -eq 2 ] && case "$OUT" in *"could not recount the updated baseline tools/size-ratchet-baseline.tsv"*) true ;; *) false ;; esac \
-  && ok "a wc failure on the recount is a collection error: exit 2 with the update-aborted diagnostic" \
-  || bad "a wc failure on the recount is a collection error, exit 2 (never raw status 7)" "rc=$RC out=$OUT"
-case "$OUT" in *"wc: simulated recount failure"*) ok "the shim fired on the recount call (3rd wc), pinning the cause" ;; *) bad "the shim fired on the recount call" "$OUT" ;; esac
-
-# The OTHER candidate measurement, added with the self-row reconciliation: it
-# runs first, so it needs its own case or a failure there would surface as this
-# one and quietly retarget the assertion above.
-run_wc_failing_from 2 --update
-[ "$RC" -eq 2 ] && case "$OUT" in *"could not measure the candidate baseline for its own row"*) true ;; *) false ;; esac \
-  && ok "a wc failure measuring the candidate for its own row is exit 2 with its own diagnostic" \
-  || bad "a wc failure on the self-row measurement is exit 2 with its own diagnostic" "rc=$RC out=$OUT"
-row_selfmeasure="$(cat "$R/tools/size-ratchet-baseline.tsv")"
-[ "$row_selfmeasure" = "$(printf 'big.txt\t20')" ] \
-  && ok "the aborted self-row measurement leaves the original row byte-identical" \
-  || bad "the aborted self-row measurement leaves the original row byte-identical" "row=$row_selfmeasure"
-row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
-[ "$row" = "$(printf 'big.txt\t20')" ] && ok "the aborted recount leaves the original loose row byte-identical" \
-  || bad "the aborted recount leaves the original loose row byte-identical" "row=$row"
-run_sr --update
-[ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'big.txt\t15')" ] \
-  && ok "shim-free control: the recount fixture really tightens 20 -> 15" \
-  || bad "shim-free control: the recount fixture really tightens 20 -> 15" "rc=$RC out=$OUT"
-
-echo "=== fail-closed: a status-1 awk death on the counts scan is never 'row not found' ==="
-# Pre-fix, the scan manufactured exit 1 for a missing row and accepted
-# every status <= 1, so an awk execution failure returning 1 read as
-# "baseline not present" and --update proceeded to replace the baseline.
-new_repo updawk
-mkfile big.txt 15
-mkdir -p "$R/tools"
-printf 'big.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
-git -C "$R" add -A
-run_sr_shimmed "$AWK_SHIM" --update
-[ "$RC" -eq 2 ] && case "$OUT" in *"could not scan the counts for tools/size-ratchet-baseline.tsv"*) true ;; *) false ;; esac \
-  && ok "an awk failure (exit 1, no output) on the counts scan is a collection error, exit 2" \
-  || bad "an awk failure (exit 1, no output) on the counts scan is a collection error" "rc=$RC out=$OUT"
-row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
-[ "$row" = "$(printf 'big.txt\t20')" ] && ok "the aborted scan leaves the original loose row byte-identical" \
-  || bad "the aborted scan leaves the original loose row byte-identical" "row=$row"
-run_sr --update
-[ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'big.txt\t15')" ] \
-  && ok "shim-free control: the awk fixture really tightens 20 -> 15" \
-  || bad "shim-free control: the awk fixture really tightens 20 -> 15" "rc=$RC out=$OUT"
-
 echo "=== fail-closed: a failed baseline replace exits 2 with the mv-side diagnostic ==="
 new_repo updmv
 mkfile big.txt 15
@@ -426,7 +314,7 @@ mkdir -p "$R/tools"
 printf 'big.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
 git -C "$R" add -A
 run_sr_shimmed "$MV_SHIM" --update
-[ "$RC" -eq 2 ] && case "$OUT" in *"could not replace the baseline at tools/size-ratchet-baseline.tsv"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not replace tools/size-ratchet-baseline.tsv"*) true ;; *) false ;; esac \
   && ok "a failed replace is a collection error: exit 2, never mv's raw status" \
   || bad "a failed replace is a collection error, exit 2" "rc=$RC out=$OUT"
 case "$OUT" in *"mv: simulated replace failure"*) ok "mv's own stderr is surfaced, pinning the cause" ;; *) bad "mv's own stderr is surfaced" "$OUT" ;; esac
@@ -446,7 +334,7 @@ printf 'big.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
 git -C "$R" add -A
 rm -f "$TMP/cp-calls"
 run_sr_shimmed "$CP_SHIM" --update
-[ "$RC" -eq 2 ] && case "$OUT" in *"could not re-read the replaced baseline at tools/size-ratchet-baseline.tsv"*"WAS replaced"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not re-read tools/size-ratchet-baseline.tsv after replacing it"*) true ;; *) false ;; esac \
   && ok "a failed re-read after a successful replace is a collection error whose diagnostic owns the mutation" \
   || bad "a failed re-read after a successful replace is a collection error owning the mutation" "rc=$RC out=$OUT"
 row="$(cat "$R/tools/size-ratchet-baseline.tsv")"

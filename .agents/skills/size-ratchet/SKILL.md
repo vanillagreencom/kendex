@@ -33,8 +33,7 @@ editing it in a reviewed diff, and never at all in a frozen class.
 
 Flags, `SIZE_RATCHET_*` keys, and exit codes: `size-ratchet --help`.
 Verdict classes, semantics, units, the shipped class list, baseline/excludes
-formats, and seeding: [README.md](README.md). Collection internals and the
-migration note for repos already using this format:
+formats, and seeding: [README.md](README.md). Collection and maintenance notes:
 [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Responding to a failure
@@ -46,9 +45,9 @@ violated, the deciding threshold (class pattern or default), and the remedy:
 Three verdicts are not a size problem and take no judgment. **A row in the
 wrong unit** is a class that changed what it counts: run `--update`, which
 re-measures the row. **A shrunk row** under `--staged` is already lowered
-and staged by the run itself. **A moved baseline** names the two paths
-instead of a file and a size: move the baseline in a commit that changes
-nothing else, then change its rows in the next one.
+and staged by the run itself. **A baseline absent at its resolved HEAD
+path** relocates in a change that touches nothing else, declared with
+`RATCHET_RAISE=1`; change its rows later.
 
 **Check composition before the seam.** A file over its cap whose bulk is
 inline tests needs those tests moved to the language's separate-test

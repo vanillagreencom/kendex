@@ -277,67 +277,6 @@ OUT="$(cd "$R" && umask 022 && PATH="$CHMOD_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=1
   && ok "--update completes under BSD chmod option parsing (the mode's -- comes first)" \
   || bad "--update completes under BSD chmod option parsing" "rc=$RC out=$OUT"
 
-echo "=== a self-referential baseline row converges in ONE --update ==="
-# The baseline file is itself tracked, so when it is over its threshold it earns
-# a row — whose correct value is this file's own final length. The pipeline wrote
-# that row from the PRE-update counts, so pruning any other row left the row
-# disagreeing with reality and the very next check failed: --update contradicting
-# its own one-run tightening guarantee, logging "tightened: … 50 -> 2" for a file
-# that ended up 1 line long. Measured before the fix: a baseline holding one
-# to-be-removed row plus a self-referential row needed TWO runs to converge.
-
-# Case A: the candidate lands at/under the threshold, so the row must GO.
-R="$TMP/selfrow-drop"
-mkdir -p "$R/tools"
-git -C "$R" -c init.defaultBranch=main init -q
-git -C "$R" config user.email test@example.com
-git -C "$R" config user.name test
-mkfile shrunk.txt 1
-printf 'shrunk.txt\t50\ntools/size-ratchet-baseline.tsv\t50\n' >"$R/tools/size-ratchet-baseline.tsv"
-git -C "$R" add -A
-OUT=""; RC=0
-OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=1 "$SR" --update 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "one --update converges: no violation remains on the same run" \
-  || bad "one --update converges (self-row dropped)" "rc=$RC out=$OUT"
-# The verdict must be reachable a second time without another rewrite.
-OUT2=""; RC2=0
-OUT2="$(cd "$R" && SIZE_RATCHET_THRESHOLD=1 "$SR" 2>&1)" || RC2=$?
-[ "$RC2" -eq 0 ] && ok "the immediately following CHECK is clean — the fixed point really was reached" \
-  || bad "the immediately following check is clean" "rc=$RC2 out=$OUT2"
-case "$OUT" in
-  *"stale baseline row"*) bad "--update must not leave the stale self-row it just wrote" "$OUT" ;;
-  *) ok "no stale-row violation is reported by the run that wrote the baseline" ;;
-esac
-# The log must not claim a tighten for a row it removed.
-case "$OUT" in
-  *"removed (the baseline's own row"*) ok "the dropped self-row is announced honestly, correcting the earlier line" ;;
-  *) bad "the dropped self-row is announced" "$OUT" ;;
-esac
-
-# Case B: the candidate stays OVER the threshold, so the row is re-tightened to
-# the real length rather than dropped — the other branch of the same fix.
-R="$TMP/selfrow-tighten"
-mkdir -p "$R/tools"
-git -C "$R" -c init.defaultBranch=main init -q
-git -C "$R" config user.email test@example.com
-git -C "$R" config user.name test
-mkfile keep.txt 5
-mkfile shrunk.txt 1
-printf 'keep.txt\t9\nshrunk.txt\t50\ntools/size-ratchet-baseline.tsv\t50\n' >"$R/tools/size-ratchet-baseline.tsv"
-git -C "$R" add -A
-OUT=""; RC=0
-OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=1 "$SR" --update 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "one --update converges when the self-row survives" \
-  || bad "one --update converges (self-row tightened)" "rc=$RC out=$OUT"
-# Two rows survive (keep.txt and the baseline itself), so the self-row must read
-# exactly 2 — the candidate's own line count, not the pre-update 3.
-expected_self="$(printf 'keep.txt\t5\ntools/size-ratchet-baseline.tsv\t2')"
-actual_self="$(cat "$R/tools/size-ratchet-baseline.tsv")"
-[ "$actual_self" = "$expected_self" ] && ok "the surviving self-row equals the file's final length (2), not its pre-update length" \
-  || bad "the surviving self-row equals the final length" "$(printf 'expected:\n%s\ngot:\n%s' "$expected_self" "$actual_self")"
-rows_on_disk="$(wc -l <"$R/tools/size-ratchet-baseline.tsv" | tr -d ' ')"
-[ "$rows_on_disk" = "2" ] && ok "the row and the on-disk line count agree — self-consistent by construction" \
-  || bad "the row and the on-disk line count agree" "on disk: $rows_on_disk"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -1,60 +1,4 @@
 #!/usr/bin/env bash
-# size-ratchet — tighten-only file-size gate over tracked files.
-#
-# check (default): every tracked file (git ls-files) minus the exclusion
-# list must be at or under its threshold, unless a baseline row freezes
-# it at its current size. FAIL on:
-#   (a) a new offender — over the threshold with no baseline row;
-#   (b) growth of a baselined file — actual size > its baseline row;
-#   (c) a baseline looser than reality — row > actual size, the file shrank
-#       to/under the threshold, or the file left the tracked set. The
-#       ratchet only moves down, so a loose or stale row is itself a
-#       failure, never slack;
-#   (d) a row in the wrong unit — a byte class carrying a line row or the
-#       reverse: the number means something else now, so it is re-measured
-#       (--update), never compared;
-#   (e) a row a change ADDS or RAISES over HEAD's. RAISING an existing row
-#       needs RATCHET_RAISE=1 on the invocation, and is refused whatever the
-#       run carries when the path is in a frozen class. A FIRST row for a
-#       path HEAD's baseline carries none for is a bootstrap, which
-#       RATCHET_RAISE=1 admits in every class, frozen included; a renamed
-#       path is such a path, so a rename bootstraps rather than raises;
-#   (f) a change that MOVES the baseline and rewrites it in the same commit.
-#       Across a move nothing compares the rows, so the move travels alone
-#       and the rows change in the commit after it.
-#
-# --update: rewrite the baseline TIGHTENING ONLY — lower rows to current
-# reality, re-measure rows whose unit no longer matches their class, remove
-# rows for files now at/under their threshold or no longer counted; never
-# add a row, never raise a number. Deliberate growth is a human hand-edit of
-# the row, visible in review. After the rewrite the check re-runs against
-# the new baseline, so remaining growth and new offenders still fail.
-#
-# --staged runs that same rewrite itself and `git add`s the result, so a
-# commit that SHRINKS a limited file passes on the first attempt instead of
-# demanding a --update and a second commit.
-#
-# A path's threshold is the first pattern it matches in
-# SIZE_RATCHET_CLASSES (a repo's own overrides) then
-# SIZE_RATCHET_DEFAULT_CLASSES (the list this package ships), else
-# SIZE_RATCHET_THRESHOLD. Class patterns are the excludes file's globs and
-# run through the same matcher. Frozen paths carry the one inversion to that
-# order: README.md "Path classes" states the rule, path_threshold implements
-# it, and neither is paraphrased anywhere else.
-#
-# A class threshold carries its UNIT: `pattern=400` is 400 lines,
-# `pattern=24k` is 24*1024 bytes. Lines are newline counts (`wc -l`), bytes
-# are `wc -c`. Baseline: `path<TAB>size`, LC_ALL=C sorted, unique paths,
-# sizes above the path's threshold, a byte row suffixed `b` (`24576b`).
-# Excludes: `pattern<TAB>reason` per line (shell glob matched against the
-# full repo-relative path; `*` crosses `/`), blank lines and `#` comments
-# ignored, a missing reason is a config error; the package's own default
-# exclusions apply on top of the list.
-#
-# Exit codes: 0 clean; 1 violations; 2 usage/config/collection error. The
-# gate distinguishes "measured and fine" from "could not measure": any
-# failure to collect a count (unreadable index blob, grep execution
-# failure) terminates with exit 2 — it never degrades into a passing check.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -65,41 +9,12 @@ TAB="$(printf '\t')"
 NL='
 '
 
-# --- what the package ships --------------------------------------------------
-# The class list every consumer gets without configuring one. A repo
-# overrides a class through SIZE_RATCHET_CLASSES; it does not restate the
-# list. Markdown is measured in bytes and sits at the high end of the
-# published per-file guidance for each kind of file: an instruction file
-# loads every session, and the AGENTS.md classes sit under the whole-chain
-# cap so the nested files fit inside it; a SKILL.md body loads whenever its
-# skill does, one workflow loads at a time, and everything else is read on
-# demand and paged. Markdown entries come first so a README or a doc under a
-# tests/ directory is judged as the document it is. Code keeps lines, which
-# is what every linter caps.
-#
-# Every directory pattern carries BOTH forms, the way AGENTS.md and CLAUDE.md
-# do: `*` may match nothing, but the literal `/` in `*/tests/*` still must be
-# there, so without `tests/*` beside it a root-level tests/ — where Rust puts
-# its integration tests — would take neither the 800-line class nor the
-# freeze, and both statements this list makes about tests would be false for
-# it.
 SHIPPED_CLASSES="AGENTS.md=24k;CLAUDE.md=24k;*/AGENTS.md=24k;*/CLAUDE.md=24k;*/SKILL.md=24k;*/workflows/*.md=40k;*.md=64k;tests/*=800;*/tests/*=800;test/*=800;*/test/*=800;__tests__/*=800;*/__tests__/*=800;tests.rs=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800;*.spec.*=800"
 
-# Rows in these classes never rise. A test splits and a document is cut;
-# neither is ever the fix that needs the added lines, so no declaration on
-# the invocation buys one more. `*.md` covers every markdown class above, and
-# every directory pattern carries both forms for the reason the class list
-# gives.
 SHIPPED_FROZEN_CLASSES="*.md;tests/*;*/tests/*;test/*;*/test/*;__tests__/*;*/__tests__/*;tests.rs;*/tests.rs;*test_util.rs;*.test.*;*.spec.*"
 
-# Exclusions the package applies on top of the repo's list, as
-# `pattern<TAB>reason` rows — the same shape the list itself carries.
 DEFAULT_EXCLUDES="CHANGELOG*.md${TAB}one long file is the documented norm; entries carry the rule"
 
-# Count index blobs rather than worktree copies. The default prefers the
-# worktree — what a developer is looking at — and only falls back to the
-# index; a pre-commit gate needs the opposite, because the blob is what
-# enters history.
 STAGED=0
 
 usage() {
@@ -161,15 +76,9 @@ bootstraps rather than raises. No commit message is read: a pre-commit hook
 cannot see one, so the reason belongs in the commit body for review, not in
 a check.
 
-A commit that REPOINTS SIZE_RATCHET_BASELINE is judged by what HEAD holds a
-row set at, because rows at the new path may be a stranger's rather than the
-ones HEAD was judged against. None is a bootstrap. Exactly one, at the path
-this run reads, is an ordinary run. Exactly one elsewhere passes only when the
-arriving rows are that set byte for byte. Two or more is ambiguous and
-refuses: the repoint travels alone, and the rows change in the commit after.
-
-A run whose HEAD carries no baseline rows has no reference for the added and
-raised checks, so the verdict line says so rather than reading as clean.
+When HEAD exists but has no rows at the resolved baseline path, a non-empty
+candidate refuses unless RATCHET_RAISE=1. Relocate the baseline in a change
+that touches nothing else, declare that run, then edit rows in a later change.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
@@ -180,22 +89,12 @@ config_error() {
   exit 2
 }
 
-# A count that could not be collected is never a pass: same loud exit as a
-# config error, distinct name so call sites read as what they are.
 collection_error() {
   echo "::error::size-ratchet: $*" >&2
   exit 2
 }
 
 count_nonempty_lines() { # FILE — count on stdout; loud exit if grep cannot read it
-  # grep -c exits 1 on zero matches but still prints 0 — only exit >= 2
-  # (execution/read failure) means the count is unknown.
-  #
-  # `--` goes BEFORE the pattern at every grep call site here. Option scanning
-  # stops at the first non-option argument, which for grep is the PATTERN, so a
-  # trailing `--` is read as a literal filename by any non-permuting (BSD/POSIX)
-  # grep and the invocation fails on a clean repo. Leading `--` is valid under
-  # GNU, BSD and POSIX alike.
   local n status=0
   n="$(grep -c -- . "$1")" || status=$?
   [ "$status" -le 1 ] || collection_error "could not count lines in $1 (grep exit $status)"
@@ -205,11 +104,6 @@ count_nonempty_lines() { # FILE — count on stdout; loud exit if grep cannot re
 MODE="check"
 BASELINE_OPT=""
 EXCLUDES_OPT=""
-# Whether the flag was SUPPLIED is tracked apart from its value: testing the
-# value alone made `--baseline=` and `--baseline ""` indistinguishable from an
-# absent flag, so automation passing a path that came out of a bad substitution
-# silently checked the repository default and passed. Supplied-but-empty is a
-# config error below.
 BASELINE_SET=0
 EXCLUDES_SET=0
 while [ $# -gt 0 ]; do
@@ -252,23 +146,11 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# All configured paths (settings file, baseline, excludes) are repo-relative.
 REPO_ROOT="$(git rev-parse --show-toplevel)" || config_error "not inside a git repository"
-# Every collection-path operation below routes its failure through
-# config_error/collection_error. Unguarded, `set -e` killed the script with the
-# failing tool's own status — usually 1, which this script's contract reserves
-# for "a size violation was measured", so a broken environment reached callers
-# as a failing gate rather than a broken one.
 cd "$REPO_ROOT" || config_error "could not enter the repository root $REPO_ROOT"
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/size-ratchet.XXXXXX")" || config_error "could not create a temporary directory"
-# STAGED_BASELINE is the --update replacement file, created NEXT TO the baseline
-# (below) so its rename into place is a same-filesystem rename(2). It is cleaned
-# up here because every abort between its creation and the rename must leave no
-# debris in a tracked directory.
 STAGED_BASELINE=""
-# cleanup re-exits with the status it interrupted: under errexit a failing rm
-# would otherwise replace the contract exit code (0/1/2) with its own.
 cleanup() {
   cleanup_status=$?
   rm -rf -- "$TMP" || :
@@ -276,8 +158,6 @@ cleanup() {
   exit "$cleanup_status"
 }
 trap cleanup EXIT
-# Not in update mode: it rewrites the worktree policy, and the settings that
-# name WHICH file it rewrites have to come from the same place.
 if [ "$STAGED" -eq 1 ] && [ "$MODE" != "update" ]; then
   SR_SETTINGS_FROM_INDEX=1
   SR_SETTINGS_INDEX_DIR="$TMP"
@@ -289,24 +169,9 @@ case "$THRESHOLD" in
   "" | *[!0-9]* | 0*[0-9] | 0) config_error "SIZE_RATCHET_THRESHOLD must be a positive integer, got '$THRESHOLD'" ;;
 esac
 
-# --- per-path-class thresholds: pattern=threshold[;pattern=threshold …] -----
-# Whitespace around an entry and around its `=` is trimmed; the LAST `=`
-# separates, so a pattern may contain one. An empty entry is skipped like a
-# blank excludes line — it can shift no threshold. Every other malformed
-# entry is a config error naming it: a mapping the parser cannot read must
-# never collapse into "this path takes the base threshold".
-#
-# A threshold carries its UNIT: a bare number counts lines, a `k` suffix
-# counts kibibytes. A re-wrap moves a line count on markdown and leaves the
-# byte count alone, so a line count on it measures the author's fill column;
-# bytes measure the document. The unit rides beside the number in
-# CLASS_UNITS (`l` or `b`) so every measurement, row and comparison
-# downstream knows what it is counting.
 CLASS_PATTERNS=()
 CLASS_THRESHOLDS=()
 CLASS_UNITS=()
-# The threshold as written (`250`, `24k`), kept so the verdict line can name
-# an entry exactly as its author typed it.
 CLASS_RAW=()
 CLASS_COUNT=0
 parse_classes() { # SETTING-NAME VALUE — appends entries
@@ -337,9 +202,6 @@ parse_classes() { # SETTING-NAME VALUE — appends entries
     case "$cpat" in
       *"$TAB"* | *"$NL"*) config_error "$name: entry '$pair' has a tab or newline in its pattern; the mapping is one line" ;;
     esac
-    # The unit comes off the threshold BEFORE the number is validated, so
-    # `24k` reads as 24 kibibytes while every other trailing character stays
-    # what it always was: a malformed threshold naming its own entry.
     cthr="$craw"
     cunit="l"
     case "$craw" in
@@ -360,9 +222,6 @@ parse_classes() { # SETTING-NAME VALUE — appends entries
   done
 }
 
-# A repo's own entries are matched FIRST, so it overrides a class without
-# restating the list; the shipped list decides everything it leaves alone.
-# Frozen paths invert that order — path_threshold is the rule.
 CLASSES="$(sr_setting SIZE_RATCHET_CLASSES "")" || exit 2
 parse_classes SIZE_RATCHET_CLASSES "$CLASSES"
 REPO_CLASS_COUNT="$CLASS_COUNT"
@@ -370,9 +229,6 @@ DEFAULT_CLASSES="$(sr_setting SIZE_RATCHET_DEFAULT_CLASSES "$SHIPPED_CLASSES")" 
 parse_classes SIZE_RATCHET_DEFAULT_CLASSES "$DEFAULT_CLASSES"
 SHIPPED_CLASS_COUNT=$((CLASS_COUNT - REPO_CLASS_COUNT))
 
-# A repo entry naming a pattern the shipped list already carries RESTATES that
-# class — the one way to say "this class, our number", and the only repo entry
-# path_threshold lets decide a frozen path.
 CLASS_RESTATED=()
 sr_ri=0
 while [ "$sr_ri" -lt "$REPO_CLASS_COUNT" ]; do
@@ -388,16 +244,9 @@ while [ "$sr_ri" -lt "$REPO_CLASS_COUNT" ]; do
   sr_ri=$((sr_ri + 1))
 done
 
-# What each repo entry actually did over the tracked set, stamped by
-# path_threshold and read back by the verdict line: DECIDED on at least one
-# path, YIELDED to a frozen class on at least one. An entry that yielded and
-# decided nothing governs nothing, and the run says so rather than printing it
-# as the mapping in force.
 CLASS_DECIDED=()
 CLASS_YIELDED=()
 
-# --- frozen classes: globs whose rows may never rise -------------------------
-# Same glob language as the classes and the exclusion list, no thresholds.
 FROZEN_PATTERNS=()
 FROZEN_COUNT=0
 FROZEN_CLASSES="$(sr_setting SIZE_RATCHET_FROZEN_CLASSES "$SHIPPED_FROZEN_CLASSES")" || exit 2
@@ -436,10 +285,6 @@ if [ "$EXCLUDES_SET" = "1" ]; then
 else
   EXCLUDES_FILE="$(sr_setting SIZE_RATCHET_EXCLUDES "tools/size-ratchet-excludes")" || exit 2
 fi
-# Lexically normalize configured paths (leading ./, internal ./ and ..
-# segments): git ls-files records canonical relative paths, and every
-# literal comparison against them must agree. Pure string surgery — no
-# symlink resolution, Bash 3.2-safe.
 normalize_rel_path() { # PATH -> normalized on stdout; nonzero if it escapes
   local input="$1" out="" seg rest
   rest="$input"
@@ -467,54 +312,20 @@ BASELINE_FILE="$(normalize_rel_path "$BASELINE_FILE")" || config_error "baseline
 EXCLUDES_FILE="$(normalize_rel_path "$EXCLUDES_FILE")" || config_error "excludes path escapes the repository or normalizes empty"
 [ -n "$BASELINE_FILE" ] || config_error "baseline path resolved empty"
 [ -n "$EXCLUDES_FILE" ] || config_error "excludes path resolved empty"
-# A path beginning with '-' would read as an option to the line utilities
-# that touch it — refuse it as configuration rather than trusting every
-# call site's `--` guard forever.
 case "$BASELINE_FILE" in -*) config_error "baseline path must not begin with '-': $BASELINE_FILE" ;; /*) config_error "baseline path must be repo-root-relative, got absolute: $BASELINE_FILE" ;; esac
 case "$EXCLUDES_FILE" in -*) config_error "excludes path must not begin with '-': $EXCLUDES_FILE" ;; /*) config_error "excludes path must be repo-root-relative, got absolute: $EXCLUDES_FILE" ;; esac
 
 
-# --- exclusion list: pattern<TAB>reason, reason mandatory --------------------
-# In staged mode the whole verdict must come from ONE commit snapshot, policy
-# included: an unstaged edit to a tracked exclusion list or baseline would
-# otherwise authorize staged growth the commit does not carry. A tracked
-# policy file is therefore read from the index; an untracked one is the
-# worktree copy either way.
-# 0 = the index copy governs; 1 = the worktree copy does; 2 = the commit
-# carries no such file (it is staged for deletion), which is not the same
-# thing as a never-tracked path whose worktree copy is all there is.
 staged_policy_state() { # PATH
   [ "$STAGED" -eq 1 ] || return 1
-  # --update REWRITES the worktree policy file, so it must read that copy or
-  # the rewrite would drop every unstaged hand-edit from it.
   [ "$MODE" != "update" ] || return 1
   read_index_file_mode "$1"
   [ -z "$INDEX_FILE_MODE" ] || return 0
-  # The HEAD leg goes through the classified probe: cat-file -e exits 128
-  # both for "HEAD carries no such path" and for an operational failure, so
-  # a bare probe here read a broken git as "never tracked" and let a
-  # recreated worktree policy govern the staged snapshot.
   read_head_file_mode "$1"
   [ -z "$HEAD_FILE_MODE" ] || return 2
   return 1
 }
 
-# Index presence is probed with `git ls-files`, not by comparing `git cat-file
-# -t` output to "blob". cat-file exits 128 BOTH for "not in the index" and for a
-# corrupt or unavailable object, so with its status discarded a broken object
-# read looked exactly like an untracked file and the gate fell through to an
-# empty baseline / zero exclusions and reported OK — the fail-open direction, in
-# which a stale row that should have failed the run simply vanishes. ls-files
-# answers from the index alone and exits 0 whether or not it matches, so a
-# nonzero status here is unambiguously a real failure, and the index MODE it
-# prints also tells us whether the entry is a regular file — which is what
-# cat-file's type check was for. `:(literal)` keeps a path carrying glob
-# metacharacters an exact match.
-#
-# Publishes through INDEX_FILE_MODE rather than stdout, and must be called as a
-# plain command: inside `$(...)` collection_error's `exit 2` would terminate only
-# the subshell, the caller would read an empty mode, and the fall-through to
-# "absent" this guard exists to remove would be right back.
 INDEX_FILE_MODE=""
 read_index_file_mode() { # PATH — sets INDEX_FILE_MODE ("" when untracked)
   local entry status=0
@@ -524,22 +335,15 @@ read_index_file_mode() { # PATH — sets INDEX_FILE_MODE ("" when untracked)
   [ -n "$entry" ] || INDEX_FILE_MODE=""
 }
 
-# The same probe against the COMMITTED tree, for the one state the index
-# cannot answer: a path whose DELETION is staged is gone from the index, so an
-# index-only look reads a committed file as "never there". `git ls-tree` reads
-# the named tree and exits 0 whether or not the path matches — printing the
-# entry only when it does — so, exactly as above, a nonzero status is a real
-# failure and never "not there". An UNBORN HEAD carries nothing by definition
-# (a repository before its first commit, which is where a bootstrap runs);
-# rev-parse reserves exit 1 for that, and any other status is a failure too.
-# Same call discipline as read_index_file_mode: a plain command, never `$(...)`.
 HEAD_FILE_MODE=""
+HEAD_EXISTS=0
 read_head_file_mode() { # PATH — sets HEAD_FILE_MODE ("" when HEAD carries no such path)
   local entry status=0 head_status=0
   HEAD_FILE_MODE=""
+  HEAD_EXISTS=0
   git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
   case "$head_status" in
-    0) ;;
+    0) HEAD_EXISTS=1 ;;
     1) return 0 ;;
     *) collection_error "could not resolve HEAD while probing for $1 (git rev-parse exit $head_status) — refusing to treat it as absent" ;;
   esac
@@ -559,8 +363,6 @@ read_policy_from_index() { # PATH — stages the index copy of the list at $TMP/
 }
 
 EXCLUDES_SOURCE="$EXCLUDES_FILE"
-# Diagnostics name the CONFIGURED path plus where it was read from, so a
-# malformed row in a partial tree still points at the file to fix.
 EXCLUDES_LABEL="$EXCLUDES_FILE"
 excludes_state=0
 staged_policy_state "$EXCLUDES_FILE" || excludes_state=$?
@@ -571,13 +373,6 @@ case "$excludes_state" in
     EXCLUDES_LABEL="$EXCLUDES_FILE (index copy)"
     ;;
   1)
-    # The worktree copy governs but is not materialized (fresh or sparse
-    # checkout): fall back to the tracked INDEX blob, mirroring the baseline's
-    # fallback below. Running with ZERO exclusions counted the vendored and
-    # generated files the tracked policy excludes and reported violations
-    # against them — "every tracked file minus the exclusion list" held only in
-    # its first half. The list is read-only here, so unlike the baseline there
-    # is no --update interaction to refuse.
     if [ ! -f "$EXCLUDES_FILE" ]; then
       read_index_file_mode "$EXCLUDES_FILE"
       if [ -n "$INDEX_FILE_MODE" ]; then
@@ -594,9 +389,6 @@ case "$excludes_state" in
 esac
 
 EXCLUDE_PATTERNS=()
-# The package's own exclusions come first, written in the list's own
-# `pattern<TAB>reason` shape so the justification is recorded exactly the way
-# a repo records one. A repo's list adds to these; it does not replace them.
 while IFS= read -r line; do
   [ -n "$line" ] || continue
   EXCLUDE_PATTERNS+=("${line%%"$TAB"*}")
@@ -604,8 +396,6 @@ done <<EOF
 $DEFAULT_EXCLUDES
 EOF
 if [ -f "$EXCLUDES_SOURCE" ]; then
-  # The read loop below redirects from this file; an unreadable one would kill
-  # the script on the redirect, with bash's status rather than the contract's.
   [ -r "$EXCLUDES_SOURCE" ] || config_error "$EXCLUDES_LABEL: exists but cannot be read"
   lineno=0
   while IFS= read -r line || [ -n "$line" ]; do
@@ -622,12 +412,8 @@ if [ -f "$EXCLUDES_SOURCE" ]; then
   done <"$EXCLUDES_SOURCE"
 fi
 
-# The one glob matcher: exclusion patterns and class patterns are the same
-# language, matched the same way, against the full repo-relative path.
 glob_match() { # PATH PATTERN — 0 when the glob matches the whole path
   local path="$1" pat="$2"
-  # $pat must expand unquoted to act as a glob, not a literal.
-  # shellcheck disable=SC2254
   case "$path" in
     $pat) return 0 ;;
   esac
@@ -636,35 +422,17 @@ glob_match() { # PATH PATTERN — 0 when the glob matches the whole path
 
 is_excluded() { # PATH — 0 when some exclusion glob matches the full path
   local pat
-  # Guarded expansion: an empty array is an unbound variable under Bash 3.2
-  # with set -u.
   for pat in ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"}; do
     glob_match "$1" "$pat" && return 0
   done
   return 1
 }
 
-# PT = the path's threshold, PU = the unit it counts (`l` lines, `b` bytes),
-# PC = the class pattern that decided it (empty for the base threshold).
-# Single resolver: collection stamps every counted row with PT and PU, and
-# report() re-runs it to name the threshold that judged the path — including
-# for a baseline row whose file left the tracked set.
-#
-# A repo entry is matched first, EXCEPT on a frozen path: the skip below is
-# there so a directory-scoped entry cannot retitle a shipped class for paths
-# the repo never named. The rule and its two exits are stated once, in
-# README.md "Path classes"; each exit is a branch below.
 path_threshold() { # PATH
   local i=0 frozen="" shadowed="" skipped="" hit="" s
-  # Indexed iteration bounded by CLASS_COUNT: a whole-array expansion on an
-  # empty array is an unbound variable under Bash 3.2 with set -u.
   while [ "$i" -lt "$CLASS_COUNT" ]; do
     if glob_match "$1" "${CLASS_PATTERNS[$i]}"; then
-      # Exit one: an entry restating a shipped pattern is the repo naming the
-      # class it means to move, so it is no shadow and is never skipped.
       if [ "$i" -lt "$REPO_CLASS_COUNT" ] && [ "${CLASS_RESTATED[$i]:-0}" != "1" ]; then
-        # The freeze list is a second glob sweep, so it is asked once per path
-        # and only for a repo entry that actually matched.
         if [ -z "$frozen" ]; then
           if is_frozen "$1"; then frozen="y"; else frozen="n"; fi
         fi
@@ -680,18 +448,11 @@ path_threshold() { # PATH
     fi
     i=$((i + 1))
   done
-  # Exit two: where the shipped list names no class for the frozen path, the
-  # first entry the skip passed over stands after all — the base threshold is
-  # a number nobody wrote for that path.
   [ -n "$hit" ] || hit="$shadowed"
-  # An entry the skip passed over LOST this path, unless that fallback just
-  # handed the same path back to it. The verdict line reports both.
   for s in $skipped; do
     if [ "$s" = "$hit" ]; then CLASS_DECIDED[$s]=1; else CLASS_YIELDED[$s]=1; fi
   done
   if [ -z "$hit" ]; then
-    # SIZE_RATCHET_THRESHOLD is a line count: code is what falls through to
-    # it, and lines are what every linter caps code by.
     PT="$THRESHOLD"
     PU="l"
     PC=""
@@ -712,8 +473,6 @@ is_frozen() { # PATH — 0 when a frozen-class glob matches the full path
   return 1
 }
 
-# The noun a diagnostic uses for a unit, so every message names what it
-# counted rather than assuming lines. Plurals append the `s`.
 unit_noun() { # UNIT
   case "$1" in
     b) printf 'byte' ;;
@@ -721,9 +480,6 @@ unit_noun() { # UNIT
   esac
 }
 
-# A baseline row's number carries its unit as a `b` suffix; every comparison
-# is between plain integers, so the two are split apart on the way in and put
-# back together on the way out.
 row_value() { # ROW-VALUE — the integer alone
   printf '%s' "${1%b}"
 }
@@ -735,23 +491,12 @@ format_row() { # SIZE UNIT — the baseline row's number
   esac
 }
 
-# --- baseline: path<TAB>size, LC_ALL=C sorted, unique paths ------------------
-# The same hygiene holds wherever the rows came from. MODE says what a bad row
-# MEANS: `fatal` for the copy that GOVERNS the verdict — reviewed input, so it
-# fails loud — and `soft` for a copy the run only wants to REWRITE, which
-# returns nonzero and leaves the caller to skip the rewrite. SUGGEST names the
-# file a fix command would operate on, and is empty for a copy the caller has
-# no path to hand back.
-# What a baseline row looks like, in one place: this validator and the moved
-# baseline check below both ask the question and must not answer it apart.
 BASELINE_ROW_RE="^[^${TAB}]+${TAB}[1-9][0-9]*b?\$"
 validate_baseline_rows() { # MODE FILE LABEL [SUGGEST]
   local mode="$1" file="$2" label="$3" suggest="${4:-}" grep_status=0 bad_rows dup_paths hint="" fault=""
   bad_rows="$(grep -nEv -- "$BASELINE_ROW_RE" "$file")" || grep_status=$?
   [ "$grep_status" -le 1 ] || collection_error "could not validate $label (grep exit $grep_status)"
   [ -z "$suggest" ] || hint=" (LC_ALL=C sort -o $suggest $suggest)"
-  # One fault decided in one place, so a soft caller cannot inherit an arm
-  # that forgot to speak. The listing an arm has goes to stderr on the way.
   if [ -n "$bad_rows" ]; then
     printf '%s\n' "$bad_rows" >&2
     fault="malformed row(s) above (expected 'path<TAB>size' with a positive count, suffixed 'b' when the class counts bytes)"
@@ -765,10 +510,6 @@ validate_baseline_rows() { # MODE FILE LABEL [SUGGEST]
     fi
   fi
   [ -n "$fault" ] || return 0
-  # Soft mode is a rewrite source, not a gate, so a fault there is a SKIP —
-  # said out loud. A rewrite that silently does not happen leaves the commit
-  # failing on the verdict the rewrite existed to resolve, and pointing the
-  # developer at a remedy that operates on the file that just refused.
   [ "$mode" = "fatal" ] || {
     echo "size-ratchet: $label: $fault" >&2
     echo "size-ratchet: the worktree copy cannot be rewritten, so the --staged rewrite is skipped and the verdict comes from the index copy" >&2
@@ -781,11 +522,8 @@ BASELINE_FROM_INDEX=0
 baseline_state=0
 staged_policy_state "$BASELINE_FILE" || baseline_state=$?
 if [ "$baseline_state" -eq 2 ]; then
-  # Staged for deletion: the commit freezes nothing, so nothing is frozen.
   : >"$TMP/baseline.tsv" || collection_error "could not initialize the empty baseline scratch file"
 elif [ "$baseline_state" -eq 1 ] && [ -f "$BASELINE_FILE" ]; then
-  # grep exit 1 = every row well-formed; exit >= 2 = the validation itself
-  # broke, which must never read as a clean baseline.
   validate_baseline_rows fatal "$BASELINE_FILE" "$BASELINE_FILE" "$BASELINE_FILE"
   cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not stage a working copy of $BASELINE_FILE"
 elif read_index_file_mode "$BASELINE_FILE"; [ -n "$INDEX_FILE_MODE" ]; then
@@ -793,44 +531,16 @@ elif read_index_file_mode "$BASELINE_FILE"; [ -n "$INDEX_FILE_MODE" ]; then
     100*) ;;
     *) config_error "$BASELINE_FILE is tracked but is not a regular file in the index (mode $INDEX_FILE_MODE); it cannot be read as a baseline" ;;
   esac
-  # Staged mode, or a sparse checkout where the accepted baseline is tracked
-  # but not materialized: read it from the index rather than degrading to an
-  # empty baseline (which would report every frozen offender as new). Full
-  # hygiene applies: an index baseline must satisfy exactly what a
-  # materialized one must.
-  # The flag means "no worktree copy to rewrite", which is what --update
-  # needs to know; staged mode reads the index with the file present too.
   [ -f "$BASELINE_FILE" ] || BASELINE_FROM_INDEX=1
-  # The presence probe above already proved the index entry exists, so a
-  # failing read here is runtime (I/O, corrupt object) — never config.
   git show ":$BASELINE_FILE" >"$TMP/baseline.tsv" || collection_error "failed to read tracked baseline from the index: $BASELINE_FILE"
   validate_baseline_rows fatal "$TMP/baseline.tsv" "$BASELINE_FILE (index copy)"
 else
   : >"$TMP/baseline.tsv" || collection_error "could not initialize the empty baseline scratch file"
 fi
 
-# --- count every tracked, non-excluded, regular file -------------------------
-# -s carries the index MODE per entry: 120000 = tracked symlink (skip),
-# 160000 = submodule gitlink (never countable; a baseline row for one is
-# stale), 100xxx = regular file. The worktree state (shadowing symlink or
-# directory, sparse absence) never decides what a path IS — the index does.
 git ls-files -sz >"$TMP/files.z" || config_error "git ls-files failed"
 checked=0
 : >"$TMP/counts.raw" || collection_error "could not initialize the counts scratch file"
-# Worktree reads are batched: one `wc` invocation per bounded group of
-# files instead of one per file (a large repo materializes thousands).
-# wc emits its counts in argument order, so every output row is matched to
-# its input BY POSITION — which also places the `total` row a multi-file
-# invocation appends past the last input, where it is never read as a count.
-# A nonzero status, a short read, a non-numeric count or any positional
-# mismatch discards the whole batch (a partial batch is not a measurement)
-# and re-measures it one file at a time, so an unreadable or vanished file
-# still fails loud naming THAT file.
-#
-# One pending batch per UNIT, because one wc invocation counts one thing:
-# a repo interleaves markdown and code all through `git ls-files`, so
-# flushing on every unit change would degrade the batching back to a call
-# per file.
 BATCH_MAX_FILES=256
 BATCH_MAX_CHARS=60000 # ARG_MAX headroom for the assembled command line
 WT_BATCH=()
@@ -866,12 +576,6 @@ flush_batch() { # UNIT — appends one "<path><TAB><count>" row per pending file
   [ "${#WT_BATCH[@]}" -gt 0 ] || return 0
   : >"$TMP/batch.tsv" || collection_error "could not initialize the batch scratch file"
   wc "$wcflag" -- "${WT_BATCH[@]}" >"$TMP/wc.out" || status=$?
-  # A multi-file invocation appends exactly one summary row and a
-  # single-file one appends none, so the whole output is accounted for:
-  # rows past the last input are counted, never parsed. Without that count
-  # a batch whose LAST row went missing would slide its summary into the
-  # final input's slot — and for an input named `total` the slot would even
-  # match, banking the batch sum as that file's size.
   if [ "${#WT_BATCH[@]}" -gt 1 ]; then want_extra=1; fi
   if [ "$status" -eq 0 ]; then
     while IFS= read -r line; do
@@ -879,9 +583,6 @@ flush_batch() { # UNIT — appends one "<path><TAB><count>" row per pending file
         extra=$((extra + 1))
         continue
       fi
-      # wc pads counts with leading blanks (BSD wc does); one space then
-      # separates the count from the path, which may hold spaces but never
-      # a newline or tab (both refused above).
       line="${line#"${line%%[![:space:]]*}"}"
       count="${line%% *}"
       path="${line#* }"
@@ -899,9 +600,6 @@ flush_batch() { # UNIT — appends one "<path><TAB><count>" row per pending file
   fi
   : >"$TMP/batch.tsv" || collection_error "could not initialize the batch scratch file"
   for f in "${WT_BATCH[@]}"; do
-    # Same contract as the index path: a worktree file that exists but
-    # cannot be read (permissions, I/O error) is a collection failure with
-    # its own diagnostic — not a bare set -e death mid-loop.
     n="$(wc "$wcflag" <"$f")" || collection_error "cannot read tracked file '$f' — its size is unmeasurable, refusing to skip it"
     n="${n#"${n%%[![:space:]]*}"}" # strip wc's leading whitespace (BSD wc pads)
     case "$n" in
@@ -914,13 +612,9 @@ flush_batch() { # UNIT — appends one "<path><TAB><count>" row per pending file
 }
 
 while IFS= read -r -d '' rec; do
-  # Record shape: "<mode> <sha> <stage>\t<path>".
   mode="${rec%% *}"
   f="${rec#*"$TAB"}"
   is_excluded "$f" && continue
-  # Every record downstream (counts, baseline) is line- and
-  # tab-oriented; a path carrying either separator would silently split into
-  # garbage rows. Refuse loudly — excluding the path is the escape hatch.
   case "$f" in
     *"$NL"*) config_error "tracked path contains a newline, unrepresentable in line-oriented records (exclude it to skip the gate): '$f'" ;;
     *"$TAB"*) config_error "tracked path contains a tab, unrepresentable in the baseline TSV (exclude it to skip the gate): '$f'" ;;
@@ -928,27 +622,10 @@ while IFS= read -r -d '' rec; do
   case "$mode" in
     120000) continue ;; # tracked symlink — no meaningful size
     160000) continue ;; # submodule gitlink — never countable; a baseline
-                        # row for one reads as gone/stale, not absent
   esac
-  # The class decides WHAT is counted, so it is resolved before the file is
-  # measured rather than stamped on afterwards.
   path_threshold "$f"
   if [ "$PU" = "b" ]; then wcflag="-c"; else wcflag="-l"; fi
   if [ "$STAGED" -eq 1 ] || [ ! -f "$f" ] || [ -h "$f" ]; then
-    # --staged always lands here: what the commit records is the blob, and a
-    # worktree copy reverted after `git add` would otherwise hide staged
-    # growth from the gate entirely.
-    #
-    # Otherwise: the index says regular file but the worktree disagrees
-    # (unstaged deletion, sparse checkout, or a shadowing symlink/directory).
-    # Either way, count the INDEX blob so the "every tracked file" contract holds — a sparse
-    # tree cannot smuggle a new offender past the gate, and baselined rows
-    # evaluate against real content. An unshowable blob (corrupt object,
-    # promisor blob unavailable offline) is a collection failure: its size
-    # is unknown, so skipping it would let an over-threshold file pass —
-    # refuse loudly instead. pipefail (set at the top) is load-bearing
-    # here: it surfaces git's failure through the pipeline's status, and
-    # git's own stderr flows straight through as the diagnostic.
     if ! n="$(git show ":$f" | wc "$wcflag")"; then
       collection_error "cannot read index blob for tracked file '$f' — its size is unmeasurable, refusing to skip it"
     fi
@@ -974,14 +651,8 @@ while IFS= read -r -d '' rec; do
 done <"$TMP/files.z"
 flush_batch l
 flush_batch b
-# Every selected file must have produced exactly one count row. A shortfall
-# means part of the tracked set went unmeasured, and an unmeasured file can
-# hide an offender — refuse rather than report a verdict over a subset.
 counted="$(count_nonempty_lines "$TMP/counts.raw")"
 [ "$counted" -eq "$checked" ] || collection_error "counted $counted of the $checked tracked file(s) selected for measurement — the collection is incomplete, refusing to report a verdict"
-# Stamp each measured row with the threshold and unit its path class carries.
-# A pass over the rows, not a step inside collection: counting is batched and
-# the batch writer knows nothing about classes.
 : >"$TMP/counts.classed" || collection_error "could not initialize the classified-counts scratch file"
 while IFS="$TAB" read -r cf cn; do
   path_threshold "$cf"
@@ -991,26 +662,10 @@ classed="$(count_nonempty_lines "$TMP/counts.classed")"
 [ "$classed" -eq "$counted" ] || collection_error "classified $classed of the $counted measured row(s) — refusing to report a verdict over a subset"
 LC_ALL=C sort -- "$TMP/counts.classed" >"$TMP/counts.tsv" || collection_error "could not sort the collected counts — the measurement is incomplete, refusing to report a verdict"
 
-# The verdict line reports the mapping the run actually USED, which is why it
-# is built here and not at parse time: the pass above put every tracked path
-# through the resolver, so each repo entry now knows whether it decided one.
-# An entry that decided none governs nothing, and a run that printed it as the
-# mapping in force would advertise a threshold no file was ever judged
-# against — a clean run saying something false. The raw setting's spacing and
-# empty entries stay out: they
-# read as behavior the matcher never sees. The shipped list is a count, not a
-# transcript — it is the same everywhere, and the per-file diagnostics already
-# name the class that decided each path.
 CLASSES_NOTE=""
 sr_ni=0
 while [ "$sr_ni" -lt "$REPO_CLASS_COUNT" ]; do
   sr_entry="${CLASS_PATTERNS[$sr_ni]}=${CLASS_RAW[$sr_ni]}"
-  # DECIDED is the predicate, so the bare rendering is unreachable for an
-  # entry that governed nothing. WHY it governed nothing is not said: a
-  # pattern matching nothing and a pattern an earlier entry already claimed
-  # arrive here alike and no state tells those two apart. An entry the frozen
-  # skip passed over does carry its own state, and reads the same here anyway,
-  # because one reason is enough once the entry governed nothing at all.
   if [ "${CLASS_DECIDED[$sr_ni]:-0}" != "1" ]; then
     sr_entry="$sr_entry (governed nothing: decided no counted path)"
   elif [ "${CLASS_YIELDED[$sr_ni]:-0}" = "1" ]; then
@@ -1022,16 +677,6 @@ done
 [ -z "$CLASSES_NOTE" ] || CLASSES_NOTE=", classes $CLASSES_NOTE"
 [ "$SHIPPED_CLASS_COUNT" -eq 0 ] || CLASSES_NOTE="$CLASSES_NOTE, $SHIPPED_CLASS_COUNT shipped class(es)"
 
-# --- evaluate a baseline against the counts ----------------------------------
-# Counts rows are `path<TAB>size<TAB>threshold<TAB>unit` — the class resolver
-# already ran at collection, so every judgment here reads the path's own
-# threshold and the unit it is expressed in. Violation rows stay
-# `KIND<TAB>path<TAB>size<TAB>baseline-row`, with "-" wherever no row
-# applies; report() names the threshold itself.
-#
-# A row's own unit rides in its `b` suffix. Comparing across units would
-# read 1099 lines as 1099 bytes, so a row whose unit no longer matches its
-# class is reported as one to RE-MEASURE and never as growth or slack.
 evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separated
   awk -F'\t' -v OFS='\t' -v basefile="$1" '
     function rowunit(v) { return (v ~ /b$/) ? "b" : "l" }
@@ -1046,8 +691,6 @@ evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separate
         else if (n > b)                            print "GROW",  p, n, base[p]
         else if (n < b)                            print "LOOSE", p, n, base[p]
       } else if (p in base) {
-        # A row for a file at/under its threshold has to go whatever unit it
-        # is written in, so it reads as stale rather than as a unit to fix.
         print "STALE", p, n, base[p]
       }
     }
@@ -1055,22 +698,12 @@ evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separate
       for (i = 1; i <= bn; i++) {
         p = border[i]
         if (p in seen) continue
-        # "-" placeholder, never an empty field: report() reads these rows
-        # with tab-IFS, and whitespace IFS collapses consecutive tabs, which
-        # would shift the baseline count into the wrong column.
         print "GONE", p, "-", base[p]
       }
     }
   ' "$1" "$TMP/counts.tsv"
 }
 
-# Does HEAD's baseline carry a row for this path? One predicate decides every
-# size remedy, so no verdict label can be paired with the wrong one: a path
-# HEAD does not carry has no row to raise, so the declaration admits a first
-# one in every class, frozen included; a path HEAD carries is a RAISE, which a
-# frozen class refuses whatever the declaration says. Reading the label instead
-# misdirects in both directions — a genuine bootstrap told no declaration helps,
-# and a deleted row told to bootstrap a row HEAD still carries.
 head_carries_row() { # PATH
   [ -n "$HEAD_BASELINE" ] || return 1
   local p n
@@ -1085,9 +718,6 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
   while IFS="$TAB" read -r kind path n raw; do
     path_threshold "$path"; if [ -n "$PC" ]; then why="class $PC"; else why="default"; fi
     unit="$(unit_noun "$PU")s"
-    # Every number in a diagnostic is spoken in the unit the line names, so
-    # the row's `b` suffix comes off — except in the wrong-unit verdict,
-    # where the suffix IS the finding.
     b="$(row_value "$raw")"
     if ! head_carries_row "$path"; then
       remedy="split at a concept seam, or declare the row with RATCHET_RAISE=1 — a first row for a path HEAD's baseline does not carry is a bootstrap, admitted in every class"
@@ -1133,404 +763,105 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
         echo "size-ratchet FAIL frozen baseline row raised: $path — row $b -> $n $unit, threshold $PT ($why); a frozen class refuses a raise whatever RATCHET_RAISE says"
         echo "  remedy: $remedy"
         ;;
-      MOVED)
-        echo "size-ratchet FAIL baseline moved and rewritten: $path -> $BASELINE_FILE — HEAD's rows left $path, and the rows arriving at $BASELINE_FILE are not them; across a move nothing compares them, so a raise would land unjudged"
-        echo "  remedy: move the baseline in a commit that changes nothing else, then change its rows in the next one"
-        ;;
-      REPOINTED)
-        echo "size-ratchet FAIL baseline repointed and rewritten: $path — this change moves the setting to $path, and nothing establishes that the rows arriving there are the row set HEAD was judged against; across the repoint nothing compares them, so a raise would land unjudged"
-        echo "  remedy: repoint the baseline in a commit that changes nothing else, then change its rows in the next one"
+      RELOCATED)
+        echo "size-ratchet FAIL baseline has rows but HEAD has none at $BASELINE_FILE — a relocated baseline would leave its rows unjudged"
+        echo "  remedy: land the relocated baseline in a change that touches nothing else and run with RATCHET_RAISE=1"
         ;;
     esac
   done <"$1"
 }
 
-# --- the tighten-only rewrite ------------------------------------------------
-# Shared by --update and by --staged, which runs it itself so a commit that
-# shrinks a limited file passes on the first attempt. Input is
-# $TMP/baseline.tsv; the rewritten file lands at $BASELINE_FILE, is read back
-# into $TMP/baseline.tsv, and $TMP/counts.tsv gets the baseline's own new
-# size. BASELINE_REWRITTEN says whether the file on disk actually changed.
-measure_file() { # FILE UNIT DIAG — the size on stdout; DIAG is the whole
-                 # diagnostic when the file cannot be measured
-  local n
-  case "$2" in
-    b) n="$(wc -c <"$1")" || collection_error "$3" ;;
-    *) n="$(wc -l <"$1")" || collection_error "$3" ;;
-  esac
-  n="${n#"${n%%[![:space:]]*}"}"
-  case "$n" in
-    "" | *[!0-9]*) collection_error "$3 (the count came back as '$n', not a number)" ;;
-  esac
-  printf '%s\n' "$n"
-}
-
-# The row the candidate carries for the baseline's own path ("" when none).
-self_row_of() { # CANDIDATE-FILE
-  BASELINE_PATH="$BASELINE_FILE" awk -F'\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"] } $1 == p { print $2 }' "$1" \
-    || collection_error "could not read the baseline's own row from the candidate — update aborted, baseline unchanged"
-}
-
-BASELINE_REWRITTEN=0
-tighten_baseline() { # LABEL — the mode name the messages speak as
-  local label="$1" self_unit self_thr self_row_before self_row_after self_n self_pass rows new_n found baseline_dir
+tighten_baseline() { # LABEL
+  local label="$1" rows baseline_dir
   BASELINE_REWRITTEN=0
   awk -F'\t' -v OFS='\t' -v basefile="$TMP/baseline.tsv" '
     function rowunit(v) { return (v ~ /b$/) ? "b" : "l" }
     function rowsize(v) { sub(/b$/, "", v); return v + 0 }
     function fmt(n, u) { return (u == "b") ? n "b" : n "" }
     function word(u) { return (u == "b") ? "bytes" : "lines" }
-    FILENAME == basefile { base[$1] = $2; border[++bn] = $1; next }
-    { act[$1] = $2 + 0; thr[$1] = $3 + 0; un[$1] = $4 }
+    FILENAME == basefile { base[$1] = $2; order[++count] = $1; next }
+    { actual[$1] = $2 + 0; threshold[$1] = $3 + 0; unit[$1] = $4 }
     END {
-      for (i = 1; i <= bn; i++) {
-        p = border[i]; b = base[p]
-        if (!(p in act) || act[p] <= thr[p]) {
-          printf "removed: %s (row %s)\n", p, b > "/dev/stderr"
+      for (i = 1; i <= count; i++) {
+        path = order[i]; row = base[path]
+        if (!(path in actual) || actual[path] <= threshold[path]) {
+          printf "removed: %s (row %s)\n", path, row > "/dev/stderr"
           continue
         }
-        # A row whose unit no longer matches its class records a different
-        # quantity, so it is RE-MEASURED rather than compared: comparing
-        # would read a line count as a byte count and call the change growth.
-        if (rowunit(b) != un[p]) {
-          printf "re-measured (the class counts %s now): %s %s -> %s\n", word(un[p]), p, b, fmt(act[p], un[p]) > "/dev/stderr"
-          print p, fmt(act[p], un[p])
+        if (rowunit(row) != unit[path]) {
+          printf "re-measured (the class counts %s now): %s %s -> %s\n", word(unit[path]), path, row, fmt(actual[path], unit[path]) > "/dev/stderr"
+          print path, fmt(actual[path], unit[path])
           continue
         }
-        bv = rowsize(b)
-        if (act[p] < bv) {
-          printf "tightened: %s %s -> %s\n", p, b, fmt(act[p], un[p]) > "/dev/stderr"
-          print p, fmt(act[p], un[p])
-        } else {
-          if (act[p] > bv) printf "kept (grew %s > %s — growth is a hand-edit, never --update): %s\n", fmt(act[p], un[p]), b, p > "/dev/stderr"
-          print p, b
-        }
+        size = rowsize(row)
+        if (actual[path] < size) printf "tightened: %s %s -> %s\n", path, row, fmt(actual[path], unit[path]) > "/dev/stderr"
+        else if (actual[path] > size) printf "kept (grew %s > %s — growth is a hand-edit, never --update): %s\n", fmt(actual[path], unit[path]), row, path > "/dev/stderr"
+        print path, fmt(actual[path] < size ? actual[path] : size, unit[path])
       }
     }
-  ' "$TMP/baseline.tsv" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new" || collection_error "could not build the tightened baseline — $label aborted, baseline unchanged"
-  if [ "$BASELINE_FROM_INDEX" = "1" ]; then
-    # printf %q shell-escapes the configured path so the suggested command
-    # survives copy-paste. update-index/checkout-index take literal file
-    # paths — no sparse-pattern or pathspec-glob semantics in either cone
-    # or non-cone mode, unlike `sparse-checkout add` (whose operands are
-    # patterns) — so the command works for any valid path: dash-leading,
-    # spaces, glob metacharacters, root-level.
-    BASELINE_QUOTED="$(printf '%q' "$BASELINE_FILE")"
-    config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -- $BASELINE_QUOTED, then rerun (a later git sparse-checkout reapply re-hides it; checkout-index without -f refuses to overwrite anything unexpectedly occupying the path)"
-  fi
-  if [ -f "$BASELINE_FILE" ]; then
-    # Reconcile the baseline's OWN row against the file it is about to become.
-    # The pipeline above wrote that row from the PRE-update counts, so once
-    # other rows were pruned the row disagreed with the file's new length and
-    # the very next check failed — --update contradicting its own one-run
-    # tightening guarantee, and logging "tightened: 50 -> 2" for a file that
-    # ended up 1 line long. The deciding threshold is the baseline path's own
-    # class, not the base one.
-    #
-    # A LINE row settles in one pass: editing a value in place cannot change a
-    # file's line count. A BYTE row does not — rewriting the number changes
-    # the very length it records — so the pass repeats to a fixed point, and a
-    # candidate that will not settle fails loud rather than being written out
-    # to fail its own check.
-    path_threshold "$BASELINE_FILE"
-    self_unit="$PU"
-    self_thr="$PT"
-    self_row_before="$(self_row_of "$TMP/baseline.new")"
-    self_pass=0
-    while :; do
-      self_n="$(measure_file "$TMP/baseline.new" "$self_unit" "could not measure the candidate baseline for its own row — $label aborted, baseline unchanged")"
-      BASELINE_PATH="$BASELINE_FILE" SELF_N="$self_n" SELF_THR="$self_thr" SELF_UNIT="$self_unit" awk -F'\t' -v OFS='\t' '
-        BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["SELF_N"] + 0; thr = ENVIRON["SELF_THR"] + 0; u = ENVIRON["SELF_UNIT"] }
-        $1 != p { print; next }
-        {
-          if (n <= thr) next
-          cur = $2
-          curu = (cur ~ /b$/) ? "b" : "l"
-          sub(/b$/, "", cur)
-          v = (curu != u) ? n : (cur + 0 > n ? n : cur + 0)   # re-measure, else tighten only
-          print p, (u == "b" ? v "b" : v "")
-        }
-      ' "$TMP/baseline.new" >"$TMP/baseline.self" || collection_error "could not reconcile the baseline's own row — $label aborted, baseline unchanged"
-      if cmp -s -- "$TMP/baseline.new" "$TMP/baseline.self"; then
-        rm -f -- "$TMP/baseline.self"
-        break
-      fi
-      mv "$TMP/baseline.self" "$TMP/baseline.new" || collection_error "could not stage the reconciled baseline — $label aborted, baseline unchanged"
-      self_pass=$((self_pass + 1))
-      [ "$self_pass" -lt 16 ] || collection_error "the baseline's own row will not settle against its own size after $self_pass passes — $label aborted, baseline unchanged"
-    done
-    # The pipeline above already logged this row from the PRE-update counts,
-    # so its verdict is restated here rather than left contradicting reality.
-    self_row_after="$(self_row_of "$TMP/baseline.new")"
-    if [ "$self_row_before" != "$self_row_after" ]; then
-      if [ -z "$self_row_after" ]; then
-        echo "removed (the baseline's own row: it is now $self_n $(unit_noun "$self_unit")(s), at/under threshold $self_thr): $BASELINE_FILE" >&2
-      else
-        echo "re-tightened (the baseline's own row against its new size): $BASELINE_FILE $self_row_before -> $self_row_after" >&2
-      fi
-    fi
-    # Every check and recount that can fail runs against the candidate
-    # BEFORE it replaces the real baseline, so any collection failure
-    # aborts the update with the reviewed baseline byte-identical — and
-    # exits 2 per the contract, never a tool's raw status. The atomic
-    # replace is the very last step.
-    rows="$(count_nonempty_lines "$TMP/baseline.new")"
-    # Nothing to write when the rewrite reproduces the file byte for byte:
-    # a no-op replace would still be a worktree write, and in --staged it
-    # would stage a file the commit has no reason to carry.
-    if cmp -s -- "$TMP/baseline.new" "$BASELINE_FILE"; then
-      [ "$label" != "--update" ] || echo "size-ratchet --update: baseline already tight at $BASELINE_FILE ($rows row(s))"
-      return 0
-    fi
-    BASELINE_REWRITTEN=1
-    # The baseline file is itself a tracked file whose length is about to
-    # change; refresh its counts row from the candidate (identical to the
-    # post-replace content) so the post-update verdict sees reality, not
-    # the pre-rewrite length.
-    # Literal path match (awk string equality, never a grep regex): a
-    # baseline path with regex-significant characters must still recount.
-    # awk reserves no exit code for "row not found" the way grep reserves
-    # 1 for "no match", so a manufactured status would collide with a real
-    # awk execution failure returning the same number. The verdict travels
-    # on stdout instead: every nonzero awk status — and any output other
-    # than the two expected words — is a collection error.
-    found="$(BASELINE_PATH="$BASELINE_FILE" awk -F'\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"] } $1 == p { f = 1 } END { print f ? "yes" : "no" }' "$TMP/counts.tsv")" || collection_error "could not scan the counts for $BASELINE_FILE (awk failed) — $label aborted, baseline unchanged"
-    case "$found" in
-      yes | no) ;;
-      *) collection_error "counts scan for $BASELINE_FILE produced unexpected output '$found' — $label aborted, baseline unchanged" ;;
-    esac
-    if [ "$found" = "yes" ]; then
-      new_n="$(measure_file "$TMP/baseline.new" "$self_unit" "could not recount the updated baseline $BASELINE_FILE — $label aborted, baseline unchanged")"
-      BASELINE_PATH="$BASELINE_FILE" NEW_N="$new_n" awk -F'\t' -v OFS='\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["NEW_N"] } $1 == p { print p, n, $3, $4; next } { print }' "$TMP/counts.tsv" >"$TMP/counts.rewrite" || collection_error "could not rewrite the counts row for $BASELINE_FILE — $label aborted, baseline unchanged"
-      mv "$TMP/counts.rewrite" "$TMP/counts.tsv" || collection_error "could not stage the refreshed counts — $label aborted, baseline unchanged"
-    fi
-    # The replacement is staged NEXT TO the baseline, not in $TMP. `mktemp -d`
-    # honours TMPDIR, so on the common layout where /tmp is a separate
-    # filesystem from the checkout, `mv` could not rename and fell back to
-    # copy-then-remove — an interruption mid-copy left the tracked baseline
-    # truncated or missing, defeating the atomic-replace intent stated above. A
-    # sibling temp is on the destination's own filesystem by construction, so
-    # the final step is a real rename(2).
-    case "$BASELINE_FILE" in
-      */*) baseline_dir="${BASELINE_FILE%/*}" ;;
-      *) baseline_dir=. ;;
-    esac
-    STAGED_BASELINE="$(mktemp -- "$baseline_dir/.size-ratchet-baseline.XXXXXX")" || collection_error "could not create a staging file beside $BASELINE_FILE — $label aborted, baseline unchanged"
-    # rename(2) carries the SOURCE file's mode, and mktemp creates at 0600 — so
-    # without this the replace would silently narrow a world-readable tracked
-    # file. 0666 masked by the umask is exactly the mode the plain shell
-    # redirect that writes $TMP/baseline.new produces.
-    #
-    # `--` goes BEFORE the mode, not after it. BSD/macOS chmod parses options
-    # with getopt(3), which stops at the first non-option argument — the mode —
-    # so a trailing `--` is read as a literal filename and chmod fails on the
-    # nonexistent file `--`, aborting every --update on macOS. GNU chmod
-    # permutes and accepts either order, which is why the mistake survives a
-    # Linux-only run.
-    chmod -- "$(printf '%03o' "$((0666 & ~8#$(umask)))")" "$STAGED_BASELINE" || collection_error "could not set the staging file's mode beside $BASELINE_FILE — $label aborted, baseline unchanged"
-    cat -- "$TMP/baseline.new" >"$STAGED_BASELINE" || collection_error "could not write the staged baseline beside $BASELINE_FILE — $label aborted, baseline unchanged"
-    # The replace and the re-read carry the contract too, with honest
-    # sidedness: mv failing means the original may not have been replaced
-    # cleanly — inspect it; cp failing AFTER a successful mv means the
-    # baseline on disk WAS replaced and only the re-read for the
-    # post-update check is missing.
-    mv -- "$STAGED_BASELINE" "$BASELINE_FILE" || collection_error "could not replace the baseline at $BASELINE_FILE (mv failed) — inspect the file before trusting it"
-    STAGED_BASELINE="" # renamed away; nothing left for the EXIT trap to remove
-    cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not re-read the replaced baseline at $BASELINE_FILE (cp failed) — the baseline WAS replaced; rerun size-ratchet to verify it"
-    echo "size-ratchet $label: baseline tightened at $BASELINE_FILE ($rows row(s))"
-  else
-    # No baseline exists and the rewrite never adds rows, so there is nothing
-    # to write; fall through to the plain check.
+  ' "$TMP/baseline.tsv" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new" \
+    || collection_error "could not build the tightened baseline — $label aborted, baseline unchanged"
+  [ "$BASELINE_FROM_INDEX" != "1" ] || config_error "$label cannot rewrite an index-only baseline; materialize $BASELINE_FILE first"
+  [ -f "$BASELINE_FILE" ] || {
     echo "size-ratchet $label: no baseline at $BASELINE_FILE and $label never adds rows; nothing written"
+    return 0
+  }
+  rows="$(count_nonempty_lines "$TMP/baseline.new")"
+  if cmp -s -- "$TMP/baseline.new" "$BASELINE_FILE"; then
+    [ "$label" != "--update" ] || echo "size-ratchet --update: baseline already tight at $BASELINE_FILE ($rows row(s))"
+    return 0
   fi
+  BASELINE_REWRITTEN=1
+  case "$BASELINE_FILE" in
+    */*) baseline_dir="${BASELINE_FILE%/*}" ;;
+    *) baseline_dir=. ;;
+  esac
+  STAGED_BASELINE="$(mktemp -- "$baseline_dir/.size-ratchet-baseline.XXXXXX")" \
+    || collection_error "could not create a staging file beside $BASELINE_FILE — $label aborted, baseline unchanged"
+  chmod -- "$(printf '%03o' "$((0666 & ~8#$(umask)))")" "$STAGED_BASELINE" \
+    || collection_error "could not set the staging file mode — $label aborted, baseline unchanged"
+  cp -- "$TMP/baseline.new" "$STAGED_BASELINE" \
+    || collection_error "could not write the staged baseline — $label aborted, baseline unchanged"
+  mv -- "$STAGED_BASELINE" "$BASELINE_FILE" \
+    || collection_error "could not replace $BASELINE_FILE — inspect it before trusting it"
+  STAGED_BASELINE=""
+  cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" \
+    || collection_error "could not re-read $BASELINE_FILE after replacing it"
+  echo "size-ratchet $label: baseline tightened at $BASELINE_FILE ($rows row(s))"
 }
 
 if [ "$MODE" = "update" ]; then
   tighten_baseline "--update"
 fi
 
-# --- --seed: write the FIRST baseline -----------------------------------------
-# The steady-state contract (rows never added, never raised) is also the only
-# path to a first baseline, so bootstrap gets its own mode: every tracked,
-# non-excluded file over ITS deciding threshold enters at its current count —
-# collected by the same pass the gate itself trusts — and only onto an empty
-# or absent baseline. A populated baseline is a live ratchet; growth stays a
-# reviewed hand-edit.
 if [ "$MODE" = "seed" ]; then
-  if [ "$BASELINE_FILE" = "$EXCLUDES_FILE" ]; then
-    config_error "--seed refuses: the baseline and exclusion list resolve to the same path ($BASELINE_FILE) — seeding would turn every row into an exclusion on the next run"
-  fi
-  if [ -e "$BASELINE_FILE" ] && [ -e "$EXCLUDES_FILE" ] && [ "$BASELINE_FILE" -ef "$EXCLUDES_FILE" ]; then
-    config_error "--seed refuses: the baseline and exclusion list are the same file (aliased through a link) — seeding would turn every row into an exclusion on the next run"
-  fi
-  # Bootstrap-only holds against the recorded copies too: rows in the INDEX
-  # copy mean the ratchet is live even when the worktree copy was truncated,
-  # and a regenerated baseline must be a reviewed hand-edit, never a reseed.
-  # The probe is the collector's own, so a failing git terminates here rather
-  # than reading as "no such path" and clearing the way for a reseed.
-  read_index_file_mode "$BASELINE_FILE"
-  if [ -n "$INDEX_FILE_MODE" ]; then
-    case "$INDEX_FILE_MODE" in
-      100*) ;;
-      *) config_error "--seed refuses: the index carries $BASELINE_FILE as a non-regular entry (mode $INDEX_FILE_MODE); seeding cannot read it to prove the ratchet is not live" ;;
-    esac
-    git show ":$BASELINE_FILE" >"$TMP/baseline.index" 2>/dev/null \
-      || collection_error "could not read the index copy of $BASELINE_FILE — seeding cannot prove the ratchet is not live"
-    rows_index="$(count_nonempty_lines "$TMP/baseline.index")"
-    if [ "$rows_index" -gt 0 ]; then
-      config_error "--seed refuses: the INDEX copy of $BASELINE_FILE carries $rows_index row(s) — the ratchet is live; restore the file (git checkout -- $BASELINE_FILE) or hand-edit it"
-    fi
-  fi
-  # …and against the COMMITTED copy, which is what the index probe above
-  # cannot see: staging the baseline's DELETION (or a truncation) empties it
-  # from the index, and an index-only look then reads a live ratchet as "no
-  # baseline" and reseeds every row at today's sizes — laundering growth into
-  # a fresh freeze with nothing said.
-  read_head_file_mode "$BASELINE_FILE"
-  if [ -n "$HEAD_FILE_MODE" ]; then
-    case "$HEAD_FILE_MODE" in
-      100*) ;;
-      *) config_error "--seed refuses: HEAD carries $BASELINE_FILE as a non-regular entry (mode $HEAD_FILE_MODE); seeding cannot read it to prove the ratchet is not live" ;;
-    esac
-    git show "HEAD:$BASELINE_FILE" >"$TMP/baseline.head" 2>/dev/null \
-      || collection_error "could not read the committed copy of $BASELINE_FILE — seeding cannot prove the ratchet is not live"
-    rows_head="$(count_nonempty_lines "$TMP/baseline.head")"
-    if [ "$rows_head" -gt 0 ]; then
-      config_error "--seed refuses: the COMMITTED copy of $BASELINE_FILE carries $rows_head row(s) — the ratchet is live even though the worktree and index copies no longer carry them; restore the file (git checkout HEAD -- $BASELINE_FILE) or hand-edit it"
-    fi
-  fi
-  rows_existing="$(count_nonempty_lines "$TMP/baseline.tsv")"
-  if [ "$rows_existing" -gt 0 ]; then
-    config_error "--seed refuses: $BASELINE_FILE already carries $rows_existing row(s) — the ratchet is live and only moves down (--update tightens; growth is a reviewed hand-edit)"
-  fi
-  if [ "$BASELINE_FROM_INDEX" = "1" ]; then
-    BASELINE_QUOTED="$(printf '%q' "$BASELINE_FILE")"
-    config_error "--seed cannot write an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -- $BASELINE_QUOTED, then rerun"
-  fi
-  # Under --staged the populated-baseline refusal above read the INDEX copy;
-  # unstaged rows in the worktree copy are still content this mode must not
-  # replace.
-  if [ -f "$BASELINE_FILE" ]; then
-    rows_worktree="$(count_nonempty_lines "$BASELINE_FILE")"
-    if [ "$rows_worktree" -gt 0 ]; then
-      config_error "--seed refuses: the worktree copy of $BASELINE_FILE carries $rows_worktree row(s) (unstaged) — stage or remove them first"
-    fi
-  fi
-  awk -F'\t' -v OFS='\t' '{ if (($2 + 0) > ($3 + 0)) print $1, ($4 == "b" ? $2 "b" : $2 "") }' "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.seed" || collection_error "could not derive the seed rows — nothing written"
-  cp -- "$TMP/baseline.seed" "$TMP/baseline.new" || collection_error "could not stage the seed rows — nothing written"
-  # The baseline is about to become a tracked file itself; when its own size
-  # will exceed its deciding threshold, it enters with a self-row — measured
-  # at the final content, self-row included — so the very next run over the
-  # committed file does not open with a new offender. The row's own digits
-  # are part of that content, so the value is solved by iteration rather than
-  # assumed, and a candidate that will not settle fails loud.
-  path_threshold "$BASELINE_FILE"
-  if ! is_excluded "$BASELINE_FILE"; then
-    self_row=""
-    seed_pass=0
-    while :; do
-      seed_n="$(measure_file "$TMP/baseline.new" "$PU" "could not measure the seeded baseline for its own row — nothing written")"
-      if [ "$seed_n" -gt "$PT" ]; then
-        want_row="$(format_row "$seed_n" "$PU")"
-      else
-        want_row=""
-      fi
-      [ "$want_row" != "$self_row" ] || break
-      self_row="$want_row"
-      cp -- "$TMP/baseline.seed" "$TMP/baseline.new" || collection_error "could not restage the seed rows — nothing written"
-      if [ -n "$self_row" ]; then
-        printf '%s\t%s\n' "$BASELINE_FILE" "$self_row" >>"$TMP/baseline.new" || collection_error "could not add the baseline's own row — nothing written"
-        LC_ALL=C sort -o "$TMP/baseline.new" "$TMP/baseline.new" || collection_error "could not sort the seeded baseline — nothing written"
-      fi
-      seed_pass=$((seed_pass + 1))
-      [ "$seed_pass" -lt 16 ] || collection_error "the seeded baseline's own row will not settle against its own size after $seed_pass passes — nothing written"
-    done
-  fi
-  rows="$(count_nonempty_lines "$TMP/baseline.new")"
-  base_parent="."
-  case "$BASELINE_FILE" in
-    */*) base_parent="${BASELINE_FILE%/*}" ;;
-  esac
-  # Containment BEFORE side effects: the deepest existing ancestor must
-  # physically sit inside the repository before any directory is created —
-  # a symlinked parent resolving elsewhere must receive neither the seeded
-  # file nor the mkdir.
-  repo_phys="$(pwd -P)" || collection_error "could not resolve the repository root"
-  probe="$base_parent"
-  while [ ! -d "$probe" ]; do
-    case "$probe" in
-      */*) probe="${probe%/*}" ;;
-      *) probe="." ;;
-    esac
-  done
-  parent_phys="$(cd "$probe" 2>/dev/null && pwd -P)" || config_error "--seed cannot resolve the baseline directory for $BASELINE_FILE"
-  case "$parent_phys/" in
-    "$repo_phys"/*) ;;
-    *) config_error "--seed refuses: $BASELINE_FILE resolves outside the repository ($parent_phys) — nothing written" ;;
-  esac
-  if [ "$base_parent" != "." ]; then
-    mkdir -p "$base_parent" || collection_error "could not create the baseline directory for $BASELINE_FILE"
-    parent_phys="$(cd "$base_parent" 2>/dev/null && pwd -P)" || config_error "--seed cannot resolve the baseline directory for $BASELINE_FILE"
-    case "$parent_phys/" in
-      "$repo_phys"/*) ;;
-      *) config_error "--seed refuses: $BASELINE_FILE resolves outside the repository ($parent_phys) — nothing written" ;;
-    esac
-  fi
-  # The destination itself must be a plain path: mv onto a symlink or a
-  # directory would deposit the file wherever they point instead.
-  if [ -L "$BASELINE_FILE" ] || { [ -e "$BASELINE_FILE" ] && [ ! -f "$BASELINE_FILE" ]; }; then
-    config_error "--seed refuses: $BASELINE_FILE exists but is not a regular file — the baseline must be a plain file this repository owns"
-  fi
-  # Same atomic-staging contract as --update: a $TMP on another filesystem
-  # degrades mv to copy-then-remove, and an interruption mid-copy would
-  # leave a truncated baseline the next --seed run refuses to repair (rows
-  # exist). A sibling temp makes the final step a real rename(2); the mode
-  # is what the plain redirect writing baseline.new produces, and the same
-  # EXIT trap owns the staging file until the rename consumes it.
+  rows="$(count_nonempty_lines "$TMP/baseline.tsv")"
+  [ "$rows" -eq 0 ] || config_error "--seed refuses: $BASELINE_FILE already carries rows"
+  awk -F'\t' -v OFS='\t' '$2 > $3 { print $1, ($4 == "b" ? $2 "b" : $2) }' "$TMP/counts.tsv" \
+    | LC_ALL=C sort >"$TMP/baseline.new" \
+    || collection_error "could not derive the seed rows — nothing written"
   case "$BASELINE_FILE" in
     */*) baseline_dir="${BASELINE_FILE%/*}" ;;
     *) baseline_dir=. ;;
   esac
-  STAGED_BASELINE="$(mktemp -- "$baseline_dir/.size-ratchet-baseline.XXXXXX")" || collection_error "could not create a staging file beside $BASELINE_FILE — seed aborted, nothing written"
-  chmod -- "$(printf '%03o' "$((0666 & ~8#$(umask)))")" "$STAGED_BASELINE" || collection_error "could not set the staging file's mode beside $BASELINE_FILE — seed aborted, nothing written"
-  cat -- "$TMP/baseline.new" >"$STAGED_BASELINE" || collection_error "could not write the staged baseline beside $BASELINE_FILE — seed aborted, nothing written"
-  mv -- "$STAGED_BASELINE" "$BASELINE_FILE" || collection_error "could not seed the baseline at $BASELINE_FILE (rename failed) — the destination is unchanged; the staging file is removed on exit"
-  STAGED_BASELINE="" # renamed away; nothing left for the EXIT trap to remove
-  cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not re-read the seeded baseline at $BASELINE_FILE — the file WAS written; rerun size-ratchet to verify it"
-  # The file this mode just wrote is about to be judged by the trailing
-  # verdict; give the counts its row at the written length so the verdict
-  # sees what `git add` is about to make true, replacing any pre-existing
-  # row (a tracked-but-empty baseline is in the counts at length 0). An
-  # excluded baseline is outside the collector and gets no row.
-  if ! is_excluded "$BASELINE_FILE"; then
-    seed_n="$(measure_file "$BASELINE_FILE" "$PU" "could not recount the seeded baseline $BASELINE_FILE — the baseline WAS written; rerun size-ratchet to verify it")"
-    BASELINE_PATH="$BASELINE_FILE" NEW_N="$seed_n" NEW_T="$PT" NEW_U="$PU" awk -F'\t' -v OFS='\t' '
-      BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["NEW_N"]; t = ENVIRON["NEW_T"]; u = ENVIRON["NEW_U"] }
-      $1 == p { next }
-      { print }
-      END { print p, n, t, u }
-    ' "$TMP/counts.tsv" >"$TMP/counts.rewrite" || collection_error "could not refresh the counts row for $BASELINE_FILE — the baseline WAS written; rerun size-ratchet to verify it"
-    mv "$TMP/counts.rewrite" "$TMP/counts.tsv" || collection_error "could not stage the refreshed counts — the baseline WAS written; rerun size-ratchet to verify it"
-  fi
-  echo "size-ratchet --seed: first baseline written at $BASELINE_FILE ($rows row(s)) — commit it; rows only move down from here"
+  mkdir -p -- "$baseline_dir" || collection_error "could not create $baseline_dir"
+  STAGED_BASELINE="$(mktemp -- "$baseline_dir/.size-ratchet-baseline.XXXXXX")" \
+    || collection_error "could not create a staging file beside $BASELINE_FILE"
+  chmod -- "$(printf '%03o' "$((0666 & ~8#$(umask)))")" "$STAGED_BASELINE" \
+    || collection_error "could not set the seeded baseline mode"
+  cp -- "$TMP/baseline.new" "$STAGED_BASELINE" \
+    || collection_error "could not stage the seeded baseline"
+  mv -- "$STAGED_BASELINE" "$BASELINE_FILE" \
+    || collection_error "could not seed $BASELINE_FILE"
+  STAGED_BASELINE=""
+  cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" \
+    || collection_error "could not re-read the seeded baseline"
+  rows="$(count_nonempty_lines "$TMP/baseline.tsv")"
+  echo "size-ratchet --seed: first baseline written at $BASELINE_FILE ($rows row(s))"
 fi
 
-# --- rows a change adds or raises --------------------------------------------
-# A baseline row is the only way past a threshold, so a row a change ADDS or
-# RAISES is that threshold routed around. RATCHET_RAISE=1 on the invocation
-# declares it out loud; the reason belongs in the commit body for review,
-# where a person reads it, because a pre-commit hook cannot see a commit
-# message at all. A path in a frozen class refuses a raise even so: a test
-# splits and a document is cut, and neither is ever the fix that needs the
-# added lines. Rows already at HEAD are grandfathered — the gate judges the
-# change, not the history it inherited.
 RAISE_OK="${RATCHET_RAISE:-}"
 
-# HEAD's copy of the baseline, or "" when HEAD carries no ROW SET to compare —
-# an unborn HEAD, a baseline this change introduces, or one committed empty as
-# a placeholder, which every bootstrap does: --seed then writes the first rows,
-# and against a zero-row HEAD every one of them would read as newly added. A
-# git failure is never "absent": read_head_file_mode refuses on one.
 HEAD_BASELINE=""
 read_head_baseline() {
   HEAD_BASELINE=""
@@ -1545,393 +876,6 @@ read_head_baseline() {
   HEAD_BASELINE="$TMP/baseline.head"
 }
 
-# --- a baseline that MOVED ---------------------------------------------------
-# The check above reads HEAD at the CONFIGURED path. Move that path and HEAD
-# carries nothing there, so the rows have no reference and every raise the
-# change makes — a frozen one included — lands unjudged.
-#
-# The gate does not follow the move. Where HEAD's baseline was is a question
-# only HEAD's settings answer, and those resolve through a chain this script
-# consults but does not own, so answering it here means keeping a second
-# implementation of someone else's contract in step with it. A move is refused
-# instead, and the rows travel in a commit that changes nothing else.
-#
-# The discriminator is what the change does to the OLD file: HEAD's blob there
-# was a row set, and the judged snapshot's is not. That is stricter than "this
-# path changed" and it is what keeps an ordinary edit out — a row-shaped file
-# whose numbers move is still a row set, so it never reports. Only a file that
-# STOPPED being one does: deleted, emptied, or replaced with something that is
-# not rows.
-#
-# It cannot misfire on the three bootstraps. An unborn HEAD has no changed
-# paths at all. A baseline this change introduces leaves HEAD carrying no row
-# set anywhere, so no changed path has one to lose. A placeholder committed
-# empty holds no rows at HEAD to recognize, and is at the configured path,
-# which this scan skips. A change that points the setting elsewhere while
-# leaving the old file tracked with its rows loses no row set, so it is not a
-# move this can name — baseline_repointed refuses that shape instead.
-#
-# The scan runs whether or not HEAD carries rows at the configured path. Rows
-# there do not establish they were the baseline HEAD used — a destination that
-# already existed carries its own, and comparing against those is how a raise
-# reads as grandfathered while HEAD's real row said something else.
-#
-# A pure move passes. The rows that arrive are byte for byte the rows that
-# left, so no row rose across it; anything else about them is the next
-# commit's business.
-
-# 0 when HEAD is born. Both baseline checks below need it, and neither may
-# read "unborn" out of a git failure: an unborn HEAD is exit 1 and nothing
-# else. WHY names the judgment being refused, so the diagnostic says what went
-# unjudged rather than which git command ran.
-head_is_born() { # WHY
-  local head_status=0
-  git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
-  case "$head_status" in
-    0) return 0 ;;
-    1) return 1 ;;
-    *) collection_error "could not resolve HEAD while $1 (git rev-parse exit $head_status) — refusing to treat it as absent" ;;
-  esac
-}
-
-# Every path this change touches, NUL-terminated, at $TMP/changed.paths.
-#
-# --no-renames, because a `git mv` of the baseline is exactly the move this
-# looks for and rename detection would report it as one path, not a removal.
-# -z, because core.quotePath spells a non-ASCII path C-quoted by default:
-# `"tools/\303\251.tsv"` never matches a literal probe, and the removed
-# baseline would read as absent. It also terminates each path with a NUL,
-# which is the one byte a path cannot contain — a newline can, so the reads
-# below split on NUL rather than translating NULs into newlines.
-# Every changed path, not only the deleted ones: emptying the old baseline in
-# place, or writing something else over it, is the same move and reports as a
-# modification. The predicates that read this list are what keep it honest.
-list_changed_paths() { # WHY
-  local diff_status=0
-  if [ "$STAGED" -eq 1 ]; then
-    git diff --cached --no-renames -z --name-only HEAD >"$TMP/changed.paths" || diff_status=$?
-  else
-    git diff --no-renames -z --name-only HEAD >"$TMP/changed.paths" || diff_status=$?
-  fi
-  [ "$diff_status" -eq 0 ] || collection_error "could not list what this change touches (git diff exit $diff_status) — refusing to $1"
-}
-
-baseline_moved() { # CANDIDATE-BASELINE — violations on stdout
-  local p
-  head_is_born "looking for a moved baseline" || return 0 # an unborn HEAD removed nothing
-  list_changed_paths "treat a moved baseline as absent"
-  while IFS= read -r -d '' p || [ -n "$p" ]; do
-    [ -n "$p" ] || continue
-    [ "$p" != "$BASELINE_FILE" ] || continue
-    head_rows_removed "$p" || continue
-    snapshot_rows_at "$p" && continue
-    cmp -s -- "$TMP/removed.head" "$1" && continue
-    # "-" placeholders, never empty fields: report() reads these rows with
-    # tab-IFS, and whitespace IFS collapses consecutive tabs.
-    printf '%s\t%s\t%s\t%s\n' "MOVED" "$p" "-" "-"
-  done <"$TMP/changed.paths"
-}
-
-# Whether FILE holds a row set. The row shape is the only question — sorting
-# and duplicates are the governing copy's business, and a file that fails them
-# is still the row set this change carried away.
-blob_is_row_set() { # FILE
-  # Captured and status-checked, never read inside the test. count_nonempty_lines
-  # exits loudly when grep cannot read the file, and that exit ends only the
-  # substitution — the caller would see an empty capture, `[ "" -gt 0 ]` would
-  # error, and this would answer "not a row set" for a file it never read.
-  # count_head_row_sets takes that answer with `|| continue`, so HEAD's real
-  # baseline would drop out of the count, the count would fall to zero, and the
-  # repoint check would take its bootstrap arm and pass.
-  # `rows` is assigned on its own line: `local rows="$(...)"` reports LOCAL's
-  # status and swallows the failure this guard exists to catch.
-  local status=0 rows
-  rows="$(count_nonempty_lines "$1")" || collection_error "could not count the lines of $1 to tell whether it holds baseline rows"
-  [ "$rows" -gt 0 ] || return 1
-  grep -qEv -- "$BASELINE_ROW_RE" "$1" || status=$?
-  case "$status" in
-    0) return 1 ;; # a line that is not a row
-    1) return 0 ;;
-    *) collection_error "could not read $1 to tell whether it holds baseline rows (grep exit $status)" ;;
-  esac
-}
-
-head_rows_removed() { # PATH — 0 when HEAD held a row set there, at $TMP/removed.head
-  read_head_file_mode "$1"
-  case "$HEAD_FILE_MODE" in 100*) ;; *) return 1 ;; esac
-  git show "HEAD:$1" >"$TMP/removed.head" || collection_error "could not read $1 from HEAD to tell whether it was the baseline this change moved"
-  blob_is_row_set "$TMP/removed.head"
-}
-
-# The judged snapshot's copy, from the same side the enumeration above read:
-# the index under --staged, the worktree otherwise.
-snapshot_rows_at() { # PATH — 0 when the snapshot still holds a row set there
-  if [ "$STAGED" -eq 1 ]; then
-    read_index_file_mode "$1"
-    case "$INDEX_FILE_MODE" in 100*) ;; *) return 1 ;; esac
-    git show ":$1" >"$TMP/removed.now" || collection_error "could not read the staged copy of $1 to tell whether it still holds baseline rows"
-  else
-    # -L before -f, which follows. A symlink is not the row set that was
-    # there, whatever it points at — and pointing it at the NEW baseline is
-    # exactly how a move made the old path look untouched. The index side
-    # never had this: it reads mode 120000 and answers no already.
-    [ ! -L "$1" ] || return 1
-    [ -f "$1" ] || return 1
-    cp -- "$1" "$TMP/removed.now" || collection_error "could not copy $1 to tell whether it still holds baseline rows"
-  fi
-  blob_is_row_set "$TMP/removed.now"
-}
-
-# --- a baseline REPOINTED, with the old one left where it was ----------------
-# The scan above names a move by what the OLD file loses. Copy the rows to a
-# new path instead of moving them — old file still tracked, still a row set —
-# and it loses nothing, so nothing is named, while the raise gate reads HEAD at
-# the new path, finds nothing, and judges no row. Exit 0 with a frozen row
-# raised.
-#
-# Following the repoint is the same refused problem as following a move: where
-# HEAD's baseline was is a question only HEAD's settings answer. So this does
-# not ask. It reads HEAD's own tree and decides from what is there.
-#
-# Rows AT the configured path used to end this check on its first line, which
-# read "the raise gate has a reference, so it is judging". It does not follow.
-# A repoint can land on a path that ALREADY carried rows of its own, and then
-# the reference rows_raised reads are a stranger's: HEAD's real baseline said
-# 15, the destination's own row said 20, and the raise reads as grandfathered.
-# The destination having rows is not evidence they are the rows this commit
-# should be judged against.
-#
-# So the entry condition is the settings source alone — the only way a commit
-# moves the setting, since the environment is not something a commit can land
-# — and the judgment is what HEAD holds a row set at, taken over HEAD's tree
-# rather than over the change. One question, asked once, in place of a chain
-# of preconditions that four review rounds each found a new way around.
-#
-# NONE is every bootstrap. An unborn HEAD is excluded above; a baseline this
-# change introduces leaves HEAD with no rows to route around; a placeholder
-# committed empty is not a row set. None of the three can hide a raise,
-# because none has a HEAD row to raise from.
-#
-# EXACTLY ONE, AT THE CONFIGURED PATH, is an ordinary run. The setting still
-# names the rows HEAD was judged against, so rows_raised judges them as ever
-# and this says nothing.
-#
-# EXACTLY ONE, ELSEWHERE, is the repoint. That row set is the baseline HEAD
-# used — nothing else at HEAD is one — so a candidate byte-identical to it
-# carries HEAD's own rows and no row rose to reach them. Only that passes.
-#
-# TWO OR MORE cannot be told apart here. A candidate equal to SOME blob at
-# HEAD proves nothing once more than one is a row set: an unrelated tracked
-# file holding the RAISED rows is byte-identical too, and matching it would
-# launder exactly the raise this refuses. Ambiguity fails closed, and the
-# remedy is the same two-commit split every other refusal here asks for.
-#
-# Cost lives on the settings-source test, which is a path comparison over the
-# changed paths. A commit that touches no settings source never reaches the
-# scan, and that is every ordinary commit.
-baseline_repointed() { # CANDIDATE-BASELINE — violations on stdout
-  # The count is CAPTURED and its status checked, never read inside the test.
-  # count_nonempty_lines exits loudly when grep cannot read the file, and that
-  # exit ends only the substitution: the outer shell survives with an empty
-  # capture, `[ "" -gt 0 ]` errors, and the `||` arm skips this whole check.
-  # A file the gate could not read would have waved the repoint through.
-  # `local` is on its own line, because `local n="$(...)"` reports LOCAL's
-  # status and swallows the failure a `||` here is meant to catch.
-  local rows
-  head_is_born "looking for a repointed baseline" || return 0
-  rows="$(count_nonempty_lines "$1")" || collection_error "could not count the candidate baseline's rows — refusing to treat this change as no repoint"
-  [ "$rows" -gt 0 ] || return 0 # no rows arriving to judge
-  diff_touches_settings || return 0
-  count_head_row_sets
-  case "$HEAD_ROW_SETS" in
-    0) return 0 ;; # a bootstrap, not a repoint
-    1)
-      # At the configured path the setting still names HEAD's own rows, and
-      # rows_raised is already judging them. Anywhere else, it moved.
-      [ "$HEAD_ROW_SET_PATH" != "$BASELINE_FILE" ] || return 0
-      candidate_is_prior_baseline "$1" && return 0 # the pure repoint
-      ;;
-  esac
-  # "-" placeholders, never empty fields: report() reads these rows with
-  # tab-IFS, and whitespace IFS collapses consecutive tabs.
-  printf '%s\t%s\t%s\t%s\n' "REPOINTED" "$BASELINE_FILE" "-" "-"
-}
-
-# Whether the change touches a file that can name the baseline. The list is
-# the one this skill's own lib/settings.sh resolves through, restated here
-# because that library exports no list to read. Keep the two in step: a
-# source added there is a source to add below. An explicit
-# SIZE_RATCHET_SETTINGS_FILE consults only itself, /dev/null selects no
-# source at all, and the dotenv layer applies wherever a TOML layer does.
-diff_touches_settings() { # — 0 when a settings source is in the change
-  local p src explicit
-  case "${SIZE_RATCHET_SETTINGS_FILE:-}" in
-    /dev/null) return 1 ;;
-    "") set -- ".kendex/settings.toml" "kendex.settings.toml" ".env.local" ;;
-    *)
-      # The two built-in names above are already what the index spells. An
-      # explicit one is whatever the caller typed, and the resolver honours
-      # `./x`, `sub/../x` and `a/b/../../x` as the same source, so the raw
-      # spelling is compared to nothing git ever records.
-      # Probed on the ORIGINAL spelling, before it is reduced: an absolute
-      # source drops out of the reduction below, and one pointing from outside
-      # the repository INTO it still resolves to a file a commit can change.
-      [ ! -L "$SIZE_RATCHET_SETTINGS_FILE" ] || return 0
-      explicit="$(settings_source_repo_path "$SIZE_RATCHET_SETTINGS_FILE")"
-      if [ -n "$explicit" ]; then
-        set -- "$explicit" ".env.local"
-      else
-        set -- ".env.local"
-      fi
-      ;;
-  esac
-  # A SYMLINKED source counts as touched without asking what it resolves to.
-  # The comparison below is lexical, so it names the LINK while the resolver
-  # reads through to the target: a commit rewriting the target changed the
-  # effective settings and matched nothing here, and the repoint sailed past.
-  # Answering "what does this resolve to" properly means a second copy of the
-  # resolver's own path handling, which is the thing this file does not keep.
-  # Assuming it changed is the fail-closed answer and costs only the scan, in
-  # a repository that symlinks its settings at all.
-  for src in "$@"; do
-    [ ! -L "$src" ] || return 0
-  done
-  list_changed_paths "treat a repointed baseline as absent"
-  while IFS= read -r -d '' p || [ -n "$p" ]; do
-    [ -n "$p" ] || continue
-    for src in "$@"; do
-      [ "$p" != "$src" ] || return 0
-    done
-  done <"$TMP/changed.paths"
-  return 1
-}
-
-# A settings source as the INDEX would spell it, or "" when no commit can
-# change it. sr_settings_normalize_path is the resolver's own normalizer, so
-# the two agree on which spellings name one file; it is read from the
-# vendored lib rather than reimplemented, and nothing is added there — that
-# copy is pinned byte-identical across three skills.
-settings_source_repo_path() { # PATH — repo-relative canonical path, or ""
-  local p="$1" norm
-  case "$p" in
-    "$REPO_ROOT"/*) p="${p#"$REPO_ROOT"/}" ;; # inside the repo, spelled absolutely
-    /*) return 0 ;;                           # outside it; no commit reaches it
-  esac
-  norm="$(sr_settings_normalize_path "$p")"
-  case "$norm" in
-    "" | ".." | "../"*) return 0 ;; # leaves the repository, so git records nothing
-    *) printf '%s' "$norm" ;;
-  esac
-}
-
-# Whether FILE is byte-identical to the ONE row set HEAD carries, which
-# count_head_row_sets has already named at $HEAD_ROW_SET_PATH. Asking about
-# that blob and no other is the point: a candidate equal to just any blob
-# HEAD holds proves nothing about the rows it replaces.
-candidate_is_prior_baseline() { # FILE
-  [ -n "$HEAD_ROW_SET_PATH" ] || collection_error "asked whether the candidate baseline is HEAD's, with no HEAD row set named — refusing to treat it as a pure repoint"
-  git show "HEAD:$HEAD_ROW_SET_PATH" >"$TMP/prior.head" || collection_error "could not read $HEAD_ROW_SET_PATH from HEAD to compare it with the candidate baseline"
-  cmp -s -- "$TMP/prior.head" "$1"
-}
-
-# How many paths HEAD carries a row set at, counted no further than 2 —
-# "more than one" is the whole answer past that, and the tree is not worth
-# walking for a number nothing reads. Sets HEAD_ROW_SETS and, when it is 1,
-# HEAD_ROW_SET_PATH.
-#
-# The configured path is COUNTED, not skipped. Whether the single row set
-# HEAD holds is the one the setting names is the question the caller decides
-# on, and skipping that path answered it "no" for every ordinary run.
-#
-# git grep narrows first, and it narrows on a FIXED STRING: every row holds a
-# tab, so a blob with no tab cannot be a row set, and no row set escapes the
-# probe. Matching the full row pattern here instead cost 12.5s against this
-# repository's 3948 files where the fixed probe costs 52ms — a regex walking
-# megabyte-long lines is the expense, not the tree. The survivors are read in
-# full and blob_is_row_set gives the real answer, so the cheap probe only ever
-# decides what is worth opening.
-HEAD_ROW_SETS=0
-HEAD_ROW_SET_PATH=""
-count_head_row_sets() { # — sets HEAD_ROW_SETS (0, 1, or 2) and HEAD_ROW_SET_PATH
-  local p grep_status=0
-  HEAD_ROW_SETS=0
-  HEAD_ROW_SET_PATH=""
-  # -a, never -I: a row set is text, but whether GIT calls it text is a
-  # consumer's .gitattributes to decide, and `*.tsv binary` made -I skip the
-  # baseline entirely. HEAD_ROW_SETS then stayed 0, this took the bootstrap
-  # arm, and the repoint it exists to refuse landed at exit 0. What the
-  # narrowing must not do is let an attribute decide which blobs are looked
-  # at; blob_is_row_set reads the materialized copy with plain grep, which no
-  # attribute reaches, so the row-shape question is still answered on text.
-  # stderr is NOT suppressed: exit >= 2 is a search that could not run, and
-  # the refusal below quotes the code while git's own line says why.
-  git grep -a -l -z -F -e "$TAB" HEAD >"$TMP/rowish.paths" || grep_status=$?
-  case "$grep_status" in
-    0) ;;
-    1) return 0 ;; # no path at HEAD holds even one tab, so none holds a row
-    *) collection_error "could not search HEAD for a baseline row set (git grep exit $grep_status) — refusing to treat HEAD as carrying none" ;;
-  esac
-  while IFS= read -r -d '' p || [ -n "$p" ]; do
-    p="${p#HEAD:}"
-    [ -n "$p" ] || continue
-    git show "HEAD:$p" >"$TMP/rowish.blob" || collection_error "could not read $p from HEAD to tell whether it holds baseline rows"
-    blob_is_row_set "$TMP/rowish.blob" || continue
-    HEAD_ROW_SETS=$((HEAD_ROW_SETS + 1))
-    if [ "$HEAD_ROW_SETS" -eq 1 ]; then
-      HEAD_ROW_SET_PATH="$p"
-    else
-      HEAD_ROW_SET_PATH="" # ambiguous, and no path may stand for the baseline
-      return 0
-    fi
-  done <"$TMP/rowish.paths"
-  return 0
-}
-
-# A change that moves a class from lines to bytes (or back) leaves HEAD's rows
-# counting something else, and comparing across the two would read 1099 lines
-# as 1099 bytes. Skipping instead is worse: the row is re-measured at the
-# file's CURRENT size, so a commit that changes the unit AND grows the file
-# freezes the growth for free. HEAD's rows are re-expressed in the unit their
-# class counts NOW — measured from HEAD's own blob — so the comparison happens
-# in one unit and only a file that did not grow re-measures for free.
-head_rows_in_class_units() { # — writes HEAD's rows at $TMP/baseline.head.now
-  local p u n
-  awk -F'\t' -v OFS='\t' -v countsfile="$TMP/counts.tsv" '
-    function rowunit(v) { return (v ~ /b$/) ? "b" : "l" }
-    FILENAME == countsfile { cu[$1] = $4; next }
-    ($1 in cu) && rowunit($2) != cu[$1] { print $1, cu[$1] }
-  ' "$TMP/counts.tsv" "$HEAD_BASELINE" >"$TMP/head.reunit" || collection_error "could not list the HEAD rows a unit change left uncomparable"
-  cp -- "$HEAD_BASELINE" "$TMP/baseline.head.now" || collection_error "could not stage HEAD's rows for the raise comparison"
-  [ -s "$TMP/head.reunit" ] || return 0
-  : >"$TMP/head.remeasured" || collection_error "could not initialize the HEAD re-measure scratch file"
-  while IFS="$TAB" read -r p u || [ -n "$p" ]; do
-    [ -n "$p" ] || continue
-    read_head_file_mode "$p"
-    case "$HEAD_FILE_MODE" in
-      100*) ;;
-      *) collection_error "HEAD's baseline carries a row for '$p' in a unit its class no longer counts, and HEAD has no regular file there to re-measure — refusing to judge the row against a quantity it cannot compare" ;;
-    esac
-    git show "HEAD:$p" >"$TMP/head.blob" || collection_error "could not read '$p' from HEAD to re-express its row in the unit its class counts now"
-    n="$(measure_file "$TMP/head.blob" "$u" "could not measure HEAD's copy of '$p' to re-express its row in the unit its class counts now")"
-    printf '%s\t%s\n' "$p" "$(format_row "$n" "$u")" >>"$TMP/head.remeasured" || collection_error "could not record HEAD's re-expressed row for '$p'"
-  done <"$TMP/head.reunit"
-  awk -F'\t' -v OFS='\t' -v newfile="$TMP/head.remeasured" '
-    FILENAME == newfile { v[$1] = $2; next }
-    { print $1, (($1 in v) ? v[$1] : $2) }
-  ' "$TMP/head.remeasured" "$HEAD_BASELINE" >"$TMP/baseline.head.reunit" || collection_error "could not re-express HEAD's rows in the units their classes count now"
-  mv -- "$TMP/baseline.head.reunit" "$TMP/baseline.head.now" || collection_error "could not stage the re-expressed HEAD rows"
-}
-
-# Violation rows in evaluate()'s shape: KIND<TAB>path<TAB>size<TAB>previous.
-# The size field is the ROW's own value, the number a person wrote — the
-# measurement belongs to LOOSE and GROW, and a refusal quoting it would name a
-# quantity the gate never compared. Only a row doing work is judged — one
-# whose file is over its threshold. A row for a file at or under it is already
-# STALE, and naming it twice would report one root cause as two. Frozen
-# membership is a shell glob, so it is stamped on each row here and read as a
-# column in awk. The read continues past a final line with no newline: a
-# hand-edited row is where such a file comes from, and a lost last row is a
-# row never judged.
 rows_raised() { # CURRENT-BASELINE — violations on stdout
   [ -n "$HEAD_BASELINE" ] || return 0
   local p n frozen
@@ -1941,82 +885,45 @@ rows_raised() { # CURRENT-BASELINE — violations on stdout
     if is_frozen "$p"; then frozen="frozen"; else frozen="open"; fi
     printf '%s\t%s\t%s\n' "$p" "$n" "$frozen" >>"$TMP/baseline.judged" || collection_error "could not record the baseline row for '$p'"
   done <"$1"
-  head_rows_in_class_units
-  awk -F'\t' -v OFS='\t' -v countsfile="$TMP/counts.tsv" -v headfile="$TMP/baseline.head.now" -v raise_ok="$RAISE_OK" '
+  awk -F'\t' -v OFS='\t' -v countsfile="$TMP/counts.tsv" -v headfile="$HEAD_BASELINE" -v raise_ok="$RAISE_OK" '
     function rowunit(v) { return (v ~ /b$/) ? "b" : "l" }
     function rowsize(v) { sub(/b$/, "", v); return v + 0 }
     FILENAME == countsfile { now[$1] = $2 + 0; thr[$1] = $3 + 0; unit[$1] = $4; next }
     FILENAME == headfile   { was[$1] = $2; had[$1] = 1; next }
     !($1 in now) { next }
     now[$1] <= thr[$1] { next }
-    # A row in the wrong unit is already reported as one to re-measure, and
-    # its number means something else until it is; HEAD is read in the class
-    # unit above, so every comparison below is between like quantities.
     rowunit($2) != unit[$1] { next }
     !($1 in had) { if (raise_ok != "1") print "ADDED", $1, rowsize($2), "-"; next }
     rowsize($2) > rowsize(was[$1]) {
       if ($3 == "frozen") print "FROZEN", $1, rowsize($2), was[$1]
       else if (raise_ok != "1") print "RAISED", $1, rowsize($2), was[$1]
     }
-  ' "$TMP/counts.tsv" "$TMP/baseline.head.now" "$TMP/baseline.judged"
+  ' "$TMP/counts.tsv" "$HEAD_BASELINE" "$TMP/baseline.judged"
 }
 
-# --- verdict -------------------------------------------------------------------
-# Both halves of the judgment over one candidate baseline, so the --staged
-# rewrite below can ask what its candidate earns before anything is written.
+baseline_reference_missing() { # CURRENT-BASELINE — one violation on stdout
+  [ -z "$HEAD_BASELINE" ] || return 0
+  [ "$HEAD_EXISTS" = "1" ] || return 0
+  [ "$RAISE_OK" != "1" ] || return 0
+  [ -s "$1" ] || return 0
+  printf '%s\t%s\t%s\t%s\n' RELOCATED "$BASELINE_FILE" - -
+}
+
 run_verdict() { # BASELINE-TSV — fills $TMP/violations.tsv, sets VIOLATIONS
-  local moved_rows
   evaluate "$1" >"$TMP/violations.tsv" || collection_error "could not evaluate the baseline against the collected counts"
   rows_raised "$1" >>"$TMP/violations.tsv" || collection_error "could not judge the baseline rows against HEAD's baseline"
-  # A named move and a bare repoint are one root cause, so the second only
-  # asks once the first has answered no: a move IS a repoint, and reporting it
-  # twice would name one commit's single mistake as two.
-  baseline_moved "$1" >"$TMP/moved.tsv" || collection_error "could not tell whether this change moves the baseline"
-  cat -- "$TMP/moved.tsv" >>"$TMP/violations.tsv" || collection_error "could not record whether this change moves the baseline"
-  # Captured, not read inside the test: an unreadable moved.tsv would take the
-  # false arm and never call baseline_repointed at all.
-  moved_rows="$(count_nonempty_lines "$TMP/moved.tsv")" || collection_error "could not count what the move scan reported — refusing to skip the repoint check"
-  if [ "$moved_rows" -eq 0 ]; then
-    baseline_repointed "$1" >>"$TMP/violations.tsv" || collection_error "could not tell whether this change repoints the baseline"
-  fi
+  baseline_reference_missing "$1" >>"$TMP/violations.tsv" || collection_error "could not judge whether HEAD carries the resolved baseline"
   VIOLATIONS="$(count_nonempty_lines "$TMP/violations.tsv")"
 }
 
 read_head_baseline
 run_verdict "$TMP/baseline.tsv"
 
-# --- --staged: lower the shrunk rows itself ----------------------------------
-# A commit that shrinks a limited file used to fail, wait for a --update, and
-# be made again. The pre-commit run does that rewrite itself and stages the
-# result, so the commit passes the first time.
-#
-# A commit this gate REJECTS leaves the baseline exactly as it found it, in
-# the worktree and in the index: the developer never asked for those bytes.
-# Hence the ordering — the commit's own snapshot is judged first, the rewrite
-# works from saved copies, and `git add` is reached only once the rewritten
-# candidate comes out clean. A LATER lane of the hook chain can still reject a
-# commit with the baseline staged; that residue is a row that moved only
-# because a file shrank.
-#
-# The rewrite reads the WORKTREE copy, which is what gets staged: rebuilding
-# from the index copy would delete a developer's unstaged row edits instead of
-# carrying them. Two accepted edges follow, both visible in the diff: a
-# `git commit -- <paths>` commit acquires the baseline change, and unrelated
-# unstaged row edits go into the index with it.
-#
-# Nothing here loosens a row: the rewrite is tighten-only against the STAGED
-# content, so an unstaged raise is pulled back down to the measured size, and
-# wherever it does not land the INDEX copy governs the verdict. Two worktree
-# states are left alone — a staged DELETION (the commit freezes nothing, and
-# rewriting would put the file back) and a MALFORMED copy (a hand-edit in
-# progress is not a gate, and must not fail a commit whose snapshot is clean).
 if [ "$MODE" = "check" ] && [ "$STAGED" -eq 1 ] && [ "$VIOLATIONS" -gt 0 ] \
   && [ "$baseline_state" != "2" ] && [ -f "$BASELINE_FILE" ] \
   && validate_baseline_rows soft "$BASELINE_FILE" "$BASELINE_FILE"; then
   cp -- "$TMP/violations.tsv" "$TMP/violations.staged-index" || collection_error "could not preserve the verdict before the --staged rewrite"
   cp -- "$TMP/baseline.tsv" "$TMP/baseline.staged-index" || collection_error "could not preserve the index baseline before the --staged rewrite"
-  # -p, so the preserved copy carries the original's MODE: the restore below
-  # puts that mode back with it rather than the running umask's.
   cp -p -- "$BASELINE_FILE" "$TMP/baseline.worktree-orig" || collection_error "could not preserve the worktree baseline before the --staged rewrite"
   cp -- "$TMP/baseline.worktree-orig" "$TMP/baseline.tsv" || collection_error "could not stage a working copy of $BASELINE_FILE for the --staged rewrite"
   tighten_baseline "--staged"
@@ -2025,16 +932,7 @@ if [ "$MODE" = "check" ] && [ "$STAGED" -eq 1 ] && [ "$VIOLATIONS" -gt 0 ] \
     git add -- "$BASELINE_FILE" || collection_error "could not stage the rewritten baseline at $BASELINE_FILE — it WAS rewritten in the worktree; stage it or rerun"
     echo "size-ratchet --staged: staged the tightened baseline at $BASELINE_FILE"
   else
-    # Either there was nothing to rewrite, or the rewrite did not resolve the
-    # run. Put the worktree copy back byte for byte and report what the
-    # commit's own snapshot earned.
     if [ "$BASELINE_REWRITTEN" = "1" ]; then
-      # The recovery path for a run that is already failing, so it is the last
-      # write that may leave the file half-written: it goes through the same
-      # sibling-temp-then-rename(2) the rewrite itself uses. `cp -p` from the
-      # preserved copy carries the original mode onto the temp before the
-      # rename, so the file comes back exactly as wide as it was — never
-      # wider, and never the umask's idea of it.
       case "$BASELINE_FILE" in
         */*) restore_dir="${BASELINE_FILE%/*}" ;;
         *) restore_dir=. ;;
@@ -2052,12 +950,8 @@ if [ "$MODE" = "check" ] && [ "$STAGED" -eq 1 ] && [ "$VIOLATIONS" -gt 0 ] \
 fi
 
 report "$TMP/violations.tsv" || collection_error "could not read the violations scratch file to report them"
-# "no reference" is not "checked and clean": a run whose HEAD carries no rows
-# never judged an added or raised one, and says which of the two it is.
-RAISE_NOTE=""
-[ -n "$HEAD_BASELINE" ] || RAISE_NOTE=" — HEAD carries no baseline rows, so added and raised rows were not judged"
 if [ "$VIOLATIONS" -gt 0 ]; then
-  echo "size-ratchet: $VIOLATIONS violation(s) — threshold $THRESHOLD$CLASSES_NOTE, baseline $BASELINE_FILE$RAISE_NOTE"
+  echo "size-ratchet: $VIOLATIONS violation(s) — threshold $THRESHOLD$CLASSES_NOTE, baseline $BASELINE_FILE"
   exit 1
 fi
-echo "size-ratchet: OK — $checked tracked file(s) checked, threshold $THRESHOLD$CLASSES_NOTE$RAISE_NOTE"
+echo "size-ratchet: OK — $checked tracked file(s) checked, threshold $THRESHOLD$CLASSES_NOTE"

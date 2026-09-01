@@ -88,26 +88,13 @@ copy. The skip says so on stderr, with the row diagnostic that caused it,
 because a rewrite that quietly does not happen leaves the run failing on the
 verdict it existed to resolve.
 
-The baseline is itself a counted file, so the rewrite reconciles its own row
-against the file it is about to become. A line row settles in one pass —
-editing a value in place cannot change a line count — but a byte row does
-not, since the digits are part of the length it records, so the pass repeats
-to a fixed point and a candidate that will not settle fails loud rather than
-being written out to fail its own check.
-
 ## `--seed`
 
 `--seed` collects by the same pass the gate itself trusts (index blobs,
 symlink skipping, tab/newline refusal), `LC_ALL=C` sorted, each row in its
-class's unit, with a self-row when the baseline outgrows its own threshold —
-solved by the same fixed-point iteration, because the row's own digits are
-part of what it measures.
-
-It refuses a baseline that already has rows in the worktree, the index **or**
-`HEAD`: the ratchet is live there, and growth stays a reviewed hand-edit —
-staging the baseline's deletion or truncation is not a reseed ticket. The
-seeded file lands uncommitted, so every frozen offender enters the record
-deliberately.
+class's unit. It refuses when the selected baseline already has rows or does
+not parse. The seeded file lands uncommitted, so every offender enters the
+record in review.
 
 In a sparse checkout that omits the baseline file, checks still run against
 the index copy, but `--update` refuses (it will not rewrite a file the
@@ -225,27 +212,9 @@ The setting carries a second duty: frozen paths are where the class
 inversion applies, so a glob added here changes which class decides those
 paths too. [README.md § Path classes](README.md#path-classes) says how.
 
-Rows already at HEAD are grandfathered, because the gate judges the change
-and not the history it inherited. A HEAD with no baseline (an unborn HEAD,
-a first `--seed`, a baseline this change introduces) has nothing to compare,
-so the raise gate alone is skipped — every other verdict still judges the
-snapshot and can fail it — and the verdict line says the added and raised
-checks did not run, because "no reference" must never read as "checked and
-clean". A commit that MOVES the
-baseline reaches that same emptiness without being one of the three, and every
-raise in it would land unjudged, so it is refused instead. The gate does not
-follow the move: where HEAD's baseline was is a question only HEAD's settings
-answer, and they resolve through a chain this script consults but does not
-own, so answering it means keeping a second implementation of that contract in
-step with it. The discriminator is what the change does to the old file, a path
-HEAD carried a row set at that the judged snapshot no longer carries, which
-none of the three bootstraps produces. A move whose rows arrive byte for byte
-as they left passes, because no row rose across it. A repoint that COPIES the
-rows removes nothing, so that check cannot name it; a second refusal counts
-HEAD's row sets: none bootstraps, one at the path the run reads is ordinary,
-one elsewhere needs the arriving rows byte for byte, two refuse. A row whose
-file is at or under its threshold is reported as stale instead, so one root
-cause reads as one verdict. A class that changes its UNIT does not escape:
-HEAD's row is re-expressed in the unit the class counts now, measured from
-HEAD's own blob, so the comparison runs in one unit and only a file that did
-not grow re-measures for free.
+Rows already at HEAD are grandfathered. When HEAD exists but has no rows at
+the resolved baseline path, a non-empty candidate refuses unless the run
+carries `RATCHET_RAISE=1`. That single check covers moves, copies, and settings
+repoints without discovering the prior path. Repoint the baseline in a change
+that touches nothing else; row edits follow in another change. A row whose
+file is at or under its threshold is stale, so one root cause gets one verdict.

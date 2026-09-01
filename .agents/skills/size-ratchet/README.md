@@ -45,10 +45,10 @@ even then. Markdown is measured in bytes and code in lines. Flags and exit codes
      instead of comparing it.
   5. **A row added or raised over HEAD's baseline** — see
      [Raising a row](#raising-a-row).
-  6. **The baseline moved or was repointed, and its rows changed** — HEAD's
-     rows are not where the run reads, and the rows arriving there are not
-     them, so nothing compares them and a raise would land unjudged. Repoint
-     it in a commit that changes nothing else, then change its rows next.
+  6. **HEAD has no rows at the resolved baseline path** — a non-empty
+     candidate would otherwise leave every row unjudged. Relocate it in a
+     change that touches nothing else with `RATCHET_RAISE=1`, then change
+     rows later.
 - **`--staged`** counts index blobs for every tracked file rather than
   preferring the worktree copy: what the commit records is the blob. Use it
   in a pre-commit hook; CI, which checks out a clean tree, does not need it.
@@ -82,14 +82,9 @@ raises is that threshold routed around.
 - **A first row** for a path HEAD's baseline carries none for is a
   **bootstrap**, not a raise, and the declaration admits it in every class,
   frozen included. A renamed path is such a path, so a rename bootstraps.
-- **A commit that REPOINTS the baseline** — a changed `SIZE_RATCHET_BASELINE`,
-  whether the old file moves or stays — is judged by what HEAD holds a row set
-  at, since rows at the new path may be a stranger's. None is a bootstrap; one
-  at the path the run reads is an ordinary run; one elsewhere passes only when
-  the arriving rows are that set byte for byte; two or more refuses.
-  Repoint in a commit that changes nothing else, then change its rows next.
-- A repo whose HEAD carries no baseline rows yet is bootstrapping, and the
-  gate says so on its verdict line rather than reporting a clean raise check.
+- When HEAD exists but carries no rows at the resolved baseline path, a
+  non-empty baseline needs `RATCHET_RAISE=1`. Repoint the baseline in a
+  change that touches nothing else; row edits follow in another change.
 
 ## Baseline format
 
@@ -110,10 +105,9 @@ pass — the file is reviewed input, so it fails loud.
 
 `--update` never adds rows, so the first baseline has its own mode:
 `size-ratchet --seed` writes every tracked, non-excluded file over its
-deciding threshold at its current size, `LC_ALL=C` sorted. It refuses once
-the baseline has rows in the worktree, the index **or** `HEAD` — the ratchet
-is live there. The seeded file lands uncommitted, so the initial freeze is
-still a reviewed diff.
+deciding threshold at its current size, `LC_ALL=C` sorted. It refuses a
+selected baseline that already has rows or does not parse. The seeded file
+lands uncommitted, so the initial freeze is still a reviewed diff.
 
 ## Path classes
 
