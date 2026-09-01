@@ -24,9 +24,8 @@ pub struct ReportArgs {
     pub dry_run: bool,
 }
 
-/// What the marker says where the lock has no usable answer for the
-/// reported asset: nothing recorded, entries that disagree, or a value
-/// that is no commit or hash.
+/// What the marker says where the lock recorded no commit or no rendering
+/// for the reported asset.
 const UNLOCKED: &str = "unlocked";
 
 /// `--area` names accepted on the CLI, mapped to routing labels.
@@ -131,10 +130,12 @@ pub fn run(env: &Env, args: ReportArgs) -> CliResult {
         // What the lock recorded about this installation, so triage can
         // compare the report to the fix before investigating it. An
         // installation the lock never dated says so and files anyway.
-        let provenance = route.as_ref().and_then(|r| r.provenance.as_ref());
-        let source = provenance.map_or(UNLOCKED, |p| p.source.as_str());
-        let rendered = provenance
-            .and_then(|p| p.rendered.as_deref())
+        let recorded = route.as_ref();
+        let source = recorded
+            .and_then(|r| r.source.as_deref())
+            .unwrap_or(UNLOCKED);
+        let rendered = recorded
+            .and_then(|r| r.rendered.as_deref())
             .unwrap_or(UNLOCKED);
         sent_body.push_str(&format!(
             "\n\n<!-- kendex-report:v1 asset={name} kind={kind_label} ownership=kendex source={source} rendered={rendered} -->"
