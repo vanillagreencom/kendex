@@ -249,7 +249,7 @@ Exit codes:
   75 detached wait: completion or cleanup is recoverable; cleanup failure preserves state
   124 detached wait: deadline passed; process group gone; runtime state removed
   1 detached wait: follow its diagnostic; relaunch now only when it says the worker group is gone;
-     invalid state may leave the run active, so identify/stop it or wait for its per-CLI timeout before restart;
+     invalid state may leave the run active, so restart only after confirming the original process group ended;
      after missing artifact, restart only once the original process ends; keep completed artifact on replay/runtime-removal failure; otherwise act on replayed worker cause
 HELP
 }

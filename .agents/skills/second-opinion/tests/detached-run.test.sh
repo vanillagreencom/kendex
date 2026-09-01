@@ -475,8 +475,12 @@ assert_contains "$TMP_ROOT/help.stdout" "relaunch now only when it says the work
   "help limits immediate relaunch to a proven-stopped worker group"
 assert_contains "$TMP_ROOT/help.stdout" "invalid state may leave the run active" \
   "help does not read invalid recovery state as a stopped run"
-assert_contains "$TMP_ROOT/help.stdout" "identify/stop it or wait for its per-CLI timeout before restart" \
-  "help prevents restart while the original call may still run"
+assert_contains "$TMP_ROOT/help.stdout" "restart only after confirming the original process group ended" \
+  "help requires positive process-group confirmation before restart"
+if grep -qF "per-CLI timeout before restart" "$TMP_ROOT/help.stdout"; then
+  fail "help treats elapsed call time as proof the original detached run ended"
+fi
+ok "help offers no time-based restart fallback"
 assert_contains "$TMP_ROOT/help.stdout" "after missing artifact, restart only once the original process ends" \
   "help avoids an output race after missing artifact"
 assert_contains "$TMP_ROOT/help.stdout" "keep completed artifact on replay/runtime-removal failure" \
