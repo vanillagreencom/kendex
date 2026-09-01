@@ -143,8 +143,8 @@ assert_sent_query() { # name, expected --window seconds
   assert_contains "$q" "is:pr" "$name: to pull requests"
   assert_contains "$q" "is:merged" "$name: that are merged"
   assert_contains "$q" "sort:updated-desc" "$name: newest-updated first, so a late review keeps its PR on the page"
-  assert_contains "$doc" "type:ISSUE" "$name: the document searches ISSUE, the type a PullRequest fragment matches"
-  assert_contains "$doc" 'first:$limit' "$name: and bounds the page by the limit variable"
+  assert_contains "$doc" 'search(query:$q, type:ISSUE, first:$limit)' "$name: the search CALL, so a decoy in a document comment cannot satisfy it"
+  assert_contains "$doc" 'repository(owner:$owner, name:$name)' "$name: beside the probe that proves the repository itself was read"
   sent="$(sed -n 's/.*merged:>=\([0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\).*/\1/p' <<<"$q")"
   if [ -z "$sent" ]; then
     FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        no merged:>= with a full YYYY-MM-DDTHH:MM:SSZ in: %s\n' "$name" "$q"

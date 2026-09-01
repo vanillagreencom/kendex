@@ -29,26 +29,19 @@
 #   ms21. --limit out of range, bad numbers -> exit 2 (never clamped)
 #   ms22. an unreadable state file          -> exit 2 (never silent)
 #   ms22b. an unwritable state file         -> exit 2, and NO stdout lines
-#   ms23. --help before every requirement   -> exit 0
+#   ms23. --help before GH_REPO and flags   -> exit 0
 #   ms24. many PRs                          -> still ONE query
-#   ms25. a PRE-merge thread, re-raised      -> a finding (the re-raise shape)
-#   ms26. an older canonical reply, newer    -> still a finding (the LAST
-#         bare track-word                       reply decides, both arms)
-#   ms27. the window holds more PRs than     -> a sweep-level fail-closed
-#         --limit reads                         line that REPEATS while the
-#                                               gap holds (no dedupe key)
-#   ms28. --state-file                       -> writes that file, and never
-#                                               the default state dir
-#   ms29. a relative state dir               -> anchored on the repo root, so
-#                                               a changed cwd keeps the edge
-#   ms30. a repo the read cannot reach       -> exit 2, never quiet silence
-#   ms31. GH_REPO carrying search syntax     -> exit 2 before the query
-#   ms32. a settings-file state dir, read    -> ONE baseline, whatever the
-#         from two directories                  cwd of the pass
-#   ms33. a missing reduction lib            -> exit 2, never bash's exit 1
-#   ms34. the QUERY actually sent             -> the qualifiers, the type and
-#                                               the merged: bound coverage
-#                                               rests on
+#   ms25.  a PRE-merge thread, re-raised    -> a finding (the re-raise shape)
+#   ms26.  older canonical, newer bare      -> a finding (the LAST decides)
+#   ms27.  more PRs than --limit reads      -> a sweep line that REPEATS
+#   ms28.  --state-file                     -> that file, never the default
+#   ms29.  a relative state dir             -> anchored on the repo root
+#   ms30.  a repo the read cannot reach     -> exit 2, never quiet silence
+#   ms31.  GH_REPO carrying search syntax   -> exit 2 before the query
+#   ms32.  a settings-file dir, two cwds    -> ONE baseline, either way
+#   ms33.  a missing reduction lib          -> exit 2, never bash's exit 1
+#   ms33c. a lib readable but truncated     -> exit 2, naming the symbol
+#   ms34.  the QUERY actually sent          -> qualifiers, type, probe, merged:
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -769,7 +762,16 @@ else
   assert_eq "$SPLIT_RC" "2" "ms33b: an unreadable settings lib exits 2 the same way"
   assert_eq "$SPLIT_OUT" "" "ms33b: with stdout empty"
 fi
-chmod 644 "$LIBTEST/lib/settings.sh"; SWEEP="$SWEEP_REAL"
+chmod 644 "$LIBTEST/lib/settings.sh"
+
+# ms33c: readable but TRUNCATED — the only case lib_defines answers, and one
+# neither arm above reaches, since ms33 deletes the lib and ms33b unreads it.
+head -5 "$SKILL_ROOT/scripts/lib/merged-sweep-reduce.sh" > "$LIBTEST/lib/merged-sweep-reduce.sh"
+run_split
+assert_eq "$SPLIT_RC" "2" "ms33c: a lib that is readable but defines nothing exits 2"
+assert_contains "$SPLIT_ERR" "defines no MERGED_SWEEP_REDUCE_JQ" "ms33c: naming the symbol the lib owes"
+assert_eq "$SPLIT_OUT" "" "ms33c: with stdout empty"
+SWEEP="$SWEEP_REAL"
 
 # --- ms34: the REQUEST the coverage claim rests on -----------------------
 # Every arm above feeds the stub a fixture, which proves nothing about what

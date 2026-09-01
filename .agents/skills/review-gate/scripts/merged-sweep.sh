@@ -39,8 +39,8 @@ print_usage() {
 Usage: merged-sweep.sh [--window SECS] [--limit N] [--no-state]
                        [--state-file PATH]
 
-Sweep recently-merged PRs for reviews and review threads that landed AFTER
-the merge and carry no disposition reply. One invocation answers: did a
+Sweep recently-merged PRs for reviews and review thread comments that landed
+AFTER the merge and carry no disposition reply. One invocation answers: did a
 finding arrive too late for anyone to read it?
 
   --window SECS      only PRs merged within this many seconds (default
@@ -64,47 +64,47 @@ finding arrive too late for anyone to read it?
 
 Attention kinds (column 3):
   post-merge-findings  a merged PR carries a review, or a review thread
-                       COMMENT, created after its mergedAt with no
-                       disposition reply (Fixed in <sha>, Declined:
-                       <reason>, or a track-word NAMING an issue — a bare
-                       track-word is not an answer), so nothing has read
-                       it. Approvals and dismissals are not findings; the
-                       PR author's own reviews are not findings. A thread
-                       counts on its newest post-merge comment that is not
-                       itself a reply form, never on the thread opening: a
-                       reviewer re-raising on a line it already flagged
-                       lands in a PRE-merge thread, and a thread whose only
-                       post-merge comment IS a reply is answered. The STANDING reply is the
-                       LAST non-bot one in a reply form, as in
-                       review-predicate.sh, so an older canonical reply
-                       never outranks a newer bare one; bots are exempt
-                       because they quote each other. The two surfaces
-                       differ deliberately: INSIDE a thread a human comment
-                       that is not a reply form is new content and reopens
-                       the finding, while on the PR CONVERSATION the same
-                       comment is chatter and the standing disposition
+                       COMMENT, created after its mergedAt with no disposition
+                       reply (Fixed in <sha>, Declined: <reason>, or a
+                       track-word NAMING an issue — a bare track-word is not an
+                       answer), so nothing has read it. Approvals and
+                       dismissals are not findings; the PR author's own reviews
+                       are not findings. A thread counts on its newest
+                       post-merge comment that is not itself a reply form,
+                       never on the thread opening: a reviewer re-raising on a
+                       line it already flagged lands in a PRE-merge thread, and
+                       a thread whose only post-merge comment IS a reply is
+                       answered. The STANDING reply is the LAST non-bot one in
+                       a reply form, as in review-predicate.sh, so an older
+                       canonical reply never outranks a newer bare one; bots
+                       are exempt because they quote each other. The two
+                       surfaces differ deliberately: INSIDE a thread a human
+                       comment that is not a reply form is new content and
+                       reopens the finding, while on the PR CONVERSATION the
+                       same comment is chatter and the standing disposition
                        holds. What the read cannot prove fails CLOSED: a
                        truncated reviewThreads page (GitHub documents no
-                       ordering for it), a review or comment page whose
-                       every entry is post-merge, and an unparsable
-                       timestamp. One gap is invisible and so uncovered:
-                       search is eventually consistent, so a PR the index
-                       has not caught up with is absent from the page AND
-                       uncounted. A loop recovers what one shot misses
+                       ordering for it), a review or comment page whose every
+                       entry is post-merge, and an unparsable timestamp. One
+                       gap is invisible and so uncovered: search is eventually
+                       consistent, so a PR the index has not caught up with is
+                       absent from the page AND uncounted. A loop recovers what
+                       one shot misses
   sweep:window-truncated  the window holds more merged PRs than this page
                        read, so the sweep cannot answer for the remainder.
                        Belongs to no single PR, so it carries "-" and
                        "--------" in the first two columns
 
 Dedupe: per-repo state, the same rising-edge mechanism as oversee-watch's
-PW_SEEN. A finding is keyed by the node id of its review or thread, the
-per-PR fail-closed arm by a synthetic <number>:overflow. A key present in
-the previous pass is not re-emitted; one that clears and recurs is news. So a finding surfaces ONCE and stays quiet while unchanged, and
-silence means "nothing NEW needs you" — use --no-state to re-read what is
-still outstanding. sweep:window-truncated is EXEMPT: a shortfall no reply
-can clear is a standing property, not an event, so it carries no key and
-REPEATS every pass while it holds. Announce-once there would leave the
-gap, and a gap that worsens, silent from the second pass on.
+PW_SEEN. A finding is keyed by the node id of its review or thread, the per-PR
+fail-closed arm by a synthetic <number>:overflow. A key present in the previous
+pass is not re-emitted; one that clears and recurs is news. So a finding
+surfaces ONCE and stays quiet while unchanged, and silence means "nothing NEW
+needs you" — use --no-state to re-read what is still outstanding.
+sweep:window-truncated is EXEMPT: a shortfall no reply can clear is a standing
+property, not an event, so it carries no key and REPEATS every pass while it
+holds. Announce-once there would leave the gap, and a gap that worsens, silent
+from the second pass on.
 
 Output: one tab-separated attention line, the same shape pr-watch.sh
 emits, so one reducer consumes both:
@@ -113,14 +113,14 @@ emits, so one reducer consumes both:
 Exit codes:
   0  nothing new needs attention
   1  at least one attention line
-  2  a read or config failure — always GLOBAL (missing or malformed
-     GH_REPO, a bad flag, a repository the read could not reach, a broken
-     merged-PR listing, an unusable state file). One query answers for the
-     whole sweep, so there is no per-PR failure to isolate: exit 2 reports
-     on stderr and prints NO lines on stdout at all. Surface stderr, never stdout alone. Attention lines are
-     buffered until the state file is written, so a state write that fails
-     exits 2 with nothing printed rather than looking like ordinary
-     attention
+  2  a read or config failure — always GLOBAL (missing or malformed GH_REPO, a
+     bad flag, a repository the read could not reach, a broken merged-PR
+     listing, an unusable state file). One query answers for the whole sweep,
+     so there is no per-PR failure to isolate: exit 2 reports on stderr and
+     prints NO lines on stdout at all. Surface stderr, never stdout alone.
+     Attention lines are buffered until the state file is written, so a state
+     write that fails exits 2 with nothing printed rather than looking like
+     ordinary attention
 
 Env (required): GH_TOKEN (or ambient gh auth), GH_REPO — OWNER/REPO, and
 only letters, digits, '.', '_' and '-' either side of the slash, because it

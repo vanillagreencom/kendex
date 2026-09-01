@@ -257,8 +257,8 @@ instead of reporting silence over the remainder. Raise `--limit`, or narrow
 `--window` until the line stops — an instruction you can follow, because
 that line carries no dedupe key and repeats on every pass while the gap
 holds. The ceiling of 80 is MEASURED (about 8s on a full page against one
-busy repo, with the failure cliff at 100), not an API limit, and a 504 is
-load-dependent: re-measure on your own repo before leaning on the number.
+busy repo, with 100 failing once in two runs), not an API limit, and a 504
+is load-dependent: re-measure on your own repo before leaning on the number.
 Search is eventually consistent and separately rate-limited, so a PR merged
 seconds ago may not appear until the next pass. Exit 2 is always a global
 failure with nothing on stdout, so a consumer that sees lines is looking at

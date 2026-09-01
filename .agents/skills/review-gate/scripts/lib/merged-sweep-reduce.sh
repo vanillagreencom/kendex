@@ -52,10 +52,10 @@ else
   # recently UPDATED merged PRs, scattered across the window rather than a
   # contiguous newest-merged block, so no timestamp here bounds the unread
   # remainder and quoting one would send the operator to a window that is
-  # also truncated. It carries NO key: a
-  # coverage shortfall is a standing property of the read that no reply
-  # clears, so announce-once would leave the gap silent from the second
-  # pass on — and a gap that WORSENS silent with it.
+  # also truncated. The row carries NO key: a coverage shortfall is a
+  # standing property of the read that no reply clears, so announce-once
+  # would leave the gap silent from the second pass on, and a gap that
+  # WORSENS silent with it.
   | (if ($s.issueCount > ($s.nodes | length)) or $s.pageInfo.hasNextPage
      then [ [ "-", "--------", "sweep:window-truncated", "-",
               "\($s.issueCount) merged PR(s) in the window, \($s.nodes | length) read at --limit \($limit) — the rest is UNSWEPT; \(if $limit < $limit_max then "raise --limit (max \($limit_max)), or narrow --window, until those two counts meet" else "narrow --window until those two counts meet; --limit is already at its \($limit_max) ceiling" end)" ]
