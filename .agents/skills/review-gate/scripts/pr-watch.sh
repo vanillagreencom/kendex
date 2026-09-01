@@ -58,10 +58,10 @@ Attention kinds:
                      names no mechanism — an empty reason, or nothing but
                      non-reason tokens (frozen, cap, round N, tests pass,
                      out of scope, pre-existing and the like). Read by
-                     shape, so a decline written without the colon counts
-                     too. Cleared by a reply naming a passing state, a
-                     false premise, or an excluded class. Needs the
-                     predicate (evaluate mode only)
+                     shape, so a decline without the colon counts too.
+                     Cleared by a reply naming a passing state, a false
+                     premise, or an excluded class with the fact that puts
+                     it there. Needs the predicate (evaluate mode only)
   gate-stale         the predicate and the gate context's newest row
                      disagree, in either mismatch direction — the writer
                      has not converged (event missed, cron slipped). With
