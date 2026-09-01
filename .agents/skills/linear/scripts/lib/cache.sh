@@ -287,7 +287,7 @@ cache_get_children_recursive() {
     # Returns flat array with depth field. Emits both `id` and `identifier`
     # so consumers reading either field (raw cache vs formatted output)
     # work consistently.
-    cache_jq_file "$CACHE_DIR/issues.json" "[]" --arg p "$parent" --argjson max "$max_depth" '
+    cache_jq_file "$CACHE_DIR/issues.json" "[]" --arg p "$parent" --argjson max "$max_depth" "$ISSUE_RELATION_JQ"'
         . as $all |
         def descendants($pid; depth):
             if depth >= $max then [] else
@@ -308,9 +308,9 @@ cache_get_children_recursive() {
                         estimate: ($c.estimate // 0),
                         depth: depth,
                         parent_id: ($c.parent.identifier // ""),
-                        blocks: [($c.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-                        blocked_by: [($c.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
-                        blocked_by_open: [($c.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier]
+                        blocks: issue_blocks_ids($c.relations.nodes),
+                        blocked_by: issue_blocked_by_ids($c.inverseRelations.nodes),
+                        blocked_by_open: issue_blocked_by_open_ids($c.inverseRelations.nodes)
                     }
                 ) |
                 . + (map(.id) | map(. as $cid | $all | descendants($cid; depth + 1)) | flatten)
@@ -590,8 +590,7 @@ cache_refresh_issues() {
                 labels { nodes { name } }
                 priority estimate url
                 createdAt updatedAt archivedAt trashed
-                relations { nodes { id type relatedIssue { id identifier title state { name type } } } }
-                inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
+$ISSUE_RELATION_FIELDS
             }
         }
     }"

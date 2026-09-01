@@ -76,8 +76,7 @@ sync_issues() {
                 updatedAt
                 archivedAt
                 trashed
-                relations { nodes { id type relatedIssue { id identifier title state { name type } } } }
-                inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
+'"$ISSUE_RELATION_FIELDS"'
             }
         }
     }'

@@ -5,12 +5,27 @@
 
 set -euo pipefail
 
+readonly ISSUE_RELATION_FIELDS='relations { nodes { id type relatedIssue { id identifier title state { name } } } } inverseRelations { nodes { id type issue { id identifier title state { name type } } } }'
+readonly ISSUE_RELATION_JQ='
+def issue_is_open: (.state.type | IN("completed", "canceled") | not);
+def issue_blocks_relations($relations): [($relations // [])[] | select(.type == "blocks")];
+def issue_blocks_ids($relations): issue_blocks_relations($relations) | map(.relatedIssue.identifier);
+def issue_blocked_row: {id: .relatedIssue.identifier, title: .relatedIssue.title, state: .relatedIssue.state.name};
+def issue_blocks_rows($relations; $with_relation_id): issue_blocks_relations($relations) | map(issue_blocked_row + if $with_relation_id then {relation_id: .id} else {} end);
+def issue_blocked_by_relations($relations): [($relations // [])[] | select(.type == "blocks")];
+def issue_blocked_by_open_relations($relations): issue_blocked_by_relations($relations) | map(select(.issue | issue_is_open));
+def issue_blocker_row: {id: .issue.identifier, title: .issue.title, state: .issue.state.name};
+def issue_blocked_by_ids($relations): issue_blocked_by_relations($relations) | map(.issue.identifier);
+def issue_blocked_by_open_ids($relations): issue_blocked_by_open_relations($relations) | map(.issue.identifier);
+def issue_blocked_by_rows($relations; $with_relation_id): issue_blocked_by_relations($relations) | map(issue_blocker_row + if $with_relation_id then {relation_id: .id} else {} end);
+def issue_blocked_by_open_rows($relations; $with_relation_id): issue_blocked_by_open_relations($relations) | map(issue_blocker_row + if $with_relation_id then {relation_id: .id} else {} end);
+'
 # Format issues list to safe structure
 # Input: Raw GraphQL response with .issues.nodes[]
 # Output: Flat array with all nullable fields defaulted
 format_issues_list() {
     local raw="$1"
-    echo "$raw" | jq '[.issues.nodes[] | {
+    echo "$raw" | jq "$ISSUE_RELATION_JQ"'[.issues.nodes[] | {
         id: .identifier,
         uuid: .id,
         title: (.title // ""),
@@ -31,9 +46,9 @@ format_issues_list() {
         cycle: (if .cycle then (.cycle.name // "Cycle \(.cycle.number)") else "" end),
         created_at: (.createdAt // ""),
         updated_at: (.updatedAt // ""),
-        blocks: [(.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-        blocked_by: [(.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
-        blocked_by_open: [(.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier],
+        blocks: issue_blocks_ids(.relations.nodes),
+        blocked_by: issue_blocked_by_ids(.inverseRelations.nodes),
+        blocked_by_open: issue_blocked_by_open_ids(.inverseRelations.nodes),
         related: [(.relations.nodes // [])[] | select(.type == "related") | .relatedIssue.identifier],
         url: (.url // "")
     }]'
@@ -44,7 +59,7 @@ format_issues_list() {
 # Output: Flat object (not wrapped in {issue: ...})
 format_issue_single() {
     local raw="$1"
-    echo "$raw" | jq '{
+    echo "$raw" | jq "$ISSUE_RELATION_JQ"'{
         id: .issue.identifier,
         identifier: .issue.identifier,
         uuid: .issue.id,
@@ -66,9 +81,9 @@ format_issue_single() {
         cycle: (if .issue.cycle then (.issue.cycle.name // "Cycle \(.issue.cycle.number)") else "" end),
         created_at: (.issue.createdAt // ""),
         updated_at: (.issue.updatedAt // ""),
-        blocks: [(.issue.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-        blocked_by: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
-        blocked_by_open: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier],
+        blocks: issue_blocks_ids(.issue.relations.nodes),
+        blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
+        blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
         related: [(.issue.relations.nodes // [])[] | select(.type == "related") | .relatedIssue.identifier],
         url: (.issue.url // "")
     }'
@@ -79,7 +94,7 @@ format_issue_single() {
 # Output: Flat object with children array and pending_count
 format_issue_with_bundle() {
     local raw="$1"
-    echo "$raw" | jq '
+    echo "$raw" | jq "$ISSUE_RELATION_JQ"'
         # Recursive function to flatten children with depth tracking
         # Note: sort_order omitted from children — only meaningful on parent/standalone issues
         def flatten_children(depth):
@@ -98,9 +113,9 @@ format_issue_with_bundle() {
                 labels: [($node.labels.nodes // [])[] | .name],
                 depth: depth,
                 parent_id: ($node.parent.identifier // ""),
-                blocks: [($node.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-                blocked_by: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
-                blocked_by_open: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier]
+                blocks: issue_blocks_ids($node.relations.nodes),
+                blocked_by: issue_blocked_by_ids($node.inverseRelations.nodes),
+                blocked_by_open: issue_blocked_by_open_ids($node.inverseRelations.nodes)
             }] + (($node.children.nodes // []) | map(flatten_children(depth + 1)) | flatten);
 
         # Flatten all children
@@ -128,9 +143,9 @@ format_issue_with_bundle() {
             cycle: (if .issue.cycle then (.issue.cycle.name // "Cycle \(.issue.cycle.number)") else "" end),
             created_at: (.issue.createdAt // ""),
             updated_at: (.issue.updatedAt // ""),
-            blocks: [(.issue.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-            blocked_by: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
-            blocked_by_open: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier],
+            blocks: issue_blocks_ids(.issue.relations.nodes),
+            blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
+            blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
             related: [(.issue.relations.nodes // [])[] | select(.type == "related") | .relatedIssue.identifier],
             url: (.issue.url // ""),
             children: $children,
@@ -143,7 +158,7 @@ format_issue_with_bundle() {
 # Strips: description, url, timestamps, uuid, project_id
 format_issue_compact() {
     local raw="$1"
-    echo "$raw" | jq '{
+    echo "$raw" | jq "$ISSUE_RELATION_JQ"'{
         id: .issue.identifier,
         identifier: .issue.identifier,
         title: (.issue.title // ""),
@@ -157,9 +172,9 @@ format_issue_compact() {
         project: (.issue.project.name // ""),
         assignee: (.issue.assignee.name // ""),
         parent_id: (.issue.parent.identifier // ""),
-        blocks: [(.issue.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-        blocked_by: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
-        blocked_by_open: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier],
+        blocks: issue_blocks_ids(.issue.relations.nodes),
+        blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
+        blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
         children: [(.issue.children.nodes // [])[] | {id: .identifier, title: .title, state: .state.name}]
     }'
 }
@@ -167,7 +182,7 @@ format_issue_compact() {
 # Format issue with bundle to compact structure
 format_issue_with_bundle_compact() {
     local raw="$1"
-    echo "$raw" | jq '
+    echo "$raw" | jq "$ISSUE_RELATION_JQ"'
         def flatten_children(depth):
             . as $node | [{
                 id: $node.identifier,
@@ -180,9 +195,9 @@ format_issue_with_bundle_compact() {
                 estimate: ($node.estimate // 0),
                 depth: depth,
                 parent_id: ($node.parent.identifier // ""),
-                blocks: [($node.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-                blocked_by: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
-                blocked_by_open: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier]
+                blocks: issue_blocks_ids($node.relations.nodes),
+                blocked_by: issue_blocked_by_ids($node.inverseRelations.nodes),
+                blocked_by_open: issue_blocked_by_open_ids($node.inverseRelations.nodes)
             }] + (($node.children.nodes // []) | map(flatten_children(depth + 1)) | flatten);
 
         ([.issue.children.nodes[] | flatten_children(0)] | flatten) as $children |
@@ -199,9 +214,9 @@ format_issue_with_bundle_compact() {
             project: (.issue.project.name // ""),
             assignee: (.issue.assignee.name // ""),
             parent_id: (.issue.parent.identifier // ""),
-            blocks: [(.issue.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-            blocked_by: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
-            blocked_by_open: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier],
+            blocks: issue_blocks_ids(.issue.relations.nodes),
+            blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
+            blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
             children: $children,
             pending_count: ([$children[] | select(.state_type | IN("completed", "canceled") | not)] | length)
         }
@@ -211,7 +226,7 @@ format_issue_with_bundle_compact() {
 # Format issues list to compact structure
 format_issues_list_compact() {
     local raw="$1"
-    echo "$raw" | jq '[.issues.nodes[] | {
+    echo "$raw" | jq "$ISSUE_RELATION_JQ"'[.issues.nodes[] | {
         id: .identifier,
         title: (.title // ""),
         state: (.state.name // ""),
@@ -223,9 +238,9 @@ format_issues_list_compact() {
         sort_order: (.sortOrder // 0),
         project: (.project.name // ""),
         parent_id: (.parent.identifier // ""),
-        blocks: [(.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-        blocked_by: [(.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
-        blocked_by_open: [(.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier]
+        blocks: issue_blocks_ids(.relations.nodes),
+        blocked_by: issue_blocked_by_ids(.inverseRelations.nodes),
+        blocked_by_open: issue_blocked_by_open_ids(.inverseRelations.nodes)
     }]'
 }
 
@@ -435,25 +450,10 @@ format_labels_list() {
 # Format issue relations to safe structure
 format_relations_list() {
     local raw="$1"
-    echo "$raw" | jq '{
-        blocks: [(.issue.relations.nodes // [])[] | select(.type == "blocks") | {
-            relation_id: .id,
-            id: .relatedIssue.identifier,
-            title: .relatedIssue.title,
-            state: .relatedIssue.state.name
-        }],
-        blocked_by: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks") | {
-            relation_id: .id,
-            id: .issue.identifier,
-            title: .issue.title,
-            state: .issue.state.name
-        }],
-        blocked_by_open: [(.issue.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | {
-            relation_id: .id,
-            id: .issue.identifier,
-            title: .issue.title,
-            state: .issue.state.name
-        }],
+    echo "$raw" | jq "$ISSUE_RELATION_JQ"'{
+        blocks: issue_blocks_rows(.issue.relations.nodes; true),
+        blocked_by: issue_blocked_by_rows(.issue.inverseRelations.nodes; true),
+        blocked_by_open: issue_blocked_by_open_rows(.issue.inverseRelations.nodes; true),
         related: [(.issue.relations.nodes // [])[] | select(.type == "related") | {
             relation_id: .id,
             id: .relatedIssue.identifier,
@@ -489,7 +489,7 @@ format_children_list() {
 # Includes blocks/blocked_by from relations for sub-issue ordering
 format_children_recursive() {
     local raw="$1"
-    echo "$raw" | jq '
+    echo "$raw" | jq "$ISSUE_RELATION_JQ"'
         # Recursive function to flatten children with depth tracking
         def flatten_children(depth):
             . as $node | [{
@@ -506,9 +506,9 @@ format_children_recursive() {
                 labels: [($node.labels.nodes // [])[] | .name],
                 depth: depth,
                 parent_id: ($node.parent.identifier // ""),
-                blocks: [($node.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-                blocked_by: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
-                blocked_by_open: [($node.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier]
+                blocks: issue_blocks_ids($node.relations.nodes),
+                blocked_by: issue_blocked_by_ids($node.inverseRelations.nodes),
+                blocked_by_open: issue_blocked_by_open_ids($node.inverseRelations.nodes)
             }] + (($node.children.nodes // []) | map(flatten_children(depth + 1)) | flatten);
 
         # Start from issue.children.nodes (depth 0 = direct children)

@@ -399,7 +399,7 @@ cache_get_issue() {
             --argjson children "$children" \
             --argjson pending "$pending_count" \
             --argjson attachments "$attachments" \
-            '{
+            "$ISSUE_RELATION_JQ"'{
                 id: $issue.identifier,
                 identifier: $issue.identifier,
                 uuid: $issue.id,
@@ -420,9 +420,9 @@ cache_get_issue() {
                 cycle: (if $issue.cycle then ($issue.cycle.name // "Cycle \($issue.cycle.number)") else "" end),
                 created_at: ($issue.createdAt // ""),
                 updated_at: ($issue.updatedAt // ""),
-                blocks: [($issue.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue.identifier],
-                blocked_by: [($issue.inverseRelations.nodes // [])[] | select(.type == "blocks") | .issue.identifier],
-                blocked_by_open: [($issue.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | .issue.identifier],
+                blocks: issue_blocks_ids($issue.relations.nodes),
+                blocked_by: issue_blocked_by_ids($issue.inverseRelations.nodes),
+                blocked_by_open: issue_blocked_by_open_ids($issue.inverseRelations.nodes),
                 related: [($issue.relations.nodes // [])[] | select(.type == "related") | .relatedIssue.identifier],
                 url: ($issue.url // ""),
                 children: $children,
@@ -549,23 +549,11 @@ cache_list_relations() {
     fi
 
     local result
-    result=$(cache_jq_file "$CACHE_DIR/issues.json" "" --arg id "$issue_id" '
+    result=$(cache_jq_file "$CACHE_DIR/issues.json" "" --arg id "$issue_id" "$ISSUE_RELATION_JQ"'
         .[] | select(.identifier == $id or .id == $id) | {
-            blocks: [(.relations.nodes // [])[] | select(.type == "blocks") | {
-                id: .relatedIssue.identifier,
-                title: .relatedIssue.title,
-                state: .relatedIssue.state.name
-            }],
-            blocked_by: [(.inverseRelations.nodes // [])[] | select(.type == "blocks") | {
-                id: .issue.identifier,
-                title: .issue.title,
-                state: .issue.state.name
-            }],
-            blocked_by_open: [(.inverseRelations.nodes // [])[] | select(.type == "blocks" and (.issue.state.type | IN("completed", "canceled") | not)) | {
-                id: .issue.identifier,
-                title: .issue.title,
-                state: .issue.state.name
-            }],
+            blocks: issue_blocks_rows(.relations.nodes; false),
+            blocked_by: issue_blocked_by_rows(.inverseRelations.nodes; false),
+            blocked_by_open: issue_blocked_by_open_rows(.inverseRelations.nodes; false),
             related: [(.relations.nodes // [])[] | select(.type == "related") | {
                 id: .relatedIssue.identifier,
                 title: .relatedIssue.title,

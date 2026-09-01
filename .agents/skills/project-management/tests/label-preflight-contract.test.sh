@@ -65,7 +65,7 @@ fi
 
 tpm_audit="$SKILL_DIR/workflows/tpm-audit.md"
 require "$tpm_audit" 'cache issues get \[ISSUE_ID\]' 'supported cached issue fetch for relation analysis'
-require "$tpm_audit" 'blocks`, `blocked_by`, and `related`' 'relation fields come from the cached issue payload'
+require "$tpm_audit" 'blocks`, `blocked_by`, `blocked_by_open`, and `related`' 'relation fields come from the cached issue payload'
 
 audit_issues="$SKILL_DIR/workflows/audit-issues.md"
 if grep -Fq 'Agent returns `.JSON` file. If missing, halt.' "$audit_issues"; then

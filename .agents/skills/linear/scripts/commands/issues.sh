@@ -305,9 +305,7 @@ ISSUE_RETURN_FIELDS='
     updatedAt
     archivedAt
     trashed
-    relations { nodes { id type relatedIssue { id identifier title state { name type } } } }
-    inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
-'
+'"$ISSUE_RELATION_FIELDS"
 
 linear_mutation_success() {
     local normalized="$1"
@@ -461,8 +459,7 @@ list_issues() {
                 updatedAt
                 archivedAt
                 trashed
-                relations { nodes { id type relatedIssue { id identifier title state { name } } } }
-                inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
+'"$ISSUE_RELATION_FIELDS"'
             }
         }
     }'
@@ -523,15 +520,15 @@ list_issues() {
     raw)
         # --with-relations with raw outputs analyzed format (legacy behavior)
         if [ "$with_relations" = "true" ]; then
-            echo "$result" | jq '{
+            echo "$result" | jq "$ISSUE_RELATION_JQ"'{
                     unblocked: [.issues.nodes[] |
-                        select([.inverseRelations.nodes[] | select(.type == "blocks" and .issue.state.name != "Done")] | length == 0) |
+                        select(issue_blocked_by_open_relations(.inverseRelations.nodes) | length == 0) |
                         {id: .identifier, title, agent: ([.labels.nodes[].name | select(startswith("agent:"))] | first // "none"), priority}
                     ],
                     blocked: [.issues.nodes[] |
-                        select([.inverseRelations.nodes[] | select(.type == "blocks" and .issue.state.name != "Done")] | length > 0) |
+                        select(issue_blocked_by_open_relations(.inverseRelations.nodes) | length > 0) |
                         {id: .identifier, title, agent: ([.labels.nodes[].name | select(startswith("agent:"))] | first // "none"), priority,
-                         blocked_by: [.inverseRelations.nodes[] | select(.type == "blocks" and .issue.state.name != "Done") | .issue.identifier]}
+                         blocked_by: issue_blocked_by_open_ids(.inverseRelations.nodes)}
                     ]
                 }'
         else
@@ -644,8 +641,7 @@ bulk_get_issues() {
                 trashed
                 parent { id identifier title }
                 children { nodes { id identifier title state { name } } }
-                relations { nodes { id type relatedIssue { id identifier title state { name } } } }
-                inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
+'"$ISSUE_RELATION_FIELDS"'
             }
         }
     }'
@@ -868,8 +864,7 @@ get_issue() {
                 archivedAt
                 trashed
                 parent { id identifier title }
-                relations { nodes { id type relatedIssue { id identifier title state { name } } } }
-                inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
+'"$ISSUE_RELATION_FIELDS"'
                 children {
                     nodes {
                         id identifier title description
@@ -878,8 +873,7 @@ get_issue() {
                         labels { nodes { name } }
                         priority estimate
                         parent { identifier }
-                        relations { nodes { type relatedIssue { identifier } } }
-                        inverseRelations { nodes { type issue { identifier state { type } } } }
+'"$ISSUE_RELATION_FIELDS"'
                         children {
                             nodes {
                                 id identifier title description
@@ -888,8 +882,7 @@ get_issue() {
                                 labels { nodes { name } }
                                 priority estimate
                                 parent { identifier }
-                                relations { nodes { type relatedIssue { identifier } } }
-                                inverseRelations { nodes { type issue { identifier state { type } } } }
+'"$ISSUE_RELATION_FIELDS"'
                                 children {
                                     nodes {
                                         id identifier title description
@@ -898,8 +891,7 @@ get_issue() {
                                         labels { nodes { name } }
                                         priority estimate
                                         parent { identifier }
-                                        relations { nodes { type relatedIssue { identifier } } }
-                                        inverseRelations { nodes { type issue { identifier state { type } } } }
+'"$ISSUE_RELATION_FIELDS"'
                                     }
                                 }
                             }
@@ -934,8 +926,7 @@ get_issue() {
                 trashed
                 parent { id identifier title }
                 children { nodes { id identifier title state { name } } }
-                relations { nodes { id type relatedIssue { id identifier title state { name } } } }
-                inverseRelations { nodes { id type issue { id identifier title state { name type } } } }
+'"$ISSUE_RELATION_FIELDS"'
             }
         }'
     fi
@@ -2178,8 +2169,7 @@ list_children() {
                         priority
                         estimate
                         parent { identifier }
-                        relations { nodes { type relatedIssue { identifier } } }
-                        inverseRelations { nodes { type issue { identifier state { type } } } }
+'"$ISSUE_RELATION_FIELDS"'
                         children {
                             nodes {
                                 id
@@ -2191,8 +2181,7 @@ list_children() {
                                 priority
                                 estimate
                                 parent { identifier }
-                                relations { nodes { type relatedIssue { identifier } } }
-                                inverseRelations { nodes { type issue { identifier state { type } } } }
+'"$ISSUE_RELATION_FIELDS"'
                                 children {
                                     nodes {
                                         id
@@ -2204,8 +2193,7 @@ list_children() {
                                         priority
                                         estimate
                                         parent { identifier }
-                                        relations { nodes { type relatedIssue { identifier } } }
-                                        inverseRelations { nodes { type issue { identifier state { type } } } }
+'"$ISSUE_RELATION_FIELDS"'
                                     }
                                 }
                             }
@@ -2311,30 +2299,7 @@ list_relations() {
         issue(id: $id) {
             identifier
             title
-            relations {
-                nodes {
-                    id
-                    type
-                    relatedIssue {
-                        id
-                        identifier
-                        title
-                        state { name type }
-                    }
-                }
-            }
-            inverseRelations {
-                nodes {
-                    id
-                    type
-                    issue {
-                        id
-                        identifier
-                        title
-                        state { name }
-                    }
-                }
-            }
+'"$ISSUE_RELATION_FIELDS"'
         }
     }'
 
