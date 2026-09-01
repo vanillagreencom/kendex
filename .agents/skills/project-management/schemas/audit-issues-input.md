@@ -4,7 +4,7 @@ Input file for `audit-issues --issues`, written by the caller at `[worktree-path
 
 ```json
 {
-  "source": "review|pr-comments|local-review|research-complete|roadmap",
+  "source": "review|pr-comments|local-review|research-complete|roadmap-create",
   "parent_issue": "PROJ-456",
   "tracker": {"type": "linear|github", "repository": "owner/repo"},
   "worktree": "/path/to/worktree",

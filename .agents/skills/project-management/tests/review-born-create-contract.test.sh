@@ -6,7 +6,7 @@
 #
 #   1. Every documented `issues create` invocation passes a body and names
 #      where that body comes from, so no site can file a body with no reach.
-#   2. Every workflow that writes an audit-input file states a `source`, and
+#   2. Every workflow that hands audit-issues a file states a `source`, and
 #      every stated source is one the schema declares — without it the
 #      analysis cannot decide review_born and the symptom half fails open.
 #   3. The review-born create audit-issues.md documents is run verbatim
@@ -106,26 +106,30 @@ in_enum() {
 	return 1
 }
 
-# A writer BUILDS an audit input; a consumer merely reads the schema. The
-# writers say so — "audit input", "audit-input file" — and the consumers'
-# table rows do not, so the selector is that phrase rather than the file path,
-# which one writer states on another line. A selected writer that states no
-# source FAILS: skipping it is how the review-born half went unenforced.
+# A writer is a workflow that HANDS audit-issues a file — the two file modes,
+# whose source audit-issues § 1.1 reads and tpm-audit's review_born rule then
+# tests. Selecting on the invocation excludes tpm-audit, which audit-issues
+# calls rather than the other way round, and whose analysis output carries no
+# source by design. The source is read from the invocation's own section, not
+# from the file: two writers state it several lines above the call, and a file
+# elsewhere describes a per-item record whose `source` is a different field
+# entirely. A selected writer that states no source FAILS — skipping one is
+# how a value outside the enum sat in the tree unnoticed.
 writers_seen=0
 while IFS= read -r hit; do
 	file="${hit%%:*}"
 	rest="${hit#*:}"
-	line="${rest#*:}"
-	grep -qE 'audit[- ]input' <<<"$line" || continue
+	line="${rest%%:*}"
 	writers_seen=$((writers_seen + 1))
-	stated="$(sed -nE 's/.*`?source: "([a-z-]+)"`?.*/\1/p' <<<"$line" | head -1)"
+	stated="$(section_of "$file" "$line" |
+		sed -nE 's/.*"?source"?: "([a-z-]+)".*/\1/p' | head -1)"
 	[[ -n "$stated" ]] ||
-		fail "${file#"$SKILLS_ROOT/"} writes an audit-input file but states no source, so review_born cannot be derived for it"
+		fail "${file#"$SKILLS_ROOT/"}:$line hands audit-issues a file but its section states no source, so review_born cannot be derived for it"
 	in_enum "$stated" ||
-		fail "${file#"$SKILLS_ROOT/"} states source \"$stated\", which the schema's enum does not declare ($enum_values)"
-done < <(grep -rn 'audit-issues-input.md' "$SKILLS_ROOT"/*/workflows/*.md || true)
-[[ "$writers_seen" -ge 4 ]] ||
-	fail "only $writers_seen audit-input writer(s) found; the derivation stopped matching the tree"
+		fail "${file#"$SKILLS_ROOT/"}:$line states source \"$stated\", which the schema's enum does not declare ($enum_values)"
+done < <(grep -rnE 'audit-issues\.md --(issues|analyzed)' "$SKILLS_ROOT"/*/workflows/*.md || true)
+[[ "$writers_seen" -ge 6 ]] ||
+	fail "only $writers_seen audit-issues caller(s) found; the derivation stopped matching the tree"
 
 # Every source the producer calls review-born must be one that can occur.
 review_born_line="$(grep -m1 -F '`review_born` is true when' "$TPM_AUDIT")" ||
@@ -252,4 +256,4 @@ run_documented "$WITH_SYMPTOM"
 jq -s -e 'any(.[]; .query | contains("issueCreate"))' "$CURL_LOG" >/dev/null ||
 	fail "the review-born create with a Symptom never reached issueCreate"
 
-echo "ok: $sites_seen create site(s) name a body source, $writers_seen audit-input writer(s) state a declared source, and the documented review-born create enforces the symptom half of the bar"
+echo "ok: $sites_seen create site(s) name a body source, $writers_seen audit-issues caller(s) state a declared source, and the documented review-born create enforces the symptom half of the bar"
