@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Each table row must answer help before loading project configuration.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"

@@ -30,9 +30,7 @@ SANDBOX="$TMP_ROOT/project"
 mkdir -p "$SANDBOX"
 git -C "$SANDBOX" init -q
 
-# The shared `gh` fake seeds identity probes. This suite stages the `pr view`
-# call its routed-command check needs; any other non-identity call is refused.
-# The stub ships beside this test in both the source package and its render.
+# The shared stub ships beside this test in both source and render.
 BIN_DIR="$TMP_ROOT/bin"
 # shellcheck source=lib/gh-stub.sh
 . "$TEST_DIR/lib/gh-stub.sh"
