@@ -480,10 +480,10 @@ lives in one capability table read by core and UI.
   paths are guard-banned. Structured frontmatter values parse as bounded
   YAML with aliases and duplicate keys refused; tolerant readers keep the
   plain one-line values harnesses accept. Renderers pass foreign values for
-  generated fields through the target format's scalar encoder. Fork and
-  import share one compact frontmatter-name rewrite for renamed YAML skills
-  and agents: it replaces or inserts a literal `name:` line and relies on
-  target validation.
+  generated fields through the target format's scalar encoder. Fork,
+  import, and namespaced skill installation share one compact
+  frontmatter-name rewrite for YAML skills and agents: it replaces or
+  inserts a literal `name:` line and relies on target validation.
 - **The source store is immutable; revisions are declared.** Each commit
   is materialized once into a directory named after its object id,
   published by rename, read unchanged thereafter; fetching touches only a

@@ -1,7 +1,7 @@
 //! A rendered skill tree and its `.disabled` spelling, plus the shared
-//! frontmatter-name rewrite used by YAML skill and agent fork/import paths.
-//! The rewrite handles the literal form kendex writes; callers may ask it of
-//! bytes that have no tree around them yet.
+//! frontmatter-name rewrite used by YAML skill and agent fork/import paths
+//! and namespaced skill installation. The rewrite handles the literal form
+//! kendex writes; callers may ask it of bytes with no tree around them yet.
 //!
 //! Kept apart from `skill.rs`, which renders the bytes. Whatever holds a
 //! tree after that is asking one of these two questions, and both are here.
@@ -9,9 +9,10 @@
 use std::path::PathBuf;
 
 /// Replace a literal `name:` line, or insert one when no such line exists,
-/// preserving the file's line ending. YAML skill and agent forks and imports
-/// share this rewrite. Other valid YAML key spellings and multiline values
-/// are not interpreted; target validation decides whether the result loads.
+/// preserving the file's line ending. YAML skill and agent forks and imports,
+/// plus namespaced skill installation, share this rewrite. Other valid YAML
+/// key spellings and multiline values are not interpreted; target validation
+/// decides whether the result loads.
 pub(crate) fn with_name(text: &str, installed: &str) -> Option<String> {
     let newline = if text.starts_with("---\r\n") {
         "\r\n"

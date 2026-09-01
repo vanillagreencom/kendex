@@ -41,8 +41,9 @@ impl RenderWarning {
 /// plain. Renderers pass foreign text for generated YAML fields through
 /// here: a raw newline there is frontmatter injection, not a cosmetic bug.
 /// Byte-preserving rewrites have their own contract; YAML skill and agent
-/// fork/import paths share a compact frontmatter-name rewrite that handles a
-/// literal `name:` line and relies on target validation.
+/// fork/import paths and namespaced skill installation share a compact
+/// frontmatter-name rewrite that handles a literal `name:` line and relies
+/// on target validation.
 pub fn yaml_scalar(text: &str) -> String {
     if !needs_quoting(text) {
         return text.to_owned();
