@@ -264,18 +264,46 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
+/// A project that is its own catalog: the items it installs live in the
+/// tree it installs them into, declared by a source rooted at the project.
+/// kendex is one, and so is every repository publishing what it also runs
+/// — the shape whose record states the checkout twice over, in the
+/// positions it wrote and in the provenance each entry came from.
+#[allow(clippy::unwrap_used)]
+fn its_own_catalog(home: &Path) -> std::path::PathBuf {
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::create_dir_all(project.join("skills/deploy")).unwrap();
+    fs::write(
+        project.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship it\n---\nRead the plan first.\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 6\n\n[sources.own]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"own\"\n",
+            source_path(Path::new("."))
+        ),
+    )
+    .unwrap();
+    project
+}
+
 /// The must-fail control for reading a lock in the checkout it was copied
 /// into. `git worktree` seeds every linked checkout with the main one's
 /// `.kendex-lock.json`, whose every position is an absolute path under the
-/// main checkout; read where it stands, the record belongs to another tree
-/// and the read-only verbs refuse instead of answering. Nothing composing
-/// them in a worktree can then be checked at all.
+/// main checkout and whose every entry records provenance the same way when
+/// the catalog is the project itself. Read where it stands, the record
+/// belongs to another tree: verify refuses at the door, and past that every
+/// row reads as an install rebound to a source nobody moved. Nothing
+/// composing these verbs in a worktree can then be checked at all.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
-    let project = declared(home, "Read the plan first.\n");
+    let project = its_own_catalog(home);
     assert!(kendex(home, &project, &["apply", "-y"]).status.success());
 
     // The linked worktree: the same tracked tree, render and lock included.
@@ -291,6 +319,10 @@ fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock()
     assert!(
         printed.contains("✓ skill deploy"),
         "and answer for the install the record names: {printed}"
+    );
+    assert!(
+        !printed.contains("now set to come from"),
+        "no row reads as rebound by the move between checkouts: {printed}"
     );
 
     let checked = kendex(home, &worktree, &["check"]);
@@ -309,7 +341,7 @@ fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock()
     // came from is untouched by anything the worktree just did.
     assert_eq!(
         fs::read_to_string(project.join(".claude/skills/deploy/SKILL.md")).unwrap(),
-        fs::read_to_string(home.join("catalog/skills/deploy/SKILL.md")).unwrap(),
+        fs::read_to_string(project.join("skills/deploy/SKILL.md")).unwrap(),
         "and the checkout the lock came from still holds its own install"
     );
 }

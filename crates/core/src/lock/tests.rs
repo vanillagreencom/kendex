@@ -267,6 +267,81 @@ fn a_project_lock_another_project_wrote_resolves_onto_the_project_reading_it() {
     );
 }
 
+/// A record whose writing root is no path on this machine — a clone at
+/// another path, a tree copied off another box, a main checkout since
+/// moved. Resolution turns on the record naming the root it went down
+/// under, never on that root still being reachable, and a read that
+/// required it would refuse exactly the copies this exists for.
+#[test]
+fn a_project_lock_a_root_that_is_gone_wrote_still_resolves() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("here");
+    std::fs::create_dir_all(&root).unwrap();
+    let gone = tmp.path().join("was/here");
+    assert!(!gone.exists(), "the writing root is not on this machine");
+    let path = root.join(LOCK_FILE);
+    recording(
+        &path,
+        "skill:gh:claude",
+        &gone.join(".agents/skills/gh"),
+        Some(&gone),
+    );
+
+    let lock = load(&path).unwrap();
+    assert_eq!(
+        lock.entries["skill:gh:claude"]
+            .emitted
+            .as_ref()
+            .unwrap()
+            .paths,
+        vec![root.join(".agents/skills/gh")],
+        "the remainder lands under the root reading"
+    );
+    assert_eq!(
+        lock.root,
+        Some(crate::paths::canonical(&root).unwrap()),
+        "and the record is this project's from here on"
+    );
+}
+
+/// A position stating no remainder of the root the record went down under
+/// is refused, not left to the containment check: it never was a position
+/// that project wrote, and under the root reading it there is a whole tree
+/// of places it could land inside and still not be this scope's.
+#[test]
+fn a_travelled_record_claiming_a_position_its_own_root_never_held_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("here");
+    let wrote_it = tmp.path().join("there");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&wrote_it).unwrap();
+    let path = root.join(LOCK_FILE);
+
+    // Inside the project reading the record, so containment waves it
+    // through, and outside the one that wrote it, so the record never
+    // stated it as anywhere of its own.
+    let inside = root.join("vendor/somebody-elses/link");
+    recording(&path, "skill:gh:claude", &inside, Some(&wrote_it));
+    let refused = load(&path).unwrap_err();
+    assert!(
+        matches!(
+            &refused,
+            CoreError::LockOutsideProject { key, recorded, root: named, .. }
+                if key == "skill:gh:claude" && recorded == &inside && named == &wrote_it
+        ),
+        "{refused:?}"
+    );
+
+    // The root itself states no remainder at all, and rejoined it would
+    // name the reading project's whole directory as a place this scope
+    // owns.
+    recording(&path, "skill:gh:claude", &wrote_it, Some(&wrote_it));
+    assert!(matches!(
+        load(&path),
+        Err(CoreError::LockOutsideProject { .. })
+    ));
+}
+
 /// A record naming no project is refused rather than adopted: nothing knows
 /// who wrote it, and reading it as this project's is the guess the refusal
 /// exists to stop.
@@ -418,23 +493,50 @@ fn a_project_lock_is_never_written_claiming_another_tree() {
     assert!(!path.exists(), "and nothing is left at the path");
 }
 
-/// A lock named relatively is the current directory's, and nothing absolute
-/// is under that. Read as the empty prefix `Path::parent` gives back, every
-/// path would pass.
+/// A lock named relatively is the current directory's, and that directory
+/// is a place — never the bare `.` a spelling makes of it, and never the
+/// empty prefix `Path::parent` gives back, which every path starts with and
+/// which containment would wave anything through.
+///
+/// Both halves of the read hold to it. A record written under the
+/// directory being read has its claims judged against that directory, and
+/// one written elsewhere rebases onto it — resolved, so nothing this hands
+/// out is a string read against whatever the process's directory happens to
+/// be later.
 #[test]
-fn a_relatively_named_project_lock_still_has_a_boundary() {
+fn a_relatively_named_project_lock_reads_as_the_directory_it_names() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join(LOCK_FILE);
+    let here = crate::paths::canonical(Path::new(".")).unwrap();
     let elsewhere = tmp.path().join("there/.agents/skills/gh");
-    // Written under the same directory it is read from — the current one —
-    // so nothing resolves and the claim is judged where it stands.
-    recording(&path, "skill:gh:claude", &elsewhere, Some(Path::new(".")));
-    let text = std::fs::read_to_string(&path).unwrap();
 
+    // Written under the directory being read, so nothing rebases and the
+    // claim is judged where it stands.
+    recording(&path, "skill:gh:claude", &elsewhere, Some(&here));
+    let text = std::fs::read_to_string(&path).unwrap();
     assert!(matches!(
         parse_text(Path::new(LOCK_FILE), &text),
         Err(CoreError::LockOutsideProject { .. })
     ));
+
+    // Written under another root, so it rebases — onto the directory the
+    // relative name resolves to, not onto the name.
+    recording(&path, "skill:gh:claude", &elsewhere, Some(tmp.path()));
+    let text = std::fs::read_to_string(&path).unwrap();
+    let lock = match parse_text(Path::new(LOCK_FILE), &text).unwrap() {
+        LockFile::Current(lock) => lock,
+        LockFile::Absent => unreachable!("the text is a record"),
+    };
+    assert_eq!(
+        lock.entries["skill:gh:claude"]
+            .emitted
+            .as_ref()
+            .unwrap()
+            .paths,
+        vec![here.join("there/.agents/skills/gh")],
+        "the position resolves to a place, not to a name read again later"
+    );
+    assert_eq!(lock.root, Some(here));
 }
 
 /// The global lock has no single root — each harness owns a directory of
