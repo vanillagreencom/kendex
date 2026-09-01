@@ -114,8 +114,8 @@ group "runtime"
 # unstripped, which is an absolute path and still names the right file.
 SKILL_REL="${SKILL_DIR#"$REPO_ROOT"/}"
 for rel in scripts/review-predicate.sh scripts/review-writer.sh \
-  scripts/pr-watch.sh scripts/validate.sh scripts/validate-workflow.sh \
-  scripts/lib/settings.sh; do
+  scripts/pr-watch.sh scripts/merged-sweep.sh scripts/validate.sh \
+  scripts/validate-workflow.sh scripts/lib/settings.sh; do
   path="$SKILL_DIR/$rel"
   if [ ! -f "$path" ]; then
     bad "$rel is missing from the installed skill ($SKILL_DIR) — re-run \`kendex refresh\` and commit the result"

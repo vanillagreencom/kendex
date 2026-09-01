@@ -214,6 +214,24 @@ period, or `head-moved` when a push landed mid-reduction — re-run); exit 2
 skill's waiters are the single-PR *foreground* waits; pr-watch is the
 multi-PR *background* reducer.
 
+pr-watch reduces OPEN PRs only, and the gate opens on the first non-author
+review with no quiet period — so a review round landing in the queue's final
+minutes merges before anyone reads it. `merged-sweep.sh` is the same reducer
+over recently-merged PRs, emitting one `post-merge-findings` line per merged
+PR that carries a review or review thread created after its `mergedAt` with
+no disposition reply:
+
+```bash
+export GH_REPO=your-org/your-repo
+.agents/skills/review-gate/scripts/merged-sweep.sh
+```
+
+Same line shape and exit codes, so one consumer reads both. It keeps its own
+per-repo state (`MERGED_SWEEP_STATE_DIR`, default `tmp/review-gate-merged-sweep`):
+a finding surfaces once and stays quiet while unchanged, which makes exit 0
+mean "nothing NEW". Pass `--no-state` to re-read everything still
+outstanding — the audit form.
+
 ## Verification
 
 - `.agents/skills/review-gate/scripts/validate.sh` exits 0 from the repo
