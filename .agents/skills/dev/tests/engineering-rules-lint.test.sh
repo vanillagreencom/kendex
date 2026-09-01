@@ -60,10 +60,15 @@ rule "the scope rule names Step 0 and links it" "$DEV" "$RULES" \
   'Step 0' "$DISP_LINK"
 rule "the round contract names Step 0" "$DEV" "$ROUND" 'Step 0'
 
-# The sentence the twin rule replaced, refused rather than left beside it.
-absent "no rule states the twin test as a judgment to recognise" "$DEV" "$RULES" \
-  'Never re-implement a judgment another component owns' \
-  '- Never re-implement a judgment another component owns — delegate.'
+# The sentence the twin rule replaced, refused rather than left beside it, in
+# both sections — `absent` reads only the heading it is given, so the COVERS
+# bullet's "neither section" needs one registration per section.
+TWIN_RE='Never re-implement a judgment another component owns'
+TWIN_SAMPLE='- Never re-implement a judgment another component owns — delegate.'
+absent "Engineering Rules states no twin test as a judgment to recognise" \
+  "$DEV" "$RULES" "$TWIN_RE" "$TWIN_SAMPLE"
+absent "the round contract states no twin test as a judgment to recognise" \
+  "$DEV" "$ROUND" "$TWIN_RE" "$TWIN_SAMPLE"
 
 # The link resolves. A rule naming a step behind a dead link states nothing an
 # agent can follow. `check` carries no automatic control, so the planted one

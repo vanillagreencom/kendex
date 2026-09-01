@@ -93,4 +93,4 @@ The Linear cache is workspace-wide, so each path states whether it resolves the 
 
 ## Dependencies
 
-`linear` skill (Linear-tracked work), `github` skill + `gh` (GitHub-tracked issue audits), `git` and `jq` (audit verification scope).
+`orch` skill (the excluded classes the creation bar defers to live in its `references/finding-disposition.md`), `linear` skill (Linear-tracked work), `github` skill + `gh` (GitHub-tracked issue audits), `git` and `jq` (audit verification scope).
