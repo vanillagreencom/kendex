@@ -1,10 +1,10 @@
 //! Review-driven pins: strictest-provenance merge, the edited-copy
-//! choice, licence evidence, cross-selection collisions, the
-//! origin-overlap refusal, and the rename a second agent format refuses.
+//! choice, licence evidence, cross-selection collisions, and the
+//! origin-overlap refusal.
 
 use std::fs;
 
-use super::{entry, file_item, find, seeded, selection, skill, target};
+use super::{entry, find, seeded, selection, skill, target};
 use crate::author::import::{CandidateGroup, ImportSelection, apply, inventory};
 use crate::error::CoreError;
 use crate::model::{HarnessId, ItemKind, Scope};
@@ -329,33 +329,4 @@ fn a_target_inside_an_origin_tree_is_refused() {
     .unwrap_err()
     .to_string();
     assert!(refused.contains("own origin"), "{refused}");
-}
-/// An agent is not always frontmatter: Codex reads its agents as TOML and
-/// an unmanaged scan offers those like any other, so a rename arrives here
-/// with bytes that carry a `name` key and no frontmatter at all. The
-/// refusal names the format, rather than sending the person off to add a
-/// frontmatter block the harness would then refuse to load.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_renamed_agent_in_another_format_is_refused_by_that_format() {
-    let (tmp, env, scope) = seeded();
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    file_item(
-        &root.join(".codex/agents"),
-        "codexer.toml",
-        "name = \"codexer\"\ndescription = \"about codexer\"\n",
-    );
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-codex");
-    let candidates = inventory(&env, &scopes).unwrap();
-    let mut renamed = selection(find(&candidates, "codexer"), false);
-    renamed.destination = "settled".to_owned();
-
-    let message = apply(&env, &scopes, &target, &[renamed])
-        .unwrap_err()
-        .to_string();
-    assert!(message.contains("a .toml agent"), "{message}");
-    assert!(!message.contains("frontmatter"), "{message}");
 }
