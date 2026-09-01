@@ -76,10 +76,12 @@ fn outside_the_project(root: &Path, lock: &Lock) -> Option<(String, PathBuf)> {
 /// files. So the record is refused, naming the path, at both ends: no read
 /// hands one out and no write puts one down.
 ///
-/// On the read this is the floor under
-/// [`resolve_against_reading_root`], which has already rebased every
-/// position onto this root or refused the record. What reaches here is a
-/// remainder that walks back out through `..`.
+/// On the read this runs after [`resolve_against_reading_root`], which has
+/// rebased every position onto this root or refused the record. What that
+/// pass cannot settle is a remainder walking back out: `../elsewhere`
+/// states a remainder of the writing root like any other and rejoins like
+/// one, so a rebased position can still hold a `..`. This is where the
+/// `..` is decided, whichever side of the rebase it arrived on.
 ///
 /// The global lock has no single root — each harness owns a directory of its
 /// own — so it has no boundary to check.
@@ -177,20 +179,25 @@ fn resolve_provenance(root: &Path, reading: &Path, provenance: &mut String) {
 /// Where a travelled record's paths point, read from the project reading
 /// it rather than from the one that wrote it.
 ///
-/// A project's lock travels. `git worktree` seeds each linked checkout
-/// with a copy, and so does anyone who copies a tree; the record that
-/// arrives states every position and every path-source provenance as an
-/// absolute path under the root that wrote it. Read as written those are
-/// the other checkout's: refresh reads the positions as the ones this
-/// scope owns and takes back what a new render no longer produces, out of
-/// that checkout, and every entry reads as rebound to a source that only
-/// moved because the checkout did.
+/// A project's lock travels. kendex keeps it out of git
+/// ([`crate::engine::posture`] writes the ignore line), so nothing carries
+/// it on its own: it arrives when a tree is copied, and in a linked
+/// worktree when the repository's worktree tooling is set to copy it in,
+/// which is what `WORKTREE_COPIES` does here. The record that arrives
+/// states every position and every path-source provenance as an absolute
+/// path under the root that wrote it. Read as written those are the other
+/// checkout's: refresh reads the positions as the ones this scope owns and
+/// takes back what a new render no longer produces, out of that checkout,
+/// and every entry reads as rebound to a source that only moved because
+/// the checkout did.
 ///
 /// So they are not read as written. The reading root plus the remainder a
-/// path states is where the same thing sits here, and positions rebase
-/// totally or the record is refused ([`remainder`]) — so nothing this
-/// produces leaves the reading root, which is what makes this a resolution
-/// and not a refusal.
+/// path states is where the same thing sits here, and every position
+/// states a remainder of the writing root or the record is refused
+/// ([`remainder`]) — no position is carried across unresolved, which is
+/// what makes this a resolution and not a refusal. Whether what it
+/// produces sits inside the reading root is [`refuse_foreign_paths`]'s to
+/// say: a remainder can itself walk back out.
 ///
 /// Two roots leave nothing to state a remainder against, and reading the
 /// paths as this project's anyway is exactly the guess the refusal exists
@@ -249,20 +256,15 @@ pub(super) fn resolve_against_reading_root(path: &Path, lock: &mut Lock) -> Resu
 /// The write end of the same question: which project a record may be put
 /// down naming.
 ///
-/// A read resolves a foreign root because it can — every position rebases
-/// onto the reading root and none can escape it. A write has nothing to
-/// resolve: the record handed in is the one that lands, and a project lock
-/// that cannot hand out another project's name must not be made to hold it
-/// either.
-fn refuse_another_project(path: &Path, lock: &Lock) -> Result<()> {
-    let Some(root) = project_root_at(path) else {
-        return Ok(());
-    };
-    let Some(recorded) = lock.root.as_deref() else {
-        return Err(CoreError::LockWithoutProject {
-            path: path.to_path_buf(),
-        });
-    };
+/// A read can resolve a record another root wrote, because every position
+/// in it states a remainder of that root or the record is refused, and a
+/// remainder rejoins here. A write has nothing to resolve: the record
+/// handed in is the one that lands, and a project lock that cannot hand
+/// out another project's name must not be made to hold it either.
+///
+/// The root the record names is the caller's to produce, so the one case
+/// with no root to compare has one home, in the read that can act on it.
+fn refuse_another_project(path: &Path, recorded: &Path, root: PathBuf) -> Result<()> {
     match same_directory(recorded, &root) {
         true => Ok(()),
         false => Err(CoreError::LockFromAnotherProject {
@@ -287,9 +289,11 @@ pub(super) fn stamp_project(path: &Path, lock: &mut Lock) -> Result<()> {
     let Some(root) = project_root_at(path) else {
         return Ok(());
     };
-    if lock.root.is_some() {
-        return refuse_another_project(path, lock);
+    match lock.root.as_deref() {
+        Some(recorded) => refuse_another_project(path, recorded, root),
+        None => {
+            lock.root = Some(root);
+            Ok(())
+        }
     }
-    lock.root = Some(root);
-    Ok(())
 }

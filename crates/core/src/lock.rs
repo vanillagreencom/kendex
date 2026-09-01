@@ -53,9 +53,10 @@ pub struct Lock {
     /// Every position an entry records is an absolute path under this
     /// root, so this is what makes each one readable as a remainder — the
     /// part of it that is about the installation rather than about the
-    /// checkout. A lock travels with a copied tree, and a linked worktree
-    /// is seeded with one; read from another root, each position resolves
-    /// onto the root reading it instead.
+    /// checkout. The record travels with a copied tree, and into a linked
+    /// worktree wherever worktree tooling is set to copy it in; read from
+    /// another root, each position resolves onto the root reading it
+    /// instead.
     ///
     /// `None` on the global lock, which has no single root — each harness
     /// owns a directory of its own. `None` on a project lock is a record

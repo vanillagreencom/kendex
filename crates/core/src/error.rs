@@ -48,7 +48,7 @@ pub enum CoreError {
     LockCorrupt { path: PathBuf, message: String },
 
     #[error(
-        "{path} records {key} at {recorded}, outside the project at {root} — this lock belongs to another checkout; delete it and apply again"
+        "{path} records {key} at {recorded}, which is not under {root} — a record claims only what sits under that root; move it aside and apply again"
     )]
     LockOutsideProject {
         path: PathBuf,
@@ -58,7 +58,7 @@ pub enum CoreError {
     },
 
     #[error(
-        "{path} was written by the project at {recorded}, not the one at {root} — this lock belongs to another checkout; delete it and apply again"
+        "{path} was written under {recorded}, not under {root} — a record belongs to the project that wrote it"
     )]
     LockFromAnotherProject {
         path: PathBuf,

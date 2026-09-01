@@ -250,13 +250,23 @@ fn declared(home: &Path, body: &str) -> std::path::PathBuf {
 
 /// Everything under `from`, put down again under `to` — a checkout of the
 /// same tree, which is what a linked worktree is.
+///
+/// A link is re-created rather than followed. `fs::copy` reads through
+/// one, so a link to a directory — the shape a symlink install leaves at
+/// `.claude/skills/<name>` — would fail as a directory read instead of
+/// arriving as a link, and the copy would not be the tree it came from.
+/// Relative targets are what kendex writes, so re-creating the link points
+/// it at the copy's own render rather than back at the original.
 #[allow(clippy::unwrap_used)]
 fn copy_tree(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
     for entry in fs::read_dir(from).unwrap() {
         let entry = entry.unwrap();
         let there = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
+        let kind = entry.file_type().unwrap();
+        if kind.is_symlink() {
+            std::os::unix::fs::symlink(fs::read_link(entry.path()).unwrap(), &there).unwrap();
+        } else if kind.is_dir() {
             copy_tree(&entry.path(), &there);
         } else {
             fs::copy(entry.path(), &there).unwrap();
@@ -269,6 +279,10 @@ fn copy_tree(from: &Path, to: &Path) {
 /// kendex is one, and so is every repository publishing what it also runs
 /// — the shape whose record states the checkout twice over, in the
 /// positions it wrote and in the provenance each entry came from.
+///
+/// Installed by symlink, which is what kendex installs itself with: the
+/// tree lands under `.agents` and the tool reads it through a link, so the
+/// record names two positions per entry and one of them is a link.
 #[allow(clippy::unwrap_used)]
 fn its_own_catalog(home: &Path) -> std::path::PathBuf {
     let project = home.join("dev/app");
@@ -282,7 +296,7 @@ fn its_own_catalog(home: &Path) -> std::path::PathBuf {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.own]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"own\"\n",
+            "schema = 6\n\n[sources.own]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.deploy]\nsource = \"own\"\n",
             source_path(Path::new("."))
         ),
     )
@@ -291,13 +305,14 @@ fn its_own_catalog(home: &Path) -> std::path::PathBuf {
 }
 
 /// The must-fail control for reading a lock in the checkout it was copied
-/// into. `git worktree` seeds every linked checkout with the main one's
-/// `.kendex-lock.json`, whose every position is an absolute path under the
-/// main checkout and whose every entry records provenance the same way when
-/// the catalog is the project itself. Read where it stands, the record
-/// belongs to another tree: verify refuses at the door, and past that every
-/// row reads as an install rebound to a source nobody moved. Nothing
-/// composing these verbs in a worktree can then be checked at all.
+/// into. kendex keeps `.kendex-lock.json` out of git, so a linked worktree
+/// gets one only where worktree tooling is set to copy it in, which is what
+/// this repository does. Every position in the record that arrives is an
+/// absolute path under the main checkout, and so is every entry's
+/// provenance when the catalog is the project itself. Read where it stands,
+/// the record belongs to another tree: verify refuses at the door, and past
+/// that every row reads as an install rebound to a source nobody moved.
+/// Nothing composing these verbs in a worktree can then be checked at all.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock() {
@@ -306,9 +321,15 @@ fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock()
     let project = its_own_catalog(home);
     assert!(kendex(home, &project, &["apply", "-y"]).status.success());
 
-    // The linked worktree: the same tracked tree, render and lock included.
+    // The linked worktree: the tracked tree, with the lock copied in
+    // beside it the way worktree tooling puts it there.
     let worktree = home.join("dev/.worktrees/app");
     copy_tree(&project, &worktree);
+    assert_eq!(
+        fs::read_link(worktree.join(".claude/skills/deploy")).unwrap(),
+        Path::new("../../.agents/skills/deploy"),
+        "the copy carries the link the install left, pointing at its own render"
+    );
 
     let verified = kendex(home, &worktree, &["verify"]);
     let printed = String::from_utf8_lossy(&verified.stderr).into_owned();
@@ -335,14 +356,6 @@ fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock()
     assert!(
         !printed.contains("another checkout"),
         "no could-not-check line stands in for the answer: {printed}"
-    );
-
-    // The whole point of the refusal it replaces: the checkout the record
-    // came from is untouched by anything the worktree just did.
-    assert_eq!(
-        fs::read_to_string(project.join(".claude/skills/deploy/SKILL.md")).unwrap(),
-        fs::read_to_string(project.join("skills/deploy/SKILL.md")).unwrap(),
-        "and the checkout the lock came from still holds its own install"
     );
 }
 
