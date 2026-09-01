@@ -263,8 +263,10 @@ derivation. So is a missing or unparseable one. Either way the render produces
 nothing, the hand-written exclusions included, because a repo the generator
 cannot derive from should say so rather than ship a short list.
 
-`derive_render` makes the resolved manifest a render input, so the marker names
-it by the path actually read.
+`derive_render` makes both manifests render inputs, because the root file is
+read to decide where the install state lives and the sibling only when it says
+so. SKILL.md § The render inputs states the pair; the marker names each by the
+path actually read.
 
 `[[exclusions.path]]` entries add repo-specific paths.
 

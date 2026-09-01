@@ -389,15 +389,29 @@ off, while the policy set still counts every `AGENTS.md` as policy-bearing for
 exactly that reason. Its control is independent of the flag.
 
 **Rejects, when `[bots] codex` is true.** A root `AGENTS.md` with no `## Code
-Review Rules` heading, or with more than one. An owned region whose bytes differ
-from the render. A doctrine or repo line matching the heading predicate in
-`repo-toml.md` § The content refusals, which markdown reads as a heading and
-which would end the owned region at the next render, taking the rest of the
-section with it.
+Review Rules` heading, or with more than one. A doctrine or repo line matching
+the heading predicate in `repo-toml.md` § The content refusals, which markdown
+reads as a heading and which would end the owned region at the next render,
+taking the rest of the section with it.
 
-These three judge a rendered region, so with the flag off there is no region to
-judge and rejecting a missing heading would fail a repo that never asked for
-one.
+Both presuppose a managed region, so with the flag off there is none to judge
+and rejecting a missing heading would fail a repo that never asked for one.
+
+**The region's bytes are `drift`'s, not this validator's.** Every clause here is
+structural — does the section exist, is it unique, is there an unmanaged nested
+one, would a line break the region — and none compares anything against a
+render. That is what lets all of them run before the write, which is what makes
+the write-phase splice failure unreachable. A byte comparison could not: before
+the write the repo holds the last render, so any change to doctrine, the TOML or
+the tracker substitution would make it fire and `render` would write nothing,
+leaving the region unable to be updated at all in a repo where `toml-schema`
+requires `codex` true.
+
+One owner also settles the isolation the § Controls rule needs. Two validators
+rejecting the same byte difference means no fixture can red exactly one, and
+`drift` is the owner because a byte comparison against a fresh render is its
+entire subject and it already carries the rule that `AGENTS.md` is compared over
+its region rather than whole.
 
 ## `orphan`
 
@@ -459,11 +473,13 @@ match its source, and the edit's author has no reason to suspect it.
 **Rejects.** Any path the current TOML produces whose bytes differ from a fresh
 render, naming the path and the differing region.
 
-`AGENTS.md` is the one path compared over a region rather than whole. The
-generator never creates that file and never adds its heading, so it always holds
-content the render did not write, and a whole-file comparison would differ on
-every repo. What `drift` compares there is the owned region, which is also all
-the write would have replaced.
+`AGENTS.md` is the one path compared over a region rather than whole, and this
+validator is that comparison's only owner. The generator never creates that file
+and never adds its heading, so it always holds content the render did not write,
+and a whole-file comparison would differ on every repo. What `drift` compares
+there is the owned region, which is also all the write would have replaced.
+`agents-section` judges that region's structure and cites this rule for its
+bytes, so a region fixture reds exactly one validator.
 
 **Marker-agnostic, unlike every other rule here.** `render` refuses to replace
 an unmarked file and `orphan` carves unmarked files out, so a marker-gated
@@ -494,8 +510,8 @@ failing on bytes nobody is committing.
 
 **Controls.** The hand-edit fixture, a fixture whose only change is a deleted
 marker line, and one pair per render input for the mode. Per input — the TOML,
-the spec copy, the vendored schema, the resolved manifest — a staged, consistent
-set with a divergent worktree copy of that input, asserted green; and a staged
+the spec copy, the vendored schema, each install manifest read — a staged,
+consistent set with a divergent worktree copy of that input, asserted green; and a staged
 copy of that input that its staged outputs are stale against, asserted red. Plus
 one for absence: an input staged as absent, asserted on the absence rather than
 on its worktree copy.
@@ -534,7 +550,7 @@ So they read the repo:
 |---------------------|----------|---------|
 | `orphan` | the repo, before the write | the repo |
 | `agents-section`, every clause | the repo, before the write | the repo |
-| `drift` | skipped, and named as skipped | the repo |
+| `drift`, the `AGENTS.md` owned region included | skipped, and named as skipped | the repo |
 | `exclusion-consistency`, derived-set clause | skipped, and named as skipped | the repo |
 
 `orphan` runs before the write because that is the render that creates the
@@ -546,13 +562,17 @@ shape this package exists to remove.
 direction. The write-phase splice fails when the owned region cannot be located,
 and by then other outputs have been replaced — a partial render, against
 SKILL.md's promise that a validator failure leaves the repo untouched. Checking
-the heading before the write is what makes that failure unreachable.
+the heading before the write is what makes that failure unreachable. Every
+clause it has is structural, so none of them compares against a render and none
+needs skipping; the region's bytes belong to `drift`, which is skipped.
 
 The two skips are not vacuous checks left running; they are checks with no
 question to answer at render time, and the run says so rather than counting them
 as passed. A render exists to change the bytes `drift` compares, so at render
-time `drift` would red on its own purpose. And `exclusion-consistency`'s derived
-clause compares a derivation against itself. Both have force in `check`, against
+time `drift` would red on its own purpose — the `AGENTS.md` region most of all,
+where the repo holds the last render and any doctrine, TOML or tracker change
+makes the bytes differ by design. And `exclusion-consistency`'s derived clause
+compares a derivation against itself. Both have force in `check`, against
 a committed tree whose manifest and whose files have moved on since someone
 last rendered — which is the question they were written for.
 

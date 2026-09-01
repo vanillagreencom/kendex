@@ -228,7 +228,12 @@ below contains them.
 - `bot-instructions.toml`.
 - The spec copy's doctrine source and routing table.
 - `.bot-instructions/coderabbit-schema.json`, when `[bots] coderabbit` is true.
-- The resolved install manifest, when `[exclusions] derive_render` is true.
+- Both install manifests, when `[exclusions] derive_render` is true. It is a pair
+  rather than one file: the root `kendex.toml` is always read, because whether
+  it declares `is_source_catalog` is what decides where install state lives, and
+  `kendex-local.toml` is read as well when it does. Naming only the resolved one
+  would leave a staged lane reading routing bytes from the worktree and install
+  state from the index, judging a state nobody is committing.
 - The existing `AGENTS.md`, when `[bots] codex` is true.
 
 What a repo-state validator walks is deliberately not in that set: `orphan`'s
