@@ -1428,12 +1428,12 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # exits 2, the writer prints "taking no action" and reds without posting a
 # status, and the gate keeps whatever it already held. That is why a decline
 # stopped a PR converging rather than turning it red. The local jq is
-# Oniguruma and takes lookaround, and every proof that runs unattended reads
-# through that jq, so `(?<!` shipped here once and nothing caught it. The
-# boundary is therefore spelled by `word_strip`, which consumes the reason in
-# run-aligned pieces (a separator run, a listed word plus the one character
-# ending it, or an unlisted run), leaving every match to start where the last
-# ended, at a run start, which is the set of positions a lookbehind allows.
+# Oniguruma and takes lookaround, and every other proof that runs unattended
+# reads through that jq, so `(?<!` shipped here once and nothing caught it.
+# The boundary is therefore spelled by `word_strip`, which consumes the
+# reason in run-aligned pieces (a separator run, a listed word plus the one
+# character ending it, or an unlisted run), so every match starts where the
+# last ended, at a run start, the set of positions a lookbehind allows.
 # The space padded onto the END is how a word in the last position meets that
 # one-character boundary; nothing is asked of the left, and the closing trim
 # takes both pads back. Anything added here has to compile under both

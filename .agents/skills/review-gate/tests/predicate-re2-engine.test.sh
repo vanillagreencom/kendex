@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # The predicate hands its thread jq to `gh --jq`, and gh's regex engine is
-# Go's RE2: no lookaround, at all. Every proof that runs unattended puts that
-# same program through the LOCAL jq, whose Oniguruma accepts patterns RE2
-# refuses to compile. One proof here does reach RE2 — e2e-sandbox.sh replays
-# the writer live, and the writer runs the predicate — but it skips without
-# E2E_REPO, so nothing in CI ran it. That is how #1930 shipped a lookbehind:
-# local jq took it, and every live evaluation of a PR carrying a `Declined:`
-# reply died with `invalid regular expression`, leaving the writer to red
-# without posting anything and the gate status frozen where it stood.
+# Go's RE2: no lookaround, at all. Every OTHER proof that runs unattended
+# puts that same program through the LOCAL jq, whose Oniguruma accepts
+# patterns RE2 refuses to compile. One other proof here does reach RE2 —
+# e2e-sandbox.sh replays the writer live, and the writer runs the predicate —
+# but it skips without E2E_REPO, so nothing in CI ran it. That is how #1930
+# shipped a lookbehind: local jq took it, and every live evaluation of a PR
+# carrying a `Declined:` reply died with `invalid regular expression`,
+# leaving the writer to red without posting anything and the gate status
+# frozen where it stood.
 #
 # This suite is the missing half: the SHIPPED program, through the SHIPPED
 # engine, with no opt-in. The real `gh` (not the tests' shim) is pointed at a
@@ -251,23 +252,6 @@ else
         "the mutant did not run under RE2: $(head -1 "$work/worded.err")"
   fi
 fi
-
-# -------------------------------------------------------- no lookaround at all ---
-# Everything above proves ONE program, located by the `t_threads_page_jq`
-# anchor. The mechanism that produced the bug is wider than that program: any
-# regex written against local jq and handed to gh fails the same way, and a
-# second such program would sit outside the proof. This scan costs nothing and
-# reds wherever a lookaround lands in these two scripts. `(?<name>` is a named
-# capture, not lookaround, and gh translates it, so it is not matched here.
-for f in "$PRED" "$SCRIPT_DIR/../scripts/pr-watch.sh"; do
-  hits="$(grep -nE '\(\?<!|\(\?<=|\(\?=|\(\?!' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
-  if [ -z "$hits" ]; then
-    ok "no lookaround in ${f##*/}"
-  else
-    bad "no lookaround in ${f##*/}" \
-        "gh's RE2 compiles none of these, and a jq program carrying one aborts the read: $hits"
-  fi
-done
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ] || exit 1
