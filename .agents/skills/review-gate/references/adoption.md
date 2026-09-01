@@ -187,7 +187,7 @@ convergence scripts, and the `REVIEW_GATE_TRUST_PR_WORKFLOWS` /
 workflow, applies the fast/full split to its CI, and updates its own docs
 from the legacy override key to `REVIEW_GATE_OVERRIDE_CONTEXT`.
 
-## Watching PRs as an agent (pr-watch and merged-sweep)
+## Watching PRs as an agent (pr-watch)
 
 `.agents/skills/review-gate/scripts/pr-watch.sh` is a needs-attention
 reducer for sessions shepherding one or many PRs. Never watch gate-state
@@ -216,56 +216,21 @@ multi-PR *background* reducer.
 
 pr-watch reduces OPEN PRs only, and the gate opens on the first non-author
 review with no quiet period — so a review round landing in the queue's final
-minutes merges before anyone reads it. `merged-sweep.sh` sweeps
-recently-merged PRs for that, emitting one `post-merge-findings` line per
-merged PR carrying a review, or a review thread comment, PUBLISHED after its
-`mergedAt` with no disposition reply — published, not created, so work
-drafted in the queue and submitted after the merge counts. It emits that same
-line when one PR's read cannot prove itself — reviews or threads past the
-page bound, a timestamp that will not parse, a time equal to `mergedAt` —
-which asks for a manual re-read. A window
-holding more merged PRs than one query read is a second kind,
-`sweep:window-truncated`, which belongs to no single PR.
+minutes merges before anyone reads it. `merged-sweep.sh` is the same reducer
+over recently-merged PRs, emitting one `post-merge-findings` line per merged
+PR that carries a review or review thread created after its `mergedAt` with
+no disposition reply:
 
 ```bash
 export GH_REPO=your-org/your-repo
 .agents/skills/review-gate/scripts/merged-sweep.sh
 ```
 
-**It is not a drop-in for pr-watch, and the two are not interchangeable.**
-pr-watch is LEVEL-triggered and stateless: every pass reports the whole
-standing set, so a wake lost for any reason costs nothing and the consumer
-owns the rising edge. merged-sweep is EDGE-triggered and keeps its own
-per-repo state (`REVIEW_GATE_MERGED_SWEEP_STATE_DIR`, default
-`tmp/review-gate-merged-sweep`): each finding is announced ONCE and is
-silent afterwards, so exit 0 means "nothing NEW", not "nothing
-outstanding", and a consumer must never read one pass as the full picture.
-Run `--no-state` — the standing audit form, which re-reports everything
-outstanding and writes nothing — on any schedule that has to be
-self-correcting, and after a missed wake.
-
-GITIGNORE the state directory. The default writes inside the repository,
-and an agent lane running `git add -A` would otherwise commit it; point the
-setting at a path outside the tree if you would rather not carry the ignore
-rule. A relative value is anchored on the repository root, never the
-process cwd, so a loop that changes directory between passes keeps its
-baseline.
-
-One query answers for the whole sweep, and `--limit` (default 20, max 80) is
-how many merged PRs it reads. Enumeration is the GitHub search API bounded
-by `merged:`, so the window is a counted set rather than an ordering
-premise: when it holds more PRs than one page read, the sweep says so
-instead of reporting silence over the remainder. Raise `--limit`, or narrow
-`--window` until the line stops — an instruction you can follow, because
-that line carries no dedupe key and repeats on every pass while the gap
-holds. The ceiling of 80 is MEASURED (about 8s on a full page against one
-busy repo, with 100 failing once in two runs), not an API limit, and a 504
-is load-dependent: re-measure on your own repo before leaning on the number.
-Search is eventually consistent and separately rate-limited, so a PR merged
-seconds ago may not appear until the next pass. Exit 2 is always a global
-failure with nothing on stdout, so a consumer that sees lines is looking at
-findings — and a repository the read could not reach is one of those
-failures, never a quiet window.
+Same line shape and exit codes, so one consumer reads both. It keeps its own
+per-repo state (`MERGED_SWEEP_STATE_DIR`, default `tmp/review-gate-merged-sweep`):
+a finding surfaces once and stays quiet while unchanged, which makes exit 0
+mean "nothing NEW". Pass `--no-state` to re-read everything still
+outstanding — the audit form.
 
 ## Verification
 

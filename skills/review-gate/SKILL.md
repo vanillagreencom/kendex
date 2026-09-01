@@ -154,10 +154,8 @@ the harness's wake-up mechanism: silence + exit 0 means nothing needs you;
 attention lines name exactly what does. The gate opens on the first
 non-author review with no quiet period, so a round landing in the queue's
 final minutes merges unread: run `merged-sweep.sh` beside it to catch the
-findings that arrived after the merge. It is NOT a drop-in for pr-watch —
-pr-watch reports the standing set every pass, merged-sweep announces each
-finding once off its own state, so read `--no-state` for what is still
-outstanding. See adoption.md § Watching PRs as an agent.
+findings that arrived after the merge. See adoption.md § Watching PRs as an
+agent.
 
 **Reviewers are down / nothing is reviewing.** Run the internal review loop:
 fix findings, resolve every thread, then post the override status with a real
@@ -276,19 +274,12 @@ nothing else.
 # the predicate), --awaiting-after SECS (default: PR_REVIEW_WAIT_SECS)
 .agents/skills/review-gate/scripts/pr-watch.sh [PR# ...]
 
-# the same reduction over recently-MERGED PRs (env: GH_REPO) — one
+# the same reducer over recently-MERGED PRs (env: GH_REPO) — one
 # post-merge-findings line per merged PR carrying a review or review thread
-# comment that arrived after the merge with no disposition reply, or whose
-# own read cannot prove itself (reviews or threads past the page bound, a
-# timestamp that will not parse); those ask for a manual re-read. A window
-# holding more merged PRs than --limit read is a SECOND kind,
-# sweep:window-truncated, which carries no dedupe key and repeats every
-# pass while the gap holds. Findings are EDGE triggered, unlike pr-watch:
-# per-repo state announces each once
-# (REVIEW_GATE_MERGED_SWEEP_STATE_DIR, gitignore it), so exit 0 means
-# nothing NEW and --no-state is the standing audit form.
-# Flags: --window SECS (default 172800), --limit N (default 20, max 80),
-# --no-state, --state-file PATH
+# that arrived after the merge with no disposition reply. Per-repo state
+# surfaces each finding once; --no-state re-reads everything outstanding.
+# Flags: --window SECS (default 172800), --limit N (default 20), --no-state,
+# --state-file PATH
 .agents/skills/review-gate/scripts/merged-sweep.sh
 ```
 

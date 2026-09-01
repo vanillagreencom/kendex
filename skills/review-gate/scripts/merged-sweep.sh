@@ -9,34 +9,67 @@
 # env — is print_usage below: run with --help.
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+print_usage() {
+  cat <<'USAGE'
+Usage: merged-sweep.sh [--window SECS] [--limit N] [--no-state]
+                       [--state-file PATH]
 
-# Every lib is SOURCED, and under set -e a missing one ends the run at
-# exit 1 — the code promising attention lines — with nothing on stdout,
-# which a consumer reads as "nothing to do". All fail closed at 2 instead.
-lib_readable() { # PATH
-  [ -r "$1" ] || { echo "::error::merged-sweep: cannot read $1 — the skill install is incomplete; re-run kendex refresh, or check the file mode" >&2; exit 2; }
+Sweep recently-merged PRs for reviews and review threads that landed AFTER
+the merge and carry no disposition reply. One invocation answers: did a
+finding arrive too late for anyone to read it?
+
+  --window SECS      only PRs merged within this many seconds (default
+                     172800 — 48h); at most 9 digits
+  --limit N          how many recently-updated merged PRs to consider
+                     (default 20, max 100). Ordered by UPDATE time, so a
+                     merged PR that a late review touched stays in view
+  --no-state         report every current finding, deduping nothing — the
+                     audit form; the sweep writes no state file
+  --state-file PATH  override the per-repo state file (default:
+                     $MERGED_SWEEP_STATE_DIR/<repo-slug>, itself
+                     defaulting to tmp/review-gate-merged-sweep/)
+
+Attention kind:
+  post-merge-findings  a merged PR carries a review or a review thread
+                       created after its mergedAt with no disposition
+                       reply (Fixed in <sha>, Declined: <reason>, or a
+                       track-word NAMING an issue — a bare track-word is
+                       not an answer), so nothing has read it. Approvals and
+                       dismissals are not findings; the PR author's own
+                       reviews are not findings. Replies are read the way
+                       review-predicate.sh reads them: newest non-bot
+                       reply, bots exempt because they quote each other.
+                       A PR whose findings cannot be fully read in this
+                       page shape (every returned review or thread is
+                       post-merge, so more may exist; a thread past 50
+                       comments) fails CLOSED as attention
+
+Dedupe: per-repo state, the same rising-edge mechanism as oversee-watch's
+PW_SEEN. Each finding is keyed by its node id; a key present in the
+previous pass is not re-emitted, and a key that clears and later recurs is
+news again. The state file is rewritten to the current key set on every
+pass, so a finding surfaces ONCE and stays quiet while unchanged. Silence
+therefore means "nothing NEW needs you" — use --no-state to re-read what
+is still outstanding.
+
+Output: one tab-separated line per merged PR with new findings, the same
+shape pr-watch.sh emits, so one reducer consumes both:
+  <pr-number> <TAB> <head-sha-8> <TAB> <kind> <TAB> <detail>
+
+Exit codes:
+  0  nothing new needs attention
+  1  at least one attention line
+  2  read failure, in two shapes: per-PR failures carry `error` lines on
+     stdout (attention lines may also be present), while GLOBAL failures
+     (missing GH_REPO, a broken merged-PR listing, an unusable state file)
+     report on stderr only with no per-PR lines — surface stderr, not just
+     stdout
+
+Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
+Env (optional): MERGED_SWEEP_STATE_DIR — directory holding the per-repo
+state files (default tmp/review-gate-merged-sweep, relative to the cwd)
+USAGE
 }
-lib_defines() { # PATH SYMBOL — a truncated or mismatched lib defines nothing
-  { [ -n "${!2+x}" ] || command -v "$2" >/dev/null 2>&1; } \
-    || { echo "::error::merged-sweep: $1 defines no $2 — it is truncated or from another version; re-run kendex refresh" >&2; exit 2; }
-}
-
-lib_readable "$script_dir/lib/settings.sh"
-# shellcheck source=lib/settings.sh
-. "$script_dir/lib/settings.sh"
-lib_defines "$script_dir/lib/settings.sh" rg_setting
-lib_readable "$script_dir/lib/merged-sweep-usage.sh"
-# shellcheck source=lib/merged-sweep-usage.sh
-. "$script_dir/lib/merged-sweep-usage.sh"
-lib_defines "$script_dir/lib/merged-sweep-usage.sh" print_usage
-
-# Both scratch paths go on ANY exit, signals included: an interrupted pass
-# leaves neither a half-written state file nor the read's stderr capture.
-gh_err=""
-state_tmp=""
-cleanup() { [ -z "$gh_err" ] || rm -f -- "$gh_err"; [ -z "$state_tmp" ] || rm -f -- "$state_tmp"; }
-trap cleanup EXIT
 
 for arg in "$@"; do
   case "$arg" in
@@ -48,14 +81,8 @@ if [ -z "${GH_REPO:-}" ]; then
   echo "::error::merged-sweep: GH_REPO is required" >&2
   exit 2
 fi
-# The shape arm alone is not enough: GH_REPO is spliced into the search
-# query STRING below, so anything between the slashes becomes search syntax
-# — "acme/widgets is:draft" sweeps an empty set and exits 0 in silence.
 case "$GH_REPO" in
   */*/*|/*|*/) echo "::error::merged-sweep: GH_REPO must be OWNER/REPO (got '$GH_REPO')" >&2; exit 2 ;;
-  *[!A-Za-z0-9._/-]*)
-    echo "::error::merged-sweep: GH_REPO may hold only letters, digits, '.', '_' and '-' either side of the slash (got '$GH_REPO'); it is spliced into a search query, where a space or a qualifier would silently change the set swept" >&2
-    exit 2 ;;
   */*) ;;
   *) echo "::error::merged-sweep: GH_REPO must be OWNER/REPO (got '$GH_REPO')" >&2; exit 2 ;;
 esac
@@ -101,62 +128,29 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# GraphQL rejects first:0, and the upper bound is MEASURED, not the API's:
-# print_usage carries the figures, the date and the repo they came from.
-# Both are refused, never clamped — a clamp would sweep a different set than
-# the operator asked for, and the saturation row reports what one page cannot.
-LIMIT_MAX=80
-if [ "$LIMIT" -lt 1 ] || [ "$LIMIT" -gt "$LIMIT_MAX" ]; then
-  echo "::error::merged-sweep: --limit must be between 1 and $LIMIT_MAX (got $LIMIT)" >&2
+# GraphQL rejects first:0 and caps the page at 100. Both bounds are refused
+# rather than clamped: a clamp would silently sweep a different set than the
+# operator asked for.
+if [ "$LIMIT" -lt 1 ] || [ "$LIMIT" -gt 100 ]; then
+  echo "::error::merged-sweep: --limit must be between 1 and 100 (got $LIMIT)" >&2
   exit 2
 fi
 
 # --- state --------------------------------------------------------------
-# One file per repo, the shape oversee-watch keeps for PW_SEEN: the previous
-# pass's keys, one per line, replaced atomically. Anchored on the REPOSITORY
-# ROOT, never the cwd, as oversee-watch anchors its own — a poll loop that
-# changed directory would otherwise re-announce everything.
-SETTING_HINT="set REVIEW_GATE_MERGED_SWEEP_STATE_DIR, pass --state-file, or pass --no-state"
+# One file per repo, the same shape oversee-watch keeps for PW_SEEN: the
+# keys of the previous pass, one per line, replaced atomically.
 if [ "$USE_STATE" = "1" ] && [ -z "$STATE_FILE" ]; then
-  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
-  # The KEY resolves from the repository root, not only the path it names:
-  # rg_setting reads .env.local and the settings TOMLs as CWD-relative paths,
-  # so an off-root caller finds none, takes the built-in default and anchors a
-  # DIFFERENT directory under the same root, re-announcing everything forever.
-  if [ -n "$repo_root" ]; then
-    state_dir="$(cd "$repo_root" && rg_setting REVIEW_GATE_MERGED_SWEEP_STATE_DIR "tmp/review-gate-merged-sweep")" || exit 2
-  else
-    state_dir="$(rg_setting REVIEW_GATE_MERGED_SWEEP_STATE_DIR "tmp/review-gate-merged-sweep")" || exit 2
-  fi
-  if [ -z "$state_dir" ]; then
-    echo "::error::merged-sweep: REVIEW_GATE_MERGED_SWEEP_STATE_DIR is explicitly empty — a state directory is required; $SETTING_HINT" >&2
-    exit 2
-  fi
-  case "$state_dir" in
-    /*) ;;
-    *)
-      if [ -z "$repo_root" ]; then
-        echo "::error::merged-sweep: a relative state directory ($state_dir) is anchored on the repository root, and this is not a git working tree — $SETTING_HINT with an absolute path" >&2
-        exit 2
-      fi
-      state_dir="$repo_root/$state_dir"
-      ;;
-  esac
-  mkdir -p -- "$state_dir" || {
-    echo "::error::merged-sweep: could not create the state directory $state_dir ($SETTING_HINT)" >&2
+  state_dir="${MERGED_SWEEP_STATE_DIR:-tmp/review-gate-merged-sweep}"
+  mkdir -p "$state_dir" || {
+    echo "::error::merged-sweep: could not create the state directory $state_dir (set MERGED_SWEEP_STATE_DIR, or pass --no-state)" >&2
     exit 2
   }
-  # INJECTIVE. Slugging the slash to an underscore made acme/foo_bar and
-  # acme_foo/bar one file, so two repos in one state dir overwrote each other
-  # and a synthetic key — which, unlike a node id, repeats across repos —
-  # could suppress the other's FIRST alert. %2F cannot collide: the validator
-  # above accepts no percent, and every other character passes through.
-  STATE_FILE="$state_dir/${GH_REPO%%/*}%2F${GH_REPO#*/}"
+  STATE_FILE="$state_dir/$(printf '%s' "$GH_REPO" | tr -c 'A-Za-z0-9._-' '_')"
 fi
 seen=""
 if [ "$USE_STATE" = "1" ] && [ -e "$STATE_FILE" ]; then
-  seen="$(cat -- "$STATE_FILE")" || {
-    echo "::error::merged-sweep: cannot read the state file $STATE_FILE ($SETTING_HINT)" >&2
+  seen="$(cat "$STATE_FILE")" || {
+    echo "::error::merged-sweep: cannot read the state file $STATE_FILE (set MERGED_SWEEP_STATE_DIR, or pass --no-state)" >&2
     exit 2
   }
 fi
@@ -164,50 +158,30 @@ fi
 # --- read ---------------------------------------------------------------
 # ONE query for the whole sweep: this runs on a poll loop beside pr-watch,
 # and a per-PR fan-out would multiply every pass by the window size.
-# The enumeration is `search` with a merged: qualifier, because
-# repository.pullRequests offers no MERGED_AT ordering — a page of it can
-# never prove it covered the window, which is the silence this sweep exists
-# to end. search bounds the set by mergedAt and counts it, so coverage is a
-# comparison, not a premise; sort:updated-desc truncates at the end a late
-# review has not touched. The bound needs the FULL timestamp: measured on
-# vanillagreencom/kendex 2026-09-01, the Z-suffixed merged:>= counted 78 in
-# a 48h window where the date-only form counted 95. A malformed qualifier
-# degrades search to free text, so ms34 asserts what was sent.
-# submittedAt and publishedAt ride along because createdAt is when a review
-# was STARTED: measured on a real PENDING review the same day, submittedAt
-# was null while publishedAt EQUALLED createdAt, and that review's inline
-# comment had publishedAt null. def at in the reduce lib resolves both.
-# Nested bounds are `last:` because a post-merge review or thread comment
-# is newer than every pre-merge one, so truncation hides only content that
-# could neither BE a finding nor ANSWER one. reviewThreads is the
-# exception: no documented ordering, so any truncation fails closed.
-# repository(owner,name){id} is the POSITIVE proof the named repo was READ:
-# search answers a misspelled, renamed or unauthorized repository with
-# issueCount 0, no errors and gh exit 0 — a quiet window's shape — while
-# this field answers NOT_FOUND and a null, which both handlers fail closed on.
-query='query($owner:String!,$name:String!,$q:String!,$limit:Int!){
-  repository(owner:$owner, name:$name){ id }
-  search(query:$q, type:ISSUE, first:$limit){
-    issueCount
-    pageInfo{ hasNextPage }
-    nodes{
-      ... on PullRequest {
+# Bounds are `last:` on purpose — a post-merge review or thread is NEWER
+# than every pre-merge one, so the newest page is where they are, and the
+# only way to overflow is for the whole page to be post-merge, which the
+# reduction below detects and fails closed on.
+query='query($owner:String!,$name:String!,$limit:Int!){
+  repository(owner:$owner,name:$name){
+    pullRequests(first:$limit, states:MERGED, orderBy:{field:UPDATED_AT, direction:DESC}){
+      nodes{
         number mergedAt headRefOid
         author{login}
         reviews(last:30){
           totalCount
-          nodes{ id createdAt submittedAt state body author{login __typename} }
+          nodes{ id createdAt state body author{login __typename} }
         }
         comments(last:50){
-          nodes{ createdAt publishedAt body author{login __typename} }
+          nodes{ createdAt body author{login __typename} }
         }
-        reviewThreads(last:50){
+        reviewThreads(last:30){
           totalCount
           nodes{
             id
-            comments(last:30){
+            comments(first:50){
               totalCount
-              nodes{ id createdAt publishedAt body author{login __typename} }
+              nodes{ createdAt body author{login __typename} }
             }
           }
         }
@@ -216,25 +190,9 @@ query='query($owner:String!,$name:String!,$q:String!,$limit:Int!){
   }
 }'
 
-now="$(date -u +%s)"
-cutoff=$((now - WINDOW))
-cutoff_iso="$(date -u -d "@$cutoff" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-  || date -u -r "$cutoff" +%Y-%m-%dT%H:%M:%SZ)" || cutoff_iso=""
-if [ -z "$cutoff_iso" ]; then
-  echo "::error::merged-sweep: could not format the window cutoff (date does not accept -d @SECS or -r SECS)" >&2
-  exit 2
-fi
-
-# gh's stderr is KEPT: at high --limit values GitHub answers HTTP 504, and
-# a generic "could not list" sends the operator after an auth or network
-# fault instead of the one knob that fixes it.
-gh_err="$(mktemp)" || { echo "::error::merged-sweep: could not create a temporary file for the read" >&2; exit 2; }
 raw="$(gh api graphql -f query="$query" \
-    -f owner="${GH_REPO%%/*}" -f name="${GH_REPO#*/}" \
-    -f q="repo:$GH_REPO is:pr is:merged sort:updated-desc merged:>=$cutoff_iso" \
-    -F limit="$LIMIT" 2>"$gh_err")" || {
-  echo "::error::merged-sweep: could not read $GH_REPO for merged PRs in the last ${WINDOW}s at --limit $LIMIT; the gh lines below name the cause — NOT_FOUND is a misspelled or renamed repository, or one outside this token's access, and HTTP 504 is an over-large page, so lower --limit before suspecting auth or network" >&2
-  sed 's/^/::error::merged-sweep: gh: /' "$gh_err" >&2
+    -f owner="${GH_REPO%%/*}" -f name="${GH_REPO#*/}" -F limit="$LIMIT" 2>/dev/null)" || {
+  echo "::error::merged-sweep: could not list recently-merged PRs" >&2
   exit 2
 }
 if [ -z "$raw" ]; then
@@ -243,78 +201,119 @@ if [ -z "$raw" ]; then
 fi
 
 # --- reduce -------------------------------------------------------------
-lib_readable "$script_dir/lib/merged-sweep-reduce.sh"
-# shellcheck source=lib/merged-sweep-reduce.sh
-. "$script_dir/lib/merged-sweep-reduce.sh"
-lib_defines "$script_dir/lib/merged-sweep-reduce.sh" MERGED_SWEEP_REDUCE_JQ
+# The disposition forms are review-predicate.sh's, read the same way: the
+# canonical `Fixed in <sha>` / `Declined:` reply, or any reply carrying a
+# track-word. This asks only "did anyone answer this", so it does NOT
+# re-run the predicate's narrower untracked-claim and unreasoned-decline
+# reductions — those judge an answer's quality on an OPEN PR, where the
+# gate can still act on the judgement.
+reduce_jq='
+def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
+def tracking: test("(?i)\\btrack(ed|ing|s)?\\b");
+def names_an_issue: test("([A-Z][A-Z0-9]+-[0-9]+|#[0-9]+)\\b");
+# A track-word alone is NOT an answer here. review-predicate.sh accepts one
+# as a thread'"'"'s standing disposition and then files it as an
+# untracked-claim finding; this sweep has no second finding to file, so a
+# bare "tracking that separately" would silence the last net over a late
+# finding — the fail-open direction the whole pass exists to close.
+def answered: disposition or (tracking and names_an_issue);
+def human: (.author.__typename // "User") != "Bot";
+def epoch: if type == "string" then (try (sub("\\.[0-9]+";"") | fromdateiso8601) catch null) else null end;
 
-rows="$(jq -r --argjson cutoff "$cutoff" --argjson limit "$LIMIT" \
-    --argjson limit_max "$LIMIT_MAX" "$MERGED_SWEEP_REDUCE_JQ" <<<"$raw" 2>/dev/null)" || {
-  echo "::error::merged-sweep: merged-PR listing is malformed, or $GH_REPO could not be read (broken read, an unreadable or misspelled repository, a row without a number/head/mergedAt, or graphql errors)" >&2
+if (.errors? // [] | length) > 0 then error("graphql errors present")
+elif (.data.repository.pullRequests.nodes | type) != "array" then error("malformed merged-PR container")
+else
+  [ .data.repository.pullRequests.nodes[]
+    | . as $pr
+    | (.mergedAt | epoch) as $merged
+    | if ($pr.number | type) != "number"
+         or (($pr.headRefOid // "") | test("^[0-9a-fA-F]{40}$") | not)
+         or $merged == null
+      then error("malformed merged-PR row")
+      else . end
+    | select($merged >= $cutoff)
+    # Answers that can clear a late REVIEW: a later human ISSUE COMMENT in
+    # a disposition form. A review object has no reply thread of its own,
+    # so the PR conversation is where its answer lands. Review bodies are
+    # deliberately NOT answers — a review is the finding side, and one
+    # whose own body carried a track-word would otherwise clear itself.
+    | ([ ($pr.comments.nodes // [])[]
+         | select(human) | select((.body // "") | answered)
+         | (.createdAt | epoch) | select(. != null) ] | max // -1) as $answered_at
+    | ([ ($pr.reviews.nodes // [])[]
+         | select((.createdAt | epoch) != null and (.createdAt | epoch) > $merged)
+         | select(.state == "CHANGES_REQUESTED" or .state == "COMMENTED")
+         | select((.author.login // "") != ($pr.author.login // ""))
+         | select($answered_at <= (.createdAt | epoch))
+         | .id ]) as $late_reviews
+    | ([ ($pr.reviewThreads.nodes // [])[]
+         | . as $t
+         | (($t.comments.nodes // []) | first | (.createdAt // null) | epoch) as $opened
+         | select($opened != null and $opened > $merged)
+         | select([ ($t.comments.nodes // [])[]
+                    | select(human)
+                    | select((.createdAt | epoch) != null and (.createdAt | epoch) > $opened)
+                    | select((.body // "") | answered) ] | length == 0)
+         | $t.id ]) as $late_threads
+    # Fail closed where the page cannot prove it is complete: every
+    # returned review or thread being post-merge means more may sit behind
+    # the bound, and a thread past the comment bound may hide its answer.
+    | ([ ($pr.reviews.nodes // [])[] | select((.createdAt | epoch) != null and (.createdAt | epoch) > $merged) ] | length) as $post_reviews
+    | ([ ($pr.reviewThreads.nodes // [])[]
+         | select(((.comments.nodes // []) | first | (.createdAt // null) | epoch) != null)
+         | select((((.comments.nodes // []) | first | .createdAt) | epoch) > $merged) ] | length) as $post_threads
+    | (($pr.reviews.totalCount > ($pr.reviews.nodes | length) and $post_reviews == ($pr.reviews.nodes | length))
+       or ($pr.reviewThreads.totalCount > ($pr.reviewThreads.nodes | length) and $post_threads == ($pr.reviewThreads.nodes | length))
+       or ([ ($pr.reviewThreads.nodes // [])[]
+             | select(.comments.totalCount > (.comments.nodes | length)) ] | length > 0)) as $overflow
+    | select(($late_reviews | length) > 0 or ($late_threads | length) > 0 or $overflow)
+    | ($late_reviews + $late_threads + (if $overflow then ["\($pr.number):overflow"] else [] end)) as $keys
+    | [ ($pr.number | tostring), ($pr.headRefOid[0:8]), ($keys | join(" ")),
+        (if $overflow
+         then "post-merge activity beyond the read bound on a merged PR — fail closed; re-read #\($pr.number) by hand"
+         else "\($late_reviews | length) review(s) and \($late_threads | length) review thread(s) landed after the merge with no disposition reply — merged \($pr.mergedAt); nothing has read them"
+         end) ]
+    | @tsv
+  ] | .[]
+end'
+
+now="$(date -u +%s)"
+cutoff=$((now - WINDOW))
+rows="$(jq -r --argjson cutoff "$cutoff" "$reduce_jq" <<<"$raw" 2>/dev/null)" || {
+  echo "::error::merged-sweep: merged-PR listing is malformed (broken read, a row without a number/head/mergedAt, or graphql errors)" >&2
   exit 2
 }
 
-# --- reduce to lines, then persist, then print ---------------------------
-# Nothing reaches stdout until the state file is on disk. Exit 2 is the
-# GLOBAL failure shape and consumers key on it: oversee-watch's
-# check_pr_watch reads a non-zero run that printed lines as findings and one
-# that printed none as a failure, so a failed state write must print nothing.
+# --- emit ---------------------------------------------------------------
 attention=0
 current=""
-out=""
 # Node ids are opaque: split them on whitespace with globbing OFF, so a
 # metacharacter in a future id shape can never expand against the cwd.
 set -f
-while IFS=$'\t' read -r number head kind keys detail; do
+while IFS=$'\t' read -r number head keys detail; do
   [ -n "$number" ] || continue
-  if [ "$keys" = "-" ]; then
-    # A standing condition, not an event: no key, so nothing marks it seen
-    # and it re-emits every pass while it holds. That is what makes "narrow
-    # --window until the line stops" a usable instruction instead of one
-    # that appears to succeed on pass two.
-    new=1
-  else
-    new=0
-    for key in $keys; do
-      current="$current$key"$'\n'
-      if [ "$USE_STATE" = "0" ]; then
-        new=1
-      elif ! grep -qxF -- "$key" <<<"$seen"; then
-        new=1
-      fi
-    done
-  fi
+  new=0
+  for key in $keys; do
+    current="$current$key"$'\n'
+    if [ "$USE_STATE" = "0" ]; then
+      new=1
+    elif ! grep -qxF -- "$key" <<<"$seen"; then
+      new=1
+    fi
+  done
   [ "$new" = "1" ] || continue
-  out="$out$(printf '%s\t%s\t%s\t%s' "$number" "$head" "$kind" "$detail")"$'\n'
+  printf '%s\t%s\t%s\t%s\n' "$number" "$head" "post-merge-findings" "$detail"
   attention=1
 done <<<"$rows"
 set +f
 
-# STAGE, deliver, then PUBLISH. Both orderings are required and only this
-# one satisfies both: staging precedes every line, so a state failure still
-# exits 2 with empty stdout, which is what check_pr_watch reads as a failure
-# rather than as findings; and the baseline lands only after the lines are
-# out, so a killed process or a closed pipe leaves the OLD baseline and the
-# next pass repeats instead of marking undelivered findings seen forever.
 if [ "$USE_STATE" = "1" ]; then
-  state_tmp="$STATE_FILE.$$.tmp"
-  printf '%s' "$current" > "$state_tmp" || {
-    echo "::error::merged-sweep: could not write the state file $STATE_FILE ($SETTING_HINT)" >&2
+  tmp="$STATE_FILE.$$.tmp"
+  { printf '%s' "$current" > "$tmp" && mv -f "$tmp" "$STATE_FILE"; } || {
+    rm -f "$tmp"
+    echo "::error::merged-sweep: could not write the state file $STATE_FILE (set MERGED_SWEEP_STATE_DIR, or pass --no-state)" >&2
     exit 2
   }
-fi
-
-if ! { [ -z "$out" ] || printf '%s' "$out"; }; then
-  echo "::error::merged-sweep: could not deliver the attention lines; the baseline is unchanged, so the next pass reports them again" >&2
-  exit 2
-fi
-
-if [ "$USE_STATE" = "1" ]; then
-  mv -f -- "$state_tmp" "$STATE_FILE" || {
-    echo "::error::merged-sweep: could not write the state file $STATE_FILE ($SETTING_HINT)" >&2
-    exit 2
-  }
-  state_tmp=""
 fi
 
 if [ "$attention" = "1" ]; then exit 1; fi
