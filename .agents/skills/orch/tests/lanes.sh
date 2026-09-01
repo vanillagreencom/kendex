@@ -664,14 +664,14 @@ assert_contains "$noclaim_out" "Opened tmux window" "the laneless launch still o
 assert_eq "$(ls -1 "$OT_STATE/claims" 2>/dev/null | wc -l | tr -d '[:space:]')" "0" \
   "a launch with no --lane records no claim"
 
-# `--lane auto` over a batch: the claim each launch records must move the next
-# item off that account, or one invocation puts the whole fleet on one lane —
-# the failure the claims exist to prevent.
+# `--lane auto` over a batch: the claim each launch records must move the
+# next item off that account, or one invocation puts the fleet on one lane.
+# $TERMINAL pins the stub open_gui reaches for first: no window opens here.
 rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
 run_ot_auto() { LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
   GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
   OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
-  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
+  PATH="$OT_STUB_BIN:$PATH" TERMINAL=ghostty WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
 set +e
 auto_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-4 CC-5 2>&1)
 auto_rc=$?

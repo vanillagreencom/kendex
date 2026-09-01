@@ -76,6 +76,11 @@ exit 1
 EOF
 chmod +x "$BIN/ghostty" "$BIN/gh"
 
+# $TERMINAL is what open_gui reaches for first, so it is PINNED to the stub on
+# PATH here: unset, the branch below it would resolve whatever terminal the
+# developer's desktop provides and this suite would open real windows.
+export TERMINAL=ghostty
+
 # Stub worktree CLI:
 #   exists <item>          "true" when $STUB_EXISTS_DIR/<item> is present
 #   create <item>          logs "<item>", exits per $STUB_EXIT_DIR/<item>

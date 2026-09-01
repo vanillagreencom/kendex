@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Launch one or more work item worktrees in a separate terminal/window.
 # This is a handoff helper only; it does not monitor spawned sessions.
+# In-app harnesses (Codex app, Claude desktop, drovr) never use this script:
+# they hand off through the harness's own tooling — oversee.md § 1.
 
 set -euo pipefail
 
@@ -14,7 +16,7 @@ Usage: open-terminal [--tracker linear|github] [--repo OWNER/REPO] ITEM... [opti
 Options:
   --harness <name>  claude, codex, opencode, pi
   --tmux            Open tmux windows in the current session
-  --ghostty         Open Ghostty/GUI terminals
+  --ghostty         Open GUI terminals ($TERMINAL, xdg-terminal-exec, ghostty)
   --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced
   --lane <spec>     Launch under a chosen harness account. `auto` picks the
                     qualifying account with the fewest launches in flight for
@@ -439,6 +441,17 @@ tmux_wait_composer() {
   return 1
 }
 
+# The last layer before any window opens. A launch whose working directory is
+# gone opens a terminal that cannot start, so every path refuses here by name —
+# whatever produced it: a worktree deleted under a running lane, or a stubbed
+# CLI that exits 0 printing nothing. The empty path is the same: `-d ""` is
+# false.
+launchable_dir() { # DIR TITLE
+  [[ -d "$1" ]] && return 0
+  echo "Error: refusing to launch '$2': working directory '$1' does not exist" >&2
+  return 1
+}
+
 open_tmux() {
   local dir="$1" title="$2" cmd="$3" brief="${4:-}"
   # Called on the left of `||` at the launch loop, which suspends errexit for
@@ -447,6 +460,7 @@ open_tmux() {
   # return (most visibly on briefless lanes, whose early return would
   # otherwise count a broken window as launched).
   [[ -n "${TMUX:-}" ]] || { echo "Error: not inside tmux" >&2; return 1; }
+  launchable_dir "$dir" "$title" || return 1
   local last_idx pane spec server
   if ! last_idx=$(tmux list-windows -F '#{window_index}' | tail -1) || [[ -z "$last_idx" ]]; then
     echo "Error: tmux list-windows failed; cannot place window '$title'" >&2
@@ -506,15 +520,21 @@ open_tmux() {
   return 1
 }
 
+# Outside tmux the user's own terminal opens the lane: $TERMINAL is the
+# explicit choice, xdg-terminal-exec the desktop's, and ghostty only where a
+# desktop names neither. Nothing is hardcoded ahead of what the user set.
 open_gui() {
   local dir="$1" title="$2" cmd="$3"
   local shell_cmd="cd '$dir' && $cmd"
-  if command -v ghostty >/dev/null 2>&1; then
-    setsid env -u CLAUDECODE ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd" </dev/null >/dev/null 2>&1 &
+  launchable_dir "$dir" "$title" || return 1
+  if [[ -n "${TERMINAL:-}" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
+    setsid env -u CLAUDECODE "$TERMINAL" -e bash -lc "$shell_cmd" </dev/null >/dev/null 2>&1 &
   elif command -v xdg-terminal-exec >/dev/null 2>&1; then
     setsid env -u CLAUDECODE xdg-terminal-exec bash -lc "$shell_cmd" </dev/null >/dev/null 2>&1 &
+  elif command -v ghostty >/dev/null 2>&1; then
+    setsid env -u CLAUDECODE ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd" </dev/null >/dev/null 2>&1 &
   else
-    echo "Error: no supported GUI terminal found" >&2
+    echo "Error: no GUI terminal found; set \$TERMINAL to one, or install xdg-terminal-exec" >&2
     return 1
   fi
   echo "Opened terminal '$title' in $dir"

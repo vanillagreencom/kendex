@@ -207,6 +207,80 @@ orphan="$(cat "$ROOT/orphan.pid" 2>/dev/null || true)"
   && ok "control: and the cap left no process of it behind" \
   || bad "control: and the cap left no process of it behind" "pid $orphan is still running; state=$GG_PTY_STATE err=$GG_PTY_ERR"
 
+# A suite killed mid-run takes the poll loop above with it, and `script` has
+# already setsid'd the session out of every group that killer could name — so
+# the cap on this side simply stops existing. What is left is the deadline the
+# session holds over itself, and it is the difference between a probe that ends
+# and the pair of keepalives from a dead session that ran for sixteen hours
+# before they were killed by hand (KEN-1084). The body here traps TERM away, as
+# those did, so nothing short of the SIGKILL that deadline sends can end it.
+cat >"$ROOT/abandon-runner.sh" <<'RUNNER'
+set -euo pipefail
+. "$1"
+gg_pty_run 2 "$2" || true
+RUNNER
+
+# abandon PTY_LIB CASE_FILE PIDFILE — run a case under PTY_LIB, kill the runner
+# the moment the session has a child to leave behind, and set ABANDONED to that
+# child's pid. Killing the runner is what a load reaper or a usage wall does to
+# a suite; the session and its spawner survive it either way.
+abandon() {
+  local lib="$1" case_file="$2" pidfile="$3" runner i=0
+  rm -f "$pidfile"
+  bash "$ROOT/abandon-runner.sh" "$lib" "$case_file" >/dev/null 2>&1 &
+  runner=$!
+  while [ "$i" -lt 60 ] && [ ! -s "$pidfile" ]; do
+    sleep 0.25
+    i=$((i + 1))
+  done
+  kill -9 "$runner" 2>/dev/null || true
+  wait "$runner" 2>/dev/null || true
+  ABANDONED="$(cat "$pidfile" 2>/dev/null || true)"
+}
+
+# gone_within PID SECONDS
+gone_within() {
+  local i=0
+  while [ "$i" -lt "$2" ]; do
+    kill -0 "$1" 2>/dev/null || return 0
+    sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+printf 'trap "" HUP TERM\necho STARTED\nsleep 300 &\necho "$!" >%q\nwait\n' \
+  "$ROOT/abandoned.pid" >"$ROOT/abandon-case.sh"
+abandon "$TEST_DIR/lib/pty.bash" "$ROOT/abandon-case.sh" "$ROOT/abandoned.pid"
+[ -n "$ABANDONED" ] \
+  && ok "an abandoned session really did start the child its own deadline must take" \
+  || bad "an abandoned session really did start the child its own deadline must take" "no pid recorded"
+# The cap is 2 and the session's deadline sits five seconds past it; 20 is slack
+# for a loaded box, not a second budget.
+[ -n "$ABANDONED" ] && gone_within "$ABANDONED" 20 \
+  && ok "and the session ends itself once the run that started it is gone" \
+  || bad "and the session ends itself once the run that started it is gone" "pid $ABANDONED is still running"
+
+# The must-fail control: the same abandonment against a copy whose watchdog
+# never starts. Without it the session outlives the run, which is the leak.
+NO_DEADLINE="$ROOT/pty-no-deadline.bash"
+sed 's/if \[ -n "$gg_pgid" \]; then/if false; then/' "$TEST_DIR/lib/pty.bash" >"$NO_DEADLINE"
+cmp -s "$TEST_DIR/lib/pty.bash" "$NO_DEADLINE" \
+  && bad "control: the mutant really drops the session's own deadline" "the copy is byte-identical to pty.bash" \
+  || ok "control: the mutant really drops the session's own deadline"
+printf 'trap "" HUP TERM\necho STARTED\nsleep 300 &\necho "$!" >%q\nwait\n' \
+  "$ROOT/abandoned-mutant.pid" >"$ROOT/abandon-mutant-case.sh"
+abandon "$NO_DEADLINE" "$ROOT/abandon-mutant-case.sh" "$ROOT/abandoned-mutant.pid"
+[ -n "$ABANDONED" ] && ! gone_within "$ABANDONED" 12 \
+  && ok "control: without that deadline the abandoned session is still running" \
+  || bad "control: without that deadline the abandoned session is still running" "pid ${ABANDONED:-none} ended anyway, so the case above proves nothing"
+# The leak this control deliberately creates is reaped here, by the group the
+# session recorded for itself — the suite must not become the thing it pins.
+if [ -n "$ABANDONED" ]; then
+  leaked_group="$(ps -o pgid= -p "$ABANDONED" 2>/dev/null | tr -dc '0-9' || true)"
+  [ -z "$leaked_group" ] || kill -9 -- "-$leaked_group" 2>/dev/null || true
+fi
+
 # The status is the SESSION's own, read from the file it wrote rather than
 # from the spawner, which reports on its own account.
 printf 'exit 7\n' >"$ROOT/status-case.sh"

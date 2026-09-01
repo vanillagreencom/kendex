@@ -83,11 +83,14 @@ Two rules hold, and a probe that drops either is worse than no probe:
   answered by EOF the moment it is written and the session returns instead of
   waiting for a person who is not there. What it returns differs by platform,
   which is why a case asserts on the destination.
-- **A time cap.** After `CAP` seconds the session's process group is killed,
-  the spawner's after it. `script` puts the session in a group of its own, so
-  killing the spawner alone leaves the stuck child behind. A probe that HANGS
-  yields no measurement at all, so a mutation run scores it as not killed and
-  prints a silent miss rather than a wedge.
+- **A time cap, held on both sides.** After `CAP` seconds the caller kills the
+  session's process group, the spawner's after it: `script` puts the session in
+  a group of its own, so killing the spawner alone leaves the stuck child
+  behind. The session holds the same deadline over ITSELF a few seconds later,
+  because a suite killed mid-run takes the caller's poll loop with it and
+  leaves a setsid'd session nothing can reach. A probe that HANGS yields no
+  measurement at all, so a mutation run scores it as not killed and prints a
+  silent miss rather than a wedge.
 
 Three things to assert, and `terminal-paths.test.sh` is the worked example —
 its `pty_call` is the wrapper shape a new case copies:
