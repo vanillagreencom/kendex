@@ -34,11 +34,12 @@ pub(super) struct Wrapper {
     /// and a count taken from the source would read a rewritten line as a
     /// section the publisher never brought.
     pub published: String,
-    /// The same prose as the catalog holds it, standing line for line
-    /// against `published` — the rewrite says each line in the harness's
-    /// words without ever adding or dropping one, and only trailing blank
-    /// lines are cut, off the end. The pair is what gives a captured line
-    /// back the words it was written in.
+    /// The same prose as the catalog holds it, which stands line for line
+    /// against `published` once its trailing whitespace is off: the
+    /// renderer hands the rewrite `trim_end` of this text, and the rewrite
+    /// says each line in the harness's words without ever adding or
+    /// dropping one. The pair is what gives a captured line back the words
+    /// it was written in.
     pub authored: String,
 }
 

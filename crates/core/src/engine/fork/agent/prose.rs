@@ -7,8 +7,6 @@
 //! twice, and whatever it said in one harness's words would be what every
 //! other harness renders.
 
-use std::collections::HashMap;
-
 use crate::render::agent::GENERATED_BANNER;
 use crate::render::inside_a_block;
 
@@ -34,9 +32,8 @@ use super::wrapper::Wrapper;
 /// holds more copies of it than the publisher brought.
 ///
 /// What is left is then said back in the words the catalog published it
-/// in, line by line, because the rendering said those lines in this
-/// harness's vocabulary and the fork's source is what every harness
-/// renders from next.
+/// in, because the rendering said those lines in this harness's vocabulary
+/// and the fork's source is what every harness renders from next.
 pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
     let lines: Vec<&str> = body.lines().collect();
     let kept: Vec<&str> = match wrapper {
@@ -46,7 +43,7 @@ pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
             let body_back: Vec<&str> = front.iter().rev().copied().collect();
             let publisher_back: Vec<&str> = publisher.iter().rev().copied().collect();
             let back = taken(&body_back, &publisher_back, &said(&wrapper.after, true));
-            front[..front.len() - back].to_vec()
+            as_published(&front[..front.len() - back], wrapper)
         }
         // Nothing was subtracted, so the banner the renderer wrote is
         // still standing in the body — the one line the next render is
@@ -59,10 +56,9 @@ pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
             .copied()
             .collect(),
     };
-    let said = wrapper.map(authored).unwrap_or_default();
     let mut out = String::new();
     for line in kept {
-        out.push_str(said.get(line).copied().flatten().unwrap_or(line));
+        out.push_str(line);
         out.push('\n');
     }
     // Only the blank separators go. A first line indented into a code
@@ -71,36 +67,59 @@ pub(super) fn prose(body: &str, wrapper: Option<&Wrapper>) -> String {
     format!("{}\n", out.trim_start_matches('\n').trim_end())
 }
 
-/// The publisher's own lines, each keyed by what this harness renders it
-/// as. Only the lines the rewrite said differently are in it — one it left
-/// alone gives the same text back — so a body the rewrite never touched
-/// costs nothing and a line the person wrote themselves is looked up and
-/// missed.
+/// The kept lines, each one standing at the publisher's own position
+/// given back the words the catalog published it in. Every harness but
+/// Claude says a body's tool references in its own vocabulary, so a line
+/// read off the rendering is the publisher's line said in that harness's
+/// words, and the fork's source is what every harness renders from next.
 ///
-/// A rendering two published lines both stand for is left out. `replace`
-/// is Gemini's word for Edit and for MultiEdit alike, and picking one of
-/// them would put a tool the person never named into their prose.
+/// Which lines are the publisher's is asked of position, never of text. A
+/// line is theirs where it stands where the rendering stands it: the run
+/// at the front that matches the rendering line for line, and the run at
+/// the back that does the same. Between the two is where the person
+/// worked, and those lines stay exactly as they wrote them, harness words
+/// and all — this reads what the renderer wrote, and their line is not
+/// something it wrote.
 ///
-/// The reading is a whole line at a time, which is what the pairing can
-/// prove: a line as rendered is a line as published, said differently, so
-/// swapping one for the other is what this harness renders back. A line
-/// the person edited is theirs and stands as they wrote it, harness words
-/// and all — nothing here knows which half of it they changed.
-fn authored(wrapper: &Wrapper) -> HashMap<&str, Option<&str>> {
-    let mut said: HashMap<&str, Option<&str>> = HashMap::new();
-    for (rendered, published) in wrapper.published.lines().zip(wrapper.authored.lines()) {
-        if rendered == published {
-            continue;
-        }
-        said.entry(rendered)
-            .and_modify(|held| {
-                if *held != Some(published) {
-                    *held = None;
-                }
-            })
-            .or_insert(Some(published));
+/// Text alone cannot answer it. Two published lines may render as one and
+/// the same line, a fenced sample keeps every byte while the prose above
+/// it is reworded into the same words, and a person may type the
+/// harness's own name for a tool; matched by text, each of those puts a
+/// line into the source that nobody wrote.
+///
+/// The pairing itself is positional: `rewrite_prose` says each line in the
+/// harness's words and emits one line per line, and every agent renderer
+/// hands it `trim_end` of the body. Where the two counts disagree the
+/// pairing has slipped and every line past the slip would be swapped for
+/// its neighbour's, so nothing is said back at all. It is written as a
+/// refusal rather than a `debug_assert` for the reason `wrapper` gives for
+/// its own: an invariant held fail-closed, pinned red by the vocab suite's
+/// line-count test rather than by a case reaching it here.
+fn as_published<'a>(kept: &[&'a str], wrapper: &'a Wrapper) -> Vec<&'a str> {
+    let rendered: Vec<&str> = wrapper.published.lines().collect();
+    let published: Vec<&str> = wrapper.authored.trim_end().lines().collect();
+    if rendered.len() != published.len() {
+        return kept.to_vec();
     }
-    said
+    let front = kept
+        .iter()
+        .zip(&rendered)
+        .take_while(|(kept, rendered)| kept == rendered)
+        .count();
+    let back = kept[front..]
+        .iter()
+        .rev()
+        .zip(rendered[front..].iter().rev())
+        .take_while(|(kept, rendered)| kept == rendered)
+        .count();
+    let mut words = kept.to_vec();
+    for (at, line) in words.iter_mut().take(front).enumerate() {
+        *line = published[at];
+    }
+    for (from_the_end, line) in words.iter_mut().rev().take(back).enumerate() {
+        *line = published[published.len() - 1 - from_the_end];
+    }
+    words
 }
 
 /// One line a section is identified by. `inside` is a line standing

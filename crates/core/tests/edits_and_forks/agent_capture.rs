@@ -600,7 +600,7 @@ fn forking_a_pi_agent_captures_the_words_its_prose_was_written_in() {
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
     assert!(
-        source.contains("Use the WebFetch tool."),
+        source.contains("Use the WebFetch tool.") && !source.contains("webfetch"),
         "the capture kept Pi's vocabulary as the fork's source: {source}"
     );
     let claude = fs::read_to_string(rendered(&w, HarnessId::Claude, "rev")).unwrap();
@@ -621,25 +621,62 @@ fn forking_a_pi_agent_captures_the_words_its_prose_was_written_in() {
     }
 }
 
-/// A harness may say two of Claude's tools with one word — Gemini's
-/// `replace` is Edit and MultiEdit alike — and the rendering keeps no
-/// record of which one it stood for. The capture leaves such a line as the
-/// rendering says it rather than picking one, because picking puts a tool
-/// the person never named into their prose.
+/// A harness may render two published lines as one and the same line.
+/// Gemini says `glob` for the Glob tool, which is also the ordinary word
+/// somebody writes in lowercase prose. Read by text the two are one line
+/// with two answers; read by position each is its own.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_word_that_stands_for_two_tools_is_left_as_the_rendering_says_it() {
+fn two_published_lines_a_harness_renders_alike_each_keep_their_own_words() {
     let w = agent_world(
         "\"claude\", \"gemini\"",
-        "---\nname: rev\ndescription: agent rev\n---\nUse the Edit tool.\n\nUse the MultiEdit tool.\n\nUpstream body.\n",
+        "---\nname: rev\ndescription: agent rev\n---\nUse the glob tool.\n\nUse the Glob tool.\n\nUpstream body.\n",
         "",
         "",
     );
     let file = rendered(&w, HarnessId::Gemini, "rev");
     assert_eq!(
-        times(&fs::read_to_string(&file).unwrap(), "Use the replace tool."),
+        times(&fs::read_to_string(&file).unwrap(), "Use the glob tool."),
         2,
-        "the fixture must render both tools as Gemini's one word"
+        "the fixture must render both lines alike"
+    );
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    for line in ["Use the glob tool.", "Use the Glob tool."] {
+        assert_eq!(
+            times(&source, line),
+            1,
+            "{line} is one of two lines the rendering says alike: {source}"
+        );
+    }
+}
+
+/// A fenced sample keeps every byte through the rewrite, so a sample
+/// written in Gemini's own words stands in the rendering beside prose the
+/// rewrite turned into those same words. The sample is the publisher's
+/// bytes and must come back as they wrote it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fenced_sample_written_in_the_harnesss_words_keeps_every_byte() {
+    let w = agent_world(
+        "\"claude\", \"gemini\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUse the Read tool.\n\n```\nUse the read_file tool.\n```\n\nUpstream body.\n",
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    assert_eq!(
+        times(
+            &fs::read_to_string(&file).unwrap(),
+            "Use the read_file tool."
+        ),
+        2,
+        "the fixture must render the prose into the sample's own words"
     );
     edit_body(&file);
 
@@ -649,8 +686,50 @@ fn a_word_that_stands_for_two_tools_is_left_as_the_rendering_says_it() {
 
     let source = fs::read_to_string(captured(&w, "rev")).unwrap();
     assert_eq!(
-        times(&source, "Use the replace tool."),
-        2,
-        "the capture named a tool the rendering could not tell apart: {source}"
+        times(&source, "Use the read_file tool."),
+        1,
+        "the fenced sample lost the bytes the rewrite keeps: {source}"
+    );
+    assert_eq!(
+        times(&source, "Use the Read tool."),
+        1,
+        "the prose above it did not come back in the published words: {source}"
+    );
+}
+
+/// A line the person typed into the rendering is theirs, in whatever words
+/// they reached for. Reading the rendering back says what the renderer
+/// wrote, and their line is not something it wrote.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_line_the_person_typed_in_the_harnesss_words_stays_as_they_wrote_it() {
+    let w = agent_world(
+        "\"claude\", \"gemini\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUse the Read tool.\n\nUpstream body.\n",
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("Upstream body.", "My body.\n\nUse the read_file tool."),
+    )
+    .unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert_eq!(
+        times(&source, "Use the read_file tool."),
+        1,
+        "the capture rewrote a line the person typed themselves: {source}"
+    );
+    assert_eq!(
+        times(&source, "Use the Read tool."),
+        1,
+        "the publisher's own line did not come back in the published words: {source}"
     );
 }

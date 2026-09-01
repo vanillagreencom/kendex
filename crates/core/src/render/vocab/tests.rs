@@ -240,3 +240,40 @@ fn a_hook_matcher_is_restated_alternative_by_alternative() {
         ("Bash".to_owned(), true)
     );
 }
+
+/// The rewrite says each line in the harness's words and gives back one
+/// line for every line it was handed. The fork's capture pairs a rendering
+/// with the prose it was published as by position, so a rewrite that
+/// wrapped, split or joined a line would hand every captured line its
+/// neighbour's words.
+#[test]
+fn every_harness_gives_back_one_line_for_every_line() {
+    let body = concat!(
+        "Use the Read tool, then the `Grep` tool.\n",
+        "\n",
+        "See [the Bash tool](docs/bash.md) and the mcp__gh tool.\n",
+        "\n",
+        "```sh\n",
+        "use the Bash tool\n",
+        "```\n",
+        "\n",
+        "Read .agents/skills/gh/SKILL.md first.\n",
+        "\n",
+        "Use the WebFetch tool last.\n",
+    );
+    for harness in [
+        HarnessId::Codex,
+        HarnessId::Copilot,
+        HarnessId::Cursor,
+        HarnessId::Gemini,
+        HarnessId::Opencode,
+        HarnessId::Pi,
+    ] {
+        let (text, _) = rewrite_prose(body, harness);
+        assert_eq!(
+            text.lines().count(),
+            body.lines().count(),
+            "{harness:?} changed how many lines the body has: {text}"
+        );
+    }
+}
