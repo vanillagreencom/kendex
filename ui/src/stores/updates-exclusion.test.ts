@@ -210,9 +210,14 @@ describe("the check and the writes exclude each other", () => {
     await checking;
   });
 
-  // `busy` covers several writers now, so it is counted rather than set:
-  // the first to finish would otherwise write false while the second is
-  // still out, which is exactly the moment a check must still refuse.
+  // `busy` is counted rather than set, because two writes really can be
+  // out at once. `updateOne` bars a second one through `rowUnsettled`,
+  // which carries the read state, a running check and a flip settling in
+  // the row's own scope — never `busy` — so two updates in two scopes are
+  // both accepted. `updateRows` reads the same predicate, and a Follow
+  // flip takes a second scope's flip for the same reason. A `busy` that
+  // whichever finishes first writes false would reopen the check while the
+  // other is still committing.
   it("keeps a check refused until the last of two overlapping writes ends", async () => {
     const landed = {
       status: "ok" as const,
@@ -220,32 +225,29 @@ describe("the check and the writes exclude each other", () => {
     };
     vi.mocked(commands.updatesOverview).mockResolvedValue(landed);
 
-    const mute = park<Awaited<ReturnType<typeof commands.updateSetIgnored>>>();
-    vi.mocked(commands.updateSetIgnored).mockReturnValue(mute.promise);
-    const muting = useUpdatesStore.getState().setIgnored(row({}), true);
+    const first = park<Awaited<ReturnType<typeof commands.packageUpdate>>>();
+    const second = park<Awaited<ReturnType<typeof commands.packageUpdate>>>();
+    vi.mocked(commands.packageUpdate)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
 
-    const apply = park<Awaited<ReturnType<typeof commands.packageUpdate>>>();
-    vi.mocked(commands.packageUpdate).mockReturnValue(apply.promise);
-    const { updateToLatest } = packageVersionActions(
-      { scope: { scope: "global" }, kind: "skill", name: "gh" },
-      "gh",
-      false,
-      () => {},
-      () => {},
-    );
-    const updating = updateToLatest(NEWEST);
+    const one = useUpdatesStore.getState().updateOne(row({}));
+    const two = useUpdatesStore
+      .getState()
+      .updateOne(row({ scope: { scope: "project", root: "/home/me/app" } }));
+    // The overlap is measured, not assumed: nothing refused the second.
+    expect(commands.packageUpdate).toHaveBeenCalledTimes(2);
 
-    // The first ends; the second is still out.
-    mute.land(landed);
-    await muting;
+    first.land(APPLIED);
+    await one;
     expect(useUpdatesStore.getState().busy).toBe(true);
 
     vi.mocked(commands.updatesRefresh).mockClear();
     await useUpdatesStore.getState().check();
     expect(commands.updatesRefresh).not.toHaveBeenCalled();
 
-    apply.land(APPLIED);
-    await updating;
+    second.land(APPLIED);
+    await two;
     expect(useUpdatesStore.getState().busy).toBe(false);
   });
 
