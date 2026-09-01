@@ -83,9 +83,9 @@ Attention kinds (column 3):
                        reopens the finding, while on the PR CONVERSATION the
                        same comment is chatter and the standing disposition
                        holds. What the read cannot prove fails CLOSED: a
-                       truncated reviewThreads page (GitHub documents no
-                       ordering for it), a review or comment page whose every
-                       entry is post-merge, and an unparsable timestamp. One
+                       truncated reviewThreads page (no documented ordering), a
+                       review or comment page entirely post-merge, an
+                       unparsable timestamp, and a time equal to mergedAt. One
                        gap is invisible and so uncovered: search is eventually
                        consistent, so a PR the index has not caught up with is
                        absent from the page AND uncounted. A loop recovers what

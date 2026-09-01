@@ -251,3 +251,36 @@ assert_decline_reason_arms() {
   decline_arm 1 $'Declined: \t\n ' "a decline followed only by whitespace answers nothing"
   decline_arm 0 "Declined: the handle is closed on the error path" "a decline WITH a reason answers"
 }
+
+# The mergedAt TIE arms (ms37), here for the same reason ms36 is. GitHub
+# serializes to the second, so an item published in the same second as the
+# merge resolves to exactly mergedAt and the read can prove neither side.
+# It must fail closed into overflow: dropping it is silent forever, and
+# claiming it is a finding asserts what the read cannot show. The control
+# one second later pins the other side of the boundary.
+assert_merge_tie_arms() {
+  local one_later; one_later="$(iso -3599)"
+  fresh_state
+  fixture "$(envelope "$(pr 16 "$MERGED_AT" dev \
+    "[$(review REV_tie "$MERGED_AT" COMMENTED "P1: tied with the merge" codex Bot)]" '[]' '[]')")"
+  run_split
+  assert_eq "$SPLIT_RC" "1" "ms37: a review tied with mergedAt surfaces"
+  assert_row ms37 "$SPLIT_OUT" "16" "$HEAD_A8" "post-merge-findings" "same second as the merge"
+  assert_eq "$(cat "$TMP_ROOT/state/acme_widgets")" "16:overflow" \
+    "ms37: keyed ONLY on the overflow arm — widening the finding predicate to >= would key the review id here too"
+  assert_not_contains "$SPLIT_OUT" "landed after the merge with no disposition reply" \
+    "ms37: and never as a confirmed finding — the read cannot prove which side it is on"
+  fresh_state
+  fixture "$(envelope "$(pr 16 "$MERGED_AT" dev '[]' '[]' \
+    "[$(thread THR_tie 1 "$(comment "$MERGED_AT" "P2: tied with the merge" codex Bot)")]")")"
+  run_split
+  assert_eq "$SPLIT_RC" "1" "ms37: a thread comment tied with mergedAt surfaces"
+  assert_contains "$SPLIT_OUT" "same second as the merge" "ms37: with the same fail-closed line"
+  fresh_state
+  fixture "$(envelope "$(pr 16 "$MERGED_AT" dev \
+    "[$(review REV_1s "$one_later" COMMENTED "P1: one second past" codex Bot)]" '[]' '[]')")"
+  run_split
+  assert_eq "$SPLIT_RC" "1" "ms37: one second past the merge is an ordinary finding"
+  assert_contains "$SPLIT_OUT" "1 review(s) and 0 review thread(s)" "ms37: counted, not failed closed"
+  assert_not_contains "$SPLIT_OUT" "same second as the merge" "ms37: the tie line belongs to the tie alone"
+}

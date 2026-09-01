@@ -43,6 +43,7 @@
 #   ms34.  the QUERY actually sent          -> qualifiers, type, probe, merged:
 #   ms35.  drafted pre-merge, published later-> a finding, not createdAt
 #   ms36.  a decline with no reason        -> answers nothing, both arms
+#   ms37.  a time equal to mergedAt         -> fail closed, neither side
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -255,9 +256,8 @@ set -e
 assert_eq "$rc" "1" "ms14b: a human post-merge comment is a finding, not a reply"
 assert_contains "$out" "0 review(s) and 1 review thread(s)" "ms14b: counted as a thread finding"
 
-# ms14c: inside a THREAD a human non-disposition comment is content on a
-# line, so it is a finding even after a real reply — the fail-closed
-# reading, and deliberately unlike ms9c's conversation arm.
+# ms14c: inside a THREAD a human non-disposition comment is content on a line,
+# so it is a finding even after a real reply — fail closed, unlike ms9c.
 fresh_state
 CHATTER="$(thread THR_chatter 3 \
   "$(comment "$AFTER_MERGE" "P2: this leaks" codex Bot)" \
@@ -293,8 +293,7 @@ assert_eq "$rc" "1" "ms16: a thread past the comment bound fails closed even whe
 assert_contains "$out" "beyond the read bound" "ms16: and says so"
 
 # ms16b (finding #5): a long thread that opened AND closed before the merge
-# hides nothing — comments are read newest-first, so truncation drops only
-# older pre-merge ones.
+# hides nothing — read newest-first, truncation drops only older pre-merge ones.
 fresh_state
 PRE_DEEP="$(thread THR_predeep 60 \
   "$(comment "$BEFORE_MERGE" "a long pre-merge argument" codex Bot)" \
@@ -654,9 +653,8 @@ set -e
 assert_eq "$rc" "1" "ms27f: and a gap that worsened is never silent"
 assert_contains "$out" "500 merged PR(s) in the window" "ms27f: reporting the WORSE count, not the old one"
 
-# At the ceiling the only remedy left is the window, and the line says that
-# rather than telling the operator to raise a limit already at its maximum.
-# Its own fixture, so reordering or editing ms27 cannot change what it tests.
+# At the ceiling the only remedy is the window, and the line says so rather than
+# naming a limit already at its maximum. Its own fixture, so ms27 cannot move it.
 fresh_state
 fixture "$(STUB_ISSUE_COUNT=86 envelope "$(pr 11 "$MERGED_AT" dev '[]' '[]' '[]')")"
 set +e
@@ -794,6 +792,7 @@ assert_eq "$SPLIT_RC" "1" "ms35: work drafted before the merge and PUBLISHED aft
 assert_contains "$SPLIT_OUT" "2 review(s) and 1 review thread(s)" "ms35: the review by submittedAt, the thread comment by publishedAt, a field-less shape by createdAt"
 
 assert_decline_reason_arms
+assert_merge_tie_arms
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

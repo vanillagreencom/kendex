@@ -38,7 +38,17 @@ def names_an_issue: test("([A-Z][A-Z0-9]+-[0-9]+|#[0-9]+)\\b");
 # no corpus, so it belongs here; recognising a BAD one does, so it does not.
 def answered: (disposition and ((declined | not) or reasoned_decline))
               or (tracking and names_an_issue);
+# ASSUMES an entry with no author is a HUMAN, so its reply can answer a
+# finding. GitHub returns a null author only for a deleted account, whose
+# reply was written by a person; a bot cannot reach this default, because
+# the query asks for __typename and GraphQL always returns it for an author
+# that exists. What would break it: a response shape that omits __typename
+# on a live author, which would let a bot reply clear a finding.
 def human: (.author.__typename // "User") != "Bot";
+# Anything that will not parse — a non-string, a malformed date — becomes
+# null, which $bad_ts counts and fails closed on; nothing is dropped for
+# being unreadable. The fraction is DISCARDED, so two items in the same
+# second compare equal: that is what makes the mergedAt tie below possible.
 def epoch: if type == "string" then (try (sub("\\.[0-9]+";"") | fromdateiso8601) catch null) else null end;
 # The EFFECTIVE PUBLICATION time, and the ONE definition every arm shares.
 # createdAt is when a review was STARTED: a reviewer drafting during the
@@ -53,6 +63,9 @@ def epoch: if type == "string" then (try (sub("\\.[0-9]+";"") | fromdateiso8601)
 # comment carries no submittedAt at all. createdAt remains the fallback, so
 # a response shape carrying neither field behaves exactly as before.
 def at: ((.submittedAt // .publishedAt // .createdAt) | epoch);
+# A missing body reads as "", which is neither a disposition nor a
+# track-word: it never answers a finding, and inside a thread it counts as
+# CONTENT. Both directions are the closed one.
 def is_reply: human and ((.body // "") | (disposition or tracking));
 
 if (.errors? // [] | length) > 0 then error("graphql errors present")
@@ -100,7 +113,19 @@ else
          | . as $r
          | ($r | at) as $rat
          | select($rat != null and $rat > $merged)
+         # ASSUMES the review states worth reading are exactly these two, so
+         # a state this list does not name is dropped in silence. Today the
+         # enum holds only PENDING, APPROVED and DISMISSED besides them, and
+         # each is deliberately not a finding. What would break it: GitHub
+         # adding a member. A deny-list would fail closed instead, but it
+         # would first need a ruling on PENDING — reported, not changed here.
          | select($r.state == "CHANGES_REQUESTED" or $r.state == "COMMENTED")
+         # ASSUMES at most one of the two logins is missing. Two deleted
+         # accounts compare "" to "" and the review is dropped as a
+         # self-review; one deleted account still differs from a live login,
+         # so the finding survives. What would break it: a PR whose author
+         # AND reviewer are both deleted, which is why this is recorded
+         # rather than defended.
          | select(($r.author.login // "") != ($pr.author.login // ""))
          | ([ $pr_replies[] | select(at > $rat) ] | last) as $standing
          | select(($standing == null) or (($standing.body // "") | answered | not))
@@ -115,31 +140,52 @@ else
          | ([ ($t.comments.nodes // [])[] | select(at != null) | select(at > $merged) ]) as $post
          | ([ $post[] | select(is_reply | not) | at ] | max // null) as $finding_at
          | select($finding_at != null)
+         # STRICTLY after the finding: a reply in the same second as the
+         # finding cannot be proved to answer it, so it does not and the
+         # thread surfaces. This boundary already fails closed.
          | ([ $post[] | select(is_reply) | select(at > $finding_at) ] | last) as $standing
          | select(($standing == null) or (($standing.body // "") | answered | not))
          | $t.id ]) as $late_threads
     # Fail closed wherever the read cannot prove itself: reviews come back
-    # in creation order, so their bound hides content only when every
-    # returned review is post-merge; reviewThreads has no documented order,
+    # in CREATION order (measured 2026-09-01: first:N returns the OLDEST N)
+    # while `at` places them by SUBMISSION, so this bound catches a page
+    # that is entirely post-merge but NOT a draft opened before the
+    # truncated tail and submitted after the merge; reported rather than
+    # closed here, since closing it means failing closed on every truncated
+    # review page. reviewThreads has no documented order,
     # so any truncation there fails closed; thread comments are read
     # newest-first, so truncation is harmless unless every returned comment
-    # is post-merge; and a timestamp that will not parse cannot be placed
-    # either side of the merge, so it is never silently dropped.
+    # is post-merge; a timestamp that will not parse cannot be placed either
+    # side of the merge; and neither can one that lands ON it.
     | ([ ($pr.reviews.nodes // [])[] | select(at != null) | select(at > $merged) ] | length) as $post_reviews
     | (([ ($pr.reviews.nodes // [])[] | select(at == null) ] | length)
        + ([ ($pr.reviewThreads.nodes // [])[] | (.comments.nodes // [])[] | select(at == null) ] | length)) as $bad_ts
+    # The mergedAt TIE. GitHub serializes to the second and epoch drops the
+    # fraction, so anything published in the same second as the merge lands
+    # exactly ON $merged. Neither arm may claim it: `>` drops it in silence
+    # and no later pass ever looks again, `>=` reports a finding the read
+    # cannot prove is post-merge. So it goes to overflow, which asks for
+    # eyes and keys the PR so the ask is not repeated every pass.
+    | (([ ($pr.reviews.nodes // [])[] | select(at == $merged) ] | length)
+       + ([ ($pr.reviewThreads.nodes // [])[] | (.comments.nodes // [])[] | select(at == $merged) ] | length)) as $ties
     | (($pr.reviews.totalCount > ($pr.reviews.nodes | length) and $post_reviews == ($pr.reviews.nodes | length))
        or ($pr.reviewThreads.totalCount > ($pr.reviewThreads.nodes | length))
        or ([ ($pr.reviewThreads.nodes // [])[]
              | select(.comments.totalCount > (.comments.nodes | length))
              | select([ (.comments.nodes // [])[] | select(at != null) | select(at <= $merged) ] | length == 0) ] | length > 0)
-       or $bad_ts > 0) as $overflow
+       or $bad_ts > 0 or $ties > 0) as $overflow
     | select(($late_reviews | length) > 0 or ($late_threads | length) > 0 or $overflow)
+    # ASSUMES every review and thread carries the node id the query asks for
+    # by name. A null id joins as an empty segment, so two findings on one PR
+    # could share a key and the second would dedupe away. What would break
+    # it: a response omitting a requested id on a node it returned.
     | ($late_reviews + $late_threads + (if $overflow then ["\($pr.number):overflow"] else [] end)) as $keys
     | [ ($pr.number | tostring), ($pr.headRefOid[0:8]), "post-merge-findings",
         ($keys | join(" ")),
         (if $bad_ts > 0
          then "a review or thread comment carries a timestamp that will not parse, so post-merge activity cannot be placed either side of the merge — fail closed; re-read #\($pr.number) by hand"
+         elif $ties > 0
+         then "a review or thread comment is timestamped in the same second as the merge, so the read cannot place it either side — fail closed; re-read #\($pr.number) by hand"
          elif $overflow
          then "post-merge activity beyond the read bound on a merged PR — fail closed; re-read #\($pr.number) by hand"
          else "\($late_reviews | length) review(s) and \($late_threads | length) review thread(s) landed after the merge with no disposition reply — merged \($pr.mergedAt); nothing has read them"
