@@ -37,6 +37,7 @@ const triggers = (html: string): string[] =>
 const stub = vi.hoisted(() => ({
   loaded: true,
   busy: false,
+  checking: false,
   showVersion: false,
 }));
 
@@ -47,6 +48,7 @@ vi.mock("@/stores/updates", async (importOriginal) => {
       ...mod.useUpdatesStore.getState(),
       loaded: stub.loaded,
       busy: stub.busy,
+      checking: stub.checking,
     };
     return selector ? selector(state) : state;
   };
@@ -417,5 +419,24 @@ describe("UpdatesTable", () => {
     const html = render([row("one", null, { ignored: true })]);
     expect(html).not.toContain('role="switch"');
     expect(html).toContain(">Notify again<");
+  });
+
+  // The mute is the one action `rowUnsettled` does not bar, so its
+  // surfaces carry the pair the store refuses on instead. Without them the
+  // button invites a click the store answers with an error. The `…` menu's
+  // Ignore item takes the same pair; it renders only once opened, so it is
+  // held in `updates-table.dom.test.tsx`.
+  it("holds Notify again while a check or a write is out", () => {
+    for (const flag of ["busy", "checking"] as const) {
+      stub.busy = false;
+      stub.checking = false;
+      stub[flag] = true;
+      const muted = render([row("one", null, { ignored: true })]);
+      expect(muted).toMatch(
+        /<button[^>]*disabled=""[^>]*>(?:(?!<button)[\s\S])*?Notify again</,
+      );
+    }
+    stub.busy = false;
+    stub.checking = false;
   });
 });

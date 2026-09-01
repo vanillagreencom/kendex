@@ -116,6 +116,23 @@ describe("package page edited notice", () => {
     expect(html).toContain(">View changes<");
   });
 
+  // Keeping the files as a fork copies what is on disk, so no value read
+  // off the row goes into it — but it commits, and a check out has a
+  // report built before that commit which would land after. The store
+  // refuses it now, and the button says so.
+  it("holds Keep as my own while a flip settles in this scope", () => {
+    const rows = [
+      edited({ editedHarnesses: ["claude"], forkableHarness: "claude" }),
+    ];
+    const forkHeld = (html: string): boolean => {
+      const tag = html.match(/<button[^>]*>Keep as my own<\/button>/)?.[0];
+      if (!tag) throw new Error("no Keep as my own button");
+      return tag.includes('disabled=""');
+    };
+    expect(forkHeld(render(rows))).toBe(false);
+    expect(forkHeld(render(rows, [{ scope: { scope: "global" } }]))).toBe(true);
+  });
+
   // Discarding applies the row's latest commit off a `pinned` a settling
   // flip may have painted, so takeNewVersion refuses for that scope. The
   // button says so rather than inviting a click that only errors.

@@ -142,3 +142,10 @@ export const UPDATES_UNCONFIRMED_TITLE =
 const NEEDS_A_CHECK = "Updating needs a check that succeeds first";
 export const UPDATE_NEEDS_CHECK_NOTE = `${NEEDS_A_CHECK} — these versions may be stale`;
 export const UPDATE_NEEDS_CHECK_HERE = NEEDS_A_CHECK;
+// A check and a write never run together: the check builds its report once,
+// so a change landing while it is out would be missing from it. The rows are
+// not stale and nothing needs checking first, which is why this is its own
+// note rather than the one above — the only thing in the way is the work
+// already running.
+export const UPDATES_ONE_AT_A_TIME_NOTE =
+  "A check or an update is already running — try again when it finishes";

@@ -65,9 +65,11 @@ export function standingReads(
      *
      *  It ranks by when it LANDS rather than when the operation began: it
      *  reports the state its own work made, so it outranks every read still
-     *  in flight. That holds because the check and the writes that commit
-     *  exclude each other by flag — nothing can have committed while this
-     *  answer was being built, so there is nothing for it to be missing. */
+     *  in flight. What makes that safe is the store's exclusion — the check
+     *  refuses while `busy`, and every write of the update standing raises
+     *  it — so no such write can have committed while this answer was being
+     *  built. A mutation that does not raise it is outside what this rule
+     *  covers. */
     landOwn: (response: Answer) => land(order.begin(), response),
     /** Read the standing again. `reading` is up for as long as one is out,
      *  read off the same ticket that orders the landings, so the page-wide

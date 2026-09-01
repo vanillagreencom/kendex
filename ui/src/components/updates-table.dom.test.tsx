@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { UPDATE_LABEL } from "@/lib/copy";
+import { IGNORE_UPDATES_LABEL, UPDATE_LABEL } from "@/lib/copy";
 import { SAFETY_CAVEAT } from "@/lib/copy-safety";
 import {
   EDITED_TAG_HELP,
@@ -233,6 +233,41 @@ describe("the table's own menu", () => {
     expect(useUpdatesView.getState().showVersion).toBe(true);
     expect(host.querySelectorAll("th")).toHaveLength(12);
     expect(host.textContent).toContain("1111111 → v2");
+  });
+});
+
+// Ignoring a package is the one action the row's own staleness does not
+// bar, so its surfaces take the pair the store refuses on. The item only
+// exists once the menu is open, which is why it is held here.
+describe("the row's Ignore item", () => {
+  it("is held while a check is out", async () => {
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [row("one", null)], warnings: [], lastFetched: null },
+    });
+    mount(<UpdatesPage />);
+    await settle();
+
+    const open = async () => {
+      const trigger = button("More actions");
+      act(() => trigger.focus());
+      await userEvent.keyboard("{Enter}");
+      const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+        (el) => el.textContent?.includes(IGNORE_UPDATES_LABEL),
+      );
+      if (!(item instanceof HTMLElement))
+        throw new Error("no Ignore updates item");
+      return item;
+    };
+
+    expect((await open()).getAttribute("data-disabled")).toBeNull();
+    await userEvent.keyboard("{Escape}");
+
+    await act(async () => {
+      useUpdatesStore.setState({ checking: true });
+    });
+    expect((await open()).getAttribute("data-disabled")).toBe("");
+    useUpdatesStore.setState({ checking: false });
   });
 });
 

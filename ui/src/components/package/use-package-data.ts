@@ -28,7 +28,7 @@ import { useEditorStore } from "@/stores/editor";
 import type { PackageRef } from "@/stores/nav";
 import { useProblemsStore } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
-import { useUpdatesStore } from "@/stores/updates";
+import { holdingBusy, useUpdatesStore } from "@/stores/updates";
 import { writeRev, writeUpdate } from "@/stores/updates-writes";
 
 export type PackageView =
@@ -150,6 +150,10 @@ export function packageVersionActions(
   // This page has no edited-row filter, and a refusal is broader than an
   // edit anyway — files kendex never put there, a provenance clash — so
   // the held answer arrives here whatever the page believes about edits.
+  // Under the updates store's `busy` as well as the page's own spinner:
+  // these commit like any update does, and the Updates page's check refuses
+  // on that flag alone. Without it a check runs beside this write and lands
+  // a report built before it.
   const run = (
     call: Promise<
       | { status: "ok"; data: PackageUpdate_Serialize }
@@ -158,7 +162,8 @@ export function packageVersionActions(
     lines: OutcomeLines,
   ) => {
     setBusy(true);
-    void call.then((response) => {
+    return holdingBusy(async () => {
+      const response = await call;
       setBusy(false);
       if (response.status === "error") {
         showError(response.error);
@@ -217,11 +222,17 @@ export function packageVersionActions(
 export function useManifestBusy(switching: boolean, scopes: Scope[]): boolean {
   const auditBusy = useAuditStore((s) => s.busy);
   const updatesBusy = useUpdatesStore((s) => s.busy);
+  // A check out is the other half of the updates store's exclusion: its
+  // report is built before anything these controls commit, and landing it
+  // after would put the rows back. The controls refuse rather than start.
+  const checking = useUpdatesStore((s) => s.checking);
   const settling = useUpdatesStore((s) =>
     s.pendingFollows.some((one) =>
       scopes.some((scope) => sameScope(one.scope, scope)),
     ),
   );
   const saving = useEditorStore((s) => s.saving);
-  return auditBusy || switching || updatesBusy || settling || saving;
+  return (
+    auditBusy || switching || updatesBusy || checking || settling || saving
+  );
 }

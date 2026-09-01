@@ -11,7 +11,7 @@ import { rescanEverything } from "@/lib/rescan";
 import { caught } from "@/lib/settled";
 import { rowUnsettled } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
-import { useUpdatesStore } from "./updates";
+import { holdingBusy, useUpdatesStore } from "./updates";
 import {
   writeDiscardEdits,
   writeFork,
@@ -26,9 +26,8 @@ import {
 
 type Outcome<T> = { error: string } | { ok: T };
 
-const run = async <T>(work: () => Promise<Outcome<T>>): Promise<Outcome<T>> => {
-  useUpdatesStore.setState({ busy: true });
-  try {
+const run = <T>(work: () => Promise<Outcome<T>>): Promise<Outcome<T>> =>
+  holdingBusy(async () => {
     // A transport failure rejects rather than refusing; caught here it is
     // presented as the refusal shape, which claims nothing happened.
     const answer = await caught(work());
@@ -39,10 +38,7 @@ const run = async <T>(work: () => Promise<Outcome<T>>): Promise<Outcome<T>> => {
     if (answer.status === "error") return { error: answer.error };
     if (!("error" in answer.data)) await rescanEverything();
     return answer.data;
-  } finally {
-    useUpdatesStore.setState({ busy: false });
-  }
-};
+  });
 
 const report = (outcome: Outcome<unknown>) => {
   if ("error" in outcome)
@@ -64,6 +60,13 @@ const stale = (row: UpdateRow): boolean =>
 export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
   const harness = row.forkableHarness;
   if (!harness) return;
+  // The fork copies what is on disk, so no value read off the row goes
+  // into it — but it commits, and a check out has a report built before
+  // that commit which would land after it.
+  if (stale(row)) {
+    report({ error: UPDATE_NEEDS_CHECK_NOTE });
+    return;
+  }
   report(
     await run(async () => {
       const response = await writeFork(row.scope, row.kind, row.name, harness);

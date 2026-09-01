@@ -26,6 +26,7 @@ import {
   heldBySourceNote,
   OPEN_PACKAGE_LABEL,
   UPDATE_NEEDS_CHECK_NOTE,
+  UPDATES_ONE_AT_A_TIME_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
 import {
@@ -60,6 +61,11 @@ export function PlaceCells({
   // read, a follow switch settling in its scope — holds its controls; the
   // store refuses regardless, and they say so rather than invite a click.
   const held = useUpdatesStore((s) => rowUnsettled(s, row));
+  // The mute sends no value read off the row, so `held` is not its bar.
+  // What bars it is the exact pair the store refuses on: a check out whose
+  // report predates this commit, or another write already running.
+  const checking = useUpdatesStore((s) => s.checking);
+  const oneAtATime = busy || checking;
   const showVersion = useUpdatesView((s) => s.showVersion);
   const goToPackage = useNavStore((s) => s.goToPackage);
   const name = packageDisplayName(row);
@@ -98,6 +104,8 @@ export function PlaceCells({
           <Button
             size="sm"
             variant="outline"
+            disabled={oneAtATime}
+            title={oneAtATime ? UPDATES_ONE_AT_A_TIME_NOTE : undefined}
             onClick={() => void setIgnored(row, false)}
           >
             {NOTIFY_AGAIN_LABEL}
@@ -191,7 +199,10 @@ export function PlaceCells({
                       }
                     />
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => onIgnore(row)}>
+                      <DropdownMenuItem
+                        disabled={oneAtATime}
+                        onClick={() => onIgnore(row)}
+                      >
                         {IGNORE_UPDATES_LABEL}
                       </DropdownMenuItem>
                     </DropdownMenuContent>

@@ -21,18 +21,23 @@ export function updatesBeforeList({
   read,
   empty,
   checking,
+  busy,
   lastChecked,
   onCheck,
 }: {
   read: ReadState;
   empty: boolean;
   checking: boolean;
+  /** True while a write is out. The store refuses a check on it, so this
+   *  button says so — `updateRows` clearing the last visible row renders
+   *  this empty state while its own write still holds the flag. */
+  busy: boolean;
   /** How old the answer behind this page is, already worded. */
   lastChecked: string;
   onCheck: () => void;
 }): ReactNode | null {
   const retry = (
-    <Button variant="outline" disabled={checking} onClick={onCheck}>
+    <Button variant="outline" disabled={checking || busy} onClick={onCheck}>
       {CHECK_FOR_UPDATES_LABEL}
     </Button>
   );

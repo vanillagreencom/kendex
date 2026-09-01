@@ -27,6 +27,7 @@ import {
 import {
   lastCheckedLabel,
   UPDATE_NEEDS_CHECK_NOTE,
+  UPDATES_ONE_AT_A_TIME_NOTE,
   UPDATES_UNCONFIRMED_TITLE,
   updatesSubtitle,
 } from "@/lib/copy-updates";
@@ -88,6 +89,7 @@ export function UpdatesPage() {
     read,
     empty,
     checking,
+    busy,
     lastChecked,
     onCheck: () => void check(),
   });
@@ -215,6 +217,8 @@ export function UpdatesPage() {
         description={IGNORE_CONFIRM_BODY}
         confirmLabel={IGNORE_CONFIRM_LABEL}
         busy={busy}
+        confirmDisabled={checking}
+        confirmDisabledNote={UPDATES_ONE_AT_A_TIME_NOTE}
         onConfirm={() => {
           if (!confirmIgnore) return;
           void useUpdatesStore

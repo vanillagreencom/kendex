@@ -45,8 +45,9 @@ export function ForkNotice({
   // Discarding applies the retained row's latest commit when the place is
   // held — from rows a failed check left behind, or rows a running check
   // is about to replace, that pins an old version — so the discard waits
-  // for a check. Keeping the files as a fork copies what is on disk and
-  // stays live.
+  // for a check. The fork sends no value read off the row, but it commits
+  // all the same, and a check out would land a report built before it: the
+  // store refuses both, so both say so.
   const held = useUpdatesStore((s) => rowUnsettled(s, row));
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const several = row.editedHarnesses.length > 1;
@@ -74,7 +75,8 @@ export function ForkNotice({
         {row.forkableHarness ? (
           <Button
             size="sm"
-            disabled={busy}
+            disabled={busy || held}
+            title={held ? UPDATE_NEEDS_CHECK_NOTE : undefined}
             onClick={() => void keepAsOwn(row).then(onResolved)}
           >
             {KEEP_AS_FORK_LABEL}

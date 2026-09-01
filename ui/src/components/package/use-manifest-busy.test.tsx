@@ -8,6 +8,7 @@ import { useManifestBusy } from "./use-package-data";
 const stub = vi.hoisted(() => ({
   audit: false,
   updates: false,
+  checking: false,
   saving: false,
   settling: [] as { scope: { scope: string; root?: string } }[],
 }));
@@ -17,6 +18,7 @@ vi.mock("@/stores/updates", async (importOriginal) => {
     const state = {
       ...mod.useUpdatesStore.getState(),
       busy: stub.updates,
+      checking: stub.checking,
       pendingFollows: stub.settling,
     };
     return selector ? selector(state) : state;
@@ -64,6 +66,17 @@ describe("useManifestBusy", () => {
     stub.saving = true;
     expect(render(false)).toContain("busy");
     stub.saving = false;
+  });
+
+  // A check builds its report once, so a commit these controls make while
+  // it is out would be missing from it and the landing would put the rows
+  // back. The check's own half of the exclusion is the store refusing to
+  // start one; this is the half that keeps a write from starting under it.
+  it("holds while a check is out", () => {
+    stub.checking = true;
+    expect(render(false)).toContain("busy");
+    stub.checking = false;
+    expect(render(false)).toContain("idle");
   });
 
   // These controls command the engine directly, outside the updates store's

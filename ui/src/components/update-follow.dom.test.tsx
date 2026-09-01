@@ -24,6 +24,7 @@ import {
   USER_LEVEL_PLACE,
 } from "@/lib/copy-updates";
 import { READ_LANDED } from "@/lib/read-state";
+import { rowUnsettled } from "@/lib/updates-read-state";
 import { UpdatesPage } from "@/pages/updates";
 import { useProblemsStore } from "@/stores/problems";
 import { useUpdatesStore } from "@/stores/updates";
@@ -199,7 +200,7 @@ beforeEach(() => {
 });
 
 describe("the Follow source switch", () => {
-  it("moves before the write behind it answers, holding only its scope", async () => {
+  it("moves before the write behind it answers, and holds the page while it does", async () => {
     const write = pending<typeof ok>(ok);
     vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
     mount(<Live />);
@@ -224,14 +225,17 @@ describe("the Follow source switch", () => {
     // The same package in another place is a different declaration: the
     // flip is not its.
     expect(following(followSwitch("gh", "app"))).toBe(true);
-    // The scope being applied holds; the project scope is untouched by it
-    // and stays live.
-    expect(holding(followSwitch("gh", "app"))).toBe(false);
-    expect(holding(followSwitch("orch", "app"))).toBe(false);
+    // The flip commits like any other write, so it raises the store's
+    // `busy` and every control waits on it — that flag is the one a check
+    // refuses on, and a write it did not cover is a check running beside
+    // it. What stays scoped is which rows the flip leaves unconfirmed.
+    expect(holding(followSwitch("gh", "app"))).toBe(true);
+    expect(holding(followSwitch("orch", "app"))).toBe(true);
 
     write.answer(ok);
     await settle();
     expect(commands.updatesOverview).toHaveBeenCalled();
+    expect(holding(followSwitch("orch", "app"))).toBe(false);
   });
 
   it("keeps its new position under a read that lands mid-write", async () => {
@@ -360,10 +364,13 @@ describe("the Follow source switch", () => {
       followSwitch("gh", USER_LEVEL_PLACE).click();
     });
 
-    // gh has a place in the settling scope; orch's single place does not,
-    // and its own Update stays live.
+    // gh has a place in the settling scope; orch's single place does not.
+    // The write holds both while it runs, so the distinction is read where
+    // it is still made: which rows the flip leaves unconfirmed.
     expect(button(UPDATE_PACKAGE_EVERYWHERE_LABEL).disabled).toBe(true);
-    expect(holding(followSwitch("orch", "app"))).toBe(false);
+    const settling = useUpdatesStore.getState();
+    expect(rowUnsettled(settling, rows[0])).toBe(true);
+    expect(rowUnsettled(settling, rows[2])).toBe(false);
 
     write.answer(ok);
     await settle();
