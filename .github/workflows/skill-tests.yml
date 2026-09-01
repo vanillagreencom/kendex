@@ -13,13 +13,9 @@ name: Skill Tests
 # `if:` saying why. The review gate never conditions CI (it answers
 # review-only; see the review-gate skill) — no gate job reads the predicate.
 #
-# Time to merge is the metric and hardware follows, for the shard job alone:
-# its merge_group and push legs take the org's paid Blacksmith runners and its
-# pull_request legs free GitHub-hosted ones, so shard durations do not compare
-# across events. Every other job here is GitHub-hosted whatever the event.
-#
-# Heavy jobs run on Blacksmith when the org's CI_RUNNER_* variables are set,
-# falling back to GitHub-hosted so the workflow runs anywhere.
+# Every job names its GitHub-hosted runner in `runs-on:`, the same label on
+# every event. The repository is public, so those runners are free, and shard
+# durations compare across events.
 
 "on":
   pull_request:
@@ -49,7 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [review-gate, orch, rest, node, pi-claude-bridge]
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.CI_RUNNER_4V || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -472,9 +468,6 @@ jobs:
 
   cargo-tests:
     name: Cargo (workspace tests)
-    # GitHub-hosted deliberately: the full workspace build (Tauri app
-    # included) does not fit the org's current Blacksmith size. Route it
-    # back when the org variables point at a machine that fits it.
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

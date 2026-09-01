@@ -47,10 +47,7 @@ on:
 jobs:
   check:
     name: kendex check
-    # Builds the Rust checker, so it runs on Blacksmith when the org's
-    # CI_RUNNER_* variables are set; the fallback keeps the reusable
-    # workflow working for any caller without them.
-    runs-on: ${{ vars.CI_RUNNER_8V || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:

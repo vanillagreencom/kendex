@@ -42,7 +42,7 @@ jobs:
     name: real-CLI round trip
     permissions:
       contents: read
-    runs-on: ${{ vars.CI_RUNNER_8V || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
