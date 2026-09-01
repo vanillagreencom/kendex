@@ -437,6 +437,8 @@ Read by Qodo from the root of the default branch.
 
 **Owned.** The whole file.
 
+**Head.** The marker comment, before the first section, as `#` lines.
+
 **Sections.**
 
 - `[github_app]`: `pr_commands` from `[cadence] qodo_commands`,
@@ -522,8 +524,11 @@ the file is inert until the portal's "REVIEW.md instructions" toggle is on, and
 nothing in the repo can read the portal: someone works the checklist line, then
 sets the flag.
 
-**Body.** The blocks the `REVIEW.md` column of the routing table carries, in
-its order, as plain markdown. Qodo documents no schema for it.
+**Body.** The marker as an HTML comment, then the blocks the `REVIEW.md` column
+of the routing table carries, in its order, as plain markdown. Qodo documents no
+schema for it, which makes the marker the only thing identifying the file as
+this package's: without it the next render refuses to replace its own output and
+`orphan` cannot tell it from a file the repo wrote.
 
 ## `.macroscope/`
 
@@ -547,9 +552,10 @@ Repository-wide: a check-run agent's own `include` overrides it, which is a
 reason not to give an agent a broad `include`.
 
 **`.macroscope/correctness/doctrine.md`.** No frontmatter, so it applies
-repo-wide. Carries the blocks its routing-table column names, which is all
-eight: `.macroscope/` is Macroscope's only instruction surface, it reads no
-`AGENTS.md`, and a block left out here reaches it nowhere. Its name is reserved,
+repo-wide: the marker as an HTML comment, then the blocks its routing-table
+column names, which is all eight: `.macroscope/` is Macroscope's only
+instruction surface, it reads no `AGENTS.md`, and a block left out here reaches
+it nowhere. Its name is reserved,
 as are `correctness` and the two `.macroscope/` root names.
 
 **`.macroscope/correctness/<name>.md`.** One per `[[surface]]`: frontmatter

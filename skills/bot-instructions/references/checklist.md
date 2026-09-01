@@ -2,54 +2,74 @@
 
 ## Adding a repo
 
-Two passes, and the first one deliberately renders nothing.
+Two passes. The order is not a preference — `toml-schema`'s cross-flag clauses
+and `adopt`'s own rule fix it, and a sequence that ignores them writes a TOML
+that does not validate.
 
-**Pass one, staging.** The `[bots]` flags start false, so this pass produces a
-committed `bot-instructions.toml` and no instruction files. That is the point:
-a repo commits its intent before any vendor setting exists to honour it, and a
-flag turned on ahead of its settings work renders a file the bot is not yet
-reading.
+**What those clauses require, since everything below follows from them.** A
+`[[surface]]` set needs at least one of `copilot`, `coderabbit`, `macroscope` or
+`qodo_best_practices` on, because those four are every route surface text has.
+`copilot` or `coderabbit` needs `codex`, because the `AGENTS.md` section is
+where both get most of their doctrine. `qodo_best_practices` and
+`qodo_review_md` need `qodo`. And `adopt` takes a file or region over only for a
+capability that is on. So **capability-dependent content lands with its
+capability**, and nothing that depends on a flag is written before the flag.
 
-1. Write `bot-instructions.toml` at the repo root per
-   [schemas/repo-toml.md](../schemas/repo-toml.md). An existing hand-written bot
-   file is the source for its `[[surface]]` blocks and exclusions: read it,
-   move its repo-specific claims into the TOML, and let doctrine carry the
-   rest. Leave every `[bots]` flag false.
-2. Run `adopt`, which names every existing file and region it is taking over,
-   and every repo-root or `.github/` markdown file those files point at. That
-   second list is where a repo-wide hand-written reviewer file shows up — one
-   that restates doctrine and carries an accepted-trade-off list, reached only
-   because `AGENTS.md` and the Copilot file name it. Fold what it holds into
-   `[doctrine.append]` and `[[surface]]`; what will not fold stays hand-written
-   and is a policy path. Read both lists against the TOML: a claim in one of
-   those files that the TOML does not carry is about to be deleted, or to go on
-   steering reviews from outside the package.
-3. Run `render`. It writes nothing and says so, because every flag is off. A
-   no-op here is the staging point, not a finished install.
+**Pass one, the repo-wide TOML.** `[repo]`, `[exclusions]`, `[cadence]`,
+`[tone]`, `[budgets]` and any `[doctrine.*]` overrides, with every `[bots]` flag
+false and no `[[surface]]` entries.
 
-**Pass two, per capability.** Work one bot at a time, and finish each before
-starting the next, so a failure names the bot that caused it.
+1. Read the repo's existing hand-written bot files now and plan where their
+   claims go: which become `[[surface]]` entries, which become
+   `[doctrine.append]`, which will not fold and stay hand-written as policy
+   paths. Write the repo-wide tables; leave the surfaces for the pass that turns
+   on a bot able to read them.
+2. Do not run `adopt` here. Nothing can be adopted for a capability that is off,
+   so it would report nothing on exactly the repo this planning is for.
+3. Run `render`. It writes nothing and says so, because every flag is off. The
+   no-op is the staging point, not a finished install — the existing bot files
+   are still the repo's own and still what the bots read.
 
-4. Work that capability's settings below. Every bot has at least one setting no
-   file can express, and a bot whose install or enablement step is skipped
-   reviews nothing while every file in the repo looks correct.
-5. Do the flag's own prerequisite, where it has one. `codex` needs a
-   `## Code Review Rules` heading added to `AGENTS.md` by hand, since the
-   generator never adds it. `coderabbit` needs CodeRabbit's published schema at
+**Pass two, per capability.** Enable `codex` first if this repo wants `copilot`
+or `coderabbit`, and `qodo` before its two sub-flags. Then, one capability at a
+time, finishing each before starting the next so a failure names the bot that
+caused it:
+
+4. Work that capability's settings section below.
+5. Do its prerequisite, where it has one. `codex` needs a `## Code Review Rules`
+   heading added to `AGENTS.md` by hand, since the generator never adds it.
+   `coderabbit` needs CodeRabbit's published schema at
    `.bot-instructions/coderabbit-schema.json`; no verb writes it and
    `coderabbit-schema` fails without it, deliberately, because a validator that
    skipped on a missing schema would be silent for the life of the repo.
    `qodo_review_md` needs the portal toggle already on.
-6. Set the flag, then run `adopt` again if that capability's prerequisite left
-   an unmarked region or the repo already had a file at one of its generated
-   paths, then `render`.
-7. Read the diff. Doctrine text appearing for the first time is expected; a
-   repo-specific claim disappearing means it never made it into the TOML.
-8. Run `check`. Then repeat from step 4 for the next capability.
+6. Set the flag. With the first of `copilot`, `coderabbit`, `macroscope` or
+   `qodo_best_practices`, add the `[[surface]]` entries planned in step 1 — they
+   are legal from that moment and were not before.
+7. Run `adopt`. It can now take over that capability's generated paths, the
+   `AGENTS.md` region the heading opened included, and it names every file and
+   region it takes plus every repo-root or `.github/` markdown file those files
+   point at. That second list is where a repo-wide hand-written reviewer file
+   shows up. Read both against the TOML: a claim in one of those files that the
+   TOML does not carry is about to be deleted, or to go on steering reviews from
+   outside the package.
+8. Run `render`, then read the diff. Doctrine text appearing for the first time
+   is expected; a repo-specific claim disappearing means it never made it into
+   the TOML.
+9. Run `check`. Then repeat from step 4 for the next capability.
 
-The install is finished when every capability the repo wants is on, `check` is
-clean, and the smoke test at the end of this file has seen each enabled bot
-comment. A repo that stops after pass one has staged the work, not done it.
+**Walked end to end, for a repo that arrives with hand-written bot files.**
+Pass one commits a TOML that validates, renders nothing, and leaves those files
+untouched and still authoritative. The first capability's pass sets `codex`,
+opens the `AGENTS.md` region, adopts it, and renders the section. The next sets
+`copilot`, adds the surfaces, and adopts `.github/copilot-instructions.md` and
+the `.instructions.md` names those surfaces produce — a hand-written file in
+that directory under a name no surface produces is left alone, which is correct
+and stays the repo's own. Each later capability adopts and renders only its own
+paths. The install is finished when every capability the repo wants is on,
+`check` is clean, and the smoke test at the end of this file has seen each
+enabled bot comment. A repo that stops after pass one has staged the work, not
+done it.
 
 ## The settings
 
