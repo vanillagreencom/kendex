@@ -320,7 +320,7 @@ git -C "$rr_wt" commit -q --allow-empty -m base
 init_growth_state "$STATE" "$rr_wt" issue-9 seed 1000000
 rr_head="$(git -C "$rr_wt" rev-parse HEAD)"
 "$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 \
-  --item 1 "fix nil deref" --item 2 "cover expiry" >/dev/null
+  --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
 "$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items-from-round)" "valid" \
@@ -334,7 +334,7 @@ assert_eq "$(jq -r '.live' "$rr_auth")" "false" "repeat acceptance keeps the aut
 "$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a >/dev/null
 "$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 8-9 \
-  --item 1 "fix nil deref" --item 2 "cover expiry" >/dev/null
+  --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
 assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 8-9 --expect-items-from-round)" "incomplete" \
   "artifact missing a persisted delegated item → incomplete"
 set +e
@@ -377,7 +377,7 @@ set -e
 hint_inline="$("$CHECK" --file "$rr_wt/tmp/dev-return-issue-9-16-16.json" --expect-items 3 2>/dev/null | jq -r '.hint' || true)"
 assert_eq "$([[ "$hint_inline" != "null" ]] && echo fires)" "fires" \
   "control: file-mode --expect-items 3 against items 1..3 fires the count-vs-set hint"
-"$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --item 3 "only item three" >/dev/null
+"$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --item 3 "only item three" "tools/guard on a staged render" >/dev/null
 hint_round="$("$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --expect-items-from-round 2>/dev/null | jq -r '.hint' || true)"
 assert_eq "$hint_round" "null" "--expect-items-from-round never emits the count-vs-set hint (reason stays incomplete)"
 reason_round="$("$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --expect-items-from-round 2>/dev/null | jq -r '.reason' || true)"
@@ -402,7 +402,7 @@ git -C "$adds_wt" config commit.gpgsign false
 git -C "$adds_wt" commit -q --allow-empty -m base
 init_growth_state "$STATE" "$adds_wt" issue-826 seed 1000000
 
-"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 1-1 --item 1 "fix finding" >/dev/null
+"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 1-1 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 mkdir -p "$adds_wt/.agents/skills/orch/scripts" "$adds_wt/crates/new-parser" "$adds_wt/helpers" \
   "$adds_wt/pkg/test_helpers" "$adds_wt/skills/orch/scripts" "$adds_wt/src" \
   "$adds_wt/test/support" "$adds_wt/tools" "$adds_wt/ui/src/test"
@@ -439,7 +439,7 @@ assert_eq "$(jq -c '.files' <<<"$adds_out")" \
 
 allowed_adds="$TMP_ROOT/allowed-adds.json"
 printf '%s' '["crates/allowed/lib.rs","skills/orch/scripts/allowed-check","tools/allowed tool;still-data","ui/src/test/allowed-helper.ts"]' > "$allowed_adds"
-"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 2-2 --item 1 "fix finding" \
+"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 2-2 --item 1 "fix finding" "tools/guard on a staged render" \
   --adds-file "$allowed_adds" >/dev/null
 mkdir -p "$adds_wt/crates/allowed"
 printf 'crate\n' > "$adds_wt/crates/allowed/lib.rs"
@@ -458,7 +458,7 @@ assert_eq "$(reason --worktree "$adds_wt" --issue issue-826 --round-id 2-2 --exp
 printf 'move me\n' > "$adds_wt/ordinary.txt"
 git -C "$adds_wt" add ordinary.txt
 git -C "$adds_wt" commit -q -m pre-move
-"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --item 1 "move existing file" >/dev/null
+"$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --item 1 "move existing file" "tools/guard on a staged render" >/dev/null
 git -C "$adds_wt" mv ordinary.txt tools/moved.txt
 git -C "$adds_wt" commit -q -m move
 move_head="$(git -C "$adds_wt" rev-parse HEAD)"
@@ -474,7 +474,7 @@ git -C "$diverge_wt" config user.name Test
 git -C "$diverge_wt" config commit.gpgsign false
 git -C "$diverge_wt" commit -q --allow-empty -m base
 init_growth_state "$STATE" "$diverge_wt" issue-826 seed 1000000
-"$ROUND_WRITE" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --item 1 compare >/dev/null
+"$ROUND_WRITE" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --item 1 compare "tools/guard on a staged render" >/dev/null
 git -C "$diverge_wt" checkout -q --orphan divergent
 git -C "$diverge_wt" commit -q --allow-empty -m divergent
 diverge_head="$(git -C "$diverge_wt" rev-parse HEAD)"

@@ -120,7 +120,7 @@ git -C "$fix_worktree" commit -q --allow-empty -m base
 fix_head="$(git -C "$fix_worktree" rev-parse HEAD)"
 init_growth_state "$STATE" "$fix_worktree" issue-776 7-7 100
 env ORCH_STATE_DIR="$fix_worktree/tmp" "$ROUND_WRITE" --worktree "$fix_worktree" --issue issue-776 --round-id 7-7 \
-  --item 1 "fix nil deref" --item 2 "review decision" >/dev/null
+  --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "review decision" "tools/guard on a staged render" >/dev/null
 out="$("$WRITE" --worktree "$fix_worktree" --kind fix --issue issue-776 --round-id 7-7 \
   --branch issue-776 --commit "$fix_head" --validate pass \
   --item 1 Applied "fixed nil deref" --item 2 Skipped "contradicts D010")"

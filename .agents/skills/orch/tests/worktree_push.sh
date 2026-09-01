@@ -196,7 +196,7 @@ git -C "$restack_wt" config commit.gpgsign false
 git -C "$restack_wt" commit -q --allow-empty -m delegation-base
 restack_old="$(git -C "$restack_wt" rev-parse HEAD)"
 init_growth_state "$STATE" "$restack_wt" KEN-RESTACK seed 1000000
-"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 1-1 --item 1 restack >/dev/null
+"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 1-1 --item 1 restack "tools/guard on a staged render" >/dev/null
 mkdir -p "$restack_wt/tools"
 printf 'upstream\n' > "$restack_wt/tools/upstream-tool"
 git -C "$restack_wt" add tools/upstream-tool
@@ -236,7 +236,7 @@ assert_eq "$RUN_RC" "0" "accepted historical round missing recovery does not blo
 assert_eq "$(jq -r '.base_sha' "$restack_auth")" "$restack_base" \
   "retired authorization is not remapped"
 
-"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 3-3 --item 1 active >/dev/null
+"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 3-3 --item 1 active "tools/guard on a staged render" >/dev/null
 rm -f "$restack_wt/tmp/dev-round-KEN-RESTACK-3-3.json"
 (cd "$restack_state" && "$STATE" set KEN-RESTACK dev_round_id 3-3)
 STUB_PUSH_STDOUT="rebase-map: $restack_head $restack_base" \
@@ -246,7 +246,7 @@ assert_contains "$(cat "$run_err")" "recovery copy missing or not regular" \
   "active missing-recovery refusal names the required copy"
 rm -f "$restack_wt/.git/kendex/dev-round-authorizations/KEN-RESTACK-3-3.json"
 
-"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 4-4 --item 1 divergent >/dev/null
+"$ROUND_WRITE" --worktree "$restack_wt" --issue KEN-RESTACK --round-id 4-4 --item 1 divergent "tools/guard on a staged render" >/dev/null
 divergent_recovery="$restack_wt/tmp/dev-round-KEN-RESTACK-4-4.json"
 jq '.adds = ["tools/not-authorized"]' "$divergent_recovery" > "$TMP_ROOT/divergent-recovery.json"
 mv "$TMP_ROOT/divergent-recovery.json" "$divergent_recovery"
@@ -440,7 +440,7 @@ git -C "$wt" config user.name Test
 git -C "$wt" commit -q --allow-empty -m alias-base
 alias_old="$(git -C "$wt" rev-parse HEAD)"
 init_growth_state "$STATE" "$wt" issue-7 seed 1000000
-"$ROUND_WRITE" --worktree "$wt" --issue issue-7 --round-id 5-5 --item 1 alias >/dev/null
+"$ROUND_WRITE" --worktree "$wt" --issue issue-7 --round-id 5-5 --item 1 alias "tools/guard on a staged render" >/dev/null
 git -C "$wt" commit -q --allow-empty -m alias-restack
 alias_new="$(git -C "$wt" rev-parse HEAD)"
 (cd "$work" \
@@ -488,7 +488,7 @@ git -C "$duplicate_wt" add first.txt
 git -C "$duplicate_wt" commit -q -m 'same subject'
 duplicate_first="$(git -C "$duplicate_wt" rev-parse HEAD)"
 init_growth_state "$STATE" "$duplicate_wt" KEN-DUPLICATE seed 1000000
-"$ROUND_WRITE" --worktree "$duplicate_wt" --issue KEN-DUPLICATE --round-id 1-1 --item 1 duplicate >/dev/null
+"$ROUND_WRITE" --worktree "$duplicate_wt" --issue KEN-DUPLICATE --round-id 1-1 --item 1 duplicate "tools/guard on a staged render" >/dev/null
 printf 'second\n' >"$duplicate_wt/second.txt"
 git -C "$duplicate_wt" add second.txt
 git -C "$duplicate_wt" commit -q -m 'same subject'
@@ -508,7 +508,7 @@ duplicate_auth="$duplicate_wt/.git/kendex/dev-round-authorizations/KEN-DUPLICATE
 assert_eq "$(jq -r '.base_sha' "$duplicate_auth")" "$duplicate_first" \
   "an ambiguous mapping does not advance the authorization base"
 
-"$ROUND_WRITE" --worktree "$duplicate_wt" --issue KEN-DUPLICATE --round-id 2-2 --item 1 positional >/dev/null
+"$ROUND_WRITE" --worktree "$duplicate_wt" --issue KEN-DUPLICATE --round-id 2-2 --item 1 positional "tools/guard on a staged render" >/dev/null
 duplicate_equal_old="$(git -C "$duplicate_wt" rev-parse HEAD)"
 git -C "$duplicate_wt" commit -q --allow-empty -m 'same subject'
 duplicate_equal_new_first="$(git -C "$duplicate_wt" rev-parse HEAD)"

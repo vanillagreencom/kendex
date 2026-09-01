@@ -25,19 +25,25 @@
 #
 # Usage:
 #   dev-round-write --worktree PATH --issue ID --round-id RID \
-#     (--item N TEXT [--item N TEXT]... | --items-file JSON_PATH) \
+#     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
 #     [--adds-file JSON_PATH]
 #
 # One --item per delegated review item: N is the item's delegated number (the
 # `#[N]` in the formatted items — a set, so duplicates are rejected; canonical
 # integer, no leading zeros), TEXT is that item's full formatted block verbatim
 # (multi-line is fine; plain text, no backticks, so the command stays
-# classifier-safe under Codex approval=never). When the item text is
-# shell-hostile — real review blocks routinely carry backticks, which strict
-# harness classifiers reject even quoted — the orchestrator instead builds a
-# JSON array of {n, text} with its harness file-write tool and passes it as
-# --items-file (mutually exclusive with --item; same n/text rules, extra
-# element keys are dropped on normalization).
+# classifier-safe under Codex approval=never), and REACH names the shipped
+# producer, user action, or fixture that reaches the finding. When the item
+# text is shell-hostile — real review blocks routinely carry backticks, which
+# strict harness classifiers reject even quoted — the orchestrator instead
+# builds a JSON array of {n, text, reach} with its harness file-write tool and
+# passes it as --items-file (mutually exclusive with --item; same
+# n/text/reach rules, extra element keys are dropped on normalization).
+#
+# REACH is the fix-round bar (kendex KEN-1046): a merged-PR audit found rounds
+# answering a review thread rather than a producer, so a shape a bot typed was
+# patched as if a user had reached it. An item with no reach is a `Declined:`
+# reply, not a fix — skills/orch/references/finding-disposition.md § Filing bar.
 #
 # A round's record is IMMUTABLE once written: re-running with identical content
 # is an idempotent retry (success, same path); different content under the same
@@ -56,7 +62,7 @@
 #     "issue": "[ISSUE_ID]",                // required, normalized state key
 #     "base_sha": "[HEAD_AT_DELEGATION]",    // required, full commit id
 #     "adds": ["tools/allowed-file"],        // required, protected additions
-#     "items": [{"n": 1, "text": "…"}]      // required, >=1 entry
+#     "items": [{"n": 1, "text": "…", "reach": "…"}]
 #   }
 #
 # It is a sanctioned single-command invocation. Writes the recovery copy and
@@ -85,7 +91,7 @@ usage() {
   cat <<'EOF'
 Usage:
   dev-round-write --worktree PATH --issue ID --round-id RID \
-    (--item N TEXT [--item N TEXT]... | --items-file JSON_PATH) \
+    (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
     [--adds-file JSON_PATH]
 
 Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
@@ -93,11 +99,21 @@ Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
 directory, and prints the recovery path. One --item per delegated review
 item: N is the item's delegated number (duplicates rejected — the set is what
 dev-artifact-check --expect-items-from-round checks against; canonical integer,
-no leading zeros), TEXT is the item's full formatted block verbatim (non-empty
-plain text, no backticks). For shell-hostile item text (backticks, quotes),
-build a JSON array of {n, text} with the harness file-write tool and pass
---items-file JSON_PATH instead (mutually exclusive with --item; same rules —
-integer n, unique, non-empty text; extra element keys are dropped).
+no leading zeros), REACH names the shipped producer, user action, or fixture
+that reaches the finding — a command a person runs, a file a shipped writer
+emits, a test in the tree. An item with no reach is a `Declined:` reply, not a
+fix. What this script refuses is a short list, not a scanner: an empty reach, a
+PRRT_ review-thread node id, any all-word value containing thread, finding,
+comment, reviewer, or bot, and the enumerated `a <noun> containing/empty/unset/
+missing/malformed/invalid` phrasing. The last two are broader than the classes
+they guard, so a true reach can land on one and is reworded. A value outside
+those shapes is recorded, not approved — the classes in
+references/finding-disposition.md are the orchestrator's judgement, applied
+before the round is delegated. TEXT is the item's full formatted block verbatim
+(non-empty plain text, no backticks); for shell-hostile text pass
+--items-file JSON_PATH, a JSON array of {n, text, reach} built with the harness
+file-write tool (mutually exclusive with --item, same rules, extra element keys
+dropped).
 A round's record is immutable: an identical re-invocation is an idempotent
 success; different content under the same round id exits 2 — a changed
 delegation needs a NEW round id. The record is read back by
@@ -150,6 +166,32 @@ check_id_token() {
     || die "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
 }
 
+# --- The reach bar ---
+# Three shapes that name nothing shipped, matched case-insensitively against
+# the whole value. The last two only reach values built from plain words: a
+# real reach carries a path, a command, or a filename, whose '/', '.', or
+# backtick keeps it out of those classes. A short refusal list, not a grammar
+# — a refused value is reworded, or its item becomes a `Declined:` reply.
+REACH_REFUSALS=(
+  'prrt_'                                                                              # a GitHub review-thread node id
+  '^[a-z0-9_ -]*(thread|finding|comment|reviewer|bot)s?[a-z0-9_ -]*$'                   # only a review thread
+  '^(a|an|the) [a-z0-9_ ,-]*(containing|empty|unset|missing|malformed|invalid)[a-z0-9_ ,-]*$'  # only a shape
+)
+
+check_reach() {
+  # $1 = the item's number (for the diagnostic), $2 = the reach value.
+  local n="$1" reach="$2" lower pattern
+  [[ -n "${reach//[[:space:]]/}" ]] \
+    || die "item $n has no reach: name the shipped producer, user action, or fixture that reaches the finding — an item with no reach is a 'Declined:' reply, not a fix"
+  if is_own_flag "$reach"; then die "item $n reach must name a producer, got flag '$reach' (value missing?)"; fi
+  lower="$(printf '%s' "$reach" | tr '[:upper:]' '[:lower:]')"
+  for pattern in "${REACH_REFUSALS[@]}"; do
+    if [[ "$lower" =~ $pattern ]]; then
+      die "item $n reach '$reach' matches a refusal shape — a review-thread node id or spelling, or the enumerated 'a <noun> containing/empty/unset/missing/malformed/invalid' phrasing: name a command a person runs, a file a shipped writer emits, or a test in the tree — an item with no reach is a 'Declined:' reply, not a fix"
+    fi
+  done
+}
+
 run_size_tripwire() {
   local worktree="$1" issue="$2"
 
@@ -167,6 +209,7 @@ items_file=""
 adds_file=""
 item_n=()
 item_text=()
+item_reach=()
 seen_n=" "
 worktree_given=false
 issue_given=false
@@ -182,11 +225,11 @@ while (( $# > 0 )); do
     --items-file) need "$1" $# "${2:-}"; no_dup "$1" "$items_file_given"; items_file_given=true; items_file="$2"; shift 2 ;;
     --adds-file) need "$1" $# "${2:-}"; no_dup "$1" "$adds_file_given"; adds_file_given=true; adds_file="$2"; shift 2 ;;
     --item)
-      # Consumes exactly 2 args: N TEXT.
-      if (( $# < 3 )); then
-        die "--item requires exactly 2 arguments: N TEXT"
+      # Consumes exactly 3 args: N TEXT REACH.
+      if (( $# < 4 )); then
+        die "--item requires exactly 3 arguments: N TEXT REACH — REACH names the shipped producer, user action, or fixture that reaches the finding, and an item with no reach is a 'Declined:' reply, not a fix"
       fi
-      n="$2"; text="$3"
+      n="$2"; text="$3"; reach="$4"
       # Canonical integer only: '01' would survive a bare digits check but is
       # not a JSON number and would make jq --argjson fail downstream.
       if ! [[ "$n" =~ ^(0|[1-9][0-9]*)$ ]]; then
@@ -202,10 +245,12 @@ while (( $# > 0 )); do
       if is_own_flag "$text"; then
         die "--item TEXT must be the item's formatted block, got flag '$text' (item $n; value missing?)"
       fi
+      check_reach "$n" "$reach"
       seen_n="$seen_n$n "
       item_n+=("$n")
       item_text+=("$text")
-      shift 3
+      item_reach+=("$reach")
+      shift 4
       ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1" ;;
@@ -235,19 +280,27 @@ if [[ "$items_file_given" == "true" ]]; then
   jq empty "$items_file" >/dev/null 2>&1 \
     || die "--items-file '$items_file' is not parseable JSON"
   # Same rules as inline --item, enforced on the file: a non-empty array whose
-  # every element carries an integer n >= 0 (unique — the numbers form a set)
-  # and a non-empty, non-whitespace text string.
+  # every element carries an integer n >= 0 (unique — the numbers form a set),
+  # a non-empty, non-whitespace text string, and a non-empty reach string.
   jq -e '
     (type == "array") and (length > 0)
     and all(.[];
           (type == "object")
           and ((.n? | type) == "number") and (.n == (.n | floor)) and (.n >= 0)
           and ((.text? | type) == "string")
-          and ((.text | gsub("[[:space:]]"; "")) != ""))
+          and ((.text | gsub("[[:space:]]"; "")) != "")
+          and ((.reach? | type) == "string")
+          and ((.reach | gsub("[[:space:]]"; "")) != ""))
     and (([.[].n] | length) == ([.[].n] | unique | length))
   ' "$items_file" >/dev/null 2>&1 \
-    || die "--items-file '$items_file' must be a non-empty JSON array of {n, text} — integer n >= 0, unique, non-empty text"
-  items_json="$(jq 'map({n: .n, text: .text})' "$items_file")"
+    || die "--items-file '$items_file' must be a non-empty JSON array of {n, text, reach} — integer n >= 0, unique, non-empty text, non-empty reach naming the producer that reaches the finding"
+  # The same refusal list the inline route enforces: a file route that skipped
+  # it would be the way around the check.
+  for (( i = 0, items_count="$(jq 'length' "$items_file")"; i < items_count; i++ )); do
+    check_reach "$(jq -r --argjson i "$i" '.[$i].n' "$items_file")" \
+      "$(jq -r --argjson i "$i" '.[$i].reach' "$items_file")"
+  done
+  items_json="$(jq 'map({n: .n, text: .text, reach: .reach})' "$items_file")"
 else
   (( ${#item_n[@]} > 0 )) \
     || die "at least one --item (or --items-file) is required: a fix round with no delegated items has nothing to persist"
@@ -257,7 +310,8 @@ else
       jq -n \
         --argjson n "${item_n[$i]}" \
         --arg text "${item_text[$i]}" \
-        '{n: $n, text: $text}'
+        --arg reach "${item_reach[$i]}" \
+        '{n: $n, text: $text, reach: $reach}'
     done | jq -s '.'
   )"
 fi

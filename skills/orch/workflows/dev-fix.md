@@ -90,7 +90,7 @@ Cancel ends the workflow; a selection goes to § 2.
 
    `worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
 
-   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim.
+   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim. `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
 
    Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
 
@@ -102,7 +102,7 @@ Cancel ends the workflow; a selection goes to § 2.
 
    Exit 3 is the branch-size refusal. Stop before delegation, discard this item set, and report the current and baseline counts with `Cut required`. After the branch is cut back to the Done-when, mint a fresh round. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
 
-   `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]'` pairs inline in one command instead.
+   `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]' '[REACH]'` groups inline in one command instead.
 
    **An analysis (read-only) round has no delegated item set** — skip `dev-round-write` entirely and run step 6's Check A without an expected-set flag.
 

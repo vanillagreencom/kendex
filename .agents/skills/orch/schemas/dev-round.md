@@ -20,7 +20,7 @@ The recovery copy is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`.
   "base_sha": "0123456789abcdef0123456789abcdef01234567",
   "adds": ["tools/refresh-fixture"],
   "items": [
-    { "n": 1, "text": "#1 | security-review | src/auth.rs\nDescription: \"token refresh races\"\nRecommendation: \"serialize refresh behind the existing lock\"" }
+    { "n": 1, "text": "#1 | security-review | src/auth.rs\nDescription: \"token refresh races\"\nRecommendation: \"serialize refresh behind the existing lock\"", "reach": "a concurrent refresh from two open sessions on one account" }
   ]
 }
 ```
@@ -32,9 +32,13 @@ The recovery copy is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`.
 | `issue` | Yes | `--issue` | Normalized workflow-state key |
 | `base_sha` | Yes | captured from `HEAD` | Commit at delegation time |
 | `adds` | Yes | `--adds-file JSON_PATH` | Exact protected additions the round may make; an empty array allows none in the protected scope |
-| `items` | Yes (>=1) | `--items-file` or `--item N TEXT` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim |
+| `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
 
-`--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
+`--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
+
+**`reach` is required per item, on both routes.** It names what reaches the finding: a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix.
+
+What the writer itself refuses is a short list, not a scanner: an empty or whitespace-only reach, a `PRRT_` review-thread node id, any value built only of words that contains `thread`, `finding`, `comment`, `reviewer`, or `bot` (`Copilot thread`, `the finding`, and also `two threads writing the lease at once`), and the enumerated `a <noun> containing/empty/unset/missing/malformed/invalid` phrasing (`a name containing a quote`, `an empty PI_CODING_AGENT_DIR`). The last two patterns are wider than the classes they guard, so a true reach can land on one; reword it. A path, a command, or a filename carries a `/`, a `.`, or a backtick, which keeps it out of both. Values outside those shapes are recorded, not approved. The classes [`../references/finding-disposition.md` § Decision flow](../references/finding-disposition.md#decision-flow) excludes at Step 0 are the orchestrator's judgement at disposition time, before any round is delegated; `skills/orch/tests/dev_round_write.sh` pins the writer's actual verdict per documented shape.
 
 An `Adds:` delegation line maps to a JSON array passed through `--adds-file`; repository paths never enter shell command text. The writer and reader reject absolute paths, leading or trailing empty components, double slashes, `.` and `..` components, newlines, carriage returns, and duplicates. Omit the line and flag when no additions are allowed.
 
@@ -45,7 +49,7 @@ The external authorization adds `"schema_version": 1`, `"worktree": "[CANONICAL_
 ## Readers
 
 - **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the external authorization; its gates and refusal reasons are that script's `--help`.
-- **A respawned dev agent** reads `items[]` to recover the item numbers and texts.
+- **A respawned dev agent** reads `items[]` to recover the item numbers, texts, and reaches.
 - **The tail-reconciliation nudge** points at the record.
 
 The record is input, never receipt: it proves what was delegated, not that anything completed. Completion stays with [`dev-return.md`](dev-return.md) and the A/B acceptance tables.
