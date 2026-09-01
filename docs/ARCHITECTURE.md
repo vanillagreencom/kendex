@@ -480,9 +480,10 @@ lives in one capability table read by core and UI.
   paths are guard-banned. Structured frontmatter values parse as bounded
   YAML with aliases and duplicate keys refused; tolerant readers keep the
   plain one-line values harnesses accept. Renderers pass foreign values for
-  generated fields through the target format's scalar encoder. The compact
-  skill-name rewrite instead replaces or inserts a literal `name:` line and
-  relies on target validation.
+  generated fields through the target format's scalar encoder. Fork and
+  import share one compact frontmatter-name rewrite for renamed YAML skills
+  and agents: it replaces or inserts a literal `name:` line and relies on
+  target validation.
 - **The source store is immutable; revisions are declared.** Each commit
   is materialized once into a directory named after its object id,
   published by rename, read unchanged thereafter; fetching touches only a
@@ -711,11 +712,10 @@ lives in one capability table read by core and UI.
   from plugin-registry-shaped catalogs are `<plugin>/<item>` in manifest,
   lock and UI. The `/` never reaches disk: the halves are joined — `__` by
   default, `-` where names must be lower-kebab — by a rule beside the name
-  rule in `harness/caps.rs` and checked against it. A skill copy replaces a
-  literal `name:` frontmatter line or inserts one when absent; other YAML
-  spellings are not normalized and may fail target validation. Agent
-  renderings carry the installed name through the agent renderer. The
-  catalog keeps what it wrote. Two declarations landing on one file — `a/b`
+  rule in `harness/caps.rs` and checked against it. Skill copies use the
+  shared frontmatter-name rewrite; generated agent renderings carry the
+  installed name through the agent renderer. The catalog keeps what it wrote.
+  Two declarations landing on one file — `a/b`
   against a literal `a__b`, or two names a filesystem folds (case, trailing
   dots and spaces, Unicode composition) — install neither, naming both. Only
   agents, commands and skills may carry a plugin segment; a `/` in a hook or
