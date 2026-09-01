@@ -135,7 +135,7 @@ When the new decision replaces specific components of an active decision without
 
 ### 6.3 Apply Doc and Config Updates
 
-Implement the doc changes the agents reported: update the architecture docs, add decision references to affected files, and combine every domain's updates for a Pervasive flow. Reusable rules and project-specific insights go into the managing project's kendex config — `[skill-instructions]` for skill-level context, `[agent-additional-instructions]` for persistent agent rules, `[agent-launch-instructions]` for launch instructions. A config edit takes effect only once it is rendered, which you cannot do from a worktree.
+Implement the doc changes the agents reported: update the architecture docs, add decision references to affected files, and combine every domain's updates for a Pervasive flow. Reusable rules and project-specific insights go into the managing project's kendex config — `[skill-instructions]` for skill-level context, `[agent-additional-instructions]` for persistent agent rules, `[agent-launch-instructions]` for launch instructions. A config edit takes effect only once it is rendered: run `kendex refresh` from a checkout that permits it, which a worktree does not, so a worktree run leaves the edit in place and the rendered copies stale.
 
 ### 6.4 Decompose the Blocked Work
 
