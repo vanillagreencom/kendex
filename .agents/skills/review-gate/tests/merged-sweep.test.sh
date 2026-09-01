@@ -36,6 +36,10 @@
 #         bare track-word                       reply decides, both arms)
 #   ms27. the window holds more PRs than     -> a sweep-level fail-closed
 #         --limit reads                         line, deduped like the rest
+#   ms28. --state-file                       -> writes that file, and never
+#                                               the default state dir
+#   ms29. a relative state dir               -> anchored on the repo root, so
+#                                               a changed cwd keeps the edge
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,88 +79,8 @@ assert_not_contains() {
   fi
 }
 
-mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/cwd"
-
-# The gh stub answers exactly one call — the sweep issues one query per
-# invocation, and a second call would be a regression ms24 reports.
-cat > "$TMP_ROOT/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-set -u
-[[ "${1:-}" == "api" && "${2:-}" == "graphql" ]] || { echo "unexpected gh call: $*" >&2; exit 1; }
-echo call >> "${STUB_CALL_LOG:-/dev/null}"
-if [[ "${STUB_READ_FAIL:-}" == "yes" ]]; then echo "HTTP 502" >&2; exit 1; fi
-if [[ "${STUB_EMPTYBYTES:-}" == "yes" ]]; then exit 0; fi
-cat "${STUB_FIXTURE:?}"
-EOF
-chmod +x "$TMP_ROOT/bin/gh"
-
-# Timestamps are built from the RUN's clock, so the window arithmetic is
-# exercised against real "now" rather than a frozen fixture date that would
-# drift out of every window as the suite ages.
-NOW="$(date -u +%s)"
-iso() { # OFFSET_SECS_FROM_NOW
-  date -u -d "@$((NOW + $1))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-    || date -u -r "$((NOW + $1))" +%Y-%m-%dT%H:%M:%SZ
-}
-MERGED_AT="$(iso -3600)"       # merged an hour ago
-BEFORE_MERGE="$(iso -7200)"
-AFTER_MERGE="$(iso -1800)"
-LATER="$(iso -600)"
-OLD_MERGE="$(iso -864000)"     # ten days ago — outside the default window
-OLD_AFTER="$(iso -863000)"
-
-HEAD_A="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
-review() { # id, createdAt, state, body, login, [typename]
-  jq -n --arg id "$1" --arg at "$2" --arg st "$3" --arg body "$4" \
-    --arg login "$5" --arg tn "${6:-Bot}" \
-    '{id:$id, createdAt:$at, state:$st, body:$body, author:{login:$login, __typename:$tn}}'
-}
-comment() { # createdAt, body, login, [typename]
-  jq -n --arg at "$1" --arg body "$2" --arg login "$3" --arg tn "${4:-User}" \
-    '{createdAt:$at, body:$body, author:{login:$login, __typename:$tn}}'
-}
-thread() { # id, comments-totalCount, comment-json...
-  local id="$1" total="$2"; shift 2
-  jq -n --arg id "$id" --argjson total "$total" --argjson nodes "$(jq -sc '.' <<<"$*")" \
-    '{id:$id, comments:{totalCount:$total, nodes:$nodes}}'
-}
-pr() { # number, mergedAt, author, reviews-json, comments-json, threads-json,
-       # [reviews-totalCount], [threads-totalCount]
-  jq -n --argjson n "$1" --arg merged "$2" --arg author "$3" --arg head "$HEAD_A" \
-    --argjson rv "$4" --argjson cm "$5" --argjson th "$6" \
-    --argjson rvt "${7:--1}" --argjson tht "${8:--1}" \
-    '{number:$n, mergedAt:$merged, headRefOid:$head, author:{login:$author},
-      reviews:{totalCount:(if $rvt < 0 then ($rv|length) else $rvt end), nodes:$rv},
-      comments:{nodes:$cm},
-      reviewThreads:{totalCount:(if $tht < 0 then ($th|length) else $tht end), nodes:$th}}'
-}
-# The sweep enumerates through `search`, so the envelope carries the
-# coverage metadata it compares against: issueCount defaults to the node
-# count and hasNextPage to false, i.e. "this page covered the window", so
-# only the arms that mean to trip the truncation guard do.
-envelope() { # pr-json...
-  jq -n --argjson nodes "$(jq -sc '.' <<<"$*")" \
-    --argjson total "${STUB_ISSUE_COUNT:--1}" --argjson next "${STUB_HAS_NEXT:-false}" \
-    '{data:{search:{issueCount:(if $total < 0 then ($nodes|length) else $total end),
-                    pageInfo:{hasNextPage:$next}, nodes:$nodes}}}'
-}
-
-fixture() { printf '%s\n' "$1" > "$TMP_ROOT/fixture.json"; }
-fresh_state() { rm -rf -- "${TMP_ROOT:?}/state"; }
-
-run_sweep() { # env-tokens... [-- flags...]
-  local envs=() flags=() seen_sep=0 a
-  for a in "$@"; do
-    if [[ "$a" == "--" ]]; then seen_sep=1; continue; fi
-    if [[ "$seen_sep" == "1" ]]; then flags+=("$a"); else envs+=("$a"); fi
-  done
-  (cd "$TMP_ROOT/cwd" \
-    && PATH="$TMP_ROOT/bin:$PATH" \
-       env GH_REPO=acme/widgets STUB_FIXTURE="$TMP_ROOT/fixture.json" \
-           MERGED_SWEEP_STATE_DIR="$TMP_ROOT/state" "${envs[@]}" \
-       "$SWEEP" ${flags[@]+"${flags[@]}"} 2>&1)
-}
+# shellcheck source=lib/merged-sweep-fixtures.sh
+. "$TEST_DIR/lib/merged-sweep-fixtures.sh"
 
 echo "=== merged-sweep reduction table ==="
 
@@ -170,9 +94,8 @@ set +e
 out=$(run_sweep); rc=$?
 set -e
 assert_eq "$rc" "1" "ms1: a post-merge review exits 1"
-assert_contains "$out" "post-merge-findings" "ms1: the attention kind is emitted"
-assert_contains "$out" "1 review(s) and 0 review thread(s)" "ms1: the counts are named"
-assert_contains "$out" "aaaaaaaa" "ms1: the line carries the 8-char head sha"
+assert_row ms1 "$out" "10" "$HEAD_A8" "post-merge-findings" \
+  "1 review(s) and 0 review thread(s) landed after the merge"
 
 set +e
 out=$(run_sweep); rc=$?
@@ -206,10 +129,28 @@ out=$(run_sweep -- --no-state); rc=$?
 set -e
 assert_eq "$rc" "1" "ms5: --no-state re-reports a known finding"
 assert_contains "$out" "post-merge-findings" "ms5: with the same kind"
+
+# From a FRESH baseline, so a --no-state pass that wrongly wrote state would
+# change the next pass's answer. Running it after a stateful pass over the
+# same fixture could not: the keys would already match.
+fresh_state
+set +e
+out=$(run_sweep -- --no-state); rc=$?
+set -e
+assert_eq "$rc" "1" "ms5b: --no-state from a fresh baseline reports the finding"
+if [ -e "$TMP_ROOT/state/acme_widgets" ]; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms5b: --no-state wrote a state file"
+else
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "ms5b: and wrote no state file"
+fi
 set +e
 out=$(run_sweep); rc=$?
 set -e
-assert_eq "$rc" "0" "ms5b: --no-state consumed no rising edge — the next stateful pass is still quiet"
+assert_eq "$rc" "1" "ms5c: so the next STATEFUL pass still calls it news"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "0" "ms5d: and only then goes quiet"
 
 # --- ms6..ms10: what is NOT a finding ------------------------------------
 
@@ -262,6 +203,26 @@ out=$(run_sweep); rc=$?
 set -e
 assert_eq "$rc" "0" "ms10: a late APPROVED or DISMISSED row is not a finding"
 
+# ms9b: a BOT issue comment is no answer, whatever it says. Bots quote each
+# other, so a bot writing "Declined:" would otherwise clear a real finding.
+fresh_state
+fixture "$(envelope "$(pr 11 "$MERGED_AT" dev "[$LATE_REVIEW]" \
+  "[$(comment "$LATER" "Declined: handled upstream" helperbot Bot)]" '[]')")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms9b: a bot issue comment answers nothing, even in a disposition form"
+
+# ms9c: ordinary chatter after a real answer must not reopen it — the
+# STANDING reply is the last one in a REPLY FORM, not the last comment.
+fresh_state
+fixture "$(envelope "$(pr 11 "$MERGED_AT" dev "[$LATE_REVIEW]" \
+  "[$(comment "$(iso -900)" "Declined: the handle is closed on the error path" dev User),$(comment "$LATER" "thanks, that reads better" dev User)]" '[]')")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "0" "ms9c: chatter after a disposition does not reopen the finding"
+
 # --- ms11/ms12: the merge boundary and the window ------------------------
 
 fresh_state
@@ -307,6 +268,32 @@ out=$(run_sweep); rc=$?
 set -e
 assert_eq "$rc" "1" "ms14: a bot reply is no disposition — bots quote each other"
 assert_contains "$out" "0 review(s) and 1 review thread(s)" "ms14: counted as a thread finding"
+
+# ms14b: a HUMAN post-merge comment that is not a disposition is a finding,
+# not a reply — a thread whose only post-merge content is one must surface.
+fresh_state
+HUMAN_FINDING="$(thread THR_human 1 "$(comment "$AFTER_MERGE" "this path still double-frees" dev User)")"
+fixture "$(envelope "$(pr 12 "$MERGED_AT" dev '[]' '[]' "[$HUMAN_FINDING]")")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms14b: a human post-merge comment is a finding, not a reply"
+assert_contains "$out" "0 review(s) and 1 review thread(s)" "ms14b: counted as a thread finding"
+
+# ms14c: inside a THREAD, a human comment that is not a disposition is
+# content on a line, so it is a finding even when it follows a real reply —
+# the fail-closed reading, and deliberately unlike the review arm, where an
+# issue comment is conversation and ms9c keeps the standing disposition.
+fresh_state
+CHATTER="$(thread THR_chatter 3 \
+  "$(comment "$AFTER_MERGE" "P2: this leaks" codex Bot)" \
+  "$(comment "$(iso -900)" "Fixed in a1b2c3d4e5f6" dev User)" \
+  "$(comment "$LATER" "and the retry path has the same shape" dev User)")"
+fixture "$(envelope "$(pr 12 "$MERGED_AT" dev '[]' '[]' "[$CHATTER]")")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms14c: a human thread comment after a disposition is new content, not chatter to ignore"
 
 # --- ms15/ms16: the read bounds fail CLOSED ------------------------------
 
@@ -376,41 +363,49 @@ assert_eq "$rc" "1" "ms19c: an unparsable thread-comment timestamp fails closed 
 # --- ms17..ms22: read failures and config errors -------------------------
 
 fresh_state
-printf '%s\n' '{"errors":[{"message":"nope"}],"data":{"repository":null}}' > "$TMP_ROOT/fixture.json"
-set +e
-out=$(run_sweep); rc=$?
-set -e
-assert_eq "$rc" "2" "ms17: graphql errors beside the data exit 2"
-assert_contains "$out" "::error::" "ms17: and report on stderr"
-assert_not_contains "$out" "post-merge-findings" "ms17: with no per-PR lines"
+printf '%s\n' '{"errors":[{"message":"nope"}],"data":{"search":null}}' > "$TMP_ROOT/fixture.json"
+run_split
+assert_eq "$SPLIT_RC" "2" "ms17: graphql errors beside the data exit 2"
+assert_contains "$SPLIT_ERR" "::error::" "ms17: the diagnostic is on STDERR"
+assert_eq "$SPLIT_OUT" "" "ms17: and stdout is empty — exit 2 never looks like findings"
+
+# The container arm is reached by a well-formed envelope with no errors key,
+# so it shares no coverage with the arm above.
+fresh_state
+printf '%s\n' '{"data":{"search":null}}' > "$TMP_ROOT/fixture.json"
+run_split
+assert_eq "$SPLIT_RC" "2" "ms17b: a null search container exits 2 with no errors key to lean on"
+assert_contains "$SPLIT_ERR" "::error::" "ms17b: on stderr"
+assert_eq "$SPLIT_OUT" "" "ms17b: and stdout is empty"
 
 fresh_state
-set +e
-out=$(run_sweep STUB_EMPTYBYTES=yes); rc=$?
-set -e
-assert_eq "$rc" "2" "ms18: a zero-byte read exits 2"
-assert_contains "$out" "zero bytes" "ms18: named as a broken read, never as zero PRs"
+fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
+run_split STUB_EMPTYBYTES=yes
+assert_eq "$SPLIT_RC" "2" "ms18: a zero-byte read exits 2"
+assert_contains "$SPLIT_ERR" "zero bytes" "ms18: named as a broken read, never as zero PRs"
+assert_eq "$SPLIT_OUT" "" "ms18: with stdout empty"
 
 fresh_state
-set +e
-out=$(run_sweep STUB_READ_FAIL=yes); rc=$?
-set -e
-assert_eq "$rc" "2" "ms18b: a failed listing call exits 2"
+run_split STUB_READ_FAIL=yes
+assert_eq "$SPLIT_RC" "2" "ms18b: a failed listing call exits 2"
+assert_contains "$SPLIT_ERR" "--limit" "ms18b: and the diagnostic names the knob that fixes a 504"
+assert_eq "$SPLIT_OUT" "" "ms18b: with stdout empty"
 
 fresh_state
 fixture "$(envelope "$(pr 14 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]' \
   | jq '.headRefOid = "not-a-sha"')")"
-set +e
-out=$(run_sweep); rc=$?
-set -e
-assert_eq "$rc" "2" "ms19: a row without a usable head sha exits 2 (broken read)"
+run_split
+assert_eq "$SPLIT_RC" "2" "ms19: a row without a usable head sha exits 2 (broken read)"
+assert_eq "$SPLIT_OUT" "" "ms19: with stdout empty"
 
 fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
 set +e
-out=$( (cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_REPO "$SWEEP" 2>&1) ); rc=$?
+(cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_REPO "$SWEEP") \
+  >"$TMP_ROOT/split.out" 2>"$TMP_ROOT/split.err"; rc=$?
 set -e
 assert_eq "$rc" "2" "ms20: a missing GH_REPO exits 2"
-assert_contains "$out" "GH_REPO is required" "ms20: and names the variable"
+assert_contains "$(cat "$TMP_ROOT/split.err")" "GH_REPO is required" "ms20: named on STDERR"
+assert_eq "$(cat "$TMP_ROOT/split.out")" "" "ms20: with stdout empty"
 for bad in "acme" "acme/widgets/extra" "/widgets" "acme/"; do
   set +e
   out=$(run_sweep GH_REPO="$bad"); rc=$?
@@ -435,6 +430,16 @@ set +e
 out=$(run_sweep -- --limit 40); rc=$?
 set -e
 assert_eq "$rc" "1" "ms21c: --limit 40 is the documented ceiling and is accepted"
+fresh_state
+set +e
+out=$(run_sweep -- --limit 0040 --window 0172800); rc=$?
+set -e
+assert_eq "$rc" "1" "ms21d: zero-padded numbers are judged by magnitude, not by digit count"
+fresh_state
+set +e
+out=$(run_sweep -- --limit 0041); rc=$?
+set -e
+assert_eq "$rc" "2" "ms21e: and a zero-padded value over the ceiling is still refused"
 
 fresh_state
 mkdir -p "$TMP_ROOT/state"
@@ -450,10 +455,30 @@ else
   out=$(run_sweep); rc=$?
   set -e
   assert_eq "$rc" "2" "ms22: an unreadable state file exits 2, never a silent fresh baseline"
-  assert_contains "$out" "state file" "ms22: and names it"
+  assert_contains "$out" "cannot read the state file" "ms22: named as the READ, not any later write"
 fi
 chmod 644 "$TMP_ROOT/state/acme_widgets"
 fresh_state
+
+# ms22c: an unwritable state DIRECTORY fails at mkdir, before any read.
+mkdir -p "$TMP_ROOT/ro"
+chmod 500 "$TMP_ROOT/ro"
+if [ -w "$TMP_ROOT/ro" ]; then
+  echo "  skip  ms22c: the state directory stayed writable at mode 500 (root, or a permissionless filesystem)"
+else
+  run_split REVIEW_GATE_MERGED_SWEEP_STATE_DIR="$TMP_ROOT/ro/nested"
+  assert_eq "$SPLIT_RC" "2" "ms22c: a state directory that cannot be created exits 2"
+  assert_contains "$SPLIT_ERR" "could not create the state directory" "ms22c: named on stderr"
+  assert_eq "$SPLIT_OUT" "" "ms22c: with stdout empty"
+fi
+chmod 755 "$TMP_ROOT/ro"
+
+# ms22d: an explicitly empty state dir is a config error, not a disable —
+# --no-state is how a caller runs without state.
+run_split REVIEW_GATE_MERGED_SWEEP_STATE_DIR=""
+assert_eq "$SPLIT_RC" "2" "ms22d: an explicitly empty state directory is a config error"
+assert_contains "$SPLIT_ERR" "explicitly empty" "ms22d: and says so"
+
 
 # A state write that fails must exit 2 with NOTHING on stdout: a consumer
 # that sees lines beside a non-zero exit reads findings, not a failure.
@@ -471,6 +496,82 @@ err=$( (cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
   "$SWEEP" --state-file "$TMP_ROOT/no-such-dir/state" 2>&1 >/dev/null) )
 set -e
 assert_contains "$err" "could not write the state file" "ms22b: the reason is on stderr"
+
+# --- ms28: --state-file, documented but until now untested ---------------
+fresh_state
+rm -f -- "${TMP_ROOT:?}/explicit-state"
+fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
+set +e
+out=$(run_sweep -- --state-file "$TMP_ROOT/explicit-state"); rc=$?
+set -e
+assert_eq "$rc" "1" "ms28: --state-file reports the finding on the first pass"
+if [ -f "$TMP_ROOT/explicit-state" ]; then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "ms28: and wrote the file it was given"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms28: the named state file was not written"
+fi
+assert_contains "$(cat "$TMP_ROOT/explicit-state" 2>/dev/null)" "REV_late" "ms28: holding the finding key"
+if [ -d "$TMP_ROOT/state" ]; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms28: the default state dir was created despite --state-file"
+else
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "ms28: and the default state dir was never created"
+fi
+set +e
+out=$(run_sweep -- --state-file "$TMP_ROOT/explicit-state"); rc=$?
+set -e
+assert_eq "$rc" "0" "ms28b: and the second pass dedupes against it"
+rm -f -- "${TMP_ROOT:?}/explicit-state"
+
+# --- ms29: a RELATIVE state dir is anchored on the repository root -------
+# The rising edge is the whole point of the state layer, and a poll loop or
+# cron that runs from a different directory between passes must not silently
+# start from an empty baseline.
+git init -q "$TMP_ROOT/repo" 2>/dev/null
+mkdir -p "$TMP_ROOT/repo/sub"
+run_at() { # cwd, [flags...]
+  local at="$1"; shift
+  set +e
+  (cd "$at" && PATH="$TMP_ROOT/bin:$PATH" \
+     env GH_REPO=acme/widgets STUB_FIXTURE="$TMP_ROOT/fixture.json" \
+         REVIEW_GATE_MERGED_SWEEP_STATE_DIR="sweep-state" \
+     "$SWEEP" "$@") >"$TMP_ROOT/split.out" 2>"$TMP_ROOT/split.err"
+  SPLIT_RC=$?
+  set -e
+  SPLIT_OUT="$(cat "$TMP_ROOT/split.out")"
+  SPLIT_ERR="$(cat "$TMP_ROOT/split.err")"
+}
+if [ -d "$TMP_ROOT/repo/.git" ]; then
+  fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
+  run_at "$TMP_ROOT/repo"
+  assert_eq "$SPLIT_RC" "1" "ms29: the first pass from the repo root reports the finding"
+  if [ -f "$TMP_ROOT/repo/sweep-state/acme_widgets" ]; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "ms29: writing under the repository root"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms29: no state file under the repository root"
+  fi
+  run_at "$TMP_ROOT/repo/sub"
+  assert_eq "$SPLIT_RC" "0" "ms29b: a second pass from a SUBDIRECTORY keeps the same baseline"
+  if [ -d "$TMP_ROOT/repo/sub/sweep-state" ]; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ms29b: a second state dir appeared under the cwd"
+  else
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "ms29b: and created no second state dir beside the cwd"
+  fi
+else
+  echo "  skip  ms29: git init produced no working tree here"
+fi
+
+# ms29c: outside a working tree a relative state dir cannot be anchored, and
+# that is a loud config error rather than a silent fall back to the cwd.
+mkdir -p "$TMP_ROOT/notrepo"
+set +e
+(cd "$TMP_ROOT/notrepo" && PATH="$TMP_ROOT/bin:$PATH" \
+   env GH_REPO=acme/widgets STUB_FIXTURE="$TMP_ROOT/fixture.json" \
+       GIT_CEILING_DIRECTORIES="$TMP_ROOT" REVIEW_GATE_MERGED_SWEEP_STATE_DIR="sweep-state" \
+   "$SWEEP") >"$TMP_ROOT/split.out" 2>"$TMP_ROOT/split.err"; rc=$?
+set -e
+assert_eq "$rc" "2" "ms29c: a relative state dir outside a working tree exits 2"
+assert_contains "$(cat "$TMP_ROOT/split.err")" "repository root" "ms29c: naming the anchor it could not resolve"
+assert_eq "$(cat "$TMP_ROOT/split.out")" "" "ms29c: with stdout empty"
 
 # --- ms23: the contract is readable with no environment ------------------
 

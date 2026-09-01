@@ -104,6 +104,13 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 # values are a loud config error — a typo cannot disable a merge gate.
 REVIEW_GATE_MODE = "enforce"
 
+# Directory holding merged-sweep.sh's per-repo dedupe state. A relative
+# path is anchored on the repository root, not the cwd, so a caller that
+# changes directory between passes keeps its baseline — GITIGNORE it, or
+# point the key at a path outside the tree. Empty is a config error: the
+# sweep needs somewhere to remember what it already reported.
+REVIEW_GATE_MERGED_SWEEP_STATE_DIR = "tmp/review-gate-merged-sweep"
+
 # Review-wait quiet period in seconds — SHARED with orch's approval-wait,
 # and pr-watch.sh's awaiting-stale threshold. Set it HERE, in .env.local,
 # or export it; a .env file is read by nothing. Must be a

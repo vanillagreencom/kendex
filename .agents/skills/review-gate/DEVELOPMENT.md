@@ -18,7 +18,8 @@ Paths are as installed in a consuming repo, under
 | `scripts/validate.sh` | The consumer-facing tool: is this repo's install sound? Runtime, settings, carry-forward exclusions, then the workflow half below, whose verdicts it relays and counts. |
 | `scripts/validate-workflow.sh` | Is the adopted copy still the shipped template? Equality, not re-derivation: see § Equality, not re-derivation. Usable on its own when only the workflow copy changed. |
 | `scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate; `--heal` also dispatches the writer once on a stale gate. |
-| `scripts/merged-sweep.sh` | The post-merge half of that reducer: "did a review or a review thread land after a merge with nobody answering it?" Same line shape and exit codes as `pr-watch.sh`, so one consumer reads both; its own per-repo state file makes each finding surface once. |
+| `scripts/merged-sweep.sh` | The post-merge half of that reducer: "did a review or a review thread land after a merge with nobody answering it?" Same line shape and exit codes as `pr-watch.sh`, but NOT the same triggering: pr-watch is level-triggered and stateless, this one is edge-triggered off a per-repo state file and announces each finding once, so exit 0 means "nothing new". `--no-state` is the standing audit form. |
+| `scripts/lib/merged-sweep-reduce.sh` | The one jq program the sweep runs, sourced by it. Inputs and output shape are its header. |
 | `scripts/review-predicate-selftest.sh` | Offline proof of the decision table. An ENGINE proof: it runs here, in the catalog repo, on every change. |
 | `tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |
 
