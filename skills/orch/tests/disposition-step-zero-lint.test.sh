@@ -66,17 +66,14 @@ order "the excluded classes precede the defect question" "$DISP" \
 rule "the round cap's carve-out defers to Step 0" "$DISP" "" \
   'and Step 0 does not exclude'
 rule "unrequired defective code is deleted, not guarded" "$DISP" "$FLOW" \
-  'never by a second mechanism guarding the first'
-absent "the flow offers no hardening alternative" "$DISP" "$FLOW" \
-  'never by hardening it' \
-  '   - Not required → `fix` by deleting that code, never by hardening it.'
+  'never by hardening it and never by a second mechanism guarding the first'
 
 # One home. A filing bar that restates a class can drift from Step 0's copy,
 # and the drifting copy is the one a filing pass reads.
 absent "the filing bar restates no excluded class" "$DISP" "$BAR" \
   'a race between two invocations|a crash between two writes|no shipped producer emits|hole in a mechanism that itself came from a review round|second writer who already holds' \
   'Never for a race between two invocations on one machine: declined, not filed.'
-rule "the filing bar points at Step 0 instead" "$DISP" "$BAR" \
-  "Step 0's classes never reach the bar"
+rule "the filing bar runs every candidate through Step 0" "$DISP" "$BAR" \
+  'Every candidate runs through Step 0 before the bar judges it'
 
 md_report

@@ -4,10 +4,12 @@
 #
 # What each replaced. The twin rule was "never re-implement a judgment another
 # component owns — delegate", which names a judgment and carries no step that
-# would find one; a grep for the verb is a step an agent can run. The migration
-# rule was absent from every file, living only in a maintainer's memory, while
-# the scope rule's "mechanical enablers" exception had no closed list and let
-# readers of an older version's artifacts ride in as enablers.
+# would find one; a grep is a step an agent can run. The migration rule was a
+# product baseline in `docs/ARCHITECTURE.md` with no agent-facing half: the dev
+# bullet adds the action (write no reader for an older version's artifact) and
+# the verdict (a finding asking for one is declined), and cites that baseline
+# rather than restating it. The scope rule's "mechanical enablers" exception had
+# no closed list, so such a reader rode in as an enabler.
 #
 # The exclusion list this file's deferrals point at is orch's, pinned in
 # `../../orch/tests/disposition-step-zero-lint.test.sh`. That suite's markdown
@@ -52,9 +54,9 @@ rule "no migration or compat code" "$DEV" "$RULES" 'No migration or compat code'
 rule "a layout change is a changelog line and a fresh install" "$DEV" "$RULES" \
   'one changelog line and a fresh install'
 rule "no reader carries an older version's artifact forward" "$DEV" "$RULES" \
-  "nothing reads an artifact an older version wrote"
+  'write no reader for an artifact an older version wrote'
 rule "a finding asking to carry one forward is declined" "$DEV" "$RULES" \
-  'asking to carry one forward is declined'
+  'decline a finding that asks you to carry one forward'
 
 # The enabler exception the migration rule closes: an open list is what let a
 # reader of an old artifact ride in as a mechanical enabler.
