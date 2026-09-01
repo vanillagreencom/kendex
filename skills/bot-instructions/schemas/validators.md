@@ -249,15 +249,26 @@ five bots is not a property any repo-side check can assert.
 ## `copilot-frontmatter`
 
 **Silent failure.** A `.instructions.md` file with no `applyTo`, or an empty
-one, matches nothing and is never loaded. An `excludeAgent` value outside the
-two GitHub accepts is not an error either; the file simply loads for every
-agent, and reviewer doctrine reaches the working agent the flag was meant to
-keep it from.
+one, matches nothing and is never loaded. And `excludeAgent` fails in the
+direction that looks fine: the value names the agent the file is hidden from, so
+a missing key or the wrong one of the two leaves reviewer-only instructions
+loading into the working agent — the inverse of what `reviewer_only` asks for,
+with the file present and its frontmatter parsing.
 
 **Rejects.** A generated `.instructions.md` with no `applyTo`, an `applyTo`
-that is empty or whitespace, an `applyTo` emitted as a YAML array rather than a
-single comma-separated string, and an `excludeAgent` value other than
-`code-review` or `cloud-agent`.
+that is empty or whitespace, and an `applyTo` emitted as a YAML array rather
+than a single comma-separated string.
+
+**Rejects, on `excludeAgent`.** For a surface with `reviewer_only = true`: a
+missing `excludeAgent`, and any value other than `cloud-agent`. `code-review` is
+the documented opposite — it hides the file from the reviewer and leaves the
+working agent reading it — so accepting either value here would accept the one
+case the key exists to prevent. For a surface with `reviewer_only = false` the
+render emits no `excludeAgent`; if one is present it must still be one of the
+two values `references/limits.md` documents.
+
+Two controls on that clause, per § Controls: a reviewer-only surface rendered
+with the key missing, and one rendered with `code-review`.
 
 ## `copilot-budget`
 
@@ -296,16 +307,23 @@ dropped from a column reds this validator.
 
 ## `qodo-best-practices`
 
-**Silent failure.** Qodo documents 800 lines per file and does not document what
-it does past that. A repo cannot tell from a review whether its guidance was
-read in full, truncated, or dropped.
+**Silent failure.** A generated file nobody bounded is a file nobody reads.
+Qodo's guidance is that long best-practices files are processed less
+effectively, and it states no length at which it rejects or truncates one, so
+there is no error to wait for and no signal that guidance went unread.
 
 **Rejects.** A rendered `best_practices.md` over 800 lines, naming the surfaces
 contributing the most lines so the author can see what to cut.
 
-That is the only best-practices cap on a live vendor page, and so the only one
-enforced. Organization and mapped-repository best-practices files layer above
-the generated one and the generator cannot see them, so nothing here bounds the
+**That 800 is this package's budget, not a vendor cap.** Qodo documents it as
+writing guidance; `references/limits.md` marks it a recommendation, and this
+validator is where the package chooses to hold it — the same shape as
+`copilot-budget` against a two-page reading. The failure message says so. A
+render stopped here was stopped by this package, and telling an author Qodo
+refused their file would send them to a vendor with nothing to find.
+
+Organization and mapped-repository best-practices files layer above the
+generated one and the generator cannot see them, so nothing here bounds the
 total; `references/checklist.md` carries that as a question rather than a
 number.
 

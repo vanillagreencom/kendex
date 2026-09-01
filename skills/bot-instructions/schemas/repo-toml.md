@@ -277,7 +277,7 @@ A path set plus what a reviewer needs to know about it. Zero or more.
 | `name` | string | yes | Lowercase, `[a-z0-9-]`, non-empty, unique. Becomes the generated filenames |
 | `globs` | array of string | yes | Non-empty. Paths this surface covers |
 | `exclude_globs` | array of string | no | Subtracted from `globs`, and real subtraction only on Macroscope |
-| `reviewer_only` | bool | no, default `false` | Renders `excludeAgent: "cloud-agent"` into the Copilot file, keeping reviewer doctrine away from the working agent |
+| `reviewer_only` | bool | no, default `false` | Renders `excludeAgent: "cloud-agent"` into the Copilot file, keeping reviewer doctrine away from the working agent. `copilot-frontmatter` requires exactly that key and value when this is true, since the other permitted value hides the file from the reviewer instead |
 | `instructions` | string | yes | What a reviewer gets wrong here, and what is true instead |
 
 `name` may not be `doctrine`, `correctness`, `ignore`, or `approvability`. Each

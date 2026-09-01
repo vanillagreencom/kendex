@@ -88,8 +88,9 @@ can still change what the file means.
       level carrying settings this repo does not expect.
 - [ ] What other best-practices sources Qodo loads for this repo is known.
       Organization and mapped-repository files layer above the generated one and
-      the generator cannot see them. Qodo documents 800 lines per file and no
-      cap on the total, so nothing checks the total.
+      the generator cannot see them. Qodo recommends 800 lines per file and
+      documents no limit on the total, so nothing here checks the total and the
+      per-file number is this package's budget rather than a vendor cap.
 - [ ] Before setting `[bots] qodo_review_md`: the portal toggle under
       Configurations → Context, "REVIEW.md instructions", is on. Without it the
       file is inert, which is why the flag is set by hand after this line

@@ -5,6 +5,14 @@ limit the generator holds that this file does not carry is a defect: the
 generator's job is to encode what a vendor documents, not what someone
 remembers.
 
+**Two kinds of number, and a row says which it is.** A **cap** is a boundary the
+vendor rejects on: exceed it and the vendor discards or refuses the input, so
+the generator holds it because the alternative is a silent failure. A
+**recommendation** is writing guidance the vendor gives with no stated
+consequence; where the generator holds one, it is this package's own budget
+taken from that guidance, and the row says so. Presenting a recommendation as a
+cap would tell a reader a render was rejected for a reason no vendor states.
+
 Vendor caps move. When a render fails on a limit that looks wrong, re-read the
 cited page before raising the number in code.
 
@@ -64,7 +72,7 @@ sparse-checkout.
 |------|-------|
 | Character cap on instruction files | none is documented. Third-party writeups still cite a 4,000-character cut-off on `copilot-instructions.md` and `*.instructions.md`; GitHub removed it |
 | Size guidance | "Instructions must be no longer than 2 pages" |
-| `excludeAgent` values | `code-review`, `cloud-agent` |
+| `excludeAgent` values | `code-review`, `cloud-agent`. The value names the agent the file is hidden **from**, so `cloud-agent` keeps a file from the working agent and leaves code review reading it, and `code-review` does the reverse. They are not interchangeable |
 | `applyTo` on an empty or absent value | the file matches nothing and never loads |
 | `applyTo` | a single string holding comma-separated globs |
 
@@ -125,17 +133,24 @@ Merge, which is why the render writes both.
 <https://docs.qodo.ai/install-and-configure/configuration-overview/configuration-file>,
 <https://docs.qodo.ai/governance/rule-enforcement/without-rule-system/best-practices>
 
-| What | Value | Line |
-|------|-------|------|
-| `best_practices.md` per file | "Keep files relatively short (under ~800 lines)" | Review, and the same cap on the Merge page at `/v1/features/best-practices` |
-| Automatic `best_practices.md` loading | a Qodo Merge (commercial) feature, absent from open-source PR-Agent | Merge |
+| What | Value | Kind | Line |
+|------|-------|------|------|
+| `best_practices.md` per file | "Keep files relatively short (under ~800 lines)" | recommendation | Review, and the same words on the Merge page at `/v1/features/best-practices` |
+| Automatic `best_practices.md` loading | a Qodo Merge (commercial) feature, absent from open-source PR-Agent | — | Merge |
 
-800 lines per file is the only best-practices cap on a live vendor page. An
-accumulated cap across every source Qodo loads, and an open-source PR-Agent
-`repo_context_max_lines` default, both appeared in material that is now gone:
-the page they came from returns 404 and neither number is on any page that
-replaced it. They are not enforced anywhere in this package, because a number
-this file cannot cite is a number the generator does not hold.
+**The 800 is a recommendation, and the budget built on it is this package's.**
+Qodo gives it as writing guidance — long files are processed less effectively
+and tend to repeat what the model already knows — and states no rejection or
+truncation at any length. `qodo-best-practices` still fails over it, for the
+same reason `copilot-budget` fails over a two-page reading: an unbounded
+generated file is a render nobody reviews, and a budget someone can see beats a
+length nobody chose. What it must not claim is that Qodo refused the file.
+
+Both numbers that would have been caps are gone. An accumulated limit across
+every source Qodo loads, and an open-source PR-Agent `repo_context_max_lines`
+default, appeared in material that now 404s and are on no page that replaced it.
+Neither is enforced here, because a number this file cannot cite is a number the
+generator does not hold.
 
 **Configuration locations.** Repo root `.pr_agent.toml`, documented as the root
 of the default branch, a repo wiki page of the same name, a

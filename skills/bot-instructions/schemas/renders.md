@@ -273,10 +273,14 @@ excludeAgent: "cloud-agent"
 <surface.instructions>
 ```
 
-`excludeAgent` is emitted only when `reviewer_only = true`, and its only
-permitted values are `code-review` and `cloud-agent`. `applyTo` is a single
-non-empty string holding a comma-separated glob list, not a YAML array. The
-glob dialect refuses a comma, so the join is unambiguous.
+`excludeAgent` is emitted only when `reviewer_only = true`, and then only as
+`cloud-agent`. The value names the agent the file is hidden from, so
+`cloud-agent` keeps it from the working agent and leaves code review reading it;
+`code-review` is the exact opposite and is never what a reviewer-only surface
+wants. `copilot-frontmatter` requires the key and that value for such a surface
+rather than accepting the enum. `applyTo` is a single non-empty string holding a
+comma-separated glob list, not a YAML array. The glob dialect refuses a comma,
+so the join is unambiguous.
 
 **Escaping.** The frontmatter is YAML. The glob dialect refuses `"`, so no
 escaping is needed and a pattern that would need it is refused at input time.
@@ -447,10 +451,13 @@ file has no column in the routing table.
 orphan, so retiring the last surface says so rather than leaving a
 marker-only file that looks like current guidance.
 
-**Caps.** 800 lines for this file, which is what Qodo documents and all it
-documents; `references/limits.md` carries the page. Organization and
-mapped-repository best-practices files layer above this one and the generator
-cannot see them, so nothing here bounds the total.
+**Budget.** 800 lines for this file. Qodo gives that number as writing guidance
+and states no length at which it rejects or truncates, so the budget is this
+package's own, taken from that guidance the way `[budgets] copilot_chars` is
+taken from a two-page reading; `references/limits.md` marks it a recommendation
+and carries the page. Organization and mapped-repository best-practices files
+layer above this one and the generator cannot see them, so nothing here bounds
+the total.
 
 ## `REVIEW.md`
 
