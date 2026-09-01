@@ -354,8 +354,8 @@ fn the_read_only_verbs_answer_in_a_checkout_seeded_with_another_checkouts_lock()
         "check reads the same record and reaches the same verdict: {printed}"
     );
     assert!(
-        !printed.contains("another checkout"),
-        "no could-not-check line stands in for the answer: {printed}"
+        !printed.contains("could not check"),
+        "no could-not-check section stands in for the answer: {printed}"
     );
 }
 

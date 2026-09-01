@@ -32,14 +32,23 @@ gg_shell_quote() { # VALUE -> the value, safe inside single quotes
   printf '%s' "${1//$sq/$sq\\$sq$sq}"
 }
 
-# The helper is POSIX sh and self-contained. It runs this install's own
-# scripts directory first, then rediscovers one from the MAIN checkout (linked
-# worktrees share this hooks directory and may carry no skills of their own),
-# so a moved or re-installed checkout repairs itself.
+# What one checkout bakes in, which another checkout of the same repository
+# bakes differently.
 #
-# Generating and VERIFYING both go through here, so a checker cannot drift
-# from a writer and start blessing a helper that only resembles one.
-helper_body() { # -> the helper this installer would write, on stdout
+# `installed_scripts` and `project_rel` both name where THIS install sits,
+# and a linked worktree shares one hooks directory with the checkout that
+# armed it — so the helper a worktree would write differs from the armed one
+# in exactly these lines while running exactly the same program. A verifier
+# that compared them would call every worktree's helper unverifiable
+# forever, which is what [`GG_PER_CHECKOUT_KEYS`] in lib/hook-check.sh
+# exists to stop.
+#
+# Names, not line numbers: the check finds each line by its key.
+GG_PER_CHECKOUT_KEYS='installed_scripts project_rel'
+
+# The head this install would bake. Split from the program below because
+# only the program is the same bytes everywhere.
+helper_head() { # -> the baked head, on stdout
   cat <<HELPER_HEAD
 #!/bin/sh
 # Scripts directory of the install that wrote this file.
@@ -52,6 +61,17 @@ skill_roots='$(gg_shell_quote "$GG_SKILL_ROOTS")'
 # different project sharing these shims is still served.
 project_rel='$(gg_shell_quote "$PROJECT_REL")'
 HELPER_HEAD
+}
+
+# The helper is POSIX sh and self-contained. It runs this install's own
+# scripts directory first, then rediscovers one from the MAIN checkout (linked
+# worktrees share this hooks directory and may carry no skills of their own),
+# so a moved or re-installed checkout repairs itself.
+#
+# Generating and VERIFYING both go through here, so a checker cannot drift
+# from a writer and start blessing a helper that only resembles one. These
+# bytes carry no per-checkout value, so they are compared exactly.
+helper_program() { # -> the part of the helper every checkout writes alike
   cat <<'HELPER'
 # kendex growth-guards git hooks. Managed by the growth-guards skill and
 # rewritten on every install — do not edit.
@@ -160,4 +180,9 @@ for root in ${main:+"$main/$project_rel"} "$top/$project_rel" ${main:+"$main/"} 
 done
 fail "no executable growth-guards $mode script at $installed_scripts, nor under $main or $top (project '$project_rel', roots $skill_roots)"
 HELPER
+}
+
+helper_body() { # -> the helper this installer would write, on stdout
+  helper_head
+  helper_program
 }

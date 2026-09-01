@@ -19,6 +19,35 @@ set -euo pipefail
 # the summary still learns what is wrong and where. The remedy is the other
 # stream's: a core.hooksPath stand-down puts git's report on stderr, because
 # it is as many lines as git gives and stdout stays one line.
+# What this installer would write, with the per-checkout values the helper
+# on disk carries instead of this checkout's.
+#
+# Every byte still has to match — the program, the comments, the roots this
+# package bakes — except the values [`GG_PER_CHECKOUT_KEYS`] names, which say
+# where the install that armed the repository sits. A linked worktree shares
+# one hooks directory with the checkout that armed it, so a helper compared
+# against what the worktree itself would write differs in those lines and
+# nowhere else, and comparing them called every worktree's hooks
+# unverifiable while they were armed and running.
+#
+# A helper missing one of those lines, or carrying it somewhere the
+# generated head does not, substitutes nothing and fails the comparison,
+# which is the answer for a file this installer did not write.
+helper_as_baked_there() { # HELPER -> the bytes to compare against, on stdout
+  local helper="$1" key line body
+  body="$(helper_body)" || return 1
+  for key in $GG_PER_CHECKOUT_KEYS; do
+    line="$(grep -m 1 -e "^$key='" -- "$helper")" || continue
+    # awk prints the replacement literally; sed would read the value as a
+    # replacement expression, and a checkout path may hold any byte.
+    body="$(printf '%s\n' "$body" | awk -v k="$key='" -v repl="$line" '
+      index($0, k) == 1 { print repl; next }
+      { print }
+    ')" || return 1
+  done
+  printf '%s\n' "$body"
+}
+
 CHECK_REASONS=""
 add_reason() { # MESSAGE
   if [ -n "$CHECK_REASONS" ]; then
@@ -56,7 +85,7 @@ check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
   # while bypassing every guard. `--check` is READ-ONLY, so "the installer
   # rewrites this file" is not something it gets to assume about the copy
   # sitting there right now. Only the bytes settle what the helper does.
-  if ! helper_body 2>/dev/null | cmp -s - "$helper"; then
+  if ! helper_as_baked_there "$helper" 2>/dev/null | cmp -s - "$helper"; then
     add_reason "helper $HELPER_NAME is not the one this installer generates, so what it runs cannot be verified"
     return 3
   fi

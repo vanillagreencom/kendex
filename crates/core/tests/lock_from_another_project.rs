@@ -219,8 +219,11 @@ fn claim(lock: &Path, key: &str, paths: &[PathBuf]) {
 /// component, and every operation on it lands in `elsewhere`.
 ///
 /// This one states no remainder of the root that wrote it, so the read
-/// refuses it there and the message names that root. The claim it could
-/// have rebased through is the one above.
+/// refuses it there and the message names that root. The claim that does
+/// rebase and then walks out is
+/// `a_travelled_record_whose_remainder_walks_out_is_refused_and_that_tree_stands`
+/// — named rather than pointed at, because a direction does not survive the
+/// next reordering of this file.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_stands() {

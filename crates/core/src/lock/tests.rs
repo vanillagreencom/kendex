@@ -336,10 +336,118 @@ fn a_travelled_record_claiming_a_position_its_own_root_never_held_is_refused() {
     // name the reading project's whole directory as a place this scope
     // owns.
     recording(&path, "skill:gh:claude", &wrote_it, Some(&wrote_it));
-    assert!(matches!(
-        load(&path),
-        Err(CoreError::LockOutsideProject { .. })
-    ));
+    let refused = load(&path).unwrap_err();
+    assert!(
+        matches!(
+            &refused,
+            CoreError::LockOutsideProject { key, recorded, root: named, .. }
+                if key == "skill:gh:claude" && recorded == &wrote_it && named == &wrote_it
+        ),
+        "{refused:?}"
+    );
+}
+
+/// A root the record names relatively, or not at all, is refused before
+/// anything is stripped with it.
+///
+/// It is worse than useless as a prefix. `strip_prefix("")` matches every
+/// path and hands it back whole, so the rebase would come out the identity
+/// function: every position carried across naming the checkout that wrote
+/// it, under a record now stamped as this project's. The containment check
+/// behind it only asks whether a position sits under the reading root, so
+/// a claim on a person's own file inside this project would pass.
+#[test]
+fn a_project_lock_naming_its_root_relatively_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("here");
+    std::fs::create_dir_all(root.join("vendor")).unwrap();
+    let path = root.join(LOCK_FILE);
+    // A position inside the project reading the record, which is what a
+    // vacuous prefix would wave through.
+    let mine = root.join("vendor/mine");
+    for spelling in ["", "wrote/here"] {
+        recording(&path, "skill:gh:claude", &mine, Some(Path::new(spelling)));
+        let refused = load(&path).unwrap_err();
+        assert!(
+            matches!(
+                &refused,
+                CoreError::LockFromAnotherProject { recorded, .. }
+                    if recorded == Path::new(spelling)
+            ),
+            "{spelling:?}: {refused:?}"
+        );
+    }
+}
+
+/// The reading root gets the same refusal, and reaches it the same way: a
+/// relative lock path whose parent does not exist resolves to nothing, so
+/// the raw spelling comes back through [`project_root_at`]. Rebasing onto
+/// it would hand out positions read against whatever directory the process
+/// happens to sit in later, and containment would pass every one of them.
+#[test]
+fn a_lock_read_at_a_relative_path_that_resolves_to_nothing_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let wrote_it = tmp.path().join("wrote/here");
+    let path = tmp.path().join(LOCK_FILE);
+    recording(
+        &path,
+        "skill:gh:claude",
+        &wrote_it.join(".agents/skills/gh"),
+        Some(&wrote_it),
+    );
+    let text = std::fs::read_to_string(&path).unwrap();
+
+    let refused =
+        parse_text(Path::new("no-such-dir").join(LOCK_FILE).as_path(), &text).unwrap_err();
+    assert!(
+        matches!(
+            &refused,
+            CoreError::LockFromAnotherProject { recorded, root, .. }
+                if recorded == &wrote_it && root == Path::new("no-such-dir")
+        ),
+        "{refused:?}"
+    );
+}
+
+/// Provenance is resolved wherever the record keeps it, not only on the
+/// entries: a source's last resolution and an installed set's both record
+/// the directory a path source read from, and read from another checkout
+/// each names the other one.
+#[test]
+fn a_travelled_record_resolves_the_provenance_it_keeps_beside_the_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("here");
+    std::fs::create_dir_all(&root).unwrap();
+    let wrote_it = tmp.path().join("wrote/here");
+    let path = root.join(LOCK_FILE);
+    let catalog = |under: &Path| crate::paths::slashed(&under.join("catalog"));
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{"version":{LOCK_VERSION},"root":{},"entries":{{"skill:gh:claude":{{"name":"gh","kind":"skill","harness":"claude","source":"cat","sourceRepo":{},"method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[{}]}}}}}},"sources":{{"cat":{{"repo":{},"commit":"abc123"}}}},"bundles":{{"set":{{"source":"cat","sourceRepo":{},"commit":"abc123"}}}}}}"#,
+            json(&wrote_it),
+            serde_json::to_string(&catalog(&wrote_it)).unwrap(),
+            json(&wrote_it.join(".agents/skills/gh")),
+            serde_json::to_string(&catalog(&wrote_it)).unwrap(),
+            serde_json::to_string(&catalog(&wrote_it)).unwrap(),
+        ),
+    )
+    .unwrap();
+
+    let lock = load(&path).unwrap();
+    let here = catalog(&crate::paths::canonical(&root).unwrap());
+    assert_eq!(
+        lock.entries["skill:gh:claude"].source_repo, here,
+        "the entry's provenance"
+    );
+    assert_eq!(
+        lock.sources["cat"].repo, here,
+        "the source's last resolution"
+    );
+    assert_eq!(
+        lock.bundles["set"].source_repo, here,
+        "the set's, which is recorded apart from the source's"
+    );
 }
 
 /// A record naming no project is refused rather than adopted: nothing knows

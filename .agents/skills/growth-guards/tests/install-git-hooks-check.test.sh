@@ -219,6 +219,41 @@ commit_in "$R40" "feat: add th"
 [ "$RC" -eq 0 ] && ok "and that stub really does bypass every guard" \
   || bad "tampered helper bypasses" "rc=$RC out=$OUT"
 
+echo "=== a helper another checkout of this repository armed is armed here ==="
+# A linked worktree shares one hooks directory with the checkout that armed
+# it, and a helper written from either runs the same program: only the two
+# lines saying where the writing install sits differ. Compared whole, every
+# worktree reported its own armed hooks as unverifiable.
+R42="$(new_repo checkotherckout)"
+install_in "$R42"
+HELPER42="$R42/.git/hooks/kendex-guards"
+for KEY in installed_scripts project_rel; do
+  # The value another checkout would have baked, in place of this one's.
+  perl -i -pe "s{^$KEY='.*'\$}{$KEY='/somewhere/else/$KEY'}" "$HELPER42"
+done
+check_in "$R42"
+[ "$RC" -eq 0 ] && ok "a helper naming another checkout's install is still armed" \
+  || bad "other-checkout helper armed" "rc=$RC out=$OUT"
+
+# The exclusion is those two lines and nothing else: the program is still
+# compared byte for byte, and so is every value this package bakes.
+perl -i -pe "s{^skill_roots='.*'\$}{skill_roots='.somewhere'}" "$HELPER42"
+check_in "$R42"
+[ "$RC" -eq 2 ] && ok "but a changed skill_roots is still unverifiable" \
+  || bad "changed roots unverifiable" "rc=$RC out=$OUT"
+
+install_in "$R42"
+perl -i -pe 's{^mode="\$\{1-\}"$}{mode=pre-commit}' "$HELPER42"
+check_in "$R42"
+[ "$RC" -eq 2 ] && ok "and so is a changed line of the program itself" \
+  || bad "changed program unverifiable" "rc=$RC out=$OUT"
+
+install_in "$R42"
+perl -i -ne "print unless /^installed_scripts='/" "$HELPER42"
+check_in "$R42"
+[ "$RC" -eq 2 ] && ok "a helper missing the line substitutes nothing and is unverifiable" \
+  || bad "missing baked line unverifiable" "rc=$RC out=$OUT"
+
 echo "=== --check usage lanes ==="
 OUT=""; RC=0; OUT="$("$INSTALL" --check --uninstall 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && ok "--check with --uninstall is exit 2" || bad "check+uninstall is exit 2" "rc=$RC out=$OUT"

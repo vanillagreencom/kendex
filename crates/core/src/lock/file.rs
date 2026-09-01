@@ -5,9 +5,9 @@
 use std::path::Path;
 
 use crate::error::{CoreError, Result};
-use crate::fs::{atomic_write, read_if_exists};
+use crate::fs::{atomic_write_no_follow, read_if_exists};
 
-use super::roots::{refuse_foreign_paths, resolve_against_reading_root, stamp_project};
+use super::roots::{read_against, write_under};
 use super::{LOCK_VERSION, Lock};
 
 /// What sits at a lock path. Only the shape this build writes loads: a
@@ -65,8 +65,7 @@ pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
         path: path.to_path_buf(),
         message: e.to_string(),
     })?;
-    resolve_against_reading_root(path, &mut lock)?;
-    refuse_foreign_paths(path, &lock)?;
+    read_against(path, &mut lock)?;
     Ok(LockFile::Current(lock))
 }
 
@@ -82,19 +81,27 @@ pub fn load(path: &Path) -> Result<Lock> {
     }
 }
 
+/// Put the record down, with the version and the root it belongs to
+/// stamped on it here.
+///
+/// The version is a fact about the build that wrote the file, and the read
+/// holds every record to exactly this number — two places deciding it is
+/// how a writer comes to put down something its own reader refuses.
+///
+/// The bytes replace whatever sits at the path rather than being written
+/// through a link there. A lock is kendex's own record, the class
+/// [`atomic_write_no_follow`] already covers, and not a file a person
+/// routed somewhere of their own: a link pointing at another checkout's
+/// lock is a copy of the record by another route, and writing through it
+/// would land this project's resolved record in that checkout's file.
 pub fn save(path: &Path, lock: &Lock) -> Result<()> {
-    refuse_foreign_paths(path, lock)?;
     let mut lock = lock.clone();
-    // Stamped at the write, like the root beside it. The version is a fact
-    // about the build that wrote the file, and the read holds every record
-    // to exactly this number — two places deciding it is how a writer
-    // comes to put down something its own reader refuses.
     lock.version = LOCK_VERSION;
-    stamp_project(path, &mut lock)?;
+    write_under(path, &mut lock)?;
     let mut text = serde_json::to_string_pretty(&lock).map_err(|e| CoreError::JsonParse {
         path: path.to_path_buf(),
         message: e.to_string(),
     })?;
     text.push('\n');
-    atomic_write(path, &text)
+    atomic_write_no_follow(path, &text)
 }
