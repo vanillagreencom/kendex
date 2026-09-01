@@ -5,7 +5,6 @@ crates/core/src/engine/fork/agent/prose.rs	438
 crates/core/src/error.rs	484
 crates/core/src/mapping.rs	411
 crates/core/src/settings_file.rs	408
-hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
 pi-extensions/pi-agents-tmux/extensions/subagent/dashboard.ts	431
 pi-extensions/pi-agents-tmux/extensions/subagent/dispatch.ts	580

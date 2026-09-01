@@ -26,20 +26,19 @@ fi
 # a resumed or compacted session already carries the report, and a per-compact
 # rerun is the wallpaper this hook must not become.
 #
-# The payload is JSON, so jq reads it: the key is the TOP-LEVEL `source`, and
-# a scan for the text finds the same key nested in any other object, or the
-# same characters inside an unrelated string value — a transcript path or a
-# cwd is enough. The scan decides only where jq could not answer AT ALL — no
-# jq on the machine, or a payload jq refused — never where jq answered that
-# there is no such key, which is the very reading the scan gets wrong.
-SOURCE=""
-JQ_ANSWERED=0
-if command -v jq >/dev/null 2>&1 \
-  && SOURCE=$(printf '%s' "$INPUT" | jq -r '.source // ""' 2>/dev/null); then
-  JQ_ANSWERED=1
+# The payload is JSON and jq is the only thing that reads it: the key is the
+# TOP-LEVEL `source`, and a text scan for it finds the same key nested in any
+# other object, or the same characters inside an unrelated string value — a
+# transcript path or a cwd is enough. Without jq the payload is unread, and an
+# unread payload cannot be shown to be a fresh start, so the report is skipped
+# rather than repeated on every compact.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "kendex drift check skipped: jq is not on PATH to read the session payload"
+  exit 0
 fi
-if [ "$JQ_ANSWERED" -eq 0 ]; then
-  SOURCE=$(printf '%s' "$INPUT" | grep -o '"source"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"source"[[:space:]]*:[[:space:]]*"//;s/"$//' 2>/dev/null || true)
+if ! SOURCE=$(printf '%s' "$INPUT" | jq -r '.source // ""' 2>/dev/null); then
+  echo "kendex drift check skipped: the session payload is not valid JSON"
+  exit 0
 fi
 case "$SOURCE" in
   resume|compact)

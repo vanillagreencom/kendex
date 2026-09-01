@@ -216,9 +216,10 @@ assert_eq "$(cat "$ARGS_LOG")" "" "…and the check never runs on a resume"
 run_raw '{"cwd":"/tmp/\"source\": \"resume\"","source":"startup"}' "$BIN_DIR"
 assert_eq "$out" "$REPORT" "a quoted source inside another value is not the start reason"
 
-echo "session-drift-check: without jq"
-# The fallback scan still classifies an ordinary payload, so a machine with no
-# jq keeps the report rather than losing it.
+echo "session-drift-check: a payload it cannot read"
+# jq is the only reader. An unread payload cannot be shown to be a fresh start,
+# so the report is skipped with the reason rather than repeated on every
+# compact — and a session still starts either way.
 NOJQ_BIN="$TMP_ROOT/nojq"
 mkdir -p "$NOJQ_BIN"
 for tool in bash cat command printf grep sed head env pwd; do
@@ -226,16 +227,30 @@ for tool in bash cat command printf grep sed head env pwd; do
   [ -n "$real" ] && [ -f "$real" ] && ln -sf "$real" "$NOJQ_BIN/$tool"
 done
 ln -sf "$BIN_DIR/kendex" "$NOJQ_BIN/kendex"
-run_raw '{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' "$NOJQ_BIN"
-assert_eq "$out" "$REPORT" "without jq a fresh start still relays the report"
-run_raw '{"session_id":"s","hook_event_name":"SessionStart","source":"resume"}' "$NOJQ_BIN"
-assert_eq "$out" "" "without jq a resume is still silent"
+# PATH exactly, not prefixed: run_raw appends the caller's own PATH, which
+# leaves jq reachable and makes a no-jq claim untestable.
+run_exact_path() { # payload PATH
+  : >"$ARGS_LOG"
+  : >"$CWD_LOG"
+  set +e
+  out="$(env -i HOME="$HOME" PATH="$2" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
+    FAKE_RC=1 FAKE_OUT="$REPORT" "$(command -v bash)" "$HOOK" <<<"$1" 2>/dev/null)"
+  rc=$?
+  set -e
+}
+run_exact_path '{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' "$NOJQ_BIN"
+assert_eq "$rc" 0 "without jq the session still starts"
+assert_eq "$out" "kendex drift check skipped: jq is not on PATH to read the session payload" \
+  "without jq the skip names jq rather than reading as a clean install"
+assert_eq "$(cat "$ARGS_LOG")" "" "without jq the check never runs"
 
-# A payload jq REFUSES is the other case the scan is there for: jq's own
-# failure exit must hand off rather than be read as "no such key".
+# A payload jq REFUSES takes the same lane: the failure exit is not "no such
+# key", so it must not read as a fresh start.
 run_raw '{"source":"resume"' "$BIN_DIR"
 assert_eq "$rc" 0 "a payload jq cannot parse still exits 0"
-assert_eq "$out" "" "…and the scan classifies it rather than reading as a fresh start"
+assert_eq "$out" "kendex drift check skipped: the session payload is not valid JSON" \
+  "…and the skip names the payload rather than reading as a fresh start"
+assert_eq "$(cat "$ARGS_LOG")" "" "and the check never runs for it"
 
 echo "session-drift-check: unusable project directory"
 capture FAKE_RC=1 FAKE_OUT="$REPORT" CLAUDE_PROJECT_DIR="$TMP_ROOT/does-not-exist"
@@ -280,7 +295,7 @@ assert_contains "$out" "drift status unknown" "an unexpected failure says drift 
 echo "session-drift-check: no kendex on PATH"
 NOKENDEX_BIN="$TMP_ROOT/nokendex"
 mkdir -p "$NOKENDEX_BIN"
-for tool in bash cat command printf grep sed head; do
+for tool in bash cat command printf grep sed head jq; do
   real="$(command -v "$tool" 2>/dev/null || true)"
   [ -n "$real" ] && [ -f "$real" ] && ln -sf "$real" "$NOKENDEX_BIN/$tool"
 done
