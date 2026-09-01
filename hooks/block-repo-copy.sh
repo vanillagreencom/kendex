@@ -3,8 +3,8 @@
 # name: block-repo-copy
 # event: PreToolUse
 # matcher: Bash
-# description: Block a copy (cp, rsync, tar, local git clone) whose source names a `.git` or `target` directory and whose destination is under /tmp, /var/tmp or $TMPDIR. Suggests reading the source in place or building a minimal fixture.
-# safety: Temp destinations are commonly RAM-backed tmpfs; a multi-gigabyte tree copy fills the filesystem and every process writing there then fails with ENOSPC. One regex over the raw command decides, in the order the words stand, so nothing is resolved, expanded or stat-ed: a source whose last path component is `.git` or `target` is expensive by construction, and a destination spelled under a temp root is scratch. A source reached through a variable, and a repository named only by its working-tree path, are not seen. The reading runs the other way too: the three parts count wherever they stand, a quoted string and a comment tail included, so a read-only command spelling out a copy is refused as the copy it is not.
+# description: Block a copy (cp, rsync, a tar create-to-extract pipe, git clone) whose source names a `.git` or `target` path component and whose destination is under /tmp, /var/tmp or $TMPDIR. Suggests reading the source in place or building a minimal fixture.
+# safety: Temp destinations are commonly RAM-backed tmpfs; a multi-gigabyte tree copy fills the filesystem and every process writing there then fails with ENOSPC. One regex over the raw command decides, in the order the words stand, so nothing is resolved, expanded or stat-ed: a source whose last path component IS `.git` or `target` is expensive by construction, and a destination spelled under a temp root is scratch. Both edges of that component are tested, so a word merely ending in one — a `…/bar.git` clone URL, a `build-target` directory — is not it. A source reached through a variable, and a repository named only by its working-tree path, are not seen; neither is a `tar -czf DEST SRC`, which spells the destination before the source. The reading runs the other way too: the three parts count wherever they stand, a quoted string and a comment tail included, so a read-only command spelling out a copy is refused as the copy it is not.
 # ---
 
 set -euo pipefail
@@ -32,17 +32,20 @@ fi
 
 # The whole rule, in the order the words stand: a copy verb, then a word whose
 # last path component is `.git` or `target`, then a destination under a temp
-# root. `/?["'"'"'[:space:]]` is what keeps the source component last, so
-# `target/debug/kendex` — one binary out of a build tree — is not a tree copy.
-# `(.*[[:space:]])?` before the destination is what keeps the destination a
-# word of its own, so `/home/tmp/x` is not `/tmp`.
+# root. Both edges of that component are tested and both carry a case:
+# `/?["'"'"'[:space:]]` after it is what keeps it last, so `target/debug/kendex` —
+# one binary out of a build tree — is not a tree copy; `[/"'"'"'[:space:]]` before
+# it is what makes it a component of its own, so a `…/bar.git` clone URL and a
+# `build-target` directory are not the marker. `(.*[[:space:]])?` before the
+# destination is what keeps the destination a word of its own, so `/home/tmp/x`
+# is not `/tmp`.
 #
 # The shell tokenizer this replaced resolved every operand and stat-ed it for
 # marker directories, to catch a source spelled as a working-tree path or
 # reached through a variable. Those are not seen here, and that is the trade:
 # it is the frozen lexical-scanner class, and a finding of that shape against
 # this file is declined, not patched.
-BLOCK_RE='(^|[^[:alnum:]_.-])(cp|rsync|tar|git[[:space:]]+clone)[[:space:]].*(\.git|target)/?["'"'"'[:space:]](.*[[:space:]])?["'"'"']?(/tmp|/var/tmp|\$\{TMPDIR\}|\$TMPDIR)(/|["'"'"'[:space:]]|$)'
+BLOCK_RE='(^|[^[:alnum:]_.-])(cp|rsync|tar|git[[:space:]]+clone)[[:space:]].*[/"'"'"'[:space:]](\.git|target)/?["'"'"'[:space:]](.*[[:space:]])?["'"'"']?(/tmp|/var/tmp|\$\{TMPDIR\}|\$TMPDIR)(/|["'"'"'[:space:]]|$)'
 
 if [[ ! $COMMAND =~ $BLOCK_RE ]]; then
   exit 0

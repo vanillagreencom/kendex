@@ -5,13 +5,15 @@
 # whether a word of that command is --no-verify, a short cluster holding -n, or
 # a word carrying a core.hooksPath key.
 #
-# Nothing is rewritten before the split, so a word is seen only where the
-# command already spells it: a bypass the shell would join, unquote, expand or
-# separate into a word is not seen here and reaches git. The reading runs the
-# other way too, so a `git` word, a `commit` word and a bypass word count
-# wherever they stand, a message and a comment tail included. Both directions
-# are pinned below; the two expectation columns are where the armed and unarmed
-# answers differ.
+# One rewrite runs first: every metacharacter bash(1) lists that is not
+# whitespace (| & ; ( ) < >) becomes a space, so a word bash would have
+# separated is separated here too. Nothing is deleted. A word is therefore seen
+# only where the command already spells it, so a bypass the shell would join,
+# unquote or expand into the word is not seen here and reaches git. The reading
+# runs the other way too, so a `git` word, a `commit` word and a bypass word the
+# split leaves standing count wherever they stand, a message and a comment tail
+# included. Both directions are pinned below; the two expectation columns are
+# where the armed and unarmed answers differ.
 #
 # HOOK_UNDER_TEST runs this suite against another hook file, which is how the
 # must-fail control checks that these assertions can go red.
@@ -145,10 +147,22 @@ echo
 echo "a bypass of the armed hooks is refused"
 
 both "git commit $NV -m x" 2 2 "the flag"
+both 'git commit --no-veri -m x' 2 2 "an unambiguous abbreviation"
 both 'git commit -n -m x' 2 2 "the short flag"
+# The two sides of the value-taking-letter rule: a cluster reads left to right,
+# so -nm is the flag and -mnote is a message.
+both 'git commit -nm msg' 2 2 "n before the value-taking letter"
 both 'git commit -am x' 0 2 "a cluster without n still defers"
 both 'git commit -mnote' 0 2 "an attached message containing n"
-both 'git -c core.hooksPath=/dev/null commit -m x' 2 2 "a core.hooksPath key"
+# A core.hooksPath key removes the judge this hook defers to, so it is read off
+# the word whatever option carries it. These are the forms the word test
+# catches, and the must-fail material for the two lines that catch them.
+both 'git -c core.hooksPath=/dev/null commit -m x' 2 2 "a -c key and its value"
+both 'git -ccore.hooksPath=/dev/null commit -m x' 2 2 "an attached -c key"
+both 'git --config-env=core.hooksPath=HP commit -m x' 2 2 "a --config-env key"
+both 'git config --local core.hooksPath /dev/null && git commit -m x' 2 2 "a config write"
+both 'GIT_CONFIG_KEY_0=Core.HooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x' 2 2 "an environment key"
+both 'GIT_CONFIG_COUNT=1 git commit -m x' 2 2 "the environment count alone"
 both 'git commit -c HEAD --reset-author' 0 2 "-c reusing a message is not a key"
 
 run_hook "$ARMED" "$(payload "git commit $NV -m x")"
@@ -221,6 +235,43 @@ assert_eq "$rc" "0" "a whitespace-only command exits clean"
 assert_eq "$err" "" "and says nothing"
 
 echo
+echo "a metacharacter separates words here as it does in bash"
+
+# bash(1) calls these metacharacters and lists nine: | & ; ( ) < > space tab
+# newline. Space, tab and newline are IFS; these are the other seven, taken as
+# the class rather than as the forms that were reported. Left attached, each
+# hid a word bash would have separated, so `true;git` was no git word and
+# `commit&` no commit word.
+both 'true;git commit '"$NV"' -m x' 2 2 "a semicolon in front of the git word"
+both 'git commit&>/dev/null -n' 2 2 "an ampersand-redirect glued to the subcommand"
+both 'git commit>/dev/null -n -m x' 2 2 "a redirection glued to the subcommand"
+both 'true&&git commit '"$NV"' -m x' 2 2 "an and-list with no spaces"
+both 'true||git commit '"$NV"' -m x' 2 2 "an or-list with no spaces"
+both 'true|git commit '"$NV"' -m x' 2 2 "a pipe with no spaces"
+
+run_hook "$ARMED" "$(payload 'true;git commit '"$NV"' -m x')"
+assert_contains "$err" "The word '--no-verify' would skip" "the refusal names the flag behind the separator"
+
+# The unarmed column is the fail-open this split exists to close, and it is the
+# guard's primary contract rather than a bypass question: with the separator
+# left attached the hook found no commit at all, so a plain `true;git commit`
+# ran in a repository nothing armed and nothing checked it. The armed column is
+# the control that separating manufactures no bypass, and the last row is the
+# control that it does not lose the word-order rule.
+both 'true;git commit -m x' 0 2 "a plain commit behind a separator is still a commit"
+both 'git commit -m x&' 0 2 "a backgrounded commit with no bypass"
+both 'echo commit;git status' 0 0 "a commit word before the git word, across a separator"
+
+# A row for every substitution the rows above leave undecided, because a class
+# is only a class where each member is measured: delete one line of the seven
+# and something here must go red. The rows above answer `>`, `;`, `&` and `|`;
+# these two are what `<` and `)` decide on their own. `(` is the member with no
+# measured fail-open of its own, since a `(` in front of the git word already
+# comes off in the word loop.
+both 'git commit</dev/null -m x' 0 2 "a redirection-in glued to the subcommand"
+both '(git commit)' 0 2 "a subshell whose closing paren ends the commit word"
+
+echo
 echo "the split is not pathname expansion"
 
 # `set -f` around the word split is the only thing keeping the command's text
@@ -239,13 +290,14 @@ echo "the two stated limits"
 
 # Reading words rather than shell costs in both directions, and both costs are
 # rows so nobody grows a tokenizer back to close either. A word the command
-# spells is read wherever it stands, prose included; a word the shell would
-# assemble is not read at all.
+# spells is read wherever it stands, prose included, and quoting spares nothing
+# by itself since the substitution runs before any word is looked at; a word the
+# shell would assemble is not read at all.
 both 'git commit -m \"explain why '"$NV"' is banned\"' 2 2 "the flag inside a quoted message"
 both 'git log | grep commit' 0 2 "a commit word standing beside a git word in prose"
+both 'git log --oneline \"(commit)\"' 0 2 "a commit word inside quoted parentheses"
 # shellcheck disable=SC2016
 both 'F='"$NV"'; git commit $F -m x' 0 2 "a flag reached through a variable"
-both 'true;git commit '"$NV"' -m x' 0 0 "a separator left attached hides the git word"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

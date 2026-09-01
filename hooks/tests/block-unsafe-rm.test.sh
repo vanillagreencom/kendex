@@ -32,10 +32,11 @@ assert_contains() {
 }
 
 # The command reaches the hook JSON-encoded, exactly as the harness sends it.
+# jq does the encoding rather than sed: a Bash tool call is routinely several
+# lines, and a raw newline inside a JSON string is not JSON, so a sed-built
+# fixture could not express the multi-line rows at all.
 json_for() {
-  local c
-  c=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')
-  printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$c"
+  jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}'
 }
 
 run_hook() { # command -> rc, stderr in ERR_FILE
@@ -67,6 +68,10 @@ run_hook 'rm -rf "${X+x:?}/save"';    assert_eq "$rc" 2 'an unset-guarded altern
 run_hook 'rm -rf -- $X';              assert_eq "$rc" 2 'the -- separator does not make a variable root safe'
 run_hook 'rm -rf $LOGS/*.log';        assert_eq "$rc" 2 'a glob in the operand does not disturb classification'
 run_hook 'rm -rf $X > /var/tmp/log';  assert_eq "$rc" 2 'a redirection after the operand does not hide it'
+# One rm invocation is wider than its first operand in both directions, and
+# GNU rm accepts both shapes.
+run_hook 'rm -rf /literal/path "$DIR/sub"'; assert_eq "$rc" 2 'a variable root in a LATER operand is refused'
+run_hook 'rm $DIR/sub -rf';           assert_eq "$rc" 2 'a recursion flag standing after the operand is refused'
 
 echo "=== block-unsafe-rm: the operand half of the predicate ==="
 # Same verb, same flags, an operand that cannot collapse to /: the operand is
@@ -86,6 +91,9 @@ run_hook 'rm --recursive --force $X'; assert_eq "$rc" 2 '--recursive counts'
 # Same operand, no recursion: the harness does not prompt and neither does this.
 run_hook 'rm -f $X';                  assert_eq "$rc" 0 'a non-recursive rm on a variable passes'
 run_hook 'rm $X';                     assert_eq "$rc" 0 'an rm with no flag at all passes'
+# A long flag is not a cluster, so an r inside one is a letter of its name.
+run_hook 'rm --verbose "$X/f"';       assert_eq "$rc" 0 'a long flag merely holding an r is not recursion'
+run_hook 'rm --interactive $X';       assert_eq "$rc" 0 'nor is --interactive'
 
 echo "=== block-unsafe-rm: the command-position half of the predicate ==="
 run_hook 'mkdir -p x && rm -rf $X/y';           assert_eq "$rc" 2 'an rm after && is in command position'
@@ -96,6 +104,10 @@ run_hook 'case x in x) rm -rf "$X/sub";; esac'; assert_eq "$rc" 2 'a case-arm bo
 run_hook 'if true; then rm -rf "$X/sub"; fi';   assert_eq "$rc" 2 'a then-prefixed rm is refused'
 run_hook 'while x; do rm -rf $Y; done';         assert_eq "$rc" 2 'a do-prefixed rm inside a loop is refused'
 run_hook "$(printf 'rm\t-rf\t%s' '$X')";        assert_eq "$rc" 2 'tabs separate the words as spaces do'
+# A Bash tool call is routinely several lines, and bash's =~ anchors ^ at the
+# start of the WHOLE command, so the newline has to be a separator of its own.
+run_hook "$(printf 'cd /x\nrm -rf "%s/x"' '$D')"; assert_eq "$rc" 2 'an rm on the second line is in command position'
+run_hook "$(printf 'cd /x\nrm -rf /var/tmp/x')"; assert_eq "$rc" 0 'and a literal path on the second line still passes'
 # A word that is none of those in front of rm makes it another command's
 # argument, which this hook does not judge.
 run_hook 'git rm -r --cached $X';     assert_eq "$rc" 0 'git rm is not rm'
@@ -136,6 +148,24 @@ assert_eq "$rc" 2 'no jq refuses rather than guessing at the payload'
 assert_contains "$ERR_FILE" 'required to read the hook payload' 'the refusal names what is missing'
 run_payload '{"tool_input":{"command":"ls -la"}}' /nonexistent
 assert_eq "$rc" 2 'no text tools at all refuses too, whatever the command'
+
+# cat is the other half of the same guard: jq reads the payload, cat is what
+# hands it over. A PATH holding jq and not cat is what tells the two apart.
+NOCAT_BIN="$TMP_ROOT/nocat"
+mkdir -p "$NOCAT_BIN"
+for tool in jq sed grep; do
+  real="$(type -P "$tool" 2>/dev/null || true)"
+  [ -n "$real" ] && [ -x "$real" ] || continue
+  ln -sf "$real" "$NOCAT_BIN/$tool"
+done
+run_payload '{"tool_input":{"command":"ls -la"}}' "$NOCAT_BIN"
+assert_eq "$rc" 2 'no cat refuses rather than skipping the guard'
+assert_contains "$ERR_FILE" 'required to read the hook payload' 'the refusal names what is missing'
+# The control that the exact PATH is what decided: the same benign command
+# passes once cat is on it.
+ln -sf "$(type -P cat)" "$NOCAT_BIN/cat"
+run_payload '{"tool_input":{"command":"ls -la"}}' "$NOCAT_BIN"
+assert_eq "$rc" 0 'and the same PATH with cat added passes'
 
 echo "=== block-unsafe-rm: the stated limit ==="
 # A flag the shell would assemble is not seen here. The harness prompt still

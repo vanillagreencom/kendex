@@ -76,6 +76,12 @@ run_hook "cp -r \"$REPO/spaced dir/.git\" /tmp/copy"; assert_eq "$rc" 2 'a quote
 # is what decides. Without this row, refusing every copy into /tmp would score.
 run_hook "cp -r $REPO/docs /tmp/copy";         assert_eq "$rc" 0 'a source naming neither .git nor target is copied freely'
 run_hook "cp $REPO/target/debug/kendex /tmp/kendex"; assert_eq "$rc" 0 'one file out of a build tree is not a tree copy'
+# The other edge of the same component. Without these a pattern that only
+# pinned the right edge would score, and a remote clone — the cheap way to get
+# a repository into scratch — would be refused with no rewrite available.
+run_hook "git clone --depth 1 https://github.com/o/r.git /tmp/r"; assert_eq "$rc" 0 'a clone URL merely ending in .git is not a .git component'
+run_hook "cp -r /home/agent/dl/mytarget /tmp/x"; assert_eq "$rc" 0 'a word merely ending in target is not the build tree'
+run_hook "rsync -a build-target/ /tmp/out";    assert_eq "$rc" 0 'a hyphenated name ending in target is not it either'
 
 echo "=== block-repo-copy: the destination half of the predicate ==="
 run_hook "cp -r $REPO/.git /var/tmp/copy";   assert_eq "$rc" 2 '/var/tmp is a scratch destination'
@@ -129,13 +135,35 @@ assert_contains "$err" 'required to read the hook payload' 'the refusal names wh
 run_payload "{\"tool_input\":{\"command\":\"git status --short\"}}" /nonexistent
 assert_eq "$rc" 2 'no text tools at all refuses too, whatever the command'
 
-echo "=== block-repo-copy: the two stated limits ==="
+# cat is the other half of the same guard: jq reads the payload, cat is what
+# hands it over. A PATH holding jq and not cat is what tells the two apart.
+NOCAT_BIN="$TMP_ROOT/nocat"
+mkdir -p "$NOCAT_BIN"
+for tool in jq sed grep; do
+  real="$(type -P "$tool" 2>/dev/null || true)"
+  [ -n "$real" ] && [ -x "$real" ] || continue
+  ln -sf "$real" "$NOCAT_BIN/$tool"
+done
+run_payload "{\"tool_input\":{\"command\":\"git status --short\"}}" "$NOCAT_BIN"
+assert_eq "$rc" 2 'no cat refuses rather than skipping the guard'
+assert_contains "$err" 'required to read the hook payload' 'the refusal names what is missing'
+# The control that the exact PATH is what decided: the same benign command
+# passes once cat is on it.
+ln -sf "$(type -P cat)" "$NOCAT_BIN/cat"
+run_payload "{\"tool_input\":{\"command\":\"git status --short\"}}" "$NOCAT_BIN"
+assert_eq "$rc" 0 'and the same PATH with cat added passes'
+
+echo "=== block-repo-copy: the stated limits ==="
 # Reading the command's text rather than resolving its operands costs in both
-# directions, and both costs are rows so nobody grows a tokenizer back to close
-# either. A source spelled as the working tree that HOLDS the repository is not
-# seen; a copy spelled inside a quoted string is read as the copy it is not.
+# directions, and every cost is a row so nobody grows a tokenizer back to close
+# one. A source spelled as the working tree that HOLDS the repository is not
+# seen; neither is a tar that spells its destination before its source, which
+# is why the create-to-extract pipe above is the tar form worth having; and a
+# copy spelled inside a quoted string is read as the copy it is not.
 run_hook "cp -r $REPO /tmp/copy"
 assert_eq "$rc" 0 'a repository named by its working-tree path is not seen'
+run_hook "tar -czf /tmp/repo.tgz $REPO/.git"
+assert_eq "$rc" 0 'a tar naming its destination before its source is not seen'
 run_hook "echo \"cp -r $REPO/.git /tmp/copy\" >>notes.md"
 assert_eq "$rc" 2 'a copy spelled inside a quoted string is refused as the copy it is not'
 

@@ -3,8 +3,8 @@
 # name: block-unsafe-rm
 # event: PreToolUse
 # matcher: Bash
-# description: Block a recursive rm whose first path operand starts with a variable that may expand empty — a path outside the working tree wherever that variable is empty or unset. Names the rewrite the harness accepts without a prompt.
-# safety: The harness stops the whole session on that shape with a "Dangerous rm operation on possibly-empty variable path" prompt; refusing it here lets the agent rewrite and continue. One regex over the raw command decides: an rm in command position, a flag word carrying r or R, then an operand rooted in `$NAME`, `${NAME}` or `${NAME:-…}`. `${NAME:?…}` is the one form that cannot expand empty and it passes. A bypass the shell would assemble — a quoted flag, a line continuation, a variable holding the flag — is not seen here; the harness prompt is the backstop, and this hook only spares the session that stall.
+# description: Block a recursive rm with a path operand that starts with a variable that may expand empty — a path outside the working tree wherever that variable is empty or unset. Names the rewrite the harness accepts without a prompt.
+# safety: The harness stops the whole session on that shape with a "Dangerous rm operation on possibly-empty variable path" prompt; refusing it here lets the agent rewrite and continue. One regex over the raw command decides: an rm in command position (the start of a line included, so a multi-line call is read past its first line), a recursion flag — a single-dash cluster carrying r or R, or `--recursive` — and an operand rooted in `$NAME`, `${NAME}` or `${NAME:-…}`, in either order and wherever in that rm's operands they stand. `${NAME:?…}` is the one form that cannot expand empty and it passes, and a redirection target is not an operand. A bypass the shell would assemble — a quoted flag, a line continuation, a variable holding the flag — is not seen here; the harness prompt is the backstop, and this hook only spares the session that stall.
 # harnesses: [claude-code, cursor, opencode, codex]
 # ---
 
@@ -32,22 +32,38 @@ if ! COMMAND=$(printf '%s' "$INPUT" \
   exit 2
 fi
 
-# The whole rule, in the order the words stand:
+# The whole rule, built from named parts so each one is readable on its own:
 #
-#   1. `rm` in command position — the start of the command, or after one of the
-#      characters that end a command, or after a `then`/`do`/`else` keyword.
-#      A word before it that is none of those makes it another command's
-#      argument, so `git rm -r --cached $X` is git's and not this hook's.
-#   2. a flag word carrying `r` or `R` — `-rf`, `-R`, `--recursive`. Without
-#      recursion the path is a file, and the harness does not prompt.
-#   3. the first non-flag operand, rooted in a variable that may expand empty:
-#      `$NAME`, `${NAME}`, `${NAME:-…}`. `${NAME:?…}` aborts on empty and is
-#      the accepted rewrite, so it is the one variable root that passes; the
-#      identifier test is what keeps `${X+x:?}` — an unset-guarded ALTERNATIVE
-#      whose text merely contains :? — on the refused side. A leading double
-#      quote is peeled, since quoting does not stop an empty expansion; a
-#      single-quoted run is a literal the shell never expands and is not a
-#      variable root.
+#   POSITION  `rm` in command position — the start of the command, a newline,
+#             one of the characters that end a command, or a `then`/`do`/`else`
+#             keyword. A word before it that is none of those makes it another
+#             command's argument, so `git rm -r --cached $X` is git's and not
+#             this hook's. The newline is in the class because bash's `=~` runs
+#             without REG_NEWLINE, so `^` anchors the whole command and nothing
+#             else would reach line two of a multi-line call.
+#   RECURSE   a flag word that means recursion: a single-dash cluster carrying
+#             `r` or `R`, or `--recursive` spelled out. A long flag merely
+#             holding an r (`--verbose`, `--interactive`, `--preserve-root`) is
+#             not one — without recursion the path is a file, and the harness
+#             does not prompt.
+#   ROOT      an operand rooted in a variable that may expand empty: `$NAME`,
+#             `${NAME}`, `${NAME:-…}`. `${NAME:?…}` aborts on empty and is the
+#             accepted rewrite, so it is the one variable root that passes; the
+#             identifier test is what keeps `${X+x:?}` — an unset-guarded
+#             ALTERNATIVE whose text merely contains :? — on the refused side.
+#             A leading double quote is peeled, since quoting does not stop an
+#             empty expansion; a single-quoted run is a literal the shell never
+#             expands and is not a variable root.
+#   SKIP      the words the scan crosses to get from one part to the next,
+#             built from CROSSABLE: any character but `; & | < >`. The
+#             separators would end this rm, and a redirection target is not an
+#             operand at all, so `rm -rf /var/tmp/x > $LOG` is not a
+#             variable-rooted rm. Crossing ordinary words is what reaches a
+#             LATER operand and a flag written after the operand, both of which
+#             GNU rm accepts.
+#
+# Both orders are spelled out rather than folded together: the flag before the
+# operand, and the operand before the flag.
 #
 # The awk segmenter and flag folder this replaced answered a quoted `"-rf"`, a
 # backslash-split `-r""f`, a line continuation and a dash-leading operand after
@@ -55,7 +71,13 @@ fi
 # lexical-scanner class, and a finding of that shape against this file is
 # declined, not patched. The harness prompt still stops every one of them; what
 # it costs is the stall this hook exists to spare.
-UNSAFE_RE='(^|[;&|(){}]|[[:space:]](then|do|else)[[:space:]])[[:space:]]*rm([[:space:]]+-[^[:space:]]+)*[[:space:]]+-[^[:space:]]*[rR][^[:space:]]*([[:space:]]+-[^[:space:]]+)*[[:space:]]+"*\$([A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*([^:A-Za-z0-9_]|:[^?]))'
+NL=$'\n'
+POSITION='(^|['"$NL"';&|(){}]|[[:space:]](then|do|else)[[:space:]])[[:space:]]*rm'
+RECURSE='(-[^-[:space:]]*[rR][^[:space:]]*|--recursive)'
+ROOT='"*\$([A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*([^:A-Za-z0-9_]|:[^?]))'
+CROSSABLE='[^;&|<>[:space:]]'
+SKIP="([[:space:]]+${CROSSABLE}+)*"
+UNSAFE_RE="${POSITION}${SKIP}[[:space:]]+(${RECURSE}${SKIP}[[:space:]]+${ROOT}|${ROOT}${CROSSABLE}*${SKIP}[[:space:]]+${RECURSE}([[:space:]]|\$))"
 
 if [[ ! $COMMAND =~ $UNSAFE_RE ]]; then
   exit 0
