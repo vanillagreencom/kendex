@@ -137,9 +137,9 @@ export function installActions(set: Set, get: Get): InstallActions {
           ? items[0].name
           : `${items.length} packages`;
       toast.success(`Installed ${what}`);
-      // An install can still take a package away — a manifest edited
-      // outside the window leaves one the plan drops — and what its
-      // uninstaller ran is said here, not asked about.
+      // Whatever an install's plan took away, and what its uninstaller
+      // ran on the way out. Said, never asked about: the second question
+      // this dialog exists for is about arming, and this already happened.
       sayUndone(response.data.undone);
       for (const held of withheld) {
         toast.info(repoEffectsWithheldToast(held.name, held.reason));

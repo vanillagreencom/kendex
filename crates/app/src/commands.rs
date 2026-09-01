@@ -48,9 +48,11 @@ pub fn install_drift_hook(scope: kendex_core::model::Scope) -> Result<bool, Stri
         kendex_core::engine::plan_apply(&env, &scope, &options).map_err(|e| e.to_string())?;
     // Through the one executor, like every other report. Nothing was
     // pending when this started, so the lock this plan writes is the one
-    // the scope already carries: no package leaves here, and the account of
-    // a removal is empty.
-    crate::repo_effects::write(&env, &report)?;
+    // the scope already carries and no package leaves with it — which is
+    // what makes it safe to run a whole-scope plan off a yes given about a
+    // drift report. Checked rather than claimed: this command answers a
+    // bool and has nowhere to say what an uninstaller did.
+    crate::repo_effects::write_nothing_leaving(&env, &report)?;
     Ok(true)
 }
 

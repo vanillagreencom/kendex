@@ -7,12 +7,15 @@
 
 use super::{DeclaredEffects, run_script, touches_git};
 
-/// A line an undo produced, on the channel it belongs to.
+/// A line an undo produced, tagged with where it came from.
 ///
-/// Three, because the surfaces do three different things with them. A
-/// terminal escapes its own account, relays the package's stderr as a line
-/// like any other, and hands its stdout on byte for byte for whatever is
-/// piping it; a window shows all three to a person.
+/// Three tags rather than one stream, because two distinctions matter and
+/// neither surface can recover them afterwards. kendex's own account is
+/// told from the package's, so a surface knows which lines are already
+/// escaped and which are a third party's to escape. And the package's
+/// stdout is told from its stderr, so a terminal can hand the summary on
+/// byte for byte for whatever is piping it while everything else goes out
+/// as a line to read. A window has no pipe and escapes both.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Spoken {
     /// kendex's account of what it did about one package's effect.

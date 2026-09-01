@@ -26,17 +26,56 @@ struct Fixture {
     project: PathBuf,
 }
 
-#[allow(clippy::unwrap_used)]
-fn git(dir: &Path, args: &[&str]) {
-    let output = std::process::Command::new("git")
-        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
-        .args(args)
-        .current_dir(dir)
+/// One empty git configuration for this whole test binary, global and
+/// system alike.
+///
+/// Not the developer's. A maintainer's own config decides what a git this
+/// file runs does — `commit.gpgsign` reds every case here on a fixture
+/// with no signing key — and none of that has anything to do with this
+/// code.
+///
+/// Named on each command this file builds. It does NOT reach the installer
+/// kendex spawns, whose argv belongs to core and whose environment is
+/// whatever this process hands down; covering that one means writing the
+/// variables onto the process, and the workspace forbids `unsafe`, which
+/// `std::env::set_var` now requires. So a maintainer who has configured a
+/// hooks path still sees the arming cases stand down — the same shape
+/// `crates/cli/tests/install_ux/guarding.rs` has, and a suite-wide
+/// property rather than anything this file introduced.
+fn empty_git_config() -> &'static Path {
+    static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let path = std::env::temp_dir().join("kendex-app-repo-effects-empty.gitconfig");
+        let _ = fs::write(&path, "");
+        path
+    })
+    .as_path()
+}
+
+/// The fixture's own git: as little of the developer's as reaches it.
+///
+/// Three variables and two config files. A pre-commit hook exports
+/// `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` at the repository being
+/// committed to, so a child that clears only the first writes its staged
+/// entries into that repository's index. The config files are the empty
+/// pair above.
+fn own_git(args: &[&str], dir: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("git");
+    command
+        .env("GIT_CONFIG_GLOBAL", empty_git_config())
+        .env("GIT_CONFIG_SYSTEM", empty_git_config())
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
-        .output()
-        .unwrap();
+        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+        .args(args)
+        .current_dir(dir);
+    command
+}
+
+#[allow(clippy::unwrap_used)]
+fn git(dir: &Path, args: &[&str]) {
+    let output = own_git(args, dir).output().unwrap();
     assert!(
         output.status.success(),
         "git {args:?}: {}",
@@ -63,6 +102,7 @@ fn copy_tree(from: &Path, to: &Path) {
 /// bundle carrying growth-guards, with Claude on the machine.
 #[allow(clippy::unwrap_used)]
 fn fixture() -> Fixture {
+    empty_git_config();
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let project = home.join("dev/app");
@@ -209,11 +249,13 @@ fn the_effect_comes_back_unrun_and_a_separate_yes_arms_it() {
         f.project.join(".git/hooks/kendex-guards").is_file(),
         "the yes did not arm the hooks"
     );
-    // The installer's own last word is what the window shows.
+    // The installer's own last word is what the window shows — its
+    // success wording, not the substring its failures share with it:
+    // every "NOT armed" line the installer can print contains "armed".
     assert!(
         said.stdout
             .last()
-            .is_some_and(|line| line.contains("armed")),
+            .is_some_and(|line| line.contains("pre-commit and commit-msg armed in")),
         "{said:?}"
     );
 }
@@ -354,21 +396,10 @@ fn commit(f: &Fixture, message: &str) -> std::process::Output {
     #[allow(clippy::unwrap_used)]
     {
         fs::write(f.project.join("late.txt"), message).unwrap();
+        own_git(&["commit", "--quiet", "-a", "-m", message], &f.project)
+            .output()
+            .unwrap()
     }
-    #[allow(clippy::unwrap_used)]
-    std::process::Command::new("git")
-        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
-        .args(["commit", "--quiet", "-a", "-m", message])
-        .current_dir(&f.project)
-        // All three, like `git` above: a pre-commit hook exports every one
-        // of them pointing at the repository being committed to, so a
-        // fixture that clears only GIT_DIR still inherits GIT_INDEX_FILE
-        // and writes its own staged entries into that repository's index.
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
-        .unwrap()
 }
 
 /// Removing the package from the window disarms the repository first, and
@@ -542,4 +573,91 @@ fn removing_an_inert_package_says_nothing() {
         .unwrap_or_else(|error| panic!("remove: {error}"));
 
     assert!(view.undone.is_empty(), "{:?}", view.undone);
+}
+
+/// A departing package's own output reaches the window escaped.
+///
+/// The lines land in a toast carrying no attribution, so a package that
+/// writes a bidi override or a line phrased in kendex's voice would be
+/// read as kendex talking. The terminal escapes them; this proves the
+/// window does too, which is what makes the three places claiming both
+/// surfaces show the same lines true.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_departing_package_s_output_reaches_the_window_escaped() {
+    let f = fixture();
+    let scripts = f.project.join(".agents/skills/loud/scripts");
+    let catalog_scripts = f.env.home.join("catalog/skills/loud/scripts");
+    fs::create_dir_all(&catalog_scripts).unwrap();
+    fs::write(
+        f.env.home.join("catalog/skills/loud/SKILL.md"),
+        "---\nname: loud\ndescription: writes a deceptive line\n\
+         repo-effects:\n  summary: \"says something on the way out\"\n  \
+         uninstaller: \"scripts/out\"\n---\nBody.\n",
+    )
+    .unwrap();
+    // U+202E, the override that reverses everything printed after it.
+    fs::write(
+        catalog_scripts.join("out"),
+        "#!/bin/sh\nprintf 'loud: \\342\\200\\256done\\n'\n",
+    )
+    .unwrap();
+    fs::set_permissions(
+        catalog_scripts.join("out"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    install_skills(&f, &["loud"], None);
+    assert!(scripts.join("out").is_file(), "the fixture did not install");
+
+    let view = kendex_app::audit::remove(&f.env, &f.scope, ItemKind::Skill, "loud")
+        .unwrap_or_else(|error| panic!("remove: {error}"));
+
+    let said = view.undone.join("\n");
+    assert!(said.contains("loud: running"), "{said:?}");
+    assert!(
+        !said.contains('\u{202E}'),
+        "the override reached the window raw: {said:?}"
+    );
+    assert!(said.contains("\\u{202e}"), "{said:?}");
+}
+
+/// A write that must take nothing away refuses when it would, rather than
+/// running an uninstaller whose account nobody would see.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_write_that_must_remove_nothing_refuses_when_it_would() {
+    let f = fixture();
+    arm(&f);
+    // The report a whole-scope apply builds once the manifest no longer
+    // declares the package: a real removal, with the effect leaving.
+    let manifest = f.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        text.replace("[skills.growth-guards]\nsource = \"cat\"\n", ""),
+    )
+    .unwrap();
+    let report = kendex_core::engine::plan_apply(
+        &f.env,
+        &f.scope,
+        &kendex_core::engine::PlanOptions {
+            remove_orphans: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        !report.repo_effects_leaving.is_empty(),
+        "the fixture built a report with nothing leaving"
+    );
+
+    let refused = kendex_app::repo_effects::write_nothing_leaving(&f.env, &report).unwrap_err();
+
+    assert!(refused.contains("growth-guards"), "{refused}");
+    assert!(refused.contains("Audit page"), "{refused}");
+    assert!(
+        f.project.join(".git/hooks/kendex-guards").is_file(),
+        "the refusal ran the uninstaller anyway"
+    );
 }

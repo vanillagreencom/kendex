@@ -18,6 +18,7 @@ import {
   type UpdateRow,
 } from "@/bindings";
 import { invalidations } from "@/lib/read-state";
+import { saying } from "@/lib/undone";
 import type { BulkOutcome } from "@/lib/update-outcome";
 import { type ApplyOutcome, applyRow, applyRows } from "./updates-apply";
 
@@ -34,7 +35,12 @@ export const commits = invalidations();
  *  lets a stale report overwrite a commit. */
 const committing = async <T>(work: Promise<T>): Promise<T> => {
   try {
-    return await work;
+    // Said on the write for the same reason the commit is announced on it:
+    // a removal that ran an uninstaller in somebody's repository has to be
+    // reported by whatever command took the package away, and a rule each
+    // new mutation remembers is the rule this module already watched get
+    // forgotten. A write whose answer carries no account says nothing.
+    return saying(await work);
   } finally {
     commits.moved();
   }

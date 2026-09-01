@@ -127,6 +127,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     set({ error: null });
     toast.success(`Subscribed to '${response.data.name}'`);
     for (const note of response.data.notes) toast.message(note);
+    sayUndone(response.data.undone);
     // A repository page may now have a subscription to carry on as, under
     // whatever spelling the dialog was submitted with; the dropped summaries
     // re-read and the page picks it up.

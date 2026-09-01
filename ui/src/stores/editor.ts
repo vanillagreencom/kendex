@@ -10,6 +10,7 @@ import { type Draft, emptyDraft } from "@/lib/editor-draft";
 
 import { everyPlace, sameScope } from "@/lib/scope";
 import { settingsDraft, withEdit } from "@/lib/settings-rows";
+import { saying } from "@/lib/undone";
 import { useAuditStore } from "./audit";
 import {
   mergedPlaces,
@@ -155,6 +156,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
       return;
     }
     set({ error: null, stale: false });
+    // Saving a manifest with a package deleted out of it takes that package
+    // away, so this save owes the same account a removal does. Wired here
+    // rather than by the write the update commands share: the editor
+    // answers a refusal shape of its own and never goes through it.
+    saying(response);
     await load();
     // Forced: a save rewrote the manifest this scope renders from, so an
     // audit inside its freshness window would keep every score answering

@@ -288,7 +288,7 @@ export const commands = {
 	 *  Subscribe a scope to a marketplace: `owner/repo[@rev]`, a git URL, a
 	 *  GitHub tree URL, a skills.sh package URL, or a local folder.
 	 */
-	marketplaceSubscribe: (scope: Scope, reference: string, name: string | null) => typedError<SubscribeOutcome, string>(__TAURI_INVOKE("marketplace_subscribe", { scope, reference, name })),
+	marketplaceSubscribe: (scope: Scope, reference: string, name: string | null) => typedError<SubscribeOutcome_Serialize, string>(__TAURI_INVOKE("marketplace_subscribe", { scope, reference, name })),
 	/**
 	 *  The dialog's preview: the closure partitioned into removable, edited, and
 	 *  the bundles that go. Refuses (as an error) while the source cannot be read.
@@ -2784,7 +2784,10 @@ export type SubmittedView = {
 };
 
 /**  What subscribing declared, after the plan ran. */
-export type SubscribeOutcome = {
+export type SubscribeOutcome = SubscribeOutcome_Serialize | SubscribeOutcome_Deserialize;
+
+/**  What subscribing declared, after the plan ran. */
+export type SubscribeOutcome_Deserialize = {
 	name: string,
 	/**  The declared repository or path. */
 	reference: string,
@@ -2795,6 +2798,32 @@ export type SubscribeOutcome = {
 	 */
 	lead: string | null,
 	notes: string[],
+	/**
+	 *  What a package leaving with this plan had undone, if one did. Its
+	 *  own field rather than more notes, so the account a removal owes has
+	 *  one name across every command that can make one.
+	 */
+	undone: string[],
+};
+
+/**  What subscribing declared, after the plan ran. */
+export type SubscribeOutcome_Serialize = {
+	name: string,
+	/**  The declared repository or path. */
+	reference: string,
+	rev: string | null,
+	/**
+	 *  The package a tree or skills.sh URL was leading to — where the app
+	 *  opens next, never an identity.
+	 */
+	lead: string | null,
+	notes: string[],
+	/**
+	 *  What a package leaving with this plan had undone, if one did. Its
+	 *  own field rather than more notes, so the account a removal owes has
+	 *  one name across every command that can make one.
+	 */
+	undone?: string[],
 };
 
 /**

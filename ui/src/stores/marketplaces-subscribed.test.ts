@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type DirectoryRow, type MarketplaceRow } from "@/bindings";
 import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
@@ -147,6 +148,54 @@ describe("a Community row's Subscribed marker", () => {
     const live = subscribedKeys(useMarketplacesStore.getState().rows);
     // The snapshot still says subscribed; the live list outranks it.
     expect(rowSubscribed({ ...listed, subscribed: true }, live)).toBe(false);
+  });
+
+  // The one reason marketplace_unsubscribe stopped answering with nothing:
+  // a package leaving with its source may have armed this repository, and
+  // its uninstaller ran. Rust proves it produces the lines; this proves
+  // the window shows them.
+  it("says what the unsubscribe ran in the repository", async () => {
+    useMarketplacesStore.setState({
+      rows: [row("Acme/Kit", "acme/kit")],
+      read: READ_LANDED,
+    });
+    vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
+      status: "ok",
+      data: ["growth-guards: running scripts/install-git-hooks --uninstall"],
+    });
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+
+    await useMarketplacesStore
+      .getState()
+      .unsubscribe({ scope: "global" }, "kit", false, false);
+
+    expect(toast.message).toHaveBeenCalledWith(
+      "growth-guards: running scripts/install-git-hooks --uninstall",
+    );
+  });
+
+  it("stays quiet when the unsubscribe took no armed package away", async () => {
+    useMarketplacesStore.setState({
+      rows: [row("Acme/Kit", "acme/kit")],
+      read: READ_LANDED,
+    });
+    vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+
+    await useMarketplacesStore
+      .getState()
+      .unsubscribe({ scope: "global" }, "kit", false, false);
+
+    expect(toast.message).not.toHaveBeenCalled();
   });
 
   it("falls back to the snapshot only before the live list has loaded", () => {

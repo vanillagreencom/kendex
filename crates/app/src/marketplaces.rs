@@ -186,6 +186,11 @@ pub struct SubscribeOutcome {
     /// opens next, never an identity.
     pub lead: Option<String>,
     pub notes: Vec<String>,
+    /// What a package leaving with this plan had undone, if one did. Its
+    /// own field rather than more notes, so the account a removal owes has
+    /// one name across every command that can make one.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub undone: Vec<String>,
 }
 
 /// Subscribe a scope to a marketplace: `owner/repo[@rev]`, a git URL, a
@@ -200,12 +205,13 @@ pub fn marketplace_subscribe(
     let env = env()?;
     let subscribed = source_ops::subscribe(&env, &scope, &reference, name.as_deref())
         .map_err(|e| e.to_string())?;
-    // The subscription's own plan, through the one executor: a manifest
-    // edited outside the window can leave a package the plan drops, and its
-    // uninstaller has to run while its scripts are still on disk.
+    // Through the one executor, like every report. Not because a subscribe
+    // is expected to drop a package — orphan removal is off here, so it
+    // does not — but because that is the invariant: no path reasons about
+    // whether its own plan can take a package away, so none of them has to
+    // be re-reasoned about when its planning options change.
     let undone = crate::repo_effects::write(&env, &subscribed.report)?;
     let mut notes = subscribed.report.notes;
-    notes.extend(undone);
     // Fetch so counts and browsing land right away; a failure costs the
     // counts, never the subscription — the CLI verb behaves the same.
     if let Ok(Some(manifest)) =
@@ -222,6 +228,7 @@ pub fn marketplace_subscribe(
         rev: subscribed.rev,
         lead: subscribed.lead,
         notes,
+        undone,
     })
 }
 

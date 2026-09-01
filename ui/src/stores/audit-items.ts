@@ -105,8 +105,6 @@ export function auditRunner(
       // What the removal ran in the repository, said whatever the action
       // was called: every command here answers with the same view.
       sayUndone(response.data.undone);
-      // What the removal ran in the repository, said whatever the action
-      // was called: every command here answers with the same view.
       await useScanStore.getState().refresh();
       return true;
     }

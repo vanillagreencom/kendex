@@ -524,3 +524,95 @@ fn a_settings_only_save_carries_no_manifest_draft() {
         "the key arrives with the explainer the template ships: {written}"
     );
 }
+
+/// A project carrying a package that declares an uninstaller, installed
+/// and on disk, with a manifest the editor can save a package out of.
+///
+/// No `writes` inside `.git`, so the disclosure's git stand-down does not
+/// apply and no work tree is needed to prove what the removal runs.
+#[cfg(unix)]
+fn scope_carrying_a_declaring_package() -> (tempfile::TempDir, Env, Scope) {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), kendex_core::env::FakeOs::Linux);
+    let project = tmp.path().join("dev/app");
+    std::fs::create_dir_all(project.join(".claude")).unwrap();
+    let catalog = tmp.path().join("catalog");
+    let scripts = catalog.join("skills/guards/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        catalog.join("skills/guards/SKILL.md"),
+        "---\nname: guards\ndescription: gates the commits\n\
+         repo-effects:\n  summary: \"gates every commit here\"\n  \
+         installer: \"scripts/arm\"\n  uninstaller: \"scripts/arm --uninstall\"\n\
+         ---\nBody.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("arm"),
+        "#!/bin/sh\ncase \" $* \" in *\" --uninstall \"*) echo 'guards: disarmed';; \
+         *) echo 'guards: armed';; esac\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(scripts.join("arm"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = {MANIFEST_SCHEMA}\n\n[sources.cat]\n{}\n\n\
+             [install]\nharnesses = [\"claude\"]\n\n[skills.guards]\nsource = \"cat\"\n",
+            source_path(&catalog)
+        ),
+    )
+    .unwrap();
+    // Install it, so the tree whose uninstaller a removal runs is on disk.
+    write_customize(
+        &env,
+        Scope::Project {
+            root: project.clone(),
+        },
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(
+        project.join(".agents/skills/guards/scripts/arm").is_file(),
+        "the fixture did not install the package"
+    );
+    (tmp, env, Scope::Project { root: project })
+}
+
+/// What the editor's own save does about a package the draft deletes.
+///
+/// The reason `ExecuteError::Apply` carries the lines already said is that
+/// a repository disarmed before a failed write is a fact somebody is owed.
+/// This route plans with `PlanOptions::default()`, so orphan removal is
+/// off and a package dropped from the manifest keeps its lock entry — the
+/// save reconciles the declaration away and takes nothing off disk. That
+/// makes the account empty here, and the assertion is what holds it that
+/// way: if this route ever starts removing, the doc on the stale arm has
+/// to carry `said` through rather than discard it.
+#[cfg(unix)]
+#[test]
+fn a_save_that_drops_a_package_removes_nothing_and_so_accounts_for_nothing() {
+    let (tmp, env, scope) = scope_carrying_a_declaring_package();
+    let manifest_path = manifest::manifest_path(&env, &scope);
+    let (current, base) = manifest::read_for_mutation(&manifest_path).unwrap();
+    let mut edited = current.unwrap();
+    edited.skills.remove("guards");
+
+    let view = write_customize(&env, scope, Some((edited, base)), None).unwrap();
+
+    assert!(
+        view.undone.is_empty(),
+        "the editor's save reported a removal it does not make: {:?}",
+        view.undone
+    );
+    // And it really did leave the package's files alone — an empty account
+    // over a removal that happened would be the defect, not the state.
+    assert!(
+        tmp.path()
+            .join("dev/app/.agents/skills/guards/scripts/arm")
+            .is_file(),
+        "the save took the package off disk after all"
+    );
+}

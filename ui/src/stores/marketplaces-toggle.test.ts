@@ -1,5 +1,6 @@
 // A bare repository page's action and what toggling its holder does to
 // the summaries that decide which subscription the page carries on as.
+import { toast } from "sonner";
 import { describe, expect, it, vi } from "vitest";
 import { commands, type MarketplaceRow } from "@/bindings";
 import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
@@ -89,6 +90,50 @@ describe("a bare repository page's action", () => {
     );
     expect(held?.enabled).toBe(false);
     expect(held?.name).toBe("kit");
+  });
+
+  // Turning a source off drops the packages it carried, so the toggle can
+  // run a departing package's uninstaller — and the window has to say so.
+  it("says what turning a source off ran in the repository", async () => {
+    vi.mocked(commands.sourceToggle).mockResolvedValue({
+      status: "ok",
+      data: {
+        sources: [],
+        undone: [
+          "growth-guards: running scripts/install-git-hooks --uninstall",
+        ],
+      },
+    });
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+
+    await useMarketplacesStore
+      .getState()
+      .toggle({ scope: "global" }, "kit", false);
+
+    expect(toast.message).toHaveBeenCalledWith(
+      "growth-guards: running scripts/install-git-hooks --uninstall",
+    );
+  });
+
+  it("stays quiet when the toggle took no armed package away", async () => {
+    vi.mocked(toast.message).mockClear();
+    vi.mocked(commands.sourceToggle).mockResolvedValue({
+      status: "ok",
+      data: { sources: [] },
+    });
+    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+
+    await useMarketplacesStore
+      .getState()
+      .toggle({ scope: "global" }, "kit", true);
+
+    expect(toast.message).not.toHaveBeenCalled();
   });
 
   it("stays neutral until the canonical key is known, then matches by it", () => {

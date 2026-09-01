@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AuditView_Serialize,
@@ -26,6 +27,9 @@ vi.mock("@/bindings", async (importOriginal) => ({
   },
 }));
 
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
+}));
 vi.mock("./audit", () => ({
   useAuditStore: { getState: () => ({ refresh: vi.fn() }) },
 }));
@@ -124,6 +128,56 @@ describe("editor store", () => {
       },
       null,
     );
+  });
+
+  /// A manifest saved with a package deleted out of it takes that package
+  /// away, so this route runs the leaving package's uninstaller like any
+  /// other removal — and the editor is the one write that does not go
+  /// through the update commands, so it says so itself.
+  it("says what a save that dropped a package ran in the repository", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    await useEditorStore.getState().load();
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...({} as AuditView_Serialize),
+        undone: [
+          "growth-guards: running scripts/install-git-hooks --uninstall",
+        ],
+      },
+    });
+    useEditorStore
+      .getState()
+      .edit((draft) => setInstruction(draft, "skill-instructions", "gh", "x"));
+
+    await useEditorStore.getState().save();
+
+    expect(toast.message).toHaveBeenCalledWith(
+      "growth-guards: running scripts/install-git-hooks --uninstall",
+    );
+  });
+
+  it("stays quiet when a save took no armed package away", async () => {
+    vi.mocked(toast.message).mockClear();
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1" },
+    });
+    await useEditorStore.getState().load();
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    useEditorStore
+      .getState()
+      .edit((draft) => setInstruction(draft, "skill-instructions", "gh", "x"));
+
+    await useEditorStore.getState().save();
+
+    expect(toast.message).not.toHaveBeenCalled();
   });
 
   /// The manifest is not the settings file: a settings change reconciles

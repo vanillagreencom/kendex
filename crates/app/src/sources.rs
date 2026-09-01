@@ -31,6 +31,12 @@ pub struct SourcesAfter {
     pub undone: Vec<String>,
 }
 
+/// Write a source action's report and answer with what stands after it.
+///
+/// Through the one executor, like every report. Removing or disabling a
+/// source can take its packages with it; adding one does not. Neither
+/// command has to know which it is, and that is the point of there being
+/// one door.
 fn run_and_list(
     env: &Env,
     report: kendex_core::engine::EngineReport,
@@ -126,6 +132,8 @@ pub fn install_bundle(
         ..AddRequest::default()
     };
     let report = engine_ops::add(env, scope, &request).map_err(|e| e.to_string())?;
+    // The one executor, as everywhere: a set install is an add and takes
+    // nothing away today, and no command here is written to depend on that.
     let undone = crate::repo_effects::write(env, &report)?;
     let repo_effects = kendex_core::repo_effects::offers_for(env, scope, &report.repo_effects)
         .map_err(|e| e.to_string())?;

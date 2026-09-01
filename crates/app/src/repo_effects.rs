@@ -1,5 +1,7 @@
 //! The desktop's half of a package's repository effects: the command that
-//! runs an effect once the window has a yes.
+//! runs an effect once the window has a yes, and the one executor every
+//! command writes a report through, which undoes a leaving package's
+//! effect before the plan takes its scripts away.
 //!
 //! An install is one command that plans and writes. The effect is not in
 //! it: the report's declarations become the offers the window shows, and
@@ -99,6 +101,14 @@ pub enum ExecuteError {
     /// already said ride along — a repository disarmed before a write that
     /// then failed is a fact the person is still owed. Boxed: a refusal is
     /// the rare path, and the common `Ok` should not carry its size.
+    ///
+    /// One caller drops them: the editor maps a stale precondition to the
+    /// reload choice it draws, which is a unit answer with nowhere to put
+    /// a line. Sound there and only there, because that route plans with
+    /// `PlanOptions::default()` and so removes nothing — held by
+    /// `a_save_that_drops_a_package_removes_nothing_and_so_accounts_for_nothing`
+    /// rather than by this sentence. Any other caller that reads this
+    /// variant owes the lines.
     Apply {
         said: Vec<String>,
         error: Box<kendex_core::error::CoreError>,
@@ -144,7 +154,21 @@ pub fn execute(env: &Env, report: &EngineReport) -> Result<Vec<String>, ExecuteE
     if let Err(error) = kendex_core::repo_effects::undo(
         &report.plan.scope,
         &report.repo_effects_leaving,
-        &mut |spoken| said.push(spoken.into_line()),
+        // The package's own two streams go out escaped, the way the
+        // terminal escapes them. This is a departing third party's output
+        // landing in a toast that carries no attribution, so a line of
+        // bidi overrides or one phrased in kendex's voice would read as
+        // kendex talking. core already escapes its own Note lines, and
+        // `shown` over escaped text is the same text.
+        //
+        // The terminal's stdout door stays unescaped for the reason it
+        // exists: those bytes are a pipe's answer. A window has no pipe.
+        &mut |spoken| {
+            said.push(match spoken {
+                kendex_core::repo_effects::Spoken::Note(line) => line,
+                other => kendex_core::names::shown(&other.into_line()),
+            });
+        },
     ) {
         said.push(error.to_string());
         return Err(ExecuteError::Undo(said.join("\n")));
@@ -161,4 +185,31 @@ pub fn execute(env: &Env, report: &EngineReport) -> Result<Vec<String>, ExecuteE
 /// The same write for a caller that has no use for the two kinds apart.
 pub fn write(env: &Env, report: &EngineReport) -> Result<Vec<String>, String> {
     execute(env, report).map_err(|error| error.to_string())
+}
+
+/// The same write for a caller whose plan must take nothing away, and
+/// which has nowhere to say what a removal ran.
+///
+/// The emptiness is checked, not assumed. A caller reaches this because it
+/// proved something about its own plan a moment earlier, and a proof in a
+/// comment is worth what the next edit leaves of it — while the cost of
+/// being wrong is uninstallers running in somebody's repository off an
+/// answer they gave about something else, with nothing said. So it refuses
+/// before the write and names what it would have removed, which is the
+/// direction guard code has to fail.
+pub fn write_nothing_leaving(env: &Env, report: &EngineReport) -> Result<(), String> {
+    let leaving = &report.repo_effects_leaving;
+    if !leaving.is_empty() {
+        let names: Vec<String> = leaving
+            .iter()
+            .map(|declared| kendex_core::names::shown(&declared.name))
+            .collect();
+        return Err(format!(
+            "this would also take {} away, and undoing what it did to this \
+             repository is not something this action can report — apply the \
+             scope from the Audit page, which says what a removal ran",
+            names.join(", ")
+        ));
+    }
+    write(env, report).map(|_| ())
 }

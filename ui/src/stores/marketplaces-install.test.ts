@@ -2,6 +2,7 @@
 // the repository — and the store is where that question lives: queued
 // from the install's answer, asked one package at a time, and spent on
 // the answer it gets.
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type Disclosure, type Scope } from "@/bindings";
 import {
@@ -21,7 +22,7 @@ vi.mock("@/bindings", () => ({
   },
 }));
 vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), info: vi.fn(), error: vi.fn(), message: vi.fn() },
 }));
 vi.mock("./audit", () => ({
   useAuditStore: { getState: () => ({ refresh: vi.fn() }) },
@@ -235,5 +236,37 @@ describe("answering", () => {
     expect(useMarketplacesStore.getState().pendingEffects?.queue).toEqual([
       disclosure("linter"),
     ]);
+  });
+});
+
+// An install plans the whole scope, so its plan can take a package away
+// as well as bring one — and a package that leaves has its uninstaller run
+// before its scripts go. That is not the second question the dialog asks;
+// it already happened, and the window says so.
+describe("what an install says about a package that left with it", () => {
+  const RAN = "growth-guards: running scripts/install-git-hooks --uninstall";
+
+  it("says what the install ran in the repository", async () => {
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue({
+      status: "ok",
+      data: {
+        packages: [],
+        repoEffects: { shown: [], withheld: [] },
+        undone: [RAN],
+      },
+    });
+
+    await install();
+
+    expect(toast.message).toHaveBeenCalledWith(RAN);
+  });
+
+  it("stays quiet when the install took no armed package away", async () => {
+    vi.mocked(toast.message).mockClear();
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed([]));
+
+    await install();
+
+    expect(toast.message).not.toHaveBeenCalled();
   });
 });
