@@ -44,7 +44,7 @@ are a defect.
 ## Triage
 
 - **Already fixed** → compare the marker's `source=<repo>@<commit7>` to the fix
-  commit before investigating; older than the fix closes with "fixed in <sha>".
+  commit before investigating.
 - **Duplicate** → close, name the canonical issue.
 - **Not a kendex asset** → ownership is the asset's SKILL.md frontmatter
   (`source: kendex`), never its install path. Close with the reason; repost
