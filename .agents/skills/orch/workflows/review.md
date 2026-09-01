@@ -147,7 +147,7 @@ Omit empty categories. **Disposition is by rule, not by prompt** — never prese
 
 </output_format>
 
-`category == "issue"` suggestions that clear the filing bar in [references/finding-disposition.md](../references/finding-disposition.md), plus any escalated items from the fix round, build an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (or null), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
+Apply [references/finding-disposition.md](../references/finding-disposition.md) § Filing bar to every candidate: `category == "issue"` suggestions and the escalated items from the fix round alike. What clears it builds an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (or null), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
 
 audit-issues is a primary-session wrapper holding the interactive approval gate: run it in this session, never delegated to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
 

@@ -31,7 +31,8 @@ reply contract is in the orch skill, not here.
 - Do not re-raise a finding class answered `Declined: <reason>` on this PR
   unless the relevant code changed since.
 - Author replies are `Fixed in <sha>`, `Declined: <reason>`, or
-  `Tracked: KEN-<n>` / `#<n>`. A decline names the passing state, the
-  false premise it disproves, or the excluded class it falls in; a label
-  is not a reason. The merge gate rejects tracking claims that name no
-  issue, and declines whose reason is nothing but a label it knows.
+  `Tracked: KEN-<n>` / `#<n>`. A decline takes a reason form
+  `skills/orch/references/finding-disposition.md` § Decision flow sets
+  out; a label is not a reason. The merge gate rejects tracking claims
+  that name no issue, and declines whose reason is nothing but a label
+  it knows.

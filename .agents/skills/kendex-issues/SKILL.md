@@ -86,8 +86,8 @@ orch owns every step. kendex-specific parameters:
 - **Review the diff yourself** before submit — the actual root cause, not a
   plausible one. A stalled delegate: inspect its worktree, nudge once.
 - Findings and coupled defects disposition per orch
-  `references/finding-disposition.md` — the defect fork first, one reply
-  form per thread.
+  `references/finding-disposition.md` — the excluded classes ahead of the
+  defect fork, one reply form per thread.
 - Disjoint files → parallel; same file → sequence or bundle.
 - A required check that cannot be rerun gets a fresh head
   (`commit --amend --no-edit` + `push --force-with-lease`, never-shared

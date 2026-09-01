@@ -5,30 +5,34 @@
 # What each replaced. The twin rule was "never re-implement a judgment another
 # component owns — delegate", which names a judgment and carries no step that
 # would find one; a grep is a step an agent can run. The migration rule was a
-# product baseline in `docs/ARCHITECTURE.md` with no agent-facing half: the dev
-# bullet adds the action (write no reader for an older version's artifact) and
-# the verdict (a finding asking for one is declined), and cites that baseline
-# rather than restating it. The scope rule's "mechanical enablers" exception had
-# no closed list, so such a reader rode in as an enabler.
+# product baseline in the project's architecture doc with no agent-facing half:
+# the dev bullet adds the action (write no reader for an older version's
+# artifact) and the verdict (a finding asking for one is declined). The scope
+# rule's "mechanical enablers" exception had no closed list, so such a reader
+# rode in as an enabler.
 #
-# WHAT THIS COVERS is structure, which is all a token pin can establish
-# (`review-bots.md`, the markdown-contract bullet): the deferrals to Step 0 in
-# both sections that state the introduced-or-armed exception, the link that
-# makes Step 0 reachable and its resolution, the baseline the migration bullet
-# cites, and the absence of the delegation sentence the twin rule replaced.
+# WHAT THIS COVERS, stated as the token facts it checks rather than the rules
+# they belong to, because a token pin establishes that a structural element is
+# present and nothing more (`review-bots.md`, the markdown-contract bullet):
 #
-# WHAT IT DOES NOT COVER, and none is asked for: the rules themselves. That an
-# agent greps before adding a function, that a second copy in any language or
-# in prose is a twin, that an issue ordering one is escalated, that no reader
-# is written for an older version's artifact and such a finding is declined,
-# and that the enabler list is closed are behavioral claims living only in
-# prose. Prose negates and qualifies around any literal, so pinning those
-# sentences would report coverage of a bullet rewritten to say the opposite.
-# Deleting the twin bullet outright is likewise outside what this decides: the
-# `absent` rule below only refuses the sentence it replaced coming back.
+#   * § Engineering Rules names Step 0 on a line that also carries the
+#     finding-disposition link, and that link resolves to a file
+#   * § Round Contract names Step 0
+#   * neither section carries the delegation sentence the twin rule replaced
+#
+# WHAT IT DOES NOT COVER, and none is asked for, since each is a claim about
+# direction or behavior that co-occurrence cannot establish: that either
+# section DEFERS to Step 0 rather than overriding it; that an agent greps
+# before adding a function; that a second copy in any language or in prose is
+# a twin; that an issue ordering one is escalated; that no reader is written
+# for an older version's artifact and such a finding is declined; and that the
+# enabler list is closed. Each was mutated with every pinned token kept and
+# this suite stayed green. Deleting the twin bullet outright is likewise
+# outside what this decides: the `absent` rule only refuses the sentence it
+# replaced coming back.
 #
 # The markdown reader is `skills/orch/tests/lib/md.sh`, shared rather than
-# copied here — a second copy of it would be the twin the rule above bans. It
+# copied here — a second copy of it would be the twin the rule below bans. It
 # resolves SKILL_DIR to orch, so this suite reassigns SKILL_DIR to dev
 # immediately after sourcing and every rule reads the same variable its
 # neighbours use.
@@ -50,26 +54,20 @@ DISP_LINK='../orch/references/finding-disposition.md'
 
 echo "=== dev engineering-rules lint ==="
 
-# Both statements of the introduced-or-armed exception defer to Step 0, so
-# neither says the opposite of the excluded classes, and the scope rule carries
-# the link that makes the step reachable from here.
-rule "the scope rule defers to Step 0 and links it" "$DEV" "$RULES" \
+# Both sections that state the introduced-or-armed exception name Step 0, and
+# the scope rule's line carries the link that makes the step reachable.
+rule "the scope rule names Step 0 and links it" "$DEV" "$RULES" \
   'Step 0' "$DISP_LINK"
-rule "the round contract defers to Step 0" "$DEV" "$ROUND" 'Step 0'
-
-# The migration rule's home is the product baseline; this bullet cites it
-# rather than restating the judgment.
-rule "the migration rule cites its baseline" "$DEV" "$RULES" \
-  'docs/ARCHITECTURE.md'
+rule "the round contract names Step 0" "$DEV" "$ROUND" 'Step 0'
 
 # The sentence the twin rule replaced, refused rather than left beside it.
 absent "no rule states the twin test as a judgment to recognise" "$DEV" "$RULES" \
   'Never re-implement a judgment another component owns' \
   '- Never re-implement a judgment another component owns — delegate.'
 
-# The link resolves. A rule deferring to a step behind a dead link states
-# nothing an agent can follow. `check` carries no automatic control, so the
-# planted one below is this check's teeth.
+# The link resolves. A rule naming a step behind a dead link states nothing an
+# agent can follow. `check` carries no automatic control, so the planted one
+# below is this check's teeth.
 resolves() { [ -f "$SKILL_DIR/$1" ]; }
 check "the Step 0 link resolves to a file" resolves "$DISP_LINK"
 check "the link check flags a target that is not there" \

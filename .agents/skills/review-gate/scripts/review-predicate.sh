@@ -1493,7 +1493,7 @@ if [ "$cr" != "0" ]; then
 elif [ "$untracked" != "0" ]; then
   echo "verdict=untracked-claim detail=$untracked tracking claim(s) name no issue — write Declined: <reason>, or add the tracker/#id"
 elif [ "$unreasoned" != "0" ]; then
-  echo "verdict=unreasoned-decline detail=$unreasoned decline(s) name no mechanism — state the passing state or the false premise the finding is wrong about"
+  echo "verdict=unreasoned-decline detail=$unreasoned decline(s) name no mechanism — give a reason form from finding-disposition.md's decision flow"
 elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
   # One line, no source list. Which sources could open the gate is the repo's
   # own settings (references/settings.md), not a status description GitHub
