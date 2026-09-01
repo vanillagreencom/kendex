@@ -1137,7 +1137,7 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
         echo "  remedy: move the baseline in a commit that changes nothing else, then change its rows in the next one"
         ;;
       REPOINTED)
-        echo "size-ratchet FAIL baseline repointed and rewritten: $path — this change moves the setting to $path, where HEAD carries no rows, while HEAD's rows stay where they were; across the repoint nothing compares them, so a raise would land unjudged"
+        echo "size-ratchet FAIL baseline repointed and rewritten: $path — this change moves the setting to $path, and nothing establishes that the rows arriving there are the row set HEAD was judged against; across the repoint nothing compares them, so a raise would land unjudged"
         echo "  remedy: repoint the baseline in a commit that changes nothing else, then change its rows in the next one"
         ;;
     esac
@@ -1680,23 +1680,34 @@ snapshot_rows_at() { # PATH — 0 when the snapshot still holds a row set there
 #
 # Following the repoint is the same refused problem as following a move: where
 # HEAD's baseline was is a question only HEAD's settings answer. So this does
-# not ask. It refuses on the shape instead, and the shape is cheap: HEAD is
-# born, HEAD carries no rows at the configured path, the candidate has rows,
-# and the change touches a settings source — the only way a commit moves the
-# setting, since the environment is not something a commit can land.
+# not ask. It reads HEAD's own tree and decides from what is there.
 #
-# What HEAD holds a row set at decides the rest, and the count is the whole
-# judgment. It is taken over HEAD's tree, not over the change.
+# Rows AT the configured path used to end this check on its first line, which
+# read "the raise gate has a reference, so it is judging". It does not follow.
+# A repoint can land on a path that ALREADY carried rows of its own, and then
+# the reference rows_raised reads are a stranger's: HEAD's real baseline said
+# 15, the destination's own row said 20, and the raise reads as grandfathered.
+# The destination having rows is not evidence they are the rows this commit
+# should be judged against.
+#
+# So the entry condition is the settings source alone — the only way a commit
+# moves the setting, since the environment is not something a commit can land
+# — and the judgment is what HEAD holds a row set at, taken over HEAD's tree
+# rather than over the change. One question, asked once, in place of a chain
+# of preconditions that four review rounds each found a new way around.
 #
 # NONE is every bootstrap. An unborn HEAD is excluded above; a baseline this
 # change introduces leaves HEAD with no rows to route around; a placeholder
 # committed empty is not a row set. None of the three can hide a raise,
 # because none has a HEAD row to raise from.
 #
-# EXACTLY ONE is the only case where a match proves anything. That row set is
-# the baseline HEAD used — nothing else at HEAD is one — so a candidate
-# byte-identical to it carries HEAD's own rows and no row rose to reach them.
-# That is the pure repoint, and it passes.
+# EXACTLY ONE, AT THE CONFIGURED PATH, is an ordinary run. The setting still
+# names the rows HEAD was judged against, so rows_raised judges them as ever
+# and this says nothing.
+#
+# EXACTLY ONE, ELSEWHERE, is the repoint. That row set is the baseline HEAD
+# used — nothing else at HEAD is one — so a candidate byte-identical to it
+# carries HEAD's own rows and no row rose to reach them. Only that passes.
 #
 # TWO OR MORE cannot be told apart here. A candidate equal to SOME blob at
 # HEAD proves nothing once more than one is a row set: an unrelated tracked
@@ -1704,18 +1715,22 @@ snapshot_rows_at() { # PATH — 0 when the snapshot still holds a row set there
 # launder exactly the raise this refuses. Ambiguity fails closed, and the
 # remedy is the same two-commit split every other refusal here asks for.
 #
-# The scan is the expensive test and it runs last, behind conditions that are
-# false on every run in a repo whose baseline carries rows at its configured
-# path — which is every run that is not a bootstrap or a repoint.
+# Cost lives on the settings-source test, which is a path comparison over the
+# changed paths. A commit that touches no settings source never reaches the
+# scan, and that is every ordinary commit.
 baseline_repointed() { # CANDIDATE-BASELINE — violations on stdout
-  [ -z "$HEAD_BASELINE" ] || return 0 # HEAD has rows here; rows_raised judges them
   head_is_born "looking for a repointed baseline" || return 0
   [ "$(count_nonempty_lines "$1")" -gt 0 ] || return 0 # no rows arriving to judge
   diff_touches_settings || return 0
   count_head_row_sets
   case "$HEAD_ROW_SETS" in
-    0) return 0 ;;                                    # a bootstrap, not a repoint
-    1) candidate_is_prior_baseline "$1" && return 0 ;; # the pure repoint
+    0) return 0 ;; # a bootstrap, not a repoint
+    1)
+      # At the configured path the setting still names HEAD's own rows, and
+      # rows_raised is already judging them. Anywhere else, it moved.
+      [ "$HEAD_ROW_SET_PATH" != "$BASELINE_FILE" ] || return 0
+      candidate_is_prior_baseline "$1" && return 0 # the pure repoint
+      ;;
   esac
   # "-" placeholders, never empty fields: report() reads these rows with
   # tab-IFS, and whitespace IFS collapses consecutive tabs.
@@ -1785,15 +1800,22 @@ candidate_is_prior_baseline() { # FILE
   cmp -s -- "$TMP/prior.head" "$1"
 }
 
-# How many paths HEAD carries a row set at, other than the configured one,
-# counted no further than 2 — "more than one" is the whole answer past that,
-# and the tree is not worth walking for a number nothing reads. Sets
-# HEAD_ROW_SETS and, when it is 1, HEAD_ROW_SET_PATH.
+# How many paths HEAD carries a row set at, counted no further than 2 —
+# "more than one" is the whole answer past that, and the tree is not worth
+# walking for a number nothing reads. Sets HEAD_ROW_SETS and, when it is 1,
+# HEAD_ROW_SET_PATH.
 #
-# git grep narrows first — a row set is a file of row-shaped lines, so a file
-# with no such line cannot be one — and only the survivors are read in full.
-# That keeps the walk off HEAD's whole tree, which this would otherwise
-# inflate blob by blob.
+# The configured path is COUNTED, not skipped. Whether the single row set
+# HEAD holds is the one the setting names is the question the caller decides
+# on, and skipping that path answered it "no" for every ordinary run.
+#
+# git grep narrows first, and it narrows on a FIXED STRING: every row holds a
+# tab, so a blob with no tab cannot be a row set, and no row set escapes the
+# probe. Matching the full row pattern here instead cost 12.5s against this
+# repository's 3948 files where the fixed probe costs 52ms — a regex walking
+# megabyte-long lines is the expense, not the tree. The survivors are read in
+# full and blob_is_row_set gives the real answer, so the cheap probe only ever
+# decides what is worth opening.
 HEAD_ROW_SETS=0
 HEAD_ROW_SET_PATH=""
 count_head_row_sets() { # — sets HEAD_ROW_SETS (0, 1, or 2) and HEAD_ROW_SET_PATH
@@ -1809,16 +1831,15 @@ count_head_row_sets() { # — sets HEAD_ROW_SETS (0, 1, or 2) and HEAD_ROW_SET_P
   # attribute reaches, so the row-shape question is still answered on text.
   # stderr is NOT suppressed: exit >= 2 is a search that could not run, and
   # the refusal below quotes the code while git's own line says why.
-  git grep -a -l -z -E -e "$BASELINE_ROW_RE" HEAD >"$TMP/rowish.paths" || grep_status=$?
+  git grep -a -l -z -F -e "$TAB" HEAD >"$TMP/rowish.paths" || grep_status=$?
   case "$grep_status" in
     0) ;;
-    1) return 0 ;; # no path at HEAD holds even one row-shaped line
+    1) return 0 ;; # no path at HEAD holds even one tab, so none holds a row
     *) collection_error "could not search HEAD for a baseline row set (git grep exit $grep_status) — refusing to treat HEAD as carrying none" ;;
   esac
   while IFS= read -r -d '' p || [ -n "$p" ]; do
     p="${p#HEAD:}"
     [ -n "$p" ] || continue
-    [ "$p" != "$BASELINE_FILE" ] || continue
     git show "HEAD:$p" >"$TMP/rowish.blob" || collection_error "could not read $p from HEAD to tell whether it holds baseline rows"
     blob_is_row_set "$TMP/rowish.blob" || continue
     HEAD_ROW_SETS=$((HEAD_ROW_SETS + 1))
