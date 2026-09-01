@@ -17,8 +17,11 @@
 #   trap 'exit 143' TERM HUP
 #   trap 'exit 130' INT
 #
-# The signal traps are what make the EXIT trap fire on an abort; without them
-# bash dies on TERM without running it. A tree this could not clear FAILS the
+# The signal traps turn an abort into an ordinary exit, so the teardown below
+# decides the suite's result. The EXIT trap runs on TERM without them too, but
+# it sees a status of 0 and bash re-raises the signal over whatever the
+# teardown returns, so a tree the reap could not clear reaches the runner as a
+# signal death rather than as a failure. A tree this could not clear FAILS the
 # suite — the survivors are the very condition these suites exist to catch, so
 # discarding the reap's status would leave the containment failure invisible
 # to every runner above.

@@ -150,8 +150,9 @@ if ps -p "$leaked" -o pid= >/dev/null 2>&1; then ok "the leaked supervisor is th
 
 # And the reaper clears exactly that: same processes, run directly — through
 # the ps fallback, which is the only branch a macOS run takes and which CI,
-# being Linux-only, would otherwise never execute. Every other reap in this
-# file goes through the /proc walk, so both are covered.
+# being Linux-only, would otherwise never execute. This case and the starved
+# census below force that branch; every other reap in the file takes the /proc
+# walk, so both are covered.
 export MQ_REAP_FORCE_PS=1
 mq_reap "$TMP/leaky" || bad "reaper reported survivors under the leaky sandbox"
 unset MQ_REAP_FORCE_PS
@@ -446,8 +447,12 @@ echo "=== every supervisor-launching suite arms both ==="
 # The roster is derived, never listed: a suite that starts launching real
 # supervisors and forgets to arm is caught because it is FOUND, where a list
 # would simply not hold it and still report all-ok. Launching means the suite
-# stands up its own copy of the script that detaches supervisors; the doc
-# audits that merely quote a launch command line copy no such thing.
+# stands up its own copy of the script that detaches supervisors, which the
+# doc audits that merely quote a launch command line do not — so the predicate
+# excludes them by what it matches and needs no exemption list to maintain.
+#
+# One grep, never a pipeline: `grep -q` closes the pipe on its first hit, and
+# under pipefail the upstream SIGPIPE fails the whole test.
 launching_suites() {
   grep -lE 'cp [^#]*scripts/merge-queue-watch' "$1"/*.sh 2>/dev/null || true
 }
@@ -482,6 +487,15 @@ printf '#!/usr/bin/env bash\ncp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"\n'
 planted_roster=$(launching_suites "$planted")
 case "$planted_roster" in *"$planted/unarmed_suite.sh"*) ok "the derivation finds a launching suite no list names" ;;
   *) bad "the derivation missed a planted launching suite: $planted_roster" ;; esac
+
+# The shape every merge-queue suite had before KEN-995: the fixture tree
+# removed, the processes it started left running. The audit exists to red on
+# exactly this, and saying so here keeps that resting on the property rather
+# than on the grep's shape.
+printf '#!/usr/bin/env bash\ncp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"\ntrap %s EXIT\n' \
+  "'rm -rf \"\$TMP\"'" > "$planted/old_teardown_suite.sh"
+if suite_arms_teardown "$planted/old_teardown_suite.sh"; then bad "a suite tearing down the pre-KEN-995 way passed the arming check"
+else ok "a suite tearing down the pre-KEN-995 way fails the arming check"; fi
 
 printf '#!/usr/bin/env bash\n# trap mq_reap_teardown EXIT\n# tools/tests/lib/sealed-bin and "$SEALED:$PATH"\n' > "$planted/comment_decoy.sh"
 if suite_arms_teardown "$planted/comment_decoy.sh"; then bad "a comment naming the teardown passed the arming check"
