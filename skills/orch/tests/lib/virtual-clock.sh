@@ -81,11 +81,12 @@ exec "$STUB_REAL_SLEEP" "$@"
 EOF
   chmod +x "$bin_dir/sleep"
 
-  # Prove the mechanism is live before any case leans on it. The probe is a
-  # timestamp no real clock returns, so a fall-through — stubs off PATH, a
-  # PATH the suite never applies, a clock the stubs decline to read — answers
-  # with the real epoch and fails here instead of quietly spending every budget
-  # in wall time.
+  # Prove the stubs work before any case leans on them: a timestamp no real
+  # clock returns, read back through them and then advanced. A stub that was
+  # never written, is not executable, or declines to read the clock answers with
+  # the real epoch and fails here instead of quietly spending every budget in
+  # wall time. It proves the stubs at bin_dir, not the PATH a suite later runs
+  # its waiter under.
   local probe=1000000 seen
   printf '%s' "$probe" > "$STUB_CLOCK"
   seen="$(PATH="$bin_dir:$PATH" date +%s)"

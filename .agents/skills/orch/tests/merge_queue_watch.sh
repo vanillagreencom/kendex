@@ -31,8 +31,7 @@ wait_file() { local i; for ((i=0;i<100;i++)); do [[ -s "$1" ]] && return 0; slee
 wait_exists() { local i; for ((i=0;i<100;i++)); do [[ -e "$1" ]] && return 0; sleep 0.05; done; return 1; }
 wait_state() { local i; for ((i=0;i<200;i++)); do [[ "$(jq -r .status "$1")" == "$2" ]] && return 0; sleep 0.05; done; return 1; }
 # A synchronization primitive, so it never reports success for "the input was
-# never a process": `running` asks ps, which exits 1 on a non-numeric argument,
-# and a wait satisfied by a null or malformed pid is no wait at all.
+# never a process": `running` asks ps, which exits 1 on a non-numeric argument.
 wait_gone() { local i; [[ "$1" =~ ^[1-9][0-9]*$ ]] || { printf '        not a pid: %s\n' "$1"; return 1; }; for ((i=0;i<200;i++)); do running "$1" || return 0; sleep 0.05; done; return 1; }
 running() { local state; state=$(ps -p "$1" -o stat= 2>/dev/null) || return 1; state="${state//[[:space:]]/}"; [[ -n "$state" && "$state" != Z* ]]; }
 inode() { stat -c %i "$1" 2>/dev/null || stat -f %i "$1"; }
@@ -139,7 +138,7 @@ if [[ -f "$WATCH_SETSID_DELAY.enabled" ]]; then
   # status in `.exited`, the condition the case waits on. The `shift` drops the
   # caller's `-f`; the guard before it refuses any other first argument, so a
   # changed call site fails loudly instead of running an argv short one word.
-  "$WATCH_REAL_SETSID" -f bash -c 'touch "$WATCH_SETSID_DELAY.entered"; while [[ ! -f "$WATCH_SETSID_DELAY.release" ]]; do sleep 0.05; done; [[ "${1:-}" == -f ]] || { echo "setsid delay stub: expected -f as the first argument, got: ${1:-}" >&2; exit 64; }; shift; "$@"; printf "%s\n" "$?" > "$WATCH_SETSID_DELAY.exited"' bash "$@"
+  "$WATCH_REAL_SETSID" -f bash -c 'touch "$WATCH_SETSID_DELAY.entered"; while [[ ! -f "$WATCH_SETSID_DELAY.release" ]]; do sleep 0.05; done; [[ "${1:-}" == -f ]] || { echo "setsid delay stub: expected -f as the first argument, got: ${1:-}" >&2; printf "%s\n" 64 > "$WATCH_SETSID_DELAY.exited"; exit 64; }; shift; "$@"; printf "%s\n" "$?" > "$WATCH_SETSID_DELAY.exited"' bash "$@"
   exit 0
 fi
 if [[ -f "$WATCH_SETUP_GATE.enabled" ]]; then touch "$WATCH_SETUP_GATE.entered"; while [[ ! -f "$WATCH_SETUP_GATE.release" ]]; do sleep 0.05; done; fi
@@ -199,9 +198,8 @@ export PATH="$BIN:$SEALED:$PATH" WATCH_MODE="$MODE" WATCH_RELEASE="$RELEASE" WAT
 export WATCH_GH_PAUSE="$TMP/gh-pause" WATCH_SETUP_GATE="$TMP/setup-gate" WATCH_REAL_SETSID="$REAL_SETSID" WATCH_CLEANUP_FAIL="$TMP/cleanup-fail" WATCH_CLEANUP_INTERRUPT="$TMP/cleanup-interrupt"
 export WATCH_SETSID_FAIL="$TMP/setsid-fail" WATCH_SETSID_DELAY="$TMP/setsid-delay" WATCH_CLEANUP_PAUSE="$TMP/cleanup-pause" WATCH_AUTH_LOG="$TMP/auth.log" WATCH_WORKER_LOG="$TMP/worker.log" WATCH_WORKER_PID="$TMP/worker.pid" WATCH_WORKER_TOKEN="$TMP/worker.token" WATCH_REAL_CHMOD="$REAL_CHMOD" WATCH_REAL_FLOCK="$REAL_FLOCK" WATCH_FAIL_FLOCK_GATE="$TMP/fail-flock-gate" WATCH_REAL_PS="$REAL_PS" WATCH_PS_LOG="$TMP/ps.log" WATCH_FLOCK_LOG="$TMP/flock.log" WATCH_SUPERVISOR_PID_GATE="$TMP/supervisor-pid-gate" WATCH_REAL_MKFIFO="$REAL_MKFIFO" WATCH_REGISTRATION_GATE="$TMP/registration-gate" GH_REPO=wrong/repository GITHUB_REPOSITORY=wrong/repository
 touch "$WATCH_PS_LOG" "$WATCH_FLOCK_LOG"
-# `flock -s` is the shared lock the supervisor takes to read its own currency,
-# and nothing else in the tree takes one outside a foreground state read, so a
-# fresh shared lock is evidence a supervisor process really ran.
+# `flock -s` is the shared lock a supervisor takes to read its own currency, so
+# a count that moves while one supervisor is alive is evidence that one ran.
 shared_locks() { awk '/^-s /{n++} END{print n+0}' "$WATCH_FLOCK_LOG"; }
 unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN
 init_out=$("$SCRIPTS/merge-queue-watch" init --worktree "$WT" --issue KEN-829 --branch watch-test)
@@ -503,9 +501,8 @@ launch_bounded "$watch"
 publication_replacement=$("$SCRIPTS/merge-queue-watch" inspect --root "$MAIN" --issue KEN-829 | jq -r .artifact_path)
 touch "$new_release"; wait_file "$publication_replacement" || bad "publication-fence replacement verdict missing"
 # The stale supervisor sits on its worker until this release, then makes the one
-# publication attempt this fence has to refuse and exits. Waiting for that
-# process to go away is waiting for exactly that attempt to be over; the fixed
-# settle sleep it replaces only guessed at when it was.
+# publication attempt this fence has to refuse and exits, so waiting for that
+# process is waiting for exactly that attempt to be over.
 touch "$old_release"
 wait_gone "$stale_supervisor_pid" || bad "stale started supervisor never finished its publication attempt"
 [[ ! -e "$artifact" ]] && ok "stale started supervisor cannot publish after replacement" || bad "publication fence admitted the stale started supervisor"
@@ -532,6 +529,11 @@ if [[ -n "$REAL_SETSID" ]]; then
   wait_file "$delayed_replacement_artifact" || bad "replacement verdict missing after delayed supervisor release"
   worker_count=$(wc -l < "$WATCH_WORKER_LOG")
   printf 'malformed\n' > "$MODE"
+  # The lock count is global, so a move in it names the delayed supervisor only
+  # while it is the one live one. Retiring the replacement first makes that true
+  # here rather than inferring it from another file's layout.
+  delayed_state=$("$SCRIPTS/workflow-state" --state-dir "$WT/tmp" get KEN-829 .merge_queue_watch.state_path)
+  wait_gone "$(jq -r .supervisor_pid "$delayed_state")" || bad "replacement supervisor outlived its own verdict"
   released_locks=$(shared_locks)
   touch "$WATCH_SETSID_DELAY.release"
   # `.exited` would also be written for a supervisor that never started, so the
