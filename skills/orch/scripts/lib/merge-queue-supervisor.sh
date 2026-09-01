@@ -77,15 +77,18 @@ merge_queue_supervise() {
     publish_output && published=true
   }
   # The one teardown, on every exit (return, set -e, exit, signal), with the
-  # exit status as $?. A home that is gone gets no fallback: there is nothing
-  # left to publish into. The terminal file written last is the durable sign
-  # that teardown, including the publication fallback, is over.
+  # exit status as $?. A home that is gone gets neither the fallback nor the
+  # terminal marker: there is nothing left to publish into, and a runtime
+  # swapped for a symlink would carry the marker to wherever it points. The
+  # terminal file written last is the durable sign that teardown, including
+  # the publication fallback, is over.
   cleanup() {
     local rc=$?
     exec 6>&- 7>&- 8>&- 9>&- 2>/dev/null || true
     [[ -z "$watchdog_pid" ]] || { kill "$watchdog_pid" 2>/dev/null || true; wait "$watchdog_pid" 2>/dev/null || true; }
     stop_worker
-    if ! $published && home_present; then publish_unknown supervisor_exit "$rc" || true; fi
+    home_present || return 0
+    $published || publish_unknown supervisor_exit "$rc" || true
     { printf '%s\n' "$rc" > "$runtime/terminal" && chmod 600 "$runtime/terminal"; } 2>/dev/null || true
   }
   trap cleanup EXIT

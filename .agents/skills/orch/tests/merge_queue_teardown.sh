@@ -252,6 +252,11 @@ home_clause_case() {
 
 home_clause_case runtime-deleted break_runtime
 home_clause_case runtime-swapped-for-a-symlink break_symlink
+# The teardown's own marker follows the same rule as its fallback: a runtime
+# swapped for a symlink gets no terminal file at the symlink's target.
+[[ ! -e "$TMP/home-runtime-swapped-for-a-symlink/main/terminal" ]] \
+  && ok "runtime-swapped-for-a-symlink: no terminal marker lands at the symlink target" \
+  || bad "runtime-swapped-for-a-symlink: the teardown wrote through the symlink"
 home_clause_case state-file-deleted break_state
 home_clause_case repository-deleted break_repository altroot
 
@@ -290,6 +295,11 @@ edit_once() {
 
 home_clause_control without-runtime-clause '-d "$runtime" && ' break_runtime
 home_clause_control without-symlink-clause '! -L "$runtime" && ' break_symlink
+# The reaper's TERM runs that mutant's teardown, which no longer sees the
+# symlink and so writes its marker through it: the assertion above is not free.
+[[ -e "$TMP/mutant-without-symlink-clause/main/terminal" ]] \
+  && ok "without-symlink-clause: cutting the clause writes the marker through the symlink" \
+  || bad "without-symlink-clause: no marker at the symlink target; the symlink-target assertion above is free"
 home_clause_control without-state-clause '-f "$state_file" && ' break_state
 home_clause_control without-repository-clause ' && -d "$main_root"' break_repository altroot
 
