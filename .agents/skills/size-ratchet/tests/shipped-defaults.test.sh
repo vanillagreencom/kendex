@@ -715,5 +715,36 @@ run RATCHET_RAISE=1 SIZE_RATCHET_FROZEN_CLASSES=
 [ "$RC" -eq 0 ] && ok "control: with the frozen list emptied the same declared raise passes" \
   || bad "control: an empty frozen list allows the declared raise" "rc=$RC out=$OUT"
 
+echo "=== unit changes never compare unlike baseline quantities ==="
+new_repo frozen-unit-change
+mklines doc.md 700
+mkdir -p "$R/tools"
+printf 'doc.md\t70000b\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m bytes
+run 'SIZE_RATCHET_CLASSES=*.md=600' -- --update
+[ "$RC" -eq 1 ] && has "frozen baseline row unit changed: doc.md — row 70000b -> 700" \
+  && ok "a frozen byte-to-line migration refuses instead of comparing unlike numbers" \
+  || bad "a frozen unit migration fails closed" "rc=$RC out=$OUT"
+run RATCHET_RAISE=1 'SIZE_RATCHET_CLASSES=*.md=600'
+[ "$RC" -eq 1 ] && has "frozen baseline row unit changed" \
+  && ok "RATCHET_RAISE=1 cannot admit a frozen unit migration" \
+  || bad "a declared frozen unit migration fails closed" "rc=$RC out=$OUT"
+
+new_repo open-unit-change
+mklines big.rs 500
+mkdir -p "$R/tools"
+printf 'big.rs\t500\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m lines
+run SIZE_RATCHET_FROZEN_CLASSES= 'SIZE_RATCHET_CLASSES=*.rs=1k' -- --update
+[ "$RC" -eq 1 ] && has "baseline row unit changed: big.rs" \
+  && ok "an open unit migration needs RATCHET_RAISE=1" \
+  || bad "an undeclared open unit migration fails closed" "rc=$RC out=$OUT"
+run RATCHET_RAISE=1 SIZE_RATCHET_FROZEN_CLASSES= 'SIZE_RATCHET_CLASSES=*.rs=1k'
+[ "$RC" -eq 0 ] \
+  && ok "RATCHET_RAISE=1 admits an open unit migration" \
+  || bad "a declared open unit migration passes" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -21,7 +21,8 @@ even then. Markdown is measured in bytes and code in lines. Flags and exit codes
 ## Semantics
 
 - **Scope**: every tracked file (`git ls-files`), tests included, minus the
-  exclusion list.
+  exclusion list and the baseline itself. A policy file cannot carry a row
+  for its own size.
 - **Units**: a class threshold counts LINES when it is a bare number and
   BYTES when it carries the `k` suffix (`24k` = 24×1024 bytes). Lines are
   newline counts. The shipped list measures markdown in bytes, because a
@@ -43,12 +44,15 @@ even then. Markdown is measured in bytes and code in lines. Flags and exit codes
   4. **A row in the wrong unit** — a byte class carrying a line row, or the
      reverse. The number counts something else, so `--update` re-measures it
      instead of comparing it.
-  5. **A row added or raised over HEAD's baseline** — see
+  5. **A row whose unit changed from HEAD** — the trusted and candidate
+     numbers cannot be compared. An open row needs `RATCHET_RAISE=1`; a
+     frozen row refuses until the file is split below the new threshold.
+  6. **A row added or raised over HEAD's baseline** — see
      [Raising a row](#raising-a-row).
-  6. **HEAD has no rows at the resolved baseline path** — a non-empty
+  7. **HEAD has no rows at the resolved baseline path** — a staged non-empty
      candidate would otherwise leave every row unjudged. Relocate it in a
      change that touches nothing else with `RATCHET_RAISE=1`, then change
-     rows later.
+     rows later. A frozen row cannot cross that unverified relocation.
 - **`--staged`** counts index blobs for every tracked file rather than
   preferring the worktree copy: what the commit records is the blob. Use it
   in a pre-commit hook; CI, which checks out a clean tree, does not need it.
@@ -60,8 +64,9 @@ even then. Markdown is measured in bytes and code in lines. Flags and exit codes
 - **`--update`** tightens only: it lowers rows to the actual size, re-measures
   rows whose unit no longer matches their class, and removes rows for files
   now at/under their own threshold or no longer counted — never adds a row,
-  never raises a number — then re-checks, so it still exits 1 while growth or
-  new offenders remain.
+  never raises a number — then re-checks. A re-measured open row still needs
+  `RATCHET_RAISE=1` because HEAD's old quantity is not comparable; a frozen
+  row refuses the unit change.
 - Exit codes: `0` clean, `1` violations, `2` usage/config/collection error.
 
 ## Raising a row
@@ -83,8 +88,10 @@ raises is that threshold routed around.
   **bootstrap**, not a raise, and the declaration admits it in every class,
   frozen included. A renamed path is such a path, so a rename bootstraps.
 - When HEAD exists but carries no rows at the resolved baseline path, a
-  non-empty baseline needs `RATCHET_RAISE=1`. Repoint the baseline in a
-  change that touches nothing else; row edits follow in another change.
+  staged non-empty baseline needs `RATCHET_RAISE=1`. The declaration admits
+  open rows only, because no prior rows exist there to prove a frozen row did
+  not rise. Split frozen offenders below threshold first. Repoint the baseline
+  in a change that touches nothing else; row edits follow in another change.
 
 ## Baseline format
 
@@ -99,15 +106,21 @@ docs/handbook.md	86104b
 
 Rows are `LC_ALL=C` sorted, paths unique, counts positive. A malformed,
 unsorted, or duplicated baseline is a config error (exit 2), not a silent
-pass — the file is reviewed input, so it fails loud.
+pass — the file is reviewed input, so it fails loud. A row naming the baseline
+itself is stale because the baseline is outside the measured set.
 
 ### Seeding a first baseline
 
 `--update` never adds rows, so the first baseline has its own mode:
 `size-ratchet --seed` writes every tracked, non-excluded file over its
 deciding threshold at its current size, `LC_ALL=C` sorted. It refuses a
-selected baseline that already has rows or does not parse. The seeded file
-lands uncommitted, so the initial freeze is still a reviewed diff.
+selected baseline that already has rows or does not parse. The baseline and
+exclusion list must be different plain files inside the repository; symlinked
+destinations and parents resolving outside it refuse before a write. Seed is
+bootstrap, not relocation, and succeeds without `RATCHET_RAISE=1`. The seeded
+file lands uncommitted, so the initial freeze is still a reviewed diff; once
+staged against a HEAD with no baseline path, the relocation declaration is
+required.
 
 ## Path classes
 

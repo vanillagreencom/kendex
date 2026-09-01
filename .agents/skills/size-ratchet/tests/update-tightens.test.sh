@@ -277,6 +277,42 @@ OUT="$(cd "$R" && umask 022 && PATH="$CHMOD_SHIM:$PATH" SIZE_RATCHET_THRESHOLD=1
   && ok "--update completes under BSD chmod option parsing (the mode's -- comes first)" \
   || bad "--update completes under BSD chmod option parsing" "rc=$RC out=$OUT"
 
+echo "=== the baseline policy never measures itself ==="
+R="$TMP/self-row-update"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile shrunk.txt 1
+printf 'shrunk.txt\t50\ntools/size-ratchet-baseline.tsv\t2\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+OUT=""; RC=0
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=1 "$SR" --update 2>&1)" || RC=$?
+OUT2=""; RC2=0
+OUT2="$(cd "$R" && SIZE_RATCHET_THRESHOLD=1 "$SR" 2>&1)" || RC2=$?
+[ "$RC" -eq 0 ] && [ "$RC2" -eq 0 ] && [ ! -s "$R/tools/size-ratchet-baseline.tsv" ] \
+  && ok "--update drops a self row and its immediate plain check passes" \
+  || bad "--update drops the self row in one run" "update=$RC check=$RC2 baseline=$(cat "$R/tools/size-ratchet-baseline.tsv") out=$OUT2"
+
+R="$TMP/self-row-staged"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile limited.txt 5
+printf 'limited.txt\t5\ntools/size-ratchet-baseline.tsv\t2\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m baseline
+mkfile limited.txt 1
+git -C "$R" add limited.txt
+OUT=""; RC=0
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=1 "$SR" --staged 2>&1)" || RC=$?
+FIRST_BASELINE="$(cat "$R/tools/size-ratchet-baseline.tsv")"
+OUT2=""; RC2=0
+OUT2="$(cd "$R" && SIZE_RATCHET_THRESHOLD=1 "$SR" --staged 2>&1)" || RC2=$?
+[ "$RC" -eq 0 ] && [ -z "$FIRST_BASELINE" ] && [ "$RC2" -eq 0 ] && [ ! -s "$R/tools/size-ratchet-baseline.tsv" ] \
+  && ok "--staged drops a self row and its immediate staged check passes" \
+  || bad "--staged drops the self row in one run" "first=$RC second=$RC2 baseline=$(cat "$R/tools/size-ratchet-baseline.tsv") out=$OUT2"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

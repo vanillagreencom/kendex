@@ -334,7 +334,7 @@ printf 'big.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
 git -C "$R" add -A
 rm -f "$TMP/cp-calls"
 run_sr_shimmed "$CP_SHIM" --update
-[ "$RC" -eq 2 ] && case "$OUT" in *"could not re-read tools/size-ratchet-baseline.tsv after replacing it"*) true ;; *) false ;; esac \
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not re-read tools/size-ratchet-baseline.tsv"*"baseline WAS replaced"*) true ;; *) false ;; esac \
   && ok "a failed re-read after a successful replace is a collection error whose diagnostic owns the mutation" \
   || bad "a failed re-read after a successful replace is a collection error owning the mutation" "rc=$RC out=$OUT"
 row="$(cat "$R/tools/size-ratchet-baseline.tsv")"

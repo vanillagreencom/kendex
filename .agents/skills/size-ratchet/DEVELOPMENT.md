@@ -26,10 +26,12 @@ is what every linter caps.
 The unit rides beside the threshold through class resolution (`PU`), through
 collection (one pending batch per unit, so an interleaved tree still batches
 rather than degrading to a call per file), into the counts rows, and out
-again as a baseline row's `b` suffix. Nothing compares across units: a row
-whose unit no longer matches its class is reported as one to RE-MEASURE, and
-`--update` rewrites it at the current size in the new unit. That is the whole
-migration path — one `--update` per repo, and no mode of its own.
+again as a baseline row's `b` suffix. Nothing compares across units. A row
+whose unit no longer matches its class is reported as one to re-measure, and
+`--update` writes the current quantity in the new unit. The HEAD comparison
+then treats that change as incomparable: an open row needs
+`RATCHET_RAISE=1`, and a frozen row refuses until the file is below its new
+threshold.
 
 ## Collection
 
@@ -43,6 +45,10 @@ unavailable) is a collection error (exit 2, naming the file) — a file the
 gate could not measure is never skipped. A tracked path containing a tab or
 newline is refused loudly (exit 2; exclude it to skip the gate) — it cannot
 be represented in the line-oriented records.
+
+The baseline is policy input and never enters the measured set. A self row is
+therefore stale. This makes seed, update, and staged tightening converge
+without re-measuring output that contains its own measurement.
 
 ## `--staged` policy snapshot
 
@@ -88,13 +94,20 @@ copy. The skip says so on stderr, with the row diagnostic that caused it,
 because a rewrite that quietly does not happen leaves the run failing on the
 verdict it existed to resolve.
 
+Because collection excludes the baseline, a successful rewrite's saved counts
+remain valid after replacement. An immediate plain run asks the same questions
+over the same measured files.
+
 ## `--seed`
 
 `--seed` collects by the same pass the gate itself trusts (index blobs,
 symlink skipping, tab/newline refusal), `LC_ALL=C` sorted, each row in its
 class's unit. It refuses when the selected baseline already has rows or does
-not parse. The seeded file lands uncommitted, so every offender enters the
-record in review.
+not parse. The baseline and exclusion list must resolve to different files.
+The destination must be a plain file whose physical parent remains inside the
+repository before and after missing directories are created. Seed itself is a
+bootstrap and needs no raise declaration; the seeded file lands uncommitted,
+so every offender enters the record in review.
 
 In a sparse checkout that omits the baseline file, checks still run against
 the index copy, but `--update` refuses (it will not rewrite a file the
@@ -172,9 +185,10 @@ the existing baseline file where it is and point `SIZE_RATCHET_BASELINE`
 (or `--baseline`) at it. Rows written before the units existed carry no
 suffix and read as line counts, which is what they were.
 
-A baseline whose markdown rows are line counts migrates in one `--update`:
-each such row is re-measured in bytes, or removed where the file is under its
-byte class, and the run reports no growth doing it.
+A unit migration re-measures the row in `--update`, then applies the HEAD
+comparison rule. An open row needs `RATCHET_RAISE=1`. A frozen row must first
+shrink below the new threshold, so the update removes it instead of replacing
+an incomparable trusted quantity.
 
 A repo adopting the `400` default over a looser one gains offenders in the
 range between the two thresholds. Order matters: declare
@@ -213,8 +227,11 @@ inversion applies, so a glob added here changes which class decides those
 paths too. [README.md § Path classes](README.md#path-classes) says how.
 
 Rows already at HEAD are grandfathered. When HEAD exists but has no rows at
-the resolved baseline path, a non-empty candidate refuses unless the run
-carries `RATCHET_RAISE=1`. That single check covers moves, copies, and settings
-repoints without discovering the prior path. Repoint the baseline in a change
-that touches nothing else; row edits follow in another change. A row whose
-file is at or under its threshold is stale, so one root cause gets one verdict.
+the resolved baseline path, a staged non-empty candidate refuses unless the
+run carries `RATCHET_RAISE=1`. The declaration admits open rows only; a frozen
+row refuses because no trusted quantity exists at the new path. An untracked
+seed or an empty index baseline remains bootstrap. This covers moves, copies,
+and settings repoints without discovering the prior path. Repoint the baseline
+in a change that touches nothing else; row edits follow in another change. A
+row whose file is at or under its threshold is stale, so one root cause gets
+one verdict.

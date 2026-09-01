@@ -44,10 +44,12 @@ violated, the deciding threshold (class pattern or default), and the remedy:
 
 Three verdicts are not a size problem and take no judgment. **A row in the
 wrong unit** is a class that changed what it counts: run `--update`, which
-re-measures the row. **A shrunk row** under `--staged` is already lowered
-and staged by the run itself. **A baseline absent at its resolved HEAD
-path** relocates in a change that touches nothing else, declared with
-`RATCHET_RAISE=1`; change its rows later.
+re-measures the row; an open row declares that incomparable change with
+`RATCHET_RAISE=1`, while a frozen row first shrinks below its new threshold.
+**A shrunk row** under `--staged` is already lowered and staged by the run
+itself. **A baseline absent at its resolved HEAD path** relocates in a change
+that touches nothing else, declared with `RATCHET_RAISE=1`; a frozen row
+cannot cross that unverified move.
 
 **Check composition before the seam.** A file over its cap whose bulk is
 inline tests needs those tests moved to the language's separate-test
@@ -103,6 +105,10 @@ admits it in every class, a renamed path included. Rows already at HEAD are
 grandfathered, and a repo with no committed row set yet is bootstrapping.
 Generated and vendored content is never raised either: it is excluded (the
 exclusion list, `pattern<TAB>reason`) and leaves the counted set.
+
+The baseline is policy input, not a measured file. A self row is stale and
+every rewrite removes it, so seed, update, and staged tightening converge in
+one run.
 
 **A threshold change requires a fragment sweep.** In either direction it
 strands the splits made under the previous number: a repo that loosens already
