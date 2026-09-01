@@ -35,14 +35,14 @@ fn requested_urls(os: &str, arch: &str) -> String {
 #[allow(clippy::unwrap_used)]
 fn run_install(os: &str, arch: &str, fail: Option<(&str, i32)>) -> (std::process::Output, String) {
     let tmp = tempfile::tempdir().unwrap();
-    run_install_in(os, arch, fail, tmp.path(), &[], SUDO_STUB, BinDir::Made)
+    run_install_in(os, arch, fail, tmp.path(), &[], SUDO_STUB)
 }
 
 /// The same run against a home the caller keeps, for a test that reads what
 /// the script left behind rather than only what it fetched.
 #[allow(clippy::unwrap_used)]
 fn run_install_at(os: &str, arch: &str, home: &Path) -> (std::process::Output, String) {
-    run_install_in(os, arch, None, home, &[], SUDO_STUB, BinDir::Made)
+    run_install_in(os, arch, None, home, &[], SUDO_STUB)
 }
 
 /// What `uname -s` answers on the machine running these tests.
@@ -59,15 +59,6 @@ const HOST_UNAME: &str = match cfg!(target_os = "macos") {
     false => "Linux",
 };
 
-/// Whether the fixture makes the directory `install.sh` installs into
-/// before the run. `Absent` leaves it to the script, which is the case its
-/// elevated `mkdir` exists for.
-#[derive(Clone, Copy, PartialEq)]
-enum BinDir {
-    Made,
-    Absent,
-}
-
 #[allow(clippy::unwrap_used)]
 fn run_install_in(
     os: &str,
@@ -76,14 +67,10 @@ fn run_install_in(
     home: &Path,
     path_ahead: &[&str],
     sudo: &str,
-    make_bindir: BinDir,
 ) -> (std::process::Output, String) {
     let fake = home.join("fake-bin");
     let bindir = home.join(".local/bin");
     fs::create_dir_all(&fake).unwrap();
-    if make_bindir == BinDir::Made {
-        fs::create_dir_all(&bindir).unwrap();
-    }
     write_exe(
         &fake.join("uname"),
         &format!("#!/bin/sh\ncase \"$1\" in -s) echo {os} ;; -m) echo {arch} ;; esac\n"),
@@ -382,7 +369,6 @@ fn path_order_does_not_decide_where_a_re_run_lands() {
         &home,
         &["/usr/local/bin"],
         SUDO_STUB,
-        BinDir::Made,
     );
     // Asked first, because it is the answer a drifted script gives: a run
     // that chose the system directory stops at the stub, and reading the
@@ -530,6 +516,14 @@ fn install_sh_says_when_it_cannot_record_the_command() {
 /// the host's real `mkdir` with nothing checking where. The source it
 /// copies from is not checked, and cannot be: `install.sh` downloads into
 /// a `mktemp -d` of its own.
+///
+/// The `umask 0` is what makes the mode flags on this branch observable at
+/// all. Under the runner's own 022 a `mkdir` yields 0755 whether or not the
+/// script asked for it, so an assertion about the mode reads the fixture
+/// back rather than the script, and dropping the flag kills nothing. Clear
+/// it and every mode on an escalated command is the one the script named.
+/// It is set here, in the escalated child, because a `umask()` on the test
+/// process would leak into every other case in this binary.
 #[allow(
     clippy::unwrap_used,
     reason = "a fixture root always renders, as install_stub's does"
@@ -549,6 +543,7 @@ if [ -d "$dir" ] && [ ! -w "$dir" ]; then
   [ -n "$saved" ] || {{ echo "installer test could not read the mode of $dir" >&2; exit 1; }}
   chmod u+w "$dir"
 fi
+umask 0
 "$@"
 rc=$?
 [ -n "$saved" ] && chmod "$saved" "$dir"
@@ -587,15 +582,7 @@ fn the_privileged_branch_installs_with_flags_bsd_install_reads_alike() {
     fs::create_dir_all(&bindir).unwrap();
     fs::set_permissions(&bindir, fs::Permissions::from_mode(0o555)).unwrap();
 
-    let (output, _) = run_install_in(
-        HOST_UNAME,
-        "x86_64",
-        None,
-        &home,
-        &[],
-        &sudo_as_root(&home),
-        BinDir::Made,
-    );
+    let (output, _) = run_install_in(HOST_UNAME, "x86_64", None, &home, &[], &sudo_as_root(&home));
     // Writable again before any assertion can fail: a directory left 0555
     // is one the temp dir cannot clean up.
     fs::set_permissions(&bindir, fs::Permissions::from_mode(0o755)).unwrap();
@@ -656,15 +643,7 @@ fn the_privileged_branch_makes_the_bindir_it_could_not_make_unprivileged() {
     let parent = home.join(".local");
     fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
 
-    let (output, _) = run_install_in(
-        HOST_UNAME,
-        "x86_64",
-        None,
-        &home,
-        &[],
-        &sudo_as_root(&home),
-        BinDir::Absent,
-    );
+    let (output, _) = run_install_in(HOST_UNAME, "x86_64", None, &home, &[], &sudo_as_root(&home));
     fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
 
     let said = String::from_utf8_lossy(&output.stdout);
@@ -680,5 +659,16 @@ fn the_privileged_branch_makes_the_bindir_it_could_not_make_unprivileged() {
     assert!(
         home.join(".local/bin/kendex").is_file(),
         "the elevated branch made no directory to install into:\n{said}{stderr}"
+    );
+    // The mode the script named, not the one root's umask would have left:
+    // `sudo_as_root` clears the umask, so 0755 here can only be the -m.
+    assert_eq!(
+        fs::metadata(home.join(".local/bin"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755,
+        "the elevated branch made the bindir with the wrong mode:\n{said}{stderr}"
     );
 }

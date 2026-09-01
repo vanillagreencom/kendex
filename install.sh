@@ -119,21 +119,20 @@ install_cli() {
     # made the directory itself: -D makes directories on GNU coreutils
     # only, and BSD install on macOS spells its own -D "-D dest" and takes
     # an operand, so it reads the "-m" behind it as that operand and exits
-    # 64 on the usage it is left with. The mkdir is what keeps the pair
-    # equivalent to that -D, for the machine where the directory is not
-    # there yet and the unprivileged mkdir above could not make it. -m
-    # means the same thing to both tools, and stating it here is what the
-    # replaced command did: root's umask decides the mode otherwise.
+    # 64 on the usage it is left with. The mkdir covers the one case -D
+    # covered, the directory the unprivileged mkdir above could not make,
+    # and its -m sets the mode of that directory rather than leaving it to
+    # root's umask. It is not the general equivalent of -D, which modes
+    # every leading directory it makes where -m modes only the last.
+    #
+    # Both run bare under set -eu, so a refused escalation stops the run
+    # here rather than reaching the line that says the command installed.
     #
     # The default macOS layout comes here: /etc/paths puts root-owned
     # /usr/local/bin on PATH. A mac whose /usr/local Homebrew chowned to
     # the account takes the writable branch above instead.
-    if ! { [ -d "$bindir" ] || sudo mkdir -m 0755 -p "$bindir"; } \
-       || ! sudo install -m 0755 "$work/kendex" "$bindir/kendex"; then
-      echo "install.sh: the elevated install to $bindir did not complete" >&2
-      echo "  install into a directory you own instead, such as $HOME/.local/bin on your PATH" >&2
-      exit 1
-    fi
+    [ -d "$bindir" ] || sudo mkdir -m 0755 -p "$bindir"
+    sudo install -m 0755 "$work/kendex" "$bindir/kendex"
   fi
   echo "Installed the kendex command to $bindir/kendex"
   # What this script installed, so the desktop app can tell this file from
