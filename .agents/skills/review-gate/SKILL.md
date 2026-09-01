@@ -276,10 +276,12 @@ nothing else.
 
 # the same reducer over recently-MERGED PRs (env: GH_REPO) — one
 # post-merge-findings line per merged PR carrying a review or review thread
-# that arrived after the merge with no disposition reply. Per-repo state
-# surfaces each finding once; --no-state re-reads everything outstanding.
-# Flags: --window SECS (default 172800), --limit N (default 20), --no-state,
-# --state-file PATH
+# comment that arrived after the merge with no disposition reply. Per-repo
+# state surfaces each finding once; --no-state re-reads everything
+# outstanding. A window holding more merged PRs than --limit reads is itself
+# a fail-closed line, so silence never covers an unswept remainder.
+# Flags: --window SECS (default 172800), --limit N (default 20, max 40),
+# --no-state, --state-file PATH
 .agents/skills/review-gate/scripts/merged-sweep.sh
 ```
 

@@ -28,8 +28,14 @@
 #   ms20. GH_REPO missing / malformed       -> exit 2
 #   ms21. --limit out of range, bad numbers -> exit 2 (never clamped)
 #   ms22. an unreadable state file          -> exit 2 (never silent)
+#   ms22b. an unwritable state file         -> exit 2, and NO stdout lines
 #   ms23. --help before every requirement   -> exit 0
 #   ms24. many PRs                          -> still ONE query
+#   ms25. a PRE-merge thread, re-raised      -> a finding (the re-raise shape)
+#   ms26. an older canonical reply, newer    -> still a finding (the LAST
+#         bare track-word                       reply decides, both arms)
+#   ms27. the window holds more PRs than     -> a sweep-level fail-closed
+#         --limit reads                         line, deduped like the rest
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -125,9 +131,15 @@ pr() { # number, mergedAt, author, reviews-json, comments-json, threads-json,
       comments:{nodes:$cm},
       reviewThreads:{totalCount:(if $tht < 0 then ($th|length) else $tht end), nodes:$th}}'
 }
+# The sweep enumerates through `search`, so the envelope carries the
+# coverage metadata it compares against: issueCount defaults to the node
+# count and hasNextPage to false, i.e. "this page covered the window", so
+# only the arms that mean to trip the truncation guard do.
 envelope() { # pr-json...
   jq -n --argjson nodes "$(jq -sc '.' <<<"$*")" \
-    '{data:{repository:{pullRequests:{nodes:$nodes}}}}'
+    --argjson total "${STUB_ISSUE_COUNT:--1}" --argjson next "${STUB_HAS_NEXT:-false}" \
+    '{data:{search:{issueCount:(if $total < 0 then ($nodes|length) else $total end),
+                    pageInfo:{hasNextPage:$next}, nodes:$nodes}}}'
 }
 
 fixture() { printf '%s\n' "$1" > "$TMP_ROOT/fixture.json"; }
@@ -319,6 +331,48 @@ set -e
 assert_eq "$rc" "1" "ms16: a thread past the comment bound fails closed even when answered"
 assert_contains "$out" "beyond the read bound" "ms16: and says so"
 
+# ms16b (finding #5): a merged PR whose only long thread opened AND closed
+# before the merge has no post-merge activity to hide — comments are read
+# newest-first, so the truncation drops only older pre-merge comments.
+fresh_state
+PRE_DEEP="$(thread THR_predeep 60 \
+  "$(comment "$BEFORE_MERGE" "a long pre-merge argument" codex Bot)" \
+  "$(comment "$BEFORE_MERGE" "Fixed in a1b2c3d4e5f6" dev User)")"
+fixture "$(envelope "$(pr 13 "$MERGED_AT" dev '[]' '[]' "[$PRE_DEEP]")")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "0" "ms16b: a pre-merge-only long thread is not post-merge activity"
+assert_eq "$out" "" "ms16b: and claims nothing the data contradicts"
+
+# ms16c (finding #6): reviewThreads has no documented order, so a truncated
+# thread page fails closed even when the page it returned is mixed.
+fresh_state
+fixture "$(envelope "$(pr 13 "$MERGED_AT" dev '[]' '[]' "[$PRE_THREAD]" -1 40)")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms16c: a truncated thread page fails closed whatever its order"
+assert_contains "$out" "beyond the read bound" "ms16c: and says so"
+
+# ms19b (finding #7): a timestamp that will not parse cannot be placed
+# either side of the merge, so it surfaces rather than vanishing.
+fresh_state
+fixture "$(envelope "$(pr 13 "$MERGED_AT" dev \
+  "[$(review REV_bad "not-a-date" COMMENTED "P2: this leaks" codex Bot)]" '[]' '[]')")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms19b: an unparsable review timestamp fails closed, never a silent drop"
+assert_contains "$out" "will not parse" "ms19b: and names the cause"
+fresh_state
+fixture "$(envelope "$(pr 13 "$MERGED_AT" dev '[]' '[]' \
+  "[$(thread THR_badts 1 "$(comment "null" "P1: bad path" codex Bot)")]")")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms19c: an unparsable thread-comment timestamp fails closed too"
+
 # --- ms17..ms22: read failures and config errors -------------------------
 
 fresh_state
@@ -364,7 +418,7 @@ for bad in "acme" "acme/widgets/extra" "/widgets" "acme/"; do
   assert_eq "$rc" "2" "ms20b: GH_REPO '$bad' is refused"
 done
 
-for bad_flag in "--limit 0" "--limit 101" "--limit abc" "--window 90s" "--window 1234567890123"; do
+for bad_flag in "--limit 0" "--limit 41" "--limit 101" "--limit abc" "--window 90s" "--window 1234567890123"; do
   set +e
   # shellcheck disable=SC2086
   out=$(run_sweep -- $bad_flag); rc=$?
@@ -375,6 +429,12 @@ set +e
 out=$(run_sweep -- --nonsense); rc=$?
 set -e
 assert_eq "$rc" "2" "ms21b: an unknown argument exits 2"
+fresh_state
+fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
+set +e
+out=$(run_sweep -- --limit 40); rc=$?
+set -e
+assert_eq "$rc" "1" "ms21c: --limit 40 is the documented ceiling and is accepted"
 
 fresh_state
 mkdir -p "$TMP_ROOT/state"
@@ -395,6 +455,23 @@ fi
 chmod 644 "$TMP_ROOT/state/acme_widgets"
 fresh_state
 
+# A state write that fails must exit 2 with NOTHING on stdout: a consumer
+# that sees lines beside a non-zero exit reads findings, not a failure.
+fixture "$(envelope "$(pr 10 "$MERGED_AT" dev "[$LATE_REVIEW]" '[]' '[]')")"
+set +e
+out=$( (cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
+  env GH_REPO=acme/widgets STUB_FIXTURE="$TMP_ROOT/fixture.json" \
+  "$SWEEP" --state-file "$TMP_ROOT/no-such-dir/state" 2>/dev/null) ); rc=$?
+set -e
+assert_eq "$rc" "2" "ms22b: an unwritable state file exits 2"
+assert_eq "$out" "" "ms22b: and prints NO attention lines — exit 2 is the global-failure shape"
+set +e
+err=$( (cd "$TMP_ROOT/cwd" && PATH="$TMP_ROOT/bin:$PATH" \
+  env GH_REPO=acme/widgets STUB_FIXTURE="$TMP_ROOT/fixture.json" \
+  "$SWEEP" --state-file "$TMP_ROOT/no-such-dir/state" 2>&1 >/dev/null) )
+set -e
+assert_contains "$err" "could not write the state file" "ms22b: the reason is on stderr"
+
 # --- ms23: the contract is readable with no environment ------------------
 
 set +e
@@ -403,7 +480,8 @@ set -e
 assert_eq "$rc" "0" "ms23: --help exits 0 with GH_REPO unset"
 assert_contains "$out" "Usage: merged-sweep.sh" "ms23: --help prints usage"
 assert_contains "$out" "post-merge-findings" "ms23: --help names the attention kind"
-assert_contains "$out" "GLOBAL failures" "ms23: --help carries the exit-2 shapes"
+assert_contains "$out" "always GLOBAL" "ms23: --help carries the one exit-2 shape"
+assert_not_contains "$out" "error\` lines on" "ms23: and promises no per-PR error lines, which no path emits"
 set +e
 out=$( (cd "$TMP_ROOT/cwd" && env -u GH_REPO "$SWEEP" -h) ); rc=$?
 set -e
@@ -421,6 +499,99 @@ set -e
 assert_eq "$rc" "1" "ms24: two PRs with findings exit 1"
 assert_eq "$(grep -c . "$TMP_ROOT/calls.log")" "1" "ms24: the whole sweep is ONE query, whatever the PR count"
 assert_eq "$(grep -c 'post-merge-findings' <<<"$out")" "2" "ms24: one line per PR"
+
+# --- ms25 (finding #8): the re-raise shape -------------------------------
+# A reviewer commenting again on a line it already flagged lands in a
+# PRE-merge thread. Reading only the thread'"'"'s first comment reported
+# silence over exactly that.
+fresh_state
+RERAISE="$(thread THR_reraise 2 \
+  "$(comment "$BEFORE_MERGE" "nit: name this" codex Bot)" \
+  "$(comment "$AFTER_MERGE" "P1: this drops the error on the retry path" codex Bot)")"
+fixture "$(envelope "$(pr 12 "$MERGED_AT" dev '[]' '[]' "[$RERAISE]")")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms25: a pre-merge thread re-raised after the merge is a finding"
+assert_contains "$out" "0 review(s) and 1 review thread(s)" "ms25: counted as a thread finding"
+
+# The same thread whose only post-merge comment IS the answer stays quiet.
+fresh_state
+ANSWER_ONLY="$(thread THR_answeronly 2 \
+  "$(comment "$BEFORE_MERGE" "nit: name this" codex Bot)" \
+  "$(comment "$AFTER_MERGE" "Fixed in a1b2c3d4e5f6" dev User)")"
+fixture "$(envelope "$(pr 12 "$MERGED_AT" dev '[]' '[]' "[$ANSWER_ONLY]")")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "0" "ms25b: a post-merge comment that IS the answer is not a finding"
+
+# --- ms26 (finding #4): the LAST reply decides, on both arms -------------
+fresh_state
+SUPERSEDED="$(thread THR_superseded 3 \
+  "$(comment "$AFTER_MERGE" "P2: this leaks" codex Bot)" \
+  "$(comment "$(iso -900)" "Fixed in a1b2c3d4e5f6" dev User)" \
+  "$(comment "$LATER" "tracking that separately" dev User)")"
+fixture "$(envelope "$(pr 12 "$MERGED_AT" dev '[]' '[]' "[$SUPERSEDED]")")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms26: a canonical reply superseded by a bare track-word no longer answers"
+
+fresh_state
+fixture "$(envelope "$(pr 11 "$MERGED_AT" dev "[$LATE_REVIEW]" \
+  "[$(comment "$(iso -900)" "Fixed in a1b2c3d4e5f6" dev User),$(comment "$LATER" "tracking that separately" dev User)]" '[]')")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms26b: same on the review arm — the newest reply is the standing one"
+
+# And the order that DOES answer: the bare track-word first, canonical last.
+fresh_state
+fixture "$(envelope "$(pr 11 "$MERGED_AT" dev "[$LATE_REVIEW]" \
+  "[$(comment "$(iso -900)" "tracking that separately" dev User),$(comment "$LATER" "Fixed in a1b2c3d4e5f6" dev User)]" '[]')")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "0" "ms26c: a canonical reply newer than the bare one answers"
+
+# --- ms27 (finding #2): a window the page could not cover ----------------
+fresh_state
+STUB_ISSUE_COUNT=86 fixture "$(STUB_ISSUE_COUNT=86 envelope "$(pr 11 "$MERGED_AT" dev '[]' '[]' '[]')")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms27: a window holding more merged PRs than the page read fails closed"
+assert_contains "$out" "86 merged PR(s) in the window, 1 read" "ms27: naming the count it could not reach"
+assert_contains "$out" "UNSWEPT" "ms27: and saying the remainder is unswept"
+assert_contains "$out" "raise --limit (max 40)" "ms27: naming the remedy that applies below the ceiling"
+assert_contains "$out" "post-merge-findings" "ms27: as an ordinary attention line"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "0" "ms27b: and it dedupes like every other finding"
+
+# At the ceiling the only remedy left is the window, and the line says that
+# rather than telling the operator to raise a limit already at its maximum.
+fresh_state
+set +e
+out=$(run_sweep -- --limit 40); rc=$?
+set -e
+assert_contains "$out" "already at its 40 ceiling" "ms27e: at the ceiling the remedy named is the window"
+
+fresh_state
+fixture "$(STUB_HAS_NEXT=true envelope "$(pr 11 "$MERGED_AT" dev '[]' '[]' '[]')")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "1" "ms27c: hasNextPage alone also fails closed"
+
+fresh_state
+fixture "$(envelope "$(pr 11 "$MERGED_AT" dev '[]' '[]' '[]')")"
+set +e
+out=$(run_sweep); rc=$?
+set -e
+assert_eq "$rc" "0" "ms27d: a page that reached the whole window says nothing"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -218,8 +218,8 @@ pr-watch reduces OPEN PRs only, and the gate opens on the first non-author
 review with no quiet period — so a review round landing in the queue's final
 minutes merges before anyone reads it. `merged-sweep.sh` is the same reducer
 over recently-merged PRs, emitting one `post-merge-findings` line per merged
-PR that carries a review or review thread created after its `mergedAt` with
-no disposition reply:
+PR that carries a review, or a review thread comment, created after its
+`mergedAt` with no disposition reply:
 
 ```bash
 export GH_REPO=your-org/your-repo
@@ -231,6 +231,13 @@ per-repo state (`MERGED_SWEEP_STATE_DIR`, default `tmp/review-gate-merged-sweep`
 a finding surfaces once and stays quiet while unchanged, which makes exit 0
 mean "nothing NEW". Pass `--no-state` to re-read everything still
 outstanding — the audit form.
+
+One query answers for the whole sweep, and `--limit` (default 20, max 40) is
+how many merged PRs it reads. On a busy repo the 48h window holds more than
+that, and the sweep says so on a sweep-level fail-closed line rather than
+reporting silence over the PRs it never reached: raise `--limit`, or narrow
+`--window` until the line stops. Exit 2 is always a global failure with
+nothing on stdout, so a consumer that sees lines is looking at findings.
 
 ## Verification
 
