@@ -177,19 +177,28 @@ and the write job's `if:` expressions byte-exact; the load-bearing triggers
 isolation (no checkout, no `concurrency:`, no `issues: write`); the one
 `actions: write` and that it sits on the relay; the write job's single-writer
 group and its `cancel-in-progress: false`; `persist-credentials: false`
-counted against the checkouts; the two checkout `ref:` lines bare, with each
-guard ahead of its checkout and exiting nonzero; the relay's `DISPATCH_REF`,
+counted against the checkouts; every checkout `ref:` bare, with each guard
+ahead of its checkout and exiting nonzero; the relay's `DISPATCH_REF`,
 `WORKFLOW_REF` and `EVENT_NAME` bindings; its failure surface (a bounded
 dispatch attempt, no `mktemp`, both CR normalizers); the fork read-only flag
 and the VST-36 escalation arm; the `check_run` breaker's list against the job
 names; and the relay's timeout against its own retry budget.
 
-That set is CLOSED, and the block's own ledger comment is what closes it:
-every property the workflow rests on is either checked there or named in the
-ledger with the instrument that does cover it. Three sit in the ledger today,
-and the `relay:` battery — which EXECUTES the relay step against a gh stub,
-over both copies — is what covers the first two. Both run here, upstream, on
-every change.
+That list is closed over ONE set, named exactly so nobody reads it wider:
+the properties the `pin_workflows` block this suite replaced used to prove.
+Each is checked there or carries a row in the block's own ledger comment
+naming the instrument that reds instead; three sit in the ledger today, and
+the `relay:` battery — which EXECUTES the relay step against a gh stub, over
+both copies — covers the first two. Both run here, upstream, on every change.
+
+It is NOT a claim about every property the workflow rests on. Two classes sit
+outside it and always did, the earlier block having asserted neither: the
+jobs' `permissions:` SCOPES — that `statuses: write` is still write, that
+`contents:` and `pull-requests:` are still read — and the trigger set beyond
+the three above, `merge_group:` and the activity types included. Downgrading
+`statuses: write` or deleting `merge_group:` passes every instrument in the
+skill. Widening the block is how they get covered; reading the closure wider
+than its set is how they look covered when they are not.
 
 The battery covers BEHAVIOR, never a binding's presence: `_relay_once`
 supplies `DISPATCH_REF`, `WORKFLOW_REF` and `EVENT_NAME` as literals, so it
@@ -197,6 +206,14 @@ proves the step degrades safely when one is missing and proves nothing about
 whether the file still carries it. That is why those three are `[template]`
 checks rather than ledger rows.
 
-Every pattern in the block is anchored to column and indentation. An
-unanchored substring counts a commented-out line, so commenting a setting out
-would leave its presence check green on a file that no longer carries it.
+One matching technique runs the whole block: full-line comments are stripped
+before every match, and no pattern is tied to one YAML spelling. Both halves
+carry weight. Stripping comments is what stops a commented-out setting from
+satisfying a presence or count check — and, in an absence check, what stops a
+comment that merely names an expression from reddening. Not tying to a
+spelling is what stops a step written `- name:` first, with its `uses:` on
+the following line, from slipping past a pattern written for the `- uses:`
+form. A column anchor appears only where the indentation IS the property, a
+job-level `permissions:` key being a different thing from a workflow-level
+one. An absence check reds on an extra match, which is the fail-closed
+direction.

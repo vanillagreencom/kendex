@@ -34,9 +34,10 @@ These are known, deliberate trade-offs. Raising them again is noise:
   wrong question of the wrong tool. What the TEMPLATE means is answered
   upstream in `skills/review-gate/tests/review-writer-template.test.sh`: the
   `[template]` block derives it from the shipped template alone, and the
-  `relay:` battery executes the relay step against a gh stub. That block's
-  property set is CLOSED by its own ledger comment, so name a gap against
-  that: a property that is neither checked there nor named in the ledger.
+  `relay:` battery executes the relay step against a gh stub. That block is
+  closed over one named set — read its preamble, which says what the set is
+  and which classes sit outside it — so a gap worth naming is a property
+  inside that set which is neither checked nor in its ledger.
 
 - **No test-coverage asks for instruction markdown or for `tools/guard`
   rules in a change that adds no guard test lane.** What a test must cover is
