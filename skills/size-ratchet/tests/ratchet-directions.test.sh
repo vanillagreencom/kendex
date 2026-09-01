@@ -739,6 +739,24 @@ run_aliased "kendex.settings.toml"
   && ok "control: the canonical spelling is refused the same way" \
   || bad "control: the canonical spelling is refused" "rc=$RC out=$OUT"
 
+# Narrowing the HEAD scan with `git grep -I` let a consumer's .gitattributes
+# decide which files are text: `*.tsv binary` hid the baseline, the scan saw
+# no row set, the refusal took its bootstrap arm, and the repoint landed.
+relocating_repo copybinaryattr x.test.txt 15 15
+printf '*.tsv binary\n' >"$R/.gitattributes"
+git -C "$R" add -A
+git -C "$R" commit -q -m "the baseline, now marked binary"
+case "$(git -C "$R" check-attr binary -- tools/a.tsv)" in
+  *"binary: set"*) ok "the fixture really does mark the baseline binary, which is the premise" ;;
+  *) bad "the fixture marks the baseline binary" "$(git -C "$R" check-attr binary -- tools/a.tsv)" ;;
+esac
+mkfile x.test.txt 20
+copy_repoint x.test.txt 20
+RAISE=1 run_frozen --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"baseline repointed and rewritten: tools/b.tsv"*) true ;; *) false ;; esac \
+  && ok "a baseline marked binary is still found by the HEAD scan" \
+  || bad "a baseline marked binary is still found by the HEAD scan" "rc=$RC out=$OUT"
+
 echo "=== and the three bootstraps still pass: none of them removes a row set ==="
 # Each legitimately leaves HEAD with no rows at the configured path, and each
 # is what refusing on that emptiness alone would break.

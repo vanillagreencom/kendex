@@ -242,8 +242,8 @@ HEAD carried a row set at that the judged snapshot no longer carries, which
 none of the three bootstraps produces. A move whose rows arrive byte for byte
 as they left passes, because no row rose across it. A repoint that COPIES the
 rows removes nothing, so that check cannot name it; a second refusal takes the
-shape instead — HEAD carrying rows nowhere the run reads, a settings source in
-the change, and rows arriving that no HEAD blob already holds. A row whose
+shape — HEAD rows nowhere the run reads, a settings source changed, and the
+arriving rows not the ONE row set HEAD holds; two or more refuses. A row whose
 file is at or under its threshold is reported as stale instead, so one root
 cause reads as one verdict. A class that changes its UNIT does not escape:
 HEAD's row is re-expressed in the unit the class counts now, measured from

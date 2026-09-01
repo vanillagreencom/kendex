@@ -85,9 +85,9 @@ raises is that threshold routed around.
 - **A commit that REPOINTS the baseline** — a changed `SIZE_RATCHET_BASELINE`,
   whether the old file moves or stays — leaves HEAD carrying nothing at the
   path the run reads, so a raise would land with nothing to compare it
-  against. It is refused unless the arriving rows are ones HEAD already
-  carries. Repoint the baseline in a commit that changes nothing else, then
-  change its rows in the next one.
+  against. It passes only when HEAD holds exactly one row set and the arriving
+  rows are that set byte for byte; two or more is ambiguous and refuses.
+  Repoint in a commit that changes nothing else, then change its rows next.
 - A repo whose HEAD carries no baseline rows yet is bootstrapping, and the
   gate says so on its verdict line rather than reporting a clean raise check.
 
