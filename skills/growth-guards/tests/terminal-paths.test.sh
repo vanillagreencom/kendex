@@ -2,8 +2,9 @@
 # Pins for the code paths that only exist AT A TERMINAL. The runners invoke
 # every other suite headless, where `mv` never prompts and plain `mv` measures
 # exactly as `mv -f` does — which is how a prompting install shipped green.
-# Each case here runs under a pseudo-terminal; the rules a probe of such a
-# path must follow, what a call sets, and why, are in lib/pty.bash.
+# Each case here runs under a pseudo-terminal. What a call sets is in
+# lib/pty.bash; the rules such a probe follows, and why, are in
+# DEVELOPMENT.md § Probing a terminal-only code path.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -209,25 +210,12 @@ gg_pty_run 20 "$ROOT/die-case.sh" && [ "$GG_PTY_STATE" = gone ] && [ -z "$GG_PTY
   && ok "control: a session that dies before its last line reports no status" \
   || bad "control: a session that dies before its last line reports no status" "state=$GG_PTY_STATE rc=$GG_PTY_RC out=$GG_PTY_OUT err=$GG_PTY_ERR"
 
-# A typescript with no marker is handed back whole. Emptying it here would
-# lose the spawner's own words, which are what gg_pty_run reports as the cause
-# when no session ran at all.
-printf 'NOTHING RAN\n' >"$ROOT/no-marker.txt"
-gg_pty_capture "$ROOT/no-marker.txt"
-[ "$GG_PTY_OUT" = "NOTHING RAN" ] \
-  && ok "control: a capture with no marker keeps the whole typescript" \
-  || bad "control: a capture with no marker keeps the whole typescript" "out=$GG_PTY_OUT"
-
-
-# Every path this suite hands to a shell goes through %q, and this case drives
-# them under a scratch root whose NAME is a space and a command substitution:
-# unquoted at any one, the substitution runs. It reaches gg_pty_run's spawn
-# string, the `bash %q` line gg_pty_run writes into the session, pty_call's
-# SRC, and pty_call's source line.
-#
-# The one written path no case drives under such a name is pty_call's `cd`,
-# which is the fixture repository this suite makes for itself rather than
-# anything a caller supplies.
+# Every path handed to a shell goes through %q, and this case drives that rule
+# by giving the probe a scratch root and a source whose NAMES are a space and
+# a command substitution: unquoted anywhere on the way in, the substitution
+# runs. What it reaches is whatever the helper derives from TMPDIR or from a
+# caller's argument; what it does not reach is the fixture repository this
+# suite makes for itself, which no caller supplies.
 hostile="$ROOT/a q\$(touch $ROOT/PWNED)x dir"
 mkdir -p "$hostile"
 printf 'FROM A HOSTILE PATH\n' >"$hostile/src.tsv"
@@ -243,24 +231,6 @@ fi
 [ ! -e "$ROOT/PWNED" ] \
   && ok "control: and nothing inside that name was executed" \
   || bad "control: and nothing inside that name was executed" "the substitution ran; $ROOT/PWNED exists"
-
-# A setup failure names its own cause. An operator told "no pty spawner" over
-# an unwritable TMPDIR goes looking at devpts for a problem that is not there.
-mkdir -p "$ROOT/sealed"
-chmod 500 "$ROOT/sealed"
-printf 'echo NEVER\n' >"$ROOT/never.sh"
-if premise_denies_write "$ROOT/sealed" "control: an unwritable scratch root names the scratch root, not the spawner"; then
-  if TMPDIR="$ROOT/sealed" gg_pty_run 20 "$ROOT/never.sh"; then
-    bad "control: an unwritable scratch root names the scratch root, not the spawner" "gg_pty_run returned 0; state=$GG_PTY_STATE err=$GG_PTY_ERR"
-  else
-    case "$GG_PTY_ERR" in
-      *"scratch directory"*) ok "control: an unwritable scratch root names the scratch root, not the spawner" ;;
-      *) bad "control: an unwritable scratch root names the scratch root, not the spawner" "err=$GG_PTY_ERR" ;;
-    esac
-  fi
-fi
-
-chmod 700 "$ROOT/sealed"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

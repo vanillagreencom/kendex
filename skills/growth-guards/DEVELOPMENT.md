@@ -70,22 +70,44 @@ destination, so with the `-f` reverted such a run reaches the prompt and
 waits for a person.
 
 `gg_pty_run CAP SCRIPT_FILE`, in `tests/lib/pty.bash`, runs a bash script file
-with fds 0, 1 and 2 on a pseudo-terminal. `GG_PTY_STATE` says what became of
-the session and `GG_PTY_RC` carries its own exit status, in that state alone;
-the states and what each means are tabulated in the `pty.bash` header, which
-is the only place they are enumerated. A non-zero return means the call never
-started and `GG_PTY_ERR` names why.
+with fds 0, 1 and 2 on a pseudo-terminal. It picks the `script` grammar from
+`uname` — Darwin takes the BSD form, everything else the util-linux one — and
+a host whose `script` answers neither has no working spawner here, which is a
+RED naming the spawner as its cause rather than a skip: a case that cannot
+reach the terminal branch is not covering it. What a call sets is documented
+above the function; the states are enumerated there and nowhere else.
 
-It spawns through util-linux `script -qec` and nothing else, so a host whose
-`script` does not answer that grammar has no working spawner here. That is a
-RED naming the spawner as its cause, not a skip: a case that cannot reach the
-terminal branch is not covering it.
+Two rules hold, and a probe that drops either is worse than no probe:
 
-`terminal-paths.test.sh` is where such a case goes and where the probe's own
-rules are pinned; its `pty_call` is the wrapper shape a new one copies. The
-rules themselves — stdin redirected, a time cap, and what to assert — are
-stated once, in the `pty.bash` header, next to the code they constrain. Read
-that before writing a case.
+- **Stdin redirected.** The spawner reads `/dev/null`, so a prompt is
+  answered by EOF the moment it is written and the session returns instead of
+  waiting for a person who is not there. What it returns differs by platform,
+  which is why a case asserts on the destination.
+- **A time cap.** After `CAP` seconds the session's process group is killed,
+  the spawner's after it. `script` puts the session in a group of its own, so
+  killing the spawner alone leaves the stuck child behind. A probe that HANGS
+  yields no measurement at all, so a mutation run scores it as not killed and
+  prints a silent miss rather than a wedge.
+
+Three things to assert, and `terminal-paths.test.sh` is the worked example —
+its `pty_call` is the wrapper shape a new case copies:
+
+- **The effect the branch has, not the spawner's status.** Whether the
+  destination was replaced is what the branch does; a status is what one `mv`
+  on one host chose to say about it. `GG_PTY_STATE = ok` is the separate
+  claim that the probe ran rather than wedged.
+- **Positive evidence that the code under test was entered**, paired with
+  every negative. An unreplaced destination is also what a session that never
+  got there leaves behind, which is why the mutant control echoes a marker
+  before the call it measures and requires it back.
+- **The premise, inside the session.** A destination that denies write is
+  what makes `mv` prompt, and at euid 0 mode `0444` is not enforced — so
+  without that check a root run covers nothing and says nothing.
+
+Every path written into the session goes through `%q`. They come from
+`TMPDIR` and from the caller, so an unquoted one lands in a shell script as
+syntax rather than as a path. The session also exports `LC_ALL=C`, because a
+case matching a tool's own words is matching a string that gets translated.
 
 ## Design
 
