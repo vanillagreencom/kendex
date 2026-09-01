@@ -341,8 +341,10 @@ workflow_files=(
   "$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 )
 # A workflow states the recoverable and terminal exit codes itself, or names
-# the --help that owns them. Both spellings are in the tree, so each row pins
-# the identifiers rather than either sentence.
+# the --help that owns them. Both spellings are in the tree, so each row
+# matches either one, anchored on the sentence that routes the exit code — a
+# bare identifier appears elsewhere in these files and would pass a workflow
+# that dropped the contract.
 RESUME_FORM='Exit 75 means completion is still recoverable|per its exit code \(`second-opinion --help`\)'
 TERMINAL_FORM='Exit 124 is terminal|per its exit code \(`second-opinion --help`\) until terminal'
 for workflow_file in "${workflow_files[@]}"; do
