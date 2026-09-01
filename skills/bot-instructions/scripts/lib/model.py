@@ -7,14 +7,9 @@ implementation's single copy of that list, and the marker, the staged read and
 `drift`'s controls all take it from here rather than each naming its own set.
 """
 
-from .constants import (
-    CODERABBIT_SCHEMA_PATH,
-    MARKER_CLOSE,
-    MARKER_TOKEN,
-    TOML_PATH,
-)
+from .constants import CODERABBIT_SCHEMA_PATH, TOML_PATH
 from .errors import InputError, ManifestError
-from . import manifest, spec
+from . import manifest, marker as marker_mod, spec
 
 
 class RenderModel:
@@ -58,16 +53,13 @@ class RenderModel:
         return [e for e in self.exclusions if e["derived"]]
 
     def marker(self, style):
-        """The marker comment, in `style`: 'html' or 'hash'."""
-        paths = ", ".join(self.inputs)
-        head = f"{MARKER_TOKEN} {self.doctrine.version} from {paths}."
-        if style == "html":
-            # One comment on ONE line. `.macroscope/ignore.md` reads every
-            # non-blank line as a pattern unless the whole line is a comment,
-            # so a marker wrapped across two lines would put its second line
-            # into that file as a pattern.
-            return f"<!-- {head} {MARKER_CLOSE} -->"
-        return f"# {head}\n# {MARKER_CLOSE}"
+        """The marker comment, in `style`: 'html' or 'hash'.
+
+        `marker.comment` is the form, and `marker.at_canonical_position`
+        matches against that same function's output, so the string this
+        render writes and the string ownership is tested for are one.
+        """
+        return marker_mod.comment(style, self.doctrine.version, self.inputs)
 
 
 def _assemble(config, doctrine):
@@ -142,15 +134,22 @@ def _check_duplicates(exclusions):
 
 
 def exclude_sentence(surface):
-    """The closing sentence a surface's `exclude_globs` renders as.
+    """The closing paragraph a surface's `exclude_globs` renders as.
 
     Real subtraction only on Macroscope, which has an `exclude` frontmatter
     key. Copilot's frontmatter has no exclude key and CodeRabbit's
     `path_instructions` entry has no exclude field, so on both the subtraction
     is prose: those bots load the instructions for the excluded files and are
     asked to disregard them.
+
+    A blank line before it, never a space. Appended with a space, the sentence
+    joined whatever line the instructions ended on — and `instructions` that
+    end in a fenced code block end on the closing fence, which stops closing
+    anything once there is text after it. The fence then ran on, and the three
+    surfaces that carry this prose showed the exclusion sentence and whatever
+    followed as literal code rather than as instructions.
     """
     excl = surface.get("exclude_globs")
     if not excl:
         return ""
-    return " These rules do not cover " + ", ".join(excl) + "."
+    return "\n\nThese rules do not cover " + ", ".join(excl) + "."

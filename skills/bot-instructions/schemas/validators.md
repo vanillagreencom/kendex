@@ -95,6 +95,7 @@ Its sites, and which answer each takes:
 | Content refusals: which input string is under which refusal, and what each refusal's predicate is | Derived, one statement. The table in `repo-toml.md` § The content refusals is the single source; `toml-schema` and the Escaping paragraphs cite it. Three structures encode it: `refusals.ROWS` holds the content-class rows, `globs.check` the glob row, and `config._cadence` the `qodo_commands` row, and `toml-schema.test.sh` holds the table against all three |
 | The Qodo verbs `[cadence] qodo_commands` accepts, and which half `qodo-parity` requires guidance for | Derived, one statement. `repo-toml.md` § `[cadence]` states the set and the split; the implementation encodes the role column once and `qodo-parity` reads that |
 | Which paths a render reads: the marker's input list, `drift`'s `--staged` index set, the policy set, the open rule's coverage | Derived, one statement. SKILL.md § The render inputs is the single source; the routing table is one of them, and all four cite it rather than each naming its own set |
+| The marker line: its exact form, the prologue each path may carry, and the two fields it varies by | Derived, one statement. One function emits the marker and the ownership pattern is built from that function's own output, so the writer and the reader cannot spell it differently; one function decides the prologue and both the ownership test and the marker's insertion read it; and the version and path classes are one pair of constants, which `spec.py` refuses outside of and the pattern is built from |
 | The routing table's own shape: positions contiguous per column, no duplicates, and every block in the two all-eight columns | `doctrine-routing`, which judges the table as well as comparing it to the doctrine source |
 | Rejection clauses against their controls | Checked by reading, and the one exception. § Controls makes the count checkable by requiring one control per clause, which is why every clause has to be enumerated somewhere a reader can count |
 
@@ -454,10 +455,16 @@ the two sections carry the same set of blocks, split differently.
 Qodo render drops the block headings and defines no delimiters or embedded ids,
 and two overrides may give two blocks identical text, so nothing in the output
 can name a block. What this validator does instead is re-derive, per id, the
-text the render emitted for it, and look for that in each section. Falling back
-to whole-string comparison — which the spec forbids, since the sections carry
-the same set split differently — or letting dropped and duplicated blocks pass
-are the two alternatives, and both are the silent failure one level up. It also
+text the render emitted for it, and **walk the section for the column's blocks
+in the table's order**, each one consumed where it stands. Asking whether each
+block is merely present cannot answer the question when two of them read the
+same: with one of the two occurrences dropped, both ids find the survivor, this
+passes, and the command reads one routed block fewer. The walk needs a second
+occurrence for the second of an identical pair, and finds nothing for a block
+emitted out of the table's order. Falling back to whole-string comparison —
+which the spec forbids, since the sections carry the same set split
+differently — or letting dropped and duplicated blocks pass are the two
+alternatives, and both are the silent failure one level up. It also
 rejects a `[github_app] pr_commands` entry **whose role in `repo-toml.md`
 § `[cadence]`'s verb table is review** and whose section carries no guidance.
 The clause reads that table's role column rather than restating a set: a

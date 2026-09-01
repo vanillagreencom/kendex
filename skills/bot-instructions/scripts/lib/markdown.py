@@ -18,11 +18,20 @@ One predicate at all three sites, so those cannot disagree again. It stays
 deliberately wide about INDENTATION: markdown reads a heading after three or
 fewer leading spaces, so a line indented two spaces ends the owned region as
 surely as one in column zero.
+
+**The delimiter is a space or a tab, and nothing else.** `\s` reads every
+Unicode space as one, and CommonMark reads none of them: `##\u00a0x` is a
+paragraph to every bot, while a `\s` predicate ended the owned region there.
+Put after the generated body, that left the region `drift` compares equal to a
+fresh render while the unmanaged text below stayed inside the section every
+bot reads — the `##note` failure this predicate was written to close, reopened
+one character class wider. kendex's `tools/guard` slices the same section with
+`^##? `, so anything wider here is a boundary the two of them disagree on.
 """
 
 import re
 
-_ATX = re.compile(r"^ {0,3}(#{1,6})(?:\s|$)")
+_ATX = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]|$)")
 
 
 def heading_level(line):

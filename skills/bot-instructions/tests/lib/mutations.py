@@ -165,10 +165,11 @@ def _wrong_cause(repo):
          "does not parse")
 
 
-def main(repo, no_derive):
+def main(repo, no_derive, twins):
     _coderabbit(repo)
     _copilot(repo)
     _qodo(repo)
+    _qodo_identity(twins)
     _macroscope(repo)
     _exclusions(repo)
     _wrong_cause(repo)
@@ -316,6 +317,46 @@ def _qodo(repo):
             render_qodo, "_guidance", empty_extra,
             also=("exclusion-consistency",))
     _qodo_role(repo)
+
+
+def _qodo_identity(repo):
+    """Two blocks with identical text, one occurrence dropped from the section.
+
+    `validators.md` § `qodo-parity` allows two `[doctrine.replace]` values to
+    be identical, and that is the state a containment test cannot judge: with
+    one of the two occurrences gone, both ids still find the survivor, the
+    validator passes, and the review command reads one routed block fewer.
+    The fixture's `[doctrine.replace]` builds the state; this drops one
+    occurrence, which no `bot-instructions.toml` can do.
+
+    The twins are found rather than named: a hardcoded sentence here would
+    still read as coverage after the fixture's TOML moved on.
+    """
+    label = "one of two identical blocks dropped from a Qodo section"
+    ctx = _context(repo)
+    column = "pr_agent extra"
+    routed = [bid for bid, _ in ctx.model.blocks_for(column)]
+    texts = [ctx.model.block(b) for b in routed]
+    twins = [b for b in routed if texts.count(ctx.model.block(b)) > 1]
+    if len(twins) < 2:
+        report(False, label, "the fixture no longer gives two blocks of that column "
+                             "identical text")
+        return
+    if "render-out-of-scope" in twins:
+        # That block carries the exclusion paths as prose, so dropping its
+        # occurrence would breach a second clause and the control would red
+        # for two reasons at once.
+        report(False, label, "the twins must not be the block that carries the "
+                             "exclusion paths")
+        return
+    text = ctx.model.block(twins[0])
+    original = render_qodo._guidance
+
+    def drop_one(m, col, with_summary=True):
+        built = original(m, col, with_summary)
+        return built.replace(text, "", 1) if col == column else built
+
+    control(repo, "qodo-parity", label, render_qodo, "_guidance", drop_one)
 
 
 def _qodo_role(repo):
@@ -538,4 +579,4 @@ def _unconditional(repo):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1], sys.argv[2]))
+    sys.exit(main(sys.argv[1], sys.argv[2], sys.argv[3]))

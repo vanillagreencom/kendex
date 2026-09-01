@@ -234,6 +234,36 @@ def _sections(text):
     return sorted(out, key=lambda p: -p[1])
 
 
+def _unplaced(section, routed, block):
+    """The first routed block `section` does not carry after the one before it.
+
+    A cursor, never a containment test per block. `in` answers presence and
+    the question here is identity: `[doctrine.replace]` may give two blocks
+    the same text — `validators.md` § `qodo-parity` says so — and a render
+    that dropped one of the two occurrences left both ids satisfied by the
+    survivor, with a routed block gone from the file the bot reads and every
+    validator green. The cursor consumes each block where it stands, so the
+    second of an identical pair needs a second occurrence, and a block emitted
+    out of the table's order is not found either.
+
+    The whole assembled block, not its first line: `[doctrine.append]` and the
+    tracker substitution are already applied, and the render only ever adds
+    after a block's text, so the block is a prefix of what was emitted for it
+    and the cursor lands on the boundary between them.
+
+    One answer per column, the first block the walk cannot place. Past a miss
+    the cursor has no position worth trusting, so carrying on would report
+    every block below it as missing too.
+    """
+    pos = 0
+    for bid, _ in routed:
+        found = section.find(block(bid), pos)
+        if found == -1:
+            return bid
+        pos = found + len(block(bid))
+    return None
+
+
 def qodo_parity(ctx, out):
     """`/review` reads `[pr_reviewer] extra_instructions`; `/agentic_review`
     reads `[review_agent]`. Guidance in one is absent from the other's path."""
@@ -252,20 +282,17 @@ def qodo_parity(ctx, out):
     # Identity is recovered from the inputs, not from the rendered TOML: the
     # Qodo render drops block headings, and two overrides may give two blocks
     # identical text, so nothing in the output can name a block. What the
-    # render emitted for each id is re-derived here and looked for.
+    # render emitted for each id is re-derived here and walked for, in the
+    # routing table's order.
     for column, section, label in (
         ("pr_agent extra", extra, "[pr_reviewer] extra_instructions"),
         ("pr_agent issues", union, "the [review_agent] keys"),
         ("pr_agent compliance", union, "the [review_agent] keys"),
     ):
-        for bid, _ in ctx.model.blocks_for(column):
-            # The whole assembled block, not its first line: `[doctrine.append]`
-            # and the tracker substitution are already applied, and the render
-            # only ever adds after a block's text, so the block is a prefix of
-            # what was emitted for it.
-            if ctx.model.block(bid) not in section:
-                out.append(Finding(v, f"doctrine block {bid!r} is routed to {column!r} and "
-                                      f"is absent from {label}"))
+        bid = _unplaced(section, ctx.model.blocks_for(column), ctx.model.block)
+        if bid is not None:
+            out.append(Finding(v, f"doctrine block {bid!r} is routed to {column!r} and "
+                                  f"is absent from {label}"))
     for verb in ctx.config.cadence["qodo_commands"]:
         if QODO_VERBS.get(verb) != "review":
             continue

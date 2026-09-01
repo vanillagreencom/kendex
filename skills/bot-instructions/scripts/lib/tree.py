@@ -160,13 +160,19 @@ def _run(root, args):
 
 
 def _git(root, args):
-    # Lossy, and named as the exception in `renders.md` § Common rules beside
-    # the rule it is an exception to: that rule is about FILE CONTENT, and a
-    # path is bytes to git. `ls-files -z` emits whatever names the repo holds,
-    # so a repo tracking one that is not UTF-8 is a working repo rather than a
-    # repo to refuse; the substituted name matches no glob and reads as an odd
-    # name in a report. `fsutil.decode_text` answers the content question.
-    return [p for p in _run(root, args).stdout.decode("utf-8", "replace").split("\0") if p]
+    # `surrogateescape`, which is neither of the two the rest of this package
+    # chooses between, because a path is neither content nor display text.
+    # Strict would refuse a working repo: `ls-files -z` emits whatever names
+    # the repo holds, and a name that is not UTF-8 is legal on every
+    # filesystem this runs on. Lossy DESTROYED the name — `b"\xff/AGENTS.md"`
+    # came back as `"?/AGENTS.md"`, which still passed the nested-AGENTS.md
+    # filter and then addressed a different path on the read, so
+    # `agents-section` reported nothing about an active nested policy file.
+    # Surrogates round-trip: `os` calls and `subprocess` argument lists both
+    # encode a name back to the bytes git gave, so the reopen reaches the file
+    # the walk found. `fsutil.decode_text` answers the CONTENT question, and
+    # `renders.md` § Common rules names this as the exception to it.
+    return [p for p in _run(root, args).stdout.decode("utf-8", "surrogateescape").split("\0") if p]
 
 
 def open_tree(root, staged):

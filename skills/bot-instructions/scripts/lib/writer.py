@@ -127,8 +127,10 @@ def _gate(dir_fd, leaf, rel, require_marker, strict):
             raise RenderError(
                 f"{rel}: carries no {MARKER_TOKEN!r} marker at its canonical position, so "
                 "it is the repo's own file and render will not replace it — run `adopt` "
-                "to take it over. A marker anywhere below the first line of the first "
-                "comment is quoted content, not ownership"
+                "to take it over. The test is that the first line IS the marker this "
+                "package writes for this path: a quotation of it, a denial of it, or a "
+                "line that merely holds the words is the repo saying something about "
+                "this package, not this package owning the file"
             )
         return _identity(st), existing, substituted
     finally:

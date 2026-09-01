@@ -234,6 +234,75 @@ else
   bad 'a multi-line [repo] summary keeps its line breaks on every surface'
 fi
 
+# `exclude_globs` renders as prose on the three surfaces with no exclude field
+# of their own, and it used to be appended with a leading space. A surface
+# whose `instructions` end in a fenced code block ends on the closing fence,
+# and a fence with text after it on the line closes nothing: the sentence and
+# whatever followed became code on all three at once.
+fenced="$(bi_new_repo fenced-surface)"
+{
+  cat "$BI_FIXTURES/canonical.toml"
+  cat <<'SURFACE'
+
+[[surface]]
+name = "fenced"
+globs = ["src/**"]
+exclude_globs = ["src/tests/**"]
+instructions = """
+Run the example before reporting a defect against it.
+
+```
+kendex render --dry-run
+```
+"""
+SURFACE
+} > "$fenced/bot-instructions.toml"
+bi_must adopt --repo "$fenced" || exit 1
+bi_must render --repo "$fenced" || exit 1
+if python3 - "$BI_ROOT/skills/bot-instructions" "$fenced" <<'PROBE'; then
+import os, sys
+PKG, repo = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import yamlread
+
+SENTENCE = "These rules do not cover src/tests/**."
+
+
+def outside_a_fence(where, text):
+    """The sentence is there, at fence depth zero, and no fence is left open."""
+    if SENTENCE not in text:
+        sys.exit(where + ": the exclusion sentence is not in the output at all")
+    depth = 0
+    seen = False
+    for line in text.split("\n"):
+        if line.strip().startswith("```"):
+            depth = 1 - depth
+            continue
+        if SENTENCE in line:
+            seen = True
+            if depth:
+                sys.exit(where + ": the exclusion sentence is inside a code fence")
+    if not seen:
+        sys.exit(where + ": the exclusion sentence never appears on a line of its own")
+    if depth:
+        sys.exit(where + ": a code fence is left open")
+
+
+outside_a_fence(".github/instructions/fenced.instructions.md",
+                open(repo + "/.github/instructions/fenced.instructions.md").read())
+outside_a_fence("best_practices.md", open(repo + "/best_practices.md").read())
+doc = yamlread.loads(open(repo + "/.coderabbit.yaml").read())
+entries = [e for e in doc["reviews"]["path_instructions"]
+           if SENTENCE in e["instructions"]]
+if not entries:
+    sys.exit(".coderabbit.yaml: no path_instructions entry carries the sentence")
+outside_a_fence(".coderabbit.yaml path_instructions", entries[0]["instructions"])
+PROBE
+  ok 'an exclusion sentence after a fenced code block lands outside the fence'
+else
+  bad 'an exclusion sentence after a fenced code block lands outside the fence'
+fi
+
 # No bootstrap exemption: an unmarked region is the repo's whatever its body
 # holds, and a whitespace test would be exactly the boundary `renders.md`
 # § `AGENTS.md` says does not exist.

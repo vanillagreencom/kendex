@@ -16,15 +16,23 @@ content refusals, which `refusals.py` owns.
 
 import re
 
-from .constants import FROZEN_BLOCK_IDS, ROUTING_COLUMNS
+from .constants import (
+    FROZEN_BLOCK_IDS,
+    MARKER_PATH_CLASS,
+    MARKER_VERSION_CLASS,
+    ROUTING_COLUMNS,
+)
 from .errors import InputError, SpecError
 from . import markdown, refusals
 
 # A version reaches a `#`, `//`-free comment and an HTML comment. Anything
 # outside this class could close one and put the rest into a generated file as
-# live reviewer instructions.
-_VERSION_CLASS = re.compile(r"^[A-Za-z0-9.+-]+$")
-_PATH_CLASS = re.compile(r"^[A-Za-z0-9._/-]+$")
+# live reviewer instructions. The classes are `constants.py`'s, because
+# `marker.py` builds its ownership pattern from the same two and a second copy
+# of either would let the writer and the reader disagree about what a marker
+# may hold.
+_VERSION_CLASS = re.compile(f"^[{MARKER_VERSION_CLASS}]+$")
+_PATH_CLASS = re.compile(f"^[{MARKER_PATH_CLASS}]+$")
 
 _DASH = "–"
 
@@ -55,7 +63,7 @@ def check_marker_path(path):
     if not _PATH_CLASS.match(path):
         raise InputError(
             f"{path!r}: a path this render records in the marker must hold only "
-            "[A-Za-z0-9._/-]; the marker is a comment and this package refuses "
+            f"[{MARKER_PATH_CLASS}]; the marker is a comment and this package refuses "
             "rather than escapes"
         )
     return path
@@ -73,7 +81,7 @@ def read_version(skill_text, where):
             version = m.group(1).strip()
             if not _VERSION_CLASS.match(version):
                 raise SpecError(
-                    f"{where}: version {version!r} is outside [A-Za-z0-9.+-]. The marker "
+                    f"{where}: version {version!r} is outside [{MARKER_VERSION_CLASS}]. The marker "
                     "interpolates it into a comment, and a version carrying `-->` or a "
                     "newline would end that comment"
                 )

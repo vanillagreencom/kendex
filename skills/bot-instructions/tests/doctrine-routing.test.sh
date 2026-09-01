@@ -230,4 +230,36 @@ else
   bad 'and the block keeps that line and everything below it'
 fi
 
+# The same predicate at the same site, one character class wider: a `#` run
+# closed by a no-break space is a heading to nobody, and reading it as one
+# ended the section and dropped the rest of the block with the render
+# reporting success. Read the block back, for the reason above.
+spec="$(new_spec doctrine-nbsp)"
+python3 - "$spec/SKILL.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+anchor = "### scope\n\nRaise a defect"
+assert anchor in s, "fixture shape changed"
+open(p, "w").write(s.replace(anchor, "### scope\n\n##\u00a0not a heading.\n\nRaise a defect", 1))
+PY
+expect_green 'a doctrine block carrying ## before a no-break space renders' \
+  render --dry-run --repo "$repo" --spec "$spec"
+if python3 - "$BI_ROOT/skills/bot-instructions" "$spec" <<'PROBE'; then
+import os, sys
+PKG, SPEC = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import spec as spec_mod, tree
+blocks = spec_mod.load(tree.Worktree(SPEC), "SKILL.md", "schemas/renders.md").blocks
+body = blocks["scope"]
+if "not a heading." not in body:
+    sys.exit(f"the line was dropped from the block: {body[:120]!r}")
+if "Raise a defect" not in body:
+    sys.exit(f"the block was truncated at that line: {body[:120]!r}")
+PROBE
+  ok 'and that block keeps the line and everything below it too'
+else
+  bad 'and that block keeps the line and everything below it too'
+fi
+
 bi_summary
