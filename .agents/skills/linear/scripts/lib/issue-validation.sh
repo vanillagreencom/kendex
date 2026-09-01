@@ -277,35 +277,55 @@ blocking_level_violation_message() {
 # nothing the defect reaches through. Empty or unset keeps the guard off.
 
 # The rule every refusal quotes, so message and docs cannot drift apart.
-REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). A value naming only a review thread, a reviewer, or a shape is not a reach.'
+REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). A value naming only the thread a finding came from, or a shape, is not a reach.'
 
-# Values that name a review artifact or a hypothesis rather than a producer.
-# A short literal list, not a grammar: each entry is a word that appears only
-# when the value names the thread a finding came from, or a condition nobody
-# has met. `could`, `might` and `in theory` are the filing bar's own words for
-# an impact that is not one.
-REACH_REFUSED_WORDS='review thread|review comment|pr review|code review|reviewer|copilot|codex|prrt_|the finding|this finding|could|might|in theory|hypothetical'
+# Values naming the thread a finding came from rather than a producer. Every
+# entry needs a leading word boundary, and each bot or role name is qualified
+# by the artifact it produced: this project ships a `codex` harness id, a
+# `reviewer` skill and reviewer-* agents, so bare `codex` or `reviewer` in a
+# value refuses an honest reach like `kendex install --harness codex` or
+# `a reviewer running tools/guard`, which the guard has no escape flag to
+# recover. `could` and `might` are absent for the same reason: they mark a
+# speculative impact, which the filing bar judges on its own line, and as
+# words they refuse `could not` in a report of what a user actually hit.
+REACH_REFUSED_WORDS='(^|[^a-z0-9])((copilot|codex|reviewer|bot) (review|comment|thread|suggestion)|review (thread|comment|round)|(pr|code) review|prrt_|(the|this) finding|in theory|hypothetical)'
 
 # A value describing an input FORM is a shape, not a producer: no run emits it
 # and no user performs it.
 REACH_REFUSED_SHAPES='^(a|an) .*(containing|starting with|ending with|matching) |^(a|an) (empty|missing|malformed|invalid|unset|blank|null) '
 
+# An unsubstituted template placeholder, and a token whose whole meaning is
+# "nothing here", name no more than a blank line does. Both resolve to the
+# absent case so the caller's missing-line refusal is what the author reads.
+REACH_ABSENT_PLACEHOLDER='^\[[A-Z_]+\]$'
+REACH_ABSENT_TOKENS='^(tbd|n/a|na|none|unknown|-|\?)$'
+
 # issue_marked_value DESCRIPTION MARKER — the first `Marker:` value in the
-# body. MARKER is a POSIX bracket-case pattern, not a literal, because BSD sed
-# has no case-insensitive `s///` flag. Markdown emphasis around the marker is
-# tolerated: `Reached by:`, `**Reached by**:` and `**Reached by:**` are one
-# form, and a whole-line bold leaves its closing `**` on the value.
+# body, or empty where the line is absent or names nothing. MARKER is a POSIX
+# bracket-case pattern, not a literal, because BSD sed has no case-insensitive
+# `s///` flag. A leading list marker and markdown emphasis are tolerated:
+# `Reached by:`, `- **Reached by**:` and `**Reached by:**` are one form, and a
+# whole-line bold leaves its closing `**` on the value.
 issue_marked_value() {
-	local value
-	value=$(sed -n "s/^[[:space:]]*\**[[:space:]]*$2[[:space:]]*\**[[:space:]]*:[[:space:]]*\**[[:space:]]*//p" <<<"$1" | head -1)
+	local value lower
+	value=$(sed -n "s/^[[:space:]]*[-*+]*[[:space:]]*\**[[:space:]]*$2[[:space:]]*\**[[:space:]]*:[[:space:]]*\**[[:space:]]*//p" <<<"$1" | head -1)
 	value="${value%"${value##*[!*[:space:]]}"}"
+	lower=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+	if [[ "$value" =~ $REACH_ABSENT_PLACEHOLDER ]] || [[ "$lower" =~ $REACH_ABSENT_TOKENS ]]; then
+		value=""
+	fi
 	printf '%s' "$value"
 }
 
-# require_issue_reach DESCRIPTION PRIORITY — 0 to proceed, 1 + a JSON error on
-# stderr for the caller to return on.
+# require_issue_reach DESCRIPTION PRIORITY REVIEW_BORN — 0 to proceed, 1 + a
+# JSON error on stderr for the caller to return on.
+#
+# The symptom check is bound to REVIEW_BORN ("1" from `--review-born`). A
+# review finding files as priority 2 only with a reported symptom; priority 2
+# minted structurally — a TPM planner, a roadmap layer, the merge-pr rebundle,
+# a research spike — reports no symptom by construction and creates unchecked.
 require_issue_reach() {
-	local description="$1" priority="$2"
+	local description="$1" priority="$2" review_born="${3:-}"
 	[ -n "${LINEAR_REQUIRE_REACH:-}" ] || return 0
 
 	local reach lower
@@ -323,8 +343,9 @@ require_issue_reach() {
 		return 1
 	fi
 
-	if [ "$priority" = "2" ] && [ -z "$(issue_marked_value "$description" '[Ss]ymptom')" ]; then
-		jq -cn '{error: "Refusing to create a priority-2 issue with no \"Symptom:\" line. Priority 2 is the reported tier: name the run, the user, or the red check that already showed the defect. Without one the item is normal work - create it at --priority 3."}' >&2
+	if [ "$review_born" = "1" ] && [ "$priority" = "2" ] &&
+		[ -z "$(issue_marked_value "$description" '[Ss]ymptom')" ]; then
+		jq -cn '{error: "Refusing to create a review-born priority-2 issue with no \"Symptom:\" line. Priority 2 is the reported tier: name the run, the user, or the red check that already showed the defect. Without one the item is normal work - create it at --priority 3."}' >&2
 		return 1
 	fi
 

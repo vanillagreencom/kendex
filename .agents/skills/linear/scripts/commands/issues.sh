@@ -108,11 +108,18 @@ Create Options:
                         skill), which owns labels, project, priority, and
                         relations — do not create tracked issues directly.
 
+  --review-born         This create came from a review finding. With
+                        LINEAR_REQUIRE_REACH set, `--priority 2` then needs a
+                        `Symptom:` line in the body naming the run, user, or
+                        red check that already showed the defect. Priority 2
+                        minted structurally (planners, roadmap layers, the
+                        merge-pr rebundle, a research spike) omits the flag
+                        and is not symptom-checked.
+
   Reach guard: with LINEAR_REQUIRE_REACH set in kendex.settings.toml [env],
   create refuses a description with no `Reached by:` line naming the user
-  action, run, check, or shipped producer that arrives at the defect, one
-  whose value names only a review thread, a reviewer, or a shape, and a
-  `--priority 2` body with no `Symptom:` line.
+  action, run, check, or shipped producer that arrives at the defect, and one
+  whose value names only the thread a finding came from, or a shape.
 
 Update Options:
   --state <name>        New state
@@ -1086,6 +1093,7 @@ create_issue() {
     local requested_parent_id=""
     local output_format=""
     local no_agent_label=0
+    local review_born=0
     local attach_paths=()
     local attach_pending=()
 
@@ -1171,6 +1179,10 @@ create_issue() {
             no_agent_label=1
             shift
             ;;
+        --review-born)
+            review_born=1
+            shift
+            ;;
         --)
             shift
             break
@@ -1221,7 +1233,7 @@ create_issue() {
     fi
 
     require_agent_routing_label "$labels" "$no_agent_label" || return 1
-    require_issue_reach "$description" "$priority" || return 1
+    require_issue_reach "$description" "$priority" "$review_born" || return 1
 
     # --attach: refuse unreadable paths before any API call, then upload
     # (uploads run only after the routing guard above has passed). Images

@@ -110,7 +110,7 @@ run_linear issues create --title "Filed from a thread" \
 assert_refused_before_api "a description carrying no Reached by line"
 assert_contains "the prose-only refusal names the missing line" "$ERR" "Reached by"
 
-echo "=== guard on: a value naming a review artifact, a hypothesis or a shape is refused ==="
+echo "=== guard on: a value naming the thread it came from, or a shape, is refused ==="
 
 run_linear issues create --title "From review" \
   --description "$(printf 'Reached by: the Copilot thread on the pull request\n')"
@@ -118,13 +118,72 @@ assert_refused_before_api "a reach naming a review thread"
 assert_contains "the refusal quotes the offending value" "$ERR" "Copilot"
 
 run_linear issues create --title "From review" \
-  --description "$(printf 'Reached by: a name containing a quote\n')"
-assert_refused_before_api "a reach naming only a shape"
-assert_contains "the shape refusal states the rule" "$ERR" "shape"
+  --description "$(printf 'Reached by: the reviewer thread on this pull request\n')"
+assert_refused_before_api "a reach naming a reviewer thread"
 
 run_linear issues create --title "From review" \
-  --description "$(printf 'Reached by: an empty state directory could break the loader\n')"
+  --description "$(printf 'Reached by: the codex review of the second push\n')"
+assert_refused_before_api "a reach naming a codex review"
+
+run_linear issues create --title "From review" \
+  --description "$(printf 'Reached by: a name containing a quote\n')"
+assert_refused_before_api "a reach naming only a shape"
+assert_contains "the shape refusal comes from the value branch" "$ERR" "names no producer"
+
+run_linear issues create --title "From review" \
+  --description "$(printf 'Reached by: an empty state directory the loader never sees\n')"
+assert_refused_before_api "a reach naming an input form"
+
+run_linear issues create --title "From review" \
+  --description "$(printf 'Reached by: a hypothetical second writer\n')"
 assert_refused_before_api "a reach that is a hypothesis"
+
+echo "=== guard on: a product noun in an honest reach still creates ==="
+
+# The refusal list is matched against the value, and this project ships a
+# `codex` harness id, a `reviewer` skill and reviewer-* agents. A bare product
+# noun in the list refuses these four true reaches, and the guard has no
+# escape flag to recover them.
+run_linear issues create --title "Second opinion" \
+  --description "$(printf 'Reached by: running `codex exec` via the second-opinion skill\n')"
+assert_created "a reach naming the codex harness as its producer"
+
+run_linear issues create --title "Guard run" \
+  --description "$(printf 'Reached by: a reviewer running `tools/guard`\n')"
+assert_created "a reach naming a reviewer as its producer"
+
+run_linear issues create --title "Shortcut rebind" \
+  --description "$(printf 'Reached by: a user whose shortcut key could not be rebound\n')"
+assert_created "a reach reporting what a user could not do"
+
+run_linear issues create --title "Harness install" \
+  --description "$(printf 'Reached by: kendex install --harness codex on a fresh project\n')"
+assert_created "a reach naming a harness install command"
+
+echo "=== guard on: an unsubstituted placeholder and a null token are absent ==="
+
+# The templates this repo ships carry `[REACH]` and `[SYMPTOM]`; copying one
+# verbatim is the likeliest real path into the guard.
+run_linear issues create --title "Template copied" \
+  --description "$(printf '**Reached by**: [REACH]\n')"
+assert_refused_before_api "a [REACH] placeholder body"
+assert_contains "the placeholder refusal names the missing line" "$ERR" "Reached by"
+
+run_linear issues create --title "Template copied whole-line bold" \
+  --description "$(printf '**Reached by: [REACH]**\n')"
+assert_refused_before_api "a whole-line bold [REACH] placeholder body"
+
+run_linear issues create --title "Null token" \
+  --description "$(printf 'Reached by: TBD\n')"
+assert_refused_before_api "a TBD reach"
+
+run_linear issues create --title "Null token" \
+  --description "$(printf 'Reached by: n/a\n')"
+assert_refused_before_api "an n/a reach"
+
+run_linear issues create --title "Null token" \
+  --description "$(printf 'Reached by: -\n')"
+assert_refused_before_api "a dash reach"
 
 echo "=== guard on: a reach naming a producer creates ==="
 
@@ -138,21 +197,42 @@ printf 'Reached by: `tools/guard` on a fresh clone\n' >"$TMP_ROOT/body.md"
 run_linear issues create --title "Guard body" --description-file "$TMP_ROOT/body.md"
 assert_created "a create whose reach arrives by --description-file"
 
-echo "=== guard on: priority 2 needs a reported symptom ==="
+# project-management SKILL.md states the rule as a bullet, so a bulleted body
+# line is a form this repo's own guidance produces.
+run_linear issues create --title "Bulleted body" \
+  --description "$(printf -- '- %s\n' "$REACH_LINE")"
+assert_created "a create whose reach is a list item"
 
-run_linear issues create --title "High priority" --priority 2 \
+echo "=== guard on: a review-born priority 2 needs a reported symptom ==="
+
+run_linear issues create --title "High priority" --priority 2 --review-born \
   --description "$(printf '%s\n' "$REACH_LINE")"
-assert_refused_before_api "a priority-2 create with no Symptom line"
+assert_refused_before_api "a review-born priority-2 create with no Symptom line"
 assert_contains "the refusal names the missing line" "$ERR" "Symptom"
 assert_contains "the refusal routes the item to priority 3" "$ERR" "priority 3"
 
-run_linear issues create --title "High priority" --priority 2 \
-  --description "$(printf '%s\n%s\n' "$REACH_LINE" "$SYMPTOM_LINE")"
-assert_created "a priority-2 create carrying a reported symptom"
+run_linear issues create --title "High priority" --priority 2 --review-born \
+  --description "$(printf '%s\n**Symptom**: [SYMPTOM]\n' "$REACH_LINE")"
+assert_refused_before_api "a review-born priority-2 create whose Symptom is a placeholder"
 
-run_linear issues create --title "Normal priority" --priority 3 \
+run_linear issues create --title "High priority" --priority 2 --review-born \
+  --description "$(printf '%s\nSymptom: none\n' "$REACH_LINE")"
+assert_refused_before_api "a review-born priority-2 create whose Symptom is a null token"
+
+run_linear issues create --title "High priority" --priority 2 --review-born \
+  --description "$(printf '%s\n%s\n' "$REACH_LINE" "$SYMPTOM_LINE")"
+assert_created "a review-born priority-2 create carrying a reported symptom"
+
+# Priority 2 minted structurally — a planner, a roadmap layer, the merge-pr
+# rebundle, a research spike — reports no symptom by construction. Refusing it
+# would abort a merge on an orphan child.
+run_linear issues create --title "Structural priority" --priority 2 \
   --description "$(printf '%s\n' "$REACH_LINE")"
-assert_created "a priority-3 create with no Symptom line"
+assert_created "a structural priority-2 create with no Symptom line"
+
+run_linear issues create --title "Normal priority" --priority 3 --review-born \
+  --description "$(printf '%s\n' "$REACH_LINE")"
+assert_created "a review-born priority-3 create with no Symptom line"
 
 echo "=== no declaration: creates are unaffected ==="
 

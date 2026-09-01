@@ -25,7 +25,7 @@
 |-------------|--------|-------|
 | `[ORIGIN_CONTEXT]` | Caller — e.g. `PR review suggestion ([found_by])`, `architecture planning` | Always include provenance |
 | `[REACH]` | Caller — the user action, run, check, or shipped producer that arrives at the defect; an owner-directed item names the ask | **Required on every issue** — the rule and what it refuses are [SKILL.md](../SKILL.md) § Disposition; `linear.sh issues create` enforces it |
-| `[SYMPTOM]` | Caller — the run, the user, or the red check that already showed the defect | Required at priority 2, which is the reported tier; drop the line at any other priority |
+| `[SYMPTOM]` | Caller — the run, the user, or the red check that already showed the defect | Required on a review-born filing at priority 2, which is the reported tier; drop the line otherwise |
 | `[DESCRIPTION]` | `items[].description` | Use as written |
 | `[REQUIREMENT_*]` | `items[].recommendation` | Use as written — already a `* bullet` list |
 | `[FILE_PATH]` | `items[].location` | Backticked path. **Never line numbers**; name the function or struct |

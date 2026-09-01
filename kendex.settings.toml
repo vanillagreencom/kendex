@@ -20,10 +20,10 @@ LINEAR_AGENT_LABELS = "agent:generalist, agent:rust, agent:iced, agent:researche
 # An issue names what reaches it. Non-empty makes `issues create` refuse a
 # description with no `Reached by:` line naming the user action, run, check,
 # or shipped producer that arrives at the defect, refuse a value naming only
-# a review thread, a reviewer, or a shape, and refuse a `--priority 2` body
-# with no `Symptom:` line. Creation is the chokepoint: `Tracked: <ID>` needs
-# only an issue to exist, so without this a hypothetical gets filed where it
-# should have been declined. Empty = guard off.
+# the thread a finding came from or a shape, and refuse a `--review-born
+# --priority 2` body with no `Symptom:` line. Creation is the chokepoint:
+# `Tracked: <ID>` needs only an issue to exist, so without this a hypothetical
+# gets filed where it should have been declined. Empty = guard off.
 LINEAR_REQUIRE_REACH = "1"
 
 # Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
