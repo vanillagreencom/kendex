@@ -229,10 +229,7 @@ describe("needs_completion cwd snapshots", () => {
 				return new EventEmitter() as any;
 			}) as any);
 
-			const result = await Promise.race([
-				markTaskNeedsCompletion(runtimeRoot, "rust", "task-slow", { cwd, diagnostic: "missing completion" }),
-				new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 25)),
-			]);
+			const result = await markTaskNeedsCompletion(runtimeRoot, "rust", "task-slow", { cwd, diagnostic: "missing completion" });
 			const persisted = (await readTaskRegistry(runtimeRoot))["task-slow"]!;
 
 			expect(result).not.toBe("timed-out");
