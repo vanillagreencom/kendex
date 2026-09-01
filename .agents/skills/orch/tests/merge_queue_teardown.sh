@@ -462,26 +462,48 @@ launching_suites() {
 # check, and a match living only in fixture text arms nothing. Both shapes are
 # planted as controls below.
 #
-# A bounded scanner, not a shell parser: it follows <<DELIM and <<QUOTED
-# bodies, which is what these suites carry, and skips a line holding a
-# here-string because <<< opens no body.
+# A bounded scanner, not a shell parser. Its stated limits: a heredoc opened
+# with a space before its delimiter is not followed, and a line whose first
+# character is a hash is skipped entirely. Both make it read MORE of a file
+# than a shell would, which can only reject a suite, never pass one.
 exit_traps_in() {
   [[ -r "$1" ]] || { echo "merge_queue_teardown: cannot read $1 to scan its EXIT traps" >&2; return 2; }
-  awk '
+  awk -v q='\047' '
+    BEGIN {
+      # A heredoc opener is << with an optional -, an optional quote or
+      # backslash, and a real identifier. Anything else after << is arithmetic,
+      # a comparison, or prose, and opening a body on it made the rest of the
+      # file invisible.
+      openre = "<<-?[" q "\"\\\\]?[A-Za-z_][A-Za-z0-9_]*"
+      stripre = "^<<-?[" q "\"\\\\]?"
+    }
     delim != "" {
-      line = $0; sub(/^[\t]+/, "", line)
+      line = $0; sub(/^\t+/, "", line)
       if (line == delim) delim = ""
       next
     }
+    /^[ \t]*#/ { next }
     {
-      if ($0 !~ /<<</ && match($0, /<<-?[ \t]*[^ \t<>|;&()]+/)) {
-        d = substr($0, RSTART, RLENGTH)
-        sub(/^<<-?[ \t]*/, "", d)
-        gsub(/[^A-Za-z0-9_]/, "", d)
-        if (d != "") delim = d
+      # A here-string opens no body, and its <<< would otherwise be read as a
+      # << followed by whatever it redirects.
+      scan = $0; gsub(/<<</, "   ", scan)
+      if (match(scan, openre)) {
+        d = substr(scan, RSTART, RLENGTH)
+        sub(stripre, "", d)
+        delim = d; opened = FNR
       }
       line = $0; sub(/^[ \t]+/, "", line)
-      if (line ~ /^trap[ \t].*[ \t]EXIT([ \t]|$)/) print line
+      if (line ~ /^trap[ \t].*[ \t]EXIT([ \t]|$)/) found = found line "\n"
+    }
+    END {
+      # Reaching the end still inside a body means the scan lost its place, and
+      # every trap after that point went unseen. Report nothing rather than a
+      # partial reading.
+      if (delim != "") {
+        printf "merge_queue_teardown: end of file while still inside the heredoc %s opened at line %d; the scan could not complete\n", delim, opened > "/dev/stderr"
+        exit 2
+      }
+      printf "%s", found
     }
   ' "$1"
 }
@@ -553,11 +575,37 @@ cat > "$TMP/child.sh" <<'CHILD'
 trap mq_reap_teardown EXIT
 CHILD
 HEREDOC
+# A comment mentioning a heredoc opener used to open a body that never closed,
+# and everything after it went unread — including an overriding trap.
+cat > "$planted/comment_phantom_suite.sh" <<'PHANTOM'
+#!/usr/bin/env bash
+cp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"
+trap mq_reap_teardown EXIT
+# a note about <<HEREDOC bodies
+trap 'rm -rf -- "${TMP:?}"' EXIT
+PHANTOM
+# Ordinary code did it too: a shift, or a comparison inside a string.
+cat > "$planted/shift_phantom_suite.sh" <<'SHIFT'
+#!/usr/bin/env bash
+cp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"
+trap mq_reap_teardown EXIT
+mask=$(( 1 << 2 ))
+trap 'rm -rf -- "${TMP:?}"' EXIT
+SHIFT
+# And a body that genuinely never closes is a scan that lost its place, not a
+# suite that is not armed — the traps after it were never seen either way.
+cat > "$planted/unterminated_suite.sh" <<'UNTERM'
+#!/usr/bin/env bash
+cp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"
+trap mq_reap_teardown EXIT
+cat > /dev/null <<NEVERCLOSED
+UNTERM
 printf '#!/usr/bin/env bash\n# trap mq_reap_teardown EXIT\n# tools/tests/lib/sealed-bin and "$SEALED:$PATH"\n' > "$planted/comment_decoy.sh"
 
 if suite_arms_teardown "$planted/armed_suite.sh"; then ok "a suite that installs the reaping teardown passes the arming check"
 else bad "the arming check rejects a suite that is armed"; fi
-for shape in old_teardown_suite override_suite heredoc_only_suite comment_decoy; do
+for shape in old_teardown_suite override_suite heredoc_only_suite comment_decoy \
+             comment_phantom_suite shift_phantom_suite; do
   shape_rc=0; suite_arms_teardown "$planted/$shape.sh" || shape_rc=$?
   if [[ "$shape_rc" -eq 1 ]]; then ok "the arming check rejects $shape"
   else bad "the arming check answered $shape with $shape_rc, not a scanned rejection"; fi
@@ -567,6 +615,10 @@ unscannable_rc=0; unscannable_err=$(suite_arms_teardown "$planted/no-such-suite.
 eq "$unscannable_rc" 2 "a suite that cannot be scanned is not reported as unarmed"
 case "$unscannable_err" in *"cannot read"*) ok "the failed scan names the file it could not read" ;;
   *) bad "the failed scan is unnamed: $unscannable_err" ;; esac
+unterm_rc=0; unterm_err=$(suite_arms_teardown "$planted/unterminated_suite.sh" 2>&1) || unterm_rc=$?
+eq "$unterm_rc" 2 "a scan that ends inside a heredoc is not reported as unarmed"
+case "$unterm_err" in *"could not complete"*) ok "the incomplete scan names the body it was still inside" ;;
+  *) bad "the incomplete scan is unnamed: $unterm_err" ;; esac
 if suite_seals_path "$planted/comment_decoy.sh"; then bad "a comment naming the sealed directory passed the sealing check"
 else ok "a comment naming the sealed directory does not pass for a statement"; fi
 
