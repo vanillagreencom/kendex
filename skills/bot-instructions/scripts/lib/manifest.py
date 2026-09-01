@@ -6,8 +6,8 @@ install state routes to the sibling `kendex-local.toml`. Opening `kendex.toml`
 by name in such a repo parses a present, valid file and derives an empty set.
 
 **What a harness root contributes.** Each immediate subdirectory of a declared
-render root that holds a tracked path, plus each one the index holds as a
-symlink entry of its own, and never a file at its root — kendex merges its own
+render root that holds a tracked path, and never an entry at its root, whether
+that entry is a file or a symlink — kendex merges its own
 entries into `.claude/settings.json`, `.codex/config.toml` and
 `.pi/settings.json` while the repo owns the rest, and a glob one shape too
 wide would silence review on a file this repo can fix. `tree.subdirs` answers

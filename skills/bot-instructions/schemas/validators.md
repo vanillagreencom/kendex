@@ -318,12 +318,10 @@ unreachable rather than reporting each exclusion as dead. A repo declaring no
 exclusion at all is the other side of that: nothing can be dead, so the clause
 is silent rather than reporting an unreachable verdict about an empty set.
 
-A tree staged as a SYMLINK is the exception, and it is not dead. git stores
-`.claude/skills` as one entry with nothing beneath it, so `.claude/skills/**`
-selects no tracked path — `git ls-files -- ':(glob).claude/skills/**'` selects
-none either — while every engine reading the working tree still sees the files
-under it. A glob under a tracked symlink entry is live; the index simply cannot
-enumerate what it covers.
+A glob matching no tracked path is dead wherever it sits, symlink entries
+included. git stores one as a blob, and a pull request editing the tree behind
+a link carries that tree's real path in its diff, never the path through the
+link, so a glob under the link reaches no diff on any bot.
 
 **Rejects, also.** A declared render root the index holds as an entry of its
 own — a harness root staged as a symlink, or as a file. The derivation asks
@@ -336,17 +334,15 @@ mean the root is not a directory.
 
 **The derived set is every immediate subdirectory of a declared render root
 holding a tracked path**, read from the index in both modes so a worktree
-render and a `--staged` check of it cannot disagree, plus every SYMLINK entry
-directly under the root whose TARGET is a directory. That second half is the
-shape `crates/core/tests/symlinked_harness_dir.rs` supports: git stores
-`.claude/skills` as a single `120000` entry with nothing beneath it, so a rule
-wanting a further slash derived nothing for it and left the tree in review
-scope with nothing saying so. The target decides, not the mode: `.claude/CLAUDE.md`
-linked at `../AGENTS.md` carries the same `120000` and must derive nothing,
-or the run emits a `.claude/CLAUDE.md/**` glob that silences review on a file
-the repo owns. A target that cannot be resolved is not a directory. A regular
-file directly under the root derives nothing either, which is the rule
-`.claude/settings.json` needs.
+render and a `--staged` check of it cannot disagree. The rule is the further
+segment: a tracked path under the root names a subdirectory only when
+something follows its first component. An entry directly under the root
+derives nothing, whatever its mode — `.claude/settings.json`, a file this repo
+owns and can fix, which a glob one shape too wide would silence review on; and
+`.claude/CLAUDE.md`, which six consumer repos track as a `120000` link to
+`../AGENTS.md` and which would otherwise emit a `.claude/CLAUDE.md/**` glob
+covering nothing. The consumer repos link per skill (`.claude/skills/code-quality`),
+whose tracked path already carries the further segment.
 
 The rendered exclusion lists are not compared against each other, nor against
 a fresh derivation. Every destination writes one set, and on `check` a
