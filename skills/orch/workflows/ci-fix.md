@@ -64,7 +64,7 @@ Stamp the round as separate tool calls immediately before delegating, and arm th
 
 `worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
 
-Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 This agent pushes its fix directly and writes **no** dev-return artifact; the round-mode check for this token reports `ok == false`, which is expected. Accept this round on the agent's return message plus the pushed fix commit; on an absent return follow the escalation ladder.
 
@@ -78,7 +78,7 @@ Error output:
 [truncated error logs]
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Worktree Lease: [WORKTREE_LEASE]
 
 1. Verify possession before changing anything: `.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --expect-gen [WORKTREE_LEASE]`. Any non-zero exit ends the round here — change nothing and report its stderr verbatim.
@@ -106,7 +106,7 @@ Cross-reference those commits with the original PRs to identify which file faile
 
 For an integration issue, create a worktree from the draft branch (`worktree create [ISSUE_ID] "[DRAFT_BRANCH]" --pr [DRAFT_PR_NUMBER]`) and delegate analysis.
 
-Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the worktree just created from the draft branch.
 
 <delegation_format>
@@ -114,7 +114,7 @@ Merge queue CI failure — integration issue across stacked PRs.
 
 Draft PR: #[PR_NUMBER]
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Stack: [PRs in the stack with their domains]
 
 Error output:

@@ -82,14 +82,14 @@ Map each domain label to its agent type (project-configurable) and delegate in p
 
 Re-delegate to `[CONSULTATION_AGENT_NAME]` when the caller supplied one, omitting the reading block below. Otherwise start a fresh agent with the full block.
 
-Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 <delegation_format>
 Research: [RESEARCH_ISSUE_ID] - [TOPIC]
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 Blocked issue: [BLOCKED_ISSUE_ID]
 Read it: `.agents/skills/linear/scripts/linear.sh cache issues get [BLOCKED_ISSUE_ID]`
@@ -156,14 +156,14 @@ Run `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`, or use Pi `web_research` 
 
 Otherwise delegate to `researcher` (or `[RESEARCHER_AGENT_NAME]`).
 
-Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 <delegation_format>
 Research issue: [RESEARCH_ISSUE_ID] - [TOPIC]
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 Read:
 - [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/prompt.txt

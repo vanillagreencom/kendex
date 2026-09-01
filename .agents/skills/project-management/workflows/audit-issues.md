@@ -85,7 +85,7 @@ No sync step. Load project taxonomy the same way as Linear mode; with no declare
 
 Spawn a one-shot `[TPM]` sub-agent (not a teammate — no re-delegation).
 
-Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the current repo root; project-order mode takes no input file.
 
 <delegation_format>
@@ -93,7 +93,7 @@ Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
 
 Arguments: --project-order
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 </delegation_format>
 
 ### 2.2 Materialize and Present
@@ -146,7 +146,7 @@ With `TARGET` set, use it. Otherwise take the first `session-status.projects` en
 
 Spawn a one-shot `[TPM]` sub-agent (not a teammate).
 
-Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the input file's `worktree` when the invocation supplied one, the current repo root otherwise.
 
 <delegation_format>
@@ -154,7 +154,7 @@ Follow workflow: .agents/skills/project-management/workflows/tpm-audit.md
 
 Arguments: --project "[PROJECT_NAME]" | --team | --issues [FILE_PATH]
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 Tracker: [TRACKER] [OWNER/REPO]
 </delegation_format>
 

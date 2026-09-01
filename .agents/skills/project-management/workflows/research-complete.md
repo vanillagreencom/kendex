@@ -53,7 +53,7 @@ With several references, convert to a bulleted list under one `**Research**:` he
 
 Run exactly one flow, unless it escalates. Both flows fill the delegation the same way.
 
-Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 `[DIR]` is the caller's own checkout, main checkout included.
 
 ### 5.1 Targeted
@@ -64,7 +64,7 @@ Delegate to the domain agent:
 Analyze the impact of these research findings on your domain.
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 
@@ -88,13 +88,13 @@ List a technical change only when it changes what a user or operator experiences
 
 Delegate the same analysis to every affected domain agent in parallel, minus the cross-domain and scope questions. Then delegate the synthesis to the architecture review agent.
 
-Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.
+Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 <delegation_format>
 Synthesize the domain reports into a cross-cutting impact analysis.
 
 Worktree: [WORKTREE_PATH]
-Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane's worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.
+Worktree Check: `pwd -P` before any repo-relative command; it must print [WORKTREE_PATH]. On any other path, stop and report where the shell started.
 
 Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 

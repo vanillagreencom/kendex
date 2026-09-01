@@ -178,11 +178,11 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 # The canonical check line, with @TOKEN@ standing in for the block's own
 # placeholder name. This is the single source of truth for the sentence;
 # the shipped docs must match it character for character.
-CANON='Worktree Check: `pwd -P` before any repo-relative command. It must print [@TOKEN@]; your shell can start in another lane'"'"'s worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.'
+CANON='Worktree Check: `pwd -P` before any repo-relative command; it must print [@TOKEN@]. On any other path, stop and report where the shell started.'
 
 # The canonical fill line, verbatim. It carries no per-block token: `[DIR]`
 # is literal in every doc, so the whole line is compared as it stands.
-CANON_FILL='Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.'
+CANON_FILL='Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`.'
 
 # The fill line's opening clause: the part that names the two fields being
 # filled, before it says where the value comes from. A line opening with it
@@ -190,7 +190,7 @@ CANON_FILL='Fill `Worktree:` and its `Worktree Check:` from `git -C "[DIR]" rev-
 # contradicting instruction. Held as its own literal and asserted a PROPER
 # prefix of $CANON_FILL by f.1 — rewording the sentence without rewording
 # this reds there, rather than leaving rule 4 matching nothing in silence.
-CANON_FILL_OPEN='Fill `Worktree:` and its `Worktree Check:`'
+CANON_FILL_OPEN='Fill `Worktree:` and `Worktree Check:`'
 
 # scan_worktree_precondition <file>
 # Emits one "file:line: ..." line per defect, per rules 1, 2 and 5 above.
@@ -494,38 +494,31 @@ else
   fail "lint MISSED an unbackticked pwd"
 fi
 
-# b.12 — the recovery clause must not rest on a bare `cd`. A harness that
-# spawns a fresh shell per tool call drops it, and the agent resumes
-# repo-relative work in the wrong tree believing it recovered.
-STALE_CD='Worktree: [WORKTREE_PATH]\nWorktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]. Any other path — `cd "[WORKTREE_PATH]"`, re-run `pwd`, and report where it started.'
-if reports "$(scan_worktree_precondition "$(probe stalecd "$STALE_CD")")" "$UNCANON"; then
-  pass "lint flags a check whose remedy is a bare cd"
-else
-  fail "lint MISSED a remedy resting on a cd that may not persist"
-fi
-
-# b.16 — nor on an absolute path. `tools/guard` re-derives the repo from
-# the process cwd on its own first line, so the path it is invoked by never
-# reaches that decision and a wrong-tree shell still judges the wrong lane.
-# The canonical sentence halts instead, and any remedy written in its place
-# reds.
-ABS_REMEDY='Worktree: [WORKTREE_PATH]\nWorktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]. Any other path — give every later command an absolute path under [WORKTREE_PATH].'
-if reports "$(scan_worktree_precondition "$(probe absremedy "$ABS_REMEDY")")" "$UNCANON"; then
-  pass "lint flags a remedy resting on an absolute path"
-else
-  fail "lint MISSED a remedy an absolute path cannot deliver"
-fi
-
-# b.17 — the pre-fix sentence, identical but for a bare `pwd`. The delegated
-# path is physical (`git rev-parse --show-toplevel`), so a logical `pwd` halts
-# a correct delegate whose shell reached the checkout through a symlink. The
-# logical form must not come back unnoticed.
-LOGICAL="${CHECK//pwd -P/pwd}"
-if reports "$(scan_worktree_precondition "$(probe logical "Worktree: [WORKTREE_PATH]\n$LOGICAL")")" "$UNCANON"; then
-  pass "lint flags a check measuring the cwd with a bare pwd"
-else
-  fail "lint MISSED a check comparing a logical pwd against a physical path"
-fi
+# b.12, b.16, b.17 and b.21 — four forms the canonical sentence replaced,
+# each of which stays red. A remedy resting on a bare `cd`: a harness that
+# spawns a fresh shell per tool call drops it and the agent resumes work in
+# the wrong tree believing it recovered. A remedy resting on an absolute
+# path: `tools/guard` re-derives the repo from the process cwd on its own
+# first line, so the path it is invoked by never reaches that decision. A
+# bare `pwd`: it prints the logical path, and the delegated path is physical
+# (`git rev-parse --show-toplevel`), so it halts a correct delegate whose
+# shell entered the checkout through a symlink. And the long form, this
+# sentence with the rationale for it appended — the rationale is not
+# something the agent runs, it cost kilobytes inside every delegation, and it
+# lives in this file's header instead. Equality is what keeps all four out;
+# each is named on its own so a form that stops being caught says which.
+RETIRED_CD='Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]. Any other path — `cd "[WORKTREE_PATH]"`, re-run `pwd`, and report where it started.'
+RETIRED_ABS='Worktree Check: `pwd` before any repo-relative command. It must print [WORKTREE_PATH]. Any other path — give every later command an absolute path under [WORKTREE_PATH].'
+RETIRED_LOGICAL="${CHECK//pwd -P/pwd}"
+RETIRED_LONG='Worktree Check: `pwd -P` before any repo-relative command. It must print [WORKTREE_PATH]; your shell can start in another lane'"'"'s worktree, and `git status` or `tools/guard` resolves the repo from the process cwd, so an absolute path does not redirect it. On any other path, stop and report where the shell started; do not attempt recovery.'
+for retired in "cd remedy:$RETIRED_CD" "absolute-path remedy:$RETIRED_ABS" \
+               "logical pwd:$RETIRED_LOGICAL" "long form:$RETIRED_LONG"; do
+  if reports "$(scan_worktree_precondition "$(probe retired "Worktree: [WORKTREE_PATH]\n${retired#*:}")")" "$UNCANON"; then
+    pass "lint flags a check written as the retired ${retired%%:*}"
+  else
+    fail "lint MISSED a check written as the retired ${retired%%:*}"
+  fi
+done
 
 # b.13 — RULE 2. A block with no Worktree:/Worktree Check: pair at all IS
 # flagged, whatever it hands over: a placeholder the caller fills with a
@@ -757,17 +750,24 @@ else
   fail "lint false-flagged the canonical fill line"
 fi
 
-# e.3 — the shipped defect, spelled out: the fill line resolves the delegated
-# path to the current directory. `pwd -P` prints an absolute physical path
-# and can never equal a relative one, so this halts every correct delegate.
-RELFILL='Fill `Worktree:` and its `Worktree Check:` with the current directory. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.'
-RELATIVE="$TMP_ROOT/probe-relative-fill.md"
-printf '%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' "$RELFILL" "$CHECK" > "$RELATIVE"
-if reports "$(scan_worktree_fill "$RELATIVE")" "$NOFILL"; then
-  pass "lint flags a fill line resolving the delegated path to the current directory"
-else
-  fail "lint MISSED a delegated path resolved to the current directory"
-fi
+# e.3 and e.9 — two fill lines the canonical sentence replaced. One resolves
+# the delegated path to the current directory: `pwd -P` prints an absolute
+# physical path and can never equal a relative one, so it halts every correct
+# delegate. The other is the long form, the same command with the reason for
+# it appended — that reason belongs to rule 3 above, not to every delegating
+# workflow. Each is named on its own so a form that stops being caught says
+# which.
+RETIRED_RELFILL='Fill `Worktree:` and `Worktree Check:` with the current directory.'
+RETIRED_LONGFILL='Fill `Worktree:` and `Worktree Check:` from `git -C "[DIR]" rev-parse --show-toplevel`. The delegate compares that value against `pwd -P`, so a relative or symlinked path halts a correct checkout.'
+RETIRED_FILL="$TMP_ROOT/probe-retired-fill.md"
+for fill in "current directory:$RETIRED_RELFILL" "long form:$RETIRED_LONGFILL"; do
+  printf '%s\n\n<delegation_format>\nWorktree: [WORKTREE_PATH]\n%s\n</delegation_format>\n' "${fill#*:}" "$CHECK" > "$RETIRED_FILL"
+  if reports "$(scan_worktree_fill "$RETIRED_FILL")" "$NOFILL"; then
+    pass "lint flags a fill line written as the retired ${fill%%:*}"
+  else
+    fail "lint MISSED a fill line written as the retired ${fill%%:*}"
+  fi
+done
 
 # e.4 — the fill line inside the block does not count: it has to be the
 # doc's instruction to the filler, not a line the delegate reads as content.
@@ -852,7 +852,7 @@ case "$CANON_FILL" in
   *) fail "the opening clause is not a prefix of \$CANON_FILL — rule 4 matches nothing" ;;
 esac
 
-CONFLICT_FILL='Fill `Worktree:` and its `Worktree Check:` with whichever directory this workflow is running in.'
+CONFLICT_FILL='Fill `Worktree:` and `Worktree Check:` with whichever directory this workflow is running in.'
 
 # f.2 — the canonical line, then a byte-different line in the same shape.
 # The block is preceded by the canonical sentence, so rule 3 is satisfied
