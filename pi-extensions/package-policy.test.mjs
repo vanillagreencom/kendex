@@ -72,10 +72,15 @@ function runShardGuard(workflow, shard) {
 // one job run on different hardware per event, so shard durations did not
 // compare across events. The three families are the GitHub-hosted images, so a
 // vendor or self-hosted label reds here too rather than only an expression.
+// Every `runs-on:` KEY is read, not only the ones carrying a scalar on the same
+// line: the block form puts the value on the lines below, as a `group:` mapping
+// or a list, and a reader matching same-line scalars alone would drop that job
+// from the set rather than report it, leaving the floor below satisfied by its
+// neighbours while the job runs wherever the block says.
 function runnersNotNamedOutright(workflow) {
-	const labels = [...workflow.matchAll(/^ {4}runs-on: (.+)$/gm)].map((match) => match[1].trim());
-	assert.ok(labels.length > 0, `no "runs-on:" line in ${workflowPath} — the runner reader is broken`);
-	return labels.filter((label) => !/^(?:ubuntu|macos|windows)-[\w.-]+$/.test(label));
+	const keys = [...workflow.matchAll(/^ {4}runs-on:(.*)$/gm)].map((match) => match[0].trim());
+	assert.ok(keys.length > 0, `no "runs-on:" key in ${workflowPath} — the runner reader is broken`);
+	return keys.filter((key) => !/^runs-on: (?:ubuntu|macos|windows)-[\w.-]+$/.test(key));
 }
 
 // A package's CI entry point is `test:ci` when it declares one and `test`
@@ -307,17 +312,26 @@ test("every skill-tests.yml job names a GitHub-hosted runner outright", () => {
 // Must-fail control for the rule above, one case per way a job can stop naming
 // its runner outright. Each asserts its mutation landed, so a case that stopped
 // matching fails loud rather than proving nothing against an unmutated copy.
-test("a runs-on that is an expression or a foreign label is reported, not accepted", () => {
+test("a runs-on that is an expression, a foreign label or the block form is reported, not accepted", () => {
 	const workflow = readFileSync(workflowPath, "utf8");
 	assert.deepEqual(runnersNotNamedOutright(workflow), [], "precondition: the real workflow names every runner outright");
 	const cases = [
-		["the shard picks its runner from an org variable", "${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.CI_RUNNER_4V || 'ubuntu-latest' }}"],
-		["a job takes a vendor's runner", "blacksmith-4vcpu-ubuntu-2404"],
-		["a job takes a self-hosted label", "self-hosted"],
+		[
+			"the shard picks its runner from an org variable",
+			"    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.CI_RUNNER_4V || 'ubuntu-latest' }}",
+			"runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.CI_RUNNER_4V || 'ubuntu-latest' }}",
+		],
+		["a job takes a vendor's runner", "    runs-on: blacksmith-4vcpu-ubuntu-2404", "runs-on: blacksmith-4vcpu-ubuntu-2404"],
+		["a job takes a self-hosted label", "    runs-on: self-hosted", "runs-on: self-hosted"],
+		// The one case the other three cannot stand in for: the value moves off
+		// the key's line, so a same-line reader returns nothing for this job and
+		// the remaining jobs keep the floor satisfied. The report is the bare
+		// key, which is all there is to name on that line.
+		["a job names a runner group in the block form", "    runs-on:\n      group: kendex-runners", "runs-on:"],
 	];
-	for (const [drift, value] of cases) {
-		const mutated = workflow.replace(/^ {4}runs-on: ubuntu-latest$/m, () => `    runs-on: ${value}`);
+	for (const [drift, replacement, reported] of cases) {
+		const mutated = workflow.replace(/^ {4}runs-on: ubuntu-latest$/m, () => replacement);
 		assert.notEqual(mutated, workflow, `the mutation for "${drift}" matched nothing`);
-		assert.deepEqual(runnersNotNamedOutright(mutated), [value], `the reader stayed green when ${drift}`);
+		assert.deepEqual(runnersNotNamedOutright(mutated), [reported], `the reader stayed green when ${drift}`);
 	}
 });
