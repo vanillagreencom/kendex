@@ -50,8 +50,9 @@ pub fn apply(
                 ),
             });
         }
-        let answer = super::resolve_selection(env, scopes, selection)?;
+        let mut answer = super::resolve_selection(env, scopes, selection)?;
         license_gate(selection, &answer.group)?;
+        declare_destination(&mut answer, selection)?;
         let dest = crate::source::local_slot(&target, selection.kind, &selection.destination);
         occupies(&resolved, selections, &dest, &answer, selection)?;
         origin_overlap(&target, &answer)?;
@@ -64,6 +65,64 @@ pub fn apply(
     };
     write_all(&target, &resolved, selections, &mut outcome)?;
     Ok(outcome)
+}
+
+/// A copy taken under a new name declares that name.
+///
+/// A skill's SKILL.md and an agent's own file carry the name its tool
+/// answers to, and the catalog check reads a skill tree's SKILL.md
+/// against the directory it sits in. Bytes copied verbatim under a
+/// different destination still spell the candidate's name, so the import
+/// authors breakage into the person's own marketplace and reports that it
+/// succeeded. What is written in is the destination's *leaf*: a nested
+/// destination puts the item in a directory, and the leaf is the name
+/// every loader and the check compare against.
+///
+/// Only where that leaf really changes. An import keeping the candidate's
+/// name copies its bytes untouched — a declaration that was already wrong
+/// at the origin is the check's to report, not this copy's to quietly
+/// repair, and a tree with no declaration at all stays a tree with none.
+///
+/// The other three kinds declare no name a tool keys on: a hook is a
+/// script, an MCP server registers under its file's name, and a command's
+/// frontmatter is regenerated at render. They are copied unchanged
+/// whatever they are renamed to.
+fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelection) -> Result<()> {
+    let wanted = leaf(&selection.destination);
+    if wanted == leaf(&selection.name) {
+        return Ok(());
+    }
+    let renamed = |bytes: &[u8]| {
+        crate::render::skill::bytes_named(bytes, wanted).map_err(|problem| CoreError::Authoring {
+            message: format!(
+                "'{}' cannot be imported as '{}' — {problem}, so the copy would still call itself '{}'. Import it under its own name, or give it a frontmatter block naming it where it is now.",
+                selection.name,
+                selection.destination,
+                leaf(&selection.name),
+            ),
+        })
+    };
+    match (selection.kind, &mut answer.bytes) {
+        (ItemKind::Skill, Bytes::Tree(files)) => {
+            for (_, bytes) in files
+                .iter_mut()
+                .filter(|(rel, _)| crate::render::skill::carries_name(rel))
+            {
+                *bytes = renamed(bytes)?;
+            }
+        }
+        (ItemKind::Agent, Bytes::File(bytes)) => *bytes = renamed(bytes)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+/// The name a declaration inside a file can carry: an item name may be
+/// spelled with the plugin it came from, and the file inside knows only
+/// its own leaf — which is the half the loaders and the catalog check
+/// compare a declaration against.
+fn leaf(name: &str) -> &str {
+    crate::names::split(name).map_or(name, |(_, leaf)| leaf)
 }
 
 /// Whether a selection already taken occupies the place this one wants.

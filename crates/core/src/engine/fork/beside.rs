@@ -5,8 +5,8 @@
 //! the user chose.
 
 use super::{
-    Capture, Captured, ForkOf, capture, capture_ops, carries_name, edited_rendering, forkable_kind,
-    named_bytes, provenance, vacant_name,
+    Capture, Captured, ForkOf, capture, capture_ops, edited_rendering, forkable_kind, named_bytes,
+    provenance, vacant_name,
 };
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::engine::agent_carry::{OldName, rekey_agent_tables};
@@ -15,6 +15,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::{self, LOCAL_SOURCE_NAME};
 use crate::model::{HarnessId, ItemKind, Scope};
+use crate::render::skill::carries_name;
 
 /// Turn one edited installation into a local fork under `new_name`,
 /// leaving `name` declared from its source. `rev` — anything the

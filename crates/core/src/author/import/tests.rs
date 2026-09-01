@@ -45,8 +45,24 @@ fn skill(dir: &Path, name: &str, body: &str) {
     .unwrap();
 }
 
+/// A skill whose SKILL.md is whatever the caller says, for the shapes the
+/// `skill` helper cannot spell.
+#[allow(clippy::unwrap_used)]
+fn raw_skill(dir: &Path, name: &str, skill_md: &str) {
+    let skill = dir.join(name);
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(skill.join("SKILL.md"), skill_md).unwrap();
+}
+
+#[allow(clippy::unwrap_used)]
+fn file_item(dir: &Path, name: &str, text: &str) {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(dir.join(format!("{name}.md")), text).unwrap();
+}
+
 /// A project with all three origins: a marketplace skill (path source with
-/// a licence), the person's own local-source skill, and an unmanaged one.
+/// a licence), the person's own local-source skill, and unmanaged content
+/// of the three kinds an import can carry.
 #[allow(clippy::unwrap_used)]
 fn seeded() -> (tempfile::TempDir, Env, Scope) {
     let tmp = tempfile::tempdir().unwrap();
@@ -60,6 +76,23 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
     .unwrap();
     let project = tmp.path().join("app");
     skill(&project.join(".claude/skills"), "stray", "unmanaged bytes");
+    // A tree no name can be written into, and the two non-skill kinds an
+    // unmanaged scan offers.
+    raw_skill(
+        &project.join(".claude/skills"),
+        "bare",
+        "No frontmatter at all.\n",
+    );
+    file_item(
+        &project.join(".claude/agents"),
+        "drifter",
+        "---\nname: drifter\ndescription: about drifter\n---\nAgent body.\n",
+    );
+    file_item(
+        &project.join(".claude/commands"),
+        "note",
+        "---\ndescription: a note\n---\nCommand body.\n",
+    );
     skill(
         &project.join(crate::source::LOCAL_SOURCE_DIR).join("skills"),
         "mine",
@@ -461,4 +494,168 @@ fn an_in_place_skill_is_an_own_candidate_read_from_its_tree() {
     let candidates = inventory(&env, &[scope]).unwrap();
     let here = find(&candidates, "here");
     assert!(here.origins.iter().any(|o| !o.hash.is_empty()));
+}
+
+/// What the catalog check makes of what one import wrote, read as the
+/// person's own marketplace: how many items it found, and every breakage
+/// over them. The count is half the answer — a check that read nothing
+/// reports no breakage either.
+#[allow(clippy::unwrap_used)]
+fn checked(target: &Path) -> (usize, Vec<String>) {
+    let sealed = crate::source_read::SealedSource::open(target).unwrap();
+    let check = crate::check_catalog::check(&sealed, "mine").unwrap();
+    let breakage = check
+        .findings()
+        .filter(|finding| finding.is_breakage() && !finding.is_note())
+        .map(|finding| format!("{}: {}", finding.file, finding.message))
+        .collect();
+    (check.tally().items, breakage)
+}
+
+/// A copy taken under a new name has to declare that name: every tool
+/// keys a skill on the directory it sits in and answers to what its
+/// SKILL.md says, so bytes copied verbatim under a renamed destination
+/// author breakage into the person's own marketplace while the import
+/// reports success.
+///
+/// Both shapes: the flat rename, and the nested destination it was
+/// reported against.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_renamed_skill_declares_its_destination_and_leaves_the_catalog_whole() {
+    let (tmp, env, scope) = seeded();
+    let scopes = [scope];
+    let target = target(&env, &tmp, "mine-renamed");
+    fs::write(
+        target.join("kendex.toml"),
+        "[marketplace]\nname = \"mine\"\n",
+    )
+    .unwrap();
+    let candidates = inventory(&env, &scopes).unwrap();
+    let mut flat = selection(find(&candidates, "stray"), false);
+    flat.destination = "renamed".to_owned();
+    let mut nested = selection(find(&candidates, "mine"), false);
+    nested.destination = "group/deep".to_owned();
+
+    let selections = [flat, nested];
+
+    let outcome = apply(&env, &scopes, &target, &selections).unwrap();
+    assert_eq!(outcome.written, ["skills/renamed", "skills/group/deep"]);
+
+    let flat_md = fs::read_to_string(target.join("skills/renamed/SKILL.md")).unwrap();
+    assert!(flat_md.contains("name: renamed"), "{flat_md}");
+    assert!(
+        flat_md.contains("unmanaged bytes") && flat_md.contains("description: about stray"),
+        "only the name line changes: {flat_md}"
+    );
+    let nested_md = fs::read_to_string(target.join("skills/group/deep/SKILL.md")).unwrap();
+    assert!(nested_md.contains("name: deep"), "{nested_md}");
+
+    let (items, breakage) = checked(&target);
+    assert_eq!(items, 2, "the check read both imported trees");
+    assert_eq!(breakage, Vec::<String>::new());
+
+    // The bytes on disk are what the same selection would write again, so
+    // a repeated import is already present rather than someone else's.
+    let again = apply(&env, &scopes, &target, &selections).unwrap();
+    assert_eq!(
+        again.already_present,
+        ["skills/renamed", "skills/group/deep"]
+    );
+    assert!(again.written.is_empty());
+}
+
+/// An import that keeps the candidate's name copies its bytes verbatim,
+/// nested destination included: the leaf is the name a declaration
+/// carries, so moving a skill into a directory renames nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_import_that_keeps_the_leaf_copies_the_bytes_untouched() {
+    let (tmp, env, scope) = seeded();
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-kept");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let mut moved = selection(find(&candidates, "stray"), false);
+    moved.destination = "group/stray".to_owned();
+    // A tree carrying no frontmatter is copied as it is, rather than
+    // refused for a name nobody asked to change.
+    let bare = selection(find(&candidates, "bare"), false);
+
+    apply(&env, &scopes, &target, &[moved, bare]).unwrap();
+
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    assert_eq!(
+        fs::read(target.join("skills/group/stray/SKILL.md")).unwrap(),
+        fs::read(root.join(".claude/skills/stray/SKILL.md")).unwrap(),
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("skills/bare/SKILL.md")).unwrap(),
+        "No frontmatter at all.\n",
+    );
+}
+
+/// The rename is decided with every other refusal, before the first byte:
+/// bytes no name can be written into refuse the whole apply rather than
+/// land a copy that still answers to the old name.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_rename_no_declaration_can_carry_refuses_and_writes_nothing() {
+    let (tmp, env, scope) = seeded();
+    let scopes = [scope];
+    let target = target(&env, &tmp, "mine-uncarried");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let mut renamed = selection(find(&candidates, "bare"), false);
+    renamed.destination = "clothed".to_owned();
+    let selections = [selection(find(&candidates, "mine"), false), renamed];
+
+    let message = apply(&env, &scopes, &target, &selections)
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("it has no frontmatter"), "{message}");
+    assert!(message.contains("'clothed'"), "{message}");
+    assert!(
+        message.contains("still call itself 'bare'"),
+        "and what the copy would have answered to: {message}"
+    );
+    assert!(
+        !target.join("skills").exists(),
+        "a refused apply writes nothing at all"
+    );
+}
+
+/// What the other kinds do, stated rather than left to whatever the copy
+/// happens to do. An agent's own file carries the name its tool answers
+/// to, so a renamed agent declares its destination. A command declares no
+/// name a tool keys on — every harness that reads one reads the author's
+/// file untouched, and the two that generate one write the installed name
+/// themselves — so it is copied byte for byte whatever it is renamed to.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_renamed_agent_declares_its_destination_and_a_renamed_command_is_copied_verbatim() {
+    let (tmp, env, scope) = seeded();
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-kinds");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let mut agent = selection(find(&candidates, "drifter"), false);
+    agent.destination = "settled".to_owned();
+    let mut command = selection(find(&candidates, "note"), false);
+    command.destination = "memo".to_owned();
+
+    apply(&env, &scopes, &target, &[agent, command]).unwrap();
+
+    let written = fs::read_to_string(target.join("agents/settled.md")).unwrap();
+    assert!(written.contains("name: settled"), "{written}");
+    assert!(
+        written.contains("description: about drifter") && written.contains("Agent body."),
+        "only the name line changes: {written}"
+    );
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    assert_eq!(
+        fs::read(target.join("commands/memo.md")).unwrap(),
+        fs::read(root.join(".claude/commands/note.md")).unwrap(),
+    );
 }

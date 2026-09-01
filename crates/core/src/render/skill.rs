@@ -11,6 +11,36 @@ pub use rendered::{Files, Rendered};
 
 const SKILL_FILE: &str = "SKILL.md";
 
+/// The files of a skill's tree that carry the name the item answers to:
+/// SKILL.md under either spelling, because a switched-off installation
+/// keeps its content under the `.disabled` name and that is the same
+/// claim on the same name. An agent's source is one file, so the file
+/// itself is the one — no list to consult.
+pub(crate) const NAME_FILES: [&str; 2] = [SKILL_FILE, "SKILL.md.disabled"];
+
+/// Whether this file of a skill's tree is one of them.
+pub(crate) fn carries_name(rel: &Path) -> bool {
+    rel.to_str().is_some_and(|rel| NAME_FILES.contains(&rel))
+}
+
+/// The bytes answering to `name`. A tool knows a skill or an agent by the
+/// name its frontmatter gives, and the loader validators refuse a
+/// rendering whose file calls it something other than the name it
+/// installs under — so a copy landing under a new name says that name.
+/// A frontmatter without a name gets one, exactly as rendering would give
+/// it one.
+///
+/// `Err` is the shape no single scalar can carry the name in, said the
+/// way [`with_name`] says it. Every caller refuses on it rather than
+/// landing a copy that still answers to the old name; what differs is
+/// only whose copy each one names.
+pub(crate) fn bytes_named(bytes: &[u8], name: &str) -> std::result::Result<Vec<u8>, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "the file is not text".to_owned())?;
+    with_name(text, name)
+        .map(String::into_bytes)
+        .map_err(str::to_owned)
+}
+
 pub const INSTRUCTIONS_START: &str = "<!-- kendex:project-instructions:start -->";
 pub const INSTRUCTIONS_END: &str = "<!-- kendex:project-instructions:end -->";
 

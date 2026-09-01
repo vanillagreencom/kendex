@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{SKILL_NAME_FILES, forkable_kind, local_item, named_bytes, vacant_name};
+use super::{forkable_kind, local_item, named_bytes, vacant_name};
 use crate::apply::{Op, Plan, PlannedOp, Pre};
 use crate::engine::agent_carry::{OldName, rekey_agent_tables};
 use crate::engine::ops::manifest_for_mutation;
@@ -11,6 +11,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest;
 use crate::model::{ItemKind, Scope};
+use crate::render::skill::NAME_FILES;
 
 /// Rename a fork. Only a fork nothing depends on may change its installed
 /// name: dependents and bundles refer to the old one, and a rename that
@@ -140,7 +141,7 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
 /// declared under one name and answering to another.
 fn stamp_name(kind: ItemKind, from: &Path, to: &Path, new: &str) -> Result<Vec<PlannedOp>> {
     let moved: Vec<(PathBuf, PathBuf)> = match kind {
-        ItemKind::Skill => SKILL_NAME_FILES
+        ItemKind::Skill => NAME_FILES
             .iter()
             .map(|rel| (from.join(rel), to.join(rel)))
             .collect(),
