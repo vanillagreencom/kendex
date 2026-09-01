@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -16,24 +18,52 @@ function packages() {
 
 const workflowPath = join(root, "..", ".github", "workflows", "skill-tests.yml");
 
-// The `if:` values a per-package suite step may carry, derived from the shard
-// list `strategy.matrix` actually runs. A step conditioned on a name that list
-// does not carry — a typo, or a shard since renamed — is skipped on every run,
-// which looks identical to a step that runs and passes. Deriving the set here
-// rather than pinning one shard's literal is what keeps a shard split from
-// silently retiring a suite, and keeps the teeth: an unknown name still fails.
-function shardConditions(workflow) {
+// The shards `strategy.matrix` actually runs, and the `if:` values a
+// per-package suite step may carry to run on one. A step conditioned on a name
+// the matrix does not carry — a typo, or a shard since renamed — is skipped on
+// every run, which looks identical to a step that runs and passes. Deriving
+// these rather than pinning one shard's literal is what keeps a shard split
+// from silently retiring a suite, and keeps the teeth: an unknown name fails.
+function shardNames(workflow) {
 	const list = workflow.match(/^ {8}shard: \[(.+)\]$/m)?.[1];
 	assert.ok(list, `no "shard: [...]" matrix list in ${workflowPath} — the matrix reader is broken`);
-	return list.split(",").map((name) => `matrix.shard == '${name.trim()}'`);
+	return list.split(",").map((name) => name.trim());
 }
 
-// Every shard name a step condition mentions, in file order. A step's `if:`
-// may be compound (`matrix.shard == 'rest' && github.event_name != ...`), so
-// this reads the names out of conditions rather than comparing whole strings
-// the way the per-package check above can.
-function stepShardNames(workflow) {
-	return [...workflow.matchAll(/^ {8}if: .*?matrix\.shard == '([^']+)'/gm)].map((m) => m[1]);
+function shardConditions(workflow) {
+	return shardNames(workflow).map((name) => `matrix.shard == '${name}'`);
+}
+
+// The workflow's own `shard names agree with the matrix` step, lifted out and
+// run over a copy of the tree. Nothing here restates what that script checks:
+// it is the single implementation of the shard-name rule and these cases are
+// its control, so a rule change is made there and lands here as a red case.
+function shardGuardScript(workflow) {
+	const block = workflow.split(/\n(?= {6}- )/).find((b) => /^ {6}- name: shard names agree with the matrix$/m.test(b));
+	assert.ok(block, "the unconditional shard guard step is gone from the workflow");
+	assert.ok(!/^ {8}if: /m.test(block), "the shard guard grew an `if:`, so the drift it reports can now switch it off");
+	const body = block.match(/^ {8}run: \|\n((?: {10}.*\n?)*)/m)?.[1];
+	assert.ok(body, "could not read the shard guard's script — the reader is broken");
+	return body.replace(/^ {10}/gm, "");
+}
+
+// Reading the script happens OUTSIDE the try: an assertion in the reader is a
+// broken harness, not a guard verdict, and must not come back as an exit code.
+// A spawn failure is rethrown for the same reason.
+function runShardGuard(workflow, shard) {
+	const script = shardGuardScript(workflow);
+	const dir = mkdtempSync(join(tmpdir(), "shard-guard-"));
+	try {
+		mkdirSync(join(dir, ".github", "workflows"), { recursive: true });
+		writeFileSync(join(dir, ".github", "workflows", "skill-tests.yml"), workflow);
+		execFileSync("bash", ["-c", script], { cwd: dir, env: { ...process.env, SHARD: shard }, stdio: "pipe" });
+		return 0;
+	} catch (error) {
+		if (typeof error.status !== "number") throw error;
+		return error.status;
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 // A package's CI entry point is `test:ci` when it declares one and `test`
@@ -207,43 +237,40 @@ test("a step conditioned on a shard the matrix does not run is reported, not acc
 	assert.deepEqual(unrunPackages(typo), ["pi-claude-bridge: no step on a shard the matrix runs invokes `npm run test:ci`"]);
 });
 
-// The shard-name coupling, both directions. Neither is about Pi packages, but
-// this file already parses the workflow and runs on the `node` shard, so a
-// typo in another shard's conditions is caught from outside that shard.
-test("every step condition names a shard the matrix runs, and every shard is named", () => {
+// The shard-name rule itself is the workflow's `shard names agree with the
+// matrix` step: it carries no `if:`, so no drift can switch it off, which a
+// suite gated on one shard cannot promise. These two cases run THAT script
+// against mutated copies. Delete them only alongside the step, never instead
+// of it, and change the rule there rather than here.
+test("the workflow's shard guard accepts every shard the matrix declares and no other", () => {
 	const workflow = readFileSync(workflowPath, "utf8");
-	const shards = shardConditions(workflow).map((condition) => condition.replace(/^matrix\.shard == '|'$/g, ""));
-	const named = stepShardNames(workflow);
-	// Floor both readers: one that matched nothing would satisfy both
-	// assertions below vacuously, which is the failure this case guards.
-	assert.ok(shards.length > 0, `no shard list read from ${workflowPath} — the matrix reader is broken`);
-	assert.ok(named.length > 0, `no shard-conditioned steps read from ${workflowPath} — the step reader is broken`);
-
-	// A step naming a shard the matrix dropped is skipped on every run, which
-	// looks identical to a step that runs and passes.
-	assert.deepEqual([...new Set(named)].filter((name) => !shards.includes(name)).sort(), []);
-	// A shard no step names runs checkout and the in-workflow name guard, then
-	// reports success having executed no suite — green and empty.
-	assert.deepEqual(shards.filter((name) => !named.includes(name)).sort(), []);
+	const shards = shardNames(workflow);
+	assert.ok(shards.length > 0, "no shards read from the matrix — the reader is broken");
+	for (const shard of shards) {
+		assert.equal(runShardGuard(workflow, shard), 0, `the guard rejected ${shard}, which the matrix declares`);
+	}
+	assert.notEqual(runShardGuard(workflow, "ghost"), 0, "the guard accepted a leg the matrix does not declare");
 });
 
-// Must-fail controls for the two directions above. Each mutates a copy of the
-// workflow and asserts the mutation bit, so a reader that stopped matching
-// cannot pass these by finding nothing.
-test("a step condition naming an unknown shard is reported", () => {
+// Must-fail controls, one per direction the rule closes. Each asserts its
+// mutation actually changed the file, so a case that stopped matching fails
+// loud rather than proving nothing against an unmutated copy.
+test("the workflow's shard guard reds on every direction of shard-name drift", () => {
 	const workflow = readFileSync(workflowPath, "utf8");
-	const typo = workflow.replaceAll("matrix.shard == 'rest'", "matrix.shard == 'rst'");
-	assert.notEqual(typo, workflow, "the mutation matched no `rest` step condition");
-	const shards = shardConditions(typo).map((condition) => condition.replace(/^matrix\.shard == '|'$/g, ""));
-	assert.deepEqual([...new Set(stepShardNames(typo))].filter((name) => !shards.includes(name)), ["rst"]);
-});
-
-test("a matrix shard no step names is reported", () => {
-	const workflow = readFileSync(workflowPath, "utf8");
-	const list = workflow.match(/^ {8}shard: \[(.+)\]$/m)[0];
-	const ghost = workflow.replace(list, list.replace(/\]$/, ", ghost]"));
-	assert.notEqual(ghost, workflow, "the mutation matched no matrix list");
-	const shards = shardConditions(ghost).map((condition) => condition.replace(/^matrix\.shard == '|'$/g, ""));
-	const named = stepShardNames(ghost);
-	assert.deepEqual(shards.filter((name) => !named.includes(name)), ["ghost"]);
+	const cases = [
+		["a step names a shard the matrix dropped", workflow.replaceAll("matrix.shard == 'rest'", "matrix.shard == 'rst'")],
+		["the matrix declares a shard no step names", workflow.replace(/^( {8}shard: \[.+)\]$/m, "$1, ghost]")],
+		// A control mutating the FIRST clause of a compound condition passes
+		// under a reader that stops after one comparison, so it would prove
+		// nothing; this one mutates the second.
+		[
+			"a later clause of a compound condition is typo'd",
+			workflow.replace("matrix.shard == 'node' || matrix.shard == 'pi-claude-bridge'", "matrix.shard == 'node' || matrix.shard == 'pi-claude-brige'"),
+		],
+		["the matrix list cannot be read at all", workflow.replace(/^ {8}shard: \[.+\]$/m, "        shard: unreadable")],
+	];
+	for (const [drift, mutated] of cases) {
+		assert.notEqual(mutated, workflow, `the mutation for "${drift}" matched nothing`);
+		assert.notEqual(runShardGuard(mutated, "rest"), 0, `the guard stayed green when ${drift}`);
+	}
 });
