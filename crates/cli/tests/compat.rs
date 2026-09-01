@@ -328,6 +328,10 @@ fn report_files_through_a_stubbed_gh() {
             r#","sourceCommit":"abc1234def5678","renderedHash":"9f8e7d6c5b4a""#,
             "source=vanillagreencom/kendex@abc1234 rendered=9f8e7d6",
         ),
+        (
+            r#","sourceCommit":"abc1234def5678""#,
+            "source=vanillagreencom/kendex@abc1234 rendered=unlocked",
+        ),
         ("", "source=unlocked rendered=unlocked"),
     ] {
         fs::write(

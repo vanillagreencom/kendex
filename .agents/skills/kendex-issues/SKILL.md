@@ -43,9 +43,15 @@ are a defect.
 
 ## Triage
 
-- **Already fixed** → the report marker's `source=<repo>@<commit7>` dates the
-  report; compare it to the fix commit before investigating. Older than the
-  fix → close with "fixed in <sha>".
+- **Already fixed** → `source=<repo>@<commit7>` in the report marker is the
+  commit the reporter installed from. In a fetched kendex checkout, close with
+  "fixed in <sha>" when `git merge-base --is-ancestor <commit7> <fix-sha>`
+  exits 0. `source=unlocked`, or a commit `git cat-file -e <commit7>^{commit}`
+  cannot find, dates nothing: triage on the symptom and never close on age.
+  `rendered=<hash7>` is what the apply wrote in the reporter's tree, injected
+  instructions included, so it cannot be recomputed from a commit — two
+  reports at one `source` with different `rendered` mean one install was
+  edited locally.
 - **Duplicate** → close, name the canonical issue.
 - **Not a kendex asset** → ownership is the asset's SKILL.md frontmatter
   (`source: kendex`), never its install path. Close with the reason; repost

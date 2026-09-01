@@ -24,8 +24,9 @@ pub struct ReportArgs {
     pub dry_run: bool,
 }
 
-/// What the marker says where the lock recorded no commit or no rendering
-/// for the reported asset.
+/// What the marker says where the lock has no usable answer for the
+/// reported asset: nothing recorded, entries that disagree, or a value
+/// that is no commit or hash.
 const UNLOCKED: &str = "unlocked";
 
 /// `--area` names accepted on the CLI, mapped to routing labels.

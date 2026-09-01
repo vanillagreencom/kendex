@@ -20,15 +20,16 @@ use crate::source_ref::{owner_repo, repo_identity};
 pub const DEFAULT_UPSTREAM: &str = crate::manifest::DEFAULT_SOURCE_REPO;
 
 /// What the lock recorded about where the reported asset came from, so a
-/// triager can date a report against the fix that already landed. Both
-/// halves are read off one entry: a commit and a rendered hash from
-/// different installations would describe nothing.
+/// triager can date a report against the fix that already landed. Every
+/// half states what the matching entries agree on and nothing else: the
+/// lock keys an installation per harness, and one name at two commits or
+/// two renderings dates nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Provenance {
     /// `<repo>@<commit7>`, the repo spelled the way a lookup takes it.
     pub source: String,
-    /// The first seven characters of what the apply wrote, where the lock
-    /// recorded one.
+    /// The first seven characters of what the apply wrote, where the
+    /// entries recorded one and agree on it.
     pub rendered: Option<String>,
 }
 
@@ -44,9 +45,10 @@ pub struct Route {
     /// The kind the report is about: the one the caller named, or the one
     /// the matching lock entries agree on when the caller named none.
     pub kind: Option<ItemKind>,
-    /// Where the matching entries say the bytes came from. `None` when the
-    /// name is in no lock entry, or in none that recorded a commit: an
-    /// installation nothing dated cannot be dated afterwards.
+    /// Where the matching entries agree the bytes came from. `None` when
+    /// nothing dated them, when they disagree, or when the kind itself is
+    /// unresolved: an installation nothing dated cannot be dated after the
+    /// fact, and a guess would be read as a date.
     pub provenance: Option<Provenance>,
 }
 
@@ -84,26 +86,72 @@ pub fn route(lock: &Lock, name: &str, kind: Option<ItemKind>, upstream: &str) ->
         label: (owned && wanted == repo_identity(DEFAULT_UPSTREAM))
             .then(|| derive_label(name, kind).to_owned()),
         kind,
-        provenance: provenance(&matching),
+        provenance: provenance(&matching, kind),
     }
 }
 
-/// The recorded origin of the matching entries, off the first entry that
-/// carries a commit — entries are ordered by lock key, so the same lock
-/// answers the same way every run.
-fn provenance(matching: &[&LockEntry]) -> Option<Provenance> {
-    let entry = matching.iter().find(|e| e.source_commit.is_some())?;
-    let commit = entry.source_commit.as_deref()?;
+/// What the dated matching entries agree they came from, the way ownership
+/// and `agreed_kind` decide: disagreement answers nothing rather than
+/// picking one. The lock keys an installation per harness, so one name is
+/// several entries that can sit at different commits and hold different
+/// renderings, and a marker naming one of them would date the report
+/// against an install it did not come from. An unresolved kind is that
+/// same disagreement one level up — the resolved kind is the kind every
+/// matching entry has, or there is none — so it dates nothing either.
+fn provenance(matching: &[&LockEntry], kind: Option<ItemKind>) -> Option<Provenance> {
+    kind?;
+    // A dated entry the marker cannot spell answers `None` rather than
+    // dropping out: it still says this name came from somewhere else, and
+    // dropping it would leave a sibling's commit standing as the only one.
+    let dated: Vec<(Option<String>, Option<String>)> = matching
+        .iter()
+        .filter_map(|entry| {
+            let commit = short_hash(entry.source_commit.as_deref())?;
+            Some((
+                marker_repo(&entry.source_repo).map(|repo| format!("{repo}@{commit}")),
+                short_hash(entry.rendered_hash.as_deref()),
+            ))
+        })
+        .collect();
     Some(Provenance {
-        source: format!("{}@{}", filing_target(&entry.source_repo), short(commit)),
-        rendered: entry.rendered_hash.as_deref().map(short),
+        source: agreed(dated.iter().map(|(source, _)| source))?.clone()?,
+        // Independently: renderings differ per harness at one commit, and
+        // a disagreement there is no reason to withhold the commit itself.
+        rendered: agreed(dated.iter().map(|(_, rendered)| rendered))
+            .cloned()
+            .flatten(),
     })
 }
 
-/// A hash as a marker carries it: seven characters, cut on a character
-/// boundary because a lock is a file anyone can edit.
-fn short(hash: &str) -> String {
-    hash.chars().take(7).collect()
+/// The one value every entry gives, or `None` when they disagree or there
+/// are none.
+fn agreed<T: PartialEq>(mut values: impl Iterator<Item = T>) -> Option<T> {
+    let first = values.next()?;
+    values.all(|value| value == first).then_some(first)
+}
+
+/// A recorded hash as a marker carries it: seven characters, and only from
+/// a value shaped like a hash. The lock is a file anyone can edit and the
+/// marker lands in a public issue body, so nothing else travels — an empty
+/// value would claim a date it does not carry, and one holding `-->` would
+/// end the comment early and take the rest of the marker with it.
+fn short_hash(recorded: Option<&str>) -> Option<String> {
+    let value = recorded?;
+    (!value.is_empty() && value.chars().all(|c| c.is_ascii_hexdigit()))
+        .then(|| value.chars().take(7).collect())
+}
+
+/// The entry's repo as a marker can carry it: the filing target, and only
+/// when every character of it is one a repo reference is spelled with.
+/// `filing_target` hands back what the lock holds when it is no GitHub
+/// reference, and the marker is space-delimited inside an HTML comment.
+fn marker_repo(source_repo: &str) -> Option<String> {
+    let target = filing_target(source_repo);
+    let spellable = !target.is_empty()
+        && target
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/' | ':'));
+    spellable.then_some(target)
 }
 
 /// The upstream as something to file against: a GitHub reference folded to
@@ -120,216 +168,4 @@ fn agreed_kind(matching: &[&LockEntry]) -> Option<ItemKind> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn entry(name: &str, kind: ItemKind, source_repo: &str) -> LockEntry {
-        LockEntry {
-            name: name.to_owned(),
-            kind,
-            harness: crate::model::HarnessId::Claude,
-            source: "kendex".to_owned(),
-            source_repo: source_repo.to_owned(),
-            method: crate::manifest::Method::Copy,
-            installed_at: "2026-01-01T00:00:00Z".to_owned(),
-            source_hash: "x".to_owned(),
-            source_commit: None,
-            rendered_hash: None,
-            enabled: true,
-            upstream_skills: None,
-            emitted: None,
-            registration: None,
-            reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
-        }
-    }
-
-    fn lock_of(entries: &[(&str, ItemKind, &str)]) -> Lock {
-        let mut lock = Lock::default();
-        for (name, kind, source_repo) in entries {
-            lock.entries.insert(
-                format!("{}:{name}:{source_repo}", kind.name()),
-                entry(name, *kind, source_repo),
-            );
-        }
-        lock
-    }
-
-    /// The lock records provenance for every kind of asset alike, so a skill
-    /// recorded from the default repo routes upstream like an agent or hook.
-    #[test]
-    fn a_default_repo_entry_routes_upstream() {
-        for (kind, label) in [
-            (ItemKind::Hook, "harness"),
-            (ItemKind::Skill, "skills"),
-            (ItemKind::Agent, "skills"),
-        ] {
-            let lock = lock_of(&[("guard", kind, DEFAULT_UPSTREAM)]);
-            let route = route(&lock, "guard", Some(kind), DEFAULT_UPSTREAM);
-            assert!(route.kendex_owned, "{kind:?} from the default repo");
-            assert_eq!(route.repo.as_deref(), Some(DEFAULT_UPSTREAM));
-            assert_eq!(route.label.as_deref(), Some(label));
-        }
-    }
-
-    /// Nothing in the lock says nothing about ownership, and the safe answer
-    /// is the user's own repo.
-    #[test]
-    fn an_unlocked_name_stays_project_local() {
-        let route = route(&Lock::default(), "mystery", None, DEFAULT_UPSTREAM);
-        assert!(!route.kendex_owned);
-        assert_eq!(route.repo, None);
-        assert_eq!(route.label, None);
-    }
-
-    /// A report has to be datable against the fix that already landed, so
-    /// the route carries what the lock recorded: the repo and commit the
-    /// bytes came from, and what the apply wrote, both cut short. The entry
-    /// that recorded a commit answers even when another sorts ahead of it,
-    /// and both halves come off that one entry.
-    #[test]
-    fn a_dated_entry_carries_its_recorded_provenance() {
-        let mut dated = entry("guard", ItemKind::Skill, DEFAULT_UPSTREAM);
-        dated.source_commit = Some("abc1234def5678".to_owned());
-        dated.rendered_hash = Some("9f8e7d6c5b4a".to_owned());
-        // The undated entry from `lock_of` sorts under `skill:...`, ahead of
-        // this key: what answers is the dated entry, not the first one.
-        let mut lock = lock_of(&[("guard", ItemKind::Skill, DEFAULT_UPSTREAM)]);
-        lock.entries.insert("zz-dated".to_owned(), dated.clone());
-        assert_eq!(
-            route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM).provenance,
-            Some(Provenance {
-                source: format!("{DEFAULT_UPSTREAM}@abc1234"),
-                rendered: Some("9f8e7d6".to_owned()),
-            })
-        );
-
-        // A commit without a rendering still dates the report.
-        dated.rendered_hash = None;
-        lock.entries.insert("zz-dated".to_owned(), dated);
-        let route = route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM);
-        assert_eq!(route.provenance.and_then(|p| p.rendered), None);
-    }
-
-    /// An installation the lock never dated cannot be dated afterwards, and
-    /// a name it never recorded even less so: the route says nothing rather
-    /// than inventing a commit.
-    #[test]
-    fn an_undated_entry_has_no_provenance() {
-        let lock = lock_of(&[("guard", ItemKind::Skill, DEFAULT_UPSTREAM)]);
-        let recorded = route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM);
-        assert_eq!(recorded.provenance, None);
-        assert_eq!(
-            route(&Lock::default(), "guard", None, DEFAULT_UPSTREAM).provenance,
-            None
-        );
-    }
-
-    /// A skill installed from another marketplace keeps filing against the
-    /// consumer's own repo.
-    #[test]
-    fn a_third_party_entry_stays_project_local() {
-        let lock = lock_of(&[("guard", ItemKind::Skill, "someone/else")]);
-        assert!(!route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM).kendex_owned);
-    }
-
-    /// A subscription spells its repo however it likes and the lock keeps
-    /// that spelling, so ownership compares folded identities: the scp-style
-    /// and `.git`-suffixed entries are the same repository as the shorthand,
-    /// and a `--upstream` spelled either way matches too. Another host with
-    /// the same path is another repository.
-    #[test]
-    fn a_differently_spelled_upstream_is_the_same_repository() {
-        for spelling in [
-            "git@github.com:vanillagreencom/kendex.git",
-            "https://github.com/VanillaGreenCom/kendex",
-            "vanillagreencom/kendex.git",
-        ] {
-            let lock = lock_of(&[("guard", ItemKind::Skill, spelling)]);
-            let recorded = route(&lock, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM);
-            assert!(recorded.kendex_owned, "{spelling}");
-            assert_eq!(recorded.label.as_deref(), Some("skills"), "{spelling}");
-
-            // However the caller spells it, what comes back is what `gh
-            // --repo` and an issue URL take.
-            let named = route(&lock, "guard", Some(ItemKind::Skill), spelling);
-            assert!(named.kendex_owned, "{spelling}");
-            assert_eq!(named.repo.as_deref(), Some(DEFAULT_UPSTREAM), "{spelling}");
-            assert_eq!(named.label.as_deref(), Some("skills"), "{spelling}");
-        }
-
-        let elsewhere = lock_of(&[(
-            "guard",
-            ItemKind::Skill,
-            "https://gitlab.com/vanillagreencom/kendex",
-        )]);
-        assert!(!route(&elsewhere, "guard", Some(ItemKind::Skill), DEFAULT_UPSTREAM).kendex_owned);
-    }
-
-    /// Only a GitHub reference folds to `owner/repo`; another host has no
-    /// shorthand, so the report files against the reference as spelled.
-    #[test]
-    fn another_hosts_upstream_is_the_target_as_spelled() {
-        let lock = lock_of(&[(
-            "guard",
-            ItemKind::Skill,
-            "https://gitlab.com/team/catalog.git",
-        )]);
-        let route = route(
-            &lock,
-            "guard",
-            Some(ItemKind::Skill),
-            "https://gitlab.com/team/catalog",
-        );
-        assert!(route.kendex_owned);
-        assert_eq!(
-            route.repo.as_deref(),
-            Some("https://gitlab.com/team/catalog")
-        );
-        assert_eq!(route.label, None);
-    }
-
-    /// A named upstream routes there only when the lock recorded the asset
-    /// from it; naming a repo is not by itself proof of ownership.
-    #[test]
-    fn a_named_upstream_must_match_recorded_provenance() {
-        let lock = lock_of(&[("guard", ItemKind::Skill, "someone/else")]);
-        let matched = route(&lock, "guard", Some(ItemKind::Skill), "someone/else");
-        assert!(matched.kendex_owned);
-        assert_eq!(matched.repo.as_deref(), Some("someone/else"));
-        // Labels exist only on the canonical repo.
-        assert_eq!(matched.label, None);
-        assert!(!route(&Lock::default(), "guard", None, "someone/else").kendex_owned);
-    }
-
-    /// `--asset <name>` names no kind, so entries of every kind match it. A
-    /// name shared with something from elsewhere is ambiguous and stays
-    /// local; naming the kind resolves it.
-    #[test]
-    fn a_name_shared_with_another_origin_is_ambiguous() {
-        let lock = lock_of(&[
-            ("dev", ItemKind::Skill, DEFAULT_UPSTREAM),
-            ("dev", ItemKind::Hook, "someone/else"),
-        ]);
-        assert!(!route(&lock, "dev", None, DEFAULT_UPSTREAM).kendex_owned);
-        assert!(route(&lock, "dev", Some(ItemKind::Skill), DEFAULT_UPSTREAM).kendex_owned);
-    }
-
-    /// A kind-less report takes the kind its entries agree on, so it carries
-    /// the same label a named kind would; disagreement leaves it unresolved.
-    #[test]
-    fn a_kindless_report_takes_the_kind_its_entries_agree_on() {
-        let one_kind = lock_of(&[("dev", ItemKind::Skill, DEFAULT_UPSTREAM)]);
-        let resolved = route(&one_kind, "dev", None, DEFAULT_UPSTREAM);
-        assert_eq!(resolved.kind, Some(ItemKind::Skill));
-        assert_eq!(resolved.label.as_deref(), Some("skills"));
-
-        let mut two_kinds = one_kind;
-        two_kinds.entries.insert(
-            "hook:dev:claude".to_owned(),
-            entry("dev", ItemKind::Hook, DEFAULT_UPSTREAM),
-        );
-        let unresolved = route(&two_kinds, "dev", None, DEFAULT_UPSTREAM);
-        assert_eq!(unresolved.kind, None);
-        assert_eq!(unresolved.label.as_deref(), Some("cli"));
-    }
-}
+mod tests;
