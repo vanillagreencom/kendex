@@ -2,9 +2,6 @@ use std::fs;
 
 use super::*;
 
-/// The rendered body is the fork's source. Generated sections are owned
-/// independently, so editing one and removing another neither duplicates
-/// their unchanged siblings nor deletes an authored banner example.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section() {
@@ -55,6 +52,10 @@ fn a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section() {
     assert!(source.contains("Use the read_file tool."), "{source}");
     assert!(!source.contains("Use the Read tool."), "{source}");
     assert!(source.contains("Edited generated launch."), "{source}");
+    assert!(
+        source.contains(&format!("Example:\n\n{BANNER}")),
+        "{source}"
+    );
     assert_eq!(banners(&source), 1, "{source}");
     assert_eq!(times(&source, "## Launch Instructions"), 1, "{source}");
     for section in [
@@ -81,4 +82,47 @@ fn a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section() {
         assert_eq!(banners(text), 2, "{text}");
         assert_eq!(times(text, "My body."), 1, "{text}");
     }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_generated_section_away_from_its_position_refuses() {
+    let w = agent_world(
+        "\"gemini\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "[agent-launch-instructions]\nrev = \"Read the brief first.\"\n",
+    );
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    let section = "## Launch Instructions\n\nRead the brief first.\n\n";
+    assert!(text.contains(section), "{text}");
+    fs::write(&file, format!("{}\n{section}", text.replace(section, ""))).unwrap();
+
+    let error = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("away from its rendered position"), "{error}");
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_authored_edge_copy_refuses_when_the_generated_copy_was_deleted() {
+    let agent =
+        format!("---\nname: rev\ndescription: agent rev\n---\n{BANNER}\n\nUpstream body.\n");
+    let w = agent_world("\"gemini\"", &agent, "", "");
+    let file = rendered(&w, HarnessId::Gemini, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    let opening = format!("{BANNER}\n\n");
+    let at = text.find(&opening).unwrap();
+    fs::write(
+        &file,
+        format!("{}{}", &text[..at], &text[at + opening.len()..]),
+    )
+    .unwrap();
+
+    let error = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Gemini)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("cannot be told from"), "{error}");
 }

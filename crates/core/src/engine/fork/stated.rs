@@ -4,7 +4,6 @@ use crate::manifest::FrontmatterOverrides;
 use crate::model::HarnessId;
 use crate::render::permission::{Access, Widened};
 
-/// The override spelling for a deleted effort.
 const NO_EFFORT: &str = "none";
 
 /// Describe access the fork would give back, or `None` when it widens nothing.
@@ -106,7 +105,6 @@ pub(super) fn stated(harness: HarnessId, text: &str) -> std::result::Result<Stat
     })
 }
 
-/// A hook gate is identified by event, matcher, and command together.
 #[derive(PartialEq)]
 struct Gate {
     event: String,
@@ -159,7 +157,6 @@ fn commands(value: &crate::frontmatter::Value) -> Vec<String> {
     }
 }
 
-/// Renderer-only keys distinguish a rendering from a replacement document.
 fn is_rendering(harness: HarnessId, map: &crate::frontmatter::Map) -> bool {
     let marks: &[&str] = match harness {
         HarnessId::Claude => &["disallowedTools", "background"],
@@ -170,7 +167,6 @@ fn is_rendering(harness: HarnessId, map: &crate::frontmatter::Map) -> bool {
     marks.iter().any(|key| map.get(key).is_some())
 }
 
-/// Whether a setting can round-trip through this harness's rendered key.
 fn carries(harness: HarnessId, key: &str) -> bool {
     matches!(
         (harness, key),

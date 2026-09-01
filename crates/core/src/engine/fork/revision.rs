@@ -7,7 +7,6 @@ use crate::error::{CoreError, Result};
 use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{ItemKind, Scope};
 
-/// Refuse when any installed target records a different or unknown revision.
 pub(super) fn one_revision(
     env: &Env,
     scope: &Scope,

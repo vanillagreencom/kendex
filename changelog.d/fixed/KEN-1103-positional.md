@@ -1,0 +1,1 @@
+- Forking an edited agent now refuses ambiguous wrapper edits instead of deleting authored text that matches a generated section.
