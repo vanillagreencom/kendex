@@ -18,7 +18,7 @@ import re
 
 from .constants import FROZEN_BLOCK_IDS, ROUTING_COLUMNS
 from .errors import InputError, SpecError
-from . import refusals
+from . import markdown, refusals
 
 # A version reaches a `#`, `//`-free comment and an HTML comment. Anything
 # outside this class could close one and put the rest into a generated file as
@@ -96,7 +96,7 @@ def parse_doctrine(skill_text, where):
     start = starts[0]
     end = len(lines)
     for i in range(start + 1, len(lines)):
-        if re.match(r"^ {0,3}#{1,2}(?!#)", lines[i]):
+        if markdown.heading_level(lines[i]) in (1, 2):
             end = i
             break
     blocks = {}

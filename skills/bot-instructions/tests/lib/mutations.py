@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.join(PACKAGE, "scripts"))
 
 from lib import (  # noqa: E402
     model as model_mod,
+    validators_repo,
     render_coderabbit,
     render_markdown,
     render_qodo,
@@ -455,9 +456,25 @@ def _exclusions(repo):
             text = text.replace(entry, "")
         return text
 
+    def nest_one(m):
+        """Drop ONE glob and leave a longer entry containing it.
+
+        The two controls beside this one strip every glob, which a substring
+        test passes just as well as a set comparison — containment only
+        matters when something else still holds the token. `src/**` inside
+        `vendor/src/**` was the shape that produced no finding at all.
+        """
+        first = m.exclusion_globs[0]
+        return region(m).replace(
+            validators_repo.PROSE_LEAD + first,
+            validators_repo.PROSE_LEAD + "vendor/" + first, 1)
+
     control(repo, "exclusion-consistency",
             "a render that drops the paths from the one surface Codex reads",
             render_markdown, "agents_region_body", strip_paths)
+    control(repo, "exclusion-consistency",
+            "a dropped glob that another listed entry still contains",
+            render_markdown, "agents_region_body", nest_one)
 
     guidance = render_qodo._guidance
 

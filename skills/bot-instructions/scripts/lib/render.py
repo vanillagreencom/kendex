@@ -12,7 +12,7 @@ import json
 
 from .constants import CODERABBIT_SCHEMA_PATH, CODERABBIT_TOP_LEVEL
 from .errors import InputError, RenderError
-from . import render_coderabbit, render_markdown, render_qodo
+from . import markdown, render_coderabbit, render_markdown, render_qodo
 
 
 class Build:
@@ -155,13 +155,7 @@ def splice(existing, region_body, path="AGENTS.md"):
 
 
 def _is_heading_1_or_2(line):
-    stripped = line.lstrip(" ")
-    if len(line) - len(stripped) > 3:
-        return False
-    if not stripped.startswith("#"):
-        return False
-    hashes = len(stripped) - len(stripped.lstrip("#"))
-    return hashes in (1, 2)
+    return markdown.heading_level(line) in (1, 2)
 
 
 def region_of(existing, path="AGENTS.md"):

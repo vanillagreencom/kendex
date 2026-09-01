@@ -278,13 +278,18 @@ The two ends use different predicates, deliberately. The **opening** matches
 BOM — because kendex's `tools/guard` slices this section the same way, and a
 heading a looser generator accepted would be one that repo's guard reports as
 missing. Exactly one such heading must exist: zero is an error, and two is an
-error rather than a guess about which one to replace. The **terminator** uses
-the wide heading predicate from `repo-toml.md` § The content refusals, at level
-1 or 2. Anything narrower would fail to see a following section whose `#` sits
-after one to three spaces — markdown reads that as a heading, so the repo owns
-it, and a terminator that missed it would let the splice swallow that section
-and everything below it. It is also the predicate the input refusals already
-use, so the two agree.
+error rather than a guess about which one to replace. The **terminator** is
+`scripts/lib/markdown.py`'s heading predicate at level 1 or 2, which every site
+in this package reads.
+
+It is wide about INDENTATION and exact about the WHITESPACE after the hashes,
+and both halves carry weight in opposite directions. Missing a following
+section whose `#` sits after one to three spaces would let the splice swallow
+that section and everything below it — markdown reads it as a heading, so the
+repo owns it. Ending the region at a `##note` line, which is a heading to no
+reader, put repo-authored text OUTSIDE the region while `tools/guard`'s own
+`^##? ` still read it as inside § Code Review Rules and every bot still
+received it. The input refusals read the same predicate, so the two agree.
 
 Where the opening predicates differ, the stricter one is the contract: a repo
 whose heading carries trailing whitespace gets an error naming the byte rather

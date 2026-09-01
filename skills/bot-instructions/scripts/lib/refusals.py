@@ -24,11 +24,16 @@ import re
 
 from .constants import MARKER_TOKEN
 from .errors import InputError
+from . import markdown
 
-# markdown reads `#` as a heading after three or fewer leading spaces, so the
-# wide form is the one the outputs need: a line indented two spaces before `#`
-# ends the `AGENTS.md` owned region just as surely as one in column zero.
-_HEADING = re.compile(r"^ {0,3}#")
+# `markdown.heading_level` is the one statement of this: a run of `#`
+# FOLLOWED BY WHITESPACE, indented at most three spaces. Wide about the
+# indentation, because a line indented two spaces ends the `AGENTS.md` owned
+# region as surely as one in column zero; exact about the whitespace, because
+# `#1917` is how this repo writes a pull request number and it is a heading to
+# no reader — refusing it here made a legitimate `reason` or doctrine block
+# unrenderable while `render` and `tools/guard` both read it as ordinary
+# prose.
 # C0 less tab and newline, DEL, and the three characters ABOVE the C0 range
 # that a reader still breaks a line on: NEL, LINE SEPARATOR and PARAGRAPH
 # SEPARATOR. YAML 1.1 lists all three as line breaks, and PyYAML, libyaml,
@@ -49,7 +54,7 @@ _NAME_CLASS = re.compile(r"^[A-Za-z0-9._-]+$")
 
 def _heading(value):
     for line in value.splitlines():
-        if _HEADING.match(line):
+        if markdown.heading_level(line):
             return f"line {line.strip()!r} is a markdown heading"
     return None
 

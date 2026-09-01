@@ -5,7 +5,9 @@ implementation settles which wins rather than pretending both hold.
 
 **Atomicity wins.** Every replacement is temp-write-then-rename, so an
 interrupt leaves the old bytes and never a truncated file. That matters most
-for `AGENTS.md`, the doctrine root three of the five bots read.
+for `AGENTS.md`, the doctrine root three of the five bots read. The rename is
+half of it: `_write_all` is the other, because `os.write` may write fewer
+bytes than it was given and nothing downstream would notice a prefix.
 
 **The marker gate is narrowed, not closed.** A rename replaces a path, not the
 descriptor the marker was read from, so no single file is both marker-checked
@@ -42,6 +44,30 @@ _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 def _identity(st):
     return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _write_all(fd, data, rel):
+    """Every byte, or refuse. `os.write` may write fewer than it was given.
+
+    A short write is what ENOSPC and EDQUOT look like part way through, and
+    the module's atomicity guarantee does not survive one: the temp file holds
+    a prefix, `fsync` flushes it without complaint, `_recheck` stats the
+    TARGET and so agrees, and the rename installs a truncated file with the
+    run printing `wrote <path>`. Measured under RLIMIT_FSIZE: a 6549-byte
+    `.pr_agent.toml` was installed at 4096 bytes, exit 0.
+
+    A write returning zero cannot make progress, so it is a failure rather
+    than a loop.
+    """
+    written = 0
+    while written < len(data):
+        n = os.write(fd, data[written:])
+        if n <= 0:
+            raise RenderError(
+                f"{rel}: the write stopped after {written} of {len(data)} bytes and made "
+                "no further progress; nothing was replaced at that path"
+            )
+        written += n
 
 
 def _gate(dir_fd, leaf, rel, require_marker, strict):
@@ -155,7 +181,7 @@ def replace(root_fd, rel, data=None, require_marker=True, transform=None, notes=
             data = data.encode("utf-8")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=dir_fd)
         try:
-            os.write(fd, data)
+            _write_all(fd, data, rel)
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -225,7 +251,7 @@ class RenderLock:
                         "is from an interrupted one: read it, then delete it."
                     ) from exc
                 raise RenderError(f"{rel}: cannot lock ({exc.strerror})") from exc
-            os.write(self.fd, f"pid {os.getpid()}\n".encode())
+            _write_all(self.fd, f"pid {os.getpid()}\n".encode(), rel)
         finally:
             os.close(dir_fd)
         return self

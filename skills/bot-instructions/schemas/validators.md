@@ -374,6 +374,13 @@ beside the guidance. That is what holds the requirement in SKILL.md § Every
 rendered config excludes the render trees — without it a render could drop the
 paths from the one surface Codex reads and violate nothing checkable.
 
+Each destination's `Those paths here:` sentence is parsed into its entries and
+compared as a SET, so the clause also rejects a destination listing a path the
+TOML does not exclude. Asking whether each glob APPEARS in the text answered
+yes for `src/**` whenever `vendor/src/**` was listed, and dropping the first
+from every carrier produced no finding at all; narrowing which text is
+searched leaves that answer intact one nesting away.
+
 **What it does not establish.** That the bots exclude the same files. Codex has
 no exclusion mechanism at all, Copilot's lives in a settings page no repo file
 can read, Qodo's `[ignore]` governs `/improve` rather than what the review

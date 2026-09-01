@@ -326,6 +326,72 @@ else
   bad 'replace refuses neither content mode and both, and writes nothing either way'
 fi
 
+# `os.write` may write fewer bytes than it was given. Nothing downstream
+# notices: `fsync` flushes the prefix, `_recheck` stats the TARGET and so
+# agrees, and the rename installs a truncated file with the run printing
+# `wrote <path>`. Measured under RLIMIT_FSIZE before the loop existed, a
+# 6549-byte `.pr_agent.toml` was installed at 4096 bytes with exit 0.
+#
+# The stub short-writes ONCE, so the render is otherwise ordinary and the
+# assertion is that the file is WHOLE rather than that the run failed — a
+# short write is a thing to finish, not a thing to refuse.
+repo="$(bi_rendered_repo write-short)" || exit 1
+if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
+import os, sys
+PKG, repo = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import run, tree, verbs, writer
+from lib.errors import RenderError
+
+real = os.write
+state = {"done": False}
+
+
+def short_once(fd, data):
+    if not state["done"] and len(data) > 100:
+        state["done"] = True
+        return real(fd, data[: len(data) // 2])
+    return real(fd, data)
+
+
+def ctx(verb):
+    return run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
+                       ("SKILL.md", "schemas/renders.md"), verb,
+                       ("SKILL.md", "schemas/renders.md"))
+
+
+os.write = short_once
+try:
+    verbs.render_verb(ctx("render"), repo)
+finally:
+    os.write = real
+if not state["done"]:
+    sys.exit("the stub never short-wrote, so this probe proved nothing")
+stale = [f.message for f in run.validate(ctx("check")) if f.validator == "drift"]
+if stale:
+    sys.exit(f"a path was left truncated: {stale[0][:90]}")
+
+# The other half: a write that cannot make progress is a refusal, not a loop
+# that never ends.
+fd = os.open(os.path.join(repo, ".bot-instructions", "probe"),
+             os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+os.write = lambda f, d: 0
+try:
+    writer._write_all(fd, b"abcdef", "probe")
+    sys.exit("a write making no progress was not refused")
+except RenderError as exc:
+    if "no further progress" not in str(exc):
+        sys.exit(f"refused for the wrong reason: {exc}")
+finally:
+    os.write = real
+    os.close(fd)
+    os.unlink(os.path.join(repo, ".bot-instructions", "probe"))
+PROBE
+  ok 'a short write is finished rather than renamed as a truncated file'
+else
+  bad 'a short write is finished rather than renamed as a truncated file'
+fi
+
 # A symlink at a generated path is never followed and never replaced: the
 # containment rule is about the open rather than about the write.
 repo="$(bi_rendered_repo adopt-symlink)" || exit 1

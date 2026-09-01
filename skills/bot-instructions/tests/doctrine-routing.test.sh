@@ -197,4 +197,37 @@ PY
 expect_message "heading refusal" 'a heading line in doctrine text, which ends the owned region' \
   render --dry-run --repo "$repo" --spec "$spec"
 
+# The other side of that predicate: `#` with NO whitespace after it is a
+# heading to no reader, and this repo writes pull request numbers that way.
+# Read the block back rather than asserting the run exits 0 — the section
+# parse used to END at such a line, dropping the rest of the block with the
+# render reporting success, and a green run is exactly what that looked like.
+spec="$(new_spec doctrine-pr-number)"
+python3 - "$spec/SKILL.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+anchor = "### scope\n\nRaise a defect"
+assert anchor in s, "fixture shape changed"
+open(p, "w").write(s.replace(anchor, "### scope\n\n#1917 is a pull request.\n\nRaise a defect", 1))
+PY
+expect_green 'a doctrine block carrying a #<digits> line renders' \
+  render --dry-run --repo "$repo" --spec "$spec"
+if python3 - "$BI_ROOT/skills/bot-instructions" "$spec" <<'PROBE'; then
+import os, sys
+PKG, SPEC = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import spec as spec_mod, tree
+blocks = spec_mod.load(tree.Worktree(SPEC), "SKILL.md", "schemas/renders.md").blocks
+body = blocks["scope"]
+if "#1917 is a pull request." not in body:
+    sys.exit(f"the line was dropped from the block: {body[:120]!r}")
+if "Raise a defect" not in body:
+    sys.exit(f"the block was truncated at that line: {body[:120]!r}")
+PROBE
+  ok 'and the block keeps that line and everything below it'
+else
+  bad 'and the block keeps that line and everything below it'
+fi
+
 bi_summary

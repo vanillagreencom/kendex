@@ -545,4 +545,34 @@ bi_surface '\u2028'
 expect_red toml-schema 'a line separator in [[surface]] instructions' \
   render --dry-run --repo "$repo"
 
+# `[doctrine]` is the one top-level table its parser received untyped, where
+# `_table` types every sibling. A list reached `.get` as an AttributeError
+# traceback and an integer reached iteration as a TypeError — but the STRING
+# is the case that mattered, because it did not crash: it iterated character
+# by character and reported `[doctrine.r]: unknown table`, naming a cause that
+# does not exist. All three must arrive as one `toml-schema` finding naming
+# `[doctrine]` and what was found there.
+repo="$(bi_new_repo doctrine-type)"
+doctrine_is() {
+  python3 - "$repo/bot-instructions.toml" "$1" <<'PY'
+import sys
+p, v = sys.argv[1], sys.argv[2]
+s = open(p).read()
+assert s.startswith("schema = "), "fixture shape changed"
+head, _, rest = s.partition("\n")
+open(p, "w").write(f"{head}\ndoctrine = {v}\n{rest}")
+PY
+}
+for pair in 'list:[]' 'int:3' 'str:"reply-contract"'; do
+  doctrine_is "${pair#*:}"
+  bi_run check --repo "$repo"
+  if printf '%s\n' "$bi_out" | grep -qF "[doctrine]: expected a table, got ${pair%%:*}"; then
+    ok "a [doctrine] that is a ${pair%%:*} names the table and what was found"
+  else
+    bad "a [doctrine] that is a ${pair%%:*} names the table and what was found" \
+      "$(printf '%s' "$bi_out" | head -2 | tr '\n' ' ')"
+  fi
+  cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
+done
+
 bi_summary

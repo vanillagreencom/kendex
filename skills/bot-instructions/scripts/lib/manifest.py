@@ -97,7 +97,17 @@ def derive(tree, resolved):
     trees = set()
     for name, entry in resolved.skills.items():
         if not isinstance(entry, dict):
-            continue
+            # Loud, like every neighbour here: an unknown harness raises, a
+            # glob outside the dialect raises through `_checked`, and
+            # `resolve` refuses a manifest declaring no install. Skipping the
+            # row instead left a vendored tree in review scope with `render`
+            # and `check` both exiting 0 — "nothing found" standing in for "I
+            # could not tell", which is the one thing this package is for.
+            raise ManifestError(
+                f"[skills.{name}]: expected a table, got {type(entry).__name__}. The row "
+                "decides whether that tree is excluded from review, and a row this cannot "
+                "read is refused rather than skipped"
+            )
         if entry.get("enabled") is False:
             continue
         if entry.get("source") == "in-place":

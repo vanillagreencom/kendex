@@ -111,6 +111,42 @@ expect_red exclusion-consistency 'an unparseable resolved manifest' check --repo
 rm -f "$repo/kendex.toml"
 expect_red exclusion-consistency 'an absent resolved manifest' check --repo "$repo"
 
+# A `[skills.*]` row that is not a table. Skipping it dropped that tree from
+# the derived exclusions with `render` and `check` both exiting 0, so a
+# vendored tree stayed in review scope — "nothing found" standing in for "I
+# could not tell", at the one silent branch among loud neighbours. Paired with
+# the table row, which is the same fixture one line different.
+repo="$(bi_rendered_repo excl-skill-row)" || exit 1
+mkdir -p "$repo/.agents/skills/vendored"
+printf 'x\n' > "$repo/.agents/skills/vendored/SKILL.md"
+skills_manifest() {
+  printf 'schema = 6\n[install]\nharnesses = ["claude"]\n[skills.dev]\nsource = "."\nenabled = true\n%s' \
+    "$1" > "$repo/kendex.toml"
+  git -C "$repo" add -A >/dev/null 2>&1
+}
+skills_manifest '[skills.vendored]
+source = "."
+enabled = true
+'
+# The derived set moved, so the committed outputs are stale against it — the
+# same second clause every manifest edit here carries.
+expect_red 'exclusion-consistency drift' \
+  'a table [skills.*] row derives its tree, the pair below' check --repo "$repo"
+if printf '%s\n' "$bi_out" | grep -qF '.agents/skills/vendored/**'; then
+  ok 'and the derived glob names that tree'
+else
+  bad 'and the derived glob names that tree' "$bi_out"
+fi
+skills_manifest '[skills]
+vendored = "."
+'
+expect_red exclusion-consistency 'a [skills.*] row that is not a table' check --repo "$repo"
+if printf '%s\n' "$bi_out" | grep -qF '[skills.vendored]: expected a table'; then
+  ok 'and the refusal names the row and what it found'
+else
+  bad 'and the refusal names the row and what it found' "$bi_out"
+fi
+
 # --- the clauses `derive_render` does not gate -------------------------------
 # The flag says where the exclusions come from, not whether they are checked,
 # and it defaults to false. Gating every clause on it left a repo using only

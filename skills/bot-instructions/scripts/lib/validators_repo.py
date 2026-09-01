@@ -227,10 +227,37 @@ def _cross_surface(v, ctx, sources, out):
                 out.append(Finding(v, f"{glob!r} is excluded in {b} and not in {a}"))
 
 
+PROSE_LEAD = "Those paths here: "
+
+
+def _prose_entries(text):
+    """The exact entries the `Those paths here:` sentence lists, or None.
+
+    A SET, parsed once, rather than a substring search per glob. `if glob not
+    in text` answers yes for `src/**` whenever `vendor/src/**` is listed, so
+    dropping the first from every carrier produced no finding at all. An
+    earlier round answered that cause by narrowing WHICH text is searched,
+    which left the predicate intact and put the same hole one nesting away.
+    Parsing the sentence removes it: containment cannot stand in for
+    membership at any destination.
+
+    Line-scoped, because every emitter writes the sentence on one line and
+    ends it with a full stop. `None` says the sentence is absent, which is a
+    different finding from one listing the wrong set.
+    """
+    for line in text.split("\n"):
+        at = line.find(PROSE_LEAD)
+        if at == -1:
+            continue
+        listed = line[at + len(PROSE_LEAD):].strip().removesuffix(".")
+        return {entry.strip() for entry in listed.split(",") if entry.strip()}
+    return None
+
+
 def _prose_destinations(v, ctx, out):
     """Without this a render could drop the paths from the one surface Codex
     reads and violate nothing checkable."""
-    wanted = ctx.model.exclusion_globs
+    wanted = set(ctx.model.exclusion_globs)
     if not wanted:
         return
     carriers = {"AGENTS.md": ctx.build.region_body}
@@ -239,10 +266,20 @@ def _prose_destinations(v, ctx, out):
         text = carriers.get(column)
         if text is None:
             continue
-        for glob in wanted:
-            if glob not in text:
-                out.append(Finding(v, f"the routing table marks {column!r} as carrying the "
-                                      f"exclusion paths and {glob!r} is not in it"))
+        listed = _prose_entries(text)
+        if listed is None:
+            out.append(Finding(v, f"the routing table marks {column!r} as carrying the "
+                                  f"exclusion paths and it carries no {PROSE_LEAD!r} "
+                                  "sentence at all"))
+            continue
+        for glob in sorted(wanted - listed):
+            out.append(Finding(v, f"the routing table marks {column!r} as carrying the "
+                                  f"exclusion paths and {glob!r} is not among the "
+                                  f"{len(listed)} it lists"))
+        for extra in sorted(listed - wanted):
+            out.append(Finding(v, f"the routing table marks {column!r} as carrying the "
+                                  f"exclusion paths and it lists {extra!r}, which the "
+                                  "TOML does not exclude"))
 
 
 def _qodo_guidance(v, ctx, out):

@@ -425,11 +425,15 @@ nothing there implements.
 
 The predicates, written once:
 
-- **heading** — a line whose first non-whitespace character is `#` after three
-  or fewer leading spaces. That is what markdown reads as a heading, and the
-  wide form is the one the outputs need: a line indented two spaces before `#`
-  ends the `AGENTS.md` owned region just as surely as one in column zero, so a
-  narrower input rule would pass a value the render then refuses.
+- **heading** — a line `scripts/lib/markdown.py` reads as an ATX heading: one
+  to six `#` after three or fewer leading spaces, followed by whitespace or the
+  end of the line. Wide about the indentation, because a line indented two
+  spaces ends the `AGENTS.md` owned region as surely as one in column zero and
+  a narrower input rule would pass a value the render then refuses. Exact about
+  the whitespace, because `#1917` is a heading to no reader — refusing it here
+  made a doctrine block carrying a pull request number unrenderable while the
+  render and `tools/guard` both read that line as ordinary prose. One
+  predicate, so the input rule and the render cannot drift apart.
 - **frontmatter** — a line that is exactly `---`, which opens or closes YAML
   frontmatter in a `.instructions.md` file.
 - **marker** — a line carrying the marker text, which is what decides which
