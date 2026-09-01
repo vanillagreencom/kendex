@@ -191,14 +191,14 @@ at the open. Two halves, and both are needed:
   which is what makes it checkable at all — re-deriving a path from a descriptor
   needs a different mechanism on each platform this repo targets.
 - **Every open, not every write.** `render` writes, but `check` mostly reads:
-  `drift` opens each path the TOML produces, `orphan` opens every path
-  `validators.md` § `orphan` names — the root outputs it may have written, the
-  two Macroscope read paths it never writes, and the trees it sweeps — testing
-  each for the marker, and `agents-section` reads the repo's tracked nested
-  `AGENTS.md` files. Cited rather than listed a second time, per § Cross-file
-  sets: `orphan`'s set is the one the flag-off case turns on, so a partial
-  copy here would understate the disclosure argument this paragraph exists to
-  make. Those sets are named by the tree under judgment. `adopt` opens no
+  `drift` opens each path the TOML produces, `orphan` opens every path in
+  `validators_repo.ROOT_OUTPUTS` and every file below the trees
+  `validators.md` § `orphan` names, testing each for the marker, and
+  `agents-section` reads the repo's tracked nested `AGENTS.md` files. Cited by
+  the structure that owns it rather than partitioned again here, per §
+  Cross-file sets: `orphan`'s set is the one the flag-off case turns on, so a
+  split that stops matching the tuple would understate the disclosure argument
+  this paragraph exists to make. Those sets are named by the tree under judgment. `adopt` opens no
   file it merely names: it reports the markdown files an adopted one points
   at rather than reading them, so nothing about their contents can reach a
   report. A symlink at any of those paths is

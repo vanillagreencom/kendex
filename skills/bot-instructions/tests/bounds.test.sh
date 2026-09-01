@@ -100,7 +100,6 @@ PY
 cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
 lines_toml 400
 expect_green "a best_practices.md inside its line budget passes" render --dry-run --repo "$repo"
-bi_run render --dry-run --repo "$repo"
 cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
 lines_toml 1
 expect_red qodo-best-practices "a best_practices.md over its line budget reds" \

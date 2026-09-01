@@ -16,6 +16,7 @@ Run by `renderer-regressions.test.sh`, which supplies a rendered fixture repo.
 """
 
 import contextlib
+import re
 import sys
 import os
 
@@ -56,6 +57,17 @@ def patched(module, name, replacement):
         yield
     finally:
         setattr(module, name, original)
+
+
+def _context(repo, verb="render"):
+    return run.Context(
+        repo,
+        tree.Worktree(repo),
+        tree.Worktree(PACKAGE),
+        ("SKILL.md", "schemas/renders.md"),
+        verb,
+        ("SKILL.md", "schemas/renders.md"),
+    )
 
 
 def findings(repo, verb="check"):
@@ -196,9 +208,34 @@ def _coderabbit(repo):
     control(repo, "coderabbit-schema",
             "a nested option the vendored schema defines, dropped under an existing object",
             render_coderabbit, "full_state", drop_nested)
+    def unknown_root_key(schema, chosen, path=""):
+        built = original(schema, chosen, path)
+        if path == "":
+            # The root schema sets `additionalProperties: false`, so CodeRabbit
+            # discards the whole file over one misspelled top-level key and
+            # reviews with resolved defaults, saying nothing on the pull
+            # request. That is the silent failure this validator leads with.
+            built["reviews_"] = built.get("reviews", {})
+        return built
+
+    def wrong_type(schema, chosen, path=""):
+        built = original(schema, chosen, path)
+        # A boolean with no `enum` beside it, so `type` is the only clause
+        # that can catch this. `language` would have reded on its enum too,
+        # and the control would then pass with the type clause deleted.
+        if path == "" and "early_access" in built:
+            built["early_access"] = "false"
+        return built
+
     control(repo, "coderabbit-schema",
             "a top-level property the vendored schema defines, dropped by the render",
             render_coderabbit, "full_state", drop_root)
+    control(repo, "coderabbit-schema",
+            "a top-level key the vendored schema does not define",
+            render_coderabbit, "full_state", unknown_root_key)
+    control(repo, "coderabbit-schema",
+            "a defined property emitted at the wrong type",
+            render_coderabbit, "full_state", wrong_type)
 
 
 def _copilot(repo):
@@ -277,6 +314,46 @@ def _qodo(repo):
             "a review-role pr_commands verb whose section carries no guidance",
             render_qodo, "_guidance", empty_extra,
             also=("exclusion-consistency",))
+    _qodo_role(repo)
+
+
+def _qodo_role(repo):
+    """The role guard, which no fixture's verb list can reach on its own.
+
+    `repo-toml.md` § `[cadence]` gives three verbs the role `not review`, and
+    the clause above skips them: their sections are read by a command that
+    does not review, so guidance missing there is not a parity failure. No
+    `bot-instructions.toml` exercises the skip — a verb list is legal whatever
+    its roles, and the fixture's own render fills both sections, so the clause
+    is silent for every verb and deleting the guard changes nothing.
+
+    Both halves therefore run the SAME empty section: `/agentic_review` and
+    `/describe` both read the `[review_agent]` keys, so role is the only thing
+    that differs. The review one must fire and the other must not.
+    """
+    from lib import validators_bytes as vb  # noqa: PLC0415
+
+    ctx = _context(repo)
+    text = ctx.build.files[".pr_agent.toml"]
+    blanked = re.sub(r'(?ms)^(issues_user_guidelines|compliance_user_guidelines) = """.*?"""',
+                     r'\1 = """\n"""', text)
+    if blanked == text:
+        report(False, "the role guard skips a verb that does not review",
+               "the fixture's [review_agent] keys are not the shape this blanks")
+        return
+    ctx.build.files[".pr_agent.toml"] = blanked
+    seen = {}
+    for verb in ("/agentic_review", "/describe"):
+        ctx.config.cadence["qodo_commands"] = [verb]
+        out = []
+        vb.qodo_parity(ctx, out)
+        seen[verb] = any("whose role is" in f.message for f in out)
+    if seen["/agentic_review"] and not seen["/describe"]:
+        report(True, "the role guard skips a verb that does not review")
+    else:
+        report(False, "the role guard skips a verb that does not review",
+               f"review verb fired: {seen['/agentic_review']}; "
+               f"non-review verb fired: {seen['/describe']}")
 
 
 def _macroscope(repo):
@@ -295,6 +372,18 @@ def _macroscope(repo):
         text = original(m, surface)
         return text[: text.index("-->") + 4] + "\n"
 
+    def include_absent(m, surface):
+        # The key gone, a valid mapping left behind. `no_frontmatter` above
+        # strips the whole `---` block and lands on the front-is-None branch,
+        # which is a DIFFERENT clause: this is the one validators.md calls the
+        # one that matters, because omitted frontmatter applies repo-wide and
+        # a path-scoped surface silently widens to the whole repository.
+        return original(m, surface).replace(
+            'include:\n  - "src/tests/**"', 'exclude:\n  - "src/generated/**"')
+
+    def include_empty(m, surface):
+        return original(m, surface).replace('include:\n  - "src/tests/**"', "include: []")
+
     control(repo, "macroscope-render",
             "a correctness file whose frontmatter went missing applies repo-wide",
             render_markdown, "macroscope_surface", no_frontmatter)
@@ -307,6 +396,12 @@ def _macroscope(repo):
     control(repo, "macroscope-render",
             "a correctness file with no instruction text below the marker",
             render_markdown, "macroscope_surface", empty_body)
+    control(repo, "macroscope-render",
+            "a correctness file whose include key went missing applies repo-wide",
+            render_markdown, "macroscope_surface", include_absent)
+    control(repo, "macroscope-render",
+            "a correctness file whose include is empty",
+            render_markdown, "macroscope_surface", include_empty)
 
     ignore = render_markdown.macroscope_ignore
 

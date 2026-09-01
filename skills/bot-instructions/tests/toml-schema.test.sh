@@ -445,12 +445,73 @@ except InputError:
     pass
 else:
     sys.exit("globs.check does not enforce the glob row")
-if not QODO_VERBS:
-    sys.exit("config._cadence reads an empty verb set")
+# The verb row of that table has its own table one section up, and its Role
+# column is what `qodo-parity`'s guard reads. Compared cell by cell rather
+# than counted: `if not QODO_VERBS` passes for ANY role assignment, so a role
+# flipped on one side agreed with nothing.
+verbs = {}
+for ln in table.split("\n"):
+    cells = [c.strip().strip("`") for c in ln.strip().strip("|").split("|")]
+    if len(cells) == 3 and cells[0].startswith("/"):
+        verbs[cells[0]] = cells[2]
+if verbs != QODO_VERBS:
+    sys.exit(f"[cadence] verb table says {verbs}; constants.QODO_VERBS says {QODO_VERBS}")
 PROBE
   ok 'the content-refusal table agrees with the three structures that encode it'
 else
   bad 'the content-refusal table agrees with the three structures that encode it'
 fi
+
+# The same class holds three characters ABOVE the C0 range, because a YAML
+# reader breaks a line on all three: U+0085 NEL, U+2028 LINE SEPARATOR and
+# U+2029 PARAGRAPH SEPARATOR. A `reason` carrying one is emitted into
+# `.coderabbit.yaml` as the comment line above its entry, and PyYAML then reads
+# the rest of it as a `path_filters:` key of its own whose first entry has no
+# `!` — the state `renders.md` names as the one that turns the exclusion list
+# into an allowlist. Each is paired with the ordinary value it deviates from by
+# that one character, so the control cannot pass by rejecting everything.
+#
+# Written as TOML escapes, like the C0 case above: a literal separator in this
+# file would be invisible to a reader and to a diff.
+repo="$(bi_minimal_repo line-separators)"
+mkdir -p "$repo/a"
+printf 'x\n' > "$repo/a/f.rs"
+git -C "$repo" add -A >/dev/null 2>&1
+
+bi_reason() {
+  { printf '%s' "$BI_MIN_HEAD"
+    printf '[exclusions]\n[[exclusions.path]]\nglob = "a/**"\nreason = "a generated%s tree"\n' "$1"
+  } > "$repo/bot-instructions.toml"
+}
+for cp in u0085 u2028 u2029; do
+  bi_reason ''
+  expect_green "an ordinary [[exclusions.path]] reason, the pair for \\$cp" \
+    check --repo "$repo"
+  bi_reason "\\$cp"
+  expect_red toml-schema "a line separator \\$cp in [[exclusions.path]] reason" \
+    check --repo "$repo"
+done
+
+# The same character in `[[surface]] instructions`, which reaches
+# `.coderabbit.yaml` inside a block scalar: the text after it would be emitted
+# unindented, end the scalar, and leave PyYAML unable to read the file at all.
+bi_surface() {
+  { printf '%s' "$BI_MIN_HEAD"
+    # A surface needs a route for its text, or `toml-schema` reds on the
+    # surface set instead and the pair proves nothing about the separator.
+    printf '[bots]\ncodex = true\ncopilot = true\n'
+    printf '[[surface]]\nname = "tests"\nglobs = ["a/**"]\nreviewer_only = true\n'
+    printf 'instructions = "An ordinary%s surface."\n' "$1"
+  } > "$repo/bot-instructions.toml"
+}
+# `render --dry-run`, like the empty-instructions control above: this pair
+# needs a bot enabled for the surface text to have a route, and a fixture with
+# bots on and no rendered outputs reds on `drift` under `check`.
+bi_surface ''
+expect_green 'an ordinary [[surface]] instructions, the pair below' \
+  render --dry-run --repo "$repo"
+bi_surface '\u2028'
+expect_red toml-schema 'a line separator in [[surface]] instructions' \
+  render --dry-run --repo "$repo"
 
 bi_summary

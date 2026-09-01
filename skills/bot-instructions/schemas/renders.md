@@ -426,14 +426,29 @@ enumerable to sit in the policy set at all. A change to it is a policy change:
 loosened, the validator goes green on a file CodeRabbit discards whole, and
 stays green afterwards.
 
-**Keys.** The render **walks the vendored schema** and emits every property it
-defines a default for, at every depth, taking the value from the posture below
-where this package has an opinion and from the schema's own default everywhere
-else. Full state means every such key, or the ones left out keep resolving down
-the ladder this package does not control, and the file's claim about itself
-stops being true. A property the vendor defines no default for is not written:
-such a key has no "unset resolves down the ladder" semantics to state, and
-writing one would assert a value the vendor never chose.
+**Keys.** The render **walks the vendored schema** and emits, at every depth,
+every property the schema defines a default for **plus every property this
+package chooses a value for**, taking the value from the posture below where
+this package has an opinion and from the schema's own default everywhere else.
+Full state means every such key, or the ones left out keep resolving down the
+ladder this package does not control, and the file's claim about itself stops
+being true.
+
+A property the vendor defines no default for is written only when this package
+overrides it. Left alone it is not written: such a key has no "unset resolves
+down the ladder" semantics to state, and writing one would assert a value the
+vendor never chose. An override is the opposite case — this package has chosen
+the value, so writing it is the whole point, and the completeness clause holds
+the render to it like any other.
+
+An object carrying its own default is that default whenever nothing beneath it
+is in the set. Emitting `{}` there would replace the vendor's object with an
+empty one whose sub-keys resume resolving down the ladder, which is the state
+this section exists to rule out, arriving as a key present enough to satisfy
+the completeness clause.
+
+`scripts/lib/render_coderabbit.py`'s `in_full_state` is the one predicate for
+this paragraph, read by the render and by the validator alike.
 
 Walking rather than transcribing is what makes that true at every depth, and it
 is what keeps a moving schema from going stale in a hand-kept list: the nested
@@ -526,6 +541,15 @@ repo string containing a line that would terminate the block is refused, and so
 is one carrying a control character, by the same refusal `.pr_agent.toml` relies
 on: a block scalar cannot carry one either, and one predicate covers both
 targets because the values reaching them are the same set.
+
+**A line is what the READER calls a line, not what `\n` calls one.** The
+`control` class of `repo-toml.md` § The content refusals holds `U+0085`,
+`U+2028` and `U+2029` for that reason, and the emitter and the reader here run
+that predicate rather than a `\n`/`\r` copy of it: the strings they handle
+include doctrine text, schema defaults and derived globs, which arrive through
+no row of that table. A comment line that ends early becomes structure, and a
+block scalar's text after such a character reaches the parser unindented and
+ends the scalar.
 
 The one exception is the **empty string**, which a block scalar cannot carry at
 all. It is emitted `""`. That is a property of the form rather than a choice,

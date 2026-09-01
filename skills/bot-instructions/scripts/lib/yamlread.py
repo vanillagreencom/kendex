@@ -13,6 +13,7 @@ remove.
 """
 
 from .errors import RenderError
+from . import refusals
 
 INDENT = 2
 
@@ -22,6 +23,14 @@ class YamlSubsetError(RenderError):
 
 
 def loads(text, where="<yaml>"):
+    # Lines are `\n`-separated here, which is what `yamlemit` writes. Every
+    # other character a YAML reader breaks on is refused before the split
+    # rather than read past: this parser would see one line where PyYAML sees
+    # two, so the file it judges would not be the file CodeRabbit reads, and
+    # the disagreement is invisible — the run reports a clean pass.
+    why = refusals.control(text)
+    if why is not None:
+        raise YamlSubsetError(f"{where}: {why}")
     # Every line is kept: a blank line inside a block scalar is content, and
     # dropping it up front would silently rewrite the value being judged.
     rows = list(enumerate(text.split("\n")))

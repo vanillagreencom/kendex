@@ -249,9 +249,12 @@ exists to stop. Root-only would pass a render that dropped a nested option
 under an existing object: the top-level property is still present, and the
 setting one level down resolves away.
 
-A property the vendor defines **no default for** is outside the clause. Such a
-key has no "unset resolves down the ladder" semantics to state, and writing one
-would assert a value the vendor never chose.
+What is in the clause is what `renders.md` § `.coderabbit.yaml` § Keys puts in
+full state, read through the same `in_full_state` predicate the render reads —
+never a second statement of it here. So a property the vendor defines **no
+default for** is outside the clause until this package overrides it, at which
+point the value is one this package chose and the render owes the file that
+key like any other.
 
 `renders.md` § Keys says the render walks the vendored schema rather than a
 transcribed key list, which is why a property the vendor *adds* arrives at its
@@ -316,9 +319,11 @@ declared render root **holding a tracked path**, read from the index in both
 modes so a worktree render and a `--staged` check of it cannot disagree: a
 subtree with nothing tracked under it excludes nothing, and the dead-exclusion
 clause below would reject a derived entry no author could delete. This clause
-alone runs only when `[exclusions] derive_render` is true — the flag says
-where the exclusions come from, not whether they are checked, and the three
-clauses below judge a hand-written set just as well.
+alone runs only when `[exclusions] derive_render` is true, and so does the
+manifest paragraph immediately below it, which is part of the same read. The
+flag says where the exclusions come from, not whether they are checked: the
+cross-surface, unreadable-surface, dead-exclusion and prose-destination
+clauses judge a hand-written set just as well.
 
 **Rejects, also.** A resolved manifest that declares no install. Reading the
 wrong file and finding nothing to exclude is indistinguishable from a repo with
@@ -347,6 +352,16 @@ a reason that is not the author's, so the clause says the verdict is
 unreachable rather than reporting each exclusion as dead. A repo declaring no
 exclusion at all is the other side of that: nothing can be dead, so the clause
 is silent rather than reporting an unreachable verdict about an empty set.
+
+**Rejects, also.** A surface whose exclusion list is present and cannot be
+read — an unparseable `.pr_agent.toml`, a `.coderabbit.yaml` the reader
+refuses. The read failure is the finding, named on that surface, rather than a
+stand-in the comparisons above would then compare: a surface that came back
+empty because it could not be parsed agrees with a repo that excludes nothing,
+and every clause here would pass on a file no bot can load. Reached from the
+repository tree and from the scratch tree alike, and ungated by
+`[exclusions] derive_render` — a read that fails is a read that fails whatever
+the exclusions came from.
 
 **Rejects, also.** A non-empty exclusion set that a destination the routing
 table marks as carrying the paths does not carry: `AGENTS.md`, `pr_agent
@@ -685,7 +700,7 @@ place they cannot fail. `orphan` looks for what the current TOML does not
 produce, and the scratch tree holds only what it does produce. `drift` compares
 a path's bytes against a fresh render, which in the scratch tree are the same
 bytes. Every `agents-section` clause reads the repo: the nested-`AGENTS.md`
-walk needs a repo to walk, and the other two need a file the scratch tree does
+tracked-path read needs a repo to read, and the other two need a file the scratch tree does
 not hold at all, since `AGENTS.md` is the one output the build never assembles
 whole — the build produces the region's body and the write splices it.
 Comparing that body against itself is the vacuity the split exists to remove.

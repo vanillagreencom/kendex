@@ -2,16 +2,15 @@
 
 An unset key resolves down a precedence ladder this package does not control,
 so the render writes full state including keys that match their schema
-default. **Full state is every property the vendored schema defines a default
-for, at every depth** — a property the vendor gives no default has no
-"resolves down the ladder" semantics to state, and writing one would assert a
-value the vendor never chose.
+default. **`renders.md` § `.coderabbit.yaml` § Keys states which properties
+that is**, and `in_full_state` below is the one predicate that answers it —
+`full_state` and `coderabbit-schema`'s completeness clause both read it, so
+the two cannot disagree about a property and make a state no config satisfies.
 
 Walking the schema rather than transcribing a key list is what makes that true
 at every depth: the nested option a vendor adds arrives at its own default and
 shows in the diff, instead of leaving a top-level property present while a
-setting one level down silently resumes resolving. `coderabbit-schema`'s
-completeness clause holds the walk to the schema in both directions.
+setting one level down silently resumes resolving.
 
 OVERRIDES is where this package has an opinion. Everything else is the
 vendor's default, written explicitly.
@@ -144,7 +143,7 @@ def in_full_state(sub, chosen, here):
 
 
 def full_state(schema, chosen, path=""):
-    """Every property the schema defines a default for, at every depth."""
+    """The full-state set of `renders.md` § `.coderabbit.yaml` § Keys."""
     props = schema.get("properties") or {}
     out = {}
     for key, sub in props.items():
@@ -154,7 +153,14 @@ def full_state(schema, chosen, path=""):
         if here in chosen:
             out[key] = chosen[here]
         elif sub.get("type") == "object" and sub.get("properties"):
-            out[key] = full_state(sub, chosen, here)
+            nested = full_state(sub, chosen, here)
+            # An object that carries its OWN default and whose subtree
+            # contributes nothing: the recursion filters every child out, and
+            # `{}` there would replace the vendor's default object with an
+            # empty one whose sub-keys then resolve down the ladder — the
+            # failure full state exists to remove, arriving as a key the
+            # completeness clause is satisfied by because it is present.
+            out[key] = nested if nested else sub["default"]
         else:
             out[key] = sub["default"]
     return out

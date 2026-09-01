@@ -21,19 +21,25 @@ def render_verb(ctx, root, dry_run=False):
     with writer.RenderLock(root_fd):
         pending = writer.read_manifest(root_fd)
         if pending:
+            # A preview says what a render WOULD finish; a run that writes
+            # says what it IS finishing. Both carry the set, because a repo
+            # left mid-render by an interrupted write is the one state a
+            # preview most needs to surface, and both early returns below
+            # build on `lines` rather than replacing it.
             lines.append(
                 "an earlier render left a manifest naming "
                 + ", ".join(pending)
-                + "; this run finishes the set"
+                + ("; a render would finish that set" if dry_run
+                   else "; this run finishes the set")
             )
         run.require_clean(ctx)
         paths = sorted(ctx.build.files)
         if ctx.build.region_body is not None:
             paths.append("AGENTS.md")
         if not paths:
-            return ["nothing to render: every [bots] flag is false"] + ctx.skipped
+            return lines + ["nothing to render: every [bots] flag is false"] + ctx.skipped
         if dry_run:
-            return [f"would write {p}" for p in paths] + ctx.skipped
+            return lines + [f"would write {p}" for p in paths] + ctx.skipped
         writer.write_manifest(root_fd, paths)
         written = []
         try:

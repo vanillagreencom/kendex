@@ -25,6 +25,26 @@ class _Missing(Exception):
     """An intermediate directory is absent, so the path is."""
 
 
+def _is_symlink(name, dir_fd):
+    """Whether a failed `O_DIRECTORY|O_NOFOLLOW` open landed on a symlink.
+
+    The errno alone cannot say. Linux answers **ENOTDIR** for a symlink to a
+    directory here, not ELOOP, and ENOTDIR is also what an ordinary file
+    gives — so an errno test either treats a symlinked tree as absent or an
+    ordinary file as a containment breach. This asks the filesystem instead.
+
+    It is what makes the ELOOP branches below reachable at all. Grouping
+    ENOTDIR with ENOENT in `walk` made a symlinked scanned tree an EMPTY walk:
+    `orphan`'s only enumeration source returned nothing, its one clause about
+    a scanned tree had no input, and `check` reported a clean pass on a read
+    that leaves the repo root.
+    """
+    try:
+        return stat.S_ISLNK(os.lstat(name, dir_fd=dir_fd).st_mode)
+    except OSError:
+        return False
+
+
 def _components(rel):
     parts = [p for p in rel.split("/") if p]
     if not parts or any(p in (".", "..") for p in parts):
@@ -54,7 +74,7 @@ def _walk_to_parent(root_fd, parts, create=False):
                 if create and exc.errno == errno.ENOENT:
                     os.mkdir(part, 0o755, dir_fd=fd)
                     nxt = os.open(part, os.O_RDONLY | _DIRECTORY | _NOFOLLOW, dir_fd=fd)
-                elif exc.errno in (errno.ELOOP, errno.EMLINK):
+                elif exc.errno in (errno.ELOOP, errno.EMLINK) or _is_symlink(part, fd):
                     raise ContainmentError(
                         f"{'/'.join(parts)}: component {part!r} is a symlink; "
                         "no component of a path this package opens may redirect"
@@ -153,10 +173,13 @@ def walk(root_fd, rel, _depth=0):
         try:
             here = os.open(leaf, os.O_RDONLY | _DIRECTORY | _NOFOLLOW, dir_fd=dir_fd)
         except OSError as exc:
+            # The symlink test comes FIRST: ENOTDIR is both "a symlink to a
+            # directory" and "an ordinary file at this path", and only the
+            # second of those is a state rather than a read out of the repo.
+            if exc.errno in (errno.ELOOP, errno.EMLINK) or _is_symlink(leaf, dir_fd):
+                raise ContainmentError(f"{rel}: is a symlink and is not walked") from exc
             if exc.errno in (errno.ENOENT, errno.ENOTDIR):
                 return []
-            if exc.errno in (errno.ELOOP, errno.EMLINK):
-                raise ContainmentError(f"{rel}: is a symlink and is not walked") from exc
             raise ContainmentError(f"{rel}: cannot walk ({exc.strerror})") from exc
         try:
             for name in sorted(os.listdir(here)):

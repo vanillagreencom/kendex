@@ -125,4 +125,62 @@ else
 fi
 git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json .coderabbit.yaml
 
+# The other half of the same walk: an object carrying its OWN default whose
+# children define none. Recursing there filters every child out, and emitting
+# the `{}` that leaves replaces the vendor's default object with an empty one
+# whose sub-keys resume resolving down the ladder — while the completeness
+# clause is satisfied, because the key is present.
+python3 - "$SCHEMA" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["properties"]["reviews"]["properties"]["requirements"] = {
+    "type": "object",
+    "default": {"files": ["docs/**"]},
+    "properties": {"files": {"type": "array"}},
+}
+json.dump(d, open(p, "w"), indent=2)
+PY
+bi_run render --repo "$repo"
+if [ "$bi_status" -ne 0 ]; then
+  bad 'an object with its own default and defaultless children renders that default' "$bi_out"
+elif python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
+from lib import yamlread
+body = open(sys.argv[2] + "/.coderabbit.yaml").read()
+got = yamlread.loads(body.split("\n", 6)[-1]).get("reviews", {}).get("requirements")
+if got != {"files": ["docs/**"]}:
+    sys.exit(f"rendered {got!r}, not the vendor default")
+PROBE
+  ok 'an object with its own default and defaultless children renders that default'
+else
+  bad 'an object with its own default and defaultless children renders that default' \
+      'the render replaced the vendor default with an empty object'
+fi
+git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json .coderabbit.yaml
+
+# The reader runs the same class the input table refuses on. A rendered file
+# reaching it with a character a YAML reader breaks a line on would be read as
+# fewer lines than PyYAML reads, so this package would judge a file CodeRabbit
+# does not see — and agree with itself, silently. Planted in the file rather
+# than in the TOML, because the point is that the READER refuses it too.
+expect_green 'the rendered file the reader accepts, the pair below' check --repo "$repo"
+python3 - "$repo/.coderabbit.yaml" <<'PLANT'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+assert "path_filters:" in s, "fixture shape changed"
+open(p, "w", encoding="utf-8").write(s.replace("path_filters:",
+                                               "path_filters:" + chr(0x2028), 1))
+PLANT
+# `exclusion-consistency` is the clause: it is the validator that reads the
+# REPO's copy of the file, where the byte validators read the scratch tree. It
+# reds through the reader's refusal rather than comparing a surface it could
+# not parse. `drift` too, and genuinely — the planted character is a
+# difference from a fresh render.
+expect_red 'exclusion-consistency drift' \
+  'a line separator in the rendered .coderabbit.yaml' check --repo "$repo"
+git -C "$repo" checkout -- .coderabbit.yaml
+
 bi_summary

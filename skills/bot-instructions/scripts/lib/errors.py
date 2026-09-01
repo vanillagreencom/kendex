@@ -3,7 +3,7 @@
 Every failure here fails a run. Nothing in this package warns: a warning on a
 surface that fails silently is one more thing nobody reads.
 
-`Refusal` is the input-side family — a value this package will not render.
+`InputError` is the input-side family — a value this package will not render.
 `Finding` is the validator-side one, and it carries the validator's own
 identity so a control can assert on the validator that fired rather than on
 the run's exit code, which § Controls requires.

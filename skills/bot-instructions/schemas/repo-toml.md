@@ -442,20 +442,34 @@ The predicates, written once:
   closes its own string and the rest of it becomes TOML. Marked on exactly the
   values that reach a TOML string; `[[surface]] instructions` reaches Qodo
   through `best_practices.md`, which is markdown.
-- **control** — any C0 control character other than tab and newline, and DEL
-  (`U+007F`). One predicate for both structured targets, because the values
+- **control** — any C0 control character other than tab and newline, DEL
+  (`U+007F`), and the three characters above that range a reader still breaks
+  a line on: `U+0085` NEL, `U+2028` LINE SEPARATOR and `U+2029` PARAGRAPH
+  SEPARATOR. One predicate for both structured targets, because the values
   reaching them are the same set: a TOML basic multi-line string permits tab
   and newline and no other control, and so does a YAML scalar. TOML's own
   escapes are how one arrives — `summary = "\u0000"` parses cleanly and yields
   a literal NUL — so the value is already decoded by the time this sees it.
 
+  The three above C0 are in the class for the same reason the C0 ones are, one
+  layer out: YAML 1.1 lists them as line breaks and every reader CodeRabbit's
+  file reaches acts on them. A value carrying one is emitted as a single line
+  here and read as two there, so a rendered `reason` comment becomes a
+  `path_filters:` key of its own and the entry below it loses its `!` — the
+  state `renders.md` § `reviews.path_filters` names as the one that turns the
+  exclusion list into an allowlist. `scripts/lib/refusals.py` is the one
+  statement of the class; `yamlemit` and `yamlread` run that predicate rather
+  than a narrower copy, because not every string reaching them arrives through
+  a row of this table.
+
   A character class exempts a row from this mark only when it **enumerates the
   permitted characters**, because then no control is among them. A class that
   names an encoding does not: ASCII contains NUL and every C0 control, so
   `[tone] coderabbit` carries the mark despite having a class. Neither does a
-  class constraining one dimension only: `single line` says nothing about the
-  controls that are not newlines, which is why `[[exclusions.path]] reason`
-  carries it too. Read the test against each class rather than counting the
+  class constraining one dimension only: `single line` refuses the line breaks
+  and says nothing about the rest of the class — NUL, DEL, the C0 controls
+  that break no line — which is why `[[exclusions.path]] reason` carries it
+  too. Read the test against each class rather than counting the
   rows that have one.
 - **character class** — as stated per row above. Three enumerate their
   permitted characters and so need no `control` mark: `[repo] name` and

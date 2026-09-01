@@ -19,7 +19,9 @@ expect_red agents-section 'a nested AGENTS.md carrying a Code Review Rules secti
 # says this package does not manage the section, not that Codex is uninstalled.
 printf 'schema = 1\n[repo]\nname = "fixture"\nsummary = "A fixture repository."\n' \
   > "$repo/bot-instructions.toml"
-expect_red agents-section 'the nested clause reds with every flag false' \
+# `orphan` too, and genuinely: with every flag false the marked AGENTS.md
+# region is a path the current TOML no longer produces.
+expect_red 'agents-section orphan' 'the nested clause reds with every flag false' \
   render --dry-run --repo "$repo"
 rm -f "$repo/crates/core/AGENTS.md"
 cp "$BI_FIXTURES/canonical.toml" "$repo/bot-instructions.toml"
@@ -88,7 +90,15 @@ o retired-surface 'a marked .instructions.md no current surface produces' retire
 o retired-bot 'a marked root file of a bot whose flag went false' retired_bot
 o nested 'a marked file one directory down, at no path the generator writes' nested_move
 o check-run 'a marked file moved under .macroscope/check-run-agents' check_run_agents
-o codex-off 'the marked AGENTS.md region when [bots] codex goes false' codex_off
+
+# Out of `o`, because this one breaches a second clause and says so: turning
+# three flags off leaves the marked region orphaned AND leaves every file
+# those flags produced stale against a fresh render.
+repo="$(bi_rendered_repo orphan-codex-off)" || exit 1
+codex_off "$repo"
+git -C "$repo" add -A >/dev/null 2>&1
+expect_red 'orphan drift' 'the marked AGENTS.md region when [bots] codex goes false' \
+  check --repo "$repo"
 
 # Unmarked files are not judged, whatever the flags say: this package never
 # wrote them and does not get to call them stale.
@@ -114,7 +124,11 @@ expect_message "run \`adopt\` to take it over" \
 
 # --- drift ------------------------------------------------------------------
 repo="$(bi_rendered_repo drift-edit)" || exit 1
-printf '\nhand edit\n' >> "$repo/.pr_agent.toml"
+# A COMMENT, so the file still parses: `hand edit` on its own line makes
+# `.pr_agent.toml` unreadable, and the fixture then also trips
+# `exclusion-consistency`'s unreadable-surface clause rather than proving
+# anything about drift alone.
+printf '\n# hand edit\n' >> "$repo/.pr_agent.toml"
 expect_red drift 'a hand edit to a generated file' check --repo "$repo"
 
 # Marker-agnostic, unlike every other rule here: a marker-gated `drift` would
@@ -146,5 +160,51 @@ if printf '%s\n' "$bi_out" | grep -q '^drift:' \
 else
   bad 'an AGENTS.md region edit reds drift alone, not agents-section' "$bi_out"
 fi
+
+# --- the walk that feeds orphan ---------------------------------------------
+# A symlinked SCANNED TREE. Linux answers ENOTDIR for a no-follow directory
+# open on a symlink, not ELOOP, so an errno test that groups ENOTDIR with
+# ENOENT makes the tree an EMPTY walk: `orphan`'s only enumeration source
+# returns nothing, its clause about a scanned tree has no input, and the run
+# reports a clean pass on a read that leaves the repo root. The pair is the
+# identical file in a real directory, which `orphan` reds on.
+macroscope_off() {
+  local root
+  root="$1"
+  python3 - "$root/bot-instructions.toml" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read().replace("macroscope = true", "macroscope = false")
+open(p, "w").write(s)
+PY
+  rm -rf -- "${root:?}/.macroscope"
+}
+
+repo="$(bi_rendered_repo orphan-scanned-real)" || exit 1
+macroscope_off "$repo"
+mkdir -p "$repo/.macroscope/correctness"
+marker "$repo" > "$repo/.macroscope/correctness/doctrine.md"
+git -C "$repo" add -A >/dev/null 2>&1
+expect_red orphan 'a marked file in a scanned tree, the pair below' check --repo "$repo"
+
+repo="$(bi_rendered_repo orphan-scanned-symlink)" || exit 1
+macroscope_off "$repo"
+mkdir -p "$repo/elsewhere" "$repo/.macroscope"
+marker "$repo" > "$repo/elsewhere/doctrine.md"
+ln -s ../elsewhere "$repo/.macroscope/correctness"
+git -C "$repo" add -A >/dev/null 2>&1
+expect_message 'is a symlink and is not walked' \
+  'a symlinked scanned tree is refused, never walked as empty' check --repo "$repo"
+
+# The same errno gap one level up, at an intermediate COMPONENT. Containment
+# held either way — the run refuses and nothing lands outside the root — but
+# the diagnostic named the kernel's wording for a directory that is not one
+# instead of the symlink SKILL.md § Every open is contained leads with.
+repo="$(bi_rendered_repo orphan-component-symlink)" || exit 1
+rm -rf -- "${repo:?}/.github"
+mkdir -p "$repo/real/instructions"
+ln -s real "$repo/.github"
+expect_message "component '.github' is a symlink" \
+  'an intermediate component that is a symlink names the symlink' check --repo "$repo"
 
 bi_summary

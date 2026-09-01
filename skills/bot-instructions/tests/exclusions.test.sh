@@ -13,7 +13,9 @@ repo="$(bi_rendered_repo excl-stale)" || exit 1
 mkdir -p "$repo/.agents/skills/newly-rendered"
 printf 'x\n' > "$repo/.agents/skills/newly-rendered/SKILL.md"
 printf '\n[skills.newly-rendered]\nsource = "."\nenabled = true\n' >> "$repo/kendex.toml"
-expect_red exclusion-consistency \
+# `drift` too, and genuinely: the derived set is an input to the render, so a
+# manifest that moved on leaves the committed outputs stale by the same edit.
+expect_red 'exclusion-consistency drift' \
   'a manifest that moved on since the last render, against committed exclusions' \
   check --repo "$repo"
 

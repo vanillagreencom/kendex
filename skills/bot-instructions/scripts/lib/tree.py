@@ -130,7 +130,7 @@ def _run(root, args):
     Returning `[]` when git could not answer is indistinguishable from a repo
     that tracks nothing, and the clause downstream that exists for the second
     case then silently absorbs the first: `agents-section`'s nested-`AGENTS.md`
-    walk loses its entire input and the run reports a clean pass.
+    tracked-path read loses its entire input and the run reports a clean pass.
     """
     try:
         done = subprocess.run(["git", "-C", root] + args, capture_output=True, check=False)

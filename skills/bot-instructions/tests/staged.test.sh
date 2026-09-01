@@ -30,17 +30,21 @@ reset() {
 }
 
 # One pair. `$1` names the input; `$2` is a shell snippet that makes the input
-# one that the committed outputs are stale against.
+# one that the committed outputs are stale against. `$3` is the rest of the
+# fired set where the SAME edit breaches a second clause — a schema whose
+# default moved is one the committed render no longer satisfies, and a
+# manifest that moved on changes the derived set the exclusions compare to.
 pair() {
-  local label mutate
+  local label mutate also
   label="$1"
   mutate="$2"
+  also="${3:-}"
   reset
   eval "$mutate"
   expect_green "$label: a worktree copy the index does not carry is ignored" \
     check --staged --repo "$repo" --spec "$SPEC"
   git -C "$repo" add -A >/dev/null 2>&1
-  expect_red drift "$label: staged, with outputs stale against it" \
+  expect_red "drift $also" "$label: staged, with outputs stale against it" \
     check --staged --repo "$repo" --spec "$SPEC"
   reset
 }
@@ -73,12 +77,12 @@ p = sys.argv[1]
 d = json.load(open(p))
 d[\"properties\"][\"language\"][\"default\"] = \"en-GB\"
 json.dump(d, open(p, \"w\"), indent=2)
-" "$repo/.bot-instructions/coderabbit-schema.json"'
+" "$repo/.bot-instructions/coderabbit-schema.json"' coderabbit-schema
 
 pair 'the resolved install manifest' \
   'mkdir -p "$repo/.agents/skills/newly-rendered"
    printf "x\n" > "$repo/.agents/skills/newly-rendered/SKILL.md"
-   printf "\n[skills.newly-rendered]\nsource = \".\"\nenabled = true\n" >> "$repo/kendex.toml"'
+   printf "\n[skills.newly-rendered]\nsource = \".\"\nenabled = true\n" >> "$repo/kendex.toml"' exclusion-consistency
 
 pair 'the existing AGENTS.md' \
   'python3 -c "

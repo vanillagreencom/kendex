@@ -106,7 +106,15 @@ bi_must() {
   out="$("$BI" "$@" 2>&1)"
   status=$?
   if [ "$status" -ne 0 ]; then
-    bad "setup: $* exited $status" "$(printf '%s' "$out" | head -3 | tr '\n' ' ')"
+    # STDERR, not `bad`. Both fixture builders are called as
+    # `repo="$(bi_rendered_repo x)"`, so a FAIL line written to stdout in here
+    # is captured into `$repo` and thrown away, and the BI_FAIL it increments
+    # dies with the subshell. The caller's `|| exit 1` still fails the suite;
+    # what was missing was any word in the job log about why. Ordinary
+    # assertions keep writing to stdout, so the log stays in order.
+    BI_FAIL=$((BI_FAIL + 1))
+    printf '  FAIL setup: %s exited %s\n' "$*" "$status" >&2
+    printf '       %s\n' "$(printf '%s' "$out" | head -3 | tr '\n' ' ')" >&2
     return 1
   fi
   return 0
@@ -126,18 +134,33 @@ bi_run() {
   return 0
 }
 
-# The red control: the run fails AND the named validator is the one that says
-# so. Asserting the exit code alone would pass on any failure at all.
+# The red control: the run fails AND the fired set is exactly the one named.
+# Asserting the exit code alone would pass on any failure at all, and grepping
+# only for the wanted prefix leaves a fixture that also trips a neighbour
+# reading as coverage. That is the isolation § Controls asks for, and
+# `mutations.py`'s `control()` already enforces it on the other side of the
+# suite.
+#
+# `$1` is the whole expected set, space-separated, its FIRST word the clause
+# under test. A second name there is the `also=` of `control()`: a mutation
+# that genuinely breaches two clauses records the second rather than hiding
+# it, and a run whose set stops matching fails either way.
 expect_red() {
-  local want label
+  local want label primary fired expected
   want="$1"; label="$2"; shift 2
+  primary="${want%% *}"
+  expected="$(printf '%s\n' $want | sort -u | tr '\n' ' ')"
   bi_run "$@"
+  fired="$(printf '%s\n' "$bi_out" \
+           | sed -n 's/^\([a-z][a-z-]*\):.*/\1/p' | sort -u | tr '\n' ' ')"
   if [ "$bi_status" -eq 0 ]; then
-    bad "$label" "expected $want to red; the run passed"
-  elif printf '%s\n' "$bi_out" | grep -q "^$want:"; then
+    bad "$label" "expected $primary to red; the run passed"
+  elif [ "$fired" = "$expected" ]; then
     ok "$label"
+  elif printf '%s\n' "$bi_out" | grep -q "^$primary:"; then
+    bad "$label" "expected exactly [$expected]; fired: [$fired]"
   else
-    bad "$label" "expected '$want:'; got: $(printf '%s' "$bi_out" | head -2 | tr '\n' ' ')"
+    bad "$label" "expected '$primary:'; got: $(printf '%s' "$bi_out" | head -2 | tr '\n' ' ')"
   fi
 }
 

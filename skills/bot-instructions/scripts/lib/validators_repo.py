@@ -14,12 +14,17 @@ produced.
 import tomllib
 
 from .constants import EXCLUSION_PROSE_COLUMNS
-from .errors import Finding, ManifestError
+from .errors import Finding
 from . import globs, manifest, marker, render, render_markdown
 
-# Every path this package may have written, plus the two Macroscope read paths
-# it never writes. A marked generated file moved to one of those stays active
-# and nothing else here would judge it.
+# Every root-level path this package may have written, plus
+# `.macroscope/approvability.md`, the one Macroscope read path it never
+# writes: a marked generated file moved there stays active and nothing else
+# here would judge it. `.macroscope/ignore.md` IS written — `render.build`
+# emits it whenever `[bots] macroscope` is true — and it is in this tuple for
+# the ordinary reason, so that a marked copy survives the flag going false.
+# The other never-written read path, `.macroscope/check-run-agents`, is a
+# directory and belongs to SCANNED_TREES below.
 ROOT_OUTPUTS = (
     ".github/copilot-instructions.md",
     ".coderabbit.yaml",
@@ -164,13 +169,17 @@ def exclusion_consistency(ctx, out):
 
 
 def _derived_set(v, ctx, sources, out):
-    """The rendered derived part against an independent fresh derivation."""
-    try:
-        resolved, _ = manifest.resolve(ctx.tree)
-        fresh = {e["glob"] for e in manifest.derive(ctx.tree, resolved)}
-    except ManifestError as exc:
-        out.append(Finding(v, str(exc)))
-        return
+    """The rendered derived part against an independent fresh derivation.
+
+    The manifest read is not guarded here. It runs only under
+    `[exclusions] derive_render`, and `model.build` calls the same two
+    functions on the same tree under that same flag while `Context` is being
+    built — where `run._as_finding` attributes a `ManifestError` to this
+    validator already. A second handler here can only ever be dead, and a dead
+    handler is a clause with no control.
+    """
+    resolved, _ = manifest.resolve(ctx.tree)
+    fresh = {e["glob"] for e in manifest.derive(ctx.tree, resolved)}
     hand = {e["glob"] for e in ctx.config.exclusions["path"]}
     for name, listed in sources.items():
         rendered_derived = set(listed) - hand

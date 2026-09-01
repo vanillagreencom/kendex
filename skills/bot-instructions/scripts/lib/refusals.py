@@ -29,7 +29,21 @@ from .errors import InputError
 # wide form is the one the outputs need: a line indented two spaces before `#`
 # ends the `AGENTS.md` owned region just as surely as one in column zero.
 _HEADING = re.compile(r"^ {0,3}#")
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+# C0 less tab and newline, DEL, and the three characters ABOVE the C0 range
+# that a reader still breaks a line on: NEL, LINE SEPARATOR and PARAGRAPH
+# SEPARATOR. YAML 1.1 lists all three as line breaks, and PyYAML, libyaml,
+# go-yaml and Psych all act on them, so a `.coderabbit.yaml` carrying one is
+# read as more lines than this package wrote — a rendered comment becomes a
+# `path_filters:` key, an entry loses its `!`, and the exclusion list becomes
+# an allowlist. Python's own `str.splitlines` breaks on the same three, which
+# is why `heading` and `frontmatter` already see them and a two-character
+# `\n`/`\r` test does not.
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u0085\u2028\u2029]")
+_BREAK_NAMES = {
+    "\x85": "NEL",
+    "\u2028": "LINE SEPARATOR",
+    "\u2029": "PARAGRAPH SEPARATOR",
+}
 _NAME_CLASS = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
@@ -65,15 +79,30 @@ def _toml_delimiter(value):
     return None
 
 
-def _control(value):
+def control(value):
+    """The `control` predicate. Public, because the emitter and the reader run it.
+
+    A narrower copy of this test downstream is how a character the table
+    refuses reaches a rendered file anyway: the rows here cover the values
+    that arrive through `bot-instructions.toml`, and `yamlemit` also emits
+    doctrine text and schema defaults, which do not.
+    """
     m = _CONTROL.search(value)
-    if m:
-        return f"carries the control character U+{ord(m.group()):04X}"
-    return None
+    if m is None:
+        return None
+    ch = m.group()
+    if ch in _BREAK_NAMES:
+        return (f"carries U+{ord(ch):04X} {_BREAK_NAMES[ch]}, which a YAML reader "
+                "breaks a line on and this one does not")
+    return f"carries the control character U+{ord(ch):04X}"
 
 
 def _single_line(value):
-    if "\n" in value or "\r" in value:
+    # `splitlines` rather than a `\n`/`\r` test: it breaks on every character
+    # a reader treats as a line break, this table's wider class included. The
+    # appended `.` keeps a TRAILING break visible, which `splitlines` drops on
+    # its own — `"a\n"` and `"a"` would otherwise both read as one line.
+    if len(f"{value}.".splitlines()) > 1:
         return "must be a single line"
     return None
 
@@ -128,7 +157,7 @@ _PREDICATES = {
     "marker": _marker,
     "comment-close": _comment_close,
     "toml-delimiter": _toml_delimiter,
-    "control": _control,
+    "control": control,
     "single-line": _single_line,
     "name-class": _name_class,
     "ascii": _ascii,

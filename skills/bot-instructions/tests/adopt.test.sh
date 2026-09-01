@@ -13,10 +13,13 @@
 # written with `\xNN` escapes, so a control can name a byte no text encoding
 # round-trips.
 #
-# Reading the bytes is the point. A grep for the ASCII prose around them
-# passes whatever the write phase did to a non-ASCII byte, which is how a
-# lossy decode in the write path went unnoticed here: the file still said
-# "Never flag the generated parser" while the é in it had become U+FFFD.
+# Reading the bytes is the point: a grep for the ASCII prose around them
+# passes whatever the write phase did to a non-ASCII byte. The é in
+# `Séverine` below is VALID UTF-8, so the assertion carrying it is a multibyte
+# round-trip test — it reds on a write path that re-ENCODES lossily, and stays
+# green on one that decodes lossily. The two controls further down carry a
+# byte that is not UTF-8 at all, and those are the ones the decode rule turns
+# on.
 holds_bytes() {
   python3 -c 'import sys
 want = sys.argv[2].encode("latin-1").decode("unicode_escape").encode("latin-1")
@@ -138,6 +141,22 @@ if [ ! -f "$repo/.bot-instructions/render-manifest.json" ]; then
   ok 'a completed render clears its manifest'
 else
   bad 'a completed render clears its manifest'
+fi
+
+# `--dry-run` says it too. A repo left mid-render by an interrupted write is
+# the one state a preview most needs to surface, and the wording fits a
+# preview: this run finishes nothing.
+repo="$(bi_rendered_repo adopt-manifest-preview)" || exit 1
+mkdir -p "$repo/.bot-instructions"
+printf '{"pending": [".coderabbit.yaml", ".pr_agent.toml"]}\n' \
+  > "$repo/.bot-instructions/render-manifest.json"
+bi_run render --dry-run --repo "$repo"
+if printf '%s\n' "$bi_out" | grep -qF 'a render would finish that set' \
+   && printf '%s\n' "$bi_out" | grep -qF '.pr_agent.toml' \
+   && printf '%s\n' "$bi_out" | grep -qF 'would write '; then
+  ok 'a dry run names the pending set an earlier render left'
+else
+  bad 'a dry run names the pending set an earlier render left' "$bi_out"
 fi
 
 # The write re-reads `AGENTS.md` and locates the owned region in those bytes,
