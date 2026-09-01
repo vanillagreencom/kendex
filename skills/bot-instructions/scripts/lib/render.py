@@ -3,9 +3,7 @@
 `AGENTS.md` is outside the whole-file scheme, because it is the one output
 whose non-owned bytes belong to the repo. The build produces the region's body
 alone; the write re-reads the file, locates the region in those bytes, and
-splices there. Carrying a build-phase copy of the whole file through
-validation would discard anything written to it in that window — an editor, a
-formatter, another lane of the repo's commit chain — silently.
+splices there, so nothing written to it in that window is discarded.
 """
 
 import json
@@ -16,20 +14,24 @@ from . import markdown, render_coderabbit, render_markdown, render_qodo
 
 
 class Build:
-    def __init__(self, model, files, region_body):
+    def __init__(self, model, files, data, region_body):
         self.model = model
         self.files = files              # repo-relative path -> text
+        # The structure each of those paths was serialised FROM, for the
+        # validators that judge a document rather than its bytes. A validator
+        # that parsed the render back would be checking the emitter against
+        # itself, and would need a reader for every format this writes.
+        self.data = data                # repo-relative path -> structure
         self.region_body = region_body  # None when [bots] codex is false
 
 
 def build(model, schema=None):
     """The scratch tree. `schema` is the vendored CodeRabbit schema, already
-    read under `coderabbit-schema`'s own clause: reading it a second time here
-    would judge it twice, report the second failure as a `toml-schema` finding
-    at `bot-instructions.toml`, and let the two reads disagree about a file
-    the first one already passed."""
+    read under `coderabbit-schema`'s own clause: reading it again here would
+    report a second failure as a `toml-schema` finding at
+    `bot-instructions.toml`."""
     bots = model.config.bots
-    files = {}
+    files, data = {}, {}
     region = None
     if bots["codex"]:
         region = render_markdown.agents_region_body(model)
@@ -45,9 +47,11 @@ def build(model, schema=None):
                 ".coderabbit.yaml: [bots] coderabbit is true and no vendored schema was "
                 "handed to the render. The caller reads it under coderabbit-schema"
             )
-        files[".coderabbit.yaml"] = render_coderabbit.render(model, schema)
+        data[".coderabbit.yaml"] = render_coderabbit.state(model, schema)
+        files[".coderabbit.yaml"] = render_coderabbit.render(model, data[".coderabbit.yaml"])
     if bots["qodo"]:
-        files[".pr_agent.toml"] = render_qodo.render(model)
+        data[".pr_agent.toml"] = render_qodo.guidance(model)
+        files[".pr_agent.toml"] = render_qodo.render(model, data[".pr_agent.toml"])
     if bots["qodo_best_practices"] and model.config.surfaces:
         # No surfaces: the file is not written. An existing marked one becomes
         # an orphan, so retiring the last surface says so rather than leaving
@@ -62,7 +66,7 @@ def build(model, schema=None):
             files[f".macroscope/correctness/{surface['name']}.md"] = (
                 render_markdown.macroscope_surface(model, surface)
             )
-    return Build(model, files, region)
+    return Build(model, files, data, region)
 
 
 def load_schema(tree):
@@ -109,19 +113,16 @@ def bounds(existing):
     """`(start, end)` of the owned region, or None when there is not exactly one.
 
     The one answer to "where is the region", read by the splice, by
-    `region_of`, and by `agents-section`'s heading count. Four places asking
-    it independently is four places a change to the heading predicate has to
-    land, and two of them disagreeing about a boundary is a defect no test
-    would surface: the splice would write to one span while `drift` compared
-    another.
+    `region_of`, and by `agents-section`'s heading count: two of them
+    disagreeing about a boundary would have the splice write to one span while
+    `drift` compared another.
 
     The opening matches `^## Code Review Rules$` exactly — no trailing
     whitespace, no CR, no leading BOM — because kendex's `tools/guard` slices
-    this section the same way, and a heading a looser generator accepted would
-    be one that repo's guard reports as missing. The terminator uses the wide
-    heading predicate at level 1 or 2, because markdown reads `#` after one to
-    three spaces as a heading and a narrower terminator would let the splice
-    swallow that section and everything below it.
+    this section the same way. The terminator uses the wide heading predicate
+    at level 1 or 2: markdown reads `#` after one to three spaces as a
+    heading, and a narrower terminator lets the splice swallow that section
+    and everything below it.
     """
     lines = existing.split("\n")
     opens = headings(existing)

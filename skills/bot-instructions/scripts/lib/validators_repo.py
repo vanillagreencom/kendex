@@ -1,30 +1,17 @@
 """Repo-state validators: they judge the repository, so a scratch tree is the
-one place they cannot fail.
-
-`orphan` looks for what the current TOML does not produce, and the scratch
-tree holds only what it does. `drift` compares a path's bytes against a fresh
-render, which in the scratch tree are the same bytes. `exclusion-consistency`'s
-derived-set clause compares a rendered set against an independent fresh
-derivation — which is not vacuous even at render time, because a serializer
-that drops one derived tree from every destination leaves the derivation
-holding it, so that clause runs on both verbs against whichever tree the verb
-produced.
+one place they cannot fail — it holds only what the current TOML produces, and
+its bytes are the fresh render `drift` compares against.
 """
-
-import tomllib
 
 from .constants import EXCLUSION_PROSE_COLUMNS
 from .errors import Finding, RenderError
-from . import globs, manifest, marker, render, render_markdown
+from . import globs, marker, render, render_markdown
 
 # Every root-level path this package may have written, plus
 # `.macroscope/approvability.md`, the one Macroscope read path it never
 # writes: a marked generated file moved there stays active and nothing else
-# here would judge it. `.macroscope/ignore.md` IS written — `render.build`
-# emits it whenever `[bots] macroscope` is true — and it is in this tuple for
-# the ordinary reason, so that a marked copy survives the flag going false.
-# The other never-written read path, `.macroscope/check-run-agents`, is a
-# directory and belongs to SCANNED_TREES below.
+# here would judge it. The other never-written read path,
+# `.macroscope/check-run-agents`, is a directory and belongs to SCANNED_TREES.
 ROOT_OUTPUTS = (
     ".github/copilot-instructions.md",
     ".coderabbit.yaml",
@@ -82,13 +69,7 @@ def orphan(ctx, out):
         if path in produced:
             continue
         text = ctx.read(path)
-        # The READ question, not the write one: this clause exists to find a
-        # generated file the TOML no longer produces, and a file that was
-        # MOVED is that case. Judging it by the destination's prologue rule
-        # missed a rendered correctness surface copied to
-        # `.macroscope/approvability.md`, which keeps its frontmatter and
-        # stays live.
-        if marker.carries_marker(path, text):
+        if marker.owns(path, text):
             out.append(Finding(v, "carries this package's marker and the current TOML does "
                                   "not produce it. Retiring one is delete-then-render, in "
                                   "that order", path))
@@ -97,7 +78,7 @@ def orphan(ctx, out):
     text = ctx.read("AGENTS.md")
     if text is not None:
         region = render.region_of(text)
-        if marker.region_owned(region):
+        if marker.owns("AGENTS.md", region):
             out.append(Finding(v, "the `## Code Review Rules` region carries the marker and "
                                   "[bots] codex is false. De-orphaning it is not a deletion "
                                   "of the file: the heading is the repo's and has to "
@@ -119,13 +100,12 @@ def _readable(v, ctx, path, out):
     """One produced path's bytes, or `_UNREADABLE` with the finding recorded.
 
     A path this package produces whose bytes it cannot decode differs from a
-    fresh render — the render's bytes decode and these do not — so saying so
-    is this validator's clause. Read outside a guard it left `check` with a
-    bare message naming no validator, no finding count, and no remedy, while
-    `render` quietly replaced the file.
+    fresh render, so saying so is this validator's clause. Read outside a
+    guard it leaves `check` with a bare message naming no validator, no
+    finding count, and no remedy.
     """
     try:
-        return ctx.read_output(path)
+        return ctx.read(path)
     except RenderError as exc:
         out.append(Finding(v, f"{exc}, so it cannot be compared with a fresh render. "
                               "A render replaces it", path))
@@ -175,62 +155,17 @@ def _first_diff(a, b):
 
 def exclusion_consistency(ctx, out):
     """The exclusion lists name the skills that existed when someone last wrote
-    them, so a newly rendered tree is reviewed as if it were this repo's code."""
+    them, so a newly rendered tree is reviewed as if it were this repo's code.
+
+    The rendered lists themselves are not compared against each other or
+    against a fresh derivation: every destination writes `model.exclusions`,
+    and on `check` a destination whose bytes disagree with a fresh render is
+    `drift`'s finding. What is left is the prose the bots without a file-based
+    exclusion mechanism read, and whether a declared glob reaches anything.
+    """
     v = "exclusion-consistency"
-    # The flag gates the derived-set clause and nothing else: it says where
-    # the exclusions come from, not whether they are checked. Every clause
-    # BELOW that branch judges a hand-written `[[exclusions.path]]` set just
-    # as well — stated by where they sit rather than counted, because a count
-    # here went stale the moment one was added. `derive_render` defaults to
-    # false, so gating them on it left every repo on the default with
-    # `_prose_destinations` — the only enforcer of SKILL.md § Every rendered
-    # config excludes the render trees — never run.
-    sources, unreadable = ctx.exclusion_sources()
-    scratch, scratch_bad = ctx.scratch_exclusions()
-    for name, why in sorted({**scratch_bad, **unreadable}.items()):
-        # Named as the read failure it is. A surface whose exclusion list
-        # cannot be read is left out of the comparisons below rather than
-        # compared against a stand-in value, which would arrive as a set
-        # mismatch naming a glob nobody wrote.
-        out.append(Finding(v, f"{why}, so this surface cannot be compared", name))
-    if ctx.config.exclusions["derive_render"]:
-        _derived_set(v, ctx, sources, out)
-    _cross_surface(v, ctx, scratch, out)
     _prose_destinations(v, ctx, out)
     _dead_globs(v, ctx, out)
-
-
-def _derived_set(v, ctx, sources, out):
-    """The rendered derived part against an independent fresh derivation.
-
-    The manifest read is not guarded here. It runs only under
-    `[exclusions] derive_render`, and `model.build` calls the same two
-    functions on the same tree under that same flag while `Context` is being
-    built — where `run._as_finding` attributes a `ManifestError` to this
-    validator already. A second handler here can only ever be dead, and a dead
-    handler is a clause with no control.
-    """
-    resolved, _ = manifest.resolve(ctx.tree)
-    fresh = {e["glob"] for e in manifest.derive(ctx.tree, resolved)}
-    hand = {e["glob"] for e in ctx.config.exclusions["path"]}
-    for name, listed in sources.items():
-        rendered_derived = set(listed) - hand
-        for missing in sorted(fresh - rendered_derived):
-            out.append(Finding(v, f"{missing!r} is derived from the resolved manifest and "
-                                  f"is absent from the rendered exclusions", name))
-        for extra in sorted(rendered_derived - fresh):
-            out.append(Finding(v, f"{extra!r} is in the rendered exclusions and the "
-                                  "resolved manifest derives no such tree", name))
-
-
-def _cross_surface(v, ctx, sources, out):
-    names = list(sources)
-    for i, a in enumerate(names):
-        for b in names[i + 1:]:
-            for glob in sorted(set(sources[a]) - set(sources[b])):
-                out.append(Finding(v, f"{glob!r} is excluded in {a} and not in {b}"))
-            for glob in sorted(set(sources[b]) - set(sources[a])):
-                out.append(Finding(v, f"{glob!r} is excluded in {b} and not in {a}"))
 
 
 PROSE_LEAD = "Those paths here: "
@@ -239,17 +174,13 @@ PROSE_LEAD = "Those paths here: "
 def _prose_entries(text):
     """The exact entries the `Those paths here:` sentence lists, or None.
 
-    A SET, parsed once, rather than a substring search per glob. `if glob not
+    A SET, parsed once, rather than a substring search per glob: `if glob not
     in text` answers yes for `src/**` whenever `vendor/src/**` is listed, so
-    dropping the first from every carrier produced no finding at all. An
-    earlier round answered that cause by narrowing WHICH text is searched,
-    which left the predicate intact and put the same hole one nesting away.
-    Parsing the sentence removes it: containment cannot stand in for
-    membership at any destination.
+    containment cannot stand in for membership.
 
-    Line-scoped, because every emitter writes the sentence on one line and
-    ends it with a full stop. `None` says the sentence is absent, which is a
-    different finding from one listing the wrong set.
+    Line-scoped: every emitter writes the sentence on one line and ends it
+    with a full stop. `None` says the sentence is absent, which is a different
+    finding from one listing the wrong set.
     """
     for line in text.split("\n"):
         at = line.find(PROSE_LEAD)
@@ -267,7 +198,7 @@ def _prose_destinations(v, ctx, out):
     if not wanted:
         return
     carriers = {"AGENTS.md": ctx.build.region_body}
-    carriers.update(_qodo_guidance(v, ctx, out))
+    carriers.update(_qodo_guidance(ctx))
     for column in EXCLUSION_PROSE_COLUMNS:
         text = carriers.get(column)
         if text is None:
@@ -288,31 +219,18 @@ def _prose_destinations(v, ctx, out):
                                   "TOML does not exclude"))
 
 
-def _qodo_guidance(v, ctx, out):
-    """The two Qodo destinations, read as the keys the review agent reads.
+def _qodo_guidance(ctx):
+    """The two Qodo destinations, as the keys the review agent reads.
 
     Asking whether a glob appears anywhere in `.pr_agent.toml` is satisfied by
     `[ignore] glob`, which lists every exclusion and is an unrelated
     mechanism: it filters what Qodo analyzes for `/improve`, not what the
-    review agent reads, which is why the prose exists as well. A render that
-    dropped the paths from both guidance keys passed this clause on the
-    strength of the list beside them.
+    review agent reads, which is why the prose exists as well.
     """
-    text = ctx.build.files.get(".pr_agent.toml")
-    if text is None:
+    sections = ctx.build.data.get(".pr_agent.toml")
+    if sections is None:
         return {}
-    try:
-        doc = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        # Unreadable is not "carries the paths": `qodo-parity` names the same
-        # failure, and a clause that cannot read its destination says so.
-        out.append(Finding(v, f".pr_agent.toml is not valid TOML ({exc}), so whether the "
-                              "guidance keys carry the exclusion paths cannot be read"))
-        return {}
-    return {
-        "pr_agent issues": doc.get("review_agent", {}).get("issues_user_guidelines", ""),
-        "pr_agent extra": doc.get("pr_reviewer", {}).get("extra_instructions", ""),
-    }
+    return {column: sections[column] for column in ("pr_agent issues", "pr_agent extra")}
 
 
 def _dead_globs(v, ctx, out):
@@ -329,7 +247,9 @@ def _dead_globs(v, ctx, out):
                               "unreachable and this clause cannot answer its question"))
         return
     for entry in ctx.model.exclusions:
-        if not globs.matching(entry["glob"], tracked):
-            out.append(Finding(v, f"exclusion {entry['glob']!r} matches no tracked path, so "
-                                  "it silences nothing — a typo or a wrong anchor is dead "
-                                  "config that reads as an exclusion"))
+        glob = entry["glob"]
+        if globs.matching(glob, tracked):
+            continue
+        out.append(Finding(v, f"exclusion {glob!r} matches no tracked path, so it silences "
+                              "nothing — a typo or a wrong anchor is dead config that "
+                              "reads as an exclusion"))

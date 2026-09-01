@@ -3,17 +3,14 @@
 An unset key resolves down a precedence ladder this package does not control,
 so the render writes full state including keys that match their schema
 default. **`renders.md` § `.coderabbit.yaml` § Keys states which properties
-that is**, and `in_full_state` below is the one predicate that answers it —
-`full_state` and `coderabbit-schema`'s completeness clause both read it, so
-the two cannot disagree about a property and make a state no config satisfies.
+that is**, and `in_full_state` below is the one predicate that answers it, so
+the render and `coderabbit-schema`'s completeness clause cannot make a state
+no config satisfies.
 
 Walking the schema rather than transcribing a key list is what makes that true
-at every depth: the nested option a vendor adds arrives at its own default and
-shows in the diff, instead of leaving a top-level property present while a
-setting one level down silently resumes resolving.
-
-OVERRIDES is where this package has an opinion. Everything else is the
-vendor's default, written explicitly.
+at every depth: a nested option a vendor adds arrives at its own default and
+shows in the diff. `overrides` is where this package has an opinion;
+everything else is the vendor's default, written explicitly.
 """
 
 from .constants import (
@@ -30,24 +27,16 @@ def tone(model):
     """`[tone] coderabbit` with newlines collapsed, emitted as a folded scalar.
 
     The 250-character cap is the vendored schema's own `maxLength`, so
-    `coderabbit-schema` is its single enforcer and this does not carry a
-    second copy of the number. Refusing here as well would give one bound two
-    owners and no fixture could red exactly one of them.
+    `coderabbit-schema` is its single enforcer and this carries no second copy
+    of the number.
     """
     raw = model.config.tone["coderabbit"] or DEFAULT_TONE
     return " ".join(raw.split())
 
 
 def path_filters(model):
-    """Exclusion-only, each entry under a comment carrying its reason.
-
-    A single entry without `!` turns this into an allowlist. The reason is the
-    entry's own where it has one and the fixed derived string otherwise, the
-    same two sources `.macroscope/ignore.md` draws on — the two surfaces that
-    subtract for real both say why, so a reader of either meets the reason
-    beside the pattern rather than having to find the TOML row.
-    """
-    return [yamlemit.Commented("!" + e["glob"], e["reason"]) for e in model.exclusions]
+    """Exclusion-only. A single entry without `!` turns this into an allowlist."""
+    return ["!" + e["glob"] for e in model.exclusions]
 
 
 def path_instructions(model):
@@ -136,11 +125,9 @@ def in_full_state(sub, chosen, here):
     """Does full state carry this property? The one predicate, read twice.
 
     `coderabbit-schema`'s completeness clause asks the same question of the
-    rendered file, and two predicates that disagree make a state no config can
-    satisfy: an object whose subtree defines no defaults was omitted by the
-    render and required by the validator, so a vendored-schema refresh
-    introducing one would block every render and check with a message blaming
-    the render for a deliberate omission.
+    rendered document, and two predicates that disagree make a state no config
+    can satisfy: an object whose subtree defines no defaults would be omitted
+    by the render and required by the validator, blocking every run.
     """
     if here in chosen:
         return True
@@ -165,12 +152,9 @@ def full_state(schema, chosen, path=""):
         elif sub.get("type") == "object" and sub.get("properties"):
             # MERGED, not chosen between. An object's own default may carry
             # keys its `properties` do not describe, and the walk cannot see
-            # them: taking the recursion alone drops those sub-keys, which
-            # then resume resolving down the ladder — the failure full state
-            # exists to remove, arriving as a key the completeness clause is
-            # satisfied by because it is present. The walked values win where
-            # both name a key, since those are the vendor's own defaults read
-            # at depth plus anything this package chose.
+            # them, so taking the recursion alone drops those sub-keys and
+            # they resume resolving down the ladder. The walked values win
+            # where both name a key.
             out[key] = _merged(sub.get("default"), full_state(sub, chosen, here))
         else:
             out[key] = sub["default"]
@@ -215,12 +199,9 @@ def unresolved(schema, chosen):
 def unresolved_message(missing):
     """What `coderabbit-schema` says about the keys `unresolved` returned.
 
-    The refusal is that validator's clause rather than a raise from here: a
-    `RenderError` out of the render escapes `run._as_finding`, which catches
-    the input family, and reaches the operator with no validator naming it —
-    the one thing every other rejection in this package carries, and the thing
-    § Controls requires a control to assert on. `render_verb` validates before
-    it writes, so the refusal is no less fail-closed for being a finding.
+    A finding rather than a raise from here: a `RenderError` out of the render
+    escapes `run._as_finding` and reaches the operator naming no validator.
+    `render_verb` validates before it writes, so it is no less fail-closed.
     """
     return (
         f"{', '.join(repr(k) for k in missing)} "
@@ -232,13 +213,34 @@ def unresolved_message(missing):
     )
 
 
-def render(model, schema):
+def state(model, schema):
+    """The document this render serialises, in the order `renders.md` fixes."""
     chosen = overrides(model)
     body = full_state(schema, chosen)
     ordered = {k: body[k] for k in CODERABBIT_TOP_LEVEL if k in body}
     for key in body:
         if key not in ordered:
             ordered[key] = body[key]
+    return ordered
+
+
+def render(model, doc):
+    """`doc` as bytes, each path filter under a comment carrying its reason.
+
+    `renders.md` § `reviews.path_filters` requires one per entry, for the
+    reason `repo-toml.md` § `[exclusions]` gives for requiring the key at all:
+    an exclusion with no stated reason is indistinguishable from a mistake at
+    the next read.
+    """
+    node = dict(doc)
+    reviews = node.get("reviews")
+    if isinstance(reviews, dict) and reviews.get("path_filters"):
+        reasons = {"!" + e["glob"]: e["reason"] for e in model.exclusions}
+        reviews = dict(reviews)
+        reviews["path_filters"] = [
+            yamlemit.Commented(entry, reasons[entry]) for entry in reviews["path_filters"]
+        ]
+        node["reviews"] = reviews
     head = [
         CODERABBIT_SCHEMA_LINE,
         model.marker("hash"),
@@ -247,4 +249,4 @@ def render(model, schema):
         "# override, if one exists, outranks this file entirely.",
         "",
     ]
-    return "\n".join(head) + yamlemit.document(ordered)
+    return "\n".join(head) + yamlemit.document(node)

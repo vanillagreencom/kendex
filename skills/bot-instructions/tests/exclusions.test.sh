@@ -50,12 +50,10 @@ printf '\n[[exclusions.path]]\nglob = "app/[slug]/**"\nreason = "a route that do
 expect_red exclusion-consistency 'an exclusion glob matching no tracked path' \
   render --dry-run --repo "$repo"
 
-# The other side of that clause, and the direction that costs more: an
-# exclusion naming a bare directory is how git and CodeRabbit read "this tree",
-# and `git ls-files -- ':(glob)docs'` returns the files beneath it. Matched
-# exactly, it covered nothing, the clause called a correct exclusion dead, and
-# a repo configured that way could not render or check at all — a valid
-# configuration refused, rather than a bad one let through.
+# The other side of that clause: an exclusion naming a bare directory is how
+# git and CodeRabbit read "this tree", and `git ls-files -- ':(glob)docs'`
+# returns the files beneath it. Matched exactly it covers nothing, and the
+# clause calls a correct exclusion dead.
 alive="$(bi_new_repo excl-bare-dir)"
 {
   cat "$BI_FIXTURES/canonical.toml"
@@ -129,11 +127,9 @@ expect_red exclusion-consistency 'an unparseable resolved manifest' check --repo
 rm -f "$repo/kendex.toml"
 expect_red exclusion-consistency 'an absent resolved manifest' check --repo "$repo"
 
-# A `[skills.*]` row that is not a table. Skipping it dropped that tree from
-# the derived exclusions with `render` and `check` both exiting 0, so a
-# vendored tree stayed in review scope — "nothing found" standing in for "I
-# could not tell", at the one silent branch among loud neighbours. Paired with
-# the table row, which is the same fixture one line different.
+# A `[skills.*]` row that is not a table. Skipping it drops that tree from the
+# derived exclusions with both verbs exiting 0. Paired with the table row,
+# which is the same fixture one line different.
 repo="$(bi_rendered_repo excl-skill-row)" || exit 1
 mkdir -p "$repo/.agents/skills/vendored"
 printf 'x\n' > "$repo/.agents/skills/vendored/SKILL.md"
@@ -146,15 +142,16 @@ skills_manifest '[skills.vendored]
 source = "."
 enabled = true
 '
-# The derived set moved, so the committed outputs are stale against it — the
-# same second clause every manifest edit here carries.
-expect_red 'exclusion-consistency drift' \
+# The derived set moved, so the committed outputs are stale against it.
+expect_red drift \
   'a table [skills.*] row derives its tree, the pair below' check --repo "$repo"
-if printf '%s\n' "$bi_out" | grep -qF '.agents/skills/vendored/**'; then
+bi_must render --repo "$repo" || exit 1
+if grep -qF '.agents/skills/vendored/**' "$repo/.macroscope/ignore.md"; then
   ok 'and the derived glob names that tree'
 else
-  bad 'and the derived glob names that tree' "$bi_out"
+  bad 'and the derived glob names that tree' "$(cat "$repo/.macroscope/ignore.md")"
 fi
+git -C "$repo" checkout -- . >/dev/null 2>&1
 skills_manifest '[skills]
 vendored = "."
 '
@@ -167,9 +164,8 @@ fi
 
 # --- the clauses `derive_render` does not gate -------------------------------
 # The flag says where the exclusions come from, not whether they are checked,
-# and it defaults to false. Gating every clause on it left a repo using only
-# hand-written entries with none of them: the dead-exclusion clause below and
-# the two the renderer-regression suite covers on the same fixture.
+# and it defaults to false. Gating the clauses on it left a repo using only
+# hand-written entries with none of them.
 repo="$(bi_new_repo excl-no-derive)"
 sed 's/^derive_render = true$/derive_render = false/' \
   "$BI_FIXTURES/canonical.toml" > "$repo/bot-instructions.toml"
@@ -184,9 +180,8 @@ expect_red exclusion-consistency \
 
 # --- what the derivation asks, and of which tree -----------------------------
 # A harness root's untracked subdirectory is not a render this repo publishes:
-# deriving it names a glob matching no tracked path, which the dead-exclusion
-# clause then rejects with no TOML edit that could clear it. `--staged` reads
-# the same question off the same index, so the two modes cannot disagree.
+# deriving it names a glob the dead-exclusion clause rejects with no TOML edit
+# that could clear it. `--staged` reads the same index, so the modes agree.
 repo="$(bi_rendered_repo excl-untracked-subdir)" || exit 1
 mkdir -p "$repo/.claude/todos"
 printf '{}\n' > "$repo/.claude/todos/t.json"
@@ -211,14 +206,9 @@ else
       "$(grep github "$repo/.macroscope/ignore.md" | tr '\n' ' ')"
 fi
 
-# A render root reached through a symlink used to derive nothing, and because
-# both sides of the comparison came through the same walk they agreed on
-# empty and the run reported a clean pass. Two states, and only the first was
-# ever asserted, which is why the second stayed open.
-#
-# The symlink UNSTAGED: the index still carries the tree under `.claude/`, so
-# the derivation has its answer and the walk that lost it is what the index
-# read replaced.
+# A render root reached through a symlink, in its two states. UNSTAGED: the
+# index still carries the tree under `.claude/`, so the derivation has its
+# answer where a filesystem walk would have lost it.
 repo="$(bi_rendered_repo excl-symlinked-root)" || exit 1
 mv "$repo/.claude" "$repo/claude-real"
 ln -s claude-real "$repo/.claude"
@@ -230,12 +220,10 @@ else
       "$(head -3 "$repo/.macroscope/ignore.md" | tr '\n' ' ')"
 fi
 
-# The symlink STAGED, which the fixture above never reached: git now holds
-# `.claude` as one entry and the tree under its real name, so no tracked path
-# opens with `.claude/` and the derivation has no answer to give. An empty set
-# there is the harness tree back in review scope with nothing saying so, so
-# the run refuses naming the root — on both verbs, since one function answers
-# for both.
+# STAGED: git holds `.claude` as one entry and the tree under its real name,
+# so no tracked path opens with `.claude/` and the derivation has no answer to
+# give. An empty set there is the harness tree back in review scope with
+# nothing saying so, so the run refuses naming the root, on both verbs.
 git -C "$repo" add -A >/dev/null 2>&1
 if [ "$(git -C "$repo" ls-files -s -- .claude | cut -c1-6)" != "120000" ]; then
   bad 'the staged-symlink fixture stages the symlink' \
@@ -249,6 +237,66 @@ expect_red exclusion-consistency \
 expect_red exclusion-consistency \
   'and --staged refuses it too, from the same derivation' \
   check --staged --repo "$repo"
+
+# The real consumer layout: `.claude/CLAUDE.md` is a symlink at a FILE
+# (`../AGENTS.md`), which six of the eight repos track, and `.claude/skills`
+# is linked per skill so its tracked path already carries the further slash
+# this rule reads. git stores a symlink as a blob, so an entry with no further
+# slash derives nothing whatever its target: a `.claude/CLAUDE.md/**` glob
+# would silence review on a file the repo owns, and a pull request editing the
+# tree behind a link carries the tree's real path in its diff anyway.
+# `.claude/settings.json`, a regular file, derives nothing for the same reason.
+repo="$(bi_new_repo excl-symlinked-entry)"
+rm -rf -- "${repo:?}/.claude"
+mkdir -p "$repo/.claude/skills" "$repo/.claude/agents" "$repo/.agents/skills/code-quality"
+printf 'x\n' > "$repo/.agents/skills/code-quality/SKILL.md"
+printf 'x\n' > "$repo/.claude/agents/a.md"
+printf '{}\n' > "$repo/.claude/settings.json"
+ln -s ../../.agents/skills/code-quality "$repo/.claude/skills/code-quality"
+ln -s ../AGENTS.md "$repo/.claude/CLAUDE.md"
+git -C "$repo" add -A >/dev/null 2>&1
+if [ "$(git -C "$repo" ls-files -s -- .claude/CLAUDE.md | cut -c1-6)" = "120000" ] \
+   && [ "$(git -C "$repo" ls-files -s -- .claude/skills/code-quality | cut -c1-6)" = "120000" ]; then
+  ok 'the fixture tracks both symlinks as blobs'
+else
+  bad 'the fixture tracks both symlinks as blobs' \
+      "$(git -C "$repo" ls-files -s -- .claude | tr '\n' ' ')"
+fi
+bi_must adopt --repo "$repo" || exit 1
+bi_must render --repo "$repo" || exit 1
+if grep -qF '.claude/skills/**' "$repo/.macroscope/ignore.md" \
+   && grep -qF '.claude/agents/**' "$repo/.macroscope/ignore.md"; then
+  ok 'a subdirectory holding a tracked path derives its exclusion'
+else
+  bad 'a subdirectory holding a tracked path derives its exclusion' \
+      "$(grep claude "$repo/.macroscope/ignore.md" | tr '\n' ' ')"
+fi
+if grep -qF 'CLAUDE.md' "$repo/.macroscope/ignore.md" \
+   || grep -qF 'CLAUDE.md' "$repo/.coderabbit.yaml" \
+   || grep -qF 'CLAUDE.md' "$repo/.github/copilot-instructions.md"; then
+  bad 'a symlink at a file derives no entry in any surface' \
+      "$(grep -h CLAUDE.md "$repo/.macroscope/ignore.md" "$repo/.coderabbit.yaml" \
+         "$repo/.github/copilot-instructions.md" | tr '\n' ' ')"
+else
+  ok 'a symlink at a file derives no entry in any surface'
+fi
+if grep -qF '.claude/settings.json' "$repo/.macroscope/ignore.md"; then
+  bad 'a root-level file under a render root derives nothing' \
+      "$(grep claude "$repo/.macroscope/ignore.md" | tr '\n' ' ')"
+else
+  ok 'a root-level file under a render root derives nothing'
+fi
+expect_green 'and the repo checks clean on the derived set' check --repo "$repo"
+
+# A declared glob under a symlink entry is dead like any other glob matching
+# no tracked path. Presuming it live because a symlink sits above it made the
+# derivation and the dead-exclusion clause agree by construction on a false
+# statement, so the run passed on a glob that silences nothing anywhere.
+printf '\n[[exclusions.path]]\nglob = ".claude/CLAUDE.md/**"\nreason = "a tree that is a file"\n' \
+  >> "$repo/bot-instructions.toml"
+expect_red exclusion-consistency \
+  'a glob under a symlink entry matching nothing is reported dead' \
+  render --dry-run --repo "$repo"
 
 # --- git as an input that can fail -------------------------------------------
 # `git ls-files` returning nothing because git could not run is not a repo

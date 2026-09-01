@@ -190,11 +190,9 @@ def _surfaces(entries, where):
 
 def _doctrine(table, where):
     out = {"append": {}, "replace": {}}
-    # Typed before it is iterated, the way `_table` types its siblings. A list
-    # reached `.get` with an AttributeError traceback, an integer reached
-    # iteration with a TypeError, and a STRING iterated character by character
-    # and reported `[doctrine.r]: unknown table` — the wrong cause entirely,
-    # which is worse than either crash.
+    # Typed before it is iterated, the way `_table` types its siblings:
+    # untyped, a string iterates character by character and reports
+    # `[doctrine.r]: unknown table`, which is the wrong cause entirely.
     if not isinstance(table, dict):
         raise InputError(f"{where} [doctrine]: expected a table, got {type(table).__name__}")
     for key in table:

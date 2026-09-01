@@ -1,20 +1,17 @@
 """The content refusals, as one table.
 
 `schemas/repo-toml.md` § The content refusals is the spec's statement of this.
-ROWS below encodes every row of that table whose refusals are content classes,
-and is the only predicate their callers run. `toml-schema` applies the rows
-whose source is `bot-instructions.toml`; the render-side second check applies
-the `doctrine block text` row, because doctrine text does not come through
-that file at all.
+Every row here refuses text that would break the STRUCTURE of a file this
+package emits; a value this package merely dislikes is not refused.
+`toml-schema` applies the rows whose source is `bot-instructions.toml`; the
+render-side second check applies the `doctrine block text` row, because
+doctrine text does not come through that file at all.
 
-**Two of the table's ten rows are enforced elsewhere, and this is not their
-copy.** The glob row — `[[surface]] globs`, `exclude_globs`,
-`[[exclusions.path]] glob` — is `globs.check`, whose character class and
-path-shape clauses are its own; the `[cadence] qodo_commands` row is
-`config._cadence` reading `constants.QODO_VERBS`. Both are cited from the
-table rather than restated here, and a reader counting clauses off it lands on
-three structures, not one. `tests/toml-schema.test.sh` holds the table against
-these three, so a row added to either side without the other reds.
+**Two of the table's rows are enforced elsewhere, and this is not their copy.**
+The glob row is `globs.check`; the `[cadence] qodo_commands` row is
+`config._cadence` reading `constants.QODO_VERBS`. `tests/toml-schema.test.sh`
+holds the table against these three, so a row added to either side without the
+other reds.
 
 Refusals, not escapes: every class here is refused at input. The render
 escapes only what a format requires of text already known to be legal.
@@ -26,47 +23,29 @@ from .constants import MARKER_TOKEN
 from .errors import InputError
 from . import markdown
 
-# `markdown.py` is the one statement of this: `heading_level` for a run of `#`
-# FOLLOWED BY A SPACE OR TAB, indented at most three spaces, and `setext_level`
-# for the underline form, which this row reads together with the line above it.
-# Wide about the indentation, because a line indented two spaces ends the
-# `AGENTS.md` owned region as surely as one in column zero; exact about the
-# delimiter, because `#1917` is how this repo writes a pull request number and
-# it is a heading to no reader — refusing it here made a legitimate `reason` or
-# doctrine block unrenderable while `render` and `tools/guard` both read it as
-# ordinary prose.
 # C0 less tab and newline, DEL, and the three characters ABOVE the C0 range
 # that a reader still breaks a line on: NEL, LINE SEPARATOR and PARAGRAPH
 # SEPARATOR. YAML 1.1 lists all three as line breaks, and PyYAML, libyaml,
 # go-yaml and Psych all act on them, so a `.coderabbit.yaml` carrying one is
 # read as more lines than this package wrote — a rendered comment becomes a
 # `path_filters:` key, an entry loses its `!`, and the exclusion list becomes
-# an allowlist. Python's own `str.splitlines` breaks on the same three, which
-# is why `heading` and `frontmatter` already see them and a two-character
-# `\n`/`\r` test does not.
+# an allowlist.
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u0085\u2028\u2029]")
 _BREAK_NAMES = {
     "\x85": "NEL",
     "\u2028": "LINE SEPARATOR",
     "\u2029": "PARAGRAPH SEPARATOR",
 }
-_NAME_CLASS = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def _heading(value):
     """ATX and setext alike: no repo or doctrine string carries a heading.
 
-    Setext is the half this had missed. `Injected` over a line of `===` is an
-    H1 to every CommonMark reader, and while `[repo] summary` was reflowed on
-    its way out the underline never began a line of its own — so the moment
-    that reflow was correctly removed, repo text could put a structural
-    heading into the Copilot and Macroscope outputs past the refusal that
-    exists to stop exactly that.
-
-    Wide on purpose: any underline under a non-blank line is refused, without
-    asking whether that line is a paragraph or the opener of a fenced block.
-    A refusal is the direction where being wide is safe, and `markdown.py`
-    says why the section terminators cannot take the same reading.
+    `render.bounds` ends the `AGENTS.md` owned region at the next level-1 or
+    level-2 heading, so repo text carrying one puts everything below it
+    outside the region every render rewrites while the bots still read it.
+    Wide on purpose: any underline under a non-blank line is refused, and
+    `markdown.py` says why the section terminators cannot read it that way.
     """
     previous = ""
     for line in value.splitlines():
@@ -76,13 +55,6 @@ def _heading(value):
             return (f"line {line.strip()!r} underlines {previous.strip()!r}, "
                     "which is a markdown heading")
         previous = line
-    return None
-
-
-def _frontmatter(value):
-    for line in value.splitlines():
-        if line == "---":
-            return "a line is exactly `---`, which opens YAML frontmatter"
     return None
 
 
@@ -105,13 +77,9 @@ def _toml_delimiter(value):
 
 
 def control(value):
-    """The `control` predicate. Public, because the emitter and the reader run it.
-
-    A narrower copy of this test downstream is how a character the table
-    refuses reaches a rendered file anyway: the rows here cover the values
-    that arrive through `bot-instructions.toml`, and `yamlemit` also emits
-    doctrine text and schema defaults, which do not.
-    """
+    """The `control` predicate. Public, because `coderabbit-schema` runs it
+    over the document it validates: a default in the vendored schema does not
+    arrive through `bot-instructions.toml` and so meets no row here."""
     m = _CONTROL.search(value)
     if m is None:
         return None
@@ -123,75 +91,45 @@ def control(value):
 
 
 def _single_line(value):
-    # The appended `.` is the load-bearing part, and it has its own control:
-    # `splitlines` DROPS a trailing break, so without it `"a\n"` and `"a"`
-    # both read as one line and a `reason` ending in a newline passes.
+    # A `[[exclusions.path]] reason` runs one line inside a YAML comment and
+    # one line in `.macroscope/ignore.md`; a break puts its tail into the
+    # first as structure beside `path_filters` and into the second as a
+    # pattern. `control` does not cover `\n`.
     #
-    # `splitlines` over a `\n`/`\r` test is defence in depth rather than a
-    # clause of its own. Every row marked `single-line` pairs it with a
-    # predicate that already refuses the rest of the break set — `control` on
-    # `[[exclusions.path]] reason`, `name-class` on `[repo] name` and
-    # `[repo] tracker` — so no input distinguishes the two forms, and a
-    # control for that width would need a row this table does not have.
+    # The appended `.` is the load-bearing part: `splitlines` DROPS a trailing
+    # break, so without it `"a\n"` and `"a"` both read as one line.
     if len(f"{value}.".splitlines()) > 1:
         return "must be a single line"
     return None
 
 
-def _name_class(value):
-    if not _NAME_CLASS.match(value):
-        return "must be non-empty and hold only [A-Za-z0-9._-]"
-    return None
-
-
-def _ascii(value):
-    try:
-        value.encode("ascii")
-    except UnicodeEncodeError as exc:
-        return f"must be ASCII; byte {exc.object[exc.start]!r} is not"
-    return None
-
-
 # One row per input string, one predicate list per row, mirroring the columns
-# of `repo-toml.md` § The content refusals. `enforcer` names which side reads
-# the value, and it is why the doctrine row is not a `toml-schema` clause: the
-# value is in the spec copy, not in `bot-instructions.toml`.
+# of `repo-toml.md` § The content refusals. The second element names which
+# side reads the value, and it is why the doctrine row is not a `toml-schema`
+# clause: that value is in the spec copy, not in `bot-instructions.toml`.
+_STRUCTURAL = ["single-line", "marker", "toml-delimiter", "control"]
+
 ROWS = {
-    "[repo] name": (["single-line", "name-class"], "toml-schema"),
-    "[repo] tracker": (["single-line", "name-class"], "toml-schema"),
-    "[repo] summary": (
-        ["heading", "frontmatter", "marker", "toml-delimiter", "control"],
-        "toml-schema",
-    ),
-    "[[surface]] instructions": (
-        ["heading", "frontmatter", "marker", "control"],
-        "toml-schema",
-    ),
-    "[doctrine.*] values": (
-        ["heading", "frontmatter", "marker", "toml-delimiter", "control"],
-        "toml-schema",
-    ),
-    "doctrine block text": (
-        ["heading", "frontmatter", "marker", "toml-delimiter", "control"],
-        "render-side",
-    ),
+    "[repo] name": (_STRUCTURAL, "toml-schema"),
+    "[repo] tracker": (_STRUCTURAL, "toml-schema"),
+    "[repo] summary": (["heading", "marker", "toml-delimiter", "control"], "toml-schema"),
+    "[[surface]] instructions": (["heading", "marker", "control"], "toml-schema"),
+    "[doctrine.*] values": (["heading", "marker", "toml-delimiter", "control"], "toml-schema"),
+    "doctrine block text": (["heading", "marker", "toml-delimiter", "control"], "render-side"),
     "[[exclusions.path]] reason": (
         ["marker", "comment-close", "control", "single-line"],
         "toml-schema",
     ),
-    "[tone] coderabbit": (["control", "ascii"], "toml-schema"),
+    "[tone] coderabbit": (["control"], "toml-schema"),
 }
 
 _PREDICATES = {
     "heading": _heading,
-    "frontmatter": _frontmatter,
     "marker": _marker,
     "comment-close": _comment_close,
     "toml-delimiter": _toml_delimiter,
     "control": control,
     "single-line": _single_line,
-    "name-class": _name_class,
-    "ascii": _ascii,
 }
 
 
@@ -205,4 +143,3 @@ def apply(row, value, where):
         why = _PREDICATES[name](value)
         if why is not None:
             raise InputError(f"{where}: {why} ({name} refusal, {row})")
-

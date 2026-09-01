@@ -200,7 +200,8 @@ product functionality, not an open-source PR-Agent guarantee.
 ## Macroscope
 
 <https://docs.macroscope.com/custom-instructions>,
-<https://docs.macroscope.com/check-run-agents>
+<https://docs.macroscope.com/check-run-agents>,
+<https://docs.macroscope.com/bug-detection-and-fixes#macroscope-ignore>
 
 | What | Value |
 |------|-------|
@@ -217,6 +218,12 @@ Subdirectories are organizational only. Multiple instruction files matching one
 changed file stack. The governing file is the exception to "a correctness file
 is just instructions": its four fields set the check run's prerequisites and
 timeouts, and no other file can carry them.
+
+**`ignore.md` grammar.** Simplified glob syntax, one pattern per line. Lines
+starting with `#` are comments and blank lines are ignored. `**` matches across
+directories, `*` within one path segment, `?` one character, and a pattern with
+no `/` matches at any depth. Maximum 1,000 patterns. Matching is deterministic
+with no override mechanism.
 
 **`ignore.md` scope.** Repository-wide exclusion, applying to every check run.
 An agent's own `include` patterns override it, which is a reason not to give an

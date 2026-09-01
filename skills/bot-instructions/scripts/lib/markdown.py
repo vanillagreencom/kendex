@@ -1,52 +1,27 @@
 r"""The Markdown heading predicates: what a reader calls a heading.
 
 An ATX heading is one to six `#`, indented at most three spaces, **followed by
-whitespace or the end of the line**. The whitespace is not optional, and three
-copies of this test without it failed in three different ways:
+a space, a tab, or the end of the line**. One predicate at all three sites —
+`render.bounds`, `spec.parse_doctrine`, `refusals` — so a section terminator
+and a refusal cannot disagree about where a section ends.
 
-- `render.bounds` put the `AGENTS.md` owned region's end at a `##note` line, so
-  repo-authored text escaped the managed region while `tools/guard`'s own
-  `^##? ` still read it as inside the section and every bot still received it.
-- `spec.parse_doctrine` ended the `## Doctrine` section at a `#1917` line and
-  silently dropped the rest of a doctrine block, shipping a mid-clause rule to
-  all eight surfaces with the run reporting success.
-- `refusals` refused any line opening with `#`, which is the fail-closed
-  direction but refuses text that is a heading to no reader — `#1917` is how
-  this repo writes a pull request number.
+Wide about INDENTATION: markdown reads a heading after three or fewer leading
+spaces, so a line indented two spaces ends the owned region as surely as one
+in column zero. Exact about the DELIMITER: `\s` reads every Unicode space as
+one and CommonMark reads none of them, so `##\u00a0x` is a paragraph to every
+bot, and `#1917` is how this repo writes a pull request number. kendex's
+`tools/guard` slices the same section with `^##? `, so anything wider here is a
+boundary the two of them disagree on.
 
-One predicate at all three sites, so those cannot disagree again. It stays
-deliberately wide about INDENTATION: markdown reads a heading after three or
-fewer leading spaces, so a line indented two spaces ends the owned region as
-surely as one in column zero.
-
-**The delimiter is a space or a tab, and nothing else.** `\s` reads every
-Unicode space as one, and CommonMark reads none of them: `##\u00a0x` is a
-paragraph to every bot, while a `\s` predicate ended the owned region there.
-Put after the generated body, that left the region `drift` compares equal to a
-fresh render while the unmanaged text below stayed inside the section every
-bot reads — the `##note` failure this predicate was written to close, reopened
-one character class wider. kendex's `tools/guard` slices the same section with
-`^##? `, so anything wider here is a boundary the two of them disagree on.
-
-**Setext is the second way to write a heading, and it takes two lines**, so it
-is a second function rather than a wider `heading_level`. `Injected` over a
-line of `===` is an H1 to every CommonMark reader, and an ATX-only refusal let
-repo text carry one into every output that carries repo prose.
-
-`setext_level` answers about the UNDERLINE alone and the caller supplies the
-line above, which is what keeps the two readings of this module apart:
-
-- A REFUSAL is fail-closed when it is wide. `refusals` asks both predicates,
-  treating any underline under a non-blank line as a heading. A false positive
-  there costs an author a rewrite of a string; a false negative puts a
-  structural heading into a generated file.
-- A SECTION TERMINATOR is fail-closed when it is exact, and ends early when it
-  is wide — which is the `##note` failure itself. Whether a `---` is a setext
-  underline or a line inside a fenced code block cannot be told from the line
-  and the one above it: `renders.md`'s own frontmatter example is `---` under a
-  fence opener. So `render.bounds` and `spec.parse_doctrine` stay ATX, and
-  what keeps that honest is the refusal above — no doctrine block and no repo
-  string can carry a setext underline in the first place.
+**Setext takes two lines**, so it is a second function rather than a wider
+`heading_level`, and `setext_level` answers about the UNDERLINE alone: the two
+readings need opposite widths. A REFUSAL is fail-closed when it is wide, so
+`refusals` asks both predicates and treats any underline under a non-blank
+line as a heading. A SECTION TERMINATOR is fail-closed when it is exact, and
+whether a `---` is a setext underline or a line inside a fenced block cannot
+be told from the line and the one above it, so `render.bounds` and
+`spec.parse_doctrine` stay ATX — what keeps that safe is the refusal, which
+keeps a setext underline out of every string they parse.
 """
 
 import re

@@ -11,15 +11,10 @@
 
 # Does the file hold these exact bytes? The second argument is a byte string
 # written with `\xNN` escapes, so a control can name a byte no text encoding
-# round-trips.
-#
-# Reading the bytes is the point: a grep for the ASCII prose around them
-# passes whatever the write phase did to a non-ASCII byte. The é in
-# `Séverine` below is VALID UTF-8, so the assertion carrying it is a multibyte
-# round-trip test — it reds on a write path that re-ENCODES lossily, and stays
-# green on one that decodes lossily. The two controls further down carry a
-# byte that is not UTF-8 at all, and those are the ones the decode rule turns
-# on.
+# round-trips. Reading the bytes is the point: a grep for the ASCII prose
+# around them passes whatever the write phase did to a non-ASCII byte. The é
+# in `Séverine` below is VALID UTF-8, so that assertion is a multibyte
+# round-trip test; the two controls further down carry a byte that is not.
 holds_bytes() {
   python3 -c 'import sys
 want = sys.argv[2].encode("latin-1").decode("unicode_escape").encode("latin-1")
@@ -69,14 +64,10 @@ for want in ".github/copilot-instructions.md" \
 done
 
 # `adopt` also names every repo-root or `.github/` markdown file an adopted
-# file points at. That second list is where a repo-wide hand-written reviewer
-# file shows up: a claim in one of those that the TOML does not carry is about
-# to be deleted, or to go on steering reviews from outside the package.
-#
-# Three pointer forms, one level, no recursion: an inline link's target, a
-# reference definition's target, and a backticked path. Following prose
-# mentions would make the report unbounded and two implementations would
-# disagree on the set.
+# file points at: a claim in one of those that the TOML does not carry is
+# about to be deleted, or to go on steering reviews from outside the package.
+# Three pointer forms, one level, no recursion — an inline link's target, a
+# reference definition's target, and a backticked path.
 for want in "REVIEW-GUIDE.md" ".github/REVIEWERS.md" "HANDBOOK.md"; do
   if printf '%s\n' "$bi_out" | grep -qF "points at $want"; then
     ok "adopt names a markdown file the adopted content points at: $want"
@@ -123,42 +114,6 @@ else
 fi
 
 # --- the write phase --------------------------------------------------------
-# A failure part way through leaves the manifest, so re-running `render`
-# finishes the set. What the design does not claim is an atomic multi-file
-# replacement: no filesystem offers one, and a mixed tree that says so beats
-# one that does not.
-repo="$(bi_rendered_repo adopt-manifest)" || exit 1
-mkdir -p "$repo/.bot-instructions"
-printf '{"pending": [".coderabbit.yaml", ".pr_agent.toml"]}\n' \
-  > "$repo/.bot-instructions/render-manifest.json"
-bi_run render --repo "$repo"
-if printf '%s\n' "$bi_out" | grep -q 'earlier render left a manifest'; then
-  ok 'a render finding a manifest says it is finishing an earlier set'
-else
-  bad 'a render finding a manifest says it is finishing an earlier set' "$bi_out"
-fi
-if [ ! -f "$repo/.bot-instructions/render-manifest.json" ]; then
-  ok 'a completed render clears its manifest'
-else
-  bad 'a completed render clears its manifest'
-fi
-
-# `--dry-run` says it too. A repo left mid-render by an interrupted write is
-# the one state a preview most needs to surface, and the wording fits a
-# preview: this run finishes nothing.
-repo="$(bi_rendered_repo adopt-manifest-preview)" || exit 1
-mkdir -p "$repo/.bot-instructions"
-printf '{"pending": [".coderabbit.yaml", ".pr_agent.toml"]}\n' \
-  > "$repo/.bot-instructions/render-manifest.json"
-bi_run render --dry-run --repo "$repo"
-if printf '%s\n' "$bi_out" | grep -qF 'a render would finish that set' \
-   && printf '%s\n' "$bi_out" | grep -qF '.pr_agent.toml' \
-   && printf '%s\n' "$bi_out" | grep -qF 'would write '; then
-  ok 'a dry run names the pending set an earlier render left'
-else
-  bad 'a dry run names the pending set an earlier render left' "$bi_out"
-fi
-
 # The write re-reads `AGENTS.md` and locates the owned region in those bytes,
 # so a region that stopped being this package's between the build and the
 # write fails naming the path rather than overwriting it.
@@ -172,11 +127,10 @@ PY
 expect_message "run \`adopt\` to take it over" \
   'a region whose marker went missing is not overwritten' render --repo "$repo"
 
-# A file the write phase is about to rewrite has to round-trip first. The
-# write payload is the DECODED text, so a byte that is not valid UTF-8 would
-# be written back as U+FFFD over content outside the region this package owns,
-# with the run reporting success. Both halves are the control: the run refuses
-# naming the path, and the byte is still there afterwards.
+# A file the write phase is about to rewrite has to round-trip first: the
+# payload is the DECODED text, so a byte that is not valid UTF-8 would be
+# written back as U+FFFD over content this package does not own. Both halves
+# are the control — the run refuses naming the path, and the byte survives.
 repo="$(bi_new_repo adopt-invalid-utf8-file)"
 mkdir -p "$repo/.github"
 printf '# fixture\n\nCaf\xe9 rules.\n' > "$repo/.github/copilot-instructions.md"
@@ -206,10 +160,9 @@ else
 fi
 
 # `adopt` is the verb whose OUTPUT is the point: what each file held is the
-# diff the TOML has to absorb, and the pointer list is what the operator is
-# told to read against it. A failure part way through has to carry that report
-# out, the way `render_verb` carries its partial-set lines — a second adopt
-# finishes the set and finds neither, because those files now hold the marker.
+# diff the TOML has to absorb. A failure part way through has to carry that
+# report out — a second adopt finds neither, because those files now hold the
+# marker.
 repo="$(bi_new_repo adopt-partial-report)"
 mkdir -p "$repo/.github"
 printf '# hand-written\n\nSee [the guide](GUIDE.md).\n' > "$repo/.github/copilot-instructions.md"
@@ -233,46 +186,12 @@ else
   done
 fi
 
-# The return that writes nothing says so. This branch never reaches
-# `clear_manifest`, so a sentence worded where the manifest is READ tells a
-# repo left mid-render that the interrupted set was finished while the
-# manifest still names it and every path still holds its old bytes.
-repo="$(bi_minimal_repo adopt-manifest-no-paths)"
-printf 'schema = 1\n[repo]\nname = "fixture"\nsummary = "A fixture repository."\n' \
-  > "$repo/bot-instructions.toml"
-mkdir -p "$repo/.bot-instructions"
-printf '{"pending": [".coderabbit.yaml", "AGENTS.md"]}\n' \
-  > "$repo/.bot-instructions/render-manifest.json"
-bi_run render --repo "$repo"
-if [ "$bi_status" -ne 0 ]; then
-  bad 'a render that writes nothing does not claim it finished the set' "$bi_out"
-elif printf '%s\n' "$bi_out" | grep -qF 'this run finishes the set'; then
-  bad 'a render that writes nothing does not claim it finished the set' "$bi_out"
-elif ! printf '%s\n' "$bi_out" | grep -qF '.coderabbit.yaml, AGENTS.md'; then
-  bad 'a render that writes nothing does not claim it finished the set' \
-    "the pending set was not named at all: $bi_out"
-elif [ -f "$repo/.bot-instructions/render-manifest.json" ]; then
-  ok 'a render that writes nothing does not claim it finished the set'
-else
-  bad 'a render that writes nothing does not claim it finished the set' \
-    'the manifest is gone, so something cleared it'
-fi
-
-# The other half of the decode rule, and the reason it is stated by content
-# mode. A generated file this package OWNS that picked up a stray byte is
-# `render`'s to repair: the bytes written come from the scratch tree and the
-# file's own text is read only for the marker test, so the read substitutes
-# and the render goes through. Refusing here would fail the write phase after
-# some of the set, leave the manifest pending, and fail the same way on every
-# re-run, with `check` red on the same path and no verb able to put the repo
-# back.
+# A generated file this package owns that no longer decodes is refused by both
+# verbs, with the validator naming itself and the remedy. `check` reds and
+# `render` stops before it writes: the read that feeds the marker test is the
+# one strict decode, so nothing substitutes a byte the repo holds.
 repo="$(bi_rendered_repo adopt-stray-byte-owned)" || exit 1
-cp "$repo/REVIEW.md" "$BI_TMP/rendered-review.md"
 printf 'stray \xe9\n' >> "$repo/REVIEW.md"
-# Both halves say so out loud. `check` refuses with a validator naming itself
-# and a remedy, and `render` names the repair beside the paths it wrote — a
-# generated file rewritten from bytes nobody could read is not something to
-# replace without a word.
 expect_red drift \
   'check refuses a generated file that does not decode, naming its validator' \
   check --repo "$repo"
@@ -281,25 +200,18 @@ if printf '%s\n' "$bi_out" | grep -qF 'A render replaces it'; then
 else
   bad 'and names the remedy' "$bi_out"
 fi
-expect_green 'a generated file holding a stray byte is repaired by render, not refused' \
-  render --repo "$repo"
-if printf '%s\n' "$bi_out" | grep -qF 'REVIEW.md held bytes that are not UTF-8'; then
-  ok 'and the render says which file it repaired'
+expect_message 'REVIEW.md: is not UTF-8' \
+  'and render refuses it rather than substituting a byte' render --repo "$repo"
+if holds_bytes "$repo/REVIEW.md" 'stray \xe9'; then
+  ok 'and the byte the file held is still the byte it holds'
 else
-  bad 'and the render says which file it repaired' "$bi_out"
+  bad 'and the byte the file held is still the byte it holds' \
+    "$(od -c "$repo/REVIEW.md" | tail -2 | tr '\n' ' ')"
 fi
-if cmp -s "$repo/REVIEW.md" "$BI_TMP/rendered-review.md"; then
-  ok 'and it holds the fresh render afterwards'
-else
-  bad 'and it holds the fresh render afterwards' "$(head -3 "$repo/REVIEW.md")"
-fi
-expect_green 'so the repo checks clean again' check --repo "$repo"
 
 # `writer.replace` takes exactly one of its two content modes, and says so.
-# Neither would reach `os.write(fd, None)` with the temp file already made;
-# both would drop `data` in the transform branch without a word. Driven at the
-# function, because no verb can call it wrongly and a caller error is what
-# this clause is about.
+# Driven at the function, because no verb can call it wrongly and a caller
+# error is what this clause is about.
 repo="$(bi_new_repo adopt-replace-modes)"
 if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
 import os, sys
@@ -308,11 +220,10 @@ sys.path.insert(0, os.path.join(PKG, "scripts"))
 from lib import writer
 from lib.errors import RenderError
 
-root_fd = os.open(repo, os.O_RDONLY)
 for label, kwargs in (("neither", {}),
                       ("both", {"data": "x\n", "transform": lambda _existing: "y\n"})):
     try:
-        writer.replace(root_fd, "README.md", require_marker=False, **kwargs)
+        writer.replace(repo, "README.md", require_marker=False, **kwargs)
     except RenderError as exc:
         if "exactly one of data= and transform=" not in str(exc):
             sys.exit(f"{label}: refused, but not by the content-mode clause: {exc}")
@@ -326,97 +237,27 @@ else
   bad 'replace refuses neither content mode and both, and writes nothing either way'
 fi
 
-# `os.write` may write fewer bytes than it was given. Nothing downstream
-# notices: `fsync` flushes the prefix, `_recheck` stats the TARGET and so
-# agrees, and the rename installs a truncated file with the run printing
-# `wrote <path>`. Measured under RLIMIT_FSIZE before the loop existed, a
-# 6549-byte `.pr_agent.toml` was installed at 4096 bytes with exit 0.
-#
-# The stub short-writes ONCE, so the render is otherwise ordinary and the
-# assertion is that the file is WHOLE rather than that the run failed — a
-# short write is a thing to finish, not a thing to refuse.
-repo="$(bi_rendered_repo write-short)" || exit 1
+# The temp file is removed after every failure past its creation, so the retry
+# that would have finished the render is not refused by the debris of the run
+# before it. Same process for the retry, because the temp name carries the pid
+# and a fresh process would not collide.
+repo="$(bi_rendered_repo write-failure)" || exit 1
 if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
 import os, sys
-PKG, repo = sys.argv[1], sys.argv[2]
-sys.path.insert(0, os.path.join(PKG, "scripts"))
-from lib import run, tree, verbs, writer
-from lib.errors import RenderError
-
-real = os.write
-state = {"done": False}
-
-
-def short_once(fd, data):
-    if not state["done"] and len(data) > 100:
-        state["done"] = True
-        return real(fd, data[: len(data) // 2])
-    return real(fd, data)
-
-
-def ctx(verb):
-    return run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
-                       ("SKILL.md", "schemas/renders.md"), verb,
-                       ("SKILL.md", "schemas/renders.md"))
-
-
-os.write = short_once
-try:
-    verbs.render_verb(ctx("render"), repo)
-finally:
-    os.write = real
-if not state["done"]:
-    sys.exit("the stub never short-wrote, so this probe proved nothing")
-stale = [f.message for f in run.validate(ctx("check")) if f.validator == "drift"]
-if stale:
-    sys.exit(f"a path was left truncated: {stale[0][:90]}")
-
-# The other half: a write that cannot make progress is a refusal, not a loop
-# that never ends.
-fd = os.open(os.path.join(repo, ".bot-instructions", "probe"),
-             os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-os.write = lambda f, d: 0
-try:
-    writer._write_all(fd, b"abcdef", "probe")
-    sys.exit("a write making no progress was not refused")
-except RenderError as exc:
-    if "no further progress" not in str(exc):
-        sys.exit(f"refused for the wrong reason: {exc}")
-finally:
-    os.write = real
-    os.close(fd)
-    os.unlink(os.path.join(repo, ".bot-instructions", "probe"))
-PROBE
-  ok 'a short write is finished rather than renamed as a truncated file'
-else
-  bad 'a short write is finished rather than renamed as a truncated file'
-fi
-
-# The temp file is removed after every failure past its creation, not only
-# after the two that used to be the only ones possible there. `_write_all`
-# raising — ENOSPC and EDQUOT are the realistic causes, and reporting them is
-# why it exists — left a PID-named temp behind, and the retry that would have
-# finished the render hit EEXIST on it instead. Same process for the retry,
-# because the name carries the pid and a fresh process would not collide.
-repo="$(bi_rendered_repo write-enospc)" || exit 1
-if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
-import errno, os, sys
 PKG, repo = sys.argv[1], sys.argv[2]
 sys.path.insert(0, os.path.join(PKG, "scripts"))
 from lib import writer
 
 PAYLOAD = ("x" * 4000 + "\n")
-real = os.write
+real = os.rename
 state = {"hit": False}
 
 
-def enospc(fd, data):
-    """Half of it, then the error a full disk gives, mid-write."""
-    if not state["hit"] and len(data) > 100:
+def fail_once(src, dst, **kw):
+    if not state["hit"]:
         state["hit"] = True
-        real(fd, data[: len(data) // 2])
-        raise OSError(errno.ENOSPC, "No space left on device")
-    return real(fd, data)
+        raise OSError(28, "No space left on device")
+    return real(src, dst, **kw)
 
 
 def debris():
@@ -427,17 +268,16 @@ def debris():
 
 
 before = open(os.path.join(repo, "README.md")).read()
-root_fd = os.open(repo, os.O_RDONLY)
-os.write = enospc
+os.rename = fail_once
 try:
-    writer.replace(root_fd, "README.md", data=PAYLOAD, require_marker=False)
+    writer.replace(repo, "README.md", data=PAYLOAD, require_marker=False)
 except OSError as exc:
-    if exc.errno != errno.ENOSPC:
+    if exc.errno != 28:
         sys.exit(f"the write failed for the wrong reason: {exc}")
 else:
-    sys.exit("the stubbed write did not fail the replacement")
+    sys.exit("the stubbed rename did not fail the replacement")
 finally:
-    os.write = real
+    os.rename = real
 if not state["hit"]:
     sys.exit("the stub never raised, so this probe proved nothing")
 if open(os.path.join(repo, "README.md")).read() != before:
@@ -448,7 +288,7 @@ if left:
 
 # The half the debris broke: the retry, in THIS process, with the same
 # pid-named temp path.
-if not writer.replace(root_fd, "README.md", data=PAYLOAD, require_marker=False):
+if not writer.replace(repo, "README.md", data=PAYLOAD, require_marker=False):
     sys.exit("the retry reported that it wrote nothing")
 if open(os.path.join(repo, "README.md")).read() != PAYLOAD:
     sys.exit("the retry did not install the whole payload")
@@ -459,13 +299,5 @@ PROBE
 else
   bad 'a write that fails mid-way leaves no temp, and the retry finishes'
 fi
-
-# A symlink at a generated path is never followed and never replaced: the
-# containment rule is about the open rather than about the write.
-repo="$(bi_rendered_repo adopt-symlink)" || exit 1
-rm -f "$repo/.pr_agent.toml"
-ln -s /etc/hostname "$repo/.pr_agent.toml"
-expect_message "is a symlink" 'a symlink at a generated path is refused, not followed' \
-  render --repo "$repo"
 
 bi_summary

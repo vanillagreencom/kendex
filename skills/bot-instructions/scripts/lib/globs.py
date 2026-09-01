@@ -45,8 +45,7 @@ def check(glob, where):
     Each refusal below is its own clause with its own control, per
     `validators.md` § Controls. The class catches none of the path-shape
     clauses: `.` and `/` are permitted characters, so `../**` and `/src/**`
-    are made of nothing but allowed bytes, and the class constrains which
-    characters may appear rather than requiring one to.
+    are made of nothing but allowed bytes.
     """
     from .errors import InputError
 
@@ -75,14 +74,11 @@ def check(glob, where):
         )
     if any(p == "" for p in parts):
         raise InputError(f"{where}: glob {glob!r} has an empty component")
-    # Last, so every clause above owns its own message: the dialect's class
+    # Last, so every clause above owns its own message. The dialect's class
     # permits `[` and `]` and says nothing about what goes between them, and a
-    # `[...]` here reaches a regex character class. Proving it compiles at
-    # input is what makes a reversed range a `toml-schema` finding rather than
-    # a traceback out of the dead-exclusion clause much later. `where` is what
-    # makes it this clause's finding like the rest: without it the message
-    # names no key, and `manifest._checked` cannot say which manifest row
-    # produced the glob.
+    # `[...]` here reaches a regex character class, so proving it compiles at
+    # input makes a reversed range a `toml-schema` finding naming its key
+    # rather than a traceback out of the dead-exclusion clause much later.
     _translate(glob, where)
 
 
@@ -101,12 +97,10 @@ def check_list(globs, where):
 def _collapse(pattern):
     """Consecutive `**/` runs to one, which no match result depends on.
 
-    `**/` translates to `(?:[^/]*/)*`, and nesting those is exponential: each
-    added `**` multiplied the time to reject a non-matching path by about
-    three and a half, so `a/` plus twelve of them against a twenty-deep
-    tracked path took seconds inside `_dead_globs`, which runs this over every
-    tracked path in the repo. `**/**/` covers exactly what `**/` covers, so
-    collapsing is a rewrite of the pattern and not of its meaning.
+    `**/` translates to `(?:[^/]*/)*`, and nesting those is exponential, which
+    `_dead_globs` pays over every tracked path in the repo. `**/**/` covers
+    exactly what `**/` covers, so this rewrites the pattern and not its
+    meaning.
     """
     while "**/**/" in pattern:
         pattern = pattern.replace("**/**/", "**/")
@@ -117,45 +111,21 @@ def _translate(pattern, where=None):
     """Dialect glob to regex. `**` crosses `/`; `*` and `?` do not.
 
     A trailing `/**` keeps its slash, so `a/**` matches every path under `a`
-    and never a tracked file named `a`. Making the slash optional put this
-    matcher's answer at odds with `git ls-files -- ':(glob)a/**'`, which
-    selects nothing in a repo whose only entry is that file — and the
-    dead-exclusion clause decides with this matcher, so it accepted an
-    exclusion git and CodeRabbit apply to no path, the exact config that
-    clause exists to catch. `tests/globs.test.sh` measures the pair against
+    and never a tracked file named `a` — which is what `git ls-files --
+    ':(glob)a/**'` answers. `tests/globs.test.sh` measures the pair against
     git's wildmatch, which `renders.md` names as the engine the dialect
     targets.
 
     **A pattern holding no wildcard covers the paths beneath it**, which is
-    git's own rule for a pathspec and the one this had missed in the other
-    direction: `git ls-files -- ':(glob)docs'` selects every tracked file under
-    that directory, while an exact match selected none of them and
-    `_dead_globs` called a correct exclusion dead — refusing `render` and
-    `check` on a repo configured the way git and CodeRabbit read it. A false
-    rejection rather than a miss, and the worse of the two: nothing slips
-    through, a working repo simply cannot render.
-
-    The boundary is git's: `*`, `?` and `[` are what `has_wildcard` looks for,
-    and one of them anywhere turns the prefix rule off. Measured — `docs` and
-    `docs/sub` cover their trees, while `do*`, `doc?`, `[d]ocs` and `*/sub`
-    select nothing at all.
+    git's own rule for a pathspec, and the boundary is git's too: `*`, `?` and
+    `[` are what `has_wildcard` looks for, and one of them anywhere turns the
+    prefix rule off.
 
     The compile is guarded because the dialect's character class is wider than
     a regex character class: `[z-a]` is made of permitted bytes and is a
-    reversed range `re` refuses. A raw traceback there would be the one
-    refusal in this package that does not name the clause that refused it.
-
-    The refusal quotes the glob AS WRITTEN, not the collapsed pattern `re`
-    saw: `_collapse` rewrites `**/**/` to `**/`, and quoting that names a
-    string no file in the repo holds, so grepping for what the message says
-    finds nothing.
-
-    `where` is the key the glob came from. `check` carries one; `matching()`
-    does not, and its unprefixed form is a backstop rather than a reachable
-    clause — every glob reaching `matching` has already compiled once inside
-    `check`. It stands because `check` proving the compile is a property of
-    the call ORDER, and a raw traceback out of the dead-exclusion clause is
-    what this guard exists to prevent.
+    reversed range `re` refuses. The refusal quotes the glob AS WRITTEN rather
+    than the collapsed pattern `re` saw. `where` is the key it came from;
+    `matching()` has none, and its unprefixed form is a backstop.
     """
     from .errors import InputError
 

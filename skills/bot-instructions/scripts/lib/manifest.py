@@ -1,27 +1,19 @@
 """`[exclusions] derive_render`: the install manifest, and what it derives.
 
 **The manifest is the one kendex resolves, never a hardcoded filename.** That
-is `kendex.toml`, except in a repo whose `kendex.toml` declares
-`is_source_catalog = true`, where install state routes to the sibling
-`kendex-local.toml`. Opening `kendex.toml` by name in such a repo would parse a
-present, valid file, derive an empty set, and pass a consistency check
-comparing empty against empty.
+is `kendex.toml`, except where it declares `is_source_catalog = true` and
+install state routes to the sibling `kendex-local.toml`. Opening `kendex.toml`
+by name in such a repo parses a present, valid file and derives an empty set.
 
-**What a harness root contributes, and what it must not.** A harness root
-holds two kinds of thing: subdirectories kendex owns whole, and root-level
-files kendex merges its own entries into while the repo owns the rest —
-`.claude/settings.json`, `.codex/config.toml`, `.pi/settings.json`. So the
-derivation takes **each immediate subdirectory** of a declared render root that
-holds a tracked path, and never a file at its root. A glob one shape too wide
-would silence review on a settings file this repo owns and can fix, which is
-the opposite of what the derivation is for; one naming a tree with nothing
-tracked under it excludes nothing, and `exclusion-consistency`'s
-dead-exclusion clause rejects it with no edit an author could make to clear
-it. `tree.subdirs` answers that question from the index alone, identically in
-both modes, and refuses a root the index holds as an entry of its own rather
-than answering it with the empty set.
+**What a harness root contributes.** Each immediate subdirectory of a declared
+render root that holds a tracked path, plus each one the index holds as a
+symlink entry of its own, and never a file at its root — kendex merges its own
+entries into `.claude/settings.json`, `.codex/config.toml` and
+`.pi/settings.json` while the repo owns the rest, and a glob one shape too
+wide would silence review on a file this repo can fix. `tree.subdirs` answers
+that from the index alone, identically in both modes.
 `skills/review-gate/references/vendored-paths.md` § The harness-render variant
-draws the same line for the review gate's own set and names the merged paths.
+draws the same line for the review gate's own set.
 """
 
 import tomllib
@@ -98,12 +90,9 @@ def derive(tree, resolved):
     trees = set()
     for name, entry in resolved.skills.items():
         if not isinstance(entry, dict):
-            # Loud, like every neighbour here: an unknown harness raises, a
-            # glob outside the dialect raises through `_checked`, and
-            # `resolve` refuses a manifest declaring no install. Skipping the
-            # row instead left a vendored tree in review scope with `render`
-            # and `check` both exiting 0 — "nothing found" standing in for "I
-            # could not tell", which is the one thing this package is for.
+            # Loud, like every neighbour here. Skipping the row would leave a
+            # vendored tree in review scope with both verbs exiting 0 —
+            # "nothing found" standing in for "I could not tell".
             raise ManifestError(
                 f"[skills.{name}]: expected a table, got {type(entry).__name__}. The row "
                 "decides whether that tree is excluded from review, and a row this cannot "
@@ -125,9 +114,8 @@ def derive(tree, resolved):
             )
         root, subtrees = row
         # Only subtrees that exist: `.github` holds whichever of the copilot
-        # row's three a repo actually installed, and deriving the other two
-        # would name globs matching no tracked path, which `_dead_globs`
-        # rejects as dead config no `bot-instructions.toml` edit can clear.
+        # row's three a repo installed, and deriving the other two would name
+        # globs `_dead_globs` rejects as dead config no TOML edit can clear.
         present = tree.subdirs(root)
         for sub in present if subtrees is None else [s for s in subtrees if s in present]:
             trees.add(_checked(f"{root}/{sub}/**", f"[install] harnesses {harness!r}"))
@@ -137,13 +125,10 @@ def derive(tree, resolved):
 def _checked(glob, source):
     """A derived glob, held to the same dialect every declared one meets.
 
-    This is the one glob source that never passed `globs.check`: a manifest
-    key and an on-disk directory name become pattern bytes without an author
-    writing them as a glob. Downstream byte validators caught some of it by
-    accident, on the surfaces that parse; the paths also render as prose into
-    `AGENTS.md`, where nothing reads them as globs at all, so a name carrying
-    a newline and a heading landed live reviewer instructions in a generated
-    file. Refusing at the source names which manifest row produced it.
+    A manifest key and an on-disk directory name become pattern bytes without
+    an author writing them as a glob, and they render as prose on two surfaces
+    where nothing reads them as globs at all. Refusing at the source names
+    which manifest row produced it.
     """
     try:
         globs.check(glob, source)

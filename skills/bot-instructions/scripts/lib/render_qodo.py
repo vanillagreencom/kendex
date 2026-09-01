@@ -40,18 +40,27 @@ def toml_multiline(value, key):
     return '"""\n' + escaped + '\n"""'
 
 
-def _guidance(model, column, with_summary=True):
+def _guidance(model, column):
     parts = []
     for bid, text in model.blocks_for(column):
         if bid == "render-out-of-scope" and model.exclusions:
             text = text + "\n\nThose paths here: " + ", ".join(model.exclusion_globs) + "."
         parts.append(text)
-    if with_summary:
-        parts.append(model.summary.strip("\n"))
+    parts.append(model.summary.strip("\n"))
     return "\n\n".join(parts)
 
 
-def render(model):
+GUIDANCE_COLUMNS = ("pr_agent issues", "pr_agent compliance", "pr_agent extra")
+
+
+def guidance(model):
+    """What each `[review_agent]`/`[pr_reviewer]` key carries, before it is
+    written. `qodo-parity` and `exclusion-consistency` read this rather than
+    parsing the TOML back."""
+    return {column: _guidance(model, column) for column in GUIDANCE_COLUMNS}
+
+
+def render(model, sections):
     cadence = model.config.cadence
     out = [model.marker("hash"), ""]
     out.append("[github_app]")
@@ -61,13 +70,13 @@ def render(model):
     out.append("[review_agent]")
     out.append('comments_location_policy = "inline"')
     out.append("issues_user_guidelines = " + toml_multiline(
-        _guidance(model, "pr_agent issues"), "[review_agent] issues_user_guidelines"))
+        sections["pr_agent issues"], "[review_agent] issues_user_guidelines"))
     out.append("compliance_user_guidelines = " + toml_multiline(
-        _guidance(model, "pr_agent compliance"), "[review_agent] compliance_user_guidelines"))
+        sections["pr_agent compliance"], "[review_agent] compliance_user_guidelines"))
     out.append("")
     out.append("[pr_reviewer]")
     out.append("extra_instructions = " + toml_multiline(
-        _guidance(model, "pr_agent extra"), "[pr_reviewer] extra_instructions"))
+        sections["pr_agent extra"], "[pr_reviewer] extra_instructions"))
     for key in NOISE_KEYS:
         out.append(f"{key} = false")
     out.append("")

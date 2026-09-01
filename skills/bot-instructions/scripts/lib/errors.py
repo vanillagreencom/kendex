@@ -5,8 +5,7 @@ surface that fails silently is one more thing nobody reads.
 
 `InputError` is the input-side family — a value this package will not render.
 `Finding` is the validator-side one, and it carries the validator's own
-identity so a control can assert on the validator that fired rather than on
-the run's exit code, which § Controls requires.
+identity, which § Controls requires a control to assert on.
 """
 
 
@@ -25,14 +24,10 @@ class InputError(BotInstructionsError):
 class SourceUnavailable(InputError):
     """An input this run needs could not be read, and the reason is not absence.
 
-    The whole package turns on one rule: **a source that cannot answer raises;
-    only a definite empty answer returns empty.** A reader that answers
-    "nothing found" when it means "I could not tell" makes every validator
-    above it report a clean pass on a repo nobody checked, which is the silent
-    failure this package exists to remove — one level down, in its own code.
-
-    Names the failing command and what it said, because "git failed" without
-    git's own diagnostic sends a reader to the wrong file.
+    **A source that cannot answer raises; only a definite empty answer returns
+    empty.** A reader that answers "nothing found" when it means "I could not
+    tell" makes every validator above it report a clean pass on a repo nobody
+    checked. Names the failing command and what it said.
     """
 
     def __init__(self, what, detail):
@@ -45,16 +40,8 @@ class ManifestError(InputError):
     `exclusion-consistency` rather than matching on the message text."""
 
 
-class ContainmentError(BotInstructionsError):
-    """An open left the repo root, or crossed a symlink on the way."""
-
-
 class RenderError(BotInstructionsError):
     """A render could not produce bytes, or a write phase failed."""
-
-
-class LockError(BotInstructionsError):
-    """Another render holds the lock."""
 
 
 class Finding(BotInstructionsError):

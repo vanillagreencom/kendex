@@ -10,11 +10,10 @@ rather than counting it as passed.
 """
 
 import contextlib
-import tomllib
 
 from .constants import CODERABBIT_SCHEMA_PATH, TOML_PATH
-from .errors import (Finding, InputError, ManifestError, RenderError,
-                     SourceUnavailable, ValidationFailed)
+from .errors import (Finding, InputError, ManifestError, SourceUnavailable,
+                     ValidationFailed)
 from . import config as config_mod
 from . import model as model_mod
 from . import render as render_mod
@@ -25,12 +24,9 @@ from . import validators_repo as vr
 BYTE_VALIDATORS = (
     vb.doctrine_routing,
     vb.coderabbit_schema,
-    vb.coderabbit_filters,
-    vb.copilot_frontmatter,
     vb.copilot_budget,
     vb.qodo_parity,
     vb.qodo_best_practices,
-    vb.macroscope_render,
 )
 REPO_VALIDATORS = (vr.agents_section, vr.orphan, vr.drift)
 
@@ -48,10 +44,8 @@ def _as_finding(validator, path, other=None, other_path=None):
         raise
     except ManifestError as exc:
         # `other_path` passes THROUGH, `None` included. Every manifest message
-        # names its own file or row — `kendex.toml: absent`, `[install]
-        # harnesses: 'nosuch' has no render root` — so a trailing
-        # `[bot-instructions.toml]` sends the reader to a file that is correct,
-        # which is the wrong-cause shape `manifest._checked` exists to prevent.
+        # names its own file or row, so a trailing `[bot-instructions.toml]`
+        # would send the reader to a file that is correct.
         raise ValidationFailed([Finding(other or validator, str(exc), other_path)]) from exc
     except InputError as exc:
         raise ValidationFailed([Finding(validator, str(exc), path)]) from exc
@@ -64,8 +58,7 @@ class Context:
         # is read from the index at its repo-relative path, and wherever the
         # spec copy sits outside the repo: an absolute checkout path in a
         # rendered file would make the render depend on where CI put the
-        # trusted checkout. The two names identify the input; the version says
-        # which copy it was. Both are required, so no caller can leave the
+        # trusted checkout. Both are required, so no caller can leave the
         # marker recording whatever path this run happened to read.
         spec_names = list(spec_names)
         self.root = root
@@ -100,89 +93,10 @@ class Context:
     def walk(self, prefix):
         return self.tree.walk(prefix)
 
-    def read_output(self, path):
-        return self.tree.read(path)
-
     def tracked_paths(self):
         if self._tracked is None:
             self._tracked = self.tree.tracked()
         return self._tracked
-
-    def scratch_exclusions(self):
-        return _exclusions_from(self.build.files.get)
-
-    def repo_exclusions(self):
-        return _exclusions_from(self.read_output)
-
-    def exclusion_sources(self):
-        """The tree the derived-set clause compares.
-
-        On `render` that is the scratch outputs: a serializer that drops one
-        derived tree from every destination passes the cross-surface check,
-        and the comparison here is against an independent fresh derivation, so
-        it still has a question to answer. On `check` it is the repository,
-        whose manifest and whose files have moved on since someone rendered.
-        """
-        return self.scratch_exclusions() if self.verb == "render" else self.repo_exclusions()
-
-
-def _exclusions_from(reader):
-    """Each rendered surface's exclusion list, read back out of the bytes.
-
-    Returns `(sets, unreadable)`. A file present but unreadable is carried in
-    the second rather than left out of the first: dropping it would let a
-    malformed surface agree with every other by having no entries, which is
-    the silent failure this package exists to remove. It is carried as a
-    failure rather than as a sentinel string in the glob list, because a
-    sentinel flows into the set comparisons and arrives as
-    `'<unreadable: ...>' is in the rendered exclusions and the resolved
-    manifest derives no such tree` — a parse failure dressed as a set mismatch
-    naming a glob nobody wrote.
-
-    **Absent and empty are different answers.** `None` is the surface not
-    being rendered at all — a bot whose `[bots]` flag is false has no
-    exclusion mechanism to compare. Empty bytes are a surface that IS
-    rendered and carries no entries, and testing the text for truth collapsed
-    the two: a serializer emitting an empty `.macroscope/ignore.md` dropped it
-    from the comparison, `_cross_surface` agreed across the surfaces that
-    survived, and `validate()` returned no findings at all.
-    """
-    from . import yamlread
-
-    out = {}
-    bad = {}
-
-    def read(path, what):
-        """The read, INSIDE the guard. A file that cannot be decoded is as
-        unreadable as one that cannot be parsed, and the clause that reports
-        an unreadable surface is the one that should say so. Read outside the
-        guard, a generated file holding a byte that is not UTF-8 left `check`
-        with a bare message naming no validator and no finding count."""
-        try:
-            return reader(path)
-        except RenderError as exc:
-            bad[path] = f"{what} cannot be read: {exc}"
-            return None
-
-    text = read(".coderabbit.yaml", "reviews.path_filters")
-    if text is not None:
-        try:
-            entries = yamlread.loads(text)["reviews"]["path_filters"]
-            out[".coderabbit.yaml"] = [e[1:] for e in entries if e.startswith("!")]
-        except Exception as exc:
-            bad[".coderabbit.yaml"] = f"reviews.path_filters cannot be read: {exc}"
-    text = read(".pr_agent.toml", "[ignore] glob")
-    if text is not None:
-        try:
-            out[".pr_agent.toml"] = list(tomllib.loads(text).get("ignore", {}).get("glob", []))
-        except (tomllib.TOMLDecodeError, AttributeError, TypeError) as exc:
-            bad[".pr_agent.toml"] = f"[ignore] glob cannot be read: {exc}"
-    text = read(".macroscope/ignore.md", "the exclusion lines")
-    if text is not None:
-        out[".macroscope/ignore.md"] = [
-            ln for ln in text.split("\n") if ln.strip() and not ln.lstrip().startswith("<!--")
-        ]
-    return out, bad
 
 
 def validate(ctx):

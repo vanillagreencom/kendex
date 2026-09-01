@@ -25,12 +25,9 @@ from .constants import (
 from .errors import InputError, SpecError
 from . import markdown, refusals
 
-# A version reaches a `#`, `//`-free comment and an HTML comment. Anything
-# outside this class could close one and put the rest into a generated file as
-# live reviewer instructions. The classes are `constants.py`'s, because
-# `marker.py` builds its ownership pattern from the same two and a second copy
-# of either would let the writer and the reader disagree about what a marker
-# may hold.
+# A version reaches a `#` comment and an HTML comment. Anything outside this
+# class could close one and put the rest into a generated file as live
+# reviewer instructions.
 _VERSION_CLASS = re.compile(f"^[{MARKER_VERSION_CLASS}]+$")
 _PATH_CLASS = re.compile(f"^[{MARKER_PATH_CLASS}]+$")
 
@@ -171,7 +168,7 @@ def parse_routing(renders_text, where):
 
 
 def load(spec_tree, skill_rel, renders_rel):
-    """Read a spec copy through contained opens and return its Doctrine."""
+    """Read a spec copy and return its Doctrine."""
     skill_text = spec_tree.read(skill_rel)
     if skill_text is None:
         raise SpecError(f"{skill_rel}: the spec copy has no doctrine source")

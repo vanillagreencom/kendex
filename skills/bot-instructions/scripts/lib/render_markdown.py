@@ -1,10 +1,8 @@
 """The markdown outputs.
 
-`schemas/renders.md` states each body. Escaping is markdown passed through,
-with the heading predicate re-checked because doctrine text does not come
-through `bot-instructions.toml` and so is under no input refusal — that second
-check lives in `spec.parse_doctrine`, which applies the `doctrine block text`
-row before any of this runs.
+`schemas/renders.md` states each body. Escaping is markdown passed through:
+doctrine text does not come through `bot-instructions.toml`, so its refusals
+run in `spec.parse_doctrine` before any of this.
 """
 
 from .model import exclude_sentence
@@ -45,11 +43,9 @@ def summary_block(model):
 
     `renders.md` § Common rules: repo text is never reflowed, and
     `tone_instructions` is the only line-break exception. `paragraphs` is for
-    doctrine, whose text this package hard-wraps in its own spec copy for the
-    spec copy's sake; running it over the summary as well reflowed repo prose
-    on two of the three surfaces that carry it, while `render_qodo` emitted
-    the same value unchanged — so the two forms of one string also disagreed
-    across surfaces. This is the one form.
+    doctrine, which this package hard-wraps in its own spec copy for that
+    file's sake. This is the one form of the summary, so no two surfaces can
+    carry it differently.
     """
     return model.summary.strip("\n")
 
@@ -60,10 +56,8 @@ def block_paragraphs(model, bid, text):
     Package-authored doctrine is joined: this package hard-wraps its own prose
     in the spec copy, and those breaks belong to that file rather than to the
     meaning. A block a repo overrode keeps every line break it was written
-    with, per `renders.md` § Common rules — a fenced example in a
-    `[doctrine.replace]` arrived as one line, and a fence needs its own.
-    `model.repo_authored` is the distinction, and it says why the two rules
-    were never in conflict.
+    with, per `renders.md` § Common rules — a fenced example needs its own.
+    `model.repo_authored` is the distinction.
     """
     if model.repo_authored(bid):
         return [text.strip("\n")]
@@ -76,10 +70,7 @@ def as_bullet(text):
     A repo guard that pins the reply contract reads it as a single bullet, and
     a blank line ends that read. So this joins whatever the block's origin:
     the owned region is the second place a target forbids line breaks, and
-    § Common rules names it beside `tone_instructions`. Reindenting an
-    author's fenced block into a list item would be the generator rewriting
-    words to make them fit, which this package refuses in favour of the
-    author choosing a block that reaches an output with room for it.
+    § Common rules names it beside `tone_instructions`.
     """
     return "- " + " ".join(paragraphs(text))
 
@@ -166,10 +157,15 @@ def best_practices(model):
 
 
 def macroscope_ignore(model):
-    """Every non-blank line is a pattern; everything else stays in a comment."""
-    out = [model.marker("html"), ""]
+    """One glob per line, `#` comments, blank lines ignored.
+
+    That is the grammar Macroscope documents for this file, and it is not
+    markdown's: an HTML comment here is a pattern, not a comment, so the
+    marker and every reason take the `#` form.
+    """
+    out = [model.marker("hash"), ""]
     for entry in model.exclusions:
-        out.append(f"<!-- {entry['reason']} -->")
+        out.append(f"# {entry['reason']}")
         out.append(entry["glob"])
     return "\n".join(out).rstrip("\n") + "\n"
 

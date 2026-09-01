@@ -7,13 +7,6 @@ block scalars make safe for everything a YAML scalar can hold — and everything
 they cannot hold is refused at input by `repo-toml.md` § The content refusals,
 whose `control` predicate covers a YAML scalar and a TOML one at once.
 
-**Nothing here re-checks that class.** The one string this module emits that
-no refusal row covers is a default in the vendored schema, and a guard here
-would turn three findings that name their validators into one bare refusal
-out of the render: `coderabbit-schema`, `coderabbit-filters` and
-`exclusion-consistency` all read the emitted file back through `yamlread`,
-which runs the class and refuses, before `render_verb` writes anything.
-
 Emitting rather than depending on PyYAML is deliberate: this package is
 vendored into repos that need no third-party runtime to render or to check.
 """
@@ -36,9 +29,7 @@ class Commented:
 
     No check here. The only text this carries is a `[[exclusions.path]]
     reason`, whose row refuses every character that could end the line, or the
-    fixed reason a derived exclusion gets. A guard for an input that cannot
-    arrive would fire only where `yamlread` already refuses the emitted file
-    with a validator naming itself.
+    fixed reason a derived exclusion gets.
     """
 
     def __init__(self, value, comment):

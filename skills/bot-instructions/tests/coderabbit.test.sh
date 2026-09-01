@@ -44,12 +44,10 @@ else
 fi
 git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json
 
-# The completeness clause's own controls are in `lib/mutations.py`, at both
-# depths, because the render walks the vendored schema rather than a
-# transcribed key list: a property the vendor ADDS arrives at its own default
-# and shows in the diff, so only a renderer regression can drop one. What a
-# schema refresh reds is `drift`, which is the honest answer for that state —
-# the render moved, and the committed file has not.
+# The render walks the vendored schema rather than a transcribed key list, so
+# a property the vendor ADDS arrives at its own default and shows in the diff.
+# What a schema refresh reds is `drift`, which is the honest answer for that
+# state — the render moved, and the committed file has not.
 python3 - "$SCHEMA" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -111,10 +109,11 @@ if [ "$bi_status" -ne 0 ]; then
 elif python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
 import os, sys
 sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
-from lib import yamlread
-# Parsed, not grepped: doctrine prose in a block scalar carries the word too.
-body = open(sys.argv[2] + "/.coderabbit.yaml").read()
-doc = yamlread.loads(body.split("\n", 6)[-1])
+from lib import run, tree
+ctx = run.Context(sys.argv[2], tree.Worktree(sys.argv[2]), tree.Worktree(sys.argv[1]),
+                  ("SKILL.md", "schemas/renders.md"), "check",
+                  ("SKILL.md", "schemas/renders.md"))
+doc = ctx.build.data[".coderabbit.yaml"]
 if "requirements" in doc.get("reviews", {}):
     sys.exit("the render emitted a key the schema gives no value for")
 PROBE
@@ -149,9 +148,12 @@ if [ "$bi_status" -ne 0 ]; then
 elif python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
 import os, sys
 sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
-from lib import yamlread
-body = open(sys.argv[2] + "/.coderabbit.yaml").read()
-got = yamlread.loads(body.split("\n", 6)[-1]).get("reviews", {}).get("requirements")
+from lib import run, tree
+ctx = run.Context(sys.argv[2], tree.Worktree(sys.argv[2]), tree.Worktree(sys.argv[1]),
+                  ("SKILL.md", "schemas/renders.md"), "check",
+                  ("SKILL.md", "schemas/renders.md"))
+doc = ctx.build.data[".coderabbit.yaml"]
+got = doc.get("reviews", {}).get("requirements")
 # `mode` survives from the default, `files` comes from the walk at depth, and
 # `unset` has no default anywhere so it is not written.
 if got != {"files": ["src/**"], "mode": "strict"}:
@@ -183,9 +185,12 @@ if [ "$bi_status" -ne 0 ]; then
 elif python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
 import os, sys
 sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
-from lib import yamlread
-body = open(sys.argv[2] + "/.coderabbit.yaml").read()
-got = yamlread.loads(body.split("\n", 6)[-1]).get("reviews", {}).get("requirements")
+from lib import run, tree
+ctx = run.Context(sys.argv[2], tree.Worktree(sys.argv[2]), tree.Worktree(sys.argv[1]),
+                  ("SKILL.md", "schemas/renders.md"), "check",
+                  ("SKILL.md", "schemas/renders.md"))
+doc = ctx.build.data[".coderabbit.yaml"]
+got = doc.get("reviews", {}).get("requirements")
 if got != {"files": ["docs/**"]}:
     sys.exit(f"rendered {got!r}, not the vendor default")
 PROBE
@@ -197,10 +202,10 @@ fi
 git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json .coderabbit.yaml
 
 # The one arrival route the input table cannot cover: a default in the
-# VENDORED SCHEMA. No `bot-instructions.toml` produces it, and the emitter
-# does not re-check the class — a guard there would replace the three findings
-# below with one bare refusal out of the render, naming no validator. Nothing
-# is written either way: `render_verb` validates before its write phase.
+# VENDORED SCHEMA. No `bot-instructions.toml` produces it, so `coderabbit-schema`
+# runs the class over the document it validates — the emitter does not, because
+# a refusal there would reach the operator naming no validator. Nothing is
+# written either way: `render_verb` validates before its write phase.
 python3 - "$SCHEMA" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -211,21 +216,19 @@ d["properties"]["reviews"]["properties"]["vendor_note"] = {
 }
 json.dump(d, open(p, "w"), indent=2)
 PY
-expect_red 'coderabbit-schema coderabbit-filters exclusion-consistency' \
-  'a schema default carrying a line separator reds the validators that read it' \
+expect_red coderabbit-schema \
+  'a schema default carrying a line separator reds the validator that reads it' \
   render --dry-run --repo "$repo"
 if printf '%s\n' "$bi_out" | grep -qF 'U+2028 LINE SEPARATOR'; then
-  ok 'and each names the character it could not read past'
+  ok 'and it names the character it refused'
 else
-  bad 'and each names the character it could not read past' "$bi_out"
+  bad 'and it names the character it refused' "$bi_out"
 fi
 git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json
 
-# The reader runs the same class the input table refuses on. A rendered file
-# reaching it with a character a YAML reader breaks a line on would be read as
-# fewer lines than PyYAML reads, so this package would judge a file CodeRabbit
-# does not see — and agree with itself, silently. Planted in the file rather
-# than in the TOML, because the point is that the READER refuses it too.
+# A character planted in the committed file, rather than in the TOML: no
+# validator parses a render back, so what catches it is the comparison against
+# a fresh render.
 expect_green 'the rendered file the reader accepts, the pair below' check --repo "$repo"
 python3 - "$repo/.coderabbit.yaml" <<'PLANT'
 import sys
@@ -235,12 +238,7 @@ assert "path_filters:" in s, "fixture shape changed"
 open(p, "w", encoding="utf-8").write(s.replace("path_filters:",
                                                "path_filters:" + chr(0x2028), 1))
 PLANT
-# `exclusion-consistency` is the clause: it is the validator that reads the
-# REPO's copy of the file, where the byte validators read the scratch tree. It
-# reds through the reader's refusal rather than comparing a surface it could
-# not parse. `drift` too, and genuinely — the planted character is a
-# difference from a fresh render.
-expect_red 'exclusion-consistency drift' \
+expect_red drift \
   'a line separator in the rendered .coderabbit.yaml' check --repo "$repo"
 git -C "$repo" checkout -- .coderabbit.yaml
 

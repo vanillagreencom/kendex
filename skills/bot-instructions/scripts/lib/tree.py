@@ -6,8 +6,7 @@ would be wrong in both directions in the pre-commit lane this mode exists for:
 a commit staging a TOML change with its re-rendered outputs would red, because
 the outputs came from the index while the render was built from a worktree
 TOML that may have moved on; and an unstaged doctrine edit would silently
-decide what the staged outputs were compared against, passing or failing on
-bytes nobody is committing.
+decide what the staged outputs were compared against.
 
 A file absent from the index is that absence, not its worktree copy.
 """
@@ -19,35 +18,29 @@ from .errors import ManifestError, SourceUnavailable
 
 
 class Worktree:
-    """Every read walks from a repo-root descriptor with no-follow flags."""
-
     def __init__(self, root):
         self.root = root
-        self.fd = fsutil.open_root(root)
         self._paths = None
 
     def read(self, rel):
-        return fsutil.read_text(self.fd, rel)
+        return fsutil.read_text(self.root, rel)
 
     def walk(self, prefix):
-        return fsutil.walk(self.fd, prefix)
+        return fsutil.walk(self.root, prefix)
 
     def subdirs(self, rel):
         return _subdirs(self.tracked(), rel)
 
     def tracked(self):
-        # Memoised, the way `Index.tracked` is. `manifest.derive` asks per
-        # harness row and runs twice per check, so an uncached read here spawns
-        # git once per row per pass instead of once per run. Nothing reads the
-        # list after the write phase: `render_verb` validates, then writes.
+        # Memoised: `manifest.derive` asks per harness row and runs twice per
+        # check, so an uncached read spawns git once per row per pass.
         if self._paths is None:
             self._paths = _git(self.root, ["ls-files", "-z"])
         return self._paths
 
 
 class Index:
-    """The staged state, read as blobs. Containment is not a question here:
-    a blob has no path components to redirect through."""
+    """The staged state, read as blobs."""
 
     def __init__(self, root):
         self.root = root
@@ -76,13 +69,8 @@ class Index:
         )
         if done.returncode != 0:
             # The repository answered a moment ago, so this is the blob being
-            # absent from the index — which is a state, and the one `--staged`
-            # exists to judge.
+            # absent from the index — the state `--staged` exists to judge.
             return None
-        # The same strict decode `Worktree.read` uses. Two trees that answer
-        # differently would be the worst version of this: `--staged` is the
-        # pre-commit lane, so a lossy read there green-lights a commit whose
-        # bytes no `render` can produce and whose `check` reds.
         return fsutil.decode_text(done.stdout, rel)
 
     def walk(self, prefix):
@@ -100,29 +88,22 @@ class Index:
 def _subdirs(tracked, rel):
     """Immediate subdirectories of a render root that hold a tracked path.
 
-    One function, so a worktree render and a `--staged` check of it cannot
-    derive different sets: `git ls-files` is the index in both modes, and a
-    filesystem walk here answered a different question. It answered it worse,
-    too — an untracked or gitignored subdirectory of a render root
-    (`.claude/todos`) derived a glob matching nothing, which `_dead_globs`
-    then rejected as dead config with no edit that could clear it, and a
-    render root reached through a symlink derived nothing at all while the
-    index still carried the tree, so both sides of `exclusion-consistency`
-    agreed on empty and the run reported a clean pass.
+    One function over the index in both modes, so a worktree render and a
+    `--staged` check of it cannot derive different sets.
 
-    A root-level file is never a subdirectory, which is the rule
-    `.claude/settings.json` needs: a glob one shape too wide would silence
-    review on a settings file this repo owns and can fix.
+    A regular file directly under the root contributes nothing, which is the
+    rule `.claude/settings.json` needs: a glob one shape too wide would
+    silence review on a settings file this repo owns and can fix. A symlink
+    entry contributes nothing either, whatever its target. git stores one as a
+    blob, and a pull request editing the tree behind it carries the tree's
+    real path in its diff, never the path through the link, so a glob under
+    the link matches no diff path on any bot. The consumer repos link per
+    skill (`.claude/skills/code-quality`), whose tracked path already carries
+    the further slash this rule reads.
 
     **A render root the index holds as an entry of its own is refused**, not
-    derived as empty. Once a harness root is actually staged as a symlink git
-    stores `.claude` as that one entry and the tree under its real name, so no
-    tracked path opens with `.claude/` and this returns the empty set — the
-    harness tree silently back in review scope, on both verbs, with nothing
-    saying so. That is the empty-derivation failure this function was written
-    to close, arriving through the state its first fixture never entered. An
-    empty answer here means the root holds no tracked subdirectory; it must
-    not also mean the root is not a directory.
+    derived as empty. An empty answer here means the root holds no tracked
+    subdirectory; it must not also mean the root is not a directory.
     """
     if rel in tracked:
         raise ManifestError(
@@ -146,8 +127,7 @@ def _run(root, args):
 
     Returning `[]` when git could not answer is indistinguishable from a repo
     that tracks nothing, and the clause downstream that exists for the second
-    case then silently absorbs the first: `agents-section`'s nested-`AGENTS.md`
-    tracked-path read loses its entire input and the run reports a clean pass.
+    case then silently absorbs the first.
     """
     try:
         done = subprocess.run(["git", "-C", root] + args, capture_output=True, check=False)
@@ -160,19 +140,16 @@ def _run(root, args):
 
 
 def _git(root, args):
-    # `surrogateescape`, which is neither of the two the rest of this package
-    # chooses between, because a path is neither content nor display text.
-    # Strict would refuse a working repo: `ls-files -z` emits whatever names
-    # the repo holds, and a name that is not UTF-8 is legal on every
-    # filesystem this runs on. Lossy DESTROYED the name — `b"\xff/AGENTS.md"`
-    # came back as `"?/AGENTS.md"`, which still passed the nested-AGENTS.md
-    # filter and then addressed a different path on the read, so
-    # `agents-section` reported nothing about an active nested policy file.
-    # Surrogates round-trip: `os` calls and `subprocess` argument lists both
-    # encode a name back to the bytes git gave, so the reopen reaches the file
-    # the walk found. `fsutil.decode_text` answers the CONTENT question, and
-    # `renders.md` § Common rules names this as the exception to it.
-    return [p for p in _run(root, args).stdout.decode("utf-8", "surrogateescape").split("\0") if p]
+    """Every path git prints, decoded with `surrogateescape`.
+
+    Neither of the two modes the rest of this package chooses between, because
+    a path is neither content nor display text. Strict would refuse a working
+    repo: a name that is not UTF-8 is legal on every filesystem this runs on.
+    Lossy would DESTROY the name, and the reopen would then address a
+    different path.
+    """
+    raw = _run(root, args).stdout.decode("utf-8", "surrogateescape")
+    return [p for p in raw.split("\0") if p]
 
 
 def open_tree(root, staged):

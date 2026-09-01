@@ -45,17 +45,12 @@ def _spec_source(repo, spec_root, work, staged):
     """Where the spec copy is read from, and at which paths.
 
     Under `--staged` a spec copy that lives inside the repo is read from the
-    index like every other render input: reading doctrine from the worktree
-    while the outputs come from the index would let an unstaged doctrine edit
-    decide what the staged outputs were compared against.
+    index like every other render input, or an unstaged doctrine edit decides
+    what the staged outputs are compared against.
 
-    Inside is a question about path COMPONENTS, and `startswith("..")` answered
-    a question about characters: `<repo>/..spec` is a directory inside the
-    repo whose relative path opens with those two bytes, so a spec copy there
-    was read from the worktree while the outputs came from the index — the one
-    thing this function exists to prevent, in the mode SKILL.md says judges one
-    coherent state. `relpath` leaves an escape as a leading `..` component, so
-    the first component is the whole test.
+    Inside is a question about path COMPONENTS, never about characters:
+    `<repo>/..spec` is inside the repo and its relative path opens with those
+    two bytes. `relpath` leaves an escape as a leading `..` component.
     """
     inside = os.path.relpath(spec_root, repo)
     if staged and inside.split(os.sep)[0] != os.pardir:
@@ -71,10 +66,8 @@ def main(argv=None):
               file=sys.stderr)
         return 2
     if args.dry_run and args.verb != "render":
-        # `adopt` is the one-time verb that writes, so a flag it accepts and
-        # ignores is the worst place for one: a run meant to preview took the
-        # files over. This package's thesis is that a declared thing happens
-        # whole or refuses naming it.
+        # `adopt` is the one-time verb that writes, so a flag it accepted and
+        # ignored would take the files over on a run meant to preview.
         print(f"--dry-run is a render mode; {args.verb} does not write a set to preview",
               file=sys.stderr)
         return 2

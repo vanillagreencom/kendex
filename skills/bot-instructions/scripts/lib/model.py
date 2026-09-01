@@ -1,10 +1,9 @@
 """Everything a render reads, assembled once.
 
 SKILL.md § The render inputs is the one statement of the input set: the marker
-names them, `check --staged` reads each from the index, every one is under the
-open rule, and the policy set contains them. `RenderModel.inputs` is this
-implementation's single copy of that list, and the marker, the staged read and
-`drift`'s controls all take it from here rather than each naming its own set.
+names them, `check --staged` reads each from the index, and the policy set
+contains them. `RenderModel.inputs` is this implementation's single copy of
+that list.
 """
 
 from .constants import CODERABBIT_SCHEMA_PATH, TOML_PATH
@@ -15,13 +14,10 @@ from . import manifest, marker as marker_mod, spec
 class RenderModel:
     def __init__(self, config, doctrine, exclusions, inputs):
         # Every path here is interpolated into the marker comment, so every
-        # path here meets the class that cannot close one, which is what
-        # keeps `spec.py`'s claim and `renders.md` § Common rules true as the
-        # list grows repo-derived members. This is the backstop for the paths
-        # that are this package's own constants: `build` has already checked
-        # the manifest-derived ones against their own source, because a
-        # refusal naming the wrong file is the failure `errors.py` calls out
-        # by name.
+        # path here meets the class that cannot close one. This is the
+        # backstop for the paths that are this package's own constants;
+        # `build` checks the manifest-derived ones against their own source,
+        # so their refusal names the file that produced them.
         for path in inputs:
             spec.check_marker_path(path)
         self.config = config
@@ -51,12 +47,9 @@ class RenderModel:
         `renders.md` § Common rules asks two things that read as a
         contradiction until the block's ORIGIN is in hand. Doctrine from the
         spec copy is this package's own prose, hard-wrapped for that file's
-        sake, so joining its paragraphs is what § `AGENTS.md` is about.
-        `[doctrine.replace]` and `[doctrine.append]` put a repo author's bytes
-        into the same block, and repo text is what the no-reflow rule is
-        about. One helper answered for both inputs, which is the whole of why
-        the two rules looked as though they disagreed — and a fenced example
-        in an override came out as a single line.
+        sake, so joining its paragraphs loses nothing. `[doctrine.replace]`
+        and `[doctrine.append]` put a repo author's bytes into the same block,
+        and repo text is what the no-reflow rule is about.
 
         Whole-block, because `append` mixes the two: telling the halves apart
         would need per-paragraph origin, and keeping a package hard-wrap is
@@ -74,9 +67,9 @@ class RenderModel:
     def marker(self, style):
         """The marker comment, in `style`: 'html' or 'hash'.
 
-        `marker.comment` is the form, and `marker.at_canonical_position`
-        matches against that same function's output, so the string this
-        render writes and the string ownership is tested for are one.
+        `marker.comment` is the form, and `marker.owns` tests for that same
+        function's output, so the string this render writes and the string
+        ownership is tested for are one.
         """
         return marker_mod.comment(style, self.doctrine.version, self.inputs)
 
@@ -123,9 +116,7 @@ def build(tree, config, doctrine, spec_paths):
         # The one member of the input list a repo decides, so the one whose
         # marker-path refusal is a manifest finding. Checked here, where the
         # source is still known: the sweep in `RenderModel.__init__` sees a
-        # flat list and would report a manifest-derived path as a
-        # `bot-instructions.toml` defect, sending the reader to a file holding
-        # nothing wrong.
+        # flat list and would blame `bot-instructions.toml`.
         for path in read:
             try:
                 spec.check_marker_path(path)
@@ -168,12 +159,10 @@ def exclude_sentence(surface):
     is prose: those bots load the instructions for the excluded files and are
     asked to disregard them.
 
-    A blank line before it, never a space. Appended with a space, the sentence
-    joined whatever line the instructions ended on — and `instructions` that
-    end in a fenced code block end on the closing fence, which stops closing
-    anything once there is text after it. The fence then ran on, and the three
-    surfaces that carry this prose showed the exclusion sentence and whatever
-    followed as literal code rather than as instructions.
+    A blank line before it, never a space: `instructions` ending in a fenced
+    code block end on the closing fence, which closes nothing once there is
+    text after it on the line, and the sentence and everything after it then
+    render as literal code.
     """
     excl = surface.get("exclude_globs")
     if not excl:

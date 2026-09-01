@@ -2,8 +2,7 @@
 #
 # § Controls fixes what these have to prove: one red control per rejection
 # clause, each asserting on that validator's OWN identity and never on the
-# run's exit code, because all the validators run together and a fixture that
-# also trips another one reds for the wrong reason and reads as coverage.
+# run's exit code.
 #
 # Sourced, never executed: no mode bit, per this repo's CI convention.
 
@@ -94,24 +93,17 @@ bi_rendered_repo() {
   printf '%s\n' "$repo"
 }
 
-# A setup run whose failure is a SUITE failure, not a silent precondition.
-#
-# Every assertion that follows a setup verb is only meaningful if that verb
-# ran: a render that wrote nothing leaves whatever the fixture already had,
-# and a negative assertion ("this file does not contain X") is satisfied by a
-# file the run never touched. Discarding the exit status there makes a failed
-# setup indistinguishable from the property under test.
+# A setup run whose failure is a SUITE failure, not a silent precondition: a
+# render that wrote nothing leaves whatever the fixture already had, and a
+# negative assertion is satisfied by a file the run never touched.
 bi_must() {
   local out status
   out="$("$BI" "$@" 2>&1)"
   status=$?
   if [ "$status" -ne 0 ]; then
     # STDERR, not `bad`. Both fixture builders are called as
-    # `repo="$(bi_rendered_repo x)"`, so a FAIL line written to stdout in here
-    # is captured into `$repo` and thrown away, and the BI_FAIL it increments
-    # dies with the subshell. The caller's `|| exit 1` still fails the suite;
-    # what was missing was any word in the job log about why. Ordinary
-    # assertions keep writing to stdout, so the log stays in order.
+    # `repo="$(bi_rendered_repo x)"`, so a FAIL line on stdout is captured
+    # into `$repo` and the BI_FAIL it increments dies with the subshell.
     BI_FAIL=$((BI_FAIL + 1))
     printf '  FAIL setup: %s exited %s\n' "$*" "$status" >&2
     printf '       %s\n' "$(printf '%s' "$out" | head -3 | tr '\n' ' ')" >&2
@@ -135,16 +127,13 @@ bi_run() {
 }
 
 # The red control: the run fails AND the fired set is exactly the one named.
-# Asserting the exit code alone would pass on any failure at all, and grepping
+# Asserting the exit code alone passes on any failure at all, and grepping
 # only for the wanted prefix leaves a fixture that also trips a neighbour
-# reading as coverage. That is the isolation § Controls asks for, and
-# `mutations.py`'s `control()` already enforces it on the other side of the
-# suite.
+# reading as coverage.
 #
 # `$1` is the whole expected set, space-separated, its FIRST word the clause
-# under test. A second name there is the `also=` of `control()`: a mutation
-# that genuinely breaches two clauses records the second rather than hiding
-# it, and a run whose set stops matching fails either way.
+# under test. A second name records a mutation that genuinely breaches two
+# clauses rather than hiding it.
 expect_red() {
   local want label primary fired expected
   want="$1"; label="$2"; shift 2

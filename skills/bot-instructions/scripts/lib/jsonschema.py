@@ -2,15 +2,11 @@
 
 `validators.md` § `coderabbit-schema` fixes the rule: a schema keyword this
 validator does not implement is a failure naming the keyword, never a skip. A
-hand-written validator that ignores an unknown constraint under-validates
-while reporting success — the same class of silent failure one level up.
+validator that ignores an unknown constraint under-validates while reporting
+success. That means a schema refresh can block renders until this catches up,
+which is why the vendored copy's refresh step is a checklist line.
 
-That also means a schema refresh can block renders until this catches up,
-which is why the vendored copy's provenance and its refresh step are a
-checklist line.
-
-Lengths count Unicode code points, which is what the schema's `maxLength`
-counts and what Python's `len` over a `str` gives.
+Lengths count Unicode code points, which is what `maxLength` counts.
 """
 
 import re

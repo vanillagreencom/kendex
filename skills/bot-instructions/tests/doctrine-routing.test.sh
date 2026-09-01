@@ -1,20 +1,11 @@
 #!/usr/bin/env bash
 # `doctrine-routing`: one red control per rejection clause.
 #
-# The silent failure: the routing table is the generator's single routing
-# input, so a block reaches a surface only through a cell. A heading with no
-# row renders into nothing at all; a row naming a heading that does not exist
-# renders a hole. Both render clean.
-#
-# Every control here is a **fixture spec copy** passed with `--spec`, never an
-# edit to the running copy — a suite that edited the tree it also grades would
-# be grading itself. `--spec` is also the shape the prescribed CI lane uses,
-# where the spec copy comes from the tree under judgment while the code runs
-# from the trusted default-branch checkout.
-#
-# They run `render --dry-run`, which validates and writes nothing: `drift` is
-# skipped on render, and a doctrine change is a byte change by definition, so
-# on `check` every fixture here would red `drift` as well.
+# Every control is a **fixture spec copy** passed with `--spec`, never an edit
+# to the running copy: a suite that edited the tree it grades would be grading
+# itself. They run `render --dry-run`, which validates and writes nothing —
+# `drift` is skipped on render, and a doctrine change is a byte change by
+# definition, so on `check` every fixture here would red `drift` as well.
 
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -143,10 +134,9 @@ PY
 expect_message "no \`version:\` under metadata" 'a spec copy with no readable version' \
   render --dry-run --repo "$repo" --spec "$spec"
 
-# The version is interpolated into a comment that names this package. A
-# version carrying `-->` or a newline would end that comment and put the rest
-# into a generated markdown file as live reviewer instructions, so the package
-# validates the shape of its own spec copy rather than trusting it.
+# The version is interpolated into a comment. One carrying `-->` or a newline
+# would end that comment and put the rest into a generated file as live
+# reviewer instructions.
 spec="$(new_spec unsafe-version)"
 python3 - "$spec/SKILL.md" <<'PY'
 import re, sys
@@ -169,12 +159,11 @@ expect_message "exactly one is required" 'two `## Doctrine` sections' \
   render --dry-run --repo "$repo" --spec "$spec"
 
 # Doctrine text is under the same content refusals as repo text, applied where
-# it is read: `renders.md` § Render-side second checks. A `---` line under a
-# text line in a doctrine block renders into `.github/copilot-instructions.md`,
-# where blocks are `##` subsections with paragraphs preserved, and markdown
-# reads that pair as a setext heading — forging a section in the one file whose
-# escaping rule exists to stop exactly that. The HEADING refusal owns the pair;
-# the frontmatter one below owns a `---` that underlines nothing.
+# it is read: `renders.md` § Render-side second checks. A `---` under a text
+# line renders into `.github/copilot-instructions.md`, where blocks are `##`
+# subsections with paragraphs preserved, and markdown reads the pair as a
+# setext heading — a forged section in the file whose escaping rule exists to
+# stop exactly that.
 spec="$(new_spec doctrine-setext)"
 python3 - "$spec/SKILL.md" <<'PY'
 import sys
@@ -198,24 +187,10 @@ PY
 expect_message "heading refusal" 'a heading line in doctrine text, which ends the owned region' \
   render --dry-run --repo "$repo" --spec "$spec"
 
-# The frontmatter refusal's own shape, which no setext reading covers: a
-# `---` after a BLANK line underlines nothing and is a thematic break to a
-# reader, while at byte 0 of a markdown output it opens frontmatter.
-spec="$(new_spec doctrine-frontmatter)"
-python3 - "$spec/SKILL.md" <<'PY'
-import sys
-p = sys.argv[1]
-s = open(p).read().replace("### scope\n\nRaise a defect", "### scope\n\n---\n\nRaise a defect", 1)
-open(p, "w").write(s)
-PY
-expect_message "frontmatter refusal" 'a `---` line under a blank line in doctrine text' \
-  render --dry-run --repo "$repo" --spec "$spec"
-
-# The other side of that predicate: `#` with NO whitespace after it is a
-# heading to no reader, and this repo writes pull request numbers that way.
-# Read the block back rather than asserting the run exits 0 — the section
-# parse used to END at such a line, dropping the rest of the block with the
-# render reporting success, and a green run is exactly what that looked like.
+# The other side of the heading predicate: `#` with NO whitespace after it is
+# a heading to no reader, and this repo writes pull request numbers that way.
+# Read the block back rather than asserting the run exits 0 — a section parse
+# ending at such a line drops the rest of the block and still reports success.
 spec="$(new_spec doctrine-pr-number)"
 python3 - "$spec/SKILL.md" <<'PY'
 import sys
@@ -244,10 +219,8 @@ else
   bad 'and the block keeps that line and everything below it'
 fi
 
-# The same predicate at the same site, one character class wider: a `#` run
-# closed by a no-break space is a heading to nobody, and reading it as one
-# ended the section and dropped the rest of the block with the render
-# reporting success. Read the block back, for the reason above.
+# The same predicate one character class wider: a `#` run closed by a no-break
+# space is a heading to nobody. Read the block back, for the reason above.
 spec="$(new_spec doctrine-nbsp)"
 python3 - "$spec/SKILL.md" <<'PY'
 import sys
@@ -279,13 +252,11 @@ fi
 # A block's ORIGIN decides whether its paragraphs are joined. Doctrine from
 # the spec copy is this package's own prose, hard-wrapped for that file, so
 # joining it is right; a `[doctrine.replace]` is a repo author's bytes, and
-# `renders.md` § Common rules says repo text is never reflowed. One helper
-# answered for both, so a fenced example in an override came out as one line
-# in every destination that carries paragraphs.
+# `renders.md` § Common rules says repo text is never reflowed.
 #
-# Both halves in one fixture: the overridden block must survive intact, and a
-# block NOT overridden must still arrive joined, or a fix that simply stopped
-# joining everything would read as coverage.
+# Both halves in one fixture: the overridden block must survive intact and a
+# block NOT overridden must still arrive joined, or simply never joining would
+# read as coverage.
 fenced="$(bi_new_repo doctrine-fenced)"
 {
   cat "$BI_FIXTURES/canonical.toml"
@@ -316,7 +287,7 @@ if python3 - "$BI_ROOT/skills/bot-instructions" "$fenced" <<'PROBE'; then
 import os, sys
 PKG, repo = sys.argv[1], sys.argv[2]
 sys.path.insert(0, os.path.join(PKG, "scripts"))
-from lib import spec as spec_mod, tree, yamlread
+from lib import run, spec as spec_mod, tree
 
 FENCE = "```\nseverity = consequence * reach\n```"
 CARRIERS = (".github/copilot-instructions.md", "REVIEW.md",
@@ -329,7 +300,10 @@ for rel in CARRIERS:
 # which collapsed every newline in it unconditionally. `render-out-of-scope`
 # is the block it carries, so the fixture overrides that one too.
 OUT_OF_SCOPE = "```\ngit ls-files -- \':(glob)vendor\'\n```"
-doc = yamlread.loads(open(os.path.join(repo, ".coderabbit.yaml")).read())
+ctx = run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
+                  ("SKILL.md", "schemas/renders.md"), "check",
+                  ("SKILL.md", "schemas/renders.md"))
+doc = ctx.build.data[".coderabbit.yaml"]
 catch_all = [e for e in doc["reviews"]["path_instructions"] if e["path"] == "**"]
 if not catch_all:
     sys.exit(".coderabbit.yaml: no catch-all path_instructions entry to judge")

@@ -1,7 +1,7 @@
 ---
 name: bot-instructions
 description: "Load to render, check or adopt a repo's GitHub review-bot instruction files from the shared doctrine plus its bot-instructions.toml, or to read the doctrine, the TOML schema, the render rules and the validators."
-summary: "Renders every GitHub review bot's native instruction file from one doctrine source plus a per-repo TOML: AGENTS.md § Code Review Rules for Codex, Copilot repo-wide and path-scoped instructions, a full-state .coderabbit.yaml, .pr_agent.toml with best_practices.md, and a .macroscope tree, with thirteen validators for the surfaces that fail silently."
+summary: "Renders every GitHub review bot's native instruction file from one doctrine source plus a per-repo TOML: AGENTS.md § Code Review Rules for Codex, Copilot repo-wide and path-scoped instructions, a full-state .coderabbit.yaml, .pr_agent.toml with best_practices.md, and a .macroscope tree, with validators for the surfaces that fail silently."
 license: MIT
 user-invocable: true
 metadata:
@@ -140,10 +140,6 @@ There is no install-time placement step, no overwrite prompt, and no merge of
 hand edits back into doctrine. A generated file is either byte-identical to its
 render or a `check` finding.
 
-A render holds a lock file for its duration and a second concurrent render
-refuses, because two renders interleaving their writes produce a tree neither
-validated.
-
 ## Rendering into a file this package does not own
 
 `AGENTS.md` is the repo's own instruction file, written for working agents. The
@@ -176,43 +172,17 @@ an orphan rather than creating one. `check` catches a retirement that skipped
 the render; it is not the normal path. `validators.md` § `orphan` carries the
 order and what deleting the `AGENTS.md` region means.
 
-**Every open is contained, and the rule is about opens rather than about
-outputs.** Resolving a path, checking it, then opening it proves the property
-about the name and not about the file the open lands on, so the property is held
-at the open. Two halves, and both are needed:
-
-- **No component may redirect.** Walking from a repo-root descriptor, each
-  component is opened relative to the previous one with directory and no-follow
-  flags. A symlink anywhere in the path fails, not only a final one: with
-  `.github/instructions` a symlink out of the tree, refusing only the last
-  component creates or truncates a file outside the repo root and any check
-  after that fires too late. Containment is then a property of how the
-  descriptor was reached rather than something re-derived from the opened file,
-  which is what makes it checkable at all — re-deriving a path from a descriptor
-  needs a different mechanism on each platform this repo targets.
-- **Every open, not every write.** `render` writes, but `check` mostly reads:
-  `drift` opens each path the TOML produces, `orphan` opens every path in
-  `validators_repo.ROOT_OUTPUTS` and every file below the trees
-  `validators.md` § `orphan` names, testing each for the marker, and
-  `agents-section` reads the repo's tracked nested `AGENTS.md` files. Cited by
-  the structure that owns it rather than partitioned again here, per §
-  Cross-file sets: `orphan`'s set is the one the flag-off case turns on, so a
-  split that stops matching the tuple would understate the disclosure argument
-  this paragraph exists to make. Those sets are named by the tree under
-  judgment. `adopt` opens no file it merely names: it reports the markdown files an adopted one points
-  at rather than reading them, so nothing about their contents can reach a
-  report. A symlink at any of those paths is
-  followed by a trusted reader, and its bytes are quoted into a `check` finding
-  in a CI log — a disclosure route no write-side rule covers, because nothing is
-  written.
+**Ownership is the marker's, not the path's.** `render` replaces a generated
+path only when that file's first line is the marker this package writes — or
+its first line after a leading YAML frontmatter block or the
+`yaml-language-server` schema line, the two prologues an output's format puts
+above it. Anything else at that path is the repo's own file and the run
+refuses naming it. `renders.md` § Common rules is the rule; `adopt` is the way
+in.
 
 A path that fails is a finding naming the path, and a `check` finding never
-quotes a region out of a file that failed the open: what gets reported is the
-containment failure, not the contents.
-
-This repo's own convention is the precedent for the no-follow half — it opens
-without following and re-checks the opened file's type rather than the name. The
-walk from a root descriptor is the part it does not have.
+quotes a region out of a file that failed to read: what gets reported is the
+failure, not the contents.
 
 ## Every rendered config excludes the render trees
 
@@ -260,8 +230,7 @@ whose merge gate consumes bot output has to do instead:
 
 **The render inputs**, which is every path a render reads to produce bytes. This
 is the one statement of the set: the marker names them, `check --staged` reads
-each from the index, every one is under the open rule above, and the policy set
-below contains them.
+each from the index, and the policy set below contains them.
 
 - `bot-instructions.toml`.
 - The spec copy's doctrine source and routing table.

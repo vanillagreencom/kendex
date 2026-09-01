@@ -239,12 +239,11 @@ doctrine constant, and no doctrine block asserts what a push triggers.
 
 ### `[tone]`
 
-`coderabbit`, string, optional, ASCII only. Renders to `tone_instructions`,
-whose hard cap is 250 characters after the generator strips the newlines a TOML
-multi-line string introduces. Over the cap, CodeRabbit rejects the entire file.
-ASCII is required so that the local count and the vendor's cannot disagree
-about what one character is. Absent, the shipped default is used; see
-`renders.md` for its text.
+`coderabbit`, string, optional. Renders to `tone_instructions`, whose hard cap
+is 250 characters after the generator strips the newlines a TOML multi-line
+string introduces. Over the cap, CodeRabbit rejects the entire file. The cap
+counts Unicode code points, which is what the vendored schema's `maxLength`
+counts. Absent, the shipped default is used; see `renders.md` for its text.
 
 ### `[budgets]`
 
@@ -333,8 +332,9 @@ path actually read.
 Every derived entry carries that exact string, because every derived entry is
 excluded for that one reason and nothing about the tree distinguishes them. A
 render rule that wants a reason takes it from here rather than restating it, and
-the string is single-line ASCII with no `-->` and no `#`, so it satisfies every
-constraint a rendered comment is under by construction rather than by check.
+the string is a single ASCII line with no `-->` and no `#`, so it satisfies
+every constraint a rendered comment is under by construction rather than by
+check.
 Without it the render rules would demand bytes the schema never supplies:
 `reason` is a required key on `[[exclusions.path]]` entries alone, and a derived
 entry has no TOML row to carry one.
@@ -361,7 +361,7 @@ A path set plus what a reviewer needs to know about it. Zero or more.
 | `name` | string | yes | Lowercase, `[a-z0-9-]`, non-empty, unique. Becomes the generated filenames |
 | `globs` | array of string | yes | Non-empty. Paths this surface covers |
 | `exclude_globs` | array of string | no | Subtracted from `globs`, and real subtraction only on Macroscope. Kept rather than cut: it is the only path-scoped subtraction any of the five bots offers a repo file, and losing it would leave narrowing `globs` as the only tool. Everywhere else it renders as prose asking a bot to disregard rules it has already loaded, which SKILL.md says plainly rather than dressing up |
-| `reviewer_only` | bool | no, default `false` | Renders `excludeAgent: "cloud-agent"` into the Copilot file, keeping reviewer doctrine away from the working agent. `copilot-frontmatter` requires exactly that key and value when this is true, since the other permitted value hides the file from the reviewer instead |
+| `reviewer_only` | bool | no, default `false` | Renders `excludeAgent: "cloud-agent"` into the Copilot file, keeping reviewer doctrine away from the working agent. The other permitted value, `code-review`, hides the file from the reviewer instead, so `renders.md` fixes which one is written |
 | `instructions` | string | yes | What a reviewer gets wrong here, and what is true instead |
 
 `name` may not be `doctrine`, `correctness`, `ignore`, or `approvability`. Each
@@ -369,22 +369,21 @@ is a path this package or Macroscope already governs, and a surface claiming one
 would silently lose a file to write order.
 `.macroscope/correctness/correctness.md` is the one worth naming: it is
 Macroscope's governing file, carrying `waitsFor`, `requires` and their two
-timeouts for the whole correctness run, and `macroscope-render` permits no
-frontmatter key but `include` and `exclude`, so an `adopt` over it would drop a
-repo's check prerequisites for good. A `name` colliding with another surface is
+timeouts for the whole correctness run, and the render writes no frontmatter
+key but `include` and `exclude`, so an `adopt` over it would drop a repo's
+check prerequisites for good. A `name` colliding with another surface is
 an error. There is no separate check for a path collision, because the name
 **is** the generated filename: uniqueness plus the reserved set decides it, and
 a second check could never red.
 
-`instructions` is under the heading, frontmatter and marker refusals below.
-Each restructures at least one output: a heading — `#` or an underline — ends
-the `AGENTS.md` owned region or forges a section, `---` opens frontmatter, and
-the marker decides which files this package owns. It is also required to be non-empty, which is a rule about the surface
-rather than about the string: whitespace renders a `path_instructions` entry
-with no text, a `.instructions.md` carrying a marker and nothing under it, and
-a best-practices section with no body — a surface that costs its bots a read
-and tells them nothing, on the flag combinations where `macroscope-render`'s
-no-text clause never runs. Drop the surface instead.
+`instructions` is under the heading, marker and control refusals below. Each
+restructures at least one output: a heading — `#` or an underline — ends the
+`AGENTS.md` owned region or forges a section, and the marker decides which
+files this package owns. It is also required to be non-empty, which is a rule
+about the surface rather than about the string: whitespace renders a
+`path_instructions` entry with no text, a `.instructions.md` carrying a marker
+and nothing under it, and a best-practices section with no body — a surface
+that costs its bots a read and tells them nothing. Drop the surface instead.
 
 A `[...]` class is made of permitted characters and is not itself checked
 character by character, so the dialect admits one shape no engine can compile:
@@ -398,7 +397,9 @@ runtime the dead-exclusion clause pays once per tracked path.
 ## The content refusals
 
 One row per input string, one column per refusal class, and an **Enforced**
-column saying which side reads that row's value. Everything that judges these —
+column saying which side reads that row's value. Every class here is one that
+would break the STRUCTURE of a file this package emits; a value this package
+merely dislikes is not refused. Everything that judges these —
 `toml-schema` and the Escaping paragraphs in `renders.md` — cites this table
 rather than restating it, so a predicate written here is the only predicate.
 Three structures encode it, one per kind of cell: `refusals.ROWS` holds the
@@ -414,18 +415,18 @@ and cannot be the clause's owner; the render-side check is. Without the column
 a reader counting `toml-schema`'s clauses off this table would count three that
 nothing there implements.
 
-| Input string | heading | frontmatter | marker | comment-close | toml-delimiter | control | character class | Enforced |
-|--------------|---------|-------------|--------|---------------|----------------|---------|-----------------|----------|
-| `[repo] name` | – | – | – | – | – | – | single line, `[A-Za-z0-9._-]` | `toml-schema` |
-| `[repo] tracker` | – | – | – | – | – | – | single line, `[A-Za-z0-9._-]` | `toml-schema` |
-| `[repo] summary` | yes | yes | yes | – | yes | yes | – | `toml-schema` |
-| `[[surface]] instructions` | yes | yes | yes | – | – | yes | – | `toml-schema` |
-| `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | yes | – | yes | yes | – | `toml-schema` |
-| doctrine block text | yes | yes | yes | – | yes | yes | – | render-side |
-| `[[exclusions.path]] reason` | – | – | yes | yes | – | yes | single line | `toml-schema` |
-| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | – | – | non-empty, the glob dialect above, and its path-shape rule | `toml-schema` |
-| `[tone] coderabbit` | – | – | – | – | – | yes | ASCII only | `toml-schema` |
-| `[cadence] qodo_commands` entries | – | – | – | – | – | – | a verb from the set above, no whitespace, no `--` | `toml-schema` |
+| Input string | heading | marker | comment-close | toml-delimiter | control | character class | Enforced |
+|--------------|---------|--------|---------------|----------------|---------|-----------------|----------|
+| `[repo] name` | – | yes | – | yes | yes | single line | `toml-schema` |
+| `[repo] tracker` | – | yes | – | yes | yes | single line | `toml-schema` |
+| `[repo] summary` | yes | yes | – | yes | yes | – | `toml-schema` |
+| `[[surface]] instructions` | yes | yes | – | – | yes | – | `toml-schema` |
+| `[doctrine.append]` / `[doctrine.replace]` values | yes | yes | – | yes | yes | – | `toml-schema` |
+| doctrine block text | yes | yes | – | yes | yes | – | render-side |
+| `[[exclusions.path]] reason` | – | yes | yes | – | yes | single line | `toml-schema` |
+| `[[surface]] globs`, `exclude_globs`, `[[exclusions.path]] glob` | – | – | – | – | – | non-empty, the glob dialect above, and its path-shape rule | `toml-schema` |
+| `[tone] coderabbit` | – | – | – | – | yes | – | `toml-schema` |
+| `[cadence] qodo_commands` entries | – | – | – | – | – | a verb from the set above, no whitespace, no `--` | `toml-schema` |
 
 The predicates, written once:
 
@@ -447,9 +448,6 @@ The predicates, written once:
   is too narrow puts a structural heading into a generated file. The section
   terminators read ATX alone and `markdown.py` says why; what makes that safe
   is this row, which keeps a setext underline out of every string they parse.
-- **frontmatter** — a line that is exactly `---`, which opens or closes YAML
-  frontmatter in a `.instructions.md` file. Its own shape rather than the
-  heading row's: a `---` under a blank line underlines nothing.
 - **marker** — a line carrying the marker text, which is what decides which
   files this package owns.
 - **comment-close** — `-->`, which would end the HTML comment a `reason` is
@@ -476,31 +474,20 @@ The predicates, written once:
   `path_filters:` key of its own and the entry below it loses its `!` — the
   state `renders.md` § `reviews.path_filters` names as the one that turns the
   exclusion list into an allowlist. `scripts/lib/refusals.py` is the one
-  statement of the class, and `yamlread` runs that predicate rather than a
-  narrower copy: a default in the vendored schema reaches a rendered file
-  through no row of this table, and the reader is where three validators can
-  each refuse it naming themselves.
+  statement of the class, and `coderabbit-schema` runs that same predicate over
+  the document it validates: a default in the vendored schema reaches a
+  rendered file through no row of this table.
 
-  A character class exempts a row from this mark only when it **enumerates the
-  permitted characters**, because then no control is among them. A class that
-  names an encoding does not: ASCII contains NUL and every C0 control, so
-  `[tone] coderabbit` carries the mark despite having a class. Neither does a
-  class constraining one dimension only: `single line` refuses the line breaks
-  and says nothing about the rest of the class — NUL, DEL, the C0 controls
-  that break no line — which is why `[[exclusions.path]] reason` carries it
-  too. Read the test against each class rather than counting the
-  rows that have one.
-- **character class** — as stated per row above. Three enumerate their
-  permitted characters and so need no `control` mark: `[repo] name` and
-  `[repo] tracker` take `[A-Za-z0-9._-]`, the globs take the dialect's own
-  class, and `qodo_commands` takes a verb from a closed literal set. `[tone]
-  coderabbit` is ASCII so the local length count and the vendor's cannot
-  disagree about what one character is — which matters there and nowhere else,
-  since `tone_instructions` is the cap CodeRabbit discards the whole file over —
-  and ASCII is an encoding rather than an enumeration, so that row is marked
-  `control` as well. Tab and newline stay legal there: the documented way to
-  author a tone is a TOML multi-line string, and the render collapses its
-  newlines to single spaces.
+  A `single line` class does not exempt a row from this mark: it refuses the
+  line breaks and says nothing about the rest of the class — NUL, DEL, the C0
+  controls that break no line. Read the test against each class rather than
+  counting the rows that have one.
+- **character class** — as stated per row above. `single line` on `[repo]
+  name`, `[repo] tracker` and `[[exclusions.path]] reason`; the dialect's own
+  class on the globs; a verb from a closed literal set on `qodo_commands`. Tab
+  and newline stay legal in `[tone] coderabbit`: the documented way to author a
+  tone is a TOML multi-line string, and the render collapses its newlines to
+  single spaces.
 
 **Refusals, not escapes.** Every class here is refused at input. The render
 escapes only what a format requires of text already known to be legal — a

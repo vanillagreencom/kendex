@@ -211,10 +211,10 @@ can still change what the file means.
 - [ ] Spend caps are set: monthly, per pull request, and per review. Macroscope
       bills per review, and this package's exclusion list is what keeps a
       vendored tree from being paid for repeatedly.
-- [ ] The generated `.macroscope/ignore.md` excludes what it names. Macroscope
-      documents no grammar for that file, so the render keeps every non-pattern
-      line inside an HTML comment on the assumption that anything else would be
-      read as a pattern. Confirm once that the exclusions took effect.
+- [ ] The generated `.macroscope/ignore.md` excludes what it names. The render
+      writes the grammar Macroscope documents, one glob per line with `#`
+      comments, and `references/limits.md` § Macroscope cites the page.
+      Confirm once that the exclusions took effect.
 
 ## If the repo's kendex.toml is a source catalog
 
