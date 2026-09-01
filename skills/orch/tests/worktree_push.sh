@@ -75,7 +75,7 @@ NEW_A2="$(printf 'd%.0s' {1..39})3"
 # The pushed worktree is a real git checkout: round authorizations live in ITS git
 # dir, never in the tree and never in the state directory.
 wt="$TMP_ROOT/wt"
-git init -q "$wt"
+git init -q -b main "$wt"
 mkdir -p "$wt/tmp"
 
 # Fresh state with recorded fix commits on both surfaces: a short prefix of
