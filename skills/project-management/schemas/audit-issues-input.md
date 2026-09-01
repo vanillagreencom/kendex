@@ -64,8 +64,8 @@ Input file for `audit-issues --issues`, written by the caller at `[worktree-path
 | `title` | Yes | Concise title |
 | `location` | Yes | File path — **never line numbers**; name the function or struct |
 | `description` | Yes | 2-3 sentences: what and why. Becomes the issue body |
-| `impact` | Yes | Who hits this, on what real path — the reviewer skill's `review-finding` field, carried through as the issue's reach |
-| `symptom` | P2 review items | The run, user, or red check that already showed it. Required where a review-born source files at priority 2 |
+| `impact` | Before create | Who hits this, on what real path. The reviewer skill's `review-finding` field on a `category: "issue"` suggestion; on a blocker, an escalated item, or a Discovered Work bullet no artifact carries it and the caller writes it from the finding |
+| `symptom` | P2 review items | The run, user, or red check that already showed it. No artifact carries it, so the caller writes it from the finding. Required where a review-born source files at priority 2 |
 | `recommendation` | Yes | Bullet-list requirements. Becomes the requirements section |
 | `priority` | Yes | 1-4 |
 | `estimate` | Yes | 1-5 points |

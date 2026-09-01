@@ -40,9 +40,10 @@ TPM_AUDIT="$SKILL_DIR/workflows/tpm-audit.md"
 # --- 1. every create site names where its body comes from --------------------
 # The site list is derived: the files a harness loads to ACT — workflows and
 # patterns — not a list kept here. A create is command-shaped when linear.sh
-# runs it, which is what separates the eight real sites from the prose that
-# merely names the action. A `\`-continued command carries its flags on the
-# lines below, so the invocation is the line plus its continuations.
+# runs it, which is what separates the real sites from the prose that merely
+# names the action. A `\`-continued command carries its flags on the lines
+# below, so the invocation is the line plus its continuations, and each one is
+# judged on its own — a second create in a file cannot ride on the first.
 site_files=()
 while IFS= read -r f; do site_files+=("$f"); done < <(
 	find "$SKILLS_ROOT" -type f -path '*/workflows/*.md' -o -type f -path '*/patterns/*.md' |
@@ -50,23 +51,45 @@ while IFS= read -r f; do site_files+=("$f"); done < <(
 )
 [[ ${#site_files[@]} -gt 0 ]] || fail "no workflow or pattern files under $SKILLS_ROOT"
 
+# The body source is prose beside the command, so it is looked for in the
+# invocation's own section — its nearest preceding heading through the next
+# one. Searching the whole file would let a second create ride on a statement
+# written for the first.
+section_of() { # FILE LINE — print that line's enclosing heading section
+	local file="$1" line="$2" start end
+	start="$(awk -v n="$line" 'NR<=n && /^#{1,6} / {h=NR} END {print (h ? h : 1)}' "$file")"
+	end="$(awk -v n="$line" 'NR>n && /^#{1,6} / {print NR-1; exit}' "$file")"
+	[[ -n "$end" ]] || end="$(wc -l <"$file")"
+	sed -n "${start},${end}p" "$file"
+}
+
 sites_seen=0
 for f in "${site_files[@]}"; do
 	invocations="$(awk '
-		/linear\.sh issues create( |$|\\)/ { collecting = 1; buf = $0; next }
-		collecting { buf = buf " " $0 }
-		collecting && $0 !~ /\\$/ { print buf; collecting = 0 }
-		END { if (collecting) print buf }
+		/linear\.sh issues create( |$|\\)/ {
+			start = NR; buf = $0
+			if (buf !~ /\\$/) { print start "\t" buf; next }
+			collecting = 1; next
+		}
+		collecting {
+			buf = buf " " $0
+			if ($0 !~ /\\$/) { print start "\t" buf; collecting = 0 }
+			next
+		}
+		END { if (collecting) print start "\t" buf }
 	' "$f")"
 	[[ -n "$invocations" ]] || continue
 	sites_seen=$((sites_seen + 1))
 	while IFS= read -r invocation; do
 		[[ -n "$invocation" ]] || continue
-		grep -qE -- '--description(-file)?' <<<"$invocation" ||
-			fail "${f#"$SKILLS_ROOT/"} runs issues create with no body, so it can carry no reach: $invocation"
+		line="${invocation%%$'\t'*}"
+		command="${invocation#*$'\t'}"
+		grep -qE -- '--description(-file)?' <<<"$command" ||
+			fail "${f#"$SKILLS_ROOT/"}:$line runs issues create with no body, so it can carry no reach: $command"
+		section_of "$f" "$line" |
+			grep -qE 'issue-description-template|parent-issue-template|Reached by' ||
+			fail "${f#"$SKILLS_ROOT/"}:$line runs issues create in a section naming no body source — cite the issue template or state the Reached by: line beside the command"
 	done <<<"$invocations"
-	grep -qE 'issue-description-template|parent-issue-template|Reached by' "$f" ||
-		fail "${f#"$SKILLS_ROOT/"} runs issues create but names no body source — cite the issue template or state the Reached by: line"
 done
 [[ "$sites_seen" -ge 5 ]] ||
 	fail "only $sites_seen create site(s) found; the derivation stopped matching the tree"
@@ -83,12 +106,17 @@ in_enum() {
 	return 1
 }
 
+# A writer BUILDS an audit input; a consumer merely reads the schema. The
+# writers say so — "audit input", "audit-input file" — and the consumers'
+# table rows do not, so the selector is that phrase rather than the file path,
+# which one writer states on another line. A selected writer that states no
+# source FAILS: skipping it is how the review-born half went unenforced.
 writers_seen=0
 while IFS= read -r hit; do
 	file="${hit%%:*}"
 	rest="${hit#*:}"
 	line="${rest#*:}"
-	grep -qE 'tmp/audit-[a-z-]*-?YYYYMMDD' <<<"$line" || continue
+	grep -qE 'audit[- ]input' <<<"$line" || continue
 	writers_seen=$((writers_seen + 1))
 	stated="$(sed -nE 's/.*`?source: "([a-z-]+)"`?.*/\1/p' <<<"$line" | head -1)"
 	[[ -n "$stated" ]] ||
@@ -96,7 +124,7 @@ while IFS= read -r hit; do
 	in_enum "$stated" ||
 		fail "${file#"$SKILLS_ROOT/"} states source \"$stated\", which the schema's enum does not declare ($enum_values)"
 done < <(grep -rn 'audit-issues-input.md' "$SKILLS_ROOT"/*/workflows/*.md || true)
-[[ "$writers_seen" -ge 3 ]] ||
+[[ "$writers_seen" -ge 4 ]] ||
 	fail "only $writers_seen audit-input writer(s) found; the derivation stopped matching the tree"
 
 # Every source the producer calls review-born must be one that can occur.
