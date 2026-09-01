@@ -10,10 +10,12 @@
 #
 # EVERY CHECK HERE FAILS CLOSED. No result is read out of an empty string:
 # git, grep and the lint itself are asked for their status, and a command that
-# could not run ends the run instead of scoring a pass. The roster and the
-# pattern set are both ASKED OF THE LINT — `--list` and `--pattern` — rather
-# than restated here or parsed back out of its source, so what is judged below
-# is what the program runs.
+# could not run ends the run instead of scoring a pass. The resolved roster
+# and the pattern set are both ASKED OF THE LINT — `--list` and `--pattern` —
+# rather than restated here, so what is judged below is what the program runs.
+# The roster's hand-named entries have no such question to ask, so they are
+# read out of the roster line; that is still reading the lint rather than
+# keeping a second copy of the list here.
 set -eu -o pipefail
 ROOT="$(git rev-parse --show-toplevel)" || exit 2
 cd "$ROOT" || exit 2

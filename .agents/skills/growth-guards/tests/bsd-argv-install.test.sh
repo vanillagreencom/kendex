@@ -13,8 +13,8 @@
 # macOS would. The merge-group macOS lane stays the platform proof; this is
 # what every Linux run can say on its own.
 #
-# Bash 4 syntax in the shipped scripts is `tools/bash32-lint`, run over every
-# skill's scripts/ and tests/ at once.
+# Bash 4 syntax in the shipped scripts is `tools/bash32-lint`, run over the
+# roster `tools/bash32-lint --list` prints.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

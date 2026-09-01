@@ -34,10 +34,10 @@ set -uo pipefail
 #
 # tools/ is NOT in the roster. This file defines the pattern set in string
 # literals and explains it in comments that quote the constructs, so the
-# scan reds on the definition it judges by, and respelling that definition
-# would change what it matches. tools/tests/ reds as well, on a construct
-# name a check hands the scan as a narrowed pattern. Clearing tools/ takes
-# more than a respell; `tools/bash32-lint tools` lists what is there now.
+# scan reds on the definition it judges by. tools/tests/ reds as well, on a
+# construct name a check hands the scan as a narrowed pattern. Clearing
+# tools/ therefore takes more than a respell; `tools/bash32-lint tools`
+# lists what is there now.
 #
 # The exceptions are declared, with the reason, because a roster that
 # discovers its members cannot tell a directory that is exempt from one that
