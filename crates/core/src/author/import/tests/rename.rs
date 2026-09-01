@@ -307,6 +307,39 @@ fn a_renamed_agent_declares_its_destination_and_the_name_less_kinds_are_copied_v
     }
 }
 
+/// A parked agent keeps its content at `<name>.md.disabled`, so the file
+/// the bytes come from ends in a suffix that is not a format at all. The
+/// bytes are the frontmatter they always were, so it renames like any
+/// other agent — which is the whole reason the bytes are asked rather than
+/// the filename.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_renamed_parked_agent_declares_its_destination() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    file_item(
+        &root.join(".claude/agents"),
+        "parked.md.disabled",
+        "---\nname: parked\ndescription: about parked\n---\nAgent body.\n",
+    );
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-parked");
+    let candidates = inventory(&env, &scopes).unwrap();
+    let mut renamed = selection(find(&candidates, "parked"), false);
+    renamed.destination = "roused".to_owned();
+
+    apply(&env, &scopes, &target, &[renamed]).unwrap();
+
+    let written = fs::read_to_string(target.join("agents/roused.md")).unwrap();
+    assert!(written.contains("name: roused"), "{written}");
+    assert!(
+        written.contains("description: about parked") && written.contains("Agent body."),
+        "only the name line changes: {written}"
+    );
+}
+
 /// What decides is the format, not the extension it wears. A Cursor rule
 /// is `.mdc` and carries frontmatter, so it is renamed like any other
 /// agent: it lands in the catalog's markdown slot declaring the
@@ -341,9 +374,10 @@ fn a_renamed_cursor_agent_declares_its_destination() {
 
 /// An agent is not always frontmatter: Codex reads its agents as TOML and
 /// an unmanaged scan offers those like any other, so a rename arrives here
-/// with bytes that carry a `name` key and no frontmatter at all. The
-/// refusal names the format, rather than sending the person off to add a
-/// frontmatter block the harness would then refuse to load.
+/// with bytes that carry a `name` key and no frontmatter at all. It
+/// refuses, and names the file it read, so the person can see the format
+/// the answer is about — rather than being sent off to add a frontmatter
+/// block that the harness would then refuse to load.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_renamed_agent_in_another_format_is_refused_by_that_format() {
@@ -365,6 +399,12 @@ fn a_renamed_agent_in_another_format_is_refused_by_that_format() {
     let message = apply(&env, &scopes, &target, &[renamed])
         .unwrap_err()
         .to_string();
-    assert!(message.contains("a .toml agent"), "{message}");
-    assert!(!message.contains("frontmatter"), "{message}");
+    assert!(message.contains("'codexer.toml'"), "{message}");
+    assert!(
+        message.contains("still call itself 'codexer'"),
+        "and what the copy would have answered to: {message}"
+    );
+    // Never the instruction to add one: a Codex agent with a frontmatter
+    // block on top is an agent Codex will not load.
+    assert!(!message.contains("give it a frontmatter"), "{message}");
 }

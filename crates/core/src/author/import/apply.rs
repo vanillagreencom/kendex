@@ -92,39 +92,29 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
     // keeps illegal spellings so the wizard can offer them under another
     // destination — which is the path that reaches this refusal.
     let shown = crate::names::shown;
-    let foreign = foreign_agent_file(answer.read_from.as_deref());
-    let renamed = |bytes: &[u8]| {
+    let origin = origin_file(answer.read_from.as_deref());
+    let renamed = |bytes: &[u8], at: &str| {
         crate::render::skill::bytes_named(bytes, wanted).map_err(|problem| CoreError::Authoring {
             message: format!(
-                "'{}' cannot be imported as '{}' — {problem}, so the copy would still call itself '{}'. Import it under its own name, or give it a frontmatter block naming it where it is now.",
+                "'{}' cannot be imported as '{}' — {problem} in '{}', so the copy would still call itself '{}'. Import it under its own name: a copy is renamed only where the file it comes from carries a frontmatter block a name can be written into.",
                 shown(&selection.name),
                 shown(&selection.destination),
+                shown(at),
                 shown(crate::names::leaf(&selection.name)),
             ),
         })
     };
     match (selection.kind, &mut answer.bytes) {
         (ItemKind::Skill, Bytes::Tree(files)) => {
-            for (_, bytes) in files
+            for (rel, bytes) in files
                 .iter_mut()
                 .filter(|(rel, _)| crate::render::skill::carries_name(rel))
             {
-                *bytes = renamed(bytes)?;
+                let at = rel.to_string_lossy().into_owned();
+                *bytes = renamed(bytes, &at)?;
             }
         }
-        (ItemKind::Agent, Bytes::File(bytes)) => match foreign {
-            Some(ext) => {
-                return Err(CoreError::Authoring {
-                    message: format!(
-                        "'{}' cannot be imported as '{}' — a .{ext} agent carries its name in a shape kendex cannot write a new one into, so the copy would still call itself '{}'. Import it under its own name.",
-                        shown(&selection.name),
-                        shown(&selection.destination),
-                        shown(crate::names::leaf(&selection.name)),
-                    ),
-                });
-            }
-            None => *bytes = renamed(bytes)?,
-        },
+        (ItemKind::Agent, Bytes::File(bytes)) => *bytes = renamed(bytes, &origin)?,
         // Named rather than fallen through to, because "nothing to
         // declare" and "a shape we did not expect" are different answers
         // and only one of them is safe to be silent about. Their bytes go
@@ -151,20 +141,17 @@ fn declare_destination(answer: &mut ResolvedSelection, selection: &ImportSelecti
     Ok(())
 }
 
-/// The extension an agent's bytes arrived under, when nothing here can
-/// write a name into that format. An unmanaged scan offers agent files as
-/// their harness keeps them, which is not always markdown: Codex reads
-/// `.codex/agents/*.toml`, whose name is a TOML key rather than a
-/// frontmatter line, while Cursor's `.mdc` rules do carry frontmatter and
-/// are renamed like any other agent. The extension does not decide that —
-/// [`crate::render::agent::declared_at_ext`] does, off what each harness's
-/// renderer writes — and an extension no harness claims is refused rather
-/// than guessed at. Answering "it has no frontmatter" about a file that
-/// never had any sends the person off to add one to a format that would
-/// then refuse to load.
-fn foreign_agent_file(read_from: Option<&Path>) -> Option<String> {
-    let ext = read_from?.extension()?.to_str()?.to_ascii_lowercase();
-    (crate::render::agent::declared_at_ext(&ext) != Some(true)).then_some(ext)
+/// What to call the file a refusal is about. Shown, never decided on: an
+/// unmanaged scan offers agent files as their harness keeps them, and the
+/// spellings do not end — `.md`, Cursor's `.mdc`, Codex's `.toml`,
+/// Copilot's compound `.agent.md`, any of them parked as `.disabled` — so
+/// the name only tells the person which file to open. Whether a name can
+/// be written in is asked of the bytes.
+fn origin_file(read_from: Option<&Path>) -> String {
+    read_from.and_then(Path::file_name).map_or_else(
+        || "its own file".to_owned(),
+        |at| at.to_string_lossy().into_owned(),
+    )
 }
 
 /// Whether a selection already taken occupies the place this one wants.
