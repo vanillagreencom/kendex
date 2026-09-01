@@ -217,12 +217,29 @@ for exe in worktree/scripts/worktree review-gate/scripts/pr-watch.sh; do
   printf '#!/bin/sh\necho "EXECUTED FROM THE CONFIGURED SKILLS_DIR" >&2\nexit 0\n' >"$evil/$exe"
   chmod +x "$evil/$exe"
 done
-# TERMINAL is the third name of this shape: open_gui EXECUTES it. It exits
-# non-zero so open-terminal relays its words — a launcher's stdout and stderr
-# go to a scratch file that is only printed when the launch failed, which is
-# also the only way a marker written here can reach the assertion.
-printf '#!/bin/sh\necho "EXECUTED FROM THE CONFIGURED TERMINAL" >&2\nexit 3\n' >"$evil/evilterm"
+# TERMINAL is the third name of this shape: open_gui EXECUTES it. Its rows read
+# a FILE rather than the run's output, because open_gui sends a launcher's
+# streams to /dev/null — a marker printed on either would be discarded, and the
+# rows would then pass because nothing was heard rather than because the name
+# was refused, which is the vacuous shape this file plants controls to prevent.
+printf '#!/bin/sh\nprintf ran >%s\nexit 0\n' "$evil/terminal-ran" >"$evil/evilterm"
 chmod +x "$evil/evilterm"
+
+# ran_terminal DIR ARGS... — 0 when the configured terminal really executed. The
+# launch is detached, so the marker can land after open-terminal has exited: a
+# row expecting one waits for it, and a row expecting none has watched a real
+# interval rather than the instant after the exit.
+ran_terminal() {
+  local dir="$1" i=0
+  shift
+  rm -f "$evil/terminal-ran"
+  run open-terminal "$dir" "$@" >/dev/null 2>&1 || true
+  while [ "$i" -lt 20 ] && [ ! -f "$evil/terminal-ran" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -f "$evil/terminal-ran" ]
+}
 
 # terminal_fixture DIR — a fixture whose worktree CLI succeeds, so a case can
 # REACH the GUI launch. The generic rows never get that far: the real CLI
@@ -295,8 +312,8 @@ for source_kind in dotenv settings; do
   dir="$TMP_ROOT/own-TERMINAL-$source_kind"
   terminal_fixture "$dir"
   write_config "$dir" "$source_kind" TERMINAL "$evil/evilterm"
-  refute "open-terminal: a TERMINAL in $source_kind never chooses which terminal is executed" \
-    "$dir" open-terminal "EXECUTED FROM THE CONFIGURED TERMINAL" --cmd true KEN-1
+  label="open-terminal: a TERMINAL in $source_kind never chooses which terminal is executed"
+  if ran_terminal "$dir" --cmd true KEN-1; then bad "$label" "the configured terminal was executed"; else ok "$label"; fi
 done
 
 # approval-wait is the one CLI holding parse state across its load, and it is
@@ -382,8 +399,9 @@ leak_term="$TMP_ROOT/leak-terminal"
 terminal_fixture "$leak_term"
 write_config "$leak_term" settings TERMINAL "$evil/evilterm"
 if drop_export "$leak_term" open-terminal TERMINAL; then
-  must_leak "dropping export TERMINAL lets open-terminal execute the configured one" \
-    "$leak_term" open-terminal "EXECUTED FROM THE CONFIGURED TERMINAL" --cmd true KEN-1
+  leak_label="dropping export TERMINAL lets open-terminal execute the configured one"
+  if ran_terminal "$leak_term" --cmd true KEN-1; then ok "$leak_label"
+  else bad "$leak_label" "the row would have passed with the protection gone"; fi
 else
   bad "the export TERMINAL mutation did not land, so it proves nothing"
 fi

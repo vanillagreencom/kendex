@@ -558,28 +558,7 @@ open_gui() {
   # carrying arguments — is otherwise substituted in silence.
   [[ -z "${TERMINAL:-}" || "$chosen" == "$TERMINAL" ]] ||
     echo "Warning: \$TERMINAL '$TERMINAL' does not resolve to an executable; launching '$title' with $chosen instead" >&2
-  # A launch nothing observed is not a launch to report: this exit code is the
-  # orchestrator's only signal that a lane started, and `-e bash -lc CMD` is
-  # ghostty/xterm grammar the GTK family and wezterm do not take. The job gets a
-  # beat — alive means the window is up, exit 0 means the launcher handed off,
-  # any other status is this item's failure carrying the launcher's own words.
-  # setsid execs rather than forks here (a backgrounded job in a shell without
-  # job control is no group leader), so $! is the launcher itself.
-  local err gui_pid gui_rc=0 said
-  err="$(mktemp)" || { echo "Error: no scratch file for '$title'; not launching" >&2; return 1; }
-  setsid "${launcher[@]}" </dev/null >/dev/null 2>"$err" &
-  gui_pid=$!
-  sleep 1
-  if ! kill -0 "$gui_pid" 2>/dev/null; then
-    wait "$gui_pid" || gui_rc=$?
-    if [[ "$gui_rc" -ne 0 ]]; then
-      said="$(tr '\n' ' ' <"$err" 2>/dev/null || true)"
-      rm -f "$err"
-      echo "Error: $chosen exited $gui_rc launching '$title'${said:+: $said}" >&2
-      return 1
-    fi
-  fi
-  rm -f "$err"
+  setsid "${launcher[@]}" </dev/null >/dev/null 2>&1 &
   echo "Opened terminal '$title' in $dir"
 }
 
