@@ -19,7 +19,7 @@
 # skills/orch/schemas/dev-return.md):
 #   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix"|"analysis",
 #     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
-#     "baseline_lines": 138 (implement only; verified before persistence),
+#     "baseline_lines": 138 (implement only),
 #     "validate_note": "…"|null (optional free-text qualifier — kendex#884),
 #     "qa_labels": […], "summary_posted": bool, "summary": "…"|null,
 #     "bundled": bool, "items": [{"n": <number>, "decision": "Applied"|"Skipped"|"Blocked", "reasoning": "…"}] }
@@ -198,7 +198,7 @@ emit() {
   # verdict is the one-word acceptance answer the orchestrator acts on:
   #   accept — artifact valid for this round (warnings ride along)
   #   wait   — no artifact for this round yet; the round is still running
-  #   retry  — an artifact exists but fails identity/schema/commit gates
+  #   retry  — an artifact exists but is not accepted
   # A validate value other than "pass" downgrades accept to retry: the agent
   # finished its tail but the round's validation is failing.
   local verdict
