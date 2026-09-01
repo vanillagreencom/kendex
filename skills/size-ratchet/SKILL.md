@@ -21,8 +21,8 @@ tags: [automation]
 it only shrink.** Existing offenders are frozen in a baseline at their
 current sizes; everything else stays at or under its path class's
 threshold. Markdown is measured in bytes and code in lines. Baseline rows
-only go down or away; an existing row's number goes up only by a human
-editing it in a reviewed diff, and never at all in a frozen class.
+only go down or away while their unit stays the same. Reference and exception
+rules are [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
 
 ```bash
 .agents/skills/size-ratchet/scripts/size-ratchet            # check (pre-PR / CI)
@@ -42,14 +42,9 @@ Every size diagnostic names the file, its size, the baseline row it
 violated, the deciding threshold (class pattern or default), and the remedy:
 *split at a concept seam*.
 
-Three verdicts are not a size problem and take no judgment. **A row in the
-wrong unit** is a class that changed what it counts: run `--update`, which
-re-measures the row; an open row declares that incomparable change with
-`RATCHET_RAISE=1`, while a frozen row first shrinks below its new threshold.
-**A shrunk row** under `--staged` is already lowered and staged by the run
-itself. **A baseline absent at its resolved HEAD path** relocates in a change
-that touches nothing else, declared with `RATCHET_RAISE=1`; a frozen row
-cannot cross that unverified move.
+Reference, repoint, raise, and unit-change behavior is one rule:
+[README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
+A shrunk row under `--staged` is already lowered and staged by the run itself.
 
 **Check composition before the seam.** A file over its cap whose bulk is
 inline tests needs those tests moved to the language's separate-test
@@ -93,18 +88,10 @@ commit body) is correct in exactly two cases, both for hand-written files:
    are combined back into one, and the merged file's row rises to its
    real size. Shrink or delete the emptied rows in the same diff.
 
-Which case applies is yours to judge and the gate's to ignore: it reads
-`RATCHET_RAISE=1` and nothing else, and cannot see a commit message at all.
-What it enforces is two other things. A row a change adds or raises
-over HEAD's baseline fails unless the run carries `RATCHET_RAISE=1`, and
-RAISING an existing row in a **frozen class** — every markdown class and
-every test class by default — fails whatever it carries: a test splits and a
-document is cut, so no declaration buys either one more room. A FIRST row for
-a path HEAD's baseline carries none for is a bootstrap, and the declaration
-admits it in every class, a renamed path included. Rows already at HEAD are
-grandfathered, and a repo with no committed row set yet is bootstrapping.
-Generated and vendored content is never raised either: it is excluded (the
-exclusion list, `pattern<TAB>reason`) and leaves the counted set.
+Which case applies is yours to judge and the gate's to ignore. The enforced
+rule is [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
+Generated and vendored content is excluded from the counted set instead of
+being raised.
 
 The baseline is policy input, not a measured file. A self row is stale and
 every rewrite removes it, so seed, update, and staged tightening converge in

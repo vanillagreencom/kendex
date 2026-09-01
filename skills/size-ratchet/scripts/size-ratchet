@@ -14,17 +14,15 @@ usage() {
   cat <<'EOF'
 usage: size-ratchet [--staged] [--update | --seed] [--baseline FILE] [--excludes FILE]
 Tighten-only file-size gate: tracked files over their threshold must be
-frozen in the baseline at their current size, and the baseline may only
-move down. --update lowers/removes rows to current reality (never adds,
-never raises) and then re-checks.
+frozen in the baseline at their current size. A same-unit row only moves
+down. --update lowers/removes rows to current reality, then re-checks.
 --staged counts INDEX blobs for every tracked file instead of preferring the
 worktree copy. It runs the tighten-only rewrite and stages it only when the
 candidate makes the commit clean; otherwise it restores the worktree file.
 Units. A class threshold is LINES when it is a bare number (`400`) and
 BYTES when it carries the `k` suffix (`24k` = 24*1024 bytes). A baseline row
 for a byte class carries a `b` suffix (`24576b`). A row whose unit no longer
-matches its class is stale: --update re-measures it. If HEAD's row used the
-other unit, an open row needs RATCHET_RAISE=1 and a frozen row refuses.
+matches its class is stale and --update re-measures it.
 The baseline itself is policy input and is never measured.
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -35,17 +33,8 @@ kendex.settings.toml [env] > default):
   SIZE_RATCHET_BASELINE    baseline path            (default tools/size-ratchet-baseline.tsv)
   SIZE_RATCHET_EXCLUDES    exclusion-list path      (default tools/size-ratchet-excludes)
 Flags override both for the path settings.
-A row added or raised over HEAD needs RATCHET_RAISE=1. Frozen rows never
-rise. A first row for a path absent from HEAD's baseline is a bootstrap and
-the declaration admits it in every class. Put the reason in the commit body;
-the gate does not read commit messages.
-When HEAD exists but has no rows at the resolved baseline path, a staged
-non-empty candidate refuses unless RATCHET_RAISE=1. The declaration admits
-open rows only; a frozen row cannot cross an unverified relocation. Relocate
-the baseline in a change that touches nothing else, then edit rows later.
---seed is bootstrap and needs no raise declaration. It refuses a populated or
-malformed baseline, a baseline aliasing the exclusion list, a non-regular
-destination, and a parent that resolves outside the repository.
+Reference, raise, repoint, and unit-change rules: README.md, "Trusted HEAD baseline"; declarations use RATCHET_RAISE=1.
+Seed behavior and safety: README.md, "Seeding a first baseline".
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
 }
@@ -697,14 +686,6 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
         echo "size-ratchet FAIL frozen baseline row unit changed: $path — row $raw -> $shown; a frozen class cannot replace its trusted quantity"
         echo "  remedy: split the file below its new threshold before changing the class unit"
         ;;
-      RELOCATED)
-        echo "size-ratchet FAIL baseline has rows but HEAD has none at $BASELINE_FILE — a relocated baseline would leave its rows unjudged"
-        echo "  remedy: land the relocated baseline in a change that touches nothing else and run with RATCHET_RAISE=1"
-        ;;
-      RELOCATED_FROZEN)
-        echo "size-ratchet FAIL frozen row cannot cross an unverified baseline relocation: $path"
-        echo "  remedy: split the frozen file below its threshold before relocating the baseline"
-        ;;
     esac
   done <"$1"
 }
@@ -771,13 +752,13 @@ if [ "$MODE" = "update" ]; then
 fi
 seed_destination_prepare() {
   local base_parent="." probe parent_phys repo_phys
-  [ "$BASELINE_FILE" != "$EXCLUDES_FILE" ] \
-    || config_error "--seed refuses: the baseline and exclusion list resolve to the same path ($BASELINE_FILE)"
+  [ "$BASELINE_FILE" != "$EXCLUDES_FILE" ] || config_error "--seed refuses: the baseline and exclusion list resolve to the same path ($BASELINE_FILE)"
+  [ ! -L "$BASELINE_FILE" ] || config_error "--seed refuses: the baseline path is a symlink ($BASELINE_FILE)"
+  [ ! -L "$EXCLUDES_FILE" ] || config_error "--seed refuses: the exclusion-list path is a symlink ($EXCLUDES_FILE)"
+  { [ ! -e "$BASELINE_FILE" ] || [ -f "$BASELINE_FILE" ]; } || config_error "--seed refuses: $BASELINE_FILE exists but is not a regular file"
+  { [ ! -e "$EXCLUDES_FILE" ] || [ -f "$EXCLUDES_FILE" ]; } || config_error "--seed refuses: $EXCLUDES_FILE exists but is not a regular file"
   if [ -e "$BASELINE_FILE" ] && [ -e "$EXCLUDES_FILE" ] && [ "$BASELINE_FILE" -ef "$EXCLUDES_FILE" ]; then
     config_error "--seed refuses: the baseline and exclusion list are aliases of the same file"
-  fi
-  if [ -L "$BASELINE_FILE" ] || { [ -e "$BASELINE_FILE" ] && [ ! -f "$BASELINE_FILE" ]; }; then
-    config_error "--seed refuses: $BASELINE_FILE exists but is not a plain regular file"
   fi
   case "$BASELINE_FILE" in
     */*) base_parent="${BASELINE_FILE%/*}" ;;
@@ -831,18 +812,68 @@ if [ "$MODE" = "seed" ]; then
 fi
 RAISE_OK="${RATCHET_RAISE:-}"
 HEAD_BASELINE=""
-HEAD_BASELINE_PRESENT=0
+HEAD_BASELINE_FILE=""
+head_settings_file() { # PATH ALLOW-UNTRACKED
+  local path="$1" allow="$2" dest="$TMP/head-settings/$1" parent="$TMP/head-settings"
+  read_head_file_mode "$path"
+  case "$HEAD_FILE_MODE" in
+    100*) ;;
+    "")
+      [ "$allow" = "1" ] || return 0
+      read_index_file_mode "$path"
+      [ -z "$INDEX_FILE_MODE" ] && [ -f "$path" ] || return 0
+      ;;
+    *) collection_error "HEAD carries settings source $path as mode $HEAD_FILE_MODE, not a regular file" ;;
+  esac
+  case "$dest" in */*) parent="${dest%/*}" ;; esac
+  mkdir -p -- "$parent" || collection_error "could not prepare the HEAD settings snapshot"
+  if [ -n "$HEAD_FILE_MODE" ]; then
+    git show "HEAD:$path" >"$dest" || collection_error "could not read HEAD settings source $path"
+  else
+    cp -- "$path" "$dest" || collection_error "could not copy untracked settings source $path"
+  fi
+}
+resolve_head_baseline_file() {
+  local explicit="${SIZE_RATCHET_SETTINGS_FILE:-}" norm="" raw=""
+  norm="$explicit"
+  HEAD_BASELINE_FILE="$BASELINE_FILE"
+  read_head_file_mode "$BASELINE_FILE"
+  [ "$HEAD_EXISTS" = "1" ] || return 0
+  mkdir -p -- "$TMP/head-settings" || collection_error "could not prepare the HEAD settings snapshot"
+  if [ -n "$explicit" ] && [ "$explicit" != "/dev/null" ]; then
+    case "$explicit" in
+      /*) norm="$explicit" ;;
+      *)
+        norm="$(sr_settings_normalize_path "$explicit")"
+        case "$norm" in "" | ".." | ../*) HEAD_BASELINE_FILE="$BASELINE_FILE"; return 0 ;; esac
+        head_settings_file "$norm" 1
+        ;;
+    esac
+  else
+    head_settings_file .kendex/settings.toml 0
+    head_settings_file kendex.settings.toml 0
+  fi
+  head_settings_file .env.local 1
+  raw="$(
+    cd "$TMP/head-settings" || exit 1
+    unset SR_SETTINGS_FROM_INDEX SR_SETTINGS_INDEX_DIR
+    if [ -n "$explicit" ]; then SIZE_RATCHET_SETTINGS_FILE="$norm"; export SIZE_RATCHET_SETTINGS_FILE; else unset SIZE_RATCHET_SETTINGS_FILE; fi
+    sr_setting SIZE_RATCHET_BASELINE tools/size-ratchet-baseline.tsv
+  )" || collection_error "could not resolve SIZE_RATCHET_BASELINE from HEAD settings"
+  case "$raw" in /*) config_error "HEAD baseline path must be repo-root-relative, got absolute: $raw" ;; esac
+  HEAD_BASELINE_FILE="$(normalize_rel_path "$raw")" || config_error "HEAD baseline path escapes the repository or normalizes empty"
+}
 read_head_baseline() {
   HEAD_BASELINE=""
-  HEAD_BASELINE_PRESENT=0
-  read_head_file_mode "$BASELINE_FILE"
+  resolve_head_baseline_file
+  read_head_file_mode "$HEAD_BASELINE_FILE"
   [ -n "$HEAD_FILE_MODE" ] || return 0
   case "$HEAD_FILE_MODE" in
     100*) ;;
-    *) return 0 ;; # not a regular file at HEAD; there is no row set to compare
+    *) collection_error "HEAD carries baseline $HEAD_BASELINE_FILE as mode $HEAD_FILE_MODE, not a regular file" ;;
   esac
-  HEAD_BASELINE_PRESENT=1
-  git show "HEAD:$BASELINE_FILE" >"$TMP/baseline.head" || collection_error "could not read $BASELINE_FILE from HEAD — refusing to judge added and raised rows against a baseline it could not read"
+  git show "HEAD:$HEAD_BASELINE_FILE" >"$TMP/baseline.head" || collection_error "could not read active baseline $HEAD_BASELINE_FILE from HEAD"
+  validate_baseline_rows fatal "$TMP/baseline.head" "$HEAD_BASELINE_FILE (HEAD copy)"
   [ "$(count_nonempty_lines "$TMP/baseline.head")" -gt 0 ] || return 0
   HEAD_BASELINE="$TMP/baseline.head"
 }
@@ -875,40 +906,9 @@ rows_raised() { # CURRENT-BASELINE — violations on stdout
     }
   ' "$TMP/counts.tsv" "$HEAD_BASELINE" "$TMP/baseline.judged"
 }
-index_baseline_has_rows() {
-  read_index_file_mode "$BASELINE_FILE"
-  [ -n "$INDEX_FILE_MODE" ] || return 1
-  case "$INDEX_FILE_MODE" in
-    100*) ;;
-    *) collection_error "the index carries $BASELINE_FILE as mode $INDEX_FILE_MODE, not a regular baseline" ;;
-  esac
-  git show ":$BASELINE_FILE" >"$TMP/baseline.index.probe" \
-    || collection_error "could not read the index copy of $BASELINE_FILE while checking the baseline reference"
-  [ -s "$TMP/baseline.index.probe" ]
-}
-baseline_reference_missing() { # CURRENT-BASELINE — violations on stdout
-  local p n
-  [ -z "$HEAD_BASELINE" ] || return 0
-  [ "$HEAD_EXISTS" = "1" ] || return 0
-  [ "$HEAD_BASELINE_PRESENT" != "1" ] || return 0
-  [ "$MODE" != "seed" ] || return 0
-  index_baseline_has_rows || return 0
-  [ -s "$1" ] || return 0
-  if [ "$RAISE_OK" != "1" ]; then
-    printf '%s\t%s\t%s\t%s\n' RELOCATED "$BASELINE_FILE" - -
-    return 0
-  fi
-  while IFS="$TAB" read -r p n || [ -n "$p" ]; do
-    [ -n "$p" ] || continue
-    if is_frozen "$p"; then
-      printf '%s\t%s\t%s\t%s\n' RELOCATED_FROZEN "$p" "$n" -
-    fi
-  done <"$1"
-}
 run_verdict() { # BASELINE-TSV — fills $TMP/violations.tsv, sets VIOLATIONS
   evaluate "$1" >"$TMP/violations.tsv" || collection_error "could not evaluate the baseline against the collected counts"
   rows_raised "$1" >>"$TMP/violations.tsv" || collection_error "could not judge the baseline rows against HEAD's baseline"
-  baseline_reference_missing "$1" >>"$TMP/violations.tsv" || collection_error "could not judge whether HEAD carries the resolved baseline"
   VIOLATIONS="$(count_nonempty_lines "$TMP/violations.tsv")"
 }
 read_head_baseline

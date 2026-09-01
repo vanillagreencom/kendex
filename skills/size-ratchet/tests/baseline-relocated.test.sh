@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# One fail-closed control for a baseline path that HEAD did not judge.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,55 +7,93 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES SIZE_RATCHET_FROZEN_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE RATCHET_RAISE 2>/dev/null || true
-export SIZE_RATCHET_THRESHOLD=10 SIZE_RATCHET_DEFAULT_CLASSES="" SIZE_RATCHET_FROZEN_CLASSES="*.test.*"
+export SIZE_RATCHET_THRESHOLD=10 SIZE_RATCHET_DEFAULT_CLASSES=""
 
-R="$TMP/repo"
-mkdir -p "$R/tools"
-git -C "$R" -c init.defaultBranch=main init -q
-git -C "$R" config user.email test@example.com
-git -C "$R" config user.name test
-awk 'BEGIN { for (i = 1; i <= 15; i++) print "line " i }' >"$R/big.test.txt"
-printf 'big.test.txt\t15\n' >"$R/tools/a.tsv"
-printf '[env]\nSIZE_RATCHET_BASELINE = "tools/a.tsv"\n' >"$R/kendex.settings.toml"
-git -C "$R" add -A
-git -C "$R" commit -q -m seed
+new_repo() {
+  R="$TMP/$1"
+  mkdir -p "$R/tools"
+  git -C "$R" -c init.defaultBranch=main init -q
+  git -C "$R" config user.email test@example.com
+  git -C "$R" config user.name test
+}
 
-awk 'BEGIN { for (i = 1; i <= 20; i++) print "line " i }' >"$R/big.test.txt"
-printf 'big.test.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
-rm "$R/kendex.settings.toml"
-git -C "$R" add -A
+mkfile() {
+  awk -v n="$2" 'BEGIN { for (i = 1; i <= n; i++) print "line " i }' >"$R/$1"
+}
 
-run_relocation() {
-  local mode="$1" declaration="$2"
+run_check() {
+  local mode="$1" declaration="$2" frozen="$3"
   RC=0
-  if [ "$declaration" = "yes" ]; then
-    if [ -n "$mode" ]; then
-      OUT="$(cd "$R" && RATCHET_RAISE=1 "$SR" "$mode" 2>&1)" || RC=$?
-    else
-      OUT="$(cd "$R" && RATCHET_RAISE=1 "$SR" 2>&1)" || RC=$?
-    fi
+  if [ -n "$mode" ]; then
+    OUT="$(cd "$R" && RATCHET_RAISE="$declaration" SIZE_RATCHET_FROZEN_CLASSES="$frozen" SIZE_RATCHET_SETTINGS_FILE="$SETTINGS_FILE" "$SR" "$mode" 2>&1)" || RC=$?
   else
-    if [ -n "$mode" ]; then
-      OUT="$(cd "$R" && "$SR" "$mode" 2>&1)" || RC=$?
-    else
-      OUT="$(cd "$R" && "$SR" 2>&1)" || RC=$?
-    fi
+    OUT="$(cd "$R" && RATCHET_RAISE="$declaration" SIZE_RATCHET_FROZEN_CLASSES="$frozen" SIZE_RATCHET_SETTINGS_FILE="$SETTINGS_FILE" "$SR" 2>&1)" || RC=$?
   fi
 }
 
 FAIL=0
-for mode in "" --staged; do
-  run_relocation "$mode" no
-  [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -Fq 'baseline has rows but HEAD has none at tools/size-ratchet-baseline.tsv' \
-    || { printf 'FAIL: %s relocation passed without RATCHET_RAISE=1\nrc=%s\n%s\n' "${mode:-default}" "$RC" "$OUT" >&2; FAIL=1; }
+while IFS='|' read -r label mode declaration frozen dormant source expect_rc expect_text; do
+  [ -n "$label" ] || continue
+  new_repo "$label"
+  if [ -n "$frozen" ]; then path=big.test.txt; else path=big.txt; fi
+  mkfile "$path" 15
+  printf '%s\t15\n' "$path" >"$R/tools/active.tsv"
+  if [ "$dormant" = yes ]; then printf '%s\t20\n' "$path" >"$R/tools/target.tsv"; fi
+  case "$source" in
+    nested) SETTINGS_FILE=.kendex/settings.toml ;;
+    explicit) SETTINGS_FILE=policy/settings.toml ;;
+    *) SETTINGS_FILE=kendex.settings.toml ;;
+  esac
+  case "$SETTINGS_FILE" in */*) mkdir -p "$R/${SETTINGS_FILE%/*}" ;; esac
+  printf '[env]\nSIZE_RATCHET_BASELINE = "tools/active.tsv"\n' >"$R/$SETTINGS_FILE"
+  git -C "$R" add -A
+  git -C "$R" commit -q -m active
+  mkfile "$path" 20
+  if [ "$dormant" = no ]; then printf '%s\t20\n' "$path" >"$R/tools/target.tsv"; fi
+  printf '[env]\nSIZE_RATCHET_BASELINE = "tools/target.tsv"\n' >"$R/$SETTINGS_FILE"
+  git -C "$R" add -A
+  run_check "$mode" "$declaration" "$frozen"
+  if [ "$RC" -ne "$expect_rc" ] || { [ -n "$expect_text" ] && ! printf '%s\n' "$OUT" | grep -Fq "$expect_text"; }; then
+    printf 'FAIL: %s\nrc=%s expected=%s\n%s\n' "$label" "$RC" "$expect_rc" "$OUT" >&2
+    FAIL=$((FAIL + 1))
+  fi
+done <<'CASES'
+default-open-undeclared||0||no|root|1|baseline row raised: big.txt — row 15 -> 20 lines
+staged-open-undeclared|--staged|0||no|root|1|baseline row raised: big.txt — row 15 -> 20 lines
+default-open-declared||1||no|root|0|
+staged-open-declared|--staged|1||no|root|0|
+default-frozen-declared||1|*.test.*|no|root|1|frozen baseline row raised: big.test.txt — row 15 -> 20 lines
+staged-frozen-declared|--staged|1|*.test.*|no|root|1|frozen baseline row raised: big.test.txt — row 15 -> 20 lines
+default-dormant-target||0||yes|root|1|baseline row raised: big.txt — row 15 -> 20 lines
+staged-dormant-target|--staged|0||yes|root|1|baseline row raised: big.txt — row 15 -> 20 lines
+nested-head-settings||0||no|nested|1|baseline row raised: big.txt — row 15 -> 20 lines
+explicit-head-settings||0||no|explicit|1|baseline row raised: big.txt — row 15 -> 20 lines
+CASES
 
-  run_relocation "$mode" yes
-  [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -Fq 'frozen row cannot cross an unverified baseline relocation: big.test.txt' \
-    || { printf 'FAIL: %s relocation admitted a changed frozen row\nrc=%s\n%s\n' "${mode:-default}" "$RC" "$OUT" >&2; FAIL=1; }
-done
+while IFS='|' read -r label declaration frozen expect_rc expect_text; do
+  [ -n "$label" ] || continue
+  new_repo "$label"
+  if [ -n "$frozen" ]; then path=big.test.txt; else path=big.txt; fi
+  mkfile "$path" 15
+  printf '%s\t15\n' "$path" >"$R/tools/active.tsv"
+  SETTINGS_FILE=kendex.settings.toml
+  printf '[env]\nSIZE_RATCHET_BASELINE = "tools/active.tsv"\n' >"$R/$SETTINGS_FILE"
+  git -C "$R" add -A
+  git -C "$R" commit -q -m active
+  mkfile "$path" 20
+  : >"$R/tools/target.tsv"
+  printf '[env]\nSIZE_RATCHET_BASELINE = "tools/target.tsv"\n' >"$R/$SETTINGS_FILE"
+  git -C "$R" add -A
+  run_check --seed "$declaration" "$frozen"
+  if [ "$RC" -ne "$expect_rc" ] || { [ -n "$expect_text" ] && ! printf '%s\n' "$OUT" | grep -Fq "$expect_text"; }; then
+    printf 'FAIL: %s\nrc=%s expected=%s\n%s\n' "$label" "$RC" "$expect_rc" "$OUT" >&2
+    FAIL=$((FAIL + 1))
+  fi
+done <<'SEED_CASES'
+seed-repoint-open-undeclared|0||1|baseline row raised: big.txt — row 15 -> 20 lines
+seed-repoint-open-declared|1||0|
+seed-repoint-frozen-declared|1|*.test.*|1|frozen baseline row raised: big.test.txt — row 15 -> 20 lines
+SEED_CASES
 
-SIZE_RATCHET_FROZEN_CLASSES="" run_relocation --staged yes
-[ "$RC" -eq 0 ] || { printf 'FAIL: declared open-row relocation rc=%s\n%s\n' "$RC" "$OUT" >&2; exit 1; }
 [ "$FAIL" -eq 0 ] || exit 1
-
 printf 'baseline-relocated.test.sh: PASS\n'

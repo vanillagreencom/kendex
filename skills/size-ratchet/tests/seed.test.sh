@@ -77,24 +77,61 @@ run_seed --baseline tools/base --excludes tools/excludes
 [ ! -s "$R/tools/base" ] && [ ! -s "$R/tools/excludes" ] \
   || { printf 'FAIL: existing alias refusal changed the policies\n' >&2; exit 1; }
 
-new_repo parent-link
-awk 'BEGIN { for (i = 1; i <= 15; i++) print "line " i }' >"$R/big.txt"
-mkdir -p "$TMP/outside-parent"
-ln -s "$TMP/outside-parent" "$R/policy"
-git -C "$R" add -A
-run_seed --baseline policy/base.tsv
-[ "$RC" -eq 2 ] || { printf 'FAIL: out-of-repo parent accepted rc=%s\n%s\n' "$RC" "$OUT" >&2; exit 1; }
-[ ! -e "$TMP/outside-parent/base.tsv" ] \
-  || { printf 'FAIL: seed wrote through an out-of-repo parent\n' >&2; exit 1; }
+FAIL=0
+while IFS='|' read -r label shape expect_rc; do
+  [ -n "$label" ] || continue
+  new_repo "$label"
+  awk 'BEGIN { for (i = 1; i <= 15; i++) print "line " i }' >"$R/big.txt"
+  args=()
+  case "$shape" in
+    missing-parent)
+      args=(--baseline policy/new/base.tsv)
+      ;;
+    parent-link)
+      mkdir -p "$TMP/$label-outside"
+      ln -s "$TMP/$label-outside" "$R/policy"
+      args=(--baseline policy/base.tsv)
+      ;;
+    baseline-link)
+      : >"$TMP/$label-target"
+      ln -s "$TMP/$label-target" "$R/tools/size-ratchet-baseline.tsv"
+      ;;
+    baseline-dangling)
+      ln -s "$TMP/$label-missing" "$R/tools/size-ratchet-baseline.tsv"
+      ;;
+    excludes-link)
+      : >"$TMP/$label-target"
+      ln -s "$TMP/$label-target" "$R/tools/excludes"
+      args=(--excludes tools/excludes)
+      ;;
+    excludes-dangling)
+      ln -s "$TMP/$label-missing" "$R/tools/excludes"
+      args=(--excludes tools/excludes)
+      ;;
+  esac
+  git -C "$R" add -A
+  run_seed "${args[@]}"
+  if [ "$RC" -ne "$expect_rc" ]; then
+    printf 'FAIL: %s rc=%s expected=%s\n%s\n' "$label" "$RC" "$expect_rc" "$OUT" >&2
+    FAIL=$((FAIL + 1))
+  fi
+  if [ "$shape" = missing-parent ] && [ ! -s "$R/policy/new/base.tsv" ]; then
+    printf 'FAIL: missing in-repository parent was not created\n' >&2
+    FAIL=$((FAIL + 1))
+  fi
+  case "$shape" in
+    parent-link) [ ! -e "$TMP/$label-outside/base.tsv" ] || { printf 'FAIL: %s wrote outside\n' "$label" >&2; FAIL=$((FAIL + 1)); } ;;
+    baseline-link | excludes-link) [ ! -s "$TMP/$label-target" ] || { printf 'FAIL: %s changed its target\n' "$label" >&2; FAIL=$((FAIL + 1)); } ;;
+  esac
+done <<'DESTINATIONS'
+missing-parent|missing-parent|0
+parent-link|parent-link|2
+baseline-link|baseline-link|2
+baseline-dangling|baseline-dangling|2
+excludes-link|excludes-link|2
+excludes-dangling|excludes-dangling|2
+DESTINATIONS
 
-new_repo destination-link
-awk 'BEGIN { for (i = 1; i <= 15; i++) print "line " i }' >"$R/big.txt"
-: >"$TMP/outside-baseline"
-ln -s "$TMP/outside-baseline" "$R/tools/size-ratchet-baseline.tsv"
-git -C "$R" add -A
-run_seed
-[ "$RC" -eq 2 ] || { printf 'FAIL: symlink baseline accepted rc=%s\n%s\n' "$RC" "$OUT" >&2; exit 1; }
-[ -L "$R/tools/size-ratchet-baseline.tsv" ] && [ ! -s "$TMP/outside-baseline" ] \
-  || { printf 'FAIL: symlink refusal changed the destination\n' >&2; exit 1; }
+[ "$FAIL" -eq 0 ] || exit 1
 
 printf 'seed.test.sh: PASS\n'

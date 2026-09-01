@@ -28,10 +28,9 @@ collection (one pending batch per unit, so an interleaved tree still batches
 rather than degrading to a call per file), into the counts rows, and out
 again as a baseline row's `b` suffix. Nothing compares across units. A row
 whose unit no longer matches its class is reported as one to re-measure, and
-`--update` writes the current quantity in the new unit. The HEAD comparison
-then treats that change as incomparable: an open row needs
-`RATCHET_RAISE=1`, and a frozen row refuses until the file is below its new
-threshold.
+`--update` writes the current quantity in the new unit. `rows_raised` checks
+the unit tag before comparing numbers. The policy is
+[README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
 
 ## Collection
 
@@ -63,12 +62,20 @@ untracked source, the one thing `--staged` reads from the worktree is the
 baseline it is about to REWRITE — see the next section, where the index copy
 still governs unless the rewrite lands.
 
+## Trusted reference snapshot
+
+`resolve_head_baseline_file` materializes HEAD's settings sources under the
+scratch directory and calls `sr_setting`, the same parser the candidate uses.
+It then reads the baseline at that resolved HEAD path. `rows_raised` consumes
+only those rows; the candidate path never selects a second reference. The
+behavioral rule is [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
+
 ## The tighten-only rewrite
 
 `--update` and `--staged` run the same rewrite: rows lowered to the measured
 size, rows re-measured where their unit changed, rows removed for files now
-at/under their threshold or out of the counted set, and never a row added or
-raised. `--staged` runs it so a commit that SHRINKS a limited file passes on
+at/under their threshold or out of the counted set. It never adds a row or
+raises a same-unit number. `--staged` runs it so a commit that SHRINKS a limited file passes on
 the first attempt instead of failing, waiting for a `--update`, and being
 made again; it then stages the result.
 
@@ -105,9 +112,10 @@ symlink skipping, tab/newline refusal), `LC_ALL=C` sorted, each row in its
 class's unit. It refuses when the selected baseline already has rows or does
 not parse. The baseline and exclusion list must resolve to different files.
 The destination must be a plain file whose physical parent remains inside the
-repository before and after missing directories are created. Seed itself is a
-bootstrap and needs no raise declaration; the seeded file lands uncommitted,
-so every offender enters the record in review.
+repository before and after missing directories are created. Seed uses the
+trusted reference snapshot like every other mode; only a seed with no prior
+active rows is bootstrap. The seeded file lands uncommitted, so every offender
+enters the record in review.
 
 In a sparse checkout that omits the baseline file, checks still run against
 the index copy, but `--update` refuses (it will not rewrite a file the
@@ -186,9 +194,7 @@ the existing baseline file where it is and point `SIZE_RATCHET_BASELINE`
 suffix and read as line counts, which is what they were.
 
 A unit migration re-measures the row in `--update`, then applies the HEAD
-comparison rule. An open row needs `RATCHET_RAISE=1`. A frozen row must first
-shrink below the new threshold, so the update removes it instead of replacing
-an incomparable trusted quantity.
+comparison from [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
 
 A repo adopting the `400` default over a looser one gains offenders in the
 range between the two thresholds. Order matters: declare
@@ -206,32 +212,7 @@ that baseline together with the settings change. Declaring
 
 ## Added and raised rows
 
-A hand-edited baseline row is the only way past a threshold, so a row a
-change adds or raises is that threshold routed around. `RATCHET_RAISE=1` on
-the invocation declares it: `baseline row added` and `baseline row raised`
-fail without it. No commit message is read, because a pre-commit hook cannot
-see one — the reason belongs in the commit body, where review reads it.
-
-`SIZE_RATCHET_FROZEN_CLASSES` refuses a RAISE regardless of that
-declaration, and defaults to every markdown class and every test class. It
-does not refuse a first row: a new path still gets its bootstrap row, which
-is what a repo adopting a class needs on day one. Every size remedy follows
-one predicate, whether HEAD's baseline carries the path — a path HEAD does
-not carry names the bootstrap beside the split, a path HEAD carries names
-the split alone in a frozen class. The verdict label decides nothing: `new
-offender` appears on both sides of that line, since a change can delete a row
-HEAD still carries.
-
-The setting carries a second duty: frozen paths are where the class
-inversion applies, so a glob added here changes which class decides those
-paths too. [README.md § Path classes](README.md#path-classes) says how.
-
-Rows already at HEAD are grandfathered. When HEAD exists but has no rows at
-the resolved baseline path, a staged non-empty candidate refuses unless the
-run carries `RATCHET_RAISE=1`. The declaration admits open rows only; a frozen
-row refuses because no trusted quantity exists at the new path. An untracked
-seed or an empty index baseline remains bootstrap. This covers moves, copies,
-and settings repoints without discovering the prior path. Repoint the baseline
-in a change that touches nothing else; row edits follow in another change. A
-row whose file is at or under its threshold is stale, so one root cause gets
-one verdict.
+`rows_raised` stamps candidate rows with frozen membership, joins them to the
+trusted reference snapshot, and emits `ADDED`, `RAISED`, `FROZEN`, or the unit
+variants. The rule behind those verdicts is stated once in
+[README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
