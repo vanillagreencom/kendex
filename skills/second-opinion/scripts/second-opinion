@@ -243,12 +243,13 @@ Exit codes:
      non-zero (quota/auth/network), timed out, or returned an empty response on
      a zero exit. No external verdict; whatever partial output existed is kept
      as <output>.failed.json and the CLI's own error text is echoed on stderr
-  6  review/audit: the external CLI (or a review lane running it) was KILLED —
-     it died to a signal, named in the report and the <output>.failed.json
-     record. The reviewer was taken away by something outside the run (a
-     reaper, an operator), not refused: retry, and if it recurs find the
-     killer rather than the review's content. 128+N for a signal N the shell
-     can name is a kill; any other non-zero status is a plain failure (5)
+  6  review/audit: the external CLI was KILLED — it died to a signal, named in
+     the report and the <output>.failed.json record. Something outside the run
+     (a reaper, an operator) took the reviewer away; it did not refuse: retry,
+     and if it recurs find the killer, not the review's content. 128+N for a
+     signal N the shell can name is a kill; any other non-zero status is a plain
+     failure (5). A multi-lane run records a killed lane as status "killed" and
+     exits 6 only when every lane failed, none unusably
   75 detached wait: completion is still recoverable — rerun the same command
   124 detached wait: the run reached its deadline without publishing a status
 HELP
@@ -322,11 +323,10 @@ DETACHED_WORKER=false
 # something outside the run (a reaper, a sweeper, an operator) took the
 # reviewer away. Folded into 5 that reads as a refused review, so a session
 # cannot tell its reviewer was killed until the pattern has cost several runs.
-# Same no-verdict class, own code, and every report of it names the signal. The
-# shell cannot tell a child that died to signal N from one that chose
-# `exit $((128+N))`, so 128+N for a nameable signal N is read as a kill and any
-# other non-zero status stays a plain failure; that misreports only a CLI that
-# deliberately fakes a signal death.
+# Own code in the same no-verdict class, every report naming the signal. The
+# shell cannot tell a child killed by signal N from one that chose
+# `exit $((128+N))`, so 128+N for a nameable signal N is a kill and any other
+# non-zero status a plain failure; that misreports only a CLI faking a kill.
 EXIT_NO_SCOPE=3
 EXIT_NO_REVIEW=4
 EXIT_CLI_FAILED=5
