@@ -767,8 +767,8 @@ REAL_GIT="$(command -v git)"
 git_failing_on() { # ARG [LANE-ARG...] — todo-ban under a git that exits 128 for ARG
   local a="$1" dir="$TMP/git-shim-$1"; shift; mkdir -p "$dir"
   printf '#!/usr/bin/env bash\ncase " $* " in *" %s "*) echo "git %s: simulated failure" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$a" "$a" "$REAL_GIT" >"$dir/git"
-  chmod +x "$dir/git"; RC=0
-  OUT="$(cd "$R" && PATH="$dir:$PATH" "$SCRIPTS/todo-ban" "$@" 2>&1)" || RC=$?
+  chmod +x "$dir/git"
+  under_shim "$dir" todo-ban "$@"
 }
 under_shim() { # SHIM-DIR SCRIPT [ARG...] — run SCRIPT with SHIM-DIR first on PATH
   local dir="$1"; shift; local script="$1"; shift; RC=0
@@ -841,10 +841,10 @@ under_shim "$TR_SHIM" todo-ban --staged
 refused "a NUL-free count that cannot run is exit 2, never OK" "could not sample ok.rs to classify its content"
 
 # suppression-ban's per-carrier count is its own call, made after the shared
-# listing has already named the carrier, and it is the one gg_grep_guard
-# site outside lib/. git spends no status on a blob it could not read there,
-# so the error line on stderr is all that separates a partial count from a
-# clean zero. The shim errors that call alone.
+# listing has already named the carrier, and it is the one gg_grep_guard site
+# outside lib/. The shim errors that call alone and exits 0, so the `error:`
+# line gg_grep_guard reads off stderr is the only thing left that can refuse
+# a count which would otherwise read as a clean zero.
 new_repo readers-count
 mkdir -p "$R/tools"
 printf 'fn main() {}\n' >"$R/ok.rs"
@@ -856,11 +856,11 @@ run_check suppression-ban
   || bad "control: the baselined bare allow passes" "rc=$RC out=$OUT"
 SB_COUNT_SHIM="$TMP/git-shim-count"
 mkdir -p "$SB_COUNT_SHIM"
-printf '#!/usr/bin/env bash\ncase " $* " in *" -acE "*) echo "error: %s: unable to read %s" >&2; exit 1 ;; esac\nexec "%s" "$@"\n' \
+printf '#!/usr/bin/env bash\ncase " $* " in *" -acE "*) echo "error: %s: unable to read %s" >&2; exit 0 ;; esac\nexec "%s" "$@"\n' \
   "'phantom.rs'" "0000000000000000000000000000000000000000" "$REAL_GIT" >"$SB_COUNT_SHIM/git"
 chmod +x "$SB_COUNT_SHIM/git"
 under_shim "$SB_COUNT_SHIM" suppression-ban
-refused "an error-carrying no-match count is exit 2, never a clean zero" "unable to read" suppression-ban
+refused "a count whose stderr carries an error line is exit 2, never a clean zero" "could not read staged content while counting the bare allows" suppression-ban
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

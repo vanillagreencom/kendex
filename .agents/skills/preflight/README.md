@@ -41,8 +41,9 @@ never a machine-local `.agents` symlink.
 
 `git`, `awk`, and the usual POSIX userland; Bash 3.2 compatible.
 `shellcheck` is optional and enables the two shellcheck lanes. `data-syntax`
-reads JSON through `jq` and TOML through `taplo`, or `python3` where `taplo`
-is absent. A lane whose tool is missing skips silently.
+reads JSON through `jq` and TOML through `taplo`, or, where `taplo` is
+absent, a `python3` new enough to carry `tomllib` (3.11 and later). A lane
+whose tool is missing skips silently.
 
 Lane table, scope rules, and the subtrees each lane skips:
 [SKILL.md](SKILL.md).

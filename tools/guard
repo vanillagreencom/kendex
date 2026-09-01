@@ -117,8 +117,10 @@ done)
 # branch the index against nothing, so the first commit is judged too.
 if git cat-file -e 'HEAD^{commit}' 2>/dev/null; then
   diff_against=(HEAD)
+  have_head=1
 else
   diff_against=(--cached)
+  have_head=0
 fi
 
 # New integration-test temp roots take their canonical spelling immediately
@@ -173,12 +175,29 @@ fi
 # hooks/tests/* renders nowhere. A source with no tracked render has nothing
 # to land, and a render-only change is the sync direction and passes. A
 # deletion is in the changed set too, so the render must also still exist
-# wherever its source does. Path quoting is off on both reads: a quoted path
+# wherever its source does. Path quoting is off on every read: a quoted path
 # matches neither the case arms nor its own render.
+#
+# The roots live in one place because the arms and the tracked-set query both
+# read them: a root added to an arm alone would never be tracked, so that
+# harness's renders would be silently unowed. Agent roots carry the render's
+# extension after the colon.
+agent_roots=(.claude/agents:md .codex/agents:toml .pi/agents:md)
+hook_roots=(.claude/hooks .codex/hooks .pi/kendex/hooks)
+render_roots=(.agents/skills "${agent_roots[@]%:*}" "${hook_roots[@]}")
 render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}") ||
   { render_changed=""; say "the changed-file set for the render rule could not be read"; }
-render_tracked=$(git -c core.quotePath=false ls-files -- .agents/skills .claude/agents .codex/agents .pi/agents .claude/hooks .codex/hooks .pi/kendex/hooks) ||
+# Tracked is the index UNION what HEAD carries: the index alone drops a render
+# staged for deletion, which is the moment the outlives clause below exists to
+# judge, and skipping the rule there would accept the drift.
+render_tracked=$(git -c core.quotePath=false ls-files -- "${render_roots[@]}") ||
   { render_tracked=""; say "the tracked render set could not be read"; }
+if [ "$have_head" = 1 ]; then
+  render_committed=$(git -c core.quotePath=false ls-tree -r --name-only HEAD -- "${render_roots[@]}") ||
+    { render_committed=""; say "the committed render set could not be read"; }
+  render_tracked="$render_tracked
+$render_committed"
+fi
 render_hits=""
 NL='
 '
@@ -206,13 +225,13 @@ while IFS= read -r f; do
   agents/*.md)
     n="${f#agents/}"
     n="${n%.md}"
-    renders_under .claude/agents && require_render "$f" ".claude/agents/$n.md"
-    renders_under .codex/agents && require_render "$f" ".codex/agents/$n.toml"
-    renders_under .pi/agents && require_render "$f" ".pi/agents/$n.md"
+    for r in "${agent_roots[@]}"; do
+      renders_under "${r%:*}" && require_render "$f" "${r%:*}/$n.${r##*:}"
+    done
     ;;
   hooks/*)
     n="${f#hooks/}"
-    for d in .claude/hooks .codex/hooks .pi/kendex/hooks; do
+    for d in "${hook_roots[@]}"; do
       render_is_tracked "$d/$n" && require_render "$f" "$d/$n"
     done
     ;;

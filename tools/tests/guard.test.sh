@@ -520,7 +520,7 @@ for r in "${AGENT_RENDERS[@]}"; do
 done
 git -C "$R" checkout -q -- agents .claude/agents .codex .pi
 printf '# amended\n' >>"$R/agents/demo.md"
-if mutant_guard '/agents\/\$n/d'; then
+if mutant_guard '/^  agents\/\*\.md)$/,/^    ;;$/d'; then
   run_mutant
   [ "$RC" -eq 0 ] \
     && ok "control: with the agent render lines deleted the lone agent edit passes" \
@@ -602,6 +602,20 @@ run_guard
 [ "$RC" -eq 0 ] \
   && ok "a hook edit landing both tracked renders passes" \
   || bad "a hook edit landing both tracked renders passes" "rc=$RC out=$OUT"
+git -C "$R" checkout -q -- hooks .claude/hooks .codex/hooks
+
+# Staging a render's deletion takes it out of the index, and the index alone
+# would then read the hook as unrendered and owe nothing. Both renders go, so
+# no surviving copy can red this for another reason: the union with HEAD is
+# what keeps the rule running, and the outlives clause is what refuses.
+printf 'echo more\n' >>"$R/hooks/demo.sh"
+git -C "$R" rm -q .claude/hooks/demo.sh .codex/hooks/demo.sh
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"hooks/demo.sh -> .claude/hooks/demo.sh"* ]] \
+  && [[ "$OUT" == *"hooks/demo.sh -> .codex/hooks/demo.sh"* ]] \
+  && ok "a hook edit staging its renders' deletion reds, naming both" \
+  || bad "a hook edit staging its renders' deletion reds, naming both" "rc=$RC out=$OUT"
+git -C "$R" reset -q HEAD -- .claude/hooks .codex/hooks
 git -C "$R" checkout -q -- hooks .claude/hooks .codex/hooks
 
 printf 'echo more\n' >>"$R/hooks/tests/demo.test.sh"
