@@ -29,8 +29,9 @@ fn the_window_opens_hidden_so_the_saved_zoom_lands_first() {
 /// assertion. Two keys means one delivery path trusting what the other
 /// would turn away — and two identical pins are still the wrong pin if
 /// nothing names the key, which is how a pin whose private half exists
-/// nowhere shipped. So the decoded minisign key file is held to the key id
-/// the release is signed with as well.
+/// nowhere shipped. So the key id parsed out of the key file's payload —
+/// the half minisign verifies with, not the comment above it — is held to
+/// the key id the release is signed with as well.
 #[test]
 #[allow(clippy::expect_used)]
 fn the_app_and_the_cli_pin_one_updater_key() {
@@ -38,11 +39,30 @@ fn the_app_and_the_cli_pin_one_updater_key() {
         config()["plugins"]["updater"]["pubkey"].as_str(),
         Some(kendex_core::update_feed::UPDATER_PUBLIC_KEY)
     );
-    let decoded = base64::engine::general_purpose::STANDARD
+    let key_file = base64::engine::general_purpose::STANDARD
         .decode(kendex_core::update_feed::UPDATER_PUBLIC_KEY)
         .expect("the pinned key is base64");
-    assert!(
-        String::from_utf8_lossy(&decoded).contains("C922C89178B7C6CC"),
+    let key_file = String::from_utf8(key_file).expect("the pinned key file is text");
+    // Line one is the untrusted comment, which minisign never reads. Line
+    // two is the key: two bytes of algorithm, eight of key id little-endian,
+    // then the thirty-two a signature is checked against.
+    let payload = base64::engine::general_purpose::STANDARD
+        .decode(
+            key_file
+                .lines()
+                .nth(1)
+                .expect("the pinned key file carries a payload line")
+                .trim(),
+        )
+        .expect("the payload line is base64");
+    assert_eq!(payload.len(), 42, "a minisign public key is 42 bytes");
+    let key_id: String = payload[2..10]
+        .iter()
+        .rev()
+        .map(|b| format!("{b:02X}"))
+        .collect();
+    assert_eq!(
+        key_id, "C922C89178B7C6CC",
         "the pin carries a key id the release signing key does not"
     );
 }
