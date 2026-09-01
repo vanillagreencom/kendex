@@ -141,10 +141,10 @@ fn as_authored<'a>(
 /// The most cells [`aligned`] will hold, which is what bounds the bodies
 /// it will line up. A rendering the catalog door admits runs to a hundred
 /// thousand lines and more, and a cell for every pair of lines is a table
-/// no allocator serves — an abort where this module refuses. The bound is
-/// on the two line counts multiplied, so it admits a rendering and a
-/// published prose of two thousand lines each, ten times the longest
-/// agent in circulation, and holds fifteen megabytes doing it.
+/// no allocator serves — an abort where this module refuses. The count is
+/// the edited body against the rendering, a border row and column
+/// included, so the largest square it admits is 1,999 lines a side: ten
+/// times the longest agent in circulation, holding fifteen mebibytes.
 const CELLS: usize = 4_000_000;
 
 /// Each kept line paired with the rendered line it stands for, as
