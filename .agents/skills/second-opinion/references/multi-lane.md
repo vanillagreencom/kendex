@@ -63,7 +63,7 @@ key: for the same slot the stricter class wins.
 | `summary` | Each lane's own summary, lane-labelled |
 | `qa_metadata.union` | Always `true` for a union artifact |
 | `qa_metadata.coverage` | `full` only when every selected lane answered AND as many lanes were selected as `SECOND_OPINION_COUNT` requested; `degraded` for either shortfall (see `requested_count` / `selected_count`) |
-| `qa_metadata.lanes` | One entry per lane: the answering lanes with their agent, verdict and finding counts, then the failed ones with `status: "failed"` and their exit code |
+| `qa_metadata.lanes` | One entry per lane: the answering lanes with their agent, verdict and finding counts, then the failed ones with `status: "failed"` — or `"killed"` for a lane that died to a signal — and their exit code |
 | `qa_metadata.dedupe` | Findings in and out, per class |
 | `qa_metadata.reviewed_head` | The scope-derivation pin |
 
@@ -126,7 +126,13 @@ holding only whitespace, is the lane answering unusably (4). An absent or
 zero-byte artifact, or a lane that exited 0 leaving nothing, is the lane never
 answering (5).
 
+A lane that died to a signal — the lane child reaped with a status above 128,
+or its CLI killed and classified by the child (exit 6) — is a KILL, recorded as
+`status: "killed"` and reported with the signal's name: the reviewer was taken
+away by something outside the run, not refused, and folding that into "failed"
+is how a recurring killer stays invisible.
+
 When **every** lane fails there is no artifact and the run takes the aggregate
 of those classes: 4 when at least one lane answered unusably — its own exit 4,
-an artifact the merge could not consume, or a response-defect exit 1 — and 5
-when no lane ever answered.
+an artifact the merge could not consume, or a response-defect exit 1 — else 6
+when any lane was killed, and 5 when no lane ever answered.

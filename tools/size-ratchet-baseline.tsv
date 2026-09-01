@@ -122,7 +122,7 @@ skills/review-gate/tests/e2e-sandbox.sh	898
 skills/review-gate/tests/pr-watch.test.sh	1158
 skills/review-gate/tests/review-predicate-selftest.test.sh	929
 skills/review-gate/tests/review-writer-template.test.sh	923
-skills/second-opinion/scripts/second-opinion	2627
+skills/second-opinion/scripts/second-opinion	2694
 skills/second-opinion/scripts/second-opinion-runtime	420
 skills/second-opinion/tests/cli-failure-gate.test.sh	1211
 skills/second-opinion/tests/lane-scratch-durability.test.sh	999

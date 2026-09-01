@@ -101,7 +101,7 @@ written — findings deduplicated by normalized location, per-lane provenance in
 each finding's `sources` and in qa_metadata.lanes, lane artifacts kept beside
 it as <output>.<target>.json. A failed lane is recorded in the artifact
 (qa_metadata.coverage="degraded"); when every lane fails there is no artifact
-and the run exits 4/5.
+and the run exits 4/5/6.
 
 Environment. Every key below belongs in kendex.settings.toml [env] (or
 .env.local) except SECOND_OPINION_CURRENT_MODEL and
@@ -243,6 +243,12 @@ Exit codes:
      non-zero (quota/auth/network), timed out, or returned an empty response on
      a zero exit. No external verdict; whatever partial output existed is kept
      as <output>.failed.json and the CLI's own error text is echoed on stderr
+  6  review/audit: the external CLI (or a review lane running it) was KILLED —
+     it died to a signal, named in the report and the <output>.failed.json
+     record. The reviewer was taken away by something outside the run (a
+     reaper, an operator), not refused: retry, and if it recurs find the
+     killer rather than the review's content. Any exit status above 128 is
+     read as a signal death
   75 detached wait: completion is still recoverable — rerun the same command
   124 detached wait: the run reached its deadline without publishing a status
 HELP
@@ -311,9 +317,31 @@ DETACHED_WORKER=false
 # failure (the model never answered) — an operator retries a down lane but reads
 # a code-4 as a real signal about the review. Only review/audit modes (the ones
 # with the no-verdict contract) use it; challenge/quick keep the generic 1.
+#
+# EXIT_CLI_KILLED (KEN-1061): the CLI, or a lane running it, died to a SIGNAL.
+# That is not the CLI refusing or failing on its own terms — something outside
+# the run (a reaper, a sweeper, an operator) took the reviewer away — and folded
+# into 5 it reads as a refused review, so a session cannot tell its reviewer was
+# killed until the pattern has cost several runs. Same no-verdict class, own
+# code, and every report of it names the signal. The shell cannot tell a child
+# that died to signal N from one that chose `exit $((128+N))`, so any exit
+# status above 128 is read as a kill; that trade misreports only a CLI that
+# deliberately fakes a signal death.
 EXIT_NO_SCOPE=3
 EXIT_NO_REVIEW=4
 EXIT_CLI_FAILED=5
+EXIT_CLI_KILLED=6
+
+# The signal behind an exit status, as SIG<NAME> — empty return (1) when the
+# status is not a signal death. 128+N is the shell's encoding for a child
+# killed by signal N; `kill -l` maps the number back to its name portably.
+signal_name() {
+  local status="$1" name
+  [[ "$status" =~ ^[0-9]+$ ]] && [[ $status -gt 128 && $status -lt 192 ]] || return 1
+  name=$(kill -l "$((status - 128))" 2>/dev/null) || return 1
+  [[ -n "$name" ]] || return 1
+  printf 'SIG%s' "$name"
+}
 
 # WHERE `--` IS USED IN THIS FILE, and why it is not used everywhere.
 #
@@ -1709,7 +1737,8 @@ second_opinion_detach_if_needed
 # the failed lane and its exit code are recorded in qa_metadata.lanes and
 # coverage becomes "degraded". When EVERY lane fails there is no external
 # verdict, so the run joins the no-verdict class: exit 4 when at least one lane
-# answered unusably (its own exit 4), else exit 5.
+# answered unusably (its own exit 4), else 6 when any lane died to a signal,
+# else exit 5.
 if $MULTI_LANE; then
   # Derive scope once, up front: exits 3 before any lane spawns when the diff
   # is empty, and pins the SAME resolved range for every lane.
@@ -1913,6 +1942,7 @@ if $MULTI_LANE; then
   LANES_FAILED_JSON="[]"
   LANE_WRAPS=()
   ANY_LANE_EXIT4=false
+  ANY_LANE_KILLED=false
   for i in "${!LANE_PIDS[@]}"; do
     lane="${REVIEW_LANES[$i]}"
     lane_rc=0
@@ -2024,19 +2054,41 @@ if $MULTI_LANE; then
       # Exit-code contract: 4 = the lane ANSWERED but unusably. A lane's own
       # exit 1 after the availability check is a response-level defect too
       # (invalid JSON even after the retry exits 1) — only never-answered
-      # classes (5, 124) leave ANY_LANE_EXIT4 unset.
-      [[ $lane_rc -eq "$EXIT_NO_REVIEW" || $lane_rc -eq 1 ]] && ANY_LANE_EXIT4=true
-      echo "→ lane failed: $lane (exit $lane_rc)" >&2
+      # classes (5, 6, 124, a signal) leave ANY_LANE_EXIT4 unset.
+      #
+      # A signal death is a KILL, not a lane failing on its own terms: either
+      # the lane child itself died to a signal (rc above 128 from the wait), or
+      # its CLI did and the child classified it (EXIT_CLI_KILLED). Both are
+      # recorded as status "killed" so the union names which reviewer was taken
+      # away, and reported as kills on stderr.
+      lane_status="failed"
+      if lane_signal=$(signal_name "$lane_rc"); then
+        lane_status="killed"
+        ANY_LANE_KILLED=true
+        echo "→ lane killed: $lane ($lane_signal, exit $lane_rc) — an external signal, not a review refusal" >&2
+      elif [[ $lane_rc -eq "$EXIT_CLI_KILLED" ]]; then
+        lane_status="killed"
+        ANY_LANE_KILLED=true
+        echo "→ lane killed: $lane (exit $lane_rc — its CLI died to a signal; the lane's own log above names it)" >&2
+      else
+        [[ $lane_rc -eq "$EXIT_NO_REVIEW" || $lane_rc -eq 1 ]] && ANY_LANE_EXIT4=true
+        echo "→ lane failed: $lane (exit $lane_rc)" >&2
+      fi
       LANES_FAILED_JSON=$(jq -n --argjson prev "$LANES_FAILED_JSON" \
-        --arg target "$lane" --argjson code "$lane_rc" \
-        '$prev + [{target: $target, status: "failed", exit_code: $code}]')
+        --arg target "$lane" --arg status "$lane_status" --argjson code "$lane_rc" \
+        '$prev + [{target: $target, status: $status, exit_code: $code}]')
     fi
   done
 
   if [[ ${#LANE_WRAPS[@]} -eq 0 ]]; then
     jq -n --argjson lanes "$LANES_FAILED_JSON" \
       '{error: "every review lane failed — no external verdict", lanes: $lanes}' >&2
-    if $ANY_LANE_EXIT4; then exit "$EXIT_NO_REVIEW"; else exit "$EXIT_CLI_FAILED"; fi
+    # 4 outranks 6 outranks 5: an unusable ANSWER is a real signal about the
+    # review, a kill says the reviewer was taken away, and only when neither
+    # holds is this a plain lane failure.
+    if $ANY_LANE_EXIT4; then exit "$EXIT_NO_REVIEW"
+    elif $ANY_LANE_KILLED; then exit "$EXIT_CLI_KILLED"
+    else exit "$EXIT_CLI_FAILED"; fi
   fi
 
   # Union merge. Dedupe key: normalized location (lowercased, backticks and
@@ -2187,13 +2239,17 @@ run_target_cli() {
 # exists as <output>.failed.json (mirroring the .noreview/.incomplete sidecars),
 # emit an error JSON on stderr that carries the sidecar path AND the CLI's own
 # error text (so an operator sees "usage limit", not a bare code), then exit
-# EXIT_CLI_FAILED. Only review/audit modes carry the no-verdict contract, so
-# only they call this; challenge/quick keep the generic exit 1. Independent of
-# TARGET_CLI — both lanes route through run_target_cli and STDERR_TMP.
+# EXIT_CLI_FAILED — or EXIT_CLI_KILLED when the caller classified the failure
+# as a signal death, with "was killed" wording throughout. Only review/audit
+# modes carry the no-verdict contract, so only they call this; challenge/quick
+# keep the generic exit 1. Independent of TARGET_CLI — both lanes route through
+# run_target_cli and STDERR_TMP.
 preserve_cli_failure_and_fail() {
   local reason="$1"          # human-readable cause (e.g. "exited with code 2")
   local partial="${2:-}"     # captured stdout, may be empty
-  local sidecar cause="" cause_source=""
+  local exit_code="${3:-$EXIT_CLI_FAILED}"  # EXIT_CLI_KILLED for a signal death
+  local sidecar cause="" cause_source="" verb="failed"
+  [[ "$exit_code" -ne "$EXIT_CLI_KILLED" ]] || verb="was killed"
 
   # The CLI's own stderr is the authoritative cause (e.g. the quota message).
   # Some CLIs report the failure on stdout with an empty stderr — the Claude
@@ -2215,12 +2271,12 @@ preserve_cli_failure_and_fail() {
     artifact_file failed; sidecar="$ARTIFACT_PATH"
   fi
   sidecar=$(store_record "$sidecar" "$(jq -n --arg target "$TARGET_CLI" --arg reason "$reason" \
-        --arg cause "$cause" --arg cause_source "$cause_source" --arg stdout "$partial" \
-    '{error: "external CLI failed before producing a review", target: $target, reason: $reason, cause: $cause, cause_source: $cause_source, partial_stdout: $stdout}')")
+        --arg verb "$verb" --arg cause "$cause" --arg cause_source "$cause_source" --arg stdout "$partial" \
+    '{error: "external CLI \($verb) before producing a review", target: $target, reason: $reason, cause: $cause, cause_source: $cause_source, partial_stdout: $stdout}')")
 
   jq -n --arg target "$TARGET_CLI" --arg reason "$reason" --arg sidecar "$sidecar" \
     '{error: "\($target) \($reason) — refusing to write a review artifact", response: $sidecar}' >&2
-  echo "→ external CLI failed: $TARGET_CLI $reason" >&2
+  echo "→ external CLI $verb: $TARGET_CLI $reason" >&2
   if [[ -n "$cause" ]]; then
     echo "--- cause (${cause_source}) ---" >&2
     printf '%s\n' "$cause" >&2
@@ -2230,7 +2286,7 @@ preserve_cli_failure_and_fail() {
   else
     echo "→ failed invocation could not be preserved anywhere — the cause above is the whole record" >&2
   fi
-  exit "$EXIT_CLI_FAILED"
+  exit "$exit_code"
 }
 
 # review/audit carry the no-verdict contract (exits 3/4/5); challenge/quick do not.
@@ -2242,6 +2298,17 @@ RESULT=$(run_target_cli "$PROMPT_TMP") || EXIT_CODE=$?
 if [[ $EXIT_CODE -eq 124 ]]; then
   $REVIEW_LIKE && preserve_cli_failure_and_fail "timed out after ${TIMEOUT}s" "$RESULT"
   echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
+  exit 1
+elif CLI_SIGNAL=$(signal_name "$EXIT_CODE"); then
+  # A signal death is a kill, not the CLI refusing: report it as one, under its
+  # own exit code, so the caller can tell its reviewer was taken away.
+  $REVIEW_LIKE && preserve_cli_failure_and_fail \
+    "was killed by $CLI_SIGNAL (exit $EXIT_CODE)" "$RESULT" "$EXIT_CLI_KILLED"
+  echo "{\"error\": \"$TARGET_CLI was killed by $CLI_SIGNAL (exit $EXIT_CODE)\", \"target\": \"$TARGET_CLI\"}" >&2
+  if [[ -s "$STDERR_TMP" ]]; then
+    echo "--- stderr ---" >&2
+    head -20 "$STDERR_TMP" >&2
+  fi
   exit 1
 elif [[ $EXIT_CODE -ne 0 ]]; then
   $REVIEW_LIKE && preserve_cli_failure_and_fail "exited with code $EXIT_CODE" "$RESULT"
