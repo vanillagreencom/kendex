@@ -20,7 +20,7 @@ A Bash CLI over Linear's GraphQL API with a local JSON cache. Reads are served f
 ```bash
 ./scripts/linear.sh cache issues list --project "Phase 2" --state "Todo,In Progress"
 ./scripts/linear.sh cache issues get ABC-100 --with-bundle
-./scripts/linear.sh issues create --title "New task" --project "Phase 2" --labels "agent:generalist"
+./scripts/linear.sh issues create --title "New task" --project "Phase 2" --labels "agent:generalist" --description "Reached by: kendex apply"
 ./scripts/linear.sh issues update ABC-100 --state Done
 ./scripts/linear.sh sync --reconcile
 ```

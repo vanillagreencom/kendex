@@ -283,16 +283,33 @@ blocking_level_violation_message() {
 # and rule cannot drift apart. The symptom refusal below states its own rule.
 REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). A value naming only the thread a finding came from, a shape, or something true in theory is not a reach, and an unsubstituted placeholder or a null token is no value at all.'
 
-# Values naming the thread a finding came from rather than a producer. Every
-# entry needs a leading word boundary, and each bot or role name is qualified
-# by the artifact it produced: this project ships a `codex` harness id, a
-# `reviewer` skill and reviewer-* agents, so bare `codex` or `reviewer` in a
-# value refuses an honest reach like `kendex install --harness codex` or
-# `a reviewer running tools/guard`, which the guard has no escape flag to
-# recover. `could` and `might` are absent for the same reason: they mark a
-# speculative impact, which the filing bar judges on its own line, and as
-# words they refuse `could not` in a report of what a user actually hit.
-REACH_REFUSED_WORDS='(^|[^a-z0-9])((copilot|codex|reviewer|bot|pr|pull request|pull-request) (review|comment|thread|suggestion)|review (thread|comment|round)|code review|prrt_|(the|this) finding|in theory|hypothetical)'
+# A value that IS the artifact a finding came from, rather than one that names
+# a producer and mentions the artifact along the way. Anchored end to end with
+# its parts bounded, the same whole-value discipline the shapes list below
+# uses: a phrase appearing somewhere in the value says nothing about the
+# value, and matching on that refused `running the PR review gate on a stale
+# head`, which names a shipped check. What refuses is a determiner, any run of
+# qualifier words, an artifact head noun, and at most a prepositional tail —
+# so `the PR review suggestion` refuses and `the PR review gate on a stale
+# head` creates, the head noun being what decides.
+#
+# The two lists stay separate because the vocabularies sit in different
+# positions: a shape needs its word after a head noun (`a name containing a
+# quote`), an artifact needs its words at the head (`the pull request
+# comment`). One pattern cannot hold a vocabulary in both places.
+#
+# This project ships a `codex` harness id, a `reviewer` skill and reviewer-*
+# agents, so a bare product noun would refuse honest reaches like `kendex
+# install --harness codex` or `a reviewer running tools/guard`, which the
+# guard has no escape flag to recover. `could` and `might` are absent for the
+# same reason: they mark a speculative impact, which the filing bar judges on
+# its own line, and as words they refuse `could not` in a report of what a
+# user actually hit.
+REACH_ARTIFACT_QUALIFIER='(copilot|codex|reviewer|bot|pr|pull request|pull-request|code|review)'
+REACH_ARTIFACT_HEAD='(review|comment|thread|suggestion|round|finding)'
+REACH_DETERMINER='(the |this |that |a |an )?'
+REACH_ARTIFACT_TAIL='( (on|of|in|from|at|for|about) .{0,40})?'
+REACH_REFUSED_WORDS="^$REACH_DETERMINER($REACH_ARTIFACT_QUALIFIER )*$REACH_ARTIFACT_HEAD$REACH_ARTIFACT_TAIL\$|^prrt_[a-z0-9_-]*\$|^${REACH_DETERMINER}hypothetical( .{0,40})?\$|^in theory( .{0,40})?\$"
 
 # A value that IS an input form is a shape, not a producer: no run emits it and
 # no user performs it. Both patterns are anchored end to end and their parts

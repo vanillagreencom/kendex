@@ -197,6 +197,16 @@ run_linear issues create --title "Comments audit" \
   --description "$(printf 'Reached by: running the pr-comments audit path\n')"
 assert_created "a reach naming the pr-comments workflow as its producer"
 
+# The artifact head noun is what decides, not the words leading up to it: the
+# review gate is a shipped check, and naming it is not naming a thread.
+run_linear issues create --title "Stale head" \
+  --description "$(printf 'Reached by: running the PR review gate on a stale head\n')"
+assert_created "a reach naming the PR review gate as its producer"
+
+run_linear issues create --title "Stale head" \
+  --description "$(printf 'Reached by: the PR review gate on a stale head\n')"
+assert_created "a determiner-led reach whose head noun is a shipped check"
+
 echo "=== guard on: an unsubstituted placeholder and a null token are absent ==="
 
 # The templates this repo ships carry `[REACH]` and `[SYMPTOM]`; copying one

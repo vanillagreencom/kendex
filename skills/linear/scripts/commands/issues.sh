@@ -191,13 +191,13 @@ Examples:
   # Basic operations
   issues.sh list --label "backend" --state "Todo"
   issues.sh get PROJ-42
-  issues.sh create --title "New task" --labels "backend,priority:high"
-  issues.sh create --title "Bundle" --project "Phase 2" --format=ids  # Print only the new identifier
+  issues.sh create --title "New task" --labels "backend,priority:high" --description "Reached by: kendex apply"
+  issues.sh create --title "Bundle" --project "Phase 2" --description "Reached by: kendex apply" --format=ids  # identifier only
   issues.sh update PROJ-42 --state "In Progress"
   issues.sh archive PROJ-42
 
   # Parent/sub-issues
-  issues.sh create --title "Sub-task" --parent PROJ-42
+  issues.sh create --title "Sub-task" --parent PROJ-42 --description "Reached by: kendex apply"
   issues.sh children PROJ-42                    # Direct children only
   issues.sh children PROJ-42 --recursive        # All descendants (3 levels deep)
   issues.sh children PROJ-42 --recursive --pending  # Pending only (excludes completed/canceled)
