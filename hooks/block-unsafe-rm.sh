@@ -86,7 +86,10 @@ fi
 # lexical-scanner class, and a finding of that shape against this file is
 # declined, not patched. The harness prompt still stops every one of them; what
 # it costs is the stall this hook exists to spare.
-ENDERS=';&|'$'\n'
+# The ampersand leads so this string does not spell bash 4's case fall-through
+# operator, which tools/bash32-lint flags in string data too. A bracket
+# expression carries no order, so the set below is the set named above.
+ENDERS='&;|'$'\n'
 # BLANK and SPACE_ANY are the class names as they are spelled INSIDE a bracket
 # expression, so the same two definitions serve a class of their own and a
 # member of a larger one.
