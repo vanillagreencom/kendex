@@ -34,7 +34,8 @@ import stat
 from . import marker as marker_mod
 from .constants import MARKER_TOKEN
 from .errors import ContainmentError, LockError, RenderError
-from .fsutil import RUN_DIR, LOCK_NAME, MANIFEST_NAME, _components, _walk_to_parent, _read_all
+from .fsutil import (RUN_DIR, LOCK_NAME, MANIFEST_NAME, _components, _walk_to_parent,
+                     _read_all, decode_text)
 
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
@@ -55,6 +56,11 @@ def _gate(dir_fd, leaf, rel, require_marker):
 
     `(None, None)` when the path is absent — a path this package is creating
     has nothing to protect.
+
+    The decode is strict, and a file that does not round-trip is refused
+    before anything is written. The text this returns is the write payload,
+    not just the string the marker test reads, so a substituted byte here
+    would be a substituted byte in the file.
     """
     try:
         fd = os.open(leaf, os.O_RDONLY | _NOFOLLOW, dir_fd=dir_fd)
@@ -68,7 +74,7 @@ def _gate(dir_fd, leaf, rel, require_marker):
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise ContainmentError(f"{rel}: is not a regular file")
-        existing = _read_all(fd).decode("utf-8", "replace")
+        existing = decode_text(_read_all(fd), rel)
         if require_marker and not marker_mod.at_canonical_position(rel, existing):
             raise RenderError(
                 f"{rel}: carries no {MARKER_TOKEN!r} marker at its canonical position, so "
@@ -91,7 +97,19 @@ def replace(root_fd, rel, data=None, require_marker=True, transform=None):
     bytes to write, or None to leave the file alone. Any ownership decision
     that content settles belongs inside it, so the decision and the
     replacement come from one open. Returns True when a write happened.
+
+    Exactly one of `data` and `transform`, and the pair is checked before the
+    temp file exists.
     """
+    if (data is None) == (transform is None):
+        # Neither is a caller that would reach `os.write(fd, None)` with the
+        # temp file already created; both is `data` silently dropped by the
+        # transform branch. Both are caller errors, and this is the one
+        # function the write posture rests on.
+        raise RenderError(
+            f"{rel}: writer.replace takes exactly one of data= and transform=; "
+            f"got {'neither' if data is None else 'both'}"
+        )
     parts = _components(rel)
     dir_fd, leaf = _walk_to_parent(root_fd, parts, create=True)
     tmp = f".{leaf}.bot-instructions-tmp.{os.getpid()}"

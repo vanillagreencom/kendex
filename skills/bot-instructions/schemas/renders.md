@@ -95,6 +95,12 @@ derived from the copy taken before it. So the splice's bound is the one above,
 and it is that bound because the ownership check, the region, and the bytes
 spliced all come from one open.
 
+That one open also decodes strictly. The text a read-modify-write is handed is
+the write payload, not a string read and thrown away, so a file holding a byte
+that is not UTF-8 is refused naming the path before anything is written.
+Substituting that byte would write U+FFFD over content this package does not
+own, in the file whose non-owned bytes belong to the repo, and report success.
+
 **Write phase.** The generator builds and validates a complete scratch tree,
 writes a manifest of every path it is about to replace, then replaces them.
 A failure part way through leaves the manifest, so re-running `render` finishes

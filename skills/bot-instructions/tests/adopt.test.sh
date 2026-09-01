@@ -9,6 +9,20 @@
 
 . "$(dirname "$0")/lib/harness.sh"
 
+# Does the file hold these exact bytes? The second argument is a byte string
+# written with `\xNN` escapes, so a control can name a byte no text encoding
+# round-trips.
+#
+# Reading the bytes is the point. A grep for the ASCII prose around them
+# passes whatever the write phase did to a non-ASCII byte, which is how a
+# lossy decode in the write path went unnoticed here: the file still said
+# "Never flag the generated parser" while the é in it had become U+FFFD.
+holds_bytes() {
+  python3 -c 'import sys
+want = sys.argv[2].encode("latin-1").decode("unicode_escape").encode("latin-1")
+sys.exit(0 if want in open(sys.argv[1], "rb").read() else 1)' "$1" "$2"
+}
+
 repo="$(bi_new_repo adopt)"
 
 # A repo arriving with hand-written bot files.
@@ -22,7 +36,7 @@ Review rules for this repository. Our full policy is in
 
 [handbook]: HANDBOOK.md
 
-Never flag the generated parser as unformatted.
+Never flag the generated parser as unformatted. Ask Séverine first.
 EOF
 cat > "$repo/.github/instructions/tests.instructions.md" <<'EOF'
 ---
@@ -68,9 +82,10 @@ for want in "REVIEW-GUIDE.md" ".github/REVIEWERS.md" "HANDBOOK.md"; do
   fi
 done
 
-# The bytes survive the adoption: what the file held is still there, and the
-# diff against the next render is what the TOML has to absorb.
-if grep -q 'Never flag the generated parser' "$repo/.github/copilot-instructions.md"; then
+# Every byte an adopted file held is still there afterwards, and the diff
+# against the next render is what the TOML has to absorb.
+if grep -q 'Never flag the generated parser' "$repo/.github/copilot-instructions.md" \
+   && holds_bytes "$repo/.github/copilot-instructions.md" 'S\xc3\xa9verine'; then
   ok 'an adopted file keeps its bytes and gains the marker'
 else
   bad 'an adopted file keeps its bytes and gains the marker'
@@ -137,6 +152,70 @@ open(p, "w").write("\n".join(lines))
 PY
 expect_message "run \`adopt\` to take it over" \
   'a region whose marker went missing is not overwritten' render --repo "$repo"
+
+# A file the write phase is about to rewrite has to round-trip first. The
+# write payload is the DECODED text, so a byte that is not valid UTF-8 would
+# be written back as U+FFFD over content outside the region this package owns,
+# with the run reporting success. Both halves are the control: the run refuses
+# naming the path, and the byte is still there afterwards.
+repo="$(bi_new_repo adopt-invalid-utf8-file)"
+mkdir -p "$repo/.github"
+printf '# fixture\n\nCaf\xe9 rules.\n' > "$repo/.github/copilot-instructions.md"
+expect_message '.github/copilot-instructions.md: is not UTF-8' \
+  'a hand-written file holding a byte that is not UTF-8 is refused, not rewritten' \
+  adopt --repo "$repo"
+if holds_bytes "$repo/.github/copilot-instructions.md" 'Caf\xe9 rules'; then
+  ok 'and that byte is still the byte the file held'
+else
+  bad 'and that byte is still the byte the file held' \
+    "$(od -c "$repo/.github/copilot-instructions.md" | tr '\n' ' ')"
+fi
+
+# The same rule for AGENTS.md, whose bad byte sits in prose OUTSIDE the owned
+# region: the whole file is the write payload, not the region alone.
+repo="$(bi_new_repo adopt-invalid-utf8-agents)"
+printf '# fixture\n\n## Code Review Rules\n\nHand-written today.\n\n## Something else\n\nCaf\xe9 rules.\n' \
+  > "$repo/AGENTS.md"
+expect_message 'AGENTS.md: is not UTF-8' \
+  'a byte outside the owned region that is not UTF-8 is refused, not rewritten' \
+  adopt --repo "$repo"
+if holds_bytes "$repo/AGENTS.md" 'Caf\xe9 rules'; then
+  ok 'and AGENTS.md still holds the byte it had'
+else
+  bad 'and AGENTS.md still holds the byte it had' \
+    "$(od -c "$repo/AGENTS.md" | tr '\n' ' ')"
+fi
+
+# `writer.replace` takes exactly one of its two content modes, and says so.
+# Neither would reach `os.write(fd, None)` with the temp file already made;
+# both would drop `data` in the transform branch without a word. Driven at the
+# function, because no verb can call it wrongly and a caller error is what
+# this clause is about.
+repo="$(bi_new_repo adopt-replace-modes)"
+if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
+import os, sys
+PKG, repo = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.join(PKG, "scripts"))
+from lib import writer
+from lib.errors import RenderError
+
+root_fd = os.open(repo, os.O_RDONLY)
+for label, kwargs in (("neither", {}),
+                      ("both", {"data": "x\n", "transform": lambda _existing: "y\n"})):
+    try:
+        writer.replace(root_fd, "README.md", require_marker=False, **kwargs)
+    except RenderError as exc:
+        if "exactly one of data= and transform=" not in str(exc):
+            sys.exit(f"{label}: refused, but not by the content-mode clause: {exc}")
+    else:
+        sys.exit(f"{label}: accepted")
+if open(os.path.join(repo, "README.md")).read() != "# fixture\n":
+    sys.exit("a refused call still wrote to the file")
+PROBE
+  ok 'replace refuses neither content mode and both, and writes nothing either way'
+else
+  bad 'replace refuses neither content mode and both, and writes nothing either way'
+fi
 
 # A symlink at a generated path is never followed and never replaced: the
 # containment rule is about the open rather than about the write.

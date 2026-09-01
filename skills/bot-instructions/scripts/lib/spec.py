@@ -17,7 +17,7 @@ content refusals, which `refusals.py` owns.
 import re
 
 from .constants import FROZEN_BLOCK_IDS, ROUTING_COLUMNS
-from .errors import SpecError
+from .errors import InputError, SpecError
 from . import refusals
 
 # A version reaches a `#`, `//`-free comment and an HTML comment. Anything
@@ -42,9 +42,15 @@ class Doctrine:
 
 
 def check_marker_path(path):
-    """A path the marker records. Refused rather than encoded."""
+    """A path the marker records. Refused rather than encoded.
+
+    An `InputError` rather than a `SpecError`: this judges a render input
+    path, not the spec copy, and `run._as_finding` catches the input family,
+    so the refusal reaches the operator naming the validator whose clause it
+    is instead of as a bare message.
+    """
     if not _PATH_CLASS.match(path):
-        raise SpecError(
+        raise InputError(
             f"{path!r}: a path this render records in the marker must hold only "
             "[A-Za-z0-9._/-]; the marker is a comment and this package refuses "
             "rather than escapes"

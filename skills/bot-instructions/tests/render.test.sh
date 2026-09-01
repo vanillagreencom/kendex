@@ -220,12 +220,17 @@ fi
 # cannot close one. They are this package's own constants today, so the
 # control injects one through the manifest read, which is the input list's one
 # repo-derived member.
+#
+# It drives `cli.main` rather than `run.Context`, and asserts on what the run
+# PRINTS. The refusal firing is half the clause; the other half is that it
+# reaches the operator attributed to a validator, which is what § Controls
+# requires of every rejection and what a class-level assertion here cannot
+# see.
 if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" <<'PROBE'; then
-import os, sys
+import contextlib, io, os, sys
 PKG, repo = sys.argv[1], sys.argv[2]
 sys.path.insert(0, os.path.join(PKG, "scripts"))
-from lib import manifest, run, tree
-from lib.errors import SpecError
+from lib import cli, manifest
 
 original = manifest.resolve
 
@@ -234,20 +239,23 @@ def leaky(t):
     return resolved, paths + ["kendex.toml --> and live reviewer instructions"]
 
 manifest.resolve = leaky
+err = io.StringIO()
 try:
-    run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
-                ("SKILL.md", "schemas/renders.md"), "check",
-                ("SKILL.md", "schemas/renders.md"))
-    sys.exit("a marker input path outside the class was accepted")
-except SpecError as exc:
-    if "refuses" not in str(exc):
-        sys.exit(f"refused, but not by the marker-path clause: {exc}")
+    with contextlib.redirect_stderr(err):
+        status = cli.main(["check", "--repo", repo, "--spec", PKG])
 finally:
     manifest.resolve = original
+printed = err.getvalue()
+if status == 0:
+    sys.exit("a marker input path outside the class was accepted")
+if "refuses" not in printed:
+    sys.exit(f"refused, but not by the marker-path clause: {printed.strip()}")
+if not printed.startswith("toml-schema:"):
+    sys.exit(f"refused without naming the validator whose clause it is: {printed.strip()}")
 PROBE
-  ok 'a marker input path outside the class is refused'
+  ok 'a marker input path outside the class is refused, naming its validator'
 else
-  bad 'a marker input path outside the class is refused'
+  bad 'a marker input path outside the class is refused, naming its validator'
 fi
 
 bi_summary

@@ -106,14 +106,26 @@ def _read_all(fd):
         chunks.append(chunk)
 
 
-def read_text(root_fd, rel):
-    raw = read_file(root_fd, rel)
-    if raw is None:
-        return None
+def decode_text(raw, rel):
+    """The one strict decode, for reads and for rewrites alike.
+
+    A lossy decode is safe only while the text is read and thrown away. The
+    write phase derives the new bytes from this text, so a substituted byte
+    there is written back over the file: every byte a file holds has to
+    round-trip before any of it is rewritten, or `render` and `adopt` corrupt
+    content outside the region this package owns and report success.
+    """
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise RenderError(f"{rel}: is not UTF-8 ({exc.reason})") from exc
+
+
+def read_text(root_fd, rel):
+    raw = read_file(root_fd, rel)
+    if raw is None:
+        return None
+    return decode_text(raw, rel)
 
 
 def walk(root_fd, rel, _depth=0):
