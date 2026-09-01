@@ -88,8 +88,8 @@ Options:
   --foreground      Mark this call as subject to a foreground harness cap
   -h, --help        Show this help
 With --foreground, run the printed wait command unchanged until terminal.
-Exit 75 means completion is still recoverable; exit 124 means the run reached
-its deadline and its process group was stopped.
+Exit 75 means completion or deadline cleanup is still recoverable. Exit 124
+means the deadline passed, the process group is gone, and runtime state was removed.
 Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
 first target that is available AND runs a different model from this session —
 the model this session runs is never dispatched to, in any mode, forced or not.
@@ -250,8 +250,8 @@ Exit codes:
      signal N the shell can name is a kill; any other non-zero status is a plain
      failure (5). A multi-lane run records a killed lane as status "killed" and
      exits 6 only when every lane failed, none unusably
-  75 detached wait: completion is still recoverable — rerun the same command
-  124 detached wait: the run reached its deadline without publishing a status
+  75 detached wait: completion or cleanup is recoverable; cleanup failure preserves state
+  124 detached wait: deadline passed; process group gone; runtime state removed
 HELP
 }
 # Help is answered before project configuration is read: sourcing a repo's

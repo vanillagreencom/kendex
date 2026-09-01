@@ -16,13 +16,31 @@ process_group_alive() { kill -0 -- "-$1" 2>/dev/null; }
 stop_process_group() {
   local leader="$1" grace="$2" end now
   process_group_alive "$leader" || return 0
-  kill -TERM -- "-$leader" 2>/dev/null || true
+  if ! kill -TERM -- "-$leader" 2>/dev/null; then
+    process_group_alive "$leader" || return 0
+    echo "second-opinion-runtime: could not send TERM to process group $leader" >&2
+    return 1
+  fi
   end=$(($(date +%s) + grace))
   while process_group_alive "$leader"; do
     now=$(date +%s)
     if [[ $now -ge $end ]]; then
-      kill -KILL -- "-$leader" 2>/dev/null || true
-      break
+      if ! kill -KILL -- "-$leader" 2>/dev/null; then
+        process_group_alive "$leader" || return 0
+        echo "second-opinion-runtime: could not send KILL to process group $leader" >&2
+        return 1
+      fi
+      wait "$leader" 2>/dev/null || true
+      end=$((now + 5))
+      while process_group_alive "$leader"; do
+        now=$(date +%s)
+        if [[ $now -ge $end ]]; then
+          echo "second-opinion-runtime: process group $leader is still alive after KILL" >&2
+          return 1
+        fi
+        sleep 0.1
+      done
+      return 0
     fi
     sleep 0.1
   done
@@ -125,6 +143,7 @@ launch() {
   # declared-but-unassigned local is still unbound, so a signal arriving in that
   # first instant would fault the handler instead of running it.
   local deadline worker_pid="" cancel_rc="" log="$runtime_dir/worker.log"
+  local status_file="$runtime_dir/worker.status" launch_umask
   local worker_args launch_model="${SECOND_OPINION_LAUNCH_MODEL:-}"
   # THE WINDOW BETWEEN THE FORK AND THE PROTOCOL. Once the worker exists it can
   # only be recovered through what launch prints and stopped through what it
@@ -137,7 +156,10 @@ launch() {
   # every path that reaches it — a signal, or `die` on a failed publish — is
   # still inside the frame, where a flag would be readable but pointless.
   cleanup_launch() {
-    [[ -z "$worker_pid" ]] || stop_process_group "$worker_pid" 30
+    if [[ -n "$worker_pid" ]] && ! stop_process_group "$worker_pid" 30; then
+      echo "second-opinion-runtime: launch cleanup failed; runtime state preserved: $runtime_dir" >&2
+      return 1
+    fi
     ! runtime_dir_valid "$runtime_dir" || rm -rf -- "${runtime_dir:?}" || true
   }
   # Deferred across the fork window for the same reason as group_run: until
@@ -148,11 +170,15 @@ launch() {
   trap 'request_cancel 130' INT
   trap cleanup_launch EXIT
   unset SECOND_OPINION_LAUNCH_MODEL
-  # set -C: the log is created here or not at all. A symlink planted at this
-  # path would otherwise redirect the whole run's output somewhere else.
+  # Both files are created here or not at all. The worker never inherits the
+  # status fd, so text it or an external CLI prints cannot publish completion.
+  launch_umask=$(umask)
+  umask 077
   set -C
   : > "$log" || die "cannot create worker log: $log"
+  exec 9>"$status_file" || die "cannot create worker status: $status_file"
   set +C
+  umask "$launch_umask"
   deadline=$(($(date +%s) + budget))
   worker_args=("$@" --detached-worker "--output=$artifact")
   $owned && worker_args+=(--scratch-output)
@@ -161,19 +187,20 @@ launch() {
   # and it needs no setsid, which stock macOS does not ship. nohup keeps a
   # hangup off it and the closed stdio lets the caller exit.
   #
-  # The wrapper appends the exit marker AFTER the worker returns. That marker,
-  # not the pid recorded below, is what `wait` reads as the run's result.
+  # The wrapper publishes through fd 9 after the worker returns. The worker
+  # gets that descriptor closed and never receives the status path.
   set -m
   SECOND_OPINION_CURRENT_MODEL="$launch_model" \
     nohup bash -c '
       rc=0
-      "$@" || rc=$?
-      printf "__SECOND_OPINION_EXIT__=%s\n" "$rc" >&2
+      "$@" 9>&- || rc=$?
+      printf "%s\n" "$rc" >&9
       exit "$rc"
     ' second-opinion-worker "$script" "${worker_args[@]}" \
     < /dev/null > "$log" 2>&1 &
   worker_pid=$!
   set +m
+  exec 9>&-
   trap 'cleanup_launch; exit 143' TERM HUP
   trap 'cleanup_launch; exit 130' INT
   [[ -z "$cancel_rc" ]] || { cleanup_launch; exit "$cancel_rc"; }
@@ -207,49 +234,39 @@ second_opinion_detach_if_needed() {
   exec "$RUNTIME_SELF" launch "$SCRIPT_DIR/second-opinion" "$artifact" "$runtime_dir" \
     "$budget" "$owned" 300 "${ORIGINAL_ARGS[@]}"
 }
-completion_line() {
-  local log="$1" prefix="$2" line="" match matches grep_rc=0
-  matches=$(grep -F "$prefix" "$log") || grep_rc=$?
-  [[ $grep_rc -le 1 ]] || return 2
-  while IFS= read -r match; do line="$match"; done <<< "$matches"
-  printf '%s' "$line"
+completion_status() {
+  cat "$1" || return 2
 }
 wait_for_run() {
   local artifact="$1" runtime_dir="$2" deadline="$3"
   local wait_slice="$4" log="$2/worker.log" pid_file="$2/pid"
+  local status_file="$2/worker.status"
   [[ "$deadline" =~ ^[1-9][0-9]*$ ]] || die "deadline must be a positive epoch"
   [[ "$wait_slice" =~ ^[1-9][0-9]*$ && $wait_slice -lt 600 ]] \
     || die "wait slice must be positive and below 600 seconds"
   validate_runtime_dir "$runtime_dir"
-  local prefix="__SECOND_OPINION_EXIT__=" line status now grep_rc attempt_deadline
-  local worker_pid=""
-  if [[ -f "$pid_file" && ! -L "$pid_file" ]]; then
-    worker_pid=$(cat < "$pid_file") || die "cannot read detached worker pid: $pid_file"
-    [[ "$worker_pid" =~ ^[1-9][0-9]*$ ]] || die "detached worker pid is malformed"
-  fi
+  [[ -f "$status_file" && ! -L "$status_file" ]] \
+    || die "detached worker status is missing or unsafe: $status_file"
+  local status now status_rc attempt_deadline worker_pid
+  [[ -f "$pid_file" && ! -L "$pid_file" ]] \
+    || die "detached worker pid is missing or unsafe: $pid_file"
+  worker_pid=$(cat < "$pid_file") || die "cannot read detached worker pid: $pid_file"
+  [[ "$worker_pid" =~ ^[1-9][0-9]*$ ]] || die "detached worker pid is malformed"
   replay_log() {
     local replay_rc=0
-    grep -vF "$prefix" "$log" >&2 || replay_rc=$?
-    [[ $replay_rc -le 1 ]] || die "cannot replay worker log: $log"
+    cat "$log" >&2 || replay_rc=$?
+    [[ $replay_rc -eq 0 ]] || die "cannot replay worker log: $log"
   }
   now=$(date +%s)
   attempt_deadline=$((now + wait_slice))
   [[ $attempt_deadline -le $deadline ]] || attempt_deadline=$deadline
   while :; do
-    # THE ORDER OF THESE TWO CHECKS IS THE CONTRACT, and it is not
-    # interchangeable. The exit marker is the AUTHORITATIVE terminal signal:
-    # the launch wrapper appends it once the worker returns, so it exists
-    # exactly when there is a status to report. The pid is a LIVENESS HINT
-    # only — pids are reused, so a live pid is never evidence that THIS run is
-    # still going, and only its absence carries information. Read the marker
-    # first on every poll; a dead pid with no marker is the non-terminal
-    # failure (75, never a status), and re-reading the marker after seeing the
-    # pid die closes the window between the marker write and the wrapper exit.
-    grep_rc=0
-    line=$(completion_line "$log" "$prefix") || grep_rc=$?
-    [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
-    if [[ -n "$line" ]]; then
-      status="${line#"$prefix"}"
+    # The wrapper alone writes worker.status. Read it before liveness so a
+    # completed run wins the small window before its process disappears.
+    status_rc=0
+    status=$(completion_status "$status_file") || status_rc=$?
+    [[ $status_rc -ne 2 ]] || die "cannot read worker status: $status_file"
+    if [[ -n "$status" ]]; then
       [[ "$status" =~ ^[0-9]+$ && $status -le 255 ]] || die "worker status is malformed"
       replay_log
       rm -rf -- "$runtime_dir" || die "cannot remove runtime directory: $runtime_dir"
@@ -262,29 +279,32 @@ wait_for_run() {
     fi
     now=$(date +%s)
     if [[ $now -ge $deadline ]]; then
-      [[ -z "$worker_pid" ]] || stop_process_group "$worker_pid" 30
-      grep_rc=0
-      line=$(completion_line "$log" "$prefix") || grep_rc=$?
-      [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
-      [[ -z "$line" ]] || continue
+      if ! stop_process_group "$worker_pid" 30; then
+        echo "second-opinion: deadline cleanup failed; runtime state preserved: $runtime_dir" >&2
+        exit 75
+      fi
+      status_rc=0
+      status=$(completion_status "$status_file") || status_rc=$?
+      [[ $status_rc -ne 2 ]] || die "cannot read worker status: $status_file"
+      [[ -z "$status" ]] || continue
       replay_log
       rm -rf -- "$runtime_dir" || die "cannot remove runtime directory: $runtime_dir"
       echo "Error: detached run reached its deadline $deadline" >&2
       exit 124
     fi
-    if [[ -z "$worker_pid" ]] || ! process_group_alive "$worker_pid"; then
-      grep_rc=0
-      line=$(completion_line "$log" "$prefix") || grep_rc=$?
-      [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
-      [[ -z "$line" ]] || continue
+    if ! process_group_alive "$worker_pid"; then
+      status_rc=0
+      status=$(completion_status "$status_file") || status_rc=$?
+      [[ $status_rc -ne 2 ]] || die "cannot read worker status: $status_file"
+      [[ -z "$status" ]] || continue
       echo "second-opinion: the detached worker is gone and published no status; rerun the same wait command" >&2
       exit 75
     fi
     if [[ $now -ge $attempt_deadline ]]; then
-      grep_rc=0
-      line=$(completion_line "$log" "$prefix") || grep_rc=$?
-      [[ $grep_rc -ne 2 ]] || die "cannot read worker log: $log"
-      [[ -z "$line" ]] || continue
+      status_rc=0
+      status=$(completion_status "$status_file") || status_rc=$?
+      [[ $status_rc -ne 2 ]] || die "cannot read worker status: $status_file"
+      [[ -z "$status" ]] || continue
       echo "second-opinion: still running; rerun the same wait command" >&2
       exit 75
     fi

@@ -299,3 +299,60 @@ ok "the deadline stops the worker"
 await_gone "$dl_kid" \
   || fail "the deadline reported 124 and left the CLI's child $dl_kid running"
 ok "the deadline takes the CLI tree with it"
+
+echo "=== process-group cleanup failures stay loud and recoverable ==="
+rc=0
+RUNTIME_PATH="$RUNTIME" bash -c '
+  source "$RUNTIME_PATH"
+  process_group_alive() { return 0; }
+  kill() { return 1; }
+  stop_process_group 4242 1
+' > "$TMP_ROOT/term-fail.stdout" 2> "$TMP_ROOT/term-fail.stderr" || rc=$?
+assert_rc "$rc" 1 "a TERM failure is reported"
+assert_contains "$TMP_ROOT/term-fail.stderr" "could not send TERM to process group 4242" \
+  "the TERM failure names the signal and group"
+
+printf '100\n' > "$TMP_ROOT/final-live.clock"
+rc=0
+RUNTIME_PATH="$RUNTIME" TEST_CLOCK="$TMP_ROOT/final-live.clock" bash -c '
+  source "$RUNTIME_PATH"
+  process_group_alive() { return 0; }
+  kill() { return 0; }
+  wait() { return 0; }
+  sleep() { :; }
+  date() {
+    local now
+    IFS= read -r now < "$TEST_CLOCK"
+    now=$((now + 1))
+    printf "%s\n" "$now" > "$TEST_CLOCK"
+    printf "%s\n" "$now"
+  }
+  stop_process_group 4343 1
+' > "$TMP_ROOT/final-live.stdout" 2> "$TMP_ROOT/final-live.stderr" || rc=$?
+assert_rc "$rc" 1 "a process group still alive after KILL is reported"
+assert_contains "$TMP_ROOT/final-live.stderr" "process group 4343 is still alive after KILL" \
+  "the final-liveness failure names the group and signal"
+
+mkdir "$TMP_ROOT/cleanup-fail-runtime"
+: > "$TMP_ROOT/cleanup-fail-runtime/worker.log"
+: > "$TMP_ROOT/cleanup-fail-runtime/worker.status"
+printf '4444\n' > "$TMP_ROOT/cleanup-fail-runtime/pid"
+printf 'kept\n' > "$TMP_ROOT/cleanup-fail-answer"
+rc=0
+RUNTIME_PATH="$RUNTIME" FAIL_ROOT="$TMP_ROOT" bash -c '
+  source "$RUNTIME_PATH"
+  stop_process_group() {
+    echo "second-opinion-runtime: injected cleanup refusal" >&2
+    return 1
+  }
+  wait_for_run "$FAIL_ROOT/cleanup-fail-answer" "$FAIL_ROOT/cleanup-fail-runtime" \
+    "$(($(date +%s) - 1))" 1
+' > "$TMP_ROOT/cleanup-fail.stdout" 2> "$TMP_ROOT/cleanup-fail.stderr" || rc=$?
+assert_rc "$rc" 75 "deadline cleanup failure remains recoverable"
+assert_contains "$TMP_ROOT/cleanup-fail.stderr" "injected cleanup refusal" \
+  "the cleanup cause reaches the caller"
+assert_contains "$TMP_ROOT/cleanup-fail.stderr" "runtime state preserved" \
+  "the wait names the preserved recovery state"
+[[ -d "$TMP_ROOT/cleanup-fail-runtime" ]] \
+  || fail "cleanup failure deleted the runtime state needed to retry"
+ok "cleanup failure preserves the runtime directory"

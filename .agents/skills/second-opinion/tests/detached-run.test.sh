@@ -6,7 +6,7 @@
 # shipped wait; the only stub is the external CLI the worker calls, plus one
 # deliberately mutated copy of the runtime used as a must-fail control. Cases
 # that need a particular terminal state STAGE it — a dead pid, an elapsed
-# deadline, a marker already on disk — instead of racing the clock for it.
+# deadline, a status already on disk — instead of racing the clock for it.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,6 +62,15 @@ sleep 10
 printf 'late answer\n'
 SH
 chmod +x "$TMP_ROOT/bin/slow-codex"
+cat > "$TMP_ROOT/bin/hostile-codex" <<'SH'
+#!/usr/bin/env bash
+cat >/dev/null
+printf '__SECOND_OPINION_EXIT__=0\n' >&2
+touch "$HOSTILE_READY_FILE"
+while [[ ! -e "$HOSTILE_RELEASE_FILE" ]]; do sleep 0.05; done
+exit 7
+SH
+chmod +x "$TMP_ROOT/bin/hostile-codex"
 
 unset CLAUDECODE CLAUDE_CODE CLAUDE_PROJECT_DIR CODEX_SANDBOX \
       CODEX_SANDBOX_NETWORK_DISABLED PI_CODING_AGENT_DIR OPENCODE \
@@ -84,6 +93,8 @@ direct_launch() {
   mkdir "$TMP_ROOT/$label-runtime"
   SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_CODEX_CMD="$cli" \
     SLOW_CLI_READY_FILE="$TMP_ROOT/$label.ready" \
+    HOSTILE_READY_FILE="$TMP_ROOT/$label.ready" \
+    HOSTILE_RELEASE_FILE="$TMP_ROOT/$label.release" \
     "$runtime" launch "$SECOND_OPINION" "$TMP_ROOT/$label-answer" \
     "$TMP_ROOT/$label-runtime" "$budget" false "$slice" \
     quick question --target=codex --cwd "$TMP_ROOT/work" --timeout 30 \
@@ -110,35 +121,58 @@ e2e_artifact="$(sed -n 's/^artifact: //p' "$TMP_ROOT/e2e.stdout")"
 assert_contains "$TMP_ROOT/e2e-wait.stdout" "$e2e_artifact" "wait prints the artifact path"
 assert_contains "$e2e_artifact" "answer from codex" "the detached worker wrote the artifact"
 
-echo "=== control: without the exit marker the same run never reports success ==="
-# The marker is the only authoritative terminal signal. Strip the one line that
+echo "=== control: without the exit status the same run never reports success ==="
+# The status file is the only authoritative terminal signal. Strip the line that
 # publishes it and the identical run must stop reporting completion — a wait
 # that still returned 0 would be reading the artifact, or the pid, instead.
 MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir "$MUTANT_DIR"
 cp "$RUNTIME" "$MUTANT_DIR/second-opinion-runtime"
 MUTANT="$MUTANT_DIR/second-opinion-runtime"
-sed -i.bak '/printf "__SECOND_OPINION_EXIT_/d' "$MUTANT"
+sed -i.bak '/printf "%s\\n" "\$rc" >&9/d' "$MUTANT"
 rm -f "$MUTANT.bak"
 chmod +x "$MUTANT"
-cmp -s "$RUNTIME" "$MUTANT" && fail "marker control mutated nothing"
-ok "the marker control removes the publishing line"
+cmp -s "$RUNTIME" "$MUTANT" && fail "status control mutated nothing"
+ok "the status control removes the publishing line"
 mutant_wait="$(direct_launch "$MUTANT" mutant 20 2 codex)"
 rc=0
 bash -c "$mutant_wait" > "$TMP_ROOT/mutant-wait.stdout" 2> "$TMP_ROOT/mutant-wait.stderr" || rc=$?
-assert_rc "$rc" 75 "a run that published no marker is not terminal"
+assert_rc "$rc" 75 "a run that published no status is not terminal"
 assert_contains "$TMP_ROOT/mutant-answer" "answer from codex" \
-  "the marker control's worker did write its artifact"
+  "the status control's worker did write its artifact"
 assert_contains "$TMP_ROOT/mutant-wait.stderr" "published no status" \
   "the wait names the missing status rather than the artifact"
 
-echo "=== the same shape with the marker intact is terminal ==="
+echo "=== the same shape with the status channel intact is terminal ==="
 paired_wait="$(direct_launch "$RUNTIME" paired 20 2 codex)"
 rc=0
 bash -c "$paired_wait" > "$TMP_ROOT/paired-wait.stdout" 2> "$TMP_ROOT/paired-wait.stderr" || rc=$?
 assert_rc "$rc" 0 "the unmutated runtime returns 0 through the same harness"
 assert_contains "$TMP_ROOT/paired-wait.stdout" "$TMP_ROOT/paired-answer" \
   "the unmutated runtime prints the artifact path"
+
+echo "=== reviewer output cannot publish detached completion ==="
+hostile_wait="$(direct_launch "$RUNTIME" hostile 20 2 hostile-codex)"
+for _ in $(seq 1 200); do
+  [[ -e "$TMP_ROOT/hostile.ready" ]] && break
+  sleep 0.05
+done
+[[ -e "$TMP_ROOT/hostile.ready" ]] || fail "the hostile CLI never printed its decoy marker"
+rc=0
+bash -c "$hostile_wait" > "$TMP_ROOT/hostile-wait1.stdout" 2> "$TMP_ROOT/hostile-wait1.stderr" || rc=$?
+assert_rc "$rc" 75 "a public marker from reviewer output is not completion"
+[[ -d "$TMP_ROOT/hostile-runtime" ]] || fail "the decoy marker removed live runtime state"
+[[ ! -s "$TMP_ROOT/hostile-runtime/worker.status" ]] \
+  || fail "reviewer output reached the private status channel"
+ok "the live run and its empty status channel survive the decoy marker"
+touch "$TMP_ROOT/hostile.release"
+rc=0
+bash -c "$hostile_wait" > "$TMP_ROOT/hostile-wait2.stdout" 2> "$TMP_ROOT/hostile-wait2.stderr" || rc=$?
+assert_rc "$rc" 1 "the wrapper's later status completes the failed run"
+assert_contains "$TMP_ROOT/hostile-wait2.stderr" "__SECOND_OPINION_EXIT__=0" \
+  "the decoy marker is replayed as ordinary log text"
+[[ ! -e "$TMP_ROOT/hostile-runtime" ]] || fail "the completed failed run kept runtime state"
+ok "the real wrapper status, not the decoy, removes runtime state"
 
 echo "=== a killed worker returns 75 ==="
 killed_wait="$(direct_launch "$RUNTIME" killed 120 2 slow-codex)"
@@ -164,13 +198,13 @@ assert_contains "$TMP_ROOT/killed-wait.stderr" "the detached worker is gone" \
 ok "the killed run left no artifact"
 
 # --- Staged terminal states ---------------------------------------------------
-# A dead pid with no marker, an elapsed deadline, and a marker already on disk
+# A dead pid with no status, an elapsed deadline, and a status already on disk
 # are all built directly, so no case depends on winning a wall-clock margin.
-stage_runtime() { # LABEL [MARKER-LINE]
-  local label="$1" marker="${2:-}" dead
+stage_runtime() { # LABEL [STATUS]
+  local label="$1" status="${2:-}" dead
   mkdir "$TMP_ROOT/$label"
-  printf '%s' "$marker" > "$TMP_ROOT/$label/worker.log"
-  [[ -z "$marker" ]] || printf '\n' >> "$TMP_ROOT/$label/worker.log"
+  : > "$TMP_ROOT/$label/worker.log"
+  printf '%s' "$status" > "$TMP_ROOT/$label/worker.status"
   sleep 0 &
   dead=$!
   wait "$dead" 2>/dev/null || true
@@ -178,64 +212,65 @@ stage_runtime() { # LABEL [MARKER-LINE]
   printf 'staged answer\n' > "$TMP_ROOT/$label-answer"
 }
 
-echo "=== an elapsed deadline with no marker is terminal 124 ==="
+echo "=== an elapsed deadline with no status is terminal 124 ==="
 stage_runtime deadline-run
 rc=0
 "$RUNTIME" wait "$TMP_ROOT/deadline-run-answer" "$TMP_ROOT/deadline-run" \
   "$(($(date +%s) - 1))" 1 \
   > "$TMP_ROOT/deadline.stdout" 2> "$TMP_ROOT/deadline.stderr" || rc=$?
-assert_rc "$rc" 124 "an elapsed deadline with no marker returns 124"
+assert_rc "$rc" 124 "an elapsed deadline with no status returns 124"
 assert_contains "$TMP_ROOT/deadline.stderr" "reached its deadline" \
   "the 124 names the deadline"
 [[ -e "$TMP_ROOT/deadline-run" ]] && fail "a terminal 124 left runtime state behind"
 ok "a terminal 124 removes the runtime directory"
 
-echo "=== the marker outranks an elapsed deadline and a dead pid ==="
-stage_runtime marker-run "__SECOND_OPINION_EXIT__=0"
+echo "=== the status outranks an elapsed deadline and a dead pid ==="
+stage_runtime status-run 0
 rc=0
-"$RUNTIME" wait "$TMP_ROOT/marker-run-answer" "$TMP_ROOT/marker-run" \
+"$RUNTIME" wait "$TMP_ROOT/status-run-answer" "$TMP_ROOT/status-run" \
   "$(($(date +%s) - 1))" 1 \
-  > "$TMP_ROOT/marker.stdout" 2> "$TMP_ROOT/marker.stderr" || rc=$?
-assert_rc "$rc" 0 "a published marker beats the deadline and the dead pid"
-assert_contains "$TMP_ROOT/marker.stdout" "$TMP_ROOT/marker-run-answer" \
-  "the marker path prints the artifact"
+  > "$TMP_ROOT/status.stdout" 2> "$TMP_ROOT/status.stderr" || rc=$?
+assert_rc "$rc" 0 "a published status beats the deadline and the dead pid"
+assert_contains "$TMP_ROOT/status.stdout" "$TMP_ROOT/status-run-answer" \
+  "the status path prints the artifact"
 
-echo "=== a marker landing in the pid-death window is still read ==="
-# The wrapper writes the marker and THEN exits, so a poll can read the log,
-# find nothing, and see the pid die a moment later with the marker already on
-# disk. The re-read inside the pid-death branch is what catches that; without
+echo "=== a status landing in the pid-death window is still read ==="
+# The wrapper writes the status and THEN exits, so a poll can read the file,
+# find nothing, and see the pid die a moment later with the status now on disk.
+# The re-read inside the pid-death branch is what catches that; without
 # it the wait reports 75 for a run that has in fact finished. The cost is one
 # spurious 75 and a rerun, not a wrong status — robustness, not correctness.
 #
-# Staged by grep CALL COUNT, never by the clock: the stub publishes the marker
-# after the poll's first read of the log, which is exactly the window, and the
+# Staged by cat call count, never by the clock: the stub publishes the status
+# after the poll's first read of the file, which is exactly the window, and the
 # case decides the same way however slowly it runs.
 mkdir "$TMP_ROOT/race-bin"
-cat > "$TMP_ROOT/race-bin/grep" <<'SH'
+cat > "$TMP_ROOT/race-bin/cat" <<'SH'
 #!/usr/bin/env bash
+if [[ $# -ne 1 || "$1" != "$RACE_STATUS_FILE" ]]; then exec "$REAL_CAT" "$@"; fi
 count=0
-[[ ! -e "$RACE_COUNT" ]] || count="$(cat < "$RACE_COUNT")"
+[[ ! -e "$RACE_COUNT" ]] || IFS= read -r count < "$RACE_COUNT"
 count=$((count + 1))
 printf '%s\n' "$count" > "$RACE_COUNT"
-grep_rc=0
-"$REAL_GREP" "$@" || grep_rc=$?
-[[ $count -ne 1 ]] || printf '%s\n' "$RACE_MARKER" >> "$RACE_LOG"
-exit "$grep_rc"
+cat_rc=0
+"$REAL_CAT" "$@" || cat_rc=$?
+[[ $count -ne 1 ]] || printf '%s\n' "$RACE_STATUS" > "$RACE_STATUS_FILE"
+exit "$cat_rc"
 SH
-chmod +x "$TMP_ROOT/race-bin/grep"
+chmod +x "$TMP_ROOT/race-bin/cat"
 race_wait() { # RUNTIME LABEL — run the staged window case, print the exit code
   local runtime="$1" label="$2" rc=0
   stage_runtime "$label"
-  PATH="$TMP_ROOT/race-bin:$PATH" REAL_GREP="$(command -v grep)" \
-    RACE_COUNT="$TMP_ROOT/$label.count" RACE_LOG="$TMP_ROOT/$label/worker.log" \
-    RACE_MARKER="__SECOND_OPINION_EXIT__=5" \
+  PATH="$TMP_ROOT/race-bin:$PATH" REAL_CAT="$(command -v cat)" \
+    RACE_COUNT="$TMP_ROOT/$label.count" \
+    RACE_STATUS_FILE="$TMP_ROOT/$label/worker.status" RACE_STATUS=5 \
     "$runtime" wait "$TMP_ROOT/$label-answer" "$TMP_ROOT/$label" \
     "$(($(date +%s) + 60))" 5 \
     > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr" || rc=$?
   printf '%s\n' "$rc"
 }
 rc="$(race_wait "$RUNTIME" race)"
-assert_rc "$rc" 5 "a marker written in the pid-death window still decides the run"
+assert_rc "$rc" 5 "a status written in the pid-death window still decides the run"
 [[ -e "$TMP_ROOT/race" ]] && fail "the recovered completion left runtime state behind"
 ok "the recovered completion removes the runtime directory"
 
@@ -244,9 +279,9 @@ ok "the recovered completion removes the runtime directory"
 # which read decided the run.
 RACE_MUTANT="$MUTANT_DIR/race-mutant-runtime"
 awk '
-  /if \[\[ -z "\$worker_pid" \]\] \|\| ! process_group_alive "\$worker_pid"; then/ { print; dropping = 1; next }
-  dropping && /\[\[ -z "\$line" \]\] \|\| continue/ { dropping = 0; next }
-  dropping && (/grep_rc=0/ || /line=\$\(completion_line/ || /grep_rc -ne 2/) { next }
+  /if ! process_group_alive "\$worker_pid"; then/ { print; dropping = 1; next }
+  dropping && /\[\[ -z "\$status" \]\] \|\| continue/ { dropping = 0; next }
+  dropping && (/status_rc=0/ || /status=\$\(completion_status/ || /status_rc -ne 2/) { next }
   { print }
 ' "$RUNTIME" > "$RACE_MUTANT"
 chmod +x "$RACE_MUTANT"
@@ -261,7 +296,7 @@ assert_contains "$TMP_ROOT/race-mutant.stderr" "the detached worker is gone" \
 echo "=== a worker's own exit status is what the wait returns ==="
 # EXIT_CLI_FAILED and its siblings mean something an operator acts on, so the
 # protocol has to carry them out unchanged rather than flattening them to 1.
-stage_runtime cli-failed "__SECOND_OPINION_EXIT__=5"
+stage_runtime cli-failed 5
 rc=0
 "$RUNTIME" wait "$TMP_ROOT/cli-failed-answer" "$TMP_ROOT/cli-failed" \
   "$(($(date +%s) + 60))" 1 \
@@ -276,6 +311,16 @@ rc=0
 assert_rc "$rc" 1 "an artifact path carrying LF is refused"
 assert_contains "$TMP_ROOT/lf.stderr" "artifact path contains CR or LF" \
   "the refusal names the injected newline"
+mkdir "$TMP_ROOT/missing-pid-runtime"
+: > "$TMP_ROOT/missing-pid-runtime/worker.log"
+: > "$TMP_ROOT/missing-pid-runtime/worker.status"
+rc=0
+"$RUNTIME" wait "$TMP_ROOT/missing-pid-answer" "$TMP_ROOT/missing-pid-runtime" \
+  "$(($(date +%s) + 60))" 1 > "$TMP_ROOT/missing-pid.stdout" \
+  2> "$TMP_ROOT/missing-pid.stderr" || rc=$?
+assert_rc "$rc" 1 "a missing worker pid is refused"
+assert_contains "$TMP_ROOT/missing-pid.stderr" "worker pid is missing or unsafe" \
+  "the missing-pid refusal names the broken recovery state"
 mkdir "$TMP_ROOT/symlink-runtime"
 ln -s "$TMP_ROOT/elsewhere.log" "$TMP_ROOT/symlink-runtime/worker.log"
 rc=0
@@ -288,6 +333,19 @@ assert_contains "$TMP_ROOT/symlink.stderr" "cannot create worker log" \
   "the refusal names the log it would not follow"
 [[ -e "$TMP_ROOT/elsewhere.log" ]] && fail "the launch followed the planted symlink"
 ok "no output reached the symlink target"
+mkdir "$TMP_ROOT/status-symlink-runtime"
+ln -s "$TMP_ROOT/elsewhere.status" "$TMP_ROOT/status-symlink-runtime/worker.status"
+rc=0
+SECOND_OPINION_LAUNCH_MODEL=claude \
+  "$RUNTIME" launch "$SECOND_OPINION" "$TMP_ROOT/status-symlink-answer" \
+  "$TMP_ROOT/status-symlink-runtime" 20 false 2 quick question --target=codex \
+  --cwd "$TMP_ROOT/work" > "$TMP_ROOT/status-symlink.stdout" \
+  2> "$TMP_ROOT/status-symlink.stderr" || rc=$?
+assert_rc "$rc" 1 "a pre-planted worker status symlink stops the launch"
+assert_contains "$TMP_ROOT/status-symlink.stderr" "cannot create worker status" \
+  "the refusal names the private status channel"
+[[ -e "$TMP_ROOT/elsewhere.status" ]] && fail "the launch followed the status symlink"
+ok "no status reached the symlink target"
 
 echo "=== every shipped workflow launches capped and consumes the protocol ==="
 workflow_commands_detach() {
@@ -326,7 +384,7 @@ workflow_files=(
 # matches either one, anchored on the sentence that routes the exit code — a
 # bare identifier appears elsewhere in these files and would pass a workflow
 # that dropped the contract.
-RESUME_FORM='Exit 75 means completion is still recoverable|per its exit code \(`second-opinion --help`\)'
+RESUME_FORM='Exit 75 means completion or deadline cleanup is still recoverable|per its exit code \(`second-opinion --help`\)'
 TERMINAL_FORM='Exit 124 is terminal|per its exit code \(`second-opinion --help`\) until terminal'
 for workflow_file in "${workflow_files[@]}"; do
   workflow_commands_detach "$workflow_file" \
@@ -368,8 +426,8 @@ for control_source in \
   "$REPO_ROOT/skills/second-opinion/workflows/review.md" \
   "$REPO_ROOT/skills/orch/workflows/review-pr.md"; do
   staged="$TMP_ROOT/staged-${control_source##*/}"
-  sed -e 's/ Exit 75 means completion is still recoverable; do other event checks, then rerun the same command\.//' \
-      -e 's/ Exit 124 is terminal: the run reached its deadline, and its processes are stopped when they can still be identified as belonging to it\.//' \
+  sed -e 's/ Exit 75 means completion or deadline cleanup is still recoverable; do other event checks, then rerun the same command\.//' \
+      -e 's/ Exit 124 is terminal: the deadline passed, the process group is confirmed gone, and runtime state was removed\. A cleanup failure names the cause and preserves runtime state\.//' \
       -e 's/ and repeat it per its exit code (`second-opinion --help`) until terminal//' \
       "$control_source" > "$staged"
   if cmp -s "$control_source" "$staged"; then
