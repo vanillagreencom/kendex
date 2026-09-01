@@ -33,12 +33,11 @@ git -C "$SANDBOX" init -q
 # The shared `gh` fake, staged with the auth probes the router may make at
 # startup and the one `pr view` the routed real-command check needs. Anything
 # else is refused: a hint test that let an unexpected call succeed would pass
-# on a router that reached the network. The source tree is found through git
-# rather than a relative hop, so this works from skills/ and from the
-# .agents/ render beside it.
+# on a router that reached the network. The stub ships beside this test in
+# both the source package and its render.
 BIN_DIR="$TMP_ROOT/bin"
-# shellcheck source=../../../tools/tests/lib/gh-stub.sh
-. "$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/gh-stub.sh"
+# shellcheck source=lib/gh-stub.sh
+. "$TEST_DIR/lib/gh-stub.sh"
 GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$BIN_DIR"
 gh_stub_answer pr-view 'abc-150-fix'
 
@@ -119,6 +118,19 @@ ARGS=(pr-issue 42 --format=text)
 run_github
 assert_eq "$rc" "0" "pr-issue routes and exits 0"
 assert_contains "$out" "ABC-150" "pr-issue extracts the issue from the stubbed branch"
+
+# --- Deprecated JSON aliases are rejected ------------------------------------
+for alias_args in \
+  'pr-list-ready --json' \
+  'pr-list-failing --json' \
+  'pr-issue 42 --json' \
+  'ci-logs 42 --json' \
+  'bot-token --json'; do
+  read -r -a ARGS <<<"$alias_args"
+  run_github
+  assert_eq "$rc" "1" "$alias_args exits nonzero"
+  assert_contains "$err" "Unknown option: --json" "$alias_args rejects the alias"
+done
 
 # --- The hinted orch script exists where the hint points ----------------------
 if [[ -x "$REPO_ROOT/skills/orch/scripts/ci-wait" ]]; then

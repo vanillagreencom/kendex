@@ -1,6 +1,6 @@
 #!/bin/bash
 # List PRs ready for merge
-# Usage: pr-list-ready [--all] [--json]
+# Usage: pr-list-ready [--all] [--format=safe|table]
 
 set -euo pipefail
 
@@ -19,7 +19,6 @@ Options:
   --all             Show all open PRs (not just repo-local/user branches)
   --format=safe     JSON output (default)
   --format=table    Human-readable table
-  --json            Alias for --format=safe (deprecated)
 
 Shows PRs filtered by:
   - Local branches in this repo/worktree set (e.g. proj-117)
@@ -50,10 +49,6 @@ main() {
             format="${1#--format=}"
             shift
             ;;
-        --json)
-            format="safe"
-            shift
-            ;; # Deprecated alias
         --help | -h)
             show_help
             exit 0

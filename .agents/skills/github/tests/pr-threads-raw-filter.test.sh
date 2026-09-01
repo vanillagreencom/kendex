@@ -30,11 +30,10 @@ mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/repo"
 git -C "$TMP_ROOT/repo" init -q
 
 # The shared `gh` fake. Auth and repo answers are seeded; the GraphQL pages
-# are staged per run below. The source tree is found through git rather than
-# a relative hop, so this works from skills/ and from the .agents/ render
-# beside it.
-# shellcheck source=../../../tools/tests/lib/gh-stub.sh
-. "$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/gh-stub.sh"
+# are staged per run below. The stub ships beside this test in both the source
+# package and its render.
+# shellcheck source=lib/gh-stub.sh
+. "$TEST_DIR/lib/gh-stub.sh"
 GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
 
 # Shim jq to record every program it is handed, then run the real one. Raw

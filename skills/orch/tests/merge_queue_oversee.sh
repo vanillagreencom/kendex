@@ -9,12 +9,10 @@ mkdir -p "$TMP/repo/.agents/skills" "$TMP/bin"
 ln -s "$ORCH" "$TMP/repo/.agents/skills/orch"
 git -C "$TMP/repo" init -q
 
-# The shared `gh` fake. The source tree is found through git rather than a
-# relative hop, so this file works unchanged from skills/ and from the
-# .agents/ render beside it; a consuming repo carries the render but runs no
-# suite from it (.github/workflows/skill-tests.yml proves them at the source).
-# shellcheck source=../../../tools/tests/lib/gh-stub.sh
-. "$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/gh-stub.sh"
+# The shared `gh` fake ships in the GitHub package beside both the source and
+# rendered orchestration tests.
+# shellcheck source=../../github/tests/lib/gh-stub.sh
+. "$TEST_DIR/../../github/tests/lib/gh-stub.sh"
 GH_STUB_DIR="$TMP/gh-stub" gh_stub_install "$TMP/bin"
 gh_stub_answer auth-status logged-in
 gh_stub_answer pr-list '[]'

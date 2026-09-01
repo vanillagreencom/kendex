@@ -68,10 +68,8 @@ Output Formats:
   Commands not listed above (e.g. pr-view) do not accept --format; see
   './github.sh <command> --help'. For a normalized safe/raw PR view, use
   pr-data. An unrecognized format value is an error, never a silent
-  fallback to safe. --json is accepted as an alias for --format=safe on
-  pr-list-ready, pr-list-failing, pr-issue, ci-logs, and bot-token;
-  pr-data and pr-threads take --format=safe|raw only and reject unknown
-  flags.
+  fallback to safe. pr-data and pr-threads take --format=safe|raw only
+  and reject unknown flags.
 
 Argument rules:
   Most subcommands reject unknown flags and extra positionals beyond Usage.

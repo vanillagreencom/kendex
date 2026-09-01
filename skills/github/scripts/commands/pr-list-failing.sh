@@ -1,6 +1,6 @@
 #!/bin/bash
 # List PRs with CI failures
-# Usage: pr-list-failing [--all] [--json]
+# Usage: pr-list-failing [--all] [--format=safe|table]
 
 set -euo pipefail
 
@@ -19,7 +19,6 @@ Options:
   --all             Show all failing PRs (not just repo-local/user branches)
   --format=safe     JSON output (default)
   --format=table    Human-readable table
-  --json            Alias for --format=safe (deprecated)
 
 Shows PRs filtered by:
   - Local branches in this repo/worktree set (e.g. proj-117)
@@ -43,7 +42,6 @@ main() {
         case "$1" in
             --all) all_prs=true; shift ;;
             --format=*) format="${1#--format=}"; shift ;;
-            --json) format="safe"; shift ;;  # Deprecated alias
             --help|-h) show_help; exit 0 ;;
             *) echo "Error: Unknown option: $1" >&2; exit 1 ;;
         esac
@@ -94,7 +92,7 @@ main() {
     ')
 
     case "$format" in
-        safe|json)
+        safe)
             echo "$enriched"
             ;;
         table)

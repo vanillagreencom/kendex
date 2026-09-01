@@ -19,7 +19,6 @@ Environment:
 Options:
   --format=safe   JSON output (default): {"issue": "ABC-150", "branch": "..."}
   --format=text   Plain text output: ABC-150
-  --json          Alias for --format=safe (deprecated)
 
 Examples:
   github.sh pr-issue 42               # JSON: {"issue": "ABC-150", "branch": "..."}
@@ -38,7 +37,6 @@ main() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --format=*) format="${1#--format=}"; shift ;;
-            --json) format="safe"; shift ;;  # Deprecated alias
             --help|-h) show_help; exit 0 ;;
             [0-9]*) pr_num="$1"; shift ;;
             *) echo "Error: Unknown option: $1" >&2; exit 1 ;;
@@ -63,7 +61,7 @@ main() {
     issue=$(echo "$branch" | grep -oEi "$pattern" | head -1 | tr '[:lower:]' '[:upper:]') || true
 
     case "$format" in
-        safe|json)
+        safe)
             jq -n --arg issue "$issue" --arg branch "$branch" '{issue: $issue, branch: $branch}'
             ;;
         text)

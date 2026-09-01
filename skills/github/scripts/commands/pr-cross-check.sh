@@ -165,7 +165,7 @@ main() {
         # If no PR numbers, get ready PRs
         if [ ${#pr_nums[@]} -eq 0 ]; then
             local ready_prs
-            if ! ready_prs=$(json_or_default '[]' array "$SCRIPT_DIR/pr-list-ready.sh" --json); then
+            if ! ready_prs=$(json_or_default '[]' array "$SCRIPT_DIR/pr-list-ready.sh" --format=safe); then
                 emit_ready_pr_fetch_failure "verify"
                 exit 0
             fi
@@ -200,7 +200,7 @@ main() {
     if [ ${#pr_nums[@]} -eq 0 ]; then
         json_output=true # Default to JSON when auto-detecting
         local ready_prs
-        if ! ready_prs=$(json_or_default '[]' array "$SCRIPT_DIR/pr-list-ready.sh" --json); then
+        if ! ready_prs=$(json_or_default '[]' array "$SCRIPT_DIR/pr-list-ready.sh" --format=safe); then
             emit_ready_pr_fetch_failure "quick"
             exit 0
         fi

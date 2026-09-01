@@ -28,10 +28,9 @@ assert_eq() {
 
 # The shared `gh` fake. Only `api user` and `pr list` are staged, so a
 # command that reached for anything else is refused rather than answered.
-# The source tree is found through git rather than a relative hop, so this
-# works from skills/ and from the .agents/ render beside it.
-# shellcheck source=../../../tools/tests/lib/gh-stub.sh
-. "$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/gh-stub.sh"
+# The stub ships beside this test in both the source package and its render.
+# shellcheck source=lib/gh-stub.sh
+. "$TEST_DIR/lib/gh-stub.sh"
 GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
 gh_stub_answer api-user tester
 

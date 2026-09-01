@@ -1,6 +1,6 @@
 #!/bin/bash
 # Get CI failure logs for a PR
-# Usage: ci-logs <PR_NUMBER> [--lines N] [--json]
+# Usage: ci-logs <PR_NUMBER> [--lines N] [--format=safe|text]
 
 set -euo pipefail
 
@@ -19,7 +19,6 @@ Options:
   --lines N       Number of log lines to show (default: 100)
   --format=safe   JSON output with metadata (default)
   --format=text   Human-readable text output
-  --json          Alias for --format=safe (deprecated)
 
 Fetches the first failed workflow run for the PR and returns:
   - Job name (rust, etc.)
@@ -90,10 +89,6 @@ main() {
             format="${1#--format=}"
             shift
             ;;
-        --json)
-            format="safe"
-            shift
-            ;; # Deprecated alias
         --help | -h)
             show_help
             exit 0

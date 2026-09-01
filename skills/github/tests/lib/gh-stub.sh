@@ -16,7 +16,7 @@
 #
 # Usage, from a test:
 #
-#   . "$REPO_ROOT/tools/tests/lib/gh-stub.sh"
+#   . "$TEST_DIR/lib/gh-stub.sh"
 #   gh_stub_install "$TMP/bin"        # writes $TMP/bin/gh, exports STUB_DIR
 #   PATH="$TMP/bin:$PATH"
 #
@@ -116,7 +116,7 @@ gh_stub_install() {
   {
     cat <<'STUB_HEAD'
 #!/usr/bin/env bash
-# Written by tools/tests/lib/gh-stub.sh. Answers from $STUB_DIR.
+# Written by github/tests/lib/gh-stub.sh. Answers from $STUB_DIR.
 set -uo pipefail
 STUB_HEAD
     # The key derivation, copied out of this library rather than restated, so

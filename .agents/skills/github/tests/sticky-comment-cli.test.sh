@@ -45,11 +45,10 @@ assert_fails_with() {
 
 # The shared `gh` fake. The comment endpoints are staged under both the
 # templated and the expanded spelling, because the CLI reaches them both
-# ways and neither spelling is what these tests are about. The source tree is
-# found through git rather than a relative hop, so this works from skills/
-# and from the .agents/ render beside it.
-# shellcheck source=../../../tools/tests/lib/gh-stub.sh
-. "$(git -C "$TEST_DIR" rev-parse --show-toplevel)/tools/tests/lib/gh-stub.sh"
+# ways and neither spelling is what these tests are about. The stub ships
+# beside this test in both the source package and its render.
+# shellcheck source=lib/gh-stub.sh
+. "$TEST_DIR/lib/gh-stub.sh"
 GH_STUB_DIR="$TMPDIR/gh-stub" gh_stub_install "$TMPDIR"
 
 gh_stub_answer 'api-repos/{owner}/{repo}/issues/123/comments' \

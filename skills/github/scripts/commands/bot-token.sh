@@ -1,6 +1,6 @@
 #!/bin/bash
 # Check bot token configuration
-# Usage: bot-token [--json]
+# Usage: bot-token [--format=safe|text]
 
 set -euo pipefail
 
@@ -19,7 +19,6 @@ Usage: bot-token [options]
 Options:
   --format=safe   JSON output (default): {"configured": true, "valid": true}
   --format=text   Human-readable text: "configured" or "not configured"
-  --json          Alias for --format=safe (deprecated)
 
 Checks if GH_BOT_TOKEN is configured and valid in project config/secrets.
 Supports direct tokens (ghp_*, gho_*, etc.) and 1Password references (op://...).
@@ -36,7 +35,6 @@ main() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --format=*) format="${1#--format=}"; shift ;;
-            --json) format="safe"; shift ;;  # Deprecated alias
             --help|-h) show_help; exit 0 ;;
             *) echo "Unknown option: $1" >&2; exit 1 ;;
         esac

@@ -81,7 +81,8 @@ while IFS= read -r test_script; do
         continue
     fi
     printf 'ok - %s is directly executable\n' "$test_script"
-done < <(git -C "$REPO_ROOT" ls-files 'skills/github/tests/*.sh')
+done < <(git -C "$REPO_ROOT" ls-files 'skills/github/tests/*.sh' \
+    | grep -v '/tests/lib/')
 
 FIXTURE_ROOT="$(mktemp -d)"
 trap 'rm -rf "$FIXTURE_ROOT"' EXIT
