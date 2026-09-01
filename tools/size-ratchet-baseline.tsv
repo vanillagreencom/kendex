@@ -114,7 +114,7 @@ skills/orch/tests/worktree-cwd-precondition-lint.test.sh	940
 skills/preflight/scripts/preflight	1289
 skills/review-gate/scripts/pr-watch.sh	871
 skills/review-gate/scripts/review-predicate-selftest.sh	2514
-skills/review-gate/scripts/review-predicate.sh	1547
+skills/review-gate/scripts/review-predicate.sh	1553
 skills/review-gate/scripts/validate.sh	584
 skills/review-gate/templates/review-gate-writer.yml	658
 skills/review-gate/tests/e2e-sandbox.sh	898

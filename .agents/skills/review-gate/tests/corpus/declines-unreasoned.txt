@@ -97,6 +97,24 @@ Declined: false positive
 Declined: false-positive
 Declined: this is a false positive
 
+# --- a separator nothing else reaches ------------------------------------
+# The punctuation pass holds the slash so the path strip can read a path, and
+# holds a dot, underscore or hyphen inside a token so the count strip can
+# read a name. Whatever the two strips leave behind is flattened afterwards.
+# Drop that flatten and the separator itself is residue, which is a stated
+# reason: these are the replies whose verdict says the flatten is live.
+Declined: frozen/ pass
+Declined: out of scope/ pre-existing
+Declined: green/ clean
+
+# --- a bare number, once the count strip has had its turn -----------------
+# A number the count strip never reaches, because it is not spelled N/N. The
+# strip used to leave these digits for the number pass; it no longer does, so
+# without a reply carrying a LOOSE number the number pass has no fixture and
+# a deletion of it moves nothing.
+Declined: frozen at 3
+Declined: the cap, 4
+
 # --- a bare identifier is not a reason ------------------------------------
 Declined: a1fa74dca
 Declined: at this head
@@ -166,6 +184,29 @@ Declined: frozen at a1fa74dca; lifecycle 104 / 104 and the full tools/guard pass
 Declined: frozen at a1fa74dca; lifecycle (104/104) and the full tools/guard pass at this head.
 Declined: frozen at a1fa74dca; lifecycle [104/104] and the full tools/guard pass at this head.
 Declined: frozen at a1fa74dca; lifecycle — 104/104 and the full tools/guard pass at this head.
+# A name spelled with a dot, a hyphen or an underscore. The punctuation pass
+# holds those three inside a token, so the strip's non-space run is the whole
+# name rather than its last fragment. Normalize them to spaces ahead of the
+# strip and "merge-queue 12/12" leaves "merge" standing. None of these names
+# starts with a word either list carries: "pr-merge" above reds even under
+# the broken spelling, because "pr" is filler and the residue is empty, so it
+# cannot tell the two programs apart.
+Declined: frozen at a1fa74dca; merge-queue 12/12 and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; review-writer 42/42 and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; merge_queue_watch 12/12 and the full tools/guard pass at this head.
+Declined: frozen at a1fa74dca; lifecycle.sh 104/104 and the full tools/guard pass at this head.
+# A path spelled with an extension, for the same reason: the path strip reads
+# the dot, so "tools/guard.sh" goes whole where it used to leave "sh".
+Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard.sh pass at this head.
+
+# --- a filler word, then a count ------------------------------------------
+# The same shape as the label-phrase section below, with a FILLER word doing
+# the shielding. Both lists run ahead of the strips for one reason, so both
+# sections answer to one rule: a word the term deletes never shields the name
+# behind it. Move the filler pass back behind the strips and the strip spends
+# itself on "at", leaving "lifecycle" standing.
+Declined: frozen at a1fa74dca; lifecycle is green at 104/104 and tools/guard passes.
+Declined: frozen at a1fa74dca; lifecycle was at 104/104 and tools/guard passes.
 
 # --- a label phrase, then a count -----------------------------------------
 # ORDER, not vocabulary. The label pass consumes a multi-word entry whole,
@@ -174,24 +215,49 @@ Declined: frozen at a1fa74dca; lifecycle — 104/104 and the full tools/guard pa
 # the label pass and every line here clears the gate: "out of scope 3/3"
 # leaves "out", "works as intended 12/12" leaves "works".
 #
-# One line per multi-word entry in the label list whose FIRST word is in
-# neither that list nor the filler list — the entries a broken order strands.
+# One line per multi-word entry the misordering can strand. An entry strands
+# when its FIRST word is in neither list — nothing else deletes the head — AND
+# its LAST word is not in the FILLER list, because the filler pass sits ahead
+# of the strips in both orders, so an entry ending in a filler word is taken
+# apart before either strip can reach its tail. Spell each with spaces: a
+# separator inside the phrase makes it one non-space run, which the count
+# strip then eats whole in either order.
+#
 # Derive that set from reason_left rather than trusting this comment; if the
-# lists change, this section is what has to grow with them.
+# lists or the pass order change, this section is what has to grow with them.
 Declined: out of scope 3/3
-Declined: pre-existing 7/7
+Declined: pre existing 7/7
 Declined: by design 4/4
-Declined: nothing to do 2/2
 Declined: works as intended 12/12
 Declined: false positive 5/5
 Declined: won't fix 3/3
 # The same fault through the path strip rather than the count strip.
 Declined: out of scope 104/104 and the full tools/guard pass
 
+# --- a label phrase the derivation excludes -------------------------------
+# Must-catch, but not ordering fixtures, and here rather than above so the
+# probe does not read them as ones. "nothing to do" ends in a filler word and
+# "pre-existing" is one non-space run, so each is caught in both orders for
+# the reasons the section above states.
+Declined: nothing to do 2/2
+Declined: pre-existing 7/7
+
+# --- a label phrase written with a separator ------------------------------
+# The punctuation pass holds a dot, underscore or hyphen inside a token, so a
+# label phrase spelled with one arrives at the word list joined rather than
+# spaced. Every multi-word entry accepts all four separators for that reason.
+# Neither ordering probe covers these: with no count and no path, the strips
+# never touch them, and the label pass alone decides.
+Declined: out-of-scope
+Declined: out.of.scope
+Declined: pre_existing
+Declined: nothing-to-do
+
 # --- a label phrase the path strip reaches first --------------------------
-# `n a` is the seventh derived entry and it belongs above by the derivation,
-# but it cannot sit there: the reply people actually write is "n/a", which
-# the path strip empties whatever the order is. So it is a must-catch like
-# the rest and the ordering probe cannot use it. Its own section is how the
-# probe leaves it alone without a skip list.
+# `n a` is a derived entry and belongs above by the derivation, but it cannot
+# sit there: the reply people actually write is "n/a", and the label list
+# carries a slash spelling of the entry so the filler pass cannot take the
+# `a` out of it first. That makes it a must-catch whatever the pass order is,
+# so the ordering probe cannot tell the two orders apart on it. Its own
+# section is how the probe leaves it alone without a skip list.
 Declined: n/a 9/9

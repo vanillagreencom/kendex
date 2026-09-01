@@ -2,8 +2,7 @@
 # rather than rediscovered.
 #
 # Two positional strips reach names: a count takes the non-space run
-# immediately in front of it, and a slash-joined token is a path spelled in
-# letters and digits. Neither
+# immediately in front of it, and a slash-joined token is a path. Neither
 # reaches a name standing anywhere else in the sentence, and nothing else
 # does either — a SET of names would, and it cannot be had: a repo names its
 # files after the words it writes reasons in, so "the guard refuses this
@@ -28,25 +27,36 @@ Declined: frozen at a1fa74dca; cleanup controls pass within lifecycle 104/104 an
 # name (lifecycle) strips; these do not.
 Declined: frozen at a1fa74dca; the missing-waiter and post-arm launcher controls pass within lifecycle 104/104.
 # The count strip takes the run immediately in front of the count, and only
-# that. Punctuation between the two is normalized to whitespace first, so
-# "lifecycle (104/104)" and "lifecycle — 104/104" are caught; these three are
-# the shapes where the name is not what sits there. The name follows the
-# count; the count is not spelled N/N; a word stands between them. Widening
-# the regex to chase any of them is the lexical-scanner drip the owner rule
-# closes — write the reply the caught way, or leave it.
+# that. Punctuation between the two is normalized to whitespace first, and a
+# dot, underscore or hyphen INSIDE the name is held through the strip, so
+# "lifecycle (104/104)" and "merge-queue 12/12" are both caught. These two
+# are the shapes where the name is not what sits there: the name follows the
+# count, and the count is not spelled N/N. Widening the regex to chase either
+# is the lexical-scanner drip the owner rule closes — write the reply the
+# caught way, or leave it. A word standing between the name and the count is
+# NOT here: both word lists run ahead of the strip, so the word is gone
+# before the strip looks and the name is taken.
 Declined: frozen at a1fa74dca; 104/104 lifecycle and the full tools/guard pass at this head.
 Declined: frozen at a1fa74dca; lifecycle 104 of 104 and the full tools/guard pass at this head.
-Declined: frozen at a1fa74dca; lifecycle is green at 104/104 and tools/guard passes.
-# A path segment carrying a dot, an underscore or a hyphen. Punctuation is
-# normalized to whitespace BEFORE the strips run — it has to be, because the
-# label pass reads the normalized text and has to run first — so the path
-# strip meets "tools/guard sh" and takes only "tools/guard". The tail is
-# residue and the reply clears. The strip cannot be given those characters
-# back without giving them back to the label pass too, where "pre-existing"
-# stops matching "pre existing"; the alternative is a rule about what a file
-# extension looks like, which is the lexical drip the owner rule closes.
-Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard.sh pass at this head.
+# A path whose own segments are words the label list carries. Both word lists
+# run ahead of the strips, so "workflows" and "tests" are deleted out of the
+# middle of this path before the path strip can take it whole, and the
+# segments they leave behind are residue. "tools/guard.sh" is not here — it
+# is a must-catch, because no segment of it is a listed word. Reaching this
+# one means running the path strip in front of the label pass, which is the
+# fail-open the ordering fix closed: a strip ahead of the labels eats the
+# tail of a multi-word entry and strands its head.
 Declined: frozen at a1fa74dca; the checks pass and .github/workflows/skill-tests.yml is green.
+
+# A slash written INSIDE a multi-word label entry. The punctuation pass holds
+# the slash through both word lists so the path strip can still read a path,
+# and that same slash breaks the phrase match: "out of scope" is a label,
+# "out of/scope" is a label with a slash in it and "out" survives. The head
+# word is what stands, so an entry whose first word is itself listed does not
+# reach here. This is a grammar shape against a lexical scanner, which the
+# owner rule closes — nobody writes it by accident, and an author wanting a
+# green gate already has one by adding any word neither list carries.
+Declined: out of/scope
 # The same boundary from the other side: a label written out as a sentence is
 # prose, and prose is where the vocabulary stops. "flagged separately" is
 # caught; the same promise spelled as a sentence is not.

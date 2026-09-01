@@ -275,7 +275,7 @@ echo "--- must-fail probe: both name strips, removed ---"
 # "lifecycle", "merge", "tools guard" survive again — while every counted
 # reply that names a mechanism stays uncounted in both states. A probe where
 # both halves moved would prove the fixtures, not the strips.
-NONAME="$(sed '/^    | gsub("..S+..s+\[0-9\]+..s\*\/..s\*\[0-9\]+"/d; /^    | gsub("\[a-z0-9\]+(\//d' <<<"$prog")"
+NONAME="$(sed '/^    | gsub("..S+..s+\[0-9\]+..s\*\/..s\*\[0-9\]+"/d; /^    | gsub("\[a-z0-9\]\[*a-z0-9._-\]*\**(\//d' <<<"$prog")"
 if [ "$NONAME" = "$prog" ]; then
   bad "probe planted nothing" "the name strips did not match"
 else
@@ -325,7 +325,7 @@ probe_alone() { # probe_alone LABEL SED_EXPR REPLY
 
 probe_alone "the count strip" '/^    | gsub("..S+..s+\[0-9\]+..s\*\/..s\*\[0-9\]+"/d' \
   'Declined: frozen at a1fa74dca; pr-merge 103/103 and the full tools/guard pass at this head.'
-probe_alone "the path strip" '/^    | gsub("\[a-z0-9\]+(\//d' \
+probe_alone "the path strip" '/^    | gsub("\[a-z0-9\]\[*a-z0-9._-\]*\**(\//d' \
   'Declined: frozen at a1fa74dca; workflow 16/16 and the full tools/guard pass at this head.'
 
 echo
@@ -341,10 +341,12 @@ echo "--- must-fail probe: the strips moved back in front of the label pass ---"
 # text rather than a regex over a regex.
 MISORDERED="$(awk '
   index($0, "gsub(\"\\\\b(frozen") { lbl = $0; next }
-  index($0, "(/[a-z0-9]+)+")           { print; print lbl; next }
+  index($0, "(/[a-z0-9]")           { print; print lbl; next }
   { print }' <<<"$prog")"
 if [ "$MISORDERED" = "$prog" ]; then
   bad "probe planted nothing" "the label pass and the strips did not match"
+elif [ "$(wc -l <<<"$MISORDERED")" != "$(wc -l <<<"$prog")" ]; then
+  bad "probe moved nothing" "the label pass was dropped rather than moved — its anchor stopped matching"
 else
   n=0
   while IFS= read -r line; do
@@ -360,6 +362,41 @@ else
   while IFS= read -r line; do
     n=$((n + 1))
     out=$(page_with "$MISORDERED" "$(thread true "$(human "$line")")")
+    not_counted "$out" && ok "misordered: the mechanism still passes — $line" || bad "misordered: the mechanism still passes — $line" "$out"
+  done < <(section 'a count BESIDE a mechanism' "$CORPUS/declines-reasoned.txt")
+  [ "$n" -gt 0 ] || bad "the paired-mechanism section read nothing" "declines-reasoned.txt"
+fi
+
+echo
+echo "--- must-fail probe: the filler pass moved back behind the strips ---"
+# The other half of the same contract. BOTH word lists run ahead of the
+# strips, for one reason: a word the term deletes must not shield the name
+# behind it. The label half is proven above; this is the filler half, and it
+# is a separate probe rather than a second line in that one so a stranding is
+# attributable to the list it belongs to.
+MISFILLER="$(awk '
+  index($0, "gsub(\"\\\\b(a|an|the") { fil = $0; next }
+  index($0, "(/[a-z0-9]")                { print; print fil; next }
+  { print }' <<<"$prog")"
+if [ "$MISFILLER" = "$prog" ]; then
+  bad "probe planted nothing" "the filler pass and the strips did not match"
+elif [ "$(wc -l <<<"$MISFILLER")" != "$(wc -l <<<"$prog")" ]; then
+  bad "probe moved nothing" "the filler pass was dropped rather than moved — its anchor stopped matching"
+else
+  n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    out=$(page "$(thread true "$(human "$line")")")
+    counted "$out" && ok "live: counted — $line" || bad "live: counted — $line" "$out"
+    out=$(page_with "$MISFILLER" "$(thread true "$(human "$line")")")
+    not_counted "$out" && ok "misordered: clears the gate again — $line" || bad "misordered: clears the gate again — $line" "$out"
+  done < <(section 'a filler word, then a count' "$CORPUS/declines-unreasoned.txt")
+  [ "$n" -gt 0 ] || bad "the filler-phrase section read nothing" "declines-unreasoned.txt"
+
+  n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    out=$(page_with "$MISFILLER" "$(thread true "$(human "$line")")")
     not_counted "$out" && ok "misordered: the mechanism still passes — $line" || bad "misordered: the mechanism still passes — $line" "$out"
   done < <(section 'a count BESIDE a mechanism' "$CORPUS/declines-reasoned.txt")
   [ "$n" -gt 0 ] || bad "the paired-mechanism section read nothing" "declines-reasoned.txt"
@@ -386,6 +423,68 @@ fi
 # and leaves the sentence, the same way the count strip takes one token.
 check clean "a path inside a mechanism still passes" \
   'Declined: crates/core/src/lock.rs refuses that shape before the branch you name runs.'
+
+echo
+echo "--- every pass of reason_left is measured by a fixture ---"
+# The probes above each name ONE pass and prove it. This proves the set: every
+# line of reason_left is deleted in turn and the corpus must notice. Three
+# consecutive review rounds shipped a pass-order change that left some line
+# unmeasured — a strip whose characters no earlier pass let through, a number
+# strip whose digits a later strip had started eating — and each was found by
+# a reviewer running this sweep by hand rather than by the suite. Run here, a
+# reorder that strands a pass reds on the spot.
+#
+# The whole corpus goes through in ONE jq call per variant, and the aggregate
+# counts are compared rather than per-reply verdicts. That is sound because
+# deletion is monotone: removing a gsub can only leave MORE text standing, so
+# a reply can move from counted to uncounted and never back, and two replies
+# cannot cancel. A line whose deletion moves the aggregate on no file has no
+# fixture, and the failure prints the line.
+lines_page() { # lines_page FILE -> one page holding every reply in the file
+  local file="$1" line first=1 nodes=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    [ "$first" = 1 ] && first=0 || nodes="$nodes,"
+    nodes="$nodes$(thread true "$(human "$line")")"
+  done < "$file"
+  printf '%s' "$nodes"
+}
+
+CORPUS_NODES=""
+for f in declines-unreasoned declines-reasoned declines-known-limit; do
+  CORPUS_NODES="$CORPUS_NODES${CORPUS_NODES:+,}$(lines_page "$CORPUS/$f.txt")"
+done
+
+# The pass lines are reason_left's body: its first line, then every `| gsub`
+# up to the trim. Each is replaced by an identity rather than cut, so the
+# pipeline still parses and only the pass under test is gone.
+# Bash 3.2: no mapfile. The line numbers are a space-separated list.
+PASS_LINES="$(awk '/^  def reason_left:/ { f = 1; next } f && /;$/ { print NR; f = 0; next } f { print NR }' <<<"$prog")"
+[ -n "$PASS_LINES" ] || bad "the pass sweep read no lines" "reason_left"
+
+baseline=$(page_with "$prog" "$CORPUS_NODES")
+for ln in $PASS_LINES; do
+  text=$(sed -n "${ln}p" <<<"$prog")
+  case "$text" in
+    *'| '*) repl='    | .' ;;
+    *)      repl='    .'   ;;
+  esac
+  case "$text" in *';') repl="$repl;" ;; esac
+  variant=$(awk -v n="$ln" -v r="$repl" 'NR == n { print r; next } { print }' <<<"$prog")
+  if [ "$variant" = "$prog" ]; then
+    bad "pass sweep planted nothing" "$text"
+    continue
+  fi
+  out=$(page_with "$variant" "$CORPUS_NODES" 2>/dev/null || echo "jq-error")
+  label="a fixture notices — $(cut -c1-72 <<<"${text#    }")"
+  if [ "$out" = "jq-error" ]; then
+    bad "$label" "the variant did not parse"
+  elif [ "$out" != "$baseline" ]; then
+    ok "$label"
+  else
+    bad "$label" "deleting this pass moved no corpus verdict: it has no fixture"
+  fi
+done
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ] || exit 1
