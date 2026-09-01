@@ -101,9 +101,19 @@ pub const SUDO_STUB: &str = "#!/bin/sh\necho 'installer test tried to escalate' 
 /// script's ordinary write goes through it, and the run under test is the
 /// one that succeeds.
 ///
-/// Reads the flags `install.sh` passes — `-D`, and `-m MODE` — and treats
-/// the last two arguments as source and destination, which is the only
-/// form the script uses.
+/// Reads the one flag `install.sh` passes, `-m MODE`, and treats the last
+/// two arguments as source and destination, which is the only form the
+/// script uses.
+///
+/// Every other option is refused rather than shrugged off. BSD `install`
+/// on macOS takes a different flag set from GNU coreutils', and the
+/// overlap is not even where the spelling matches: `-D` makes missing
+/// directories on GNU and takes an operand on BSD, so GNU's
+/// `-D -m 0755 src dst` is read there as `-D -m` and exits 64. A stub that
+/// skipped what it did not recognise would accept such an invocation over
+/// the very branch macOS takes by default. Refusing instead means a flag
+/// this does not model reds here whether or not it is portable: teach it
+/// that flag, or drop the flag if the mac reads it differently.
 ///
 /// The destination is unlinked rather than written through, because that
 /// is what `install` does and `cp` does not: over a read-only file in a
@@ -122,7 +132,7 @@ pub fn install_stub(root: &Path) -> String {
          while [ $# -gt 2 ]; do\n\
          \x20 case \"$1\" in\n\
          \x20   -m) mode=\"$2\"; shift 2 ;;\n\
-         \x20   -*) shift ;;\n\
+         \x20   -*) echo \"installer test passed install an option this stub does not model: $1\" >&2; exit 1 ;;\n\
          \x20   *) break ;;\n\
          \x20 esac\n\
          done\n\

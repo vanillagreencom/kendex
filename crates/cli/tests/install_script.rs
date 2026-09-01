@@ -35,14 +35,14 @@ fn requested_urls(os: &str, arch: &str) -> String {
 #[allow(clippy::unwrap_used)]
 fn run_install(os: &str, arch: &str, fail: Option<(&str, i32)>) -> (std::process::Output, String) {
     let tmp = tempfile::tempdir().unwrap();
-    run_install_in(os, arch, fail, tmp.path(), &[])
+    run_install_in(os, arch, fail, tmp.path(), &[], SUDO_STUB)
 }
 
 /// The same run against a home the caller keeps, for a test that reads what
 /// the script left behind rather than only what it fetched.
 #[allow(clippy::unwrap_used)]
 fn run_install_at(os: &str, arch: &str, home: &Path) -> (std::process::Output, String) {
-    run_install_in(os, arch, None, home, &[])
+    run_install_in(os, arch, None, home, &[], SUDO_STUB)
 }
 
 /// What `uname -s` answers on the machine running these tests.
@@ -66,6 +66,7 @@ fn run_install_in(
     fail: Option<(&str, i32)>,
     home: &Path,
     path_ahead: &[&str],
+    sudo: &str,
 ) -> (std::process::Output, String) {
     let fake = home.join("fake-bin");
     let bindir = home.join(".local/bin");
@@ -77,7 +78,7 @@ fn run_install_in(
     );
     // The host's own `PATH` is appended below, so both commands the script
     // writes through resolve outside the fixture. Neither may reach past it.
-    write_exe(&fake.join("sudo"), SUDO_STUB);
+    write_exe(&fake.join("sudo"), sudo);
     write_exe(&fake.join("install"), &install_stub(home));
     // Logs the URL; `-o FILE` gets a runnable stand-in for the download,
     // and the release lookup gets a tag.
@@ -362,7 +363,14 @@ fn path_order_does_not_decide_where_a_re_run_lands() {
 
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
-    let (output, _) = run_install_in(HOST_UNAME, "x86_64", None, &home, &["/usr/local/bin"]);
+    let (output, _) = run_install_in(
+        HOST_UNAME,
+        "x86_64",
+        None,
+        &home,
+        &["/usr/local/bin"],
+        SUDO_STUB,
+    );
     // Asked first, because it is the answer a drifted script gives: a run
     // that chose the system directory stops at the stub, and reading the
     // destination first would report only that it never said one.
@@ -490,5 +498,92 @@ fn install_sh_says_when_it_cannot_record_the_command() {
         kendex_core::command_update::recorded_command(&env),
         None,
         "the app was handed a record install.sh never wrote"
+    );
+}
+
+/// A `sudo` that stands in for root, and only over the fixture: it lifts
+/// the write bit off the destination's directory the way root's write
+/// ignores it, runs the command, and puts the bit back. The directory the
+/// fixture made unwritable is what sends the script down its privileged
+/// branch, so the refusing stub every other case here uses could never
+/// reach the invocation that branch makes. Where the destination's
+/// directory is already writable this is `"$@"` and nothing else, and every
+/// destination stays the install stub's to refuse, so nothing reaches past
+/// the temp home either way.
+const SUDO_AS_ROOT: &str = r#"#!/bin/sh
+for arg in "$@"; do dest="$arg"; done
+dir="$(dirname "$dest")"
+if [ -d "$dir" ] && [ ! -w "$dir" ]; then
+  chmod u+w "$dir"
+  "$@"; rc=$?
+  chmod a-w "$dir"
+else
+  "$@"; rc=$?
+fi
+exit $rc
+"#;
+
+/// The branch `install.sh` takes when the directory it chose is not
+/// writable, which on macOS is the ordinary one: `/usr/local/bin` is on
+/// PATH there whether or not it exists, and root owns it, so the elevated
+/// write is what a mac install runs. What that branch hands `install` has
+/// to be flags the mac's `install` reads the same way — GNU's `-D` is an
+/// operand-taking flag there and swallows the `-m` behind it, and a run
+/// that passes the pair installs nothing at all.
+///
+/// The refusal is the stub's, not this test's: `install_stub` reads the
+/// flags and rejects the ones it does not model, so this case only has to
+/// reach the branch and let the run say whether it worked.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_privileged_branch_installs_with_flags_bsd_install_reads_alike() {
+    // Root writes through a mode bit, so `[ -w "$bindir" ]` answers true
+    // for it and the script takes the unprivileged branch instead. Nothing
+    // this case is about happens on such a runner.
+    if rustix::process::geteuid().is_root() {
+        eprintln!("skipped: root writes through the unwritable bindir this case needs");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let bindir = home.join(".local/bin");
+    fs::create_dir_all(&bindir).unwrap();
+    fs::set_permissions(&bindir, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let (output, _) = run_install_in(HOST_UNAME, "x86_64", None, &home, &[], SUDO_AS_ROOT);
+    // Writable again before any assertion can fail: a directory left 0555
+    // is one the temp dir cannot clean up.
+    fs::set_permissions(&bindir, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let said = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Asked first: a run that took the writable branch would install
+    // perfectly well and prove nothing about the one under test.
+    assert!(
+        said.contains(&format!(
+            "Installing to {} needs elevated permissions.",
+            bindir.display()
+        )),
+        "install.sh did not take the branch that needs privilege:\n{said}{stderr}"
+    );
+    assert!(
+        output.status.success(),
+        "install.sh failed on the branch it takes when the bindir needs privilege:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("this stub does not model"),
+        "install.sh passed the elevated write a flag macOS reads differently:\n{stderr}"
+    );
+    let installed = bindir.join("kendex");
+    assert!(
+        installed.is_file(),
+        "the elevated branch installed nothing at {}",
+        installed.display()
+    );
+    assert_eq!(
+        fs::metadata(&installed).unwrap().permissions().mode() & 0o777,
+        0o755,
+        "the elevated branch installed {} with the wrong mode",
+        installed.display()
     );
 }

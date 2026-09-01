@@ -114,7 +114,16 @@ install_cli() {
     install -m 0755 "$work/kendex" "$bindir/kendex"
   else
     echo "Installing to $bindir needs elevated permissions."
-    sudo install -D -m 0755 "$work/kendex" "$bindir/kendex"
+    # Two commands rather than `install -D`, which would make the missing
+    # directory itself. That flag makes directories on GNU coreutils only:
+    # BSD install on macOS spells its own -D "-D dest" and takes an
+    # operand, so it reads "-m" as that operand and exits 64 on the usage
+    # it is left with. This is macOS's usual branch — /usr/local/bin is on
+    # PATH there whether or not it exists, and root owns it either way, so
+    # the mkdir above is the one that fails and leaves nothing to write
+    # into. -m means the same thing to both.
+    sudo mkdir -p "$bindir"
+    sudo install -m 0755 "$work/kendex" "$bindir/kendex"
   fi
   echo "Installed the kendex command to $bindir/kendex"
   # What this script installed, so the desktop app can tell this file from
