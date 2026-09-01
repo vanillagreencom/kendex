@@ -466,6 +466,7 @@ launching_suites() {
 # bodies, which is what these suites carry, and skips a line holding a
 # here-string because <<< opens no body.
 exit_traps_in() {
+  [[ -r "$1" ]] || { echo "merge_queue_teardown: cannot read $1 to scan its EXIT traps" >&2; return 2; }
   awk '
     delim != "" {
       line = $0; sub(/^[\t]+/, "", line)
@@ -484,7 +485,13 @@ exit_traps_in() {
     }
   ' "$1"
 }
-suite_arms_teardown() { [[ "$(exit_traps_in "$1")" == 'trap mq_reap_teardown EXIT' ]]; }
+# 0 armed, 1 scanned and not armed, 2 the scan itself could not run — a
+# broken scan reported as an unarmed suite would name the wrong defect.
+suite_arms_teardown() {
+  local traps
+  traps=$(exit_traps_in "$1") || return 2
+  [[ "$traps" == 'trap mq_reap_teardown EXIT' ]]
+}
 suite_seals_path() {
   local body
   body=$(grep -v '^[[:space:]]*#' "$1") || return 1
@@ -496,15 +503,21 @@ if [[ -n "$roster" ]]; then ok "the launching-suite roster derived a non-empty s
 while IFS= read -r suite; do
   [[ -n "$suite" ]] || continue
   suite_name=$(basename "$suite" .sh)
-  if suite_arms_teardown "$suite"; then ok "$suite_name installs the reaping teardown"
-  else bad "$suite_name launches supervisors without arming teardown"; fi
+  arm_rc=0; suite_arms_teardown "$suite" || arm_rc=$?
+  case "$arm_rc" in
+    0) ok "$suite_name installs the reaping teardown" ;;
+    1) bad "$suite_name launches supervisors without arming teardown" ;;
+    *) bad "$suite_name could not be scanned for its EXIT traps" ;;
+  esac
   if suite_seals_path "$suite"; then ok "$suite_name seals its PATH behind the stub directory"
   else bad "$suite_name launches supervisors without sealing its PATH"; fi
 done <<< "$roster"
 
 # Controls. The derivation must FIND a suite nobody listed, and the arming
-# check must accept only a suite that really installs the reaping teardown —
-# each planted shape below passed a plain whole-line match and leaks.
+# check must accept only a suite that really installs the reaping teardown.
+# Two of the planted shapes are the reason the check counts rather than
+# matches: override_suite and heredoc_only_suite both pass a plain whole-line
+# match and both leak.
 planted="$TMP/planted"
 mkdir -p "$planted"
 printf '#!/usr/bin/env bash\ncp "$ORCH/scripts/merge-queue-watch" "$SCRIPTS/"\n' > "$planted/unarmed_suite.sh"
@@ -545,9 +558,15 @@ printf '#!/usr/bin/env bash\n# trap mq_reap_teardown EXIT\n# tools/tests/lib/sea
 if suite_arms_teardown "$planted/armed_suite.sh"; then ok "a suite that installs the reaping teardown passes the arming check"
 else bad "the arming check rejects a suite that is armed"; fi
 for shape in old_teardown_suite override_suite heredoc_only_suite comment_decoy; do
-  if suite_arms_teardown "$planted/$shape.sh"; then bad "the arming check accepted $shape"
-  else ok "the arming check rejects $shape"; fi
+  shape_rc=0; suite_arms_teardown "$planted/$shape.sh" || shape_rc=$?
+  if [[ "$shape_rc" -eq 1 ]]; then ok "the arming check rejects $shape"
+  else bad "the arming check answered $shape with $shape_rc, not a scanned rejection"; fi
 done
+# And a scan that could not run says so instead of blaming the suite.
+unscannable_rc=0; unscannable_err=$(suite_arms_teardown "$planted/no-such-suite.sh" 2>&1) || unscannable_rc=$?
+eq "$unscannable_rc" 2 "a suite that cannot be scanned is not reported as unarmed"
+case "$unscannable_err" in *"cannot read"*) ok "the failed scan names the file it could not read" ;;
+  *) bad "the failed scan is unnamed: $unscannable_err" ;; esac
 if suite_seals_path "$planted/comment_decoy.sh"; then bad "a comment naming the sealed directory passed the sealing check"
 else ok "a comment naming the sealed directory does not pass for a statement"; fi
 
