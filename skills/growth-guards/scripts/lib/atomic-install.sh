@@ -99,8 +99,8 @@ gg_install_file() { # SRC DEST LABEL
   fi
   # -f, so the rename is non-interactive whatever the destination's mode: mv
   # PROMPTS before replacing one that denies write when stdin is a terminal —
-  # exactly the destination this helper sets out to support, and a gate that
-  # stops for an answer nobody is there to give is a gate that hangs.
+  # exactly the destination this helper supports — and a gate that stops for
+  # an answer nobody gives hangs. Pinned at a tty by tests/terminal-paths.
   if ! mv -f -- "$GG_INSTALL_TMP" "$dest" 2>"$err"; then
     gg_collection_error "could not replace $label at $(gg_shown "$dest")$(gg_install_why "$err") — inspect the file before trusting it"
   fi

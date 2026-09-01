@@ -14,7 +14,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$TEST_DIR/lib/pty.bash"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 LIB="$SKILL_DIR/scripts/lib"
-COMMON="$LIB/common.sh"
+# gg_install_file lives in atomic-install.sh, which needs common.sh sourced
+# first; a session below therefore takes the lib DIRECTORY and sources both.
+INSTALL="$LIB/atomic-install.sh"
 ROOT="$TMP"
 
 PASS=0
@@ -26,8 +28,8 @@ filemode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 R="$ROOT/install-file"
 mkdir -p "$R/tools"
 
-# index-reads.test.sh's `call`, with the session's fds on a pty. COMMON is a
-# parameter so a mutant copy of the helper can be run through the same probe.
+# index-reads.test.sh's `call`, with the session's fds on a pty. LIB is a
+# parameter so a mutant copy of the tree can be run through the same probe.
 #
 # SRC is a parameter for a different reason: every path this helper writes
 # goes through %q, and a caller splicing one into the SNIPPET instead would
@@ -46,7 +48,7 @@ mkdir -p "$R/tools"
 #      session is started at all)
 # The REACHED marker is the separate positive half: it carries no status, and
 # it is the evidence that the call under test was entered.
-pty_call() { # COMMON SRC SNIPPET
+pty_call() { # LIB SRC SNIPPET
   # The case file goes BESIDE the source, not in $ROOT: gg_pty_run writes it
   # into the session as `bash %q`, so siting it under a hostile SRC is what
   # drives that line's quoting too. Everything else about it is unchanged —
@@ -54,7 +56,7 @@ pty_call() { # COMMON SRC SNIPPET
   # Two statements, not one `local`: a builtin's arguments are all expanded
   # before any of its assignments take effect, so case_file cannot read src
   # on the same line.
-  local common="$1" src="$2" snippet="$3" case_file
+  local lib="$1" src="$2" snippet="$3" case_file
   case_file="${src%/*}/pty-case.sh"
   {
     printf 'set -euo pipefail\n'
@@ -70,7 +72,8 @@ pty_call() { # COMMON SRC SNIPPET
     printf '[ -t 0 ] || { echo NOT-A-TERMINAL; exit 3; }\n'
     printf '[ ! -w tools/dest.tsv ] || { echo DESTINATION-IS-WRITABLE; exit 4; }\n'
     printf 'SRC=%q\n' "$src"
-    printf '. %q\n' "$common"
+    printf '. %q\n' "$lib/common.sh"
+    printf '. %q\n' "$lib/atomic-install.sh"
     printf 'echo REACHED\n'
     printf '%s\n' "$snippet"
   } >"$case_file"
@@ -110,7 +113,7 @@ SRC_TTY="$ROOT/tty.tsv"
 printf 'REPLACED AT A TERMINAL\n' >"$SRC_TTY"
 reset_dest ORIGINAL
 if premise_denies_write "$R/tools/dest.tsv" "the install lands, and the destination keeps its mode"; then
-  pty_call "$COMMON" "$SRC_TTY" 'gg_tmpdir; gg_install_file "$SRC" tools/dest.tsv "the fixture"'
+  pty_call "$LIB" "$SRC_TTY" 'gg_tmpdir; gg_install_file "$SRC" tools/dest.tsv "the fixture"'
   [ "$STATE" = ok ] && [ "$RC" -eq 0 ] && [ "$(cat "$R/tools/dest.tsv")" = "REPLACED AT A TERMINAL" ] \
     && [ "$(filemode "$R/tools/dest.tsv")" = 444 ] \
     && ok "the install lands, and the destination keeps its mode" \
@@ -121,20 +124,20 @@ fi
 # coincidence: the same probe against a copy of the helper with the `-f` taken
 # back out. Every headless assertion over this helper still passes against it.
 #
-# The WHOLE lib tree is copied, not common.sh alone: common.sh bootstraps
-# paths.sh and configured-paths.sh off its own directory, so a mutant sited
-# anywhere else dies at its first source line — before gg_install_file exists,
-# and while still satisfying a control that only asks for an unreplaced
-# destination.
+# The WHOLE lib tree is copied, not atomic-install.sh alone: it needs
+# common.sh sourced first, and common.sh bootstraps paths.sh and
+# configured-paths.sh off its own directory, so a mutant sited anywhere else
+# dies at its first source line — before gg_install_file exists, and while
+# still satisfying a control that only asks for an unreplaced destination.
 cp -R "$LIB" "$ROOT/lib-no-f"
-sed 's/mv -f -- /mv -- /' "$COMMON" >"$ROOT/lib-no-f/common.sh"
-cmp -s "$COMMON" "$ROOT/lib-no-f/common.sh" \
-  && bad "control: the mutant really drops the -f" "the copy is byte-identical to common.sh" \
+sed 's/mv -f -- /mv -- /' "$INSTALL" >"$ROOT/lib-no-f/atomic-install.sh"
+cmp -s "$INSTALL" "$ROOT/lib-no-f/atomic-install.sh" \
+  && bad "control: the mutant really drops the -f" "the copy is byte-identical to atomic-install.sh" \
   || ok "control: the mutant really drops the -f"
 
 reset_dest "NOT REPLACED"
 if premise_denies_write "$R/tools/dest.tsv" "control: without the -f the same probe leaves the destination unreplaced"; then
-  pty_call "$ROOT/lib-no-f/common.sh" "$SRC_TTY" 'gg_tmpdir; gg_install_file "$SRC" tools/dest.tsv "the fixture"'
+  pty_call "$ROOT/lib-no-f" "$SRC_TTY" 'gg_tmpdir; gg_install_file "$SRC" tools/dest.tsv "the fixture"'
   # The session must have REACHED the call and finished on its own, and its
   # status must be one gg_install_file itself produces: 0, or the 2 of a
   # collection error. A session that refused its premise (3, 4), was capped,
@@ -228,7 +231,7 @@ rm -f "$ROOT/PWNED"
 if premise_denies_write "$R/tools/dest.tsv" "control: a path that is a space and a command substitution stays a path"; then
   reset_dest ORIGINAL
   cp -R "$LIB" "$hostile/lib"
-  TMPDIR="$hostile" pty_call "$hostile/lib/common.sh" "$hostile/src.tsv" 'gg_tmpdir; gg_install_file "$SRC" tools/dest.tsv "the fixture"'
+  TMPDIR="$hostile" pty_call "$hostile/lib" "$hostile/src.tsv" 'gg_tmpdir; gg_install_file "$SRC" tools/dest.tsv "the fixture"'
   [ "$STATE" = ok ] && [ "$RC" -eq 0 ] && [ "$(cat "$R/tools/dest.tsv")" = "FROM A HOSTILE PATH" ] \
     && ok "control: a path that is a space and a command substitution stays a path" \
     || bad "control: a path that is a space and a command substitution stays a path" "state=$STATE rc=$RC out=$OUT content=$(cat "$R/tools/dest.tsv")"
