@@ -1,4 +1,5 @@
 control_expect "live get safe filters by state type"
+control_expect "session status routes terminal-only history to backlog"
 control_expect "production inverse projection requests state type"
 control_expect "production GraphQL has one inverse relation projection owner"
 control_replace scripts/lib/formatters.sh 1 \

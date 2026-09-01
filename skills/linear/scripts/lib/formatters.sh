@@ -1,6 +1,5 @@
 #!/bin/bash
 # Linear CLI - Output Formatters
-
 set -euo pipefail
 
 readonly ISSUE_BLOCKS_FIELDS='relations { nodes { id type relatedIssue { id identifier title state { name type } } } }'
@@ -10,6 +9,7 @@ readonly ISSUE_RELATION_JQ='
 def issue_is_open: (.state.type | IN("completed", "canceled") | not);
 def issue_blocks_relations($relations): [($relations // [])[] | select(.type == "blocks")];
 def issue_blocks_ids($relations): issue_blocks_relations($relations) | map(.relatedIssue.identifier);
+def issue_blocks_open_ids($relations): issue_blocks_relations($relations) | map(select(.relatedIssue | issue_is_open) | .relatedIssue.identifier);
 def issue_blocked_row: {id: .relatedIssue.identifier, title: .relatedIssue.title, state: .relatedIssue.state.name};
 def issue_blocks_rows($relations; $with_relation_id): issue_blocks_relations($relations) | map(issue_blocked_row + if $with_relation_id then {relation_id: .id} else {} end);
 def issue_blocked_by_relations($relations): [($relations // [])[] | select(.type == "blocks")];

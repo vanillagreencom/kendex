@@ -32,19 +32,19 @@ Set `velocity.adjustment` only on a trigger: current ≥150% of baseline for 2+ 
 
 ## 3. Backlog Candidates
 
-Use `issues.backlog`, or fall back to a cache query:
+Build one complete top-level Backlog candidate set. From session status, use `issues.backlog` plus the rows in `issues.blocked` whose `state_type` is `backlog`. If session status is unavailable, use the equivalent cache query:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues list --project "[ACTIVE_PROJECT]" --state "Backlog" --max
 ```
 
-Plan parents and standalone issues only — exclude anything with a non-empty `parent_id` (`issues.backlog` already applies this filter; apply it yourself to the fallback). Per issue, take `id`, `title`, `description`, `priority`, `estimate`, `agent`, `labels`, `blocked_by[]`, and `blocks[]`.
+Plan parents and standalone issues only. Session status already excludes children; apply the same non-empty `parent_id` exclusion to the fallback. Per issue, take `id`, `title`, `description`, `priority`, `estimate`, `agent`, `labels`, `blocked_by[]`, `blocked_by_open[]`, and `blocks[]`.
 
 ## 4. Architecture Order
 
 ### 4.1 Partition by Blocking
 
-Unblocked = `blocked_by` empty or every blocker Done. A blocked issue whose blocker is in the unblocked set can share the cycle, blocker first.
+Unblocked means `blocked_by_open` is empty. A blocked candidate whose open blocker is also in the candidate set can share the cycle, blocker first.
 
 ### 4.2 Read the Code
 

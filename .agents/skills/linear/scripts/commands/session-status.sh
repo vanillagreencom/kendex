@@ -217,7 +217,7 @@ get_session_status() {
     # Aggregate from ALL started projects, tag each issue with project_name
     local issues_json='{"actionable": [], "research_pending": [], "research_ready": [], "backlog": [], "blocked": [], "in_progress": []}'
     if [[ -n "$project_ids" ]]; then
-        issues_json=$(jq --arg pids "$project_ids" --argjson projects "$projects_json" '
+        issues_json=$(jq --arg pids "$project_ids" --argjson projects "$projects_json" "$ISSUE_RELATION_JQ"'
             # Build project ID set, name lookup, and priority lookup
             ($pids | split(",")) as $pid_list |
             ([($projects // [])[] | {(.id): .name}] | add // {}) as $project_names |
@@ -235,7 +235,7 @@ get_session_status() {
             . as $all |
 
             # Helper: check if issue is blocked by incomplete issues
-            def is_blocked: [(.inverseRelations.nodes // [])[] | select(.type == "blocks" and .issue.state.type != "completed")] | length > 0;
+            def is_blocked: issue_blocked_by_open_relations(.inverseRelations.nodes) | length > 0;
             # Helper: check if has specific label
             def has_label($name): [(.labels.nodes // [])[] | .name] | any(. == $name);
             # Helper: check if issue is a sub-issue (has parent)
@@ -276,15 +276,14 @@ get_session_status() {
                 cycle: ((.cycle.number // null)),
                 labels: [(.labels.nodes // [])[] | .name],
                 project_name: ($project_names[.project.id] // ""),
+                state: (.state.name // ""), state_type: (.state.type // ""),
+                blocked_by: issue_blocked_by_ids(.inverseRelations.nodes),
+                blocked_by_open: issue_blocked_by_open_ids(.inverseRelations.nodes),
                 children_progress: children_progress
-            };
-            # Helper: format blocked issue
-            def format_blocked: format_issue + {
-                blocked_by: [(.inverseRelations.nodes // [])[] | select(.type == "blocks" and .issue.state.type != "completed") | .issue.identifier]
             };
             # Helper: format research issue
             def format_research: format_issue + {
-                blocks: [(.relations.nodes // [])[] | select(.type == "blocks" and .relatedIssue.state.type != "completed") | .relatedIssue.identifier]
+                blocks: issue_blocks_open_ids(.relations.nodes)
             };
             {
                 actionable: [$project_issues[] |
@@ -328,7 +327,7 @@ get_session_status() {
                     select(is_sub_issue | not) |
                     select(is_blocked) |
                     select(has_label("research") | not) |
-                    format_blocked
+                    format_issue
                 ] | sort_by(.priority)
             }
         ' "$issues_file")

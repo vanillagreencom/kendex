@@ -113,7 +113,7 @@ Blocking relations must connect peers of one bundle: same direct parent, or both
 
 A blocking relation pointing at a Done or Canceled issue is **satisfied history, not stale metadata** — Linear itself already treats the dependent issue as unblocked. The relation stays for provenance; never remove or "fix" it, and audits must never classify it as stale. The only legitimate audit output for a completed-blocker relation is a scheduling signal ("gates cleared, ready to schedule").
 
-Every issue read keeps each blocking relation in `blocked_by` and lists only blockers outside the `completed` and `canceled` state types in `blocked_by_open`.
+Normalized issue lists, gets, bulk gets, bundles, recursive children, relation reads, and session status keep each blocking relation in `blocked_by` and list only nonterminal blockers in `blocked_by_open`.
 
 ## Option Behavior
 
