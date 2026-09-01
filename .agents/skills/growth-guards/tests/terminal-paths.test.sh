@@ -151,13 +151,18 @@ if premise_denies_write "$R/tools/dest.tsv" "control: without the -f the same pr
   # `could not replace the fixture` alone is gg_collection_error's frame,
   # which it prints whether or not gg_install_why relayed anything — so the
   # match reaches for mv's prompt too, which is the half this case is named
-  # for. GNU mv exits 1 and gg_install_why folds that prompt in.
-  [ "$STATE" = ok ] && [ "$RC" -eq 2 ] && case "$OUT" in
-    *"could not replace the fixture"*"overriding mode"*) true ;;
-    *) false ;;
-  esac \
-    && ok "control: and the refusal carries mv's own prompt as its cause" \
-    || bad "control: and the refusal carries mv's own prompt as its cause" "state=$STATE rc=$RC out=$OUT"
+  # for. GNU mv exits 1 and gg_install_why folds that prompt in; BSD mv
+  # answers no with exit 0 and nothing to relay, so there is no refusal to
+  # read there and this half of the claim is not available. Keyed on uname,
+  # the same way the grammar is chosen.
+  if [ "$(uname -s)" != Darwin ]; then
+    [ "$STATE" = ok ] && [ "$RC" -eq 2 ] && case "$OUT" in
+      *"could not replace the fixture"*"overriding mode"*) true ;;
+      *) false ;;
+    esac \
+      && ok "control: and the refusal carries mv's own prompt as its cause" \
+      || bad "control: and the refusal carries mv's own prompt as its cause" "state=$STATE rc=$RC out=$OUT"
+  fi
 fi
 
 echo "=== gg_pty_run: the probe rules the cases above depend on ==="
