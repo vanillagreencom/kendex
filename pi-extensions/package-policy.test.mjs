@@ -74,20 +74,42 @@ function runShardGuard(workflow, shard) {
 // current is the point of this fixture, not a cost to design around.
 const hostedRunners = ["ubuntu-latest", "macos-latest", "windows-latest"];
 
+// How many jobs skill-tests.yml declares. Adding or removing one updates this
+// number in the same commit, the same contract `hostedRunners` carries: without
+// it a reader that stopped seeing jobs would report nothing and read as a file
+// where every job obeys the rule.
+const declaredJobs = 8;
+
+// Job ids are the two-space keys under the top-level `jobs:` mapping, and a
+// job's block runs from its id line to the next id. Enumerating jobs and asking
+// each one for its runner is what makes the rule cover every job: a job whose
+// `runs-on` value sits in a block below the key, a `uses:` job reusing another
+// workflow, and a job with no runner line at all all produce no readable
+// `runs-on`, so a reader that collects the `runs-on` keys it happens to find
+// passes those jobs over while their neighbours keep it non-empty.
+function jobRunners(workflow) {
+	const start = workflow.search(/^jobs:$/m);
+	assert.ok(start >= 0, `no top-level "jobs:" mapping in ${workflowPath} — the job reader is broken`);
+	return workflow
+		.slice(start)
+		.split(/\n(?= {2}[\w-]+:$)/m)
+		.slice(1)
+		.map((block) => {
+			const id = block.match(/^ {2}([\w-]+):$/m)?.[1];
+			assert.ok(id, `a block of ${workflowPath} carries no job id — the job reader is broken`);
+			return { id, label: block.match(/^ {4}runs-on: (.+)$/m)?.[1].trim() };
+		});
+}
+
 // Every job in this workflow names its runner outright, and the header comment
 // above the workflow states that as the rule. An expression there is how the
 // runner used to be picked — `vars.CI_RUNNER_*` with a fallback — and it let
 // one job run on different hardware per event, so shard durations did not
-// compare across events. Every `runs-on:` KEY is read, not only the ones
-// carrying a scalar on the same line: the block form puts the value on the
-// lines below, as a `group:` mapping or a list, and a reader matching same-line
-// scalars alone would drop that job from the set rather than report it, leaving
-// the floor below satisfied by its neighbours while the job runs wherever the
-// block says.
+// compare across events. Each report names the job that broke the rule.
 function runnersNotNamedOutright(workflow) {
-	const keys = [...workflow.matchAll(/^ {4}runs-on:(.*)$/gm)].map((match) => match[0].trim());
-	assert.ok(keys.length > 0, `no "runs-on:" key in ${workflowPath} — the runner reader is broken`);
-	return keys.filter((key) => !hostedRunners.some((label) => key === `runs-on: ${label}`));
+	const jobs = jobRunners(workflow);
+	assert.equal(jobs.length, declaredJobs, `read ${jobs.length} job(s) from ${workflowPath}, not the ${declaredJobs} it declares — the job reader is broken`);
+	return jobs.filter(({ label }) => !hostedRunners.includes(label)).map(({ id, label }) => `${id}: ${label ?? "no runs-on on the job's own line"}`);
 }
 
 // A package's CI entry point is `test:ci` when it declares one and `test`
@@ -313,36 +335,68 @@ test("the workflow's shard guard reds on every direction of shard-name drift", (
 
 test("every skill-tests.yml job names a GitHub-hosted runner outright", () => {
 	const workflow = readFileSync(workflowPath, "utf8");
-	assert.deepEqual(runnersNotNamedOutright(workflow), [], "a job picks its runner from an expression or names a runner GitHub does not host");
+	assert.deepEqual(runnersNotNamedOutright(workflow), [], "a job names no runner on its own line, or names one outside hostedRunners");
 });
 
 // Must-fail control for the rule above, one case per way a job can stop naming
 // its runner outright. Each asserts its mutation landed, so a case that stopped
 // matching fails loud rather than proving nothing against an unmutated copy.
-test("a runs-on that is an expression, a foreign label or the block form is reported, not accepted", () => {
+// The last case mutates a different job so a reader that attributed every
+// report to the first block would be caught.
+test("a job that does not name an allowed runner is reported by id, not passed over", () => {
 	const workflow = readFileSync(workflowPath, "utf8");
 	assert.deepEqual(runnersNotNamedOutright(workflow), [], "precondition: the real workflow names every runner outright");
+	const shard = /^ {4}runs-on: ubuntu-latest$/m;
 	const cases = [
-		[
-			"the shard picks its runner from an org variable",
-			"    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.CI_RUNNER_4V || 'ubuntu-latest' }}",
-			"runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.CI_RUNNER_4V || 'ubuntu-latest' }}",
-		],
-		["a job takes a vendor's runner", "    runs-on: blacksmith-4vcpu-ubuntu-2404", "runs-on: blacksmith-4vcpu-ubuntu-2404"],
-		["a job takes a self-hosted label", "    runs-on: self-hosted", "runs-on: self-hosted"],
+		{
+			drift: "the shard picks its runner from an org variable",
+			target: shard,
+			replacement: "    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.CI_RUNNER_4V || 'ubuntu-latest' }}",
+			reported: "skill-suites-shard: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.CI_RUNNER_4V || 'ubuntu-latest' }}",
+		},
+		{
+			drift: "a job takes a vendor's runner",
+			target: shard,
+			replacement: "    runs-on: blacksmith-4vcpu-ubuntu-2404",
+			reported: "skill-suites-shard: blacksmith-4vcpu-ubuntu-2404",
+		},
+		{ drift: "a job takes a self-hosted label", target: shard, replacement: "    runs-on: self-hosted", reported: "skill-suites-shard: self-hosted" },
 		// A self-hosted runner can be registered under any label its owner
 		// picks, an OS family name included, and that runner exists and runs.
 		// This is the case a family pattern cannot tell from a GitHub image.
-		["a self-hosted runner wears an OS-family label", "    runs-on: ubuntu-self-hosted", "runs-on: ubuntu-self-hosted"],
-		// The one case the other three cannot stand in for: the value moves off
-		// the key's line, so a same-line reader returns nothing for this job and
-		// the remaining jobs keep the floor satisfied. The report is the bare
-		// key, which is all there is to name on that line.
-		["a job names a runner group in the block form", "    runs-on:\n      group: kendex-runners", "runs-on:"],
+		{
+			drift: "a self-hosted runner wears an OS-family label",
+			target: shard,
+			replacement: "    runs-on: ubuntu-self-hosted",
+			reported: "skill-suites-shard: ubuntu-self-hosted",
+		},
+		// The value moves off the key's line, so the job offers no label to
+		// judge. It is reported as the job it is rather than dropping out.
+		{
+			drift: "a job names a runner group in the block form",
+			target: shard,
+			replacement: "    runs-on:\n      group: kendex-runners",
+			reported: "skill-suites-shard: no runs-on on the job's own line",
+		},
+		// A `uses:` job is valid and carries no `runs-on` at all, which is the
+		// shape that has no key for a key-collecting reader to find.
+		{
+			drift: "a job reuses another workflow and names no runner",
+			target: /^ {4}runs-on: windows-latest$/m,
+			replacement: "    uses: ./.github/workflows/catalog-check.yml",
+			reported: "cargo-tests-windows: no runs-on on the job's own line",
+		},
 	];
-	for (const [drift, replacement, reported] of cases) {
-		const mutated = workflow.replace(/^ {4}runs-on: ubuntu-latest$/m, () => replacement);
+	for (const { drift, target, replacement, reported } of cases) {
+		const mutated = workflow.replace(target, () => replacement);
 		assert.notEqual(mutated, workflow, `the mutation for "${drift}" matched nothing`);
 		assert.deepEqual(runnersNotNamedOutright(mutated), [reported], `the reader stayed green when ${drift}`);
 	}
+
+	// The count is the floor under all of the above: a reader that stopped
+	// enumerating would report nothing and read as a clean file, so it throws
+	// rather than returning an empty set.
+	const shorter = workflow.replace(/\n {2}cargo-tests-windows:[\s\S]*$/, "\n");
+	assert.notEqual(shorter, workflow, "the mutation dropping a job matched nothing");
+	assert.throws(() => runnersNotNamedOutright(shorter), new RegExp(`not the ${declaredJobs} it declares`), "a file with a job missing was read as one where every job obeys the rule");
 });
