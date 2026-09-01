@@ -6,7 +6,7 @@
 use std::fs;
 
 use kendex_core::apply;
-use kendex_core::engine::{PlanOptions, plan_refresh};
+use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::error::CoreError;
 use kendex_core::lock::{load as load_lock, lock_path};
 use kendex_core::manifest;
@@ -53,7 +53,15 @@ fn updating_one_follower_leaves_its_siblings_at_their_commits() {
 
     // The whole-scope control: refresh is unchanged and brings the
     // sibling current.
-    let report = plan_refresh(&w.env, &w.scope).unwrap();
+    let report = plan_apply(
+        &w.env,
+        &w.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
     assert!(installed_body(&w, "b").contains("b version two."));
     assert_eq!(locked_commit(&w, "b"), second);

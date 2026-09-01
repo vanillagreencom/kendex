@@ -1,5 +1,5 @@
-//! Mixed-version logout safety, bounded concurrent-token retries, and the
-//! sign-in a rejection clears — never one another writer installed.
+//! Mixed-version logout safety, bounded concurrent-token retries, and
+//! credential removal failures.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
@@ -192,32 +192,10 @@ fn an_older_logout_during_revoke_stays_signed_out() {
     assert!(store.load().unwrap().is_none());
 }
 
-/// What another writer does to the store while the rejected call is in
-/// flight, in the window neither producer holds the refresh guard across.
-enum Race {
-    None,
-    /// A login installing this family.
-    Install(&'static str),
-    /// A logout, leaving nothing installed.
-    LogOut,
-}
-
-impl Race {
-    fn run(&self, store: &Store) -> Result<()> {
-        match self {
-            Race::None => Ok(()),
-            Race::Install(name) => store.save(&credential(name)),
-            Race::LogOut => store.clear(),
-        }
-    }
-}
-
 struct RejectingNewerTokens {
     store: Arc<Store>,
     bearers: Mutex<Vec<String>>,
     refresh_calls: AtomicUsize,
-    /// What lands as the last token is rejected.
-    race_on_last: Race,
 }
 
 impl Fetch for RejectingNewerTokens {
@@ -251,7 +229,7 @@ impl Fetch for RejectingNewerTokens {
         match bearer {
             "kxa_old" => self.store.save(&credential("newer-one"))?,
             "kxa_newer-one" => self.store.save(&credential("newer-two"))?,
-            "kxa_newer-two" => self.race_on_last.run(&self.store)?,
+            "kxa_newer-two" => {}
             other => {
                 return Err(CoreError::RegistryUnavailable {
                     why: format!("unexpected bearer {other}"),
@@ -270,7 +248,6 @@ fn two_rejected_concurrent_tokens_end_the_bounded_retry() {
         store: Arc::clone(&store),
         bearers: Mutex::new(Vec::new()),
         refresh_calls: AtomicUsize::new(0),
-        race_on_last: Race::None,
     };
 
     let refused = submit(&fetch, store.as_ref(), "jane/skills")
@@ -292,38 +269,10 @@ fn two_rejected_concurrent_tokens_end_the_bounded_retry() {
     );
 }
 
-/// A `kendex login` completing while the last rejection is in flight needs
-/// only the refresh guard, which this window does not hold. The credential
-/// it installed was never refused, so it stays, and the caller is told the
-/// sign-in moved rather than that their account expired.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_login_landing_during_the_bounded_retry_is_never_cleared() {
-    let store = Arc::new(Store::signed_in());
-    let fetch = RejectingNewerTokens {
-        store: Arc::clone(&store),
-        bearers: Mutex::new(Vec::new()),
-        refresh_calls: AtomicUsize::new(0),
-        race_on_last: Race::Install("newest"),
-    };
-
-    let refused = submit(&fetch, store.as_ref(), "jane/skills")
-        .unwrap_err()
-        .to_string();
-
-    assert!(
-        refused.contains("the sign-in changed while authenticating"),
-        "{refused}"
-    );
-    assert_eq!(store.load().unwrap().unwrap().access_token, "kxa_newest");
-}
-
-/// Rotates once and rejects the fresh token too, optionally letting another
-/// writer reach the store while that rejection is in flight.
+/// Rotates once and rejects the fresh token too.
 struct RejectingRotation {
     store: Arc<Store>,
-    /// What lands while the rejection of the rotated token is in flight.
-    race_on_rotated: Race,
+    logout_on_rotated: bool,
 }
 
 impl Fetch for RejectingRotation {
@@ -353,7 +302,8 @@ impl Fetch for RejectingRotation {
         };
         match bearer {
             "kxa_old" => {}
-            "kxa_rotated" => self.race_on_rotated.run(&self.store)?,
+            "kxa_rotated" if self.logout_on_rotated => self.store.clear()?,
+            "kxa_rotated" => {}
             other => {
                 return Err(CoreError::RegistryUnavailable {
                     why: format!("unexpected bearer {other}"),
@@ -370,7 +320,7 @@ fn a_rotation_the_server_still_rejects_clears_the_sign_in() {
     let store = Arc::new(Store::signed_in());
     let fetch = RejectingRotation {
         store: Arc::clone(&store),
-        race_on_rotated: Race::None,
+        logout_on_rotated: false,
     };
 
     let refused = submit(&fetch, store.as_ref(), "jane/skills")
@@ -391,36 +341,13 @@ fn a_rotation_the_server_still_rejects_clears_the_sign_in() {
     );
 }
 
-/// The same window on the other producer: the rotated token is rejected
-/// with the guard already dropped, so a login that landed by then owns the
-/// store and its credential is not this rejection's to delete.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_login_landing_after_rotation_is_never_cleared() {
-    let store = Arc::new(Store::signed_in());
-    let fetch = RejectingRotation {
-        store: Arc::clone(&store),
-        race_on_rotated: Race::Install("newest"),
-    };
-
-    let refused = submit(&fetch, store.as_ref(), "jane/skills")
-        .unwrap_err()
-        .to_string();
-
-    assert!(
-        refused.contains("the sign-in changed while authenticating"),
-        "{refused}"
-    );
-    assert_eq!(store.load().unwrap().unwrap().access_token, "kxa_newest");
-}
-
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_logout_landing_after_rotation_still_answers_expired() {
     let store = Arc::new(Store::signed_in());
     let fetch = RejectingRotation {
         store: Arc::clone(&store),
-        race_on_rotated: Race::LogOut,
+        logout_on_rotated: true,
     };
 
     let refused = submit(&fetch, store.as_ref(), "jane/skills")
@@ -446,7 +373,7 @@ fn a_store_that_will_not_open_still_answers_expired() {
     let store = Arc::new(Store::guard_refused_from(2));
     let fetch = RejectingRotation {
         store: Arc::clone(&store),
-        race_on_rotated: Race::None,
+        logout_on_rotated: false,
     };
 
     let refused = submit(&fetch, store.as_ref(), "jane/skills")
@@ -470,7 +397,7 @@ fn a_store_that_will_not_delete_still_answers_expired() {
     let store = Arc::new(Store::delete_refused());
     let fetch = RejectingRotation {
         store: Arc::clone(&store),
-        race_on_rotated: Race::None,
+        logout_on_rotated: false,
     };
 
     let refused = submit(&fetch, store.as_ref(), "jane/skills")

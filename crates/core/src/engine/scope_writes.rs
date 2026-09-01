@@ -86,7 +86,7 @@ pub(super) fn plan_config_edits(
         // proof along with the bytes rather than leaving the window
         // between the two open.
         let pre = match crate::harness::pi::is_hook_registry(env, scope, &path) {
-            true => crate::apply::Pre::plain_observed(&path)?,
+            true => crate::apply::Pre::observed(&path)?,
             false => crate::apply::Pre::observed(&path)?,
         };
         let file = path

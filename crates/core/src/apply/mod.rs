@@ -4,7 +4,6 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::Scope;
 
-mod common;
 pub mod journal;
 mod landing;
 mod op;
@@ -12,7 +11,6 @@ mod plan;
 mod pre;
 mod transaction;
 
-pub use common::{common_key, execute_common, recover_common_journals};
 pub use op::{Op, Pre, read_git_config};
 pub use plan::{Description, Plan, PlannedOp};
 use transaction::run_journaled;
@@ -34,10 +32,10 @@ pub fn scope_key(scope: &Scope) -> String {
     }
 }
 
-/// Exclusive writer lock over one journal key (invariant 8) — a scope, or
-/// a repository's common dir. Held for the whole journal → mutate → clear
-/// window; recovery runs under the same lock.
-pub struct ScopeGuard {
+/// Exclusive writer lock over one scope journal key (invariant 8). Held for
+/// the whole journal → mutate → clear window; recovery runs under the same
+/// lock.
+struct ScopeGuard {
     _file: crate::fs::LockedFile,
 }
 
@@ -45,7 +43,7 @@ fn lock_scope(env: &Env, scope: &Scope) -> Result<ScopeGuard> {
     lock_key(env, &scope_key(scope))
 }
 
-pub(crate) fn lock_key(env: &Env, key: &str) -> Result<ScopeGuard> {
+fn lock_key(env: &Env, key: &str) -> Result<ScopeGuard> {
     let dir = env.scope_locks_dir();
     fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
     let path = dir.join(format!("{key}.lock"));

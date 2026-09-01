@@ -7,26 +7,18 @@
 //! refuses a fork over a skill that is right there, too wide renders one
 //! pointing at instructions nothing can load.
 //!
-//! A source read at its own revision supplies everything it offers,
-//! installed or not: every declaration reading that source reads it here,
-//! an assignment naming one of its skills is answered by declaring it, and
-//! what a source adds to an agent's assignment merges into the manifest
-//! and arrives declared on the next pass. A revision a declaration pins is
-//! the opposite — nothing reads it but those declarations, and an older
-//! revision is full of packages nothing installs — so what comes out of
-//! one is what the plan installs from it, asked of the plan itself.
-
-use std::collections::{BTreeMap, BTreeSet};
+//! What a source offers is what it can supply. Every declaration reading
+//! that source reads it here, an assignment naming one of its skills is
+//! answered by declaring it, and what a source adds to an agent's
+//! assignment merges into the manifest and arrives declared on the next
+//! pass.
 
 use crate::env::Env;
 use crate::error::Result;
 use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest};
 use crate::model::{ItemKind, Scope};
-use crate::source::{SourceState, find_item, list_items, resolve, resolve_at, source_config_for};
+use crate::source::{SourceState, list_items, resolve, source_config_for};
 use crate::source_read::SealedSource;
-
-use super::desired::DesiredState;
-use super::expansion::Expansion;
 
 /// Every skill name this scope can supply, sorted and deduplicated.
 ///
@@ -53,37 +45,8 @@ impl ScopeSkills {
         manifest: &Manifest,
         arriving: &[String],
     ) -> Result<ScopeSkills> {
-        let mut state = DesiredState::default();
-        let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
-        ScopeSkills::planned(
-            env,
-            scope,
-            manifest,
-            &expansion,
-            &state.rev_conflicts,
-            arriving,
-        )
-    }
-
-    /// The scope for a pass that already derived the closure. The notes and
-    /// warnings [`ScopeSkills::after`] throws away belong to that pass, and
-    /// deriving a second closure there would let the inventory and the plan
-    /// answer from two of them. `refused` is that pass's
-    /// [`DesiredState::rev_conflicts`], the closure's own record of what it
-    /// planned and then held back.
-    pub(super) fn planned(
-        env: &Env,
-        scope: &Scope,
-        manifest: &Manifest,
-        expansion: &Expansion,
-        refused: &BTreeSet<(ItemKind, String)>,
-        arriving: &[String],
-    ) -> Result<ScopeSkills> {
         let mut skills: Vec<String> = arriving.to_vec();
         skills.extend(offered(env, scope, manifest));
-        skills.extend(installed_from_pins(
-            env, scope, manifest, expansion, refused,
-        ));
         skills.sort();
         skills.dedup();
         Ok(ScopeSkills(skills))
@@ -124,74 +87,4 @@ fn offered(env: &Env, scope: &Scope, manifest: &Manifest) -> Vec<String> {
         skills.extend(list_items(&sealed, &config, ItemKind::Skill));
     }
     skills
-}
-
-/// Every skill the plan installs from a pinned revision, confirmed present
-/// at it.
-///
-/// The plan is the only reading: a skill declared at a pin, a set member the
-/// set expansion kept, and a dependency read from its parent's own commit
-/// all arrive here as planned skills carrying that revision. Whether the
-/// catalog carries a set's member, whether a removal holds one back, and
-/// which tools a declaration lands on are already settled by the time an
-/// item is in the closure, so none of them is asked again.
-///
-/// `refused` names the items the closure marked as wanted at two revisions
-/// at once. Reaching the closure is not the same as being written: one
-/// filesystem identity exists, so the plan writes nothing for those and the
-/// pins supply nothing.
-fn installed_from_pins(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    expansion: &Expansion,
-    refused: &BTreeSet<(ItemKind, String)>,
-) -> Vec<String> {
-    let mut wanted: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
-    for (name, planned) in expansion.of(ItemKind::Skill) {
-        // A declaration no tool here can hold is in the closure so the plan
-        // can report that it produced nothing. It installs nothing, so it
-        // supplies nothing.
-        if planned.harnesses.is_empty() {
-            continue;
-        }
-        // Two derivations wanting it at different commits: the plan holds it
-        // back and says so, and a revision the closure picked would be one
-        // somebody pinned away from. `offered` above is not filtered the
-        // same way — a source read at its own revision has no second
-        // revision to disagree with, and narrowing that refuses a fork over
-        // a skill sitting right there.
-        if refused.contains(&(ItemKind::Skill, name.clone())) {
-            continue;
-        }
-        let Some(rev) = planned.decl.rev.as_deref() else {
-            continue;
-        };
-        wanted
-            .entry((planned.decl.source.as_str(), rev))
-            .or_default()
-            .push(name.as_str());
-    }
-    let mut supplied = Vec::new();
-    for ((source, rev), names) in wanted {
-        // Unreadable reads as supplying nothing, for the reason `offered`
-        // gives.
-        let Ok(SourceState::Ready(ready)) = resolve_at(env, scope, source, manifest, Some(rev))
-        else {
-            continue;
-        };
-        let Ok(sealed) = SealedSource::open(&ready.root) else {
-            continue;
-        };
-        let Ok(config) = source_config_for(&sealed, &ready.provenance) else {
-            continue;
-        };
-        supplied.extend(
-            names
-                .into_iter()
-                .filter(|name| find_item(&sealed, &config, ItemKind::Skill, name).is_some())
-                .map(str::to_owned),
-        );
-    }
-    supplied
 }

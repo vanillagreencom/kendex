@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
-use kendex_core::engine::{SetDirection, audit, ops, plan_refresh};
+use kendex_core::engine::{PlanOptions, SetDirection, audit, ops, plan_apply};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::lock::{Lock, Reason, load as load_lock, lock_path};
 use kendex_core::manifest::{self, ManifestFile};
@@ -199,12 +199,28 @@ fn a_suppressed_dependency_survives_refresh_and_lock_loss() {
     remove(&f, "github", false);
     assert!(!installed(&f, "github"));
 
-    let report = plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(!installed(&f, "github"), "refresh brought it back");
 
     fs::remove_file(lock_path(&f.env, &f.scope)).unwrap();
-    let report = plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(!installed(&f, "github"), "a lost record brought it back");
     assert!(installed(&f, "dev"));

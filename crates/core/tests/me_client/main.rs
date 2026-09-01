@@ -2,7 +2,7 @@
 //! every account state, all of them settled and all of them `load`'s
 //! answers, the offline cache ladder, and the cache's endpoint key. The
 //! UI holds its own "not read yet" and never gets it here. Which sign-in
-//! an answer belongs to is `sign_in_binding`. The fixture is a byte copy
+//! an answer belongs to is the cache generation. The fixture is a byte copy
 //! of kendex-web's `contracts/api/v1/me.json` — drift between the repos
 //! is a `cmp` away.
 
@@ -101,10 +101,6 @@ impl MemoryStore {
 
     fn signed_out() -> MemoryStore {
         MemoryStore(RefCell::new(None))
-    }
-
-    fn signed_in_as(credential: Credential) -> MemoryStore {
-        MemoryStore(RefCell::new(Some(credential)))
     }
 }
 
@@ -500,5 +496,3 @@ fn an_oversized_identity_cache_reads_as_no_cache() {
         "a cache past the cap is never read, however well-formed"
     );
 }
-
-mod sign_in_binding;

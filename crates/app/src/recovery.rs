@@ -28,19 +28,6 @@ pub fn recover_on_launch(env: &Env) -> Vec<String> {
             apply::recover_locked(env, &scope),
         );
     }
-    // Common-dir journals are recovered separately from scope ones because
-    // they are keyed by a repository rather than a scope, and no scope pass
-    // would find them. kendex writes none today — the hook installer that
-    // did was replaced by the package's own, which journals nothing — so
-    // this recovers what an older version may have left behind.
-    match apply::recover_common_journals(env) {
-        Ok(keys) => {
-            for (key, result) in keys {
-                report(&mut messages, &format!("repository hooks ({key})"), result);
-            }
-        }
-        Err(error) => messages.push(format!("repository hooks: recovery failed: {error}")),
-    }
     messages
 }
 

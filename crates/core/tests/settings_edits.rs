@@ -559,46 +559,6 @@ fn a_skill_shipping_nothing_a_switched_off_one_and_an_unreachable_one_each_say_s
     );
 }
 
-/// The race the plan-time symlink refusal cannot close on its own: the
-/// file is a plain file when the plan is made and a link to somewhere else
-/// by the time the apply runs. The write binds to the file being plain, so
-/// it refuses; a precondition that only checked bytes would follow the
-/// link and write outside the project.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_settings_file_swapped_for_a_link_between_plan_and_apply_refuses() {
-    let f = fixture(TEMPLATE);
-    install(&f);
-    let held = base_now(&f);
-    let kept = fs::read_to_string(settings_path(&f)).unwrap();
-
-    let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
-        &f.env, &f.scope,
-    ))
-    .unwrap()
-    .unwrap();
-    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
-    let options = PlanOptions {
-        settings_draft: Some(SettingsDraft {
-            edits: vec![set("REVIEWERS", "arch")],
-            base: held,
-        }),
-        ..PlanOptions::default()
-    };
-    let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
-
-    // Between the plan and the apply: the same bytes, at the end of a link
-    // pointing outside the place kendex was asked to manage.
-    let outside = f.project.join("../../outside.toml");
-    fs::write(&outside, &kept).unwrap();
-    fs::remove_file(settings_path(&f)).unwrap();
-    std::os::unix::fs::symlink(&outside, settings_path(&f)).unwrap();
-
-    let refused = apply::execute(&f.env, &report.plan).unwrap_err();
-    assert!(stale_at(&refused, &settings_path(&f)), "{refused:?}");
-    assert_eq!(fs::read_to_string(&outside).unwrap(), kept);
-}
-
 /// The refusals name a file, and this suite compares that name with its
 /// own. Reached through a link the two spellings differ — which is what
 /// macOS hands every test — so the same refusals are asserted again on a

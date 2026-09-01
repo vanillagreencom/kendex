@@ -272,21 +272,6 @@ pub fn audit(env: &Env, scope: &Scope) -> Result<EngineReport> {
     plan_apply(env, scope, &PlanOptions::default())
 }
 
-/// What a refresh would do: regenerate everything declared, and re-derive
-/// the closure in both directions — a dependency that appeared upstream is
-/// an addition, one that went away leaves an installation nothing needs. The
-/// caller previews the set changes before any of it is applied.
-pub fn plan_refresh(env: &Env, scope: &Scope) -> Result<EngineReport> {
-    plan_apply(
-        env,
-        scope,
-        &PlanOptions {
-            sweep_unneeded: true,
-            ..PlanOptions::default()
-        },
-    )
-}
-
 /// Plan what disk needs to match declaration, from the manifest as it sits
 /// on disk. This is the loader the audit view AND the confirmed apply both
 /// use: a mutation-normalized copy already looks current, so planning from

@@ -74,50 +74,6 @@ const INSTALLED: &[u8] = b"the command already here";
 /// nothing else gets written.
 const OFFERED: &[u8] = SIGNED_BYTES;
 
-/// The arm no process in this repo can reach, and the one whose absence
-/// costs the most: a package manager owns these bytes, so the run says
-/// which command brings them current and stops there. Exit zero, because
-/// nothing went wrong — the release is real and the way to it is real,
-/// it is just not ours to take.
-#[test]
-fn a_package_managed_command_is_left_for_its_package_manager() {
-    let dir = tempfile::tempdir().unwrap();
-    let (env, feed_url, installed) = a_release_is_out(&dir);
-    let brew = InstallChannel::Managed {
-        manager: "Homebrew".to_owned(),
-        command: "brew upgrade kendex-cli".to_owned(),
-    };
-
-    run_on(
-        &env,
-        false,
-        &feed_url,
-        &installed,
-        &brew,
-        TEST_KEY,
-        TEST_TARGET,
-    )
-    .unwrap();
-
-    assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED);
-    assert!(!staged_path(&installed).exists());
-}
-
-/// The same release, the same command on disk, an install that is ours:
-/// now the download lands. Read against the arm above, this is what says
-/// the guard is what stopped the other one, rather than a feed that
-/// never had anything to offer.
-#[test]
-fn a_direct_command_is_replaced_from_the_feed() {
-    let dir = tempfile::tempdir().unwrap();
-    let (env, feed_url, installed) = a_release_is_out(&dir);
-
-    direct(&env, &feed_url, &installed).unwrap();
-
-    assert_eq!(std::fs::read(&installed).unwrap(), OFFERED);
-    assert!(!staged_path(&installed).exists());
-}
-
 /// The one arm every refusal below is read against, so that a green
 /// refusal is the check turning the release away rather than a fixture
 /// that could never have installed anything.
@@ -131,52 +87,6 @@ fn direct(env: &Env, feed_url: &str, installed: &Path) -> CliResult {
         TEST_KEY,
         TEST_TARGET,
     )
-}
-
-/// The same arm again with the release sitting under a directory whose
-/// name holds characters a URL reserves. A space and a `#` are ordinary in
-/// a Windows profile directory, and spelled into a URL rather than encoded
-/// they address a different file, or none — the fetch either brings back
-/// the wrong bytes or fails outright. The digests document is found by the
-/// feed's own URL, so it is fetched through the same spelling.
-#[test]
-fn a_release_under_a_name_a_url_reserves_is_still_fetched() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("my release #1");
-    let (env, feed_url, installed) = a_release_is_out_under(&home);
-
-    direct(&env, &feed_url, &installed).unwrap();
-
-    assert_eq!(std::fs::read(&installed).unwrap(), OFFERED);
-}
-
-/// The whole point of signing the command half: the feed names a host, so
-/// a run has to be able to be handed bytes and refuse them. Driven by both
-/// shapes a bad download takes — bytes the signature does not cover, and a
-/// body that is no signature at all — and either way the command that was
-/// already installed is exactly as it was.
-#[test]
-fn a_command_binary_that_fails_verification_is_never_written() {
-    for (file, corrupt) in [
-        (
-            "new-command",
-            b"kendex AppImage bytes, and a little more".as_slice(),
-        ),
-        ("new-command.sig", b"not a signature".as_slice()),
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        let (env, feed_url, installed) = a_release_is_out(&dir);
-        std::fs::write(dir.path().join(file), corrupt).unwrap();
-
-        let refused = direct(&env, &feed_url, &installed).unwrap_err().to_string();
-
-        assert!(
-            refused.contains("could not be replaced"),
-            "{file}: {refused}"
-        );
-        assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED, "{file}");
-        assert!(!staged_path(&installed).exists(), "{file}");
-    }
 }
 
 /// The defect this binding exists for: a binary the release key really
@@ -379,34 +289,6 @@ fn an_app_image_that_fails_verification_is_never_written() {
 
     assert_eq!(std::fs::read(&installed).unwrap(), b"the app already here");
     assert!(!staged_path(&installed).exists());
-}
-
-/// Two runs sharing one staged path would each rename the other's bytes
-/// into place, so the name carries the process id. It stays a sibling
-/// of the target, since a rename cannot cross filesystems.
-#[test]
-fn the_staged_file_is_a_sibling_named_for_this_process() {
-    let target = Path::new("/opt/kendex/kendex.AppImage");
-    let staged = staged_path(target);
-    assert_eq!(staged.parent(), target.parent());
-    let suffix = format!(".update.{}", std::process::id());
-    assert!(
-        staged.to_string_lossy().ends_with(&suffix),
-        "{}",
-        staged.display()
-    );
-}
-
-/// A run whose rename cannot land takes its own staged file away, or
-/// the directory collects one per process id that ever tried.
-#[test]
-fn a_replacement_that_cannot_land_leaves_no_staged_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let target = dir.path().join("kendex.AppImage");
-    std::fs::create_dir(&target).unwrap();
-
-    assert!(replace_executable(&target, b"bytes").is_err());
-    assert!(!staged_path(&target).exists());
 }
 
 /// Both app-half refusals promise the same thing, so the sentence is

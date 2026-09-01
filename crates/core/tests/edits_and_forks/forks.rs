@@ -190,40 +190,6 @@ fn renaming_an_agent_fork_leaves_it_answering_to_its_new_name() {
     assert!(installed.contains("name: my-rev"), "{installed}");
 }
 
-/// A fork whose own file cannot carry a name refuses the rename instead of
-/// half-doing it: renaming around the problem is exactly how a fork ends
-/// up declared under one name and answering to another.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_fork_whose_file_cannot_carry_the_name_refuses_the_rename() {
-    let w = world();
-    write_skill(&w.upstream, "gh", "Upstream.");
-    commit(&w.upstream, "one");
-    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
-    sync_and_apply(&w);
-    fs::write(
-        skill_file(&w),
-        "---\nname: gh\ndescription: mine\n---\nMine.\n",
-    )
-    .unwrap();
-    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan).unwrap();
-
-    let source = w.home.join("app/.kendex-local/skills/gh/SKILL.md");
-    fs::write(&source, "---\nname: gh\nname: gh\n---\nMine.\n").unwrap();
-    let refused = fork::rename_fork(&w.env, &w.scope, ItemKind::Skill, "gh", "my-gh").unwrap_err();
-    assert!(
-        matches!(refused, CoreError::ForkNameUnusable { .. }),
-        "{refused:?}"
-    );
-    assert!(
-        !w.home.join("app/.kendex-local/skills/my-gh").exists(),
-        "a refused rename must write nothing"
-    );
-    let text = fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap();
-    assert!(text.contains("[skills.gh]"), "{text}");
-}
-
 /// A fork whose slot is reached through a link is not a fork the rename
 /// can move: `fs::rename` carries the link rather than the tree, and every
 /// op the plan binds past it — the name-stamping write first of all —

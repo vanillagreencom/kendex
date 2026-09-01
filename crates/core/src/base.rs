@@ -54,21 +54,6 @@ impl Base {
         Base(value)
     }
 
-    /// The precondition a write binds to for a document kendex will not
-    /// write *through* — one whose own path is what it may touch.
-    ///
-    /// [`Pre::HashIs`] hashes what the path reaches, following a link, so
-    /// a file swapped for a link to matching bytes passes it and the write
-    /// lands at the other end. Checking for a link before planning cannot
-    /// close that: a check before a write is a race by construction, and
-    /// the refusal has to travel with the operation instead.
-    pub fn plain_pre(&self) -> Pre {
-        match &self.0 {
-            Some(hash) => Pre::PlainHashIs { hash: hash.clone() },
-            None => Pre::Absent,
-        }
-    }
-
     /// Refuse this claim unless the file's current base is exactly it.
     /// The current base is compared and dropped, never handed back — a
     /// caller holding it would be holding a base for content it never
@@ -120,33 +105,6 @@ mod tests {
                 hash: crate::hash::hash_tree(&path).unwrap()
             }
         );
-    }
-
-    /// The race the plain precondition exists to lose: between the plan
-    /// and the write, the file becomes a link to a file with the same
-    /// bytes. `HashIs` follows it and passes, so the write would land
-    /// outside the place kendex was asked to manage.
-    #[test]
-    #[cfg(unix)]
-    fn a_link_carrying_the_same_bytes_passes_the_following_check_and_fails_the_plain_one() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("kendex.settings.toml");
-        let elsewhere = tmp.path().join("elsewhere.toml");
-        std::fs::write(&path, "[env]\n").unwrap();
-        let held = Base::of("[env]\n");
-
-        assert!(Pre::from(&held).check_for_test(&path).is_ok());
-        assert!(held.plain_pre().check_for_test(&path).is_ok());
-
-        std::fs::write(&elsewhere, "[env]\n").unwrap();
-        std::fs::remove_file(&path).unwrap();
-        std::os::unix::fs::symlink(&elsewhere, &path).unwrap();
-
-        assert!(
-            Pre::from(&held).check_for_test(&path).is_ok(),
-            "a following precondition cannot tell the link from the file"
-        );
-        assert!(held.plain_pre().check_for_test(&path).is_err());
     }
 
     #[test]

@@ -279,9 +279,8 @@ pub(crate) fn copy_tree_durable(from: &Path, to: &Path) -> Result<()> {
 fn copy_tree_inner(from: &Path, to: &Path, durable: bool) -> Result<()> {
     fs::create_dir_all(to).map_err(|e| CoreError::io(to, e))?;
     // An entry the listing could not produce is an entry nothing was
-    // proven about, so it stops the copy rather than dropping out of it —
-    // the same rule `plain_tree` states in pre.rs. This is the journal's
-    // pre-image writer: a shortened copy would be recorded as a whole one,
+    // proven about, so it stops the copy rather than dropping out of it.
+    // This is the journal's pre-image writer: a shortened copy would be recorded as a whole one,
     // and the rollback that trusts it would put back less than it took.
     for entry in fs::read_dir(from).map_err(|e| CoreError::io(from, e))? {
         let source = entry.map_err(|e| CoreError::io(from, e))?.path();

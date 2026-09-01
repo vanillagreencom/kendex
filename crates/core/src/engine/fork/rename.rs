@@ -130,11 +130,7 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
 /// carried them to. Ops run in order and each proves its own precondition
 /// immediately before it writes, so what stands at the new path when the
 /// write runs is exactly the file hashed here at the old one; binding to
-/// the old path would prove nothing, the rename having emptied it. The
-/// binding is the plain-file one because kendex does not write a skill's
-/// or an agent's document through a link — a link arriving in the moved
-/// tree's place refuses the write rather than landing these bytes at the
-/// other end of it.
+/// the old path would prove nothing, the rename having emptied it.
 ///
 /// A name no single scalar can carry refuses the rename here, before
 /// anything is written: renaming around it is how the fork ends up
@@ -151,10 +147,7 @@ fn stamp_name(kind: ItemKind, from: &Path, to: &Path, new: &str) -> Result<Vec<P
     };
     let mut ops = Vec::new();
     for (old, new_path) in moved {
-        // Absent here is also "there, but not a plain file": a link or a
-        // directory wearing the name carries nothing this can stamp, and
-        // a rendering reading it is refused for that on its own.
-        let pre = Pre::plain_observed(&old)?;
+        let pre = Pre::observed(&old)?;
         if pre.binds_nothing() {
             continue;
         }

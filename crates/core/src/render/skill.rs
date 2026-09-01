@@ -32,17 +32,14 @@ pub(crate) fn carries_name(rel: &Path) -> bool {
 /// A frontmatter without a name gets one, exactly as rendering would give
 /// it one.
 ///
-/// `Err` is where no single line carries the name, said the way
-/// [`with_name`] says it — no frontmatter, a block never closed, two
-/// names, a value running past its own line — plus the one case this
-/// wrapper adds of its own: bytes that are not text at all. Every caller
-/// refuses on it rather than landing a copy that still answers to the old
-/// name; what differs is only whose copy each one names.
+/// `Err` covers bytes that are not text and files with no closed frontmatter
+/// block. Every caller refuses rather than landing a copy that still answers
+/// to the old name.
 pub(crate) fn bytes_named(bytes: &[u8], name: &str) -> std::result::Result<Vec<u8>, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| "the file is not text".to_owned())?;
     with_name(text, name)
         .map(String::into_bytes)
-        .map_err(str::to_owned)
+        .ok_or_else(|| "it has no frontmatter or the block is not closed".to_owned())
 }
 
 pub const INSTRUCTIONS_START: &str = "<!-- kendex:project-instructions:start -->";

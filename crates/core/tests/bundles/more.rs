@@ -6,7 +6,7 @@ use crate::test_util::source_path;
 use std::fs;
 
 use kendex_core::apply;
-use kendex_core::engine::{DriftState, SetDirection, audit, ops, plan_refresh};
+use kendex_core::engine::{DriftState, PlanOptions, SetDirection, audit, ops, plan_apply};
 use kendex_core::model::ItemKind;
 
 use super::{Fixture, apply_now, catalog_bundles, fixture, installed, lock_of, manifest_of, write};
@@ -25,7 +25,15 @@ fn an_upstream_member_removal_previews_before_anything_uninstalls() {
         &f.source,
         "[bundles.starter]\nskills = [\"dev\"]\nagents = [\"writer\"]\ncommands = [\"review\"]\n",
     );
-    let report = plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     let dropped = report
         .set_changes
         .iter()
@@ -65,7 +73,15 @@ fn an_upstream_member_addition_previews_too() {
         &f.source,
         "[bundles.starter]\nskills = [\"dev\", \"docs\", \"deploy\"]\n",
     );
-    let report = plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     let added = report
         .set_changes
         .iter()

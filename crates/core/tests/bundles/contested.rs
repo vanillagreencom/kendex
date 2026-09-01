@@ -4,7 +4,7 @@
 use std::fs;
 
 use kendex_core::apply;
-use kendex_core::engine::{audit, plan_refresh};
+use kendex_core::engine::{PlanOptions, audit, plan_apply};
 use kendex_core::model::ItemKind;
 
 use super::{apply_now, catalog_bundles, fixture, installed, lock_of, manifest_of, remove};
@@ -37,7 +37,15 @@ fn a_member_removed_while_the_catalog_is_offline_stays_removed() {
     );
 
     fs::rename(&offline, &f.source).unwrap();
-    let report = plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         !installed(&f, ItemKind::Skill, "docs"),

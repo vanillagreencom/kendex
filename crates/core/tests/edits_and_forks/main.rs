@@ -20,7 +20,9 @@ use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
 use kendex_core::engine::desired::native_dir;
-use kendex_core::engine::{DriftCause, DriftState, PlanOptions, audit, fork, plan_scope};
+use kendex_core::engine::{
+    DriftCause, DriftState, PlanOptions, audit, fork, plan_apply, plan_scope,
+};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::lock::{load as load_lock, lock_path};
 use kendex_core::manifest;
@@ -464,7 +466,15 @@ fn an_automatic_sweep_never_takes_edited_bytes() {
         .unwrap()
         .unwrap();
     remote::sync_sources(&w.env, &loaded).unwrap();
-    let report = kendex_core::engine::plan_refresh(&w.env, &w.scope).unwrap();
+    let report = plan_apply(
+        &w.env,
+        &w.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(w.home.join("app/.agents/skills/helper/SKILL.md")).unwrap(),

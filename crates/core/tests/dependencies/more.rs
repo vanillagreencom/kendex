@@ -26,7 +26,15 @@ fn an_optional_dependency_installs_only_once_it_is_chosen() {
         ),
     )
     .unwrap();
-    let report = plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     assert!(
         report
             .set_changes
@@ -38,7 +46,15 @@ fn an_optional_dependency_installs_only_once_it_is_chosen() {
 
     // The choice survives a refresh, and the item it brought in is recorded
     // as required, never as something the user asked for.
-    let report = plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, "linear"));
     assert!(
@@ -102,10 +118,17 @@ fn refresh_previews_what_upstream_added_and_took_away() {
     let f = fixture("[skills.dev]\nsource = \"cat\"\n");
     apply_now(&f);
     assert!(
-        plan_refresh(&f.env, &f.scope)
-            .unwrap()
-            .set_changes
-            .is_empty()
+        plan_apply(
+            &f.env,
+            &f.scope,
+            &PlanOptions {
+                sweep_unneeded: true,
+                ..PlanOptions::default()
+            },
+        )
+        .unwrap()
+        .set_changes
+        .is_empty()
     );
 
     skill(
@@ -114,7 +137,15 @@ fn refresh_previews_what_upstream_added_and_took_away() {
         "dependencies:\n  required: [github, worktree]\n",
     );
     skill(&f.source, "worktree", "");
-    let added = plan_refresh(&f.env, &f.scope).unwrap();
+    let added = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     assert_eq!(added.set_changes.len(), 1);
     assert_eq!(added.set_changes[0].name, "worktree");
     assert_eq!(added.set_changes[0].direction, SetDirection::Add);
@@ -122,7 +153,15 @@ fn refresh_previews_what_upstream_added_and_took_away() {
     apply::execute(&f.env, &added.plan).unwrap();
 
     skill(&f.source, "dev", "dependencies:\n  required: [github]\n");
-    let dropped = plan_refresh(&f.env, &f.scope).unwrap();
+    let dropped = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     assert_eq!(dropped.set_changes.len(), 1);
     assert_eq!(dropped.set_changes[0].name, "worktree");
     assert_eq!(dropped.set_changes[0].direction, SetDirection::Remove);
@@ -160,7 +199,15 @@ fn a_removal_made_while_the_catalog_is_offline_is_not_undone_by_its_return() {
     );
 
     fs::rename(&offline, &f.source).unwrap();
-    let report = plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         !installed(&f, "github"),
@@ -188,7 +235,15 @@ fn a_removal_is_written_down_with_the_record_deleted() {
     remove(&f, "github", false);
     assert!(manifest_of(&f).is_suppressed(ItemKind::Skill, "github"));
 
-    let report = plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         !lock_of(&f).entries.contains_key("skill:github:claude"),
@@ -287,7 +342,15 @@ fn an_unreadable_catalog_never_sweeps_a_dependency() {
     assert!(installed(&f, "github"));
 
     fs::rename(&f.source, f.source.with_extension("moved")).unwrap();
-    let report = plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     assert!(report.set_changes.is_empty(), "{:?}", report.set_changes);
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(installed(&f, "github") && installed(&f, "dev"));

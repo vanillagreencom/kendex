@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
-use kendex_core::engine::{EngineReport, SetDirection, audit, ops};
+use kendex_core::engine::{EngineReport, PlanOptions, SetDirection, audit, ops, plan_apply};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::lock::{BundleRef, InstallRef, Lock, Reason, load as load_lock, lock_path};
 use kendex_core::manifest::{self, ManifestFile};
@@ -300,7 +300,15 @@ fn a_member_removed_from_a_bundle_stays_removed() {
     assert!(!installed(&f, ItemKind::Skill, "docs"));
     assert!(manifest_of(&f).is_suppressed(ItemKind::Skill, "docs"));
 
-    let report = kendex_core::engine::plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         !installed(&f, ItemKind::Skill, "docs"),
@@ -308,7 +316,15 @@ fn a_member_removed_from_a_bundle_stays_removed() {
     );
 
     fs::remove_file(lock_path(&f.env, &f.scope)).unwrap();
-    let report = kendex_core::engine::plan_refresh(&f.env, &f.scope).unwrap();
+    let report = plan_apply(
+        &f.env,
+        &f.scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::default()
+        },
+    )
+    .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
     assert!(
         !installed(&f, ItemKind::Skill, "docs"),

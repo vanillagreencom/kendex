@@ -26,19 +26,6 @@ pub enum Pre {
     HashIs {
         hash: String,
     },
-    /// The same bytes as `HashIs`, and the same kind of thing holding
-    /// them — here and, for a directory, at every depth beneath it. What
-    /// a plan proved it may take is the file it looked at, never a link
-    /// that arrived in its place afterwards carrying the same bytes at
-    /// the other end. `hash_tree` follows links, so bytes alone cannot
-    /// tell the two apart; the type is half of what ownership was proven
-    /// from, so it is half of what the op binds to.
-    ///
-    /// Its absent half is [`Pre::Absent`], which already refuses a link
-    /// arriving where nothing was.
-    PlainHashIs {
-        hash: String,
-    },
     SymlinkTo {
         target: PathBuf,
     },
@@ -60,23 +47,6 @@ pub enum Pre {
 impl Pre {
     /// What a plan that rewrites `path` wholesale binds to: the bytes seen
     /// at plan time, or the absence seen at plan time.
-    /// What a plan that rewrites a document kendex will not write through
-    /// a link binds to: the bytes it saw, and that they were in a plain
-    /// file. A link arriving where one stood fails this as surely as
-    /// changed bytes would — a write follows a link, and the file at the
-    /// other end is outside whatever directory kendex was asked to
-    /// manage.
-    pub fn plain_observed(path: &Path) -> Result<Pre> {
-        match fs::symlink_metadata(path) {
-            Ok(meta) if meta.file_type().is_file() => Ok(Pre::PlainHashIs {
-                hash: hash_tree(path)?,
-            }),
-            // Nothing of the kind is here, and the write binds to that: a
-            // link arriving where nothing was fails it too.
-            _ => Ok(Pre::Absent),
-        }
-    }
-
     pub fn observed(path: &Path) -> Result<Pre> {
         match path.is_file() {
             true => Ok(Pre::HashIs {
@@ -119,9 +89,6 @@ impl Pre {
             Pre::HashIs { hash } => {
                 path.exists() && hash_tree(path).map(|h| h == *hash).unwrap_or(false)
             }
-            Pre::PlainHashIs { hash } => {
-                plain_tree(path) && hash_tree(path).map(|h| h == *hash).unwrap_or(false)
-            }
             Pre::SymlinkTo { target } => {
                 path.is_symlink() && fs::read_link(path).ok().as_deref() == Some(target)
             }
@@ -135,28 +102,4 @@ impl Pre {
             })
         }
     }
-}
-
-/// Whether this path, and everything under it, is a plain file or a plain
-/// directory. A link anywhere fails: the bytes on the far side of one are
-/// not the bytes a plan proved it could take.
-fn plain_tree(path: &Path) -> bool {
-    let Ok(meta) = fs::symlink_metadata(path) else {
-        return false;
-    };
-    if meta.file_type().is_file() {
-        return true;
-    }
-    if !meta.file_type().is_dir() {
-        return false;
-    }
-    let Ok(entries) = fs::read_dir(path) else {
-        return false;
-    };
-    // A child the listing could not produce is a child nothing was proven
-    // about, so it fails the check rather than dropping out of it.
-    entries.into_iter().all(|entry| match entry {
-        Ok(entry) => plain_tree(&entry.path()),
-        Err(_) => false,
-    })
 }
