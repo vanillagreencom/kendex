@@ -177,17 +177,14 @@ fn same_directory(recorded: &Path, root: &Path) -> bool {
 /// root and waves through whatever happens to sit under it, a person's own
 /// file among it.
 ///
-/// The last arm is the invariant itself rather than a case, and no test
-/// reaches it. `Path::join` drops its base when handed an absolute path,
-/// so a remainder that is not relative would carry a position across
-/// untouched and call it resolved — and `strip_prefix` returns an absolute
-/// remainder in exactly one shape, an empty prefix, which is a recorded
-/// root [`resolve`] refuses before this is ever called. A `..` remainder
-/// is relative and still starts with the reading root, which is
-/// [`refuse_foreign_paths`]'s to judge, not this one's. So the arm states
-/// that nothing this produces can leave the reading root, rather than that
-/// no caller currently hands it one, and a reader should not go looking
-/// for a fixture that cannot be built.
+/// The last arm is what holds a root the record may state however it
+/// likes. `Path::join` drops its base when handed an absolute path, and
+/// `strip_prefix` hands back an absolute remainder for one prefix, the
+/// empty one — so a record rooted at nothing would carry every position
+/// across untouched and call it resolved. Asking where the rejoined path
+/// landed refuses that without asking anything of the root itself. A `..`
+/// remainder is relative and still starts with the reading root, which is
+/// [`refuse_foreign_paths`]'s to judge and not this one's.
 fn rejoined(
     path: &Path,
     key: &str,
@@ -278,15 +275,11 @@ fn resolve_provenance(root: &Path, reading: &Path, provenance: &mut String) {
 /// say: a remainder can itself walk back out. Provenance is the looser
 /// half, and [`resolve_provenance`] says where it stops.
 ///
-/// Some roots leave nothing to state a remainder against, and reading the
-/// paths as this project's anyway is exactly the guess the refusal exists
-/// to stop. One the record does not name. One that is no path on this
-/// machine, a relative root naming a different place per process. And one
-/// no project could sit at, which is worse than useless as a prefix:
-/// `strip_prefix("")` matches every path and hands it back whole, and `/`
-/// prefixes every absolute path, so either way the rebase comes out the
-/// identity function while the record is stamped as this project's. The
-/// global lock names no root because it has none, each harness owning a
+/// Two roots leave nothing to resolve against. One the record does not
+/// name, so there is no prefix to take off any position. And a reading root
+/// that is no place on this machine, since nothing rejoined onto it would
+/// be one either and a relative root names a different place per process.
+/// The global lock names no root because it has none, each harness owning a
 /// directory of its own, and has nothing to resolve against.
 fn resolve(path: &Path, reading: &Path, lock: &mut Lock) -> Result<()> {
     let Some(recorded) = lock.root.clone() else {
@@ -305,12 +298,11 @@ fn resolve(path: &Path, reading: &Path, lock: &mut Lock) -> Result<()> {
     if recorded == reading {
         return Ok(());
     }
-    // A root has to be one a project could sit at before it can be stripped
-    // off anything. Absolute rules out the empty and relative spellings; a
-    // parent rules out `/`, which is absolute and just as vacuous — every
-    // absolute position states a remainder of it, so the rebase would hand
-    // back each one unmoved and stamp the record as this project's.
-    if !recorded.is_absolute() || recorded.parent().is_none() || !reading.is_absolute() {
+    // The root being read against has to be a place, or nothing rejoined
+    // onto it is one either and a relative root names a different place per
+    // process. What the RECORD names is held to nothing here: every
+    // position it states is judged on rejoining, below.
+    if !reading.is_absolute() {
         return Err(CoreError::LockFromAnotherProject {
             path: path.to_path_buf(),
             recorded,

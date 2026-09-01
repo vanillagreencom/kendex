@@ -347,39 +347,31 @@ fn a_travelled_record_claiming_a_position_its_own_root_never_held_is_refused() {
     );
 }
 
-/// A root no project could sit at is refused before anything is stripped
-/// with it.
+/// A record rooted at nothing takes every position with it, and the
+/// rejoin is what refuses them.
 ///
-/// Each of these is worse than useless as a prefix. `strip_prefix("")`
-/// matches every path and hands it back whole, and `/` prefixes every
-/// absolute path there is, so the rebase comes out the identity function:
-/// every position carried across naming the checkout that wrote it, under
-/// a record now stamped as this project's. The containment check behind it
-/// only asks whether a position sits under the reading root, so a claim on
-/// a person's own file inside this project would pass.
+/// The empty prefix matches every path and hands it back whole, so each
+/// position arrives at the rejoin exactly as the record spelled it. What
+/// settles it is where that lands: a position naming another tree is
+/// outside the root reading and refused, naming itself.
 #[test]
-fn a_project_lock_naming_a_root_no_project_could_sit_at_is_refused() {
+fn a_position_that_rejoins_outside_the_reading_root_is_refused() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("here");
-    std::fs::create_dir_all(root.join("vendor")).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
     let path = root.join(LOCK_FILE);
-    // A position inside the project reading the record, which is what a
-    // vacuous prefix would wave through.
-    let mine = root.join("vendor/mine");
-    // `/` is the third: absolute, so it passes the test the other two
-    // fail, and a prefix of every absolute path there is.
-    for spelling in ["", "wrote/here", "/"] {
-        recording(&path, "skill:gh:claude", &mine, Some(Path::new(spelling)));
-        let refused = load(&path).unwrap_err();
-        assert!(
-            matches!(
-                &refused,
-                CoreError::LockFromAnotherProject { recorded, .. }
-                    if recorded == Path::new(spelling)
-            ),
-            "{spelling:?}: {refused:?}"
-        );
-    }
+    let elsewhere = tmp.path().join("there/.agents/skills/gh");
+    recording(&path, "skill:gh:claude", &elsewhere, Some(Path::new("")));
+
+    let refused = load(&path).unwrap_err();
+    assert!(
+        matches!(
+            &refused,
+            CoreError::LockOutsideProject { key, recorded, .. }
+                if key == "skill:gh:claude" && recorded == &elsewhere
+        ),
+        "{refused:?}"
+    );
 }
 
 /// The reading root gets the same refusal, and reaches it the same way: a

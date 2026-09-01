@@ -197,11 +197,25 @@ measure is never a pass, and definitive drift outranks an unmeasured
 component. The one stdout line carries every component finding, and it is what `kendex check` relays
 where there is something to report; a clean result folds into kendex's own all-clear instead.
 
-The helper is compared BYTE FOR BYTE against what this installer generates.
-The marker inside it is only a comment, and `--check` writes nothing, so it
-does not get to assume the installer has just refreshed the copy in front of
-it; `helper_body` is the single definition both the writer and the verifier
-use. The INTERPRETER is identified by full path against a short trusted list
+The helper's PROGRAM is compared byte for byte against what this installer
+generates. The marker inside it is only a comment, and `--check` writes
+nothing, so it does not get to assume the installer has just refreshed the
+copy in front of it. Its generated HEAD is held to the head this checkout
+would bake with the per-checkout value blanked (`helper_head_shape`): fixed
+bytes either side of one value, so everything but that value is exact and the
+value may hold any byte a path may hold, a newline included. `helper_body`
+writes both halves, so a writer and a verifier cannot drift apart.
+
+Only `SCRIPT_DIR` is excusable, and only twice over: the value has to be one
+`gg_shell_quote` would have written, proved by unescaping and re-escaping it,
+and it has to name this same project's scripts directory in another checkout
+of this repository. A linked worktree shares the arming checkout's hooks
+directory and stands at the same place in its own checkout, so its helper is
+recognized. A second project in one repository stands somewhere else in the
+same checkout, so it is refused rather than relaying under the first
+project's consent. `project_rel` and `skill_roots` are compared exactly.
+
+The INTERPRETER is identified by full path against a short trusted list
 (`/bin` and `/usr/bin` shells), because an executable named `sh` anywhere can
 be a copy of `/bin/true`, and git then runs it and ignores the hook body
 entirely. An `env` shebang resolves through PATH, so it is unverifiable

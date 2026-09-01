@@ -19,28 +19,19 @@ set -euo pipefail
 # the summary still learns what is wrong and where. The remedy is the other
 # stream's: a core.hooksPath stand-down puts git's report on stderr, because
 # it is as many lines as git gives and stdout stays one line.
-# The value a baked line carries, if the line is one this installer's
-# quoter wrote.
+# A stream captured whole, trailing newlines and all.
 #
-# By round trip, never by reading the line as shell. What sits between the
-# first quote and the last is unescaped and then re-escaped, and the line
-# has to come back byte for byte — so a value carrying a closing quote and
-# anything after it, a reopened quote, or a bare backslash rebuilds
-# differently and is refused. A path holding an apostrophe rebuilds exactly,
-# which a substitution through awk did not: awk read the escape as an escape
-# sequence, and every checkout whose directory carried one went unverifiable.
-gg_baked_value() { # LINE KEY -> the value, on stdout; 1 if the line is not ours
-  local line="$1" key="$2" inner value sq="'" esc
-  esc="'\\''"
-  case "$line" in
-    "$key=$sq"*"$sq") ;;
-    *) return 1 ;;
-  esac
-  inner="${line#"$key=$sq"}"
-  inner="${inner%"$sq"}"
-  value="${inner//"$esc"/"$sq"}"
-  [ "$(gg_shell_quote "$value")" = "$inner" ] || return 1
-  printf '%s' "$value"
+# `$( )` strips every trailing newline, and a path may end in one — the case
+# tests/path-captures.test.sh exists for. The sentinel gives the shell
+# something to strip that is not the bytes.
+gg_capture() { # VAR COMMAND [ARGS...]
+  local __name="$1" __raw=""
+  shift
+  __raw="$("$@" && printf x)" || {
+    eval "$__name=''"
+    return 1
+  }
+  eval "$__name=\${__raw%x}"
 }
 
 # Where a directory sits: which repository owns it, and where it stands
@@ -52,28 +43,33 @@ gg_baked_value() { # LINE KEY -> the value, on stdout; 1 if the line is not ours
 # with this repository's.
 gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
   local __c="$1" __r="$2" dir="$3" real="" common="" top=""
-  real="$(cd -- "$dir" 2>/dev/null && pwd -P)" || return 1
-  common="$(
-    unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
-    cd -- "$real" 2>/dev/null && git rev-parse --git-common-dir 2>/dev/null && printf x
-  )" || return 1
-  common="${common%x}"
-  common="${common%"$GG_NL"}"
-  [ -n "$common" ] || return 1
-  common="$(cd -- "$real" 2>/dev/null && cd -- "$common" 2>/dev/null && pwd -P)" || return 1
-  top="$(
-    unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
-    cd -- "$real" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null && printf x
-  )" || return 1
-  top="${top%x}"
-  top="${top%"$GG_NL"}"
-  top="$(cd -- "$top" 2>/dev/null && pwd -P)" || return 1
+  gg_path real gg_physical "$dir" || return 1
+  gg_git_place common "$real" rev-parse --git-common-dir || return 1
+  # git answers relative to the directory it was asked in.
+  case "$common" in
+    /*) ;;
+    *) common="$real/$common" ;;
+  esac
+  gg_path common gg_physical "$common" || return 1
+  gg_git_place top "$real" rev-parse --show-toplevel || return 1
+  gg_path top gg_physical "$top" || return 1
   case "$real" in
     "$top") eval "$__r=''" ;;
     "$top"/*) eval "$__r=\${real#\"\$top/\"}" ;;
     *) return 1 ;;
   esac
   eval "$__c=\$common"
+}
+
+# [`gg_git_path`] with git's redirects unset, asked from inside the
+# directory rather than through `-C`: a hook exports GIT_DIR, and git
+# honours it over `-C`, so every directory would answer with this
+# repository's.
+gg_git_place() { # VAR DIR ARG... — VAR gets git's answer, bytes intact
+  local __name="$1" __dir="$2"
+  shift 2
+  gg_path "$__name" env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE \
+    -u GIT_INDEX_FILE git -C "$__dir" "$@"
 }
 
 # Whether a baked scripts directory is THIS project's, in another checkout of
@@ -105,33 +101,38 @@ gg_same_project_elsewhere() { # DIR -> 0 when it is this project's, elsewhere
 
 # Whether the head a helper carries is one this installer would bake.
 #
-# Line for line against this checkout's own head, so the shebang, every
-# comment, and every value this checkout dictates are held exactly. A line
-# may differ only where it bakes a key in GG_PER_CHECKOUT_KEYS, and then
-# only as a value this installer's quoter would have written, naming this
-# same project's scripts directory in another checkout of this repository.
+# The head with the per-checkout value blanked is a prefix and a suffix of
+# fixed bytes, so a head that is ours is exactly those two around some
+# value. Taking the value as what lies between them asks nothing of its
+# contents: it may hold an apostrophe, a newline, anything a path may hold,
+# and the bytes on either side of it are still held exactly.
 #
-# Structural, and nothing from the helper is ever copied into what it is
-# compared against. A comparison built out of the bytes it is judging
-# matches whatever it is handed: a value closing its quote and appending a
-# command read as armed while that command ran at commit time.
-check_helper_head() { # HELPER -> 0 ours, 1 not
-  local helper="$1" want="" got="" key="" value="" line=0 excused=1
-  while IFS= read -r want; do
-    line=$((line + 1))
-    got="$(sed -e "${line}!d" <"$helper")" || return 1
-    [ "$want" = "$got" ] && continue
-    excused=1
-    for key in $GG_PER_CHECKOUT_KEYS; do
-      case "$want" in "$key='"*) ;; *) continue ;; esac
-      value="$(gg_baked_value "$got" "$key")" || continue
-      gg_same_project_elsewhere "$value" || continue
-      excused=0
-      break
-    done
-    [ "$excused" -eq 0 ] || return 1
-  done < <(helper_head)
-  return 0
+# The value is then held to two things. It has to be one this installer's
+# own quoter would have written, proved by unescaping and re-escaping it —
+# so a value that closes its quote and appends a command rebuilds
+# differently and is refused, rather than being blessed by a comparison
+# assembled out of the bytes it is judging. And it has to name this same
+# project's scripts directory in another checkout of this repository.
+check_helper_head() { # HEAD -> 0 ours, 1 not
+  local head="$1" shape="" prefix="" suffix="" inner="" value="" sq="'" esc
+  esc="'\\''"
+  gg_capture shape helper_head_shape || return 1
+  case "$shape" in
+    *"$GG_PER_CHECKOUT_MARK"*"$GG_PER_CHECKOUT_MARK"*) return 1 ;;
+    *"$GG_PER_CHECKOUT_MARK"*) ;;
+    *) return 1 ;;
+  esac
+  prefix="${shape%%"$GG_PER_CHECKOUT_MARK"*}"
+  suffix="${shape#*"$GG_PER_CHECKOUT_MARK"}"
+  case "$head" in
+    "$prefix"*"$suffix") ;;
+    *) return 1 ;;
+  esac
+  inner="${head#"$prefix"}"
+  inner="${inner%"$suffix"}"
+  value="${inner//"$esc"/"$sq"}"
+  [ "$(gg_shell_quote "$value")" = "$inner" ] || return 1
+  gg_same_project_elsewhere "$value"
 }
 
 CHECK_REASONS=""
@@ -173,15 +174,23 @@ check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
   # sitting there right now. Only the bytes settle what the helper does.
   #
   # The program is those bytes exactly. The head is where one checkout of a
-  # project differs from another, so it is judged line for line against this
-  # checkout's own instead — which is what lets a worktree recognize the
-  # helper the main checkout armed, and what refuses a second project in the
-  # same repository relaying under the first one's consent.
-  local head_lines=""
-  head_lines="$(helper_head 2>/dev/null | wc -l | tr -d ' ')" || head_lines=""
-  if [ -z "$head_lines" ] \
-    || ! check_helper_head "$helper" 2>/dev/null \
-    || ! helper_program 2>/dev/null | cmp -s - <(sed -e "1,${head_lines}d" <"$helper"); then
+  # project differs from another, so it is held to this checkout's own head
+  # around the one value that may differ — which is what lets a worktree
+  # recognize the helper the main checkout armed, and what refuses a second
+  # project in the same repository relaying under the first one's consent.
+  # Where the head ends is arithmetic, not a search: the program is a fixed
+  # number of lines, so whatever precedes it is the head however many lines a
+  # baked value spread itself over.
+  local program_lines="" file_lines="" head_lines="" head=""
+  program_lines="$(helper_program 2>/dev/null | wc -l | tr -d ' ')" || program_lines=""
+  file_lines="$(wc -l <"$helper" 2>/dev/null | tr -d ' ')" || file_lines=""
+  head_lines=0
+  [ -n "$program_lines" ] && [ -n "$file_lines" ] \
+    && head_lines=$((file_lines - program_lines))
+  if [ "$head_lines" -le 0 ] \
+    || ! gg_capture head sed -e "$((head_lines + 1)),\$d" -- "$helper" \
+    || ! check_helper_head "$head" 2>/dev/null \
+    || ! helper_program 2>/dev/null | cmp -s - <(sed -e "1,${head_lines}d" -- "$helper"); then
     add_reason "helper $HELPER_NAME is not the one this installer generates, so what it runs cannot be verified"
     return 3
   fi

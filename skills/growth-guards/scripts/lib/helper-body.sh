@@ -49,8 +49,22 @@ gg_shell_quote() { # VALUE -> the value, safe inside single quotes
 # hands project B the consent project A gave. `skill_roots` is the
 # package's own list and is not per-anything.
 #
-# Names, not line numbers: the check finds each line by its key.
-GG_PER_CHECKOUT_KEYS='installed_scripts'
+# Named as the variable the head interpolates, so the check blanks it and
+# compares what is left. Naming the assignment instead would mean finding it
+# in the text, and a path may hold a newline: the value it bakes can span
+# physical lines, and there is no line to find.
+GG_PER_CHECKOUT_VAR='SCRIPT_DIR'
+
+# A token no baked value carries, standing where the per-checkout value
+# would. The head with it in place is a prefix and a suffix of fixed bytes,
+# which is what lets the value between them be lifted out whatever it holds.
+GG_PER_CHECKOUT_MARK='@@growth-guards-per-checkout@@'
+
+# The head this install would bake, with the per-checkout value blanked.
+helper_head_shape() { # -> the head around GG_PER_CHECKOUT_MARK, on stdout
+  local "$GG_PER_CHECKOUT_VAR=$GG_PER_CHECKOUT_MARK"
+  helper_head
+}
 
 # The head this install would bake. Split from the program below because
 # only the program is the same bytes everywhere.
