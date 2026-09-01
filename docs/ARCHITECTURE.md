@@ -431,11 +431,9 @@ lives in one capability table read by core and UI.
   does an answer short of certainty: an entry moved, duplicated, or
   unnamed by the record is the person's to keep, and the pass registers
   under the identity it renders beside it (`item_record::retire_previous`).
-  Pi holds instead: its registry is kendex's own file, so an entry there
-  the record cannot place is a question the hook waits on. Removal reads
-  the same record; an editor rewrites only its own registration; an entry
-  no edit of kendex's can reach is neither reconciled nor retired — proven
-  by applying and reading back.
+  Removal reads the same record; an editor rewrites only its own registration;
+  an entry no edit of kendex's can reach is neither reconciled nor retired —
+  proven by applying and reading back.
 - **Pi hooks are enforced through the carrier.** The `pi-hooks` extension
   package hosts native listeners; hook content rides in the registry
   kendex renders beside them (`kendex/hooks/<name>.sh` plus

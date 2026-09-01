@@ -479,25 +479,6 @@ impl CoreError {
             source,
         }
     }
-
-    /// Whether this is a record kendex cannot read: a lock or manifest
-    /// another version wrote, or one damaged past parsing. Two policies
-    /// key off this one list. A read that only annotates rows absorbs
-    /// exactly it to empty ([`crate::manifest::observed`],
-    /// [`crate::lock::observed`]); a verb walking several scopes skips
-    /// exactly it, names the scope, and still fails the run. Everything
-    /// else propagates from both: an IO failure, or a lock another project
-    /// wrote, is not a file kendex merely declines to convert.
-    /// `kendex_app::audit::ScopeError` gives each of the three a kind of
-    /// its own, and a test there holds the two lists together.
-    pub fn is_unreadable_record(&self) -> bool {
-        matches!(
-            self,
-            CoreError::LegacyManifest { .. }
-                | CoreError::LockCorrupt { .. }
-                | CoreError::SchemaTooNew { .. }
-        )
-    }
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;

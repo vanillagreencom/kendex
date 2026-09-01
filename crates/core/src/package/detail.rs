@@ -251,9 +251,7 @@ pub fn package_meta(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Res
         .sources
         .get(&decl.source)
         .and_then(|s| s.repo.clone());
-    // The page's standing column reads off the record; a record this
-    // build cannot read leaves the column empty, not the page.
-    let lock = crate::lock::observed(&crate::lock::lock_path(env, scope))?;
+    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
     let entries: Vec<&crate::lock::LockEntry> = lock
         .entries
         .values()

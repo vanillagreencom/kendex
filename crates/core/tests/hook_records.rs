@@ -5,9 +5,7 @@
 //! name. Only an entry the record identifies unambiguously comes out;
 //! anything less settles here, registers under its own identity, and
 //! leaves the person's entries to them, so a refresh never wedges on what
-//! the document holds. Pi is the one harness that holds instead, because
-//! it is the one whose registry kendex renders whole — `pi_carrier`
-//! carries those cases.
+//! the document holds.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]

@@ -7,7 +7,7 @@
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::Lock;
-use crate::manifest::Manifest;
+use crate::manifest::{Manifest, ManifestFile};
 use crate::model::{ItemKind, Scope};
 use crate::source_read::SealedSource;
 
@@ -27,15 +27,13 @@ pub(crate) struct Browsed {
     subscription: Option<String>,
 }
 
-/// The scope records the join reads. Browsing observes: a scope whose
-/// manifest or lock this build cannot read answers for none of its own
-/// rows rather than blanking the page — the records only feed the
-/// installed-state join.
 fn records(env: &Env, scope: &Scope) -> Result<(Manifest, Lock)> {
-    Ok((
-        crate::manifest::observed(&crate::manifest::manifest_path(env, scope))?,
-        crate::lock::observed(&crate::lock::lock_path(env, scope))?,
-    ))
+    let manifest = match crate::manifest::load(&crate::manifest::manifest_path(env, scope))? {
+        ManifestFile::Current(manifest) => *manifest,
+        ManifestFile::Absent => Manifest::default(),
+    };
+    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    Ok((manifest, lock))
 }
 
 pub(crate) fn open(env: &Env, catalog: &Catalog) -> Result<Browsed> {

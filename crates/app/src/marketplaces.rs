@@ -7,7 +7,7 @@
 
 use kendex_core::env::Env;
 use kendex_core::library::{self, ProvenanceRow};
-use kendex_core::manifest::{Manifest, manifest_path};
+use kendex_core::manifest::{Manifest, ManifestFile, manifest_path};
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::source::browse::{
     self, AvailablePackage, BundleDetail, Catalog, CatalogSummary, PackagePreview, PackageSafety,
@@ -22,11 +22,11 @@ pub mod install;
 
 use crate::scopes::{all as all_scopes, env};
 
-/// The scope's manifest for reading. Browsing observes: a manifest this
-/// build cannot read answers for none of its own rows rather than blanking
-/// the page.
 fn manifest_for_reading(env: &Env, scope: &Scope) -> Result<Manifest, String> {
-    kendex_core::manifest::observed(&manifest_path(env, scope)).map_err(|e| e.to_string())
+    match kendex_core::manifest::load(&manifest_path(env, scope)).map_err(|e| e.to_string())? {
+        ManifestFile::Current(manifest) => Ok(*manifest),
+        ManifestFile::Absent => Ok(Manifest::default()),
+    }
 }
 
 /// One subscription's catalog opened for reading, or the error that says

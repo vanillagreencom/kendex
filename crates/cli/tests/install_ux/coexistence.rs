@@ -110,13 +110,10 @@ fn removing_an_item_leaves_the_project_as_it_was() {
     }
 }
 
-/// A scope whose lock this build cannot read is skipped and named, and the
-/// run still fails. Skipped, so `remove` visits every scope the filter
-/// names rather than leaving the rest untouched with nothing saying so;
-/// failed, because exit 0 with the item still installed says the removal
-/// happened. `refresh` walks its scopes the same way.
+/// A verb that needs the lock stops at its parse error. Reading it as an
+/// empty scope or skipping it would hide why the requested work did not run.
 #[test]
-fn a_scope_whose_lock_cannot_be_read_is_skipped_and_named() {
+fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
@@ -135,28 +132,22 @@ fn a_scope_whose_lock_cannot_be_read_is_skipped_and_named() {
     );
     crate::write(&lock, &older);
 
-    let out = world.try_run(&["remove", "deploy"]);
-    let said = crate::said(&out);
-    assert!(
-        !out.status.success(),
-        "a removal that did not happen must not exit 0: {said}"
-    );
-    assert!(
-        said.contains("skipped"),
-        "the scope is named as skipped: {said}"
-    );
-    assert!(
-        said.contains("install fresh"),
-        "naming why, in the words the refusal uses: {said}"
-    );
-    assert!(
-        said.contains("could not read 1 scope"),
-        "and the run closes on what it could not do: {said}"
-    );
-    assert!(
-        !said.contains("Nothing removed"),
-        "which is not the same as there being nothing to remove: {said}"
-    );
+    for args in [&["remove", "deploy"][..], &["apply", "--plan"][..]] {
+        let out = world.try_run(args);
+        let said = crate::said(&out);
+        assert!(
+            !out.status.success(),
+            "work that did not happen must not exit 0: {said}"
+        );
+        assert!(
+            said.contains("install fresh"),
+            "the parse error names the recovery path: {said}"
+        );
+        assert!(
+            !said.contains("skipped") && !said.contains("could not read"),
+            "the parse error must propagate directly: {said}"
+        );
+    }
     assert_eq!(
         read(&lock),
         older,

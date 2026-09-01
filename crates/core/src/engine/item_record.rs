@@ -33,17 +33,10 @@ use super::desired::{Artifact, Desired};
 /// entry is looked up by, and one carried more than once is one nothing
 /// here can tell apart.
 ///
-/// An answer short of certainty retires nothing, and outside pi it holds
-/// nothing either: the pass registers under the identity it renders and
-/// leaves the person's entries to them, because all a refresh writes is
-/// its own registration, and a settings document is one the person writes
-/// in too — an entry there that the record cannot account for is most
-/// likely theirs, and holding on it would sit in conflict on every refresh
-/// with nothing able to settle it. Pi is the exception: its registry is a
-/// file kendex renders whole, under a segment of its own, so an entry
-/// running kendex's command that the record cannot place is a question
-/// rather than somebody else's business, and the hook holds until it is
-/// answered.
+/// An answer short of certainty retires nothing. The pass registers under
+/// the identity it renders and leaves the person's entries to them. Holding
+/// on an entry the record cannot account for would sit in conflict on every
+/// refresh with nothing able to settle it.
 ///
 /// Nothing is retired where the record names what this pass names anyway,
 /// so a settled installation plans nothing. The edit goes to the file
@@ -56,10 +49,6 @@ pub(super) enum Previous {
     Settled,
     /// The entry to take out first, named exactly.
     Retire(PathBuf, ConfigEdit),
-    /// The document runs this command somewhere the record does not name,
-    /// or runs it more than once, and nothing here can tell kendex's entry
-    /// from anyone else's. Writing beside them would add one more.
-    Ambiguous(String),
 }
 
 pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> Previous {
@@ -93,12 +82,6 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
     ) {
         Found::One(previous) => previous,
         Found::None => return Previous::Settled,
-        Found::Unsettled(why) => {
-            return match item.harness == crate::model::HarnessId::Pi {
-                true => Previous::Ambiguous(why),
-                false => Previous::Settled,
-            };
-        }
     };
     if previous.event == named.event
         && previous.command == named.command
@@ -137,20 +120,14 @@ struct Recorded {
 enum Found {
     One(Recorded),
     None,
-    /// The command runs, but not as one entry where the record left it:
-    /// somebody moved it, or something else runs it too.
-    Unsettled(String),
 }
 
 /// The entry kendex left, read out of the document this pass registers
 /// in, by everything the record kept to look it up by: the command, the
 /// event, and the matcher.
 ///
-/// Exactly one answering is the answer. More than one is a question
-/// nothing here can settle, since what the record kept cannot tell them
-/// apart. And nothing answering, while something else runs that command,
-/// is an entry somebody moved: writing beside it would leave the hook
-/// firing twice. Nothing running the command at all is nothing to retire.
+/// Exactly one answering is the answer. Anything else is nothing this
+/// record can retire.
 fn found(named: &Named, event: &str, matcher: Option<&str>, command: &str) -> Found {
     let Ok(Some(text)) = crate::fs::read_if_exists(named.path) else {
         return Found::None;
@@ -168,19 +145,10 @@ fn found(named: &Named, event: &str, matcher: Option<&str>, command: &str) -> Fo
             && matcher.is_none_or(|matcher| entry.matcher == matcher)
     });
     let Some(only) = answering.next() else {
-        return match entries.iter().any(|entry| entry.command == command) {
-            true => Found::Unsettled(format!(
-                "{} no longer runs {command} where kendex left it, and what runs it now is not kendex's to take — move it back, or take it out, and the next refresh settles this",
-                named.path.display()
-            )),
-            false => Found::None,
-        };
+        return Found::None;
     };
     if answering.next().is_some() {
-        return Found::Unsettled(format!(
-            "{} runs {command} more than once and the record does not say which entry is kendex's — take the ones you did not put there out, and the next refresh settles the rest",
-            named.path.display()
-        ));
+        return Found::None;
     }
     Found::One(Recorded {
         event: only.event.clone(),

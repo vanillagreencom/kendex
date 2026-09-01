@@ -46,11 +46,6 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     // Every scope is planned before any of them is written: failing before
     // the first write beats a half-applied run.
     let mut planned = Vec::new();
-    // A scope whose files this build cannot read is skipped and named, and
-    // still fails the run at the end: the scopes after it are worth
-    // applying, and an exit code of zero would say the apply happened
-    // everywhere it was asked for. `refresh` walks its scopes the same way.
-    let mut skipped: Vec<String> = Vec::new();
     for scope in resolve_scopes(env, filter)? {
         // Read the manifest as it sits on disk, through the same loader
         // the audit uses, so this verb refuses exactly what the audit
@@ -60,11 +55,6 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
             Ok(ManifestFile::Current(_)) => {}
             Ok(ManifestFile::Absent) => {
                 say(&format!("{}: no manifest", scope_label(&scope)));
-                continue;
-            }
-            Err(error) if error.is_unreadable_record() => {
-                warn(&format!("skipped {}: {}", scope_label(&scope), error));
-                skipped.push(scope_label(&scope));
                 continue;
             }
             Err(error) => return Err(error.into()),
@@ -78,15 +68,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         };
         let report = {
             let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
-            match plan_apply(env, &scope, &options) {
-                Ok(report) => report,
-                Err(error) if error.is_unreadable_record() => {
-                    warn(&format!("skipped {}: {}", scope_label(&scope), error));
-                    skipped.push(scope_label(&scope));
-                    continue;
-                }
-                Err(error) => return Err(error.into()),
-            }
+            plan_apply(env, &scope, &options)?
         };
         planned.push((scope.clone(), report));
     }
@@ -149,14 +131,6 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                 );
             },
         )?;
-    }
-    if !skipped.is_empty() {
-        return Err(format!(
-            "could not read {} scope(s): {}",
-            skipped.len(),
-            skipped.join(", ")
-        )
-        .into());
     }
     Ok(())
 }

@@ -15,7 +15,8 @@ use specta::Type;
 
 use crate::env::Env;
 use crate::error::Result;
-use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest};
+use crate::lock::LockFile;
+use crate::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME, Manifest, ManifestFile};
 use crate::model::{HarnessId, ItemKind, Scope};
 
 /// Where one installation came from.
@@ -57,10 +58,14 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
     let scopes: Vec<Scope> = scopes.iter().map(Scope::canonical).collect();
     let mut rows: BTreeMap<(Scope, ItemKind, String, HarnessId), Origin> = BTreeMap::new();
     for scope in &scopes {
-        // Observation only: a manifest or lock this build cannot read
-        // answers for none of its own rows rather than blanking the table.
-        let manifest = crate::manifest::observed(&crate::manifest::manifest_path(env, scope))?;
-        let lock = crate::lock::observed(&crate::lock::lock_path(env, scope))?;
+        let manifest = match crate::manifest::load(&crate::manifest::manifest_path(env, scope))? {
+            ManifestFile::Current(manifest) => *manifest,
+            ManifestFile::Absent => Manifest::default(),
+        };
+        let LockFile::Current(lock) = crate::lock::load_file(&crate::lock::lock_path(env, scope))?
+        else {
+            continue;
+        };
         for entry in lock.entries.values() {
             rows.insert(
                 (scope.clone(), entry.kind, entry.name.clone(), entry.harness),

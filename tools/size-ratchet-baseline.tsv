@@ -2,7 +2,7 @@
 .github/workflows/skill-tests.yml	551
 crates/core/src/engine/detach.rs	417
 crates/core/src/engine/fork/agent/prose.rs	438
-crates/core/src/error.rs	503
+crates/core/src/error.rs	484
 crates/core/src/mapping.rs	411
 crates/core/src/settings_file.rs	408
 hooks/block-repo-copy.sh	511

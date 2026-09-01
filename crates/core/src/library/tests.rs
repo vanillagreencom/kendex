@@ -113,3 +113,27 @@ fn origins_are_read_off_the_lock_manifest_and_scan() {
     assert_eq!(stray.scope, Scope::Project { root: project });
     assert_eq!(stray.harness, HarnessId::Claude);
 }
+
+/// A damaged current lock is an error, never an empty provenance join.
+#[test]
+fn a_truncated_current_lock_fails_the_library_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+    fs::write(
+        project.join(".kendex-lock.json"),
+        format!(r#"{{"version":{}"#, crate::lock::LOCK_VERSION),
+    )
+    .unwrap();
+    let scope = Scope::Project { root: project };
+
+    assert!(
+        matches!(
+            provenance(&env, std::slice::from_ref(&scope)),
+            Err(crate::error::CoreError::LockCorrupt { .. })
+        ),
+        "Library must surface a truncated lock"
+    );
+}

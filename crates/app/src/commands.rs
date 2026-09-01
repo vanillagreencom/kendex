@@ -1,4 +1,3 @@
-use kendex_core::env::Env;
 use kendex_core::harness::{KindCaps, capabilities};
 use kendex_core::model::{HarnessId, ItemKind};
 use kendex_core::scan;
@@ -101,23 +100,11 @@ pub fn report_route(
     name: String,
     kind: Option<ItemKind>,
 ) -> Result<ReportRouteView, String> {
-    route_for(&env()?, &scope, &name, kind)
-}
-
-/// [`report_route`] against a given environment, which is what makes it
-/// reachable from a test. The command above only finds the environment.
-fn route_for(
-    env: &Env,
-    scope: &kendex_core::model::Scope,
-    name: &str,
-    kind: Option<ItemKind>,
-) -> Result<ReportRouteView, String> {
-    // Read-only: a lock this build cannot read answers as no provenance,
-    // which routes to the upstream default, rather than failing the dialog.
-    let lock = kendex_core::lock::observed(&kendex_core::lock::lock_path(env, scope))
+    let env = env()?;
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&env, &scope))
         .map_err(|e| e.to_string())?;
     let route =
-        kendex_core::report::route(&lock, name, kind, kendex_core::report::DEFAULT_UPSTREAM);
+        kendex_core::report::route(&lock, &name, kind, kendex_core::report::DEFAULT_UPSTREAM);
     let issue_url = route.repo.as_ref().map(|repo| {
         let mut url = format!(
             "https://github.com/{repo}/issues/new?title={}",
@@ -134,62 +121,4 @@ fn route_for(
         label: route.label,
         issue_url,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::route_for;
-    use kendex_core::env::{Env, FakeOs};
-    use kendex_core::model::Scope;
-
-    /// One installation recorded from the upstream, in the shape this
-    /// build writes, at whichever version the caller names.
-    #[allow(clippy::unwrap_used)]
-    fn lock_at(project: &std::path::Path, version: u32) {
-        std::fs::write(
-            project.join(".kendex-lock.json"),
-            format!(
-                r#"{{"version":{version},"root":{},"entries":{{"skill:gh:claude":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"{}","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true,"reasons":[{{"reason":"requested"}}]}}}}}}"#,
-                serde_json::to_string(&project.display().to_string()).unwrap(),
-                kendex_core::report::DEFAULT_UPSTREAM
-            ),
-        )
-        .unwrap();
-    }
-
-    /// The report dialog is read-only. A lock this build cannot read costs
-    /// the provenance the route reads, so the report falls back to the
-    /// person's own repo the way an absent lock does — it does not fail the
-    /// dialog and leave them with no way to file at all.
-    #[test]
-    #[allow(clippy::unwrap_used)]
-    fn a_lock_this_build_cannot_read_costs_provenance_not_the_dialog() {
-        let tmp = tempfile::tempdir().unwrap();
-        let env = Env::fake(tmp.path(), FakeOs::Linux);
-        let project = tmp.path().join("dev/app");
-        std::fs::create_dir_all(&project).unwrap();
-        let scope = Scope::Project {
-            root: project.clone(),
-        };
-
-        lock_at(&project, kendex_core::lock::LOCK_VERSION);
-        let route = route_for(&env, &scope, "gh", None).unwrap();
-        assert!(
-            route.kendex_owned && route.issue_url.is_some(),
-            "the fixture must give the dialog provenance to lose"
-        );
-
-        // The record a released kendex left: this build's shape, one
-        // version back, so nothing but the number is wrong with it.
-        lock_at(&project, kendex_core::lock::LOCK_VERSION - 1);
-        let refused =
-            kendex_core::lock::load_file(&kendex_core::lock::lock_path(&env, &scope)).unwrap_err();
-        assert!(refused.is_unreadable_record(), "{refused}");
-
-        let route = route_for(&env, &scope, "gh", None).expect("the dialog must still answer");
-        assert!(
-            !route.kendex_owned,
-            "with no provenance to read, the report stays with the person's own repo"
-        );
-    }
 }
