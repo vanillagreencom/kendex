@@ -220,6 +220,8 @@ node.move_to_mut(Point::new(10.0, 10.0));
   `self`). Re-derive them from the parent when you need them again.
 - `Length::Fill` is viral — any fill child in a shrink container will make the
   container fill its parent on that axis.
+- Since 0.14, layout resolution prioritizes `Shrink` over `Fill` (0.13 was the
+  other way round).
 - `child(index)` panics if out of bounds — always mirror the number of
   children you produce in `layout()`.
 - No `position_over` helper at the `Layout` level -- use `layout.bounds()` directly.

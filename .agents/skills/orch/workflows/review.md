@@ -51,7 +51,7 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 
 ## 2. Launch Reviewers
 
-`[AGENTS]` is every `reviewer-*` agent this harness exposes. Resolve the reviewer mode per [SKILL.md § Agent Lifecycle](../SKILL.md#agent-lifecycle):
+`[AGENTS]` is every `reviewer-*` agent this harness exposes. Resolve the reviewer mode per [references/skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
 
 ```bash
 .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0

@@ -79,6 +79,21 @@ fn update(&mut self, message: Message) -> Task<Message> {
 }
 ```
 
+## Dev tools
+
+| Tool | Purpose | Install |
+|---|---|---|
+| `cargo-hot` | Live UI patching | `cargo install cargo-hot` |
+| `comet` | Debugger: frame metrics, widget tree, message inspector | `cargo install --locked --git https://github.com/iced-rs/comet.git` |
+
+`features = ["debug"]` plus F12 enables the built-in debugger. Stress-test with `ICED_PRESENT_MODE=Immediate` and `unconditional-rendering`. Measure with `iced::debug::time` and `comet` before optimizing:
+
+```rust
+fn update(&mut self, message: Message) -> Task<Message> {
+    iced::debug::time(format!("{message:?}"), || match message { /* ... */ })
+}
+```
+
 ## Gotchas
 
 - `time()` returns a `Span` scope guard. You must bind it to a variable (`let _span = ...`) or it will be dropped immediately, recording zero time.

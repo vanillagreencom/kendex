@@ -31,7 +31,9 @@ command, so a finding lands before a long run does.
 
 **Commit time.** Where `growth-guards` is also installed, its pre-commit
 chain runs `preflight --staged` itself — nothing to wire. Any other hook
-calls the script with `--staged`.
+calls the script with `--staged`. The guard chain's
+`GROWTH_GUARDS_PRE_COMMIT_LOCAL` lane runs its executable with no arguments,
+so wiring preflight there needs a wrapper that adds `--staged`.
 
 **CI.** `preflight --base origin/<default-branch>` on the PR head. The
 installed skill must be committed: a CI checkout sees tracked files only,
@@ -46,4 +48,5 @@ absent, a `python3` new enough to carry `tomllib` (3.11 and later). A lane
 whose tool is missing skips silently.
 
 Lane table, scope rules, and the subtrees each lane skips:
-[SKILL.md](SKILL.md).
+[SKILL.md](SKILL.md). Diff scope, the `unwired-suite` wiring grammar, and the
+`applied-migration-edited` glob set: [references/lanes.md](references/lanes.md).

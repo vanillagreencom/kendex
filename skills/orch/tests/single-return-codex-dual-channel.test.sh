@@ -33,16 +33,16 @@ assert_contains() {
   fi
 }
 
-# Assert a phrase appears within a specific `#### <heading>` section, so the
+# Assert a phrase appears within a specific `### <heading>` section, so the
 # guidance is anchored to the Single Return Message invariant, not just present
-# somewhere else in the file. Section ends at the next `#### ` heading or a
+# somewhere else in the file. Section ends at the next heading of any level or a
 # horizontal rule (`---`).
 assert_section_contains() {
   local file="$1" heading="$2" needle="$3" name="$4"
   local body
   body=$(awk -v h="$heading" '
-    index($0, "#### " h) == 1 { grab = 1; next }
-    grab && /^#### / { grab = 0 }
+    index($0, "### " h) == 1 || index($0, "#### " h) == 1 { grab = 1; next }
+    grab && /^#/     { grab = 0 }
     grab && /^---$/  { grab = 0 }
     grab { print }
   ' "$file")
@@ -58,7 +58,8 @@ assert_section_contains() {
 
 echo "=== Single Return Message: Codex dual-channel completion (kendex#532) ==="
 
-orch_skill="$REPO_ROOT/skills/orch/SKILL.md"
+# KEN-1121 moved Single Return Message out of SKILL.md into references/skill-rules.md.
+orch_skill="$REPO_ROOT/skills/orch/references/skill-rules.md"
 dev_skill="$REPO_ROOT/skills/dev/SKILL.md"
 
 # --- orch: Single Return Message section recognizes the Codex MESSAGE +

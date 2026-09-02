@@ -40,14 +40,14 @@ In Pi with the `web_research` tool active, use that tool, passing `outputPath` w
 ## Running
 
 ```bash
-skills/deep-research/scripts/deep-research report "question" --mode standard --output path/to/findings.md
-skills/deep-research/scripts/deep-research report --query-file prompt.txt --context-glob 'context-*.md' --mode full --output findings.md
-skills/deep-research/scripts/deep-research json "question" --output raw.json
-skills/deep-research/scripts/deep-research validate findings.md findings.raw.json
-skills/deep-research/scripts/deep-research doctor
+.agents/skills/deep-research/scripts/deep-research report "question" --mode standard --output path/to/findings.md
+.agents/skills/deep-research/scripts/deep-research report --query-file prompt.txt --context-glob 'context-*.md' --mode full --output findings.md
+.agents/skills/deep-research/scripts/deep-research json "question" --output raw.json
+.agents/skills/deep-research/scripts/deep-research validate findings.md findings.raw.json
+.agents/skills/deep-research/scripts/deep-research doctor
 ```
 
-`deep-research help` lists every flag. Exa `/search` caps the settings behind them: `numResults` 1-100, `text.maxCharacters` 1-10000, `additionalQueries` at most 10.
+`deep-research help` lists every flag.
 
 | Mode | Exa type | Results | Text cap | Timeout | Synthesis |
 |---|---|---:|---:|---:|---|
@@ -57,14 +57,14 @@ skills/deep-research/scripts/deep-research doctor
 
 `standard` is the default; `lite` for fast spikes, `full` for strategic or high-risk decisions. `--type`, `--num-results`, and `--text-max-characters` override a mode's defaults.
 
-`--additional-query` (repeatable) reaches Exa as `additionalQueries` within the single request under `lite` and `standard`, and as one request per query with URLs deduped across responses under `full`; the sidecar records which, as `provider-additional-queries` or `local-fan-out`.
+`--additional-query` (repeatable) reaches Exa as `additionalQueries` within the single request under `lite` and `standard`, and as one request per query with URLs deduped across responses under `full`.
 
 `--include-domain` is a hard host filter, not a quality filter: `--include-domain github.com` admits every repo on it and excludes everything else. Name authoritative projects and organizations in the query text for quality; audit the returned source list either way.
 
 ## Validation
 
 ```bash
-skills/deep-research/scripts/deep-research validate path/to/findings.md path/to/findings.raw.json
+.agents/skills/deep-research/scripts/deep-research validate path/to/findings.md path/to/findings.raw.json
 ```
 
 Prints `{ok, errors, warnings, mode, synthesis, queryCount}`; exits 0 when there are no errors. Checks structure only: required sections present, sidecar parses, query-expansion metadata self-consistent, synthesized answer present for modes that requested one.

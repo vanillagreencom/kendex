@@ -37,12 +37,8 @@ Flags and exit codes: `harness-only --help`. Contract and semantics:
 
 ## This package never edits a workflow
 
-The classification function is portable; the wiring is not. A package that
-installed itself into `.github/workflows/` would rename jobs, drop required
-contexts, and wedge merge queues in repositories it knows nothing about.
-
-The contract is one thin step the consumer writes and owns, calling the
-rendered script. Adoption edits the consumer's workflow by hand, once.
+Nothing here writes `.github/`. Wire the one step yourself, once, from
+[references/wiring.md](references/wiring.md).
 
 ## The rules to hold when wiring it
 
@@ -69,26 +65,11 @@ reads empty and skips the lane on its own. Lift it behind
 
 ## Reading a verdict
 
-`stdout` carries the verdict line alone, so `$(harness-only …)` is safe to
-read directly. The changed paths and the reason behind a `false` go to
-`stderr`, where the job log shows them. `--output FILE` (default
-`$GITHUB_OUTPUT`) appends the same line for a step output.
-
-Exit `0` accompanies every verdict, `true` or `false`. Exit `2` is a wiring
-error: an unknown flag, a missing `--event`, a flag where a value belongs, an
-`--output` the process cannot append to. It prints nothing on stdout, turning
-the step red instead of passing a guess off as a classification.
+`stdout` is the verdict line alone; changed paths and reasons go to `stderr`;
+exit `2` is a wiring error that prints no verdict.
+[README.md](README.md) § Semantics.
 
 ## Fail-closed
 
-Every unprovable case answers `false`, which runs every lane:
-
-- an event outside `pull_request`, `merge_group`, `push`
-- a missing, empty, or unresolvable endpoint, the all-zero sha included
-- a diff git cannot read
-- an empty changed-file set
-- a path git had to quote, which no harness prefix matches
-
-`--no-renames` is not tunable. With rename detection on, a product file
-moved into a render tree lists only its post-image, the diff reads as
-render-only, and the lanes that would have judged the deletion never run.
+Every unprovable case answers `false`, which runs every lane
+([README.md](README.md) § Fail-closed). `--no-renames` is fixed.

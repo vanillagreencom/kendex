@@ -55,10 +55,6 @@ When a change adds or modifies a type wrapping another (cache, proxy, decorator,
 - **Delegation target.** Every method routes to the wrapped instance, never back through a registry, session, or global (`delegate.get(...)`, not `session.get(...)`, a re-entry/recursion hazard).
 - **Forwarding coverage.** The wrapper forwards every method its callers actually use.
 
-## Plausible by Default
-
-Never refute a finding as "speculative" or "depends on runtime state" when the state is realistic, meaning reached by a producer you can name rather than merely conceivable: nil/undefined on a rare-but-reachable path (error handler, cold cache, missing optional field); a falsy zero treated as missing; an off-by-one on a boundary the code does not exclude; retry storms and partial failures; a regex or allowlist that lost an anchor. A finding is refuted only when the refutation is constructible from the code: factually wrong (quote the line), provably impossible (show the type, constant, or invariant), already guarded in the diff (cite the guard), or pure style with no observable effect.
-
 ## Output
 
 Regressions, boundary defects, compatibility/contract breaks, feature leaks, state/migration issues → `blockers[]`. Non-blocking risks and follow-up hardening → `suggestions[]`.

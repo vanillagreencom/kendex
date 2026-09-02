@@ -22,7 +22,7 @@ An explicit user choice wins. Otherwise, with several items and `codex_app.creat
 .agents/skills/linear/scripts/linear.sh cache issues get [ITEM] --with-bundle
 ```
 
-Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)) per item. A container drops off the launch list and is replaced by its unblocked DIRECT children (`depth == 0`), each of which reruns this preflight. A blocked item drops off with its live blockers named.
+Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) per item. A container drops off the launch list and is replaced by its unblocked DIRECT children (`depth == 0`), each of which reruns this preflight. A blocked item drops off with its live blockers named.
 
 - **The explicit-choice exception survives.** An enclosing `(one PR)` ancestor makes that bundle the launch item only for container-expanded entries; an item the USER supplied explicitly stays the launch item, still gated on the unioned blockers.
 - **Deduplicate, then collapse ancestry.** Keep one entry per issue id, marking it EXPLICIT whenever any duplicate was user-supplied. Then, when one final item is an ancestor bundle of another, keep only the bundle.

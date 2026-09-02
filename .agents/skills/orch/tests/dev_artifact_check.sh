@@ -668,14 +668,14 @@ done
 # dev_delegated_at must arm the watchdog. kendex#818 re-homed both mandates into
 # the numbered "orchestrator owns round closure" list (same requirements, new
 # wording) and made that list the primary path rather than a recovery fallback.
-# The two bolded list items are the anchors.
-orch_skill="$REPO_ROOT/skills/orch/SKILL.md"
-assert_file_contains "$orch_skill" "Run the check on every wake and at the deadline" "SKILL mandates the per-wake and deadline check"
-assert_file_contains "$orch_skill" '`verdict`' "SKILL names the one-word verdict acceptance reads"
-assert_file_contains "$orch_skill" "Arm a single-shot wall-clock watchdog" "SKILL mandates a wall-clock watchdog independent of sub-agent wakes (kendex#803)"
-for wf in dev-start dev-fix review-pr-comments ci-fix; do
-  wf_doc="$REPO_ROOT/skills/orch/workflows/$wf.md"
-  assert_file_contains "$wf_doc" "SKILL.md#round-closure" "$wf.md routes the watchdog contract to the canonical section"
+# The two bolded list items are the anchors, now in references/skill-rules.md.
+orch_rules="$REPO_ROOT/skills/orch/references/skill-rules.md"
+assert_file_contains "$orch_rules" "Run the check on every wake and at the deadline" "skill-rules mandates the per-wake and deadline check"; assert_file_contains "$orch_rules" '`verdict`' "skill-rules names the one-word verdict acceptance reads"
+assert_file_contains "$orch_rules" "Arm a single-shot wall-clock watchdog" "skill-rules mandates a wall-clock watchdog independent of sub-agent wakes (kendex#803)"
+assert_file_contains "$REPO_ROOT/skills/orch/SKILL.md" "references/skill-rules.md" "SKILL.md routes the moved rules to the reference"
+for wf in dev-start dev-fix review-pr-comments ci-fix; do  # needles are the RESOLVABLE relative path: a bare filename matches an unresolvable one too
+  assert_file_contains "$REPO_ROOT/skills/orch/workflows/$wf.md" "../references/skill-rules.md#round-closure" "$wf.md routes the watchdog contract to the canonical section"
+  case "$wf" in dev-fix | review-pr-comments) assert_file_contains "$REPO_ROOT/skills/orch/workflows/$wf.md" "../references/skill-rules.md#format-tags-are-literal" "$wf.md routes the literal-format rule to the canonical section" ;; esac
 done
 
 # --- doc wiring: dev workflows write the completion artifact via dev-return-write with --round-id ---

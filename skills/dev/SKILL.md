@@ -25,17 +25,22 @@ orch is the caller and runtime: it owns delegation format, round acceptance, and
 | `workflows/dev-implement.md` | Implementation: activate → plan → implement → validate → commit → QA labels → summary → artifact → return (§ 1-11) |
 | `workflows/dev-fix.md` | Review fixes: evaluate → apply or skip → validate → commit → artifact → return |
 
-Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/review.md`](../reviewer/workflows/review.md), [`../reviewer/workflows/qa-review.md`](../reviewer/workflows/qa-review.md). Command shapes, literal format tags, and round mechanics are orch's: [`../orch/SKILL.md`](../orch/SKILL.md) § Harness-Safe Shell, § Format Tags Are Literal, § Round Closure.
+Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/review.md`](../reviewer/workflows/review.md), [`../reviewer/workflows/qa-review.md`](../reviewer/workflows/qa-review.md). Command shapes are orch's [`../orch/SKILL.md`](../orch/SKILL.md) § Harness-Safe Shell; literal format tags and round mechanics are its [`../orch/references/skill-rules.md`](../orch/references/skill-rules.md) § Format Tags Are Literal and § Round Closure.
 
 ## Engineering Rules
 
-- Scope is the issue's Done-when. A behavioral surface that does not trace to it stays out of this change. Two exceptions. The mechanical enablers of landing it ride without tracing to it: locks, changelog, baselines, dismissal renewals, that list and nothing else, never code that runs at runtime. A committed render of a source file you changed is neither exception, since it traces to whatever its source traces to, and a defect the change introduces or arms is in scope by definition unless Step 0 of [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) excludes it.
+- Scope is the issue's Done-when. A behavioral surface that does not trace to it stays out of this change. Two exceptions:
+  - the mechanical enablers of landing it ride without tracing to it: locks, changelog, baselines, dismissal renewals, that list and nothing else, never code that runs at runtime;
+  - a defect the change introduces or arms is in scope by definition, unless Step 0 of [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) excludes it.
+  - A committed render of a source file you changed is neither exception: it traces to whatever its source traces to.
 - Every behavior change ships with a test that runs against the script or program enforcing it, at the smallest surface that fails. A workflow sentence ships no test. A test that pins prose, drives a second implementation, or stubs the function under test does not count as a test.
 - A refusal, a validator, a lock, a retry, or a test exists only for an input a real producer emits, this project's code or anything it calls or serves; name that producer beside it, or do not write it.
 - When a change deletes a call, apply [code-quality § Cleanup](../code-quality/SKILL.md#cleanup) to its callee. Its deletion maps to the call removal's Done-when item; no internal caller is not proof that a supported external API is unused.
 - A field, setting, or view member added by the change has a real producer and consumer. A named and documented external producer or consumer is valid when the change adds its in-repository counterpart; otherwise, add both sides in the change.
 - No migration or compat code for this project's own formats, its manifest, settings, lock and cache shapes, never another tool's on-disk state, which an adapter may have to keep recognising: write no reader for an artifact an older version of this project wrote, and decline a finding that asks you to carry one forward. A layout, schema or cache change is one changelog line and a fresh install.
-- Before adding a function, parser, stub or loop, grep the repo for the verb it performs; before stating a rule, grep for the rule. A second copy of that verb, in any language, is a twin and never delegation, and so is a second statement of a rule another file owns, in prose, config or a table: call or cite the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.
+- Before adding a function, parser, stub or loop, grep the repo for the verb it performs; before stating a rule, grep for the rule.
+  - A second copy of that verb, in any language, is a twin and never delegation, and so is a second statement of a rule another file owns, in prose, config or a table.
+  - Call or cite the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.
 - Stale docs are bugs: contradicting a committed doc means updating it in the same change.
 - Once a pushed head has been reviewed, later rounds add commits and never amend; before any review has run on a head, the kendex-issues fix cycle may amend only to refresh a required check that cannot be rerun.
 
@@ -50,7 +55,11 @@ Execute workflow sections in order; a "**Skip if**" condition is the workflow's 
 - `--issue` is the delegation's `Artifact Key:` line, the normalized workflow-state key (`issue-N` for GitHub, `PROJ-123` for Linear), never the tracker-native `OWNER/REPO#N` or a bare number. `--round-id` is its `Round ID:` line.
 - `--kind` always matches what was delegated. `--validate` matches your commit message and return; a pass that needed a re-run is still `pass`, with the caveat in `--validate-note`. Flag constraints and value shapes: `dev-return-write --help`.
 
-**Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel: Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message. A disk write is not a return. Send the `**Return exactly**` body once and go idle: in a Pi persistent pane follow it with `complete_subagent` (background agents must not call it); on Codex the `send_input` MESSAGE is the durable return and the runtime's `FINAL_ANSWER` echo of it is expected, not a separate return to author or expand.
+**Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel; a disk write is not a return. Send the `**Return exactly**` body once and go idle.
+
+- The channel is Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message.
+- In a Pi persistent pane, follow the return with `complete_subagent`; background agents must not call it.
+- On Codex the `send_input` MESSAGE is the durable return, and the runtime's `FINAL_ANSWER` echo of it is expected, not a separate return to author or expand.
 
 ## Validation
 

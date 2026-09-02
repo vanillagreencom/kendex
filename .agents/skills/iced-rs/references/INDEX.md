@@ -99,7 +99,7 @@ Iced 0.14 API references and guides. Load on demand.
 | `stream.md` | `stream::channel`, `try_channel` |
 | `time.md` | `time::every`, `repeat`, `now` |
 | `futures.md` | `MaybeSend`, `Stream`, `StreamExt` re-exports |
-| `debug.md` | `debug::time`, `time_with`, `enable`, `disable` |
+| `debug.md` | `debug::time`, `time_with`, `enable`, `disable`; dev tools (`cargo-hot`, `comet`, F12 overlay) |
 | `system.md` | `system::information` (feature `sysinfo`) |
 
 ## Theming

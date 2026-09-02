@@ -24,7 +24,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 <!-- kendex:shared-instructions:end -->
 <!-- kendex:project-instructions:end -->
 
-# dep-radar: pinned-version sweep, safe auto-update, and capability report
+# dep-radar
 
 **inventory → detect → research → classify → upgrade-with-fixes → report the
 owner tier**.
@@ -37,24 +37,19 @@ when a run applies more than one surface, one working copy per surface branch.
 
 ## Operating policy (the contract with the product owner)
 
-Each rule has a key. The key is the contract's handle: an inventory owner-rule
-cites it. The wording in the second column may be edited; dropping or renaming
-a key changes the contract.
+Rule keys are the contract; an inventory owner-rule cites them. Dropping or
+renaming a key changes the contract.
 
 | Rule | Contract |
 |---|---|
 | `auto-with-fixes` | The default. Security fixes; patch/minor bumps; pinned-binary version+SHA refreshes from OFFICIAL manifests only; SDK, agent-tooling, and runtime-binary bumps and npm/cargo majors, doing the bump AND fixing its fallout (API migrations, re-vendored bundled-extension bridges, tests, CI) in the SAME per-surface workstream; bundled-extension fork updates and local patch rebases when the consuming repo's full test suite gates the sync. |
 | `report-never-auto` | Model-weight swaps; changes to durable/recorded data scope; anything an inventory owner-rule explicitly demotes. Nothing else is report-by-default. |
 | `uncertain` | Attempt the upgrade; report only what actually failed, with error output. |
-| `defer` | Only on a strong concrete blocker, never a generic "it's a major" risk. |
+| `defer` | Only on a strong concrete blocker you actually hit, such as a dropped capability with no migration path or a transitive that does not support the new version. Never a generic "it's a major" risk or any other anticipated one. |
 | `one-pr-per-surface` | One PR per surface; never batch surfaces. A surface's fallout fixes go in THAT surface's PR. |
 | `upstream-check-required` | Every pinned surface must have a wired upstream check command; a surface lacking one is an inventory defect the run must fix. |
 | `dated-report` | Every run ends with a dated report. |
 | `demote-only` | Inventory owner-rules may demote auto→report, never promote report→auto. |
-
-A blocker is something you actually hit (a dropped capability with no migration
-path, a transitive that does not support the new version), never an anticipated
-risk.
 
 ## Phase 0: inventory (self-maintaining)
 

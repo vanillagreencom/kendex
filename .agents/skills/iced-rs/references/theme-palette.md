@@ -2,7 +2,7 @@
 
 > `iced::theme::Palette` + `iced::theme::palette::Extended` · iced 0.14.0
 
-`Palette` is the 6-color seed (background, text, primary, success, warning, danger). `Extended` is the derived palette with weak/strong variants and `Pair` (surface color + readable text color). Access via `theme.extended_palette()`.
+`Palette` is the 6-color seed (background, text, primary, success, warning, danger). `Extended` is the derived palette with weak/strong variants and `Pair` (surface color + readable text color). Access via `theme.extended_palette()`. Since 0.14 the palette derives in Oklch (0.13 derived in HSL).
 
 ## API
 

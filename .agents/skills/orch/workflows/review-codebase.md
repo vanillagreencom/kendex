@@ -22,7 +22,7 @@ Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
 `[AGENTS]` is every `reviewer-*` agent this harness exposes; use the full list and do not path-filter. None available → report `No reviewer agents installed; cannot run codebase review` and **END**.
 
-Resolve the reviewer mode per [SKILL.md § Agent Lifecycle](../SKILL.md#agent-lifecycle):
+Resolve the reviewer mode per [references/skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
 
 ```bash
 .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0

@@ -89,9 +89,6 @@ count is worse than the long file: prefer the raise.
 3. A file whose only top-level items are inherent `impl` blocks on a type
    its parent declares. That file is part 2 of the type by construction.
 
-A file header that justifies the file's existence by a line threshold is
-the author writing down that the seam is not real.
-
 **Raising a row** (`RATCHET_RAISE=1` on the invocation, reason in the
 commit body) is correct in exactly two cases, both for hand-written files:
 1. The added lines are the fix for the reported symptom and the file has
@@ -111,9 +108,6 @@ The baseline is policy input, not a measured file. A self row is stale and
 every rewrite removes it, so seed, update, and staged tightening converge in
 one run.
 
-**A threshold change requires a fragment sweep.** In either direction it
-strands the splits made under the previous number: a repo that loosens already
-holds those fragments, a repo that tightens is about to create them. A seam
-that fits only the old number is not evidence of a seam. A change of UNIT is
-a change of threshold too, since the number a path is judged against moves.
+**A threshold change requires a fragment sweep**, in either direction, and a
+change of UNIT is a change of threshold.
 [references/threshold-change.md](references/threshold-change.md).

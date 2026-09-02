@@ -16,7 +16,7 @@ tags: [review]
 
 # Second Opinion
 
-Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPINION_MODELS` roster in priority order and takes the first target that is available and runs a different model: Codex from a Claude Code session, Claude from a Codex session; when nothing eligible remains the run refuses and says why. The full contract is `second-opinion --help`: options, target selection and identity rules, environment keys and defaults, review scope and stamping, output clearing and ownership, option syntax, and exit codes.
+Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPINION_MODELS` roster in priority order and takes the first target that is available and runs a different model: Codex from a Claude Code session, Claude from a Codex session; when nothing eligible remains the run refuses and says why. Full contract: `second-opinion --help`.
 
 ```bash
 .agents/skills/second-opinion/scripts/second-opinion <mode> [options]
@@ -53,12 +53,10 @@ Cross-model is enforced in every mode: a run with no eligible target exits 1 nam
 
 ## Configuration
 
-Set non-sensitive defaults in `kendex.settings.toml` under `[env]`; `.env.local` wins over it, and a `.env` file is never read. `SECOND_OPINION_CURRENT_MODEL` and `SECOND_OPINION_FOREGROUND_CAP` are session-only; a project-file foreground-cap declaration is refused, and shipped workflows pass `--foreground` directly. This skill marks no key `# required`, so an install writes nothing into `kendex.settings.toml`; assign a key there only to change a default the scripts already read (`SECOND_OPINION_CURRENT_MODEL` and `SECOND_OPINION_TARGET` have none). Keys, defaults, and the built-in `claude`/`codex` commands: `second-opinion --help`.
+Set non-sensitive defaults in `kendex.settings.toml` under `[env]`; `.env.local` wins over it, and a `.env` file is never read. `SECOND_OPINION_FOREGROUND_CAP` is session-only; a project-file foreground-cap declaration is refused, and shipped workflows pass `--foreground` directly. This skill marks no key `# required`, so an install writes nothing into `kendex.settings.toml`; assign a key there only to change a default the scripts already read (`SECOND_OPINION_CURRENT_MODEL` and `SECOND_OPINION_TARGET` have none). Keys, defaults, and the built-in `claude`/`codex` commands: `second-opinion --help`.
 
 ## Error Handling
 
 On script failure, stderr carries a JSON error object (`{"error": "description", "target": "codex"}`) or a plain `Error:` line for pre-flight configuration errors; exit codes, preserved-response paths, and the output-clearing/ownership rules are in `second-opinion --help`. Report the stated reason. An ineligible-target refusal is fixed by installing the CLI or adjusting `SECOND_OPINION_<NAME>_CMD`, `SECOND_OPINION_MODELS`, or `SECOND_OPINION_CURRENT_MODEL`, never by forcing the same model. For a timeout, suggest a larger `--timeout` or a narrower `--range`.
-
-Callers budget review passes **per pushed head** (`qa_metadata.reviewed_head`). A new head is a new round. Downstream freshness checks (`orch review-artifact-check --file <path> [delegated_at]`) validate filesystem mtime and independently reject self-reported no-review artifacts (reason `no_review`) and qa-shaped artifacts missing their finding arrays (reason `incomplete`), regardless of verdict.
 
 If the script fails during the orch `review-pr` or `submit-pr` (local pre-PR review) workflows, **continue**. External review is advisory.

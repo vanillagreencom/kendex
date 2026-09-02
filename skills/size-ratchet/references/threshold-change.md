@@ -11,13 +11,18 @@ the repo already had a prose size rule: seeding records no row for an
 under-threshold fragment, so the repo inherits that rule's fragments and
 nothing else points at them.
 
+A change in either direction strands the splits made under the previous
+number: a repo that loosens already holds those fragments, a repo that
+tightens is about to create them.
+
 Sweep the tracked files whose deciding threshold, or its unit, differs
 between the old configuration and the new (`git ls-files`, minus the
 exclusion list).
 
 ## Predicates
 
-Each one names a candidate, not a verdict. Read the file before acting.
+Each one names a candidate, not a verdict. Read the file before acting. A
+seam that fits only the old number is not evidence of a seam.
 
 1. **One real importer.** A non-barrel source file whose exported names are
    imported by exactly one other file. Separate re-exports from imports before
