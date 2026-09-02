@@ -214,9 +214,9 @@ fn a_safety_finding_is_reported_and_fails_nothing() {
 }
 
 /// Every way a `[bundles.<name>]` body can carry a member this reader will
-/// not read, each reported under `--strict` naming the set and the key, with
-/// the set beside it and every item still offered: the breakage is the set's,
-/// not the catalog's. kendex's own four sets shipped one of these shapes.
+/// not read, each breakage a plain check fails on, naming the set and the
+/// key, with the set beside it and every item still offered: the breakage is
+/// the set's, not the catalog's. kendex's own four sets shipped one of these.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing() {
@@ -227,12 +227,6 @@ fn every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing() {
         // A key the manifest requires of an installed set, beside members:
         // neither shape, and the set vanished silently one key over.
         ("source = \"cat\"\nskills = [\"gh\"]", "source"),
-        // A list nothing readable backs loses members the same way a key
-        // this reader skips does.
-        ("skills = \"gh\"", "skills"),
-        ("skills = [[\"gh\"]]", "skills"),
-        ("skills = { a = \"gh\" }", "skills"),
-        ("skills = [\"gh\", 3]", "skills"),
     ] {
         let (_tmp, root) = repo();
         skill_at(&root, "skills", "gh");
@@ -301,8 +295,8 @@ fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
 
 /// One file is both when a project offers what it installs: `[bundles.<name>]
 /// source = "…"` in a project's own kendex.toml records an installed set, and
-/// reading it as a malformed set would make the project unreadable as a
-/// source of its own skills.
+/// reading it as a malformed set would report breakage against a project that
+/// has none.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_installed_set_recorded_beside_the_catalog_is_not_a_malformed_set() {

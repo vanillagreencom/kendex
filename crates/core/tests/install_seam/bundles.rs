@@ -324,8 +324,8 @@ fn an_unreadable_set_keeps_its_installed_members_and_names_the_key() {
     );
     let said = report.notes.join(" | ");
     assert!(
-        said.contains("source 'cat': kendex.toml"),
-        "the catalog's own finding is not carried: {said}"
+        said.contains("source 'cat': kendex.toml") && said.contains("version"),
+        "the catalog's own finding, naming the key, is not carried: {said}"
     );
     for wrong in [
         "offers no set by that name",

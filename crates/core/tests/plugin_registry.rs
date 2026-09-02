@@ -444,9 +444,9 @@ fn a_set_whose_catalog_cannot_be_read_names_it_in_the_plan() {
 }
 
 /// A registry catalog's `[bundles]` table is dead weight — its plugins are
-/// its sets — so a key nothing reads there costs it nothing, the way a
-/// kendex.toml that is not even parseable TOML is only a finding here:
-/// the registry outranks the control file.
+/// its sets — so a body nothing reads there is reported and costs the catalog
+/// nothing else: not the items it offers, not its check, not its orphan
+/// sweep. The registry outranks the control file.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_registry_catalogs_bundles_table_cannot_brick_it() {
@@ -471,8 +471,10 @@ fn a_registry_catalogs_bundles_table_cannot_brick_it() {
     let config = kendex_core::source::source_config(&sealed, "market").unwrap();
     assert!(
         !config.hides_content(),
-        "a table nothing reads made the source answer with less than it offers"
+        "a table nothing reads hid the source"
     );
+    let report = kendex_core::check_catalog::check_with(&sealed, &config, "market").unwrap();
+    assert_eq!(report.failing(false), 0, "{:?}", report.catalog);
 }
 
 /// A plugin is a set already, and `add --bundle` installs it as one. A plugin

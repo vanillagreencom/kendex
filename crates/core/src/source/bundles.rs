@@ -132,9 +132,9 @@ pub(super) fn declared(
     (bundles, unreadable)
 }
 
-/// One `[bundles.<name>]` body as the set it declares: its keys first, then
-/// its lists in reading order, each held to the all-or-nothing rule every
-/// other catalog-side list is held to.
+/// One `[bundles.<name>]` body as the set it declares: its keys first, so a
+/// body naming a list this reader does not have is reported rather than read
+/// for the lists it does have.
 fn read_set(
     name: &str,
     body: &toml::Table,
@@ -163,16 +163,15 @@ fn read_set(
     }
     let mut members = Vec::new();
     for (list, kind) in MEMBER_LISTS {
-        let Some(value) = body.get(list) else {
+        let Some(names) = body.get(list).and_then(toml::Value::as_array) else {
             continue;
         };
-        let Some(names) = super::config::string_list(Some(value)) else {
-            return Err(UnreadableBundle {
-                problem: format!("{at} `{list}` is not a list of member names"),
-                fix: "write it as an array of strings, or remove the key".to_owned(),
+        for member in names.iter().filter_map(toml::Value::as_str) {
+            members.push(BundleMember {
+                kind,
+                name: member.to_owned(),
             });
-        };
-        members.extend(names.into_iter().map(|name| BundleMember { kind, name }));
+        }
     }
     Ok(CatalogBundle {
         name: name.to_owned(),

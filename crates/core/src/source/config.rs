@@ -216,13 +216,20 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
     // its other sets and every item — still installs.
     let (readable, unreadable) = bundles::declared(table);
     config.bundles = readable;
+    // A plugin-registry catalog's plugins are its sets and this table is
+    // dead weight nothing reads, so a body in it is reported and recorded
+    // nowhere: what is not in the map cannot be read as this source hiding
+    // content, or as a set an install would refuse.
+    let offers_them = config.plugin_registry.is_none();
     for (name, problem) in unreadable {
         config.config_findings.push(CatalogFinding::new(
             crate::manifest::MANIFEST_FILE,
             problem.problem.clone(),
             problem.fix,
         ));
-        config.unreadable_bundles.insert(name, problem.problem);
+        if offers_them {
+            config.unreadable_bundles.insert(name, problem.problem);
+        }
     }
     if let Some(mapping) = table.get("agent-skills").and_then(|t| t.as_table()) {
         for (agent, skills) in mapping {
@@ -255,10 +262,8 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
 }
 
 /// A list of strings and nothing else — a member of any other type makes
-/// the whole value unreadable rather than a shorter list. The one judge of
-/// the lists read out of this control file's tables — `[catalog]`, the
-/// skill mappings, a set's member lists — so none of them is ever short.
-pub(super) fn string_list(value: Option<&toml::Value>) -> Option<Vec<String>> {
+/// the whole value unreadable rather than a shorter list.
+fn string_list(value: Option<&toml::Value>) -> Option<Vec<String>> {
     let list = value?.as_array()?;
     list.iter().map(|v| v.as_str().map(str::to_owned)).collect()
 }
