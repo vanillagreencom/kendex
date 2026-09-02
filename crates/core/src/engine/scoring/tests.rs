@@ -71,7 +71,7 @@ fn input_identity_keeps_item_name_and_kind() {
 
 #[test]
 fn different_results_stay_separate() {
-    let rows = rows(vec![
+    let differing = rows(vec![
         desired_hook(
             HarnessId::Claude,
             "PreToolUse",
@@ -84,13 +84,28 @@ fn different_results_stay_separate() {
         ),
     ]);
 
-    assert_eq!(rows.len(), 2, "different findings need separate blocks");
-    assert_eq!(rows[0].advisory.safety.score, rows[1].advisory.safety.score);
-    assert_ne!(rows[0].advisory.findings, rows[1].advisory.findings);
+    assert!(
+        differing.len() == 2
+            && differing[0].advisory.safety.score == differing[1].advisory.safety.score
+            && differing[0].advisory.findings != differing[1].advisory.findings
+    );
     let mut skipped = crate::quality::sample::populated();
     let before = skipped.grouping_key("skills/gh");
     skipped.skipped[0].reason.push('!');
     assert_ne!(before, skipped.grouping_key("skills/gh"));
+
+    let quality = rows(vec![
+        desired_agent(
+            HarnessId::Claude,
+            b"---\nname: clean\ndescription: checks work\n---\nCheck the work.",
+        ),
+        desired_agent(HarnessId::Codex, b""),
+    ]);
+    assert_ne!(quality[0].advisory.quality, quality[1].advisory.quality);
+    assert_eq!(
+        harnesses(&safety_rows(&quality)[0]),
+        [HarnessId::Claude, HarnessId::Codex]
+    );
 }
 
 #[test]
@@ -109,7 +124,10 @@ fn matching_hook_findings_group_across_labeled_locations() {
     ]);
 
     assert_eq!(audits, 2, "different hook renderings need separate audits");
-    assert_eq!(harnesses(&rows[0]), [HarnessId::Claude, HarnessId::Gemini]);
+    assert_eq!(
+        harnesses(&safety_rows(&rows)[0]),
+        [HarnessId::Claude, HarnessId::Gemini]
+    );
 }
 
 fn harnesses(row: &ItemSafety) -> Vec<HarnessId> {
@@ -138,6 +156,10 @@ fn audited(items: Vec<crate::engine::desired::Desired>) -> (usize, Vec<ItemSafet
 
 fn desired(name: &str, harness: HarnessId, bytes: &[u8]) -> crate::engine::desired::Desired {
     desired_document(ItemKind::Skill, name, harness, bytes)
+}
+
+fn desired_agent(harness: HarnessId, bytes: &[u8]) -> crate::engine::desired::Desired {
+    desired_document(ItemKind::Agent, "clean", harness, bytes)
 }
 
 fn desired_document(

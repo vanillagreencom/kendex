@@ -1712,10 +1712,7 @@ export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "
 export type ItemSafety = {
 	kind: ItemKind,
 	name: string,
-	/**
-	 *  Planned rows group renderings with the same result. Installed rows
-	 *  describe one scanned installation each.
-	 */
+	/**  Groups equal plan content; installed rows describe one scan. */
 	targets: SafetyTarget[],
 	scope: Scope,
 } & AuditResult;

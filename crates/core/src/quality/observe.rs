@@ -51,6 +51,13 @@ impl AuditInput {
 }
 
 impl AuditResult {
+    /// The normalized fields printed in a CLI safety block.
+    pub fn safety_grouping_key(&self, root: &str) -> AuditResult {
+        let mut key = self.grouping_key(root);
+        key.quality = None;
+        key
+    }
+
     /// A complete result key with harness-root paths reduced to the place
     /// inside each rendering. Equal keys can share one reported block.
     pub(crate) fn grouping_key(&self, root: &str) -> AuditResult {

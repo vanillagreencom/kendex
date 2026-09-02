@@ -52,7 +52,7 @@ fn a_critical_finding_is_reported_and_installs_anyway() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_audit_reports_every_installed_row() {
-    let f = fixture();
+    let f = fixture_with_two_harnesses();
     let report = plan(&f);
     apply::execute(&f.env, &report.plan).unwrap();
 
@@ -75,38 +75,14 @@ fn the_audit_reports_every_installed_row() {
         "{:?}",
         clean.advisory.skipped
     );
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn installed_rows_name_the_harness_and_location_the_scanner_found() {
-    let f = fixture_with_two_harnesses();
-    let report = plan(&f);
-    apply::execute(&f.env, &report.plan).unwrap();
-
-    let rows: Vec<_> = kendex_core::engine::observed_rows(&f.env, &f.scope)
-        .unwrap()
-        .into_iter()
-        .filter(|row| matches!(row.name.as_str(), "clean" | "hostile"))
-        .collect();
-    assert_eq!(
-        rows.len(),
-        2 * HarnessId::ALL.len(),
-        "the scanner should return each harness that reads the installs"
-    );
-    for harness in HarnessId::ALL {
-        let harness_dir = if harness == HarnessId::Claude {
+    assert_eq!(rows.len(), 2 * HarnessId::ALL.len());
+    for row in rows {
+        let harness_dir = if row.targets[0].harness == HarnessId::Claude {
             ".claude"
         } else {
             ".agents"
         };
-        for name in ["clean", "hostile"] {
-            let row = rows
-                .iter()
-                .find(|row| row.name == name && row.targets[0].harness == harness)
-                .unwrap();
-            assert_eq!(row.targets.len(), 1);
-            assert!(row.targets[0].location.contains(harness_dir), "{row:?}");
-        }
+        assert_eq!(row.targets.len(), 1);
+        assert!(row.targets[0].location.contains(harness_dir), "{row:?}");
     }
 }

@@ -63,7 +63,7 @@ pub use expansion::{NO_PER_PACKAGE_UPDATE, plans_per_package};
 pub use item_source::ItemSource;
 pub use observed::observed_rows;
 pub use planned::{PlannedDeclaration, planned_declarations};
-pub use scoring::{ItemSafety, SafetyTarget};
+pub use scoring::{ItemSafety, SafetyTarget, safety_rows};
 
 /// The conservative "cannot prove these bytes are our render" hold.
 pub use removal::edit_holds;

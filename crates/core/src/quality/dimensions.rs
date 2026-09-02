@@ -17,7 +17,7 @@ use specta::Type;
 
 use super::{Content, Prepared, TreeFile};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DimensionScore {
     pub dimension: String,
@@ -25,7 +25,7 @@ pub struct DimensionScore {
     pub score_percent: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AntiPattern {
     pub flag: String,
@@ -33,7 +33,7 @@ pub struct AntiPattern {
     pub remediation: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct QualityScore {
     pub score: u32,

@@ -111,9 +111,9 @@ const UNMANAGED_SHOWN: usize = 10;
 /// What the safety rules found in the content this plan would write —
 /// advisory, printed beside the plan.
 pub fn print_safety(report: &EngineReport) {
-    let mut rows: Vec<&kendex_core::engine::ItemSafety> = report.safety.iter().collect();
+    let mut rows = kendex_core::engine::safety_rows(&report.safety);
     rows.sort_by_key(|row| row.advisory.safety.score);
-    for row in rows {
+    for row in &rows {
         print_advisory(
             row.kind,
             &row.name,

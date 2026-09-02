@@ -31,8 +31,7 @@ use super::desired::DesiredState;
 pub struct ItemSafety {
     pub kind: ItemKind,
     pub name: String,
-    /// Planned rows group renderings with the same result. Installed rows
-    /// describe one scanned installation each.
+    /// Groups equal plan content; installed rows describe one scan.
     pub targets: Vec<SafetyTarget>,
     pub scope: Scope,
     /// Flattened, so every reader of a serialized row — the app, the CLI,
@@ -51,7 +50,29 @@ pub struct SafetyTarget {
     pub location: String,
 }
 
-/// Audit byte-distinct renderings once, then group matching results for output.
+/// Combine identical CLI safety blocks without changing engine rows.
+pub fn safety_rows(rows: &[ItemSafety]) -> Vec<ItemSafety> {
+    let mut grouped = Vec::<ItemSafety>::new();
+    for row in rows {
+        let root = &row.targets[0].location;
+        let key = row.advisory.safety_grouping_key(root);
+        if let Some(existing) = grouped.iter_mut().find(|existing| {
+            existing.kind == row.kind
+                && existing.name == row.name
+                && existing
+                    .advisory
+                    .safety_grouping_key(&existing.targets[0].location)
+                    == key
+        }) {
+            existing.targets.extend(row.targets.iter().cloned());
+        } else {
+            grouped.push(row.clone());
+        }
+    }
+    grouped
+}
+
+/// Audit each byte-distinct rendering once.
 pub(super) fn run(scope: &Scope, state: &DesiredState) -> Vec<ItemSafety> {
     run_with(scope, state, crate::quality::audit)
 }
@@ -63,7 +84,6 @@ fn run_with(
 ) -> Vec<ItemSafety> {
     let mut rows: Vec<ItemSafety> = Vec::new();
     let mut input_rows: HashMap<(String, String), usize> = HashMap::new();
-    let mut result_rows: HashMap<(ItemKind, String, AuditResult), usize> = HashMap::new();
     for item in &state.items {
         let input = input_for(item);
         let input_key = (item.name.clone(), input.content_hash());
@@ -76,30 +96,14 @@ fn run_with(
             continue;
         }
 
-        let advisory = audit(input);
-        let result_key = (
-            item.kind,
-            item.name.clone(),
-            advisory.grouping_key(&target.location),
-        );
-        let row = match result_rows.get(&result_key) {
-            Some(&row) => {
-                rows[row].targets.push(target);
-                row
-            }
-            None => {
-                let row = rows.len();
-                rows.push(ItemSafety {
-                    kind: item.kind,
-                    name: item.name.clone(),
-                    targets: vec![target],
-                    scope: scope.clone(),
-                    advisory,
-                });
-                result_rows.insert(result_key, row);
-                row
-            }
-        };
+        let row = rows.len();
+        rows.push(ItemSafety {
+            kind: item.kind,
+            name: item.name.clone(),
+            targets: vec![target],
+            scope: scope.clone(),
+            advisory: audit(input),
+        });
         input_rows.insert(input_key, row);
     }
     rows

@@ -328,7 +328,7 @@ pub trait AuditRule: Send + Sync {
 }
 
 /// A rule that applies here but could not run, and why.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SkippedRule {
     pub rule: String,
@@ -346,7 +346,7 @@ pub struct SkippedRule {
 /// keys those embedders already occupy: `kind`, `name`, `targets`, `scope`,
 /// `notes`, `contentHash`, `fromCache`, `format` and
 /// `discovery`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AuditResult {
     pub findings: Vec<Finding>,
