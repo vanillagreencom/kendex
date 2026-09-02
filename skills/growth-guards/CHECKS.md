@@ -340,9 +340,10 @@ uppercase issue keys (`fix(ABC-123): ...`) and issue numbers
 longer header is a body sentence on the line every log shows.
 
 **The changelog a commit owes.** When `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS`
-(empty by default) names a glob a path the commit changes matches, it must also
-add or modify a path under `GROWTH_GUARDS_CHANGELOG_PATHS` — the fragment
-scope changelog-entries judges, resolved by the same library — or carry
+(empty by default) names a glob that a path the commit changes matches, the
+commit must also add or modify a path under `GROWTH_GUARDS_CHANGELOG_PATHS`
+— the fragment scope changelog-entries judges, resolved by the same library
+— or carry
 `[no-changelog]` in the header. Deleting a fragment is not writing one, so
 evidence is a path that comes out of the commit carrying content it did not
 carry at that path before: a blob where there was none, a blob that changed,
@@ -352,7 +353,7 @@ there was none), or the destination of a rename. A mode and a sha together
 are what identify a record; either alone lets a transition through. What that path became is changelog-entries'
 judgement, running beside this one.
 
-The staged list comes from `--raw`, the spelling `todo-ban` and
+The commit's file list comes from `--raw`, the spelling `todo-ban` and
 `byte-ceiling` already use, with rename detection pinned rather than
 inherited. A raw record carries the old and new mode and the old and new blob
 for every path, so what the commit did to a file is read off the record
@@ -368,12 +369,29 @@ what was staged ON TOP of the commit an amend replaces, so a fragment already
 inside that commit read as no fragment at all and the lane refused a commit
 that satisfied it — with the escape being the flag that skips the whole hook
 chain. git tells a `commit-msg` hook nothing about an amend, so the lane reads
-it off the argv of the `git commit` process it is a descendant of: only when
-`GIT_INDEX_FILE` says this run is a hook git started, and only from the
-nearest `git` ancestor, which is the command doing the committing. Anything
-unreadable — no `/proc`, the process already gone, no `git` in eight
-generations — is not an amend, so the lane widens only where it can prove the
-parent moved.
+it off the argv of the `git commit` process it is a descendant of, in
+`/proc/<pid>/cmdline`: only when `GIT_INDEX_FILE` says this run is a hook git
+started, and only from the nearest `git` ancestor, which is the command doing
+the committing. That argv is read the way git's own parser reads it — the
+scan stops at the bare `--`, steps over the argument a value-taking option
+consumes, and takes the kernel's NUL delimiters so an argument carrying
+whitespace or a newline stays one argument — so a message or a pathspec
+spelling `--amend` is a message or a pathspec, never the flag.
+
+Anything unreadable is not an amend: the process already gone, no `git` in
+eight generations, or no `/proc` at all — which is every macOS host, where
+argv is not on the filesystem. There the widening never fires and an amend is
+judged against the HEAD it replaces, exactly as before this rule read the
+parent. So the lane widens only where it can prove the parent moved, and a
+`ps` reading is deliberately not the fallback: `ps` joins argv with spaces, so
+a message merely CONTAINING `--amend` would excuse a commit.
+
+A rebase `reword` or `edit` runs `git commit --amend` as a child of the
+rebase, so it is an amend by this reading and judged against the whole
+historical commit. Rewording a commit that changes a required path and
+predates the rule needs `[no-changelog]` in the reworded header. A plain
+all-`pick` rebase and an autosquash fixup are unaffected: the sequencer
+commits those in-process, with no `git commit` ancestor to read.
 
 `GROWTH_GUARDS_CHANGELOG_RECORD` counts as that entry only under
 `GROWTH_GUARDS_CHANGELOG_COLLATE=1`, the same declaration the record scope

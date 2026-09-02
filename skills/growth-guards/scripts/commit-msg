@@ -226,7 +226,7 @@ if [ -n "$REQUIRED" ]; then
   git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
     $GG_COMMIT_BASE \
     >"$GG_TMP/raw.z" \
-    || gg_collection_error "could not read the staged file list — the changelog rule could not run"
+    || gg_collection_error "could not read the commit's file list — the changelog rule could not run"
 
   # What "written" MEANS, over the record's full identity: a mode and a sha
   # together, never a sha alone. Equal shas are TWO states, and only the modes
@@ -273,14 +273,14 @@ if [ -n "$REQUIRED" ]; then
   : >"$GG_TMP/written.z"
   while IFS= read -r -d '' meta; do
     IFS= read -r -d '' src \
-      || gg_collection_error "the staged file list ended mid-record after $(gg_shown "$meta") — the changelog rule could not run"
+      || gg_collection_error "the commit's file list ended mid-record after $(gg_shown "$meta") — the changelog rule could not run"
     # Record shape: ":srcmode dstmode srcsha dstsha status". Splitting is safe
     # under the `set -f` at the top of this file — the fields are modes, hex
     # and a letter, and none of them is a path.
     # shellcheck disable=SC2086
     set -- $meta
     [ "$#" -eq 5 ] \
-      || gg_collection_error "the staged file list carried a record of $# field(s), not five: $(gg_shown "$meta") — the changelog rule could not run"
+      || gg_collection_error "the commit's file list carried a record of $# field(s), not five: $(gg_shown "$meta") — the changelog rule could not run"
     srcmode="${1#:}"
     dstmode="$2"
     srcsha="$3"
@@ -292,7 +292,7 @@ if [ -n "$REQUIRED" ]; then
         ;;
       R*)
         IFS= read -r -d '' dest \
-          || gg_collection_error "the staged file list ended before the destination of a $(gg_shown "$status") record — the changelog rule could not run"
+          || gg_collection_error "the commit's file list ended before the destination of a $(gg_shown "$status") record — the changelog rule could not run"
         printf '%s\0' "$src" "$dest" >>"$GG_TMP/staged.z"
         printf '%s\0' "$dest" >>"$GG_TMP/written.z"
         continue

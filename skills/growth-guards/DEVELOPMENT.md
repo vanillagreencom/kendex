@@ -21,10 +21,12 @@ docs live in README.md.
   a commit header and a changelog ARE to this family: the two changelog
   scopes both lanes resolve from, and the grammars each is judged by, kept
   apart from the scans that run them
-- `scripts/lib/commit-parent.sh` — which parent a commit will HAVE, for the
-  lanes that judge a commit rather than an index: HEAD ordinarily, HEAD's own
-  parent for an amend, read off the argv of the `git commit` this hook
-  descends from because git tells a `commit-msg` hook nothing about one
+- `scripts/lib/commit-parent.sh` — which parent a commit will HAVE, for
+  `commit-msg`, the one lane that judges a commit rather than an index: HEAD
+  ordinarily, HEAD's own parent for an amend, read off the argv of the `git
+  commit` this hook descends from — in `/proc/<pid>/cmdline`, because git
+  tells a `commit-msg` hook nothing about one — so a host without `/proc`,
+  macOS above all, keeps the older judgement of HEAD
 - `scripts/lib/changelog-record-scope.sh` — the record half of the
   `changelog-entries` judge: one tracked file against HEAD's copy, kept apart
   from the fragment-tree walk it shares nothing with but a verdict
