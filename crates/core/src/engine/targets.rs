@@ -90,6 +90,47 @@ pub(super) fn opencode_instruction_prefix(scope: &Scope) -> &'static str {
     }
 }
 
+/// A project-scope hook command: find the script above the working
+/// directory, then run it.
+///
+/// `rel` is the script's place under the project root, and nothing else in
+/// the command names a directory, so the text is the same on every machine.
+/// It has to be: a project registry is a file repositories commit, and a
+/// rendered absolute path would make each clone's copy differ and churn on
+/// every apply. `$(git rev-parse --show-toplevel)` was machine-independent
+/// and wrong instead — kendex installs into a project that is no git
+/// repository, where it substitutes nothing (`engine::posture`), and into
+/// one below the git top level, where it substitutes the enclosing tree's
+/// root (`guard::repo`). Claude Code needs none of this: it publishes a
+/// project root in a variable.
+///
+/// The walk looks for the script itself, not for a project marker: the
+/// harness read this registry by walking up from its working directory for
+/// its own config, so the project the registration came from is an
+/// ancestor, and it is the one that holds `rel`. A marker would be a proxy
+/// for that, and a wrong one — a nested `.claude/` stops a marker walk
+/// short, and a Copilot-only project has no marker directory at all.
+///
+/// The start is refused unless it is absolute: a working directory removed
+/// under the session leaves `pwd` answering `.`, and a walk from there
+/// never reaches `/`. When nothing from the start up holds the script, the
+/// command refuses, naming the start and the file: a hook that did not run
+/// must not read as one that allowed.
+///
+/// `rel` goes through [`crate::names::quoted`], never interpolated inside
+/// double quotes, so a segment holding a `$` or a backtick is read as the
+/// segment it is. It is assigned first, before the walk, because it is also
+/// what names this hook to a reader: [`crate::hook::command_stem`] takes the
+/// command's first path-shaped word.
+fn project_command(rel: &str) -> String {
+    format!(
+        "p={}; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; \
+while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || {{ r=${{r%/*}}; [ -n \"$r\" ] || r=/; }}; done; \
+[ -n \"$r\" ] || {{ echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }}; bash \"$r/$p\"",
+        crate::names::quoted(rel),
+    )
+}
+
 pub(crate) fn hook_target(
     env: &Env,
     scope: &Scope,
@@ -130,9 +171,7 @@ pub(crate) fn hook_target(
             let path = root.join("hooks").join(format!("{name}.sh"));
             let command = match scope {
                 Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
-                Scope::Project { .. } => {
-                    format!("bash \"$(git rev-parse --show-toplevel)/.codex/hooks/{name}.sh\"")
-                }
+                Scope::Project { .. } => project_command(&format!(".codex/hooks/{name}.sh")),
             };
             Some(HookTarget::Script {
                 path,
@@ -172,7 +211,7 @@ pub(crate) fn hook_target(
         // script is ours to place; `.gemini/hooks` is not a surface Gemini
         // scans, so nothing reads it except the command we register.
         // Gemini documents no project-directory variable, so the project
-        // command resolves through the repo root itself.
+        // command finds the root itself (`project_command`).
         HarnessId::Gemini => Some(dotted_script_hook(
             env,
             scope,
@@ -228,10 +267,9 @@ fn pi_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
     let path = crate::harness::pi::hook_path(&root, name);
     let command = match scope {
         Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
-        Scope::Project { .. } => format!(
-            "bash \"$(git rev-parse --show-toplevel)/.pi/{}\"",
-            crate::harness::pi::hook_rel(name)
-        ),
+        Scope::Project { .. } => {
+            project_command(&format!(".pi/{}", crate::harness::pi::hook_rel(name)))
+        }
     };
     HookTarget::Script {
         path,
@@ -259,9 +297,7 @@ fn dotted_script_hook(
     let path = root.join("hooks").join(format!("{name}.sh"));
     let command = match scope {
         Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
-        Scope::Project { .. } => {
-            format!("bash \"$(git rev-parse --show-toplevel)/{dot}/hooks/{name}.sh\"")
-        }
+        Scope::Project { .. } => project_command(&format!("{dot}/hooks/{name}.sh")),
     };
     HookTarget::Script {
         path,
@@ -277,24 +313,19 @@ fn dotted_script_hook(
 /// script beside it is invisible to that glob (matrix §2, §R5). Only a file
 /// is a switch: an entry inline in a settings file has no flag to flip.
 fn copilot_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
-    let (dir, command) = match scope {
-        Scope::Global => {
-            let dir = adapter(HarnessId::Copilot)
-                .default_global_root(env)
-                .join("hooks");
-            let command = format!(
-                "bash \"{}\"",
-                crate::paths::slashed(&dir.join(format!("{name}.sh")))
-            );
-            (dir, command)
-        }
-        Scope::Project { root } => (
-            root.join(".github/hooks"),
-            format!("bash \"$(git rev-parse --show-toplevel)/.github/hooks/{name}.sh\""),
-        ),
+    let dir = match scope {
+        Scope::Global => adapter(HarnessId::Copilot)
+            .default_global_root(env)
+            .join("hooks"),
+        Scope::Project { root } => root.join(".github/hooks"),
+    };
+    let path = dir.join(format!("{name}.sh"));
+    let command = match scope {
+        Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
+        Scope::Project { .. } => project_command(&format!(".github/hooks/{name}.sh")),
     };
     HookTarget::Script {
-        path: dir.join(format!("{name}.sh")),
+        path,
         command,
         registry: dir.join(format!("{name}.json")),
         format: HookFormat::Copilot,

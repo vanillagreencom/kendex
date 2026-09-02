@@ -394,11 +394,11 @@ fn a_recorded_entry_moved_by_hand_does_not_hold_the_hook() {
     assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
 }
 
-/// A render that changes the command's spelling — the machine's own path
-/// giving way to one a clone can follow — is a move like any other: the
-/// entry the record names comes out, and the current spelling goes in alone.
-/// Keyed on the rendered command, the upsert would find nothing to replace
-/// and the hook would fire twice on the machine that installed it.
+/// A render that changes the command's spelling — a git subshell giving way
+/// to the project's own path — is a move like any other: the entry the record
+/// names comes out, and the current spelling goes in alone. Keyed on the
+/// rendered command, the upsert would find nothing to replace and the hook
+/// would fire twice on the machine that installed it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_spelled_another_way_replaces_the_entry_it_left() {
@@ -424,30 +424,31 @@ fn a_command_spelled_another_way_replaces_the_entry_it_left() {
             .map(|handler| handler["command"].as_str().unwrap().to_owned())
             .collect()
     };
-    let portable = commands();
-    assert_eq!(portable.len(), 1);
-    assert!(portable[0].contains("git rev-parse"), "{portable:?}");
+    let rendered = commands();
+    assert_eq!(rendered.len(), 1);
+    assert!(
+        rendered[0].contains("p='.codex/hooks/guard.sh'"),
+        "{rendered:?}"
+    );
 
-    // What an older kendex left: the machine's path, in the document and
-    // in the record alike.
-    let absolute = format!("bash {}", f.project.join(".codex/hooks/guard.sh").display());
-    fs::write(
-        &registry,
-        fs::read_to_string(&registry)
-            .unwrap()
-            .replace(&portable[0].replace('"', "\\\""), &absolute),
-    )
-    .unwrap();
-    assert_eq!(commands(), vec![absolute.clone()], "the rewrite took");
+    // What an older kendex left: the subshell that asked git for the root,
+    // in the document and in the record alike.
+    let deferred = "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/guard.sh\"".to_owned();
+    let mut document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+    document["hooks"]["PreToolUse"][0]["hooks"][0]["command"] =
+        serde_json::Value::String(deferred.clone());
+    fs::write(&registry, serde_json::to_string_pretty(&document).unwrap()).unwrap();
+    assert_eq!(commands(), vec![deferred.clone()], "the rewrite took");
     let lock_path = f.project.join(".kendex-lock.json");
     let mut lock: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
     lock["entries"]["hook:guard:codex"]["registration"]["command"] =
-        serde_json::Value::String(absolute);
+        serde_json::Value::String(deferred);
     fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
     apply_now(&f);
 
-    assert_eq!(commands(), portable, "one entry, spelled the new way");
+    assert_eq!(commands(), rendered, "one entry, spelled the new way");
     let settled = audit(&f.env, &f.scope).unwrap();
     assert!(settled.plan.ops.is_empty(), "{:?}", settled.plan.ops);
 }

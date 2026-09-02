@@ -33,14 +33,10 @@ export interface RegisteredHook {
 	 * The script that command runs, for a hook kendex rendered: the file under
 	 * the same root the registration was read from, spawned directly.
 	 *
-	 * The command kendex writes for a project-scope hook spells its path
-	 * `$(git rev-parse --show-toplevel)/.pi/…`, and git's answer is not always
-	 * kendex's: a vendored checkout inside a project is its own git root while
-	 * kendex renders — and this reads — at the project above it, and a project
-	 * with no git at all has no answer to give. Both would run the wrong file
-	 * or none, and the substitution is a shell expansion this never has to
-	 * perform. So a hook of ours is spawned at the path the registry it came
-	 * from anchors, which is where kendex wrote it. A command that is not ours
+	 * The registry is the anchor, not the walk the command carries: a project
+	 * the person copied elsewhere, or read through a symlink, is still the
+	 * root this registration was just read out of, and the walk is a shell
+	 * expansion this never has to perform. A command that is not one of ours
 	 * has no such path and is run as written.
 	 */
 	script?: string;
@@ -91,13 +87,31 @@ function matches(matcher: unknown, toolName: string): boolean {
 	}
 }
 
-/** The guard name a registered command runs, or `""` where `engine::targets::pi_hook` did not write that command for this scope. */
-export function renderedName(root: string, command: string, scope: "project" | "global"): string {
-	const name = command.slice(command.lastIndexOf("/") + 1, -4);
+/**
+ * The script a registered command runs, or `""` for a command kendex did not
+ * write. `engine::targets` writes two shapes and no others: a global command
+ * names the file outright, `bash "<path>"`, and a project command opens by
+ * naming the file under the project it will go and find, `p='<path>'; …`.
+ * Both are read here, and `anchor` is what a project path is relative to —
+ * the project this registry was read from.
+ */
+function renderedScript(command: string, anchor: string | undefined): string {
+	const relative = /^p='((?:[^']|'\\'')*)';/.exec(command);
+	if (relative !== null) {
+		return anchor === undefined ? "" : resolve(anchor, relative[1]!.replaceAll("'\\''", "'"));
+	}
+	const word = command.startsWith('bash "') && command.endsWith('"') ? command.slice(6, -1) : "";
+	return word === "" ? "" : resolve(word);
+}
+
+/** The guard name a registered command runs, or `""` where `engine::targets::pi_hook` did not write that command for this root. */
+export function renderedName(root: string, command: string, anchor: string | undefined): string {
+	const script = renderedScript(command, anchor);
+	const file = script.slice(script.lastIndexOf("/") + 1);
+	if (!file.endsWith(".sh")) return "";
+	const name = file.slice(0, -3);
 	if (name === "") return "";
-	if (scope === "project") return command === `bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/${name}.sh"` ? name : "";
-	const quoted = command.startsWith('bash "') && command.endsWith('"') ? command.slice(6, -1) : "";
-	return quoted !== "" && resolve(quoted) === resolve(root, "hooks", `${name}.sh`) ? name : "";
+	return script === resolve(root, "hooks", `${name}.sh`) ? name : "";
 }
 
 /** A `readFileSync` failure that means the file is simply not there. */
@@ -121,7 +135,7 @@ function scriptGone(script: string): boolean {
 }
 
 /** The registrations one scope root holds for a listener, in file order. */
-function readRegistry(root: string, listener: string, toolName: string, scope: "project" | "global"): RegistryRead {
+function readRegistry(root: string, listener: string, toolName: string, anchor: string | undefined): RegistryRead {
 	const path = resolve(root, "hooks.json");
 	const hooks: RegisteredHook[] = [];
 	let position = 0;
@@ -146,7 +160,7 @@ function readRegistry(root: string, listener: string, toolName: string, scope: "
 				const timeout = typeof hook.timeout === "number" && Number.isFinite(hook.timeout) && hook.timeout > 0
 					? hook.timeout * 1000
 					: undefined;
-				const name = renderedName(root, hook.command, scope);
+				const name = renderedName(root, hook.command, anchor);
 				hooks.push({
 					command: hook.command,
 					name,
@@ -199,9 +213,9 @@ export function registeredHooks(listener: string, toolName: string, project: str
 
 	const answering: RegistryRead[] = [];
 	if (project !== undefined && trusted) {
-		answering.push(readRegistry(resolve(project, ".pi", "kendex"), listener, toolName, "project"));
+		answering.push(readRegistry(resolve(project, ".pi", "kendex"), listener, toolName, project));
 	}
-	answering.push(readRegistry(resolve(piUserDir(), "kendex"), listener, toolName, "global"));
+	answering.push(readRegistry(resolve(piUserDir(), "kendex"), listener, toolName, undefined));
 
 	for (const read of answering) {
 		unreadable ??= read.unreadable;

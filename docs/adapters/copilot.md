@@ -50,7 +50,7 @@ Enforced: Copilot runs the command and honours the exit code. Events map to Copi
 | `Stop` | `agentStop` |
 | `SubagentStop` | `subagentStop` |
 
-Copilot's other events (`postToolUseFailure`, `userPromptTransformed`, `subagentStart`, `errorOccurred`) have no fleet counterpart and stay unmapped, with a note. Each hook gets a file of its own, `<name>.json` beside `<name>.sh`, in the shape `{"version": 1, "hooks": {"<event>": [{"type": "command", "bash": …, "matcher": …, "timeoutSec": …}]}}`; timeouts are seconds under `timeoutSec`, and a file left holding no hooks keeps its version line (`crates/core/src/configedit/copilot.rs`). At project scope the command resolves through `$(git rev-parse --show-toplevel)`. Disabling renames the script to `.disabled` and reverses the entry in the document.
+Copilot's other events (`postToolUseFailure`, `userPromptTransformed`, `subagentStart`, `errorOccurred`) have no fleet counterpart and stay unmapped, with a note. Each hook gets a file of its own, `<name>.json` beside `<name>.sh`, in the shape `{"version": 1, "hooks": {"<event>": [{"type": "command", "bash": …, "matcher": …, "timeoutSec": …}]}}`; timeouts are seconds under `timeoutSec`, and a file left holding no hooks keeps its version line (`crates/core/src/configedit/copilot.rs`). At project scope the command finds the project root when it runs ([Hook commands](README.md#hook-commands)). Disabling renames the script to `.disabled` and reverses the entry in the document.
 
 Agent scoping: none; only `agents = "all"` custom hooks are enforced.
 

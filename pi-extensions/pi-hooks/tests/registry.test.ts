@@ -9,6 +9,7 @@ import {
 	initRustRepo,
 	installToolCallHandler,
 	readLog,
+	projectCommand,
 	registerProjectHook,
 	registerRendered,
 	renderStub,
@@ -72,11 +73,9 @@ describe("pi-hooks registry dispatch", () => {
 		}
 	});
 
-	// The command kendex registers for a project hook spells its path
-	// `$(git rev-parse --show-toplevel)/.pi/…`. Running that command verbatim
-	// would ask git which project this is, and git answers the nested checkout
-	// — where kendex rendered nothing. The guard the project installed has to
-	// run anyway, so the path comes from the registry's own root.
+	// A session started inside a vendored checkout is in its own git root,
+	// where kendex rendered nothing. The project whose guards these are is the
+	// one this registry was read from, and the script is the one it anchors.
 	test("a session inside a nested git checkout still runs the project's guard", async () => {
 		const project = initCleanRustRepo("pi-hooks-nested-");
 		const nested = join(project, "vendor", "dep");
@@ -211,21 +210,28 @@ describe("pi-hooks registry dispatch", () => {
 		const targets = readFileSync(join(crate, "engine", "targets.rs"), "utf8");
 		const piHook = targets.match(/fn pi_hook\(env: &Env, scope: &Scope, name: &str\) -> HookTarget \{([\s\S]*?)\n\}/);
 		expect(piHook, "fn pi_hook not found in crates/core/src/engine/targets.rs").not.toBeNull();
-		const templates = [...piHook![1]!.matchAll(/"(bash \\"[^"]*\{\}[^"]*\\")"/g)].map(([, template]) => template!.replaceAll('\\"', '"'));
-		expect(templates.length, `no command templates in fn pi_hook: ${piHook![1]}`).toBe(2);
-		const root = "/x/.pi/kendex";
-		for (const template of templates) {
-			// The project template's `{}` is the tail under `.pi/`, the global's
-			// the whole path — and each is kendex's only under its own scope.
-			const project = template.includes("$(git");
-			const filled = template.replace("{}", project ? "kendex/hooks/guard.sh" : `${root}/hooks/guard.sh`);
-			expect(renderedName(root, filled, project ? "project" : "global"), template).toBe("guard");
-			expect(renderedName(root, filled, project ? "global" : "project"), template).toBe("");
-		}
-		// A command of the person's that names such a path is not one of ours,
+		// The global arm writes the path outright; the project arm hands the
+		// script's place under the project to `project_command`, which is what
+		// `projectCommand` renders here out of that function. A rename or a
+		// respelling on the Rust side throws there.
+		const globalTemplate = piHook![1]!.match(/format!\("(bash \\"\{\}\\")"/);
+		expect(globalTemplate, `no global command template in fn pi_hook: ${piHook![1]}`).not.toBeNull();
+		expect(piHook![1]!, "fn pi_hook no longer renders its project command through project_command").toContain("project_command(&format!(");
+
+		const project = "/x";
+		const root = `${project}/.pi/kendex`;
+		const script = `${root}/hooks/guard.sh`;
+		expect(renderedName(root, globalTemplate![1]!.replaceAll('\\"', '"').replace("{}", script), undefined)).toBe("guard");
+		expect(renderedName(root, projectCommand(".pi/kendex/hooks/guard.sh"), project)).toBe("guard");
+		// A project command read out of the global registry names a file no
+		// scope anchors, and is the person's own as far as this can tell.
+		expect(renderedName(root, projectCommand(".pi/kendex/hooks/guard.sh"), undefined)).toBe("");
+		// A command of the person's that names a file some other root holds is
+		// not ours, nor is one naming a script outside the rendered directory —
 		// and one spelling of this root is every spelling of it.
-		expect(renderedName(root, 'bash "/opt/kendex/hooks/guard.sh"', "global")).toBe("");
-		expect(renderedName("/srv/pi-agent/kendex", 'bash "/srv/old/../pi-agent/kendex/hooks/guard.sh"', "global")).toBe("guard");
+		expect(renderedName(root, 'bash "/opt/kendex/hooks/guard.sh"', undefined)).toBe("");
+		expect(renderedName(root, projectCommand(".pi/kendex/guard.sh"), project)).toBe("");
+		expect(renderedName("/srv/pi-agent/kendex", 'bash "/srv/old/../pi-agent/kendex/hooks/guard.sh"', undefined)).toBe("guard");
 
 		const vocab = readFileSync(join(crate, "render", "vocab", "mod.rs"), "utf8");
 		const table = vocab.match(/pub fn claude_tool_name\(tool: &str\) -> String \{([\s\S]*?)\n\}/);

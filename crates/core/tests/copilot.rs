@@ -190,9 +190,11 @@ fn a_hook_registers_in_a_hook_file_of_its_own() {
     assert_eq!(registered["version"], 1);
     let entry = &registered["hooks"]["preToolUse"][0];
     assert_eq!(entry["type"], "command");
-    assert_eq!(
-        entry["bash"],
-        "bash \"$(git rev-parse --show-toplevel)/.github/hooks/audit.sh\""
+    let command = entry["bash"].as_str().unwrap();
+    assert!(command.contains("p='.github/hooks/audit.sh'"), "{command}");
+    assert!(
+        !command.contains(&*f.project.to_string_lossy()),
+        "{command}"
     );
     // The same `Bash` the source declares, said in Copilot's tool names —
     // a case-sensitive regex of Claude's spelling would match nothing.

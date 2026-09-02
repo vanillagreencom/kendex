@@ -153,9 +153,10 @@ fn one_hook_reaches_each_harness_in_its_own_native_form() {
     );
 
     assert!(at(".codex/hooks/audit.sh").is_file());
-    assert_eq!(
-        json(&at(".codex/hooks.json"))["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-        "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/audit.sh\""
+    assert!(
+        json(&at(".codex/hooks.json"))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .is_some_and(|c| c.contains("p='.codex/hooks/audit.sh'"))
     );
     assert!(
         fs::read_to_string(at(".codex/config.toml"))
@@ -182,9 +183,10 @@ fn one_hook_reaches_each_harness_in_its_own_native_form() {
     // Pi rides the pi-hooks carrier: the script lands beside a registry
     // spoken in pi's own listener names.
     assert!(at(".pi/kendex/hooks/audit.sh").is_file());
-    assert_eq!(
-        json(&at(".pi/kendex/hooks.json"))["hooks"]["tool_call"][0]["hooks"][0]["command"],
-        "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/audit.sh\""
+    assert!(
+        json(&at(".pi/kendex/hooks.json"))["hooks"]["tool_call"][0]["hooks"][0]["command"]
+            .as_str()
+            .is_some_and(|c| c.contains("p='.pi/kendex/hooks/audit.sh'"))
     );
     assert!(is_clean(&f));
 }

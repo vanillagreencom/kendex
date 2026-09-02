@@ -48,10 +48,10 @@ fn codex_registers_in_hooks_json_and_enables_the_feature() {
     else {
         panic!("codex hooks are script targets");
     };
-    assert_eq!(
-        command,
-        "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/guard.sh\""
-    );
+    assert_eq!(command, project_command(".codex/hooks/guard.sh"));
+    // The whole text names no directory outside the project, so every clone
+    // of a repository that commits this registry reads the same bytes.
+    assert!(!command.contains("/p"), "{command}");
     assert_eq!(registry, PathBuf::from("/p/.codex/hooks.json"));
     assert_eq!(feature, Some(PathBuf::from("/p/.codex/config.toml")));
 }
@@ -97,7 +97,7 @@ fn instruction_references_are_scope_relative_and_cursor_is_project_only() {
         hook_target(&env, &scope, HarnessId::Pi, "guard"),
         Some(HookTarget::Script {
             path: PathBuf::from("/p/.pi/kendex/hooks/guard.sh"),
-            command: "bash \"$(git rev-parse --show-toplevel)/.pi/kendex/hooks/guard.sh\"".into(),
+            command: project_command(".pi/kendex/hooks/guard.sh"),
             registry: PathBuf::from("/p/.pi/kendex/hooks.json"),
             format: HookFormat::Nested,
             feature: None,
@@ -124,10 +124,7 @@ fn a_copilot_hook_gets_a_document_of_its_own_beside_its_script() {
         panic!("copilot hooks are script targets");
     };
     assert_eq!(path, PathBuf::from("/p/.github/hooks/audit.sh"));
-    assert_eq!(
-        command,
-        "bash \"$(git rev-parse --show-toplevel)/.github/hooks/audit.sh\""
-    );
+    assert_eq!(command, project_command(".github/hooks/audit.sh"));
     assert_eq!(registry, PathBuf::from("/p/.github/hooks/audit.json"));
     assert_eq!(format, HookFormat::Copilot);
     assert_eq!(feature, None);

@@ -49,7 +49,7 @@ Enforced: regex matchers over tool names, exit codes honoured. Events map to Gem
 | `SessionStart`, `SessionEnd`, `Notification` | same |
 | `BeforeModel`, `AfterModel`, `BeforeToolSelection`, `BeforeAgent`, `AfterAgent` | same |
 
-An event with no counterpart registers nothing, with a note. Timeouts are milliseconds: the source declares seconds and the registration multiplies by 1000. The script lands at `<root>/hooks/<name>.sh`, and at project scope the command resolves through `$(git rev-parse --show-toplevel)`. A matcher carrying regex syntax around a tool name is registered as authored and reported.
+An event with no counterpart registers nothing, with a note. Timeouts are milliseconds: the source declares seconds and the registration multiplies by 1000. The script lands at `<root>/hooks/<name>.sh`, and at project scope the command finds the project root when it runs ([Hook commands](README.md#hook-commands)). A matcher carrying regex syntax around a tool name is registered as authored and reported.
 
 Agent scoping: none; only `agents = "all"` custom hooks are enforced, and scoped ones render as advisory prose in the agent files.
 
