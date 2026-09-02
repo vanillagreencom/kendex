@@ -55,7 +55,7 @@ AGENTS.md § Code Review Rules   .coderabbit.yaml
 .github/copilot-instructions.md .pr_agent.toml + best_practices.md
 .github/instructions/*.md       .macroscope/
 ```
-A `[[surface]]` reaches Copilot, CodeRabbit and Macroscope. Only Macroscope honors `exclude_globs`, so narrow `globs` where scoping matters. Keys: [schemas/repo-toml.md](schemas/repo-toml.md). Validators: [schemas/validators.md](schemas/validators.md).
+A `[[surface]]` reaches Copilot, CodeRabbit and Macroscope, plus Qodo through `best_practices.md` when `[bots] qodo_best_practices` is on. Only Macroscope honors `exclude_globs`, so narrow `globs` where scoping matters. Keys: [schemas/repo-toml.md](schemas/repo-toml.md). Validators: [schemas/validators.md](schemas/validators.md).
 
 - `render` writes every enabled surface after validating it.
 - `check` re-renders and diffs, reading the index under `--staged`.
@@ -90,10 +90,10 @@ A doctrine edit ships a version bump. The marker records the spec copy's version
 
 ## Doctrine
 
-The generator reads exactly one `## Doctrine` section from the spec copy named by `--spec`, or the running copy by default.
-Each `###` heading is a frozen block id.
-A block holds no repo, path, issue, or markdown that a YAML or TOML scalar cannot carry verbatim.
-Repo text goes in `bot-instructions.toml`.
+The generator reads exactly one `## Doctrine` section from the spec copy named by `--spec`, or the running copy by default, ending at the next level-one or level-two heading.
+Each `###` heading inside it is a frozen block id; a repeated id is an error.
+A section with no blocks or a block with no text is an error.
+A block holds no repo, path, issue, or markdown that a YAML or TOML scalar cannot carry verbatim; repo text goes in `bot-instructions.toml`.
 
 ### scope
 
