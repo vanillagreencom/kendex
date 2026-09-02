@@ -221,22 +221,6 @@ cache_unlock() {
     exec 200>&- || true
 }
 
-# Take the shared comment lock on fd 202, which the caller's redirection has
-# already opened. One lock across issues means two `linear.sh comments` runs on
-# different issues now contend where per-issue locks never did, so the wait is
-# bounded the way cache_lock bounds the sync lock. Hold time is one jq and one
-# mv, so 30s means a stuck holder, not a slow one.
-cache_comments_flock() {
-    if flock -n 202; then
-        return 0
-    fi
-    echo "Comment cache lock held, waiting..." >&2
-    if ! flock -w 30 202; then
-        echo "Comment cache lock timeout after 30s: $CACHE_COMMENTS_LOCK" >&2
-        return 1
-    fi
-}
-
 # =============================================================================
 # READ OPERATIONS
 # =============================================================================
@@ -502,7 +486,7 @@ cache_append_comment() {
     local comment_file="$CACHE_DIR/comments/$issue_id.json"
     cache_ensure_dir
     (
-        cache_comments_flock
+        flock 202
         if [[ -f "$comment_file" ]]; then
             jq --argjson new "$comment_json" '. + [$new]' \
                 "$comment_file" > "$comment_file.tmp"
@@ -521,7 +505,7 @@ cache_update_comment() {
     comment_id=$(echo "$comment_json" | jq -r '.id')
     [[ -n "$comment_id" && "$comment_id" != "null" ]] || return 0
     (
-        cache_comments_flock
+        flock 202
         # Merge: existing comment fields preserved, updated fields overwritten
         jq --argjson upd "$comment_json" \
             '[.[] | if .id == $upd.id then (. + $upd) else . end]' \
@@ -537,7 +521,7 @@ cache_delete_comment() {
         [[ -f "$f" ]] || continue
         if jq -e --arg id "$comment_id" 'any(.[]; .id == $id)' "$f" >/dev/null 2>&1; then
             (
-                cache_comments_flock
+                flock 202
                 jq --arg id "$comment_id" '[.[] | select(.id != $id)]' "$f" > "$f.tmp"
                 mv "$f.tmp" "$f"
             ) 202>"$CACHE_COMMENTS_LOCK"

@@ -86,13 +86,24 @@ assert_jq "with LINEAR_CACHE_ROOT unset the cache still comes from the git root"
 
 MISSING="$TMP_ROOT/no-such-root"
 ERR_FILE="$TMP_ROOT/err"
-refuse() { (cd "$PROJ" && LINEAR_CACHE_ROOT="$MISSING" bash "$LINEAR" cache issues get CC-1 --format=safe); }
-run_output OUT rc refuse 2>"$ERR_FILE"
+refuse() { (cd "$PROJ" && LINEAR_CACHE_ROOT="$1" bash "$LINEAR" cache issues get CC-1 --format=safe); }
+run_output OUT rc refuse "$MISSING" 2>"$ERR_FILE"
 
 assert_ne "a LINEAR_CACHE_ROOT naming no directory fails the command" "$rc" 0
 assert_file_contains "the refusal names the variable and the path it was given" \
   "$ERR_FILE" "LINEAR_CACHE_ROOT is not an existing directory: $MISSING"
 assert_eq "a refused read serves nothing from the standing repository's cache" "$OUT" ""
+
+# Set but empty is the same answer. It reads as absent to a `-n` test, which
+# would drop through to the git root and write the caller's fixtures into the
+# real cache, and the exit verdict below already treats it as a suite that let
+# the redirect go — the two sides of the contract have to agree.
+run_output OUT rc refuse "" 2>"$ERR_FILE"
+
+assert_ne "an empty LINEAR_CACHE_ROOT fails the command rather than reading as unset" "$rc" 0
+assert_file_contains "the refusal names the empty path it was given" \
+  "$ERR_FILE" "LINEAR_CACHE_ROOT is not an existing directory: "
+assert_eq "an empty root serves nothing from the standing repository's cache" "$OUT" ""
 
 # --- D. a comment write leaves no lock file beside the issue ----------------
 
