@@ -233,6 +233,25 @@ assert_eq "$(cat "$live_state/tmp/workflow-state-KEN-LIVE.json" | jq -r ".rebase
 
 # One test per conjunct of the gate: deleting any of them reds the suite.
 
+# The record's existence is the conjunct that decides in the PERMISSIVE
+# direction, so only a passing push can prove it. An implement round mints a
+# round id through new-round-id and never runs dev-round-write, so its state
+# names a round with no record at all: without this check every such push would
+# refuse, and a suite of refusal assertions alone would call that correct.
+(cd "$live_state" && "$STATE" set KEN-LIVE dev_round_id 9-9)
+assert_eq "$([[ -e "$live_wt/tmp/dev-round-KEN-LIVE-9-9.json" ]] && echo present || echo absent)" "absent" \
+  "control: the implement round names a round id with no record on disk"
+: > "$live_args"
+# A mapping this state has never seen, so only THIS push can have recorded it.
+STUB_ARGS_LOG="$live_args" STUB_PUSH_STDOUT="rebase-map: $OLD_B $NEW_A" \
+  run_push "$live_state" --worktree "$live_wt" --issue KEN-LIVE
+assert_eq "$RUN_RC" "0" "a round id with no record does not block the push"
+assert_eq "$([[ -s "$live_args" ]] && echo ran || echo no)" "ran" \
+  "the unblocked implement round reaches the push"
+assert_eq "$(cat "$live_state/tmp/workflow-state-KEN-LIVE.json" | jq -r ".rebase_map[\"$OLD_B\"]")" \
+  "$NEW_A" "the unblocked implement round still reconciles its map"
+(cd "$live_state" && "$STATE" set KEN-LIVE dev_round_id 1-1)
+
 # The token is path-forming. Before the deleted reconcile_round_authorizations
 # validated it, `../../x` composed a probe that resolved nowhere and let the
 # push through in silence.
