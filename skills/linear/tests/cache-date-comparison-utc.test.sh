@@ -8,8 +8,7 @@
 # host. Off UTC the cut moved by the whole offset, so within that window either
 # side of a cycle boundary `current` named a cycle that had not started (east of
 # UTC) or the previous one, or nothing at all where no earlier cycle was
-# incomplete (west of it). Nothing caught it, because every fixture cycle in this
-# suite's neighbours sits months out and CI runs UTC.
+# incomplete (west of it).
 #
 # So TZ is PINNED here, not read from the host, and the fixture's cycles sit
 # hours from now — inside the offset. The assertions state the UTC answer, which
@@ -18,8 +17,8 @@
 # The same helpers carry the second defect: with no cycle running, prev/next and
 # past/upcoming fell back to a POSITION in the date-sorted list rather than to a
 # date, which inverted both answers — a cycle that has not started was reported
-# as the previous one, to the read cycle planning consumes. So each fixture below
-# carries TWO cycles on the side under test, or a helper returning them in the
+# as the previous one, to the read cycle planning consumes. The second fixture
+# carries two cycles on each side of now, because a helper returning them in the
 # wrong order reads as green off a one-element list.
 #
 # Fully offline — pure cache reads, no curl needed.
@@ -53,9 +52,8 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 LINEAR="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 CACHE="$TMP_ROOT/.cache/linear"
 
-# UTC+14, no DST, so the pin is the same offset in every month of the year. At
-# this offset the local-time form reads as fourteen hours into tomorrow, which
-# is what puts a cycle starting in six hours on the wrong side of every cut.
+# UTC+14, no DST, so the pin is the same offset in every month of the year, and
+# far enough ahead that the local-time form reads as tomorrow.
 TZ_PIN="Pacific/Kiritimati"
 
 # jq's `now`, not `date -d '+6 hours'`: the suite already depends on jq, and
@@ -65,8 +63,7 @@ at() { jq -rn --argjson off "$1" '(now + $off) | todate | sub("Z$"; ".000Z")'; }
 
 cycles() { printf '%s\n' "$1" >"$CACHE/cycles.json"; }
 
-# Only startsAt and progress decide any selection under test; endsAt rides along
-# because the formatter prints it.
+# endsAt rides along because the formatter prints it.
 cycle_record() { # name team starts-offset ends-offset progress
   jq -cn --arg n "$1" --arg t "$2" --arg s "$(at "$3")" --arg e "$(at "$4")" --argjson p "$5" \
     '{id: ("uuid-" + $n), number: 1, name: $n, startsAt: $s,
@@ -95,6 +92,7 @@ printf '%s\n' '[]' >"$CACHE/projects.json"
 # window that widened is as visible as one that narrowed.
 jq -cn '[$ARGS.positional[] | fromjson]' --args \
   "$(issue_record IN-OLD old -7200)" \
+  "$(issue_record IN-LINGERING lingering -7200)" \
   "$(issue_record IN-RUNNING running -7200)" \
   "$(issue_record IN-SOON soon 21600)" \
   "$(issue_record STALE "" -54000)" \
@@ -112,18 +110,24 @@ ids() { jq -r '[.[].id] | sort | join(",")' <<<"$1"; }
 # --- A cycle is running: every site must agree on WHICH one ------------------
 #
 # `running` started two hours ago and is incomplete; `soon` starts in six, and
-# `old` finished long ago. Under the local-time form at +14 all three read as
+# `old` finished long ago. Under the local-time form at +14 all of them read as
 # already started, and `soon`, being the later start, wins every "most recently
 # started" selection.
+#
+# `lingering` is the reason the working cycle is MOST RECENTLY started rather
+# than merely started: a Linear cycle that ends with unfinished issues keeps
+# progress < 1, so two incomplete started cycles at once is the ordinary shape,
+# and taking the wrong end of them puts every site on the same wrong cycle.
 cycles "$(jq -cn --argjson a "$(cycle_record old KEN -3456000 -2246400 1)" \
-  --argjson b "$(cycle_record running KEN -7200 1123200 0.5)" \
-  --argjson c "$(cycle_record soon KEN 21600 1231200 0)" '[$a, $b, $c]')"
+  --argjson b "$(cycle_record lingering KEN -1728000 -518400 0.9)" \
+  --argjson c "$(cycle_record running KEN -7200 1123200 0.5)" \
+  --argjson d "$(cycle_record soon KEN 21600 1231200 0)" '[$a, $b, $c, $d]')"
 
 assert_eq "cache issues list --cycle current resolves the running cycle, not the one starting later today" \
   "$(ids "$(run cache issues list --cycle current --all-projects 2>/dev/null)")" "IN-RUNNING"
 
 assert_eq "cache issues list --cycle previous is the cycle before the running one" \
-  "$(ids "$(run cache issues list --cycle previous --all-projects 2>/dev/null)")" "IN-OLD"
+  "$(ids "$(run cache issues list --cycle previous --all-projects 2>/dev/null)")" "IN-LINGERING"
 
 assert_eq "cache issues list --cycle next is the cycle after the running one" \
   "$(ids "$(run cache issues list --cycle next --all-projects 2>/dev/null)")" "IN-SOON"
@@ -136,12 +140,12 @@ assert_eq "session-status reports the running cycle as the working one" \
   "$(jq -r '.cycle.name // "none"' <<<"$status")" "running"
 
 # The `Nd` cutoff is the same encoding with a smaller blast radius: it lands the
-# offset away from where it should. STALE was updated fifteen hours ago, inside
-# a one-day window and outside the ten-hour window the local-time form leaves;
-# OUTSIDE, at thirty hours, is outside both and must stay out.
+# offset away from where it should. STALE sits inside the one-day window and
+# outside the narrower one the local-time form leaves; OUTSIDE sits beyond both
+# and must stay out.
 assert_eq "cache issues list --updated-since keeps the UTC window and no more" \
   "$(ids "$(run cache issues list --updated-since 1d --all-projects 2>/dev/null)")" \
-  "IN-OLD,IN-RUNNING,IN-SOON,STALE"
+  "IN-LINGERING,IN-OLD,IN-RUNNING,IN-SOON,STALE"
 
 # session-status reports research as a count, so the two-issue straddle is what
 # makes it discriminating: one inside the seven days, one at ten days out.

@@ -10,8 +10,7 @@
 # offset, so within that window either side of a cycle boundary the answer is
 # wrong: east of UTC `current` names a cycle that has not started, and west of
 # it `current` names the previous cycle, or nothing at all when no earlier cycle
-# is incomplete. Real cycles start at 07:00Z, so the window is seven hours per
-# boundary; the reported case hit it squarely (KEN-1175).
+# is incomplete (KEN-1175).
 
 # Now, in the shape the cache stores.
 cache_now_utc() {
@@ -29,11 +28,11 @@ cache_utc_days_ago() {
 # The cycle a team is working in: the most recently started cycle that is not
 # finished. Reads the cycle array on stdin, prints that cycle or `null`.
 #
-# One definition because three commands select it — `cache issues list --cycle`,
-# `cache cycles list --type`, and `session-status`. As three copied expressions
-# their no-working-cycle fallbacks had already drifted apart: `cache issues
-# list` refused, `cache cycles list` returned the whole date-sorted set, and
-# `session-status` took the ends of that list, which inverted previous and next.
+# One definition, called from `cache issues list --cycle`, `cache cycles list
+# --type` and `session-status`. As copied expressions their no-working-cycle
+# fallbacks had already drifted apart: `cache issues list` refused, `cache
+# cycles list` returned the whole date-sorted set, and `session-status` took
+# the ends of that list, which inverted previous and next.
 cache_working_cycle() {
     jq --arg today "$(cache_now_utc)" \
         '[.[] | select(.startsAt <= $today and .progress < 1)] | sort_by(.startsAt) | last // null'
