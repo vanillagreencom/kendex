@@ -47,13 +47,17 @@ are pinned in `test/actions.test.ts`: the `packages/` layout, the
 
 The script is best-effort for npm's sake: given `install` or `remove` it exits
 0 on every failure and reports only on stderr. (Any other argv exits 1, which
-the manager never produces.) `append-system.ts` therefore reads a stderr line
-beginning `append-system.mjs:` as the failure, not any stderr at all, since
-`runCommand` inherits the environment and node's own warnings would otherwise
-read as one. It warns with the action, package dir and the script's own lines,
+the manager never produces.) `append-system.ts` therefore treats a stderr line
+beginning with the script's own name as the failure signal, not any stderr at
+all, since `runCommand` inherits the environment and node's own warnings would
+otherwise read as one. It warns with the action, package dir and the script's own lines,
 and returns false; every caller folds that into what the user sees. The spawn
 carries a bounded timeout and `SIGKILL`, because a package-supplied script runs
 on Pi's TUI thread.
+
+The script is the only thing that removes a block, so a package directory that
+has already gone leaves one nothing can clear. Both uninstall paths report that
+and name the marker to delete by hand, rather than reporting success.
 
 The npm uninstall path runs the removal before `npm uninstall`, because npm 7+
 does not reliably run a removed package's own `preuninstall` and the script is

@@ -216,9 +216,10 @@ export function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, optio
 	}
 	const coercedFromRunning = wasRunning && !pidStillAlive;
 
-	// Only the running->stopped coercion below produces a false
-	// (replay-eligible) value. Foreign-session snapshots are pinned to
-	// notified=true so cross-session leaks are impossible.
+	// A same-session snapshot is replay-eligible unless its persisted
+	// exitNotified is true: the running->stopped coercion forces false, and an
+	// absent or false flag stays false. Foreign-session snapshots are pinned
+	// true so cross-session leaks are impossible.
 	let exitNotified: boolean;
 	if (coercedFromRunning && !foreignSession) {
 		exitNotified = false;
@@ -272,8 +273,9 @@ export function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, optio
 // recover from running->stopped coercion in restoredTaskFromSnapshot or
 // a session_shutdown that killed tasks without notifying the agent.
 //
-// restoredTaskFromSnapshot is the only path that flips exitNotified to
-// false, and only on a fresh running->stopped coercion.
+// A same-session snapshot is replay-eligible unless its persisted
+// exitNotified is true: the running->stopped coercion forces false, and an
+// absent or false flag stays false.
 export function selectMissedExits<T extends Pick<BackgroundTaskSnapshot, "status" | "notifyOnExit" | "exitNotified">>(
 	tasks: Iterable<T>,
 ): T[] {

@@ -240,12 +240,13 @@ test("a failed append-system strip is reported at every uninstall and toggle sit
 	const inv = buildInventory({} as never, { cwd: project } as never);
 	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/failpkg")!;
 	const orphanOutcome = runUninstall({ item, method: { kind: "settings-only" } } as never, inv);
+	expect(orphanOutcome.message).toContain("could not be removed and is now stale");
 	expect(orphanOutcome.message).toContain("still on disk, so retry");
 
 	// npm succeeds and deletes the tree, so the stale block is permanent.
 	const outcome = runUninstall(planUninstall(item, inv, { cwd: project } as never)!, inv);
 	expect(outcome.ok).toBe(true);
-	expect(outcome.message).toContain("could not be removed before the package tree was deleted");
+	expect(outcome.message).toContain("could not be removed and is now stale");
 });
 
 // runCommand inherits the environment, so node's own stderr is not a verdict.
@@ -445,5 +446,36 @@ test("a killed script is reported as the deadline, a missing one as a launch fai
 	} finally {
 		console.warn = warn;
 	}
+});
+
+// The orphan branch's own population: a settings entry whose package tree has
+// already gone. Nothing on disk can remove the block, so the uninstall has to
+// say so rather than report success.
+test("an orphan uninstall whose package directory is gone names the stale block", async () => {
+	const { buildInventory } = await import("../extensions/manager/inventory.ts");
+	const { runUninstall } = await import("../extensions/manager/actions.ts");
+	const project = join(rootTmp, "project");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const packageDir = join(userPi, "npm", "node_modules", "@scope", "gonepkg");
+	mkdirSync(join(project, ".pi"), { recursive: true });
+	writeJson(join(userPi, "settings.json"), { packages: ["npm:@scope/gonepkg"] });
+	writeAppendSystemPackage(packageDir, "@scope/gonepkg");
+	await useSandboxedSpawn();
+
+	// Its block is written, then the tree disappears, which is the state the
+	// orphan branch exists for.
+	expect(runVendoredScript(packageDir, "install").status).toBe(0);
+	const target = join(userPi, "APPEND_SYSTEM.md");
+	expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
+
+	const inv = buildInventory({} as never, { cwd: project } as never);
+	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/gonepkg")!;
+	rmSync(packageDir, { force: true, recursive: true });
+
+	const outcome = runUninstall({ item, method: { kind: "settings-only" } } as never, inv);
+	expect(outcome.message).toContain("could not be removed and is now stale");
+	expect(outcome.message).toContain("kendex:append-system @scope/gonepkg begin");
+	// Still there, which is exactly why the message has to name it.
+	expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
 });
 

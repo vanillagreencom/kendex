@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join, sep } from "node:path";
 import { removeAppendSystemBlockForUninstall, restoreAppendSystemBlockAfterFailedUninstall, syncAppendSystemForPackage } from "./append-system.js";
 import { stringifyError } from "./format.js";
@@ -121,6 +121,19 @@ function appendSystemRestoreNote(item: InventoryItem, wasDisabled: boolean): str
 		: " Its APPEND_SYSTEM.md block was removed before the uninstall and could not be restored; toggle the package off and on to rewrite it.";
 }
 
+// The script is the only thing that removes a block, so when it could not run
+// the block outlives the package. Name the marker, since nothing left on disk
+// can delete it and the user has to.
+function staleBlockNote(item: InventoryItem): string {
+	const name = item.packageName ?? item.sourceName;
+	const head = ` Its APPEND_SYSTEM.md block could not be removed and is now stale:`;
+	// A package tree still on disk can be tried again; one that has gone takes
+	// the only thing that could remove the block with it.
+	return item.packageDir && existsSync(item.packageDir)
+		? `${head} the package directory is still on disk, so retry the uninstall.`
+		: `${head} delete the lines from "<!-- kendex:append-system ${name} begin -->" to the matching end marker in APPEND_SYSTEM.md.`;
+}
+
 // Same two inputs toggleItem derives currentlyDisabled from.
 function isDisabledAtUninstall(item: InventoryItem, inventory: Inventory): boolean {
 	return item.state === "disabled" || inventory.managerState.disabledItems.includes(item.id);
@@ -161,9 +174,7 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 		const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 		// npm has deleted the tree, and the script with it, so a failed strip is
 		// now permanent: nothing left can rewrite that file.
-		const blockNote = blockRemoved
-			? ""
-			: ` Its APPEND_SYSTEM.md block could not be removed before the package tree was deleted, so it is now stale; edit APPEND_SYSTEM.md to drop the ${plan.item.packageName ?? plan.item.sourceName} block by hand.`;
+		const blockNote = blockRemoved ? "" : staleBlockNote(plan.item);
 		return { ok: true, message: `npm uninstall ${plan.method.npmName} succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}${blockNote}` };
 	}
 	const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
@@ -171,9 +182,7 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 	// remove this package's APPEND_SYSTEM.md block too. The package dir stays
 	// on disk here, so a failed removal is retryable.
 	const orphanBlockRemoved = removeAppendSystemBlockForUninstall(plan.item);
-	const orphanBlockNote = orphanBlockRemoved
-		? ""
-		: " Its APPEND_SYSTEM.md block could not be removed; the package directory is still on disk, so retry the uninstall.";
+	const orphanBlockNote = orphanBlockRemoved ? "" : staleBlockNote(plan.item);
 	return stripped
 		? { ok: true, message: `Removed ${plan.item.sourceName} from ${plan.item.scope} settings.json.${orphanBlockNote}` }
 		: { ok: false, message: `Could not find a matching entry for ${plan.item.sourceName} in ${plan.item.scope} settings.json.${orphanBlockNote}` };

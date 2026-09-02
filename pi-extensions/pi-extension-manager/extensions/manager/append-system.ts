@@ -24,14 +24,22 @@ const APPEND_SYSTEM_TIMEOUT_MS = 10_000;
  * Everything it writes to stderr is surfaced here instead of dropped.
  */
 function runAppendSystemScript(packageDir: string | undefined, action: "install" | "remove"): boolean {
-	if (!packageDir) return true;
+	// A dir that is gone takes its manifest with it, so nothing here can say
+	// whether the package ever wrote a block. On `remove` that is a failure:
+	// the block may be sitting in APPEND_SYSTEM.md with nothing left to remove
+	// it. On `install` there is no package to install a block for.
+	if (!packageDir || !existsSync(packageDir)) {
+		if (action === "install") return true;
+		console.warn(`pi-extension-manager: cannot run append-system remove, the package directory (${packageDir ?? "unknown"}) is gone; any APPEND_SYSTEM.md block it left is still there`);
+		return false;
+	}
+	// The dir is here, so the manifest answers it: a package that declares no
+	// pi.appendSystem never had a block, either to write or to remove.
 	const script = join(packageDir, "scripts", SCRIPT_NAME);
 	if (!existsSync(script)) {
-		if (declaresAppendSystem(packageDir)) {
-			console.warn(`pi-extension-manager: ${packageDir} declares pi.appendSystem but ships no scripts/${SCRIPT_NAME}; APPEND_SYSTEM.md not updated`);
-			return false;
-		}
-		return true;
+		if (!declaresAppendSystem(packageDir)) return true;
+		console.warn(`pi-extension-manager: ${packageDir} declares pi.appendSystem but ships no scripts/${SCRIPT_NAME}; APPEND_SYSTEM.md not updated`);
+		return false;
 	}
 	const result = runCommand("node", [script, action], { cwd: packageDir, killSignal: "SIGKILL", timeout: APPEND_SYSTEM_TIMEOUT_MS });
 	const stderr = (result.stderr ?? "").trim();

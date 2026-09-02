@@ -13,7 +13,7 @@ import {
 import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { publishQuestionActivity, publishQuestionDebug } from "./activity.js";
 import { emitAnswerSteer } from "./answer-steer.js";

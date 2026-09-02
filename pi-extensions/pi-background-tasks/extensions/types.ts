@@ -159,8 +159,9 @@ export interface BackgroundTaskSnapshot {
 	// a session restart can replay missed exit wakeups for tasks that hit
 	// terminal state (notably the running->stopped coercion in
 	// restoredTaskFromSnapshot) without ever notifying the agent.
-	// Only running->stopped coercion at restore time produces
-	// exitNotified=false and replays.
+	// A same-session snapshot replays unless this flag is persisted true: the
+	// running->stopped coercion at restore forces false, and an absent or
+	// false flag stays false.
 	exitNotified?: boolean;
 	// Pi session id at the time the snapshot was persisted. Used at restore
 	// to gate replay ("this snapshot belongs to a different session"
