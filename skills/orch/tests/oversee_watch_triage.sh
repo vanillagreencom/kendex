@@ -145,24 +145,49 @@ new_case triage_skipped_without_team
 printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
 printf '[{"number":5,"headRefName":"issue-5","mergedAt":"2026-08-15T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
 err="$TMP_ROOT/triage-no-team"
-out="$(run_watch LINEAR_TEAM= -- --max-loops 1 --item issue-5 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch LINEAR_TEAM -- --max-loops 1 --item issue-5 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "an unset LINEAR_TEAM keeps the watch running" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT merged 5 issue-5" \
   "--since still serves the merged check with no team" "$err"
-assert_not_contains "$out" "EVENT triage" "an unset LINEAR_TEAM emits no triage event" "$err"
+assert_contains "$(cat "$err")" "LINEAR_TEAM is unset" "the unset team is named" "$err"
+
+# The case above exits on the merged event before check_triage runs, so triage
+# being off is proved here instead: a live tracker stub with a new item, and
+# nothing to wake the watch before the triage check.
+new_case triage_no_team_reaches_the_triage_check
+printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
+err="$TMP_ROOT/triage-no-team-reached"
+out="$(run_watch LINEAR_TEAM -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-08-15T09:00:00Z" \
+  "the run reaches the triage check and falls through to the heartbeat" "$err"
+assert_not_contains "$out" "EVENT triage" \
+  "a new tracker item emits no triage event with no team" "$err"
 tracker_called=no
 if [[ -e "$STUB_DIR/tracker.args" ]]; then tracker_called=yes; fi
-assert_eq "$tracker_called" "no" "an unset LINEAR_TEAM never reads the tracker" "$err"
-assert_eq "$(grep -c 'skipping the team triage check' "$err")" "1" \
-  "the skipped triage is named once on stderr" "$err"
-assert_contains "$(cat "$err")" "LINEAR_TEAM is unset" "the unset team is named" "$err"
+assert_eq "$tracker_called" "no" "a working tracker goes unread with no team" "$err"
 
 new_case triage_skipped_without_team_or_tracker
 err="$TMP_ROOT/triage-no-team-no-tracker"
-out="$(run_watch LINEAR_TEAM= OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/absent-tracker" -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+out="$(run_watch LINEAR_TEAM OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/absent-tracker" -- --max-loops 2 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "an unset LINEAR_TEAM runs a fleet with no tracker CLI" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-08-15T09:00:00Z" \
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" \
   "no team disarms the gate a missing dependency would close" "$err"
+assert_eq "$(grep -c 'skipping the team triage check' "$err")" "1" \
+  "the skip note is printed once, not once per pass" "$err"
+
+# An empty LINEAR_TEAM the parent environment exported shadows whatever team
+# kendex.settings.toml declares, and the gate cannot tell it from a project
+# with no team, so it refuses rather than silently watching without triage.
+new_case triage_refuses_a_shadowing_empty_team
+printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
+err="$TMP_ROOT/triage-empty-export"
+out="$(run_watch LINEAR_TEAM= -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "an exported-empty LINEAR_TEAM exits 2 under --since" "$err"
+assert_eq "$out" "" "an exported-empty LINEAR_TEAM emits no event" "$err"
+assert_contains "$(cat "$err")" "exported as an empty value" \
+  "the refusal names the empty export as the cause" "$err"
+assert_not_contains "$(cat "$err")" "skipping the team triage check" \
+  "the shadowed team is never read as a fleet with no team" "$err"
 
 new_case triage_unsets_inherited_state
 err="$TMP_ROOT/triage-state-inherited"

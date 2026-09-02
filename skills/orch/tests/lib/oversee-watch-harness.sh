@@ -346,8 +346,17 @@ new_case() {
 # token, stripped before the watch runs: it asks for no --repo at all, the
 # default path where the watch resolves the repository from `gh repo view`.
 run_watch() {
-  local env_args=() repo_args=(--repo owner/repo) watch_args=() arg
-  while [[ $# -gt 0 && "$1" != "--" ]]; do env_args+=("$1"); shift; done
+  local env_args=() repo_args=(--repo owner/repo) team_args=(LINEAR_TEAM=kendex) watch_args=() arg
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    # A bare LINEAR_TEAM, no `=`, drops the name from the child environment
+    # altogether — the shape `LINEAR_TEAM=` cannot express, since an exported
+    # empty value is its own case the script refuses.
+    case "$1" in
+      LINEAR_TEAM) team_args=() ;;
+      *) env_args+=("$1") ;;
+    esac
+    shift
+  done
   shift || true
   for arg in "$@"; do
     case "$arg" in
@@ -360,8 +369,9 @@ run_watch() {
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
            -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+           -u LINEAR_TEAM \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
-           LINEAR_TEAM="kendex" \
+           ${team_args[@]+"${team_args[@]}"} \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
            OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
