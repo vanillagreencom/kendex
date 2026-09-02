@@ -80,6 +80,7 @@ fn score(env: &Env, scope: &Scope) -> PackageSafety {
         },
         ItemKind::Skill,
         "gh",
+        None,
     )
     .unwrap()
 }
@@ -94,6 +95,7 @@ fn agent_safety(env: &Env, scope: &Scope) -> PackageSafety {
         },
         ItemKind::Agent,
         "helper",
+        None,
     )
     .unwrap()
 }

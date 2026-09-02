@@ -252,27 +252,34 @@ impl Browsed {
         }
     }
 
-    /// The source a name is already taken by, when it is not this one. A
-    /// fork counts too — `local` is a source like any other here.
+    /// The source a name is already taken by in `landing`, when it is not
+    /// this one. A fork counts too — `local` is a source like any other
+    /// here.
+    ///
+    /// `landing` is the scope the answer is about, the same parameter
+    /// [`Browsed::state`] takes: the engine judges invariant 4 against the
+    /// scope [`crate::engine::ops::add_seeded`] mutates, so the warning
+    /// shown before the click reads that scope's records. Only the records
+    /// move — whether a name is "ours" is the catalog's subscription name,
+    /// which is [`Browsed::owned_here`].
     ///
     /// A collision only the lock records goes unseen where the lock could
     /// not be read; nothing acts on that, because no row in such a scope
     /// offers an install for the engine to refuse — every standing the
     /// lock could have answered is [`InstallState::Unknown`], and the
     /// install surfaces gate on it.
-    ///
-    /// The scope is the BROWSED one, and stays so under a redirect: what
-    /// this reports is the name clash the catalog's own scope holds, while
-    /// invariant 4's refusal is judged where the install lands. Said here
-    /// rather than claimed away — the refusal is the engine's, and this
-    /// only shows what it can see before the click.
-    pub(super) fn collision(&self, kind: ItemKind, name: &str) -> Option<String> {
-        if let Some(decl) = self.records.manifest.declared(kind).get(name)
+    pub(super) fn collision(
+        &self,
+        landing: &Records,
+        kind: ItemKind,
+        name: &str,
+    ) -> Option<String> {
+        if let Some(decl) = landing.manifest.declared(kind).get(name)
             && !self.owned_here(&decl.source)
         {
             return Some(decl.source.clone());
         }
-        self.records
+        landing
             .lock
             .iter()
             .flat_map(|lock| lock.entries.values())
@@ -282,8 +289,10 @@ impl Browsed {
             .map(|entry| entry.source.clone())
     }
 
-    pub(super) fn bundle_collision(&self, name: &str) -> Option<String> {
-        self.records
+    /// The source a set's name is already taken by in `landing`, read the
+    /// same way and for the same reason as [`Browsed::collision`].
+    pub(super) fn bundle_collision(&self, landing: &Records, name: &str) -> Option<String> {
+        landing
             .manifest
             .bundles
             .get(name)

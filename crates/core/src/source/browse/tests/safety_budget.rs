@@ -66,6 +66,7 @@ fn a_finding_in_the_tail_reaches_the_preview_and_the_plan() {
         },
         ItemKind::Skill,
         "big",
+        None,
     )
     .unwrap();
     assert!(

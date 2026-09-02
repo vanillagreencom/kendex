@@ -227,6 +227,7 @@ struct Redirect {
     env: Env,
     browsing: Scope,
     destination: Scope,
+    source: std::path::PathBuf,
     browsed_lock: std::path::PathBuf,
     destination_lock: std::path::PathBuf,
 }
@@ -270,6 +271,7 @@ fn redirect() -> Redirect {
         env,
         browsing: Scope::Global,
         destination,
+        source,
         browsed_lock,
         destination_lock,
         _tmp: tmp,
@@ -316,6 +318,34 @@ impl Redirect {
             },
         );
         kendex_core::lock::save(&kendex_core::lock::lock_path(&self.env, scope), &lock).unwrap();
+    }
+
+    /// Declares `gh` and the `starter` set in one place from a source that
+    /// is not the catalog being browsed — the name clash invariant 4
+    /// refuses an install on.
+    #[allow(clippy::unwrap_used)]
+    fn claim_gh_in(&self, scope: &Scope) {
+        let path = self.manifest_path(scope);
+        let manifest = fs::read_to_string(&path).unwrap();
+        put(
+            &path,
+            &format!(
+                "{manifest}\n[sources.other]\npath = \"{}\"\n\n[skills.gh]\nsource = \"other\"\n\n[bundles.starter]\nsource = \"other\"\n",
+                self.source.display()
+            ),
+        );
+    }
+
+    /// Adds this place's own instructions to `gh`, which the catalog's
+    /// bytes do not carry and the preview therefore never scored.
+    #[allow(clippy::unwrap_used)]
+    fn inject_into_gh_in(&self, scope: &Scope) {
+        let path = self.manifest_path(scope);
+        let manifest = fs::read_to_string(&path).unwrap();
+        put(
+            &path,
+            &format!("{manifest}\n[skill-instructions]\ngh = \"house rules\"\n"),
+        );
     }
 
     /// Records that the person removed `gh` on purpose in one place.
@@ -497,5 +527,94 @@ fn a_members_standing_comes_from_the_place_the_install_lands_in() {
         member(&r),
         Some(InstallState::Available),
         "a removal in the scope being browsed says nothing about the project it lands in"
+    );
+}
+
+#[allow(clippy::unwrap_used)]
+fn redirected_preview(r: &Redirect) -> browse::PackagePreview {
+    browse::package_preview(
+        &r.env,
+        &catalog(&r.browsing),
+        ItemKind::Skill,
+        "gh",
+        Some(&r.destination),
+    )
+    .unwrap()
+}
+
+#[allow(clippy::unwrap_used)]
+fn redirected_safety(r: &Redirect) -> browse::PackageSafety {
+    browse::package_safety(
+        &r.env,
+        &catalog(&r.browsing),
+        ItemKind::Skill,
+        "gh",
+        Some(&r.destination),
+    )
+    .unwrap()
+}
+
+/// The name clash a page shows before the click is the one the engine's
+/// invariant 4 would refuse on, and the engine judges that against the
+/// scope it is handed. So the warning reads the destination's records, on
+/// the package page and on the set page alike: a name that place already
+/// holds from another source is warned about, and one only the browsed
+/// scope holds is not, because the install is not going there.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_name_clash_is_read_where_the_install_lands() {
+    let r = redirect();
+    assert_eq!(
+        redirected_preview(&r).collision,
+        None,
+        "the control: nothing claims the name in either place"
+    );
+
+    r.claim_gh_in(&r.destination);
+    assert_eq!(
+        redirected_preview(&r).collision,
+        Some("other".to_owned()),
+        "the install would land on this claim, so the page says so first"
+    );
+    assert_eq!(
+        redirected_detail(&r).collision,
+        Some("other".to_owned()),
+        "the set's own name is claimed there too"
+    );
+
+    // The inverse: claimed only in the scope being browsed, which the
+    // install is not going to.
+    let r = redirect();
+    r.claim_gh_in(&r.browsing);
+    assert_eq!(redirected_preview(&r).collision, None);
+    assert_eq!(redirected_detail(&r).collision, None);
+}
+
+/// The safety note says what the preview did not read: the instructions a
+/// place adds to what installs there. Which place is the one the install
+/// lands in, so a destination that injects gets the note and a browsed
+/// scope that injects does not — the note would otherwise describe text no
+/// installed copy would carry.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_safety_note_is_about_the_place_the_install_lands_in() {
+    let r = redirect();
+    assert!(
+        redirected_safety(&r).notes.is_empty(),
+        "the control: neither place adds anything to gh"
+    );
+
+    r.inject_into_gh_in(&r.destination);
+    assert_eq!(
+        redirected_safety(&r).notes.len(),
+        1,
+        "installed there, gh carries that place's instructions, unscored here"
+    );
+
+    let r = redirect();
+    r.inject_into_gh_in(&r.browsing);
+    assert!(
+        redirected_safety(&r).notes.is_empty(),
+        "no installed copy would carry these, so the note would be about nothing"
     );
 }

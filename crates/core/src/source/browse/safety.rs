@@ -62,26 +62,25 @@ pub struct PackageSafety {
     pub from_cache: bool,
 }
 
+/// `destination` redirects the install into a project. The bytes scored are
+/// the catalog's either way; what moves is the note below, because the
+/// instructions a project adds to what installs are that project's.
 pub fn package_safety(
     env: &Env,
     catalog: &Catalog,
     kind: ItemKind,
     name: &str,
+    destination: Option<&crate::model::Scope>,
 ) -> Result<PackageSafety> {
     let browsed = super::open(env, catalog)?;
+    let landing = super::opened::landing(env, &browsed, destination)?;
     let item = item(&browsed, kind, name)?;
     let (score, from_cache) = scored(env, &browsed, kind, name, &item)?;
-    // The preview reads the catalog, and this project adds its own text to
-    // what installs. Nobody has scored that combination yet, so the page
-    // says what it did not read.
-    //
-    // The manifest is the BROWSED scope's, and stays so under a redirect:
-    // this read takes no destination, so an install redirected into a
-    // project that injects its own instructions gets no note about them.
-    // Said here rather than claimed away — the note is advisory, and the
-    // scoring an install runs reads the scope it lands in.
+    // The preview reads the catalog, and the scope the install lands in
+    // adds its own text to what installs there. Nobody has scored that
+    // combination yet, so the page says what it did not read.
     let mut notes = Vec::new();
-    if injected_here(&browsed.records().manifest, kind, name) {
+    if injected_here(&landing.manifest, kind, name) {
         notes.push(format!(
             "this project adds its own instructions to {name}; they are not in this preview and are scored when it installs"
         ));
@@ -96,7 +95,9 @@ pub fn package_safety(
     })
 }
 
-/// Whether this project contributes anything to this item's rendering.
+/// Whether the scope this manifest belongs to contributes anything to this
+/// item's rendering — the scope the install would land in, which is the one
+/// whose instructions the installed item would carry.
 ///
 /// Asked of the same enumeration the rendering subtracts by, never of a
 /// second transcription of it: two lists of one thing is how both ended up

@@ -174,7 +174,7 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
         let bundles: Vec<String> = carried_bundles.iter().map(|b| names::shown(b)).collect();
         out.push(AvailablePackage {
             state: browsed.state(browsed.records(), kind, &name),
-            collision: browsed.collision(kind, &name),
+            collision: browsed.collision(browsed.records(), kind, &name),
             description: header.description.as_deref().map(names::shown),
             summary: header.summary_or_description().map(names::shown),
             tags: header.tags,
@@ -265,7 +265,7 @@ fn detail(
         installed_members: installed.min(u32::MAX as usize) as u32,
         total_members: members.len().min(u32::MAX as usize) as u32,
         members,
-        collision: browsed.bundle_collision(&found.name),
+        collision: browsed.bundle_collision(landing, &found.name),
         records_unreadable: landing.lock_unreadable(),
     }
 }

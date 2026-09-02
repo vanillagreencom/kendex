@@ -116,7 +116,7 @@ pub fn package_preview(
             text.as_deref(),
         ),
         state: browsed.state(&landing, kind, name),
-        collision: browsed.collision(kind, name),
+        collision: browsed.collision(&landing, kind, name),
     })
 }
 

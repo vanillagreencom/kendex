@@ -662,14 +662,13 @@ by core and UI.
   entry from this subscription, "partly installed (2 of 6)" is counted
   from a bundle's members; a lock this build refuses lists the catalog all
   the same, every row it alone would settle Unknown and every install surface gated on it — a set's Install all on the set's own
-  flag, since a dropped member reads NotOffered either way. The installed-state join and that refusal answer for the scope the
-  install would land in: a page redirecting into a project reads that project's records (`browse::opened::Records`, resolved once
-  by `opened::landing`), because `engine::ops::add_seeded` mutates the scope it is handed; Subscribe gates the same way on the
-  place its dialog chose, since subscribing plans against that place's lock. Two advisory reads deliberately stay with the browsed
-  scope and say so where they are: the name clash below, and the pre-install safety note about a project's own injected
-  instructions. With no subscription the join answers Available and judges name clashes against the personal scope. A name another
-  source holds is surfaced on the row (`collision`); the refusal stays in the engine (invariant 4), judged where the install
-  lands. A
+  flag, since a dropped member reads NotOffered either way. Every answer a page draws about records is about the scope the install
+  would land in: the installed-state join, that refusal, the name clash and the pre-install safety note alike. A page redirecting
+  into a project reads that project's records (`browse::opened::Records`, resolved once by `opened::landing` and passed to each of
+  them), because `engine::ops::add_seeded` mutates the scope it is handed; Subscribe gates the same way on the place its dialog
+  chose, since subscribing plans against that place's lock. With no subscription the join answers Available and judges name clashes
+  against the personal scope. A name another source holds is surfaced on the row (`collision`); the refusal stays in the engine
+  (invariant 4). A
   bare repository is fetched by `remote::sync` into the store under the
   canonical `owner/repo` every GitHub spelling folds to — the key Subscribe
   is prefilled with; only GitHub opens blind (`NotBrowsable` otherwise); a

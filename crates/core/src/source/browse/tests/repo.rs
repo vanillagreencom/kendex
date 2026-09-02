@@ -244,7 +244,7 @@ fn preview_and_safety_read_the_repository_and_the_score_is_shared_with_a_later_s
     );
     assert_eq!(preview.files.len(), 2);
 
-    let scored = package_safety(&env, &repo(), ItemKind::Skill, "gh").unwrap();
+    let scored = package_safety(&env, &repo(), ItemKind::Skill, "gh", None).unwrap();
     assert!(!scored.from_cache);
     assert!(scored.advisory.safety.score < 100);
 
@@ -263,6 +263,7 @@ fn preview_and_safety_read_the_repository_and_the_score_is_shared_with_a_later_s
         },
         ItemKind::Skill,
         "gh",
+        None,
     )
     .unwrap();
     assert!(subscribed.from_cache);
