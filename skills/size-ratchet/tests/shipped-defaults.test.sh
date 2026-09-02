@@ -43,6 +43,12 @@ mkbytes() { # PATH BYTES — exactly BYTES bytes, and zero newlines, so a case
   head -c "$2" /dev/zero | tr '\0' 'x' >"$R/$1"
 }
 
+mkwide() { # PATH LINES — 10 bytes per line, so an EOL conversion moves the byte
+           # count by a tenth and a case that reads the wrong one is visible
+  mkdir -p "$R/$(dirname "$1")"
+  awk -v n="$2" 'BEGIN { for (i = 1; i <= n; i++) printf "%0*d\n", 9, i }' >"$R/$1"
+}
+
 run() { # [VAR=val ...] [-- script-args ...] — run $SR in $R; sets OUT, RC
   local envs=() args=()
   while [ $# -gt 0 ]; do
@@ -741,6 +747,23 @@ run RATCHET_RAISE=1 -- --update
 [ "$RC" -eq 1 ] && has "frozen baseline row unit changed: doc.md — row 700 -> 210000b, but HEAD's copy measures 70000b in the new unit" \
   && ok "a hand-raised byte row in a frozen class still refuses, RATCHET_RAISE or not" \
   || bad "a raised frozen row across a unit change fails closed" "rc=$RC row=$(cat "$R/$BASE") out=$OUT"
+# Candidate and reference must be measured alike. --staged counts the raw index
+# blob, so HEAD is read raw too; reading it smudged makes an eol=crlf repo credit
+# the conversion as headroom and admit real growth under it.
+new_repo frozen-unit-change-eol
+printf '*.md text eol=crlf\n' >"$R/.gitattributes"
+mkwide doc.md 7000
+mkdir -p "$R/tools"
+printf 'doc.md\t700\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m lines
+mkwide doc.md 7500
+git -C "$R" add -A
+run -- --staged
+[ "$RC" -eq 1 ] && has "restored and nothing was staged" \
+  && [ "$(git -C "$R" show ":$BASE")" = "$(printf 'doc.md\t700')" ] \
+  && ok "a staged blob grown inside the CRLF conversion still refuses, and nothing is staged" \
+  || bad "the staged candidate is judged against a raw HEAD" "rc=$RC staged=$(git -C "$R" show ":$BASE") out=$OUT"
 
 new_repo open-unit-change
 mklines big.rs 500
