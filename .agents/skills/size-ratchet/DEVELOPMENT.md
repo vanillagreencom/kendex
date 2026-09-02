@@ -29,8 +29,10 @@ rather than degrading to a call per file), into the counts rows, and out
 again as a baseline row's `b` suffix. Nothing compares across units. A row
 whose unit no longer matches its class is reported as one to re-measure, and
 `--update` writes the current quantity in the new unit. `rows_raised` checks
-the unit tag before comparing numbers. The policy is
-[README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
+the unit tag before comparing numbers, and where the tag changed on a frozen
+row it measures `HEAD:<path>` in the new unit so there is still a like quantity
+to compare against — one `git show` per crossing row, not per tracked file. The
+policy is [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
 
 ## Collection
 
@@ -200,9 +202,13 @@ suffix and read as line counts, which is what they were.
 
 A unit migration re-measures the row in `--update`, then applies the HEAD
 comparison from [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
-The re-measured number is the tool's own, so a frozen row adopting it is not a
-raise: a consumer picking up a class whose unit changed adopts it in one
-`--update`, with no declaration and nothing to hand-edit.
+For a frozen row the reference across that change is HEAD's blob measured in
+the new unit, so an EXISTING row whose file has not grown past HEAD's copy
+crosses in one `--update` with no declaration, and one whose file did grow is
+refused with both numbers named. The same unit change also moves files across
+the threshold in both directions; `--update` drops the rows that fell under it,
+but a file that rose over it is a new offender with no row, and `--update`
+never adds one, so that half is the hand-edited freeze below.
 
 A repo adopting the `400` default over a looser one gains offenders in the
 range between the two thresholds. Order matters: declare
