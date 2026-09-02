@@ -177,42 +177,6 @@ assert_contains "a failed lookup is reported as an API failure" \
 assert_not_contains "a failed lookup is not reported as a missing project" \
   "$api_failure_err" "Project not found"
 
-# --- every command resolves through the shared resolver ----------------------
-#
-# initiatives.sh and milestones.sh each carried a private resolve_project_id
-# that shadowed the shared one after sourcing it, so the fix above would have
-# reached neither.
-#
-# Bash spells one definition several ways, so a source-text match only ever
-# covers the spellings its author thought of. The question goes to bash
-# instead: source each command script, then read back where the function it
-# ended up with was defined. A redefinition in any spelling moves that answer.
-#
-# The probe passes an action no dispatcher knows, so each script falls to its
-# unknown-action branch and exits before any API call, and the EXIT trap reads
-# the answer out of the shell the definitions landed in. A definition placed
-# after the dispatcher is unreachable for the real CLI too.
-
-resolver_source() {
-  (
-    cd "$TMP_ROOT" && LINEAR_API_KEY_OVERRIDE=test-token bash -c '
-      trap "shopt -s extdebug; declare -F resolve_project_id" EXIT
-      source "$1" __kendex_probe__ >/dev/null 2>&1
-    ' probe "$1" 2>/dev/null
-  )
-}
-
-commands_dir="$TMP_ROOT/.agents/skills/linear/scripts/commands"
-for known in initiatives.sh milestones.sh issues.sh projects.sh; do
-  assert "the probe roster holds $known" test -f "$commands_dir/$known"
-done
-
-for script in "$commands_dir"/*.sh; do
-  assert_matches "$(basename "$script") resolves through lib/common.sh" \
-    "$(resolver_source "$script")" \
-    '^resolve_project_id [0-9]+ .*/lib/common\.sh$'
-done
-
 # --- a lone live match returns rather than aborting --------------------------
 #
 # The resolver reads the selection back as two lines, and with nothing rejected

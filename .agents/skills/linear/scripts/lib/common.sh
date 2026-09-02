@@ -663,11 +663,14 @@ resolve_project_id() {
         (.projects.nodes // []) as $all
         | ($all | map(select((.state // "" | ascii_downcase) != "canceled"))) as $live
         | ($live[0].id // ""),
-          ($all - $live | map(.id + " (" + (.state // "no state") + ")") | join(", "))')
+          ($all - $live | map(.id + " (" + .state + ")") | join(", "))')
     # Command substitution strips the trailing newline, so with nothing
     # rejected — one live project, the everyday case — the second read hits EOF
     # and returns 1. Under this file's errexit that status ends the function
-    # before it can print the id it just resolved.
+    # before it can print the id it just resolved. Every call site in the skill
+    # spells the call var=$(resolve_project_id ...), where bash does not apply
+    # errexit, so the abort shows up only in a bare call or in a command
+    # substitution under shopt -s inherit_errexit, which sync.sh sets.
     { IFS= read -r project_id; IFS= read -r rejected; } <<<"$selection" || true
 
     if [ -n "$project_id" ]; then
