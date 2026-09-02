@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import type { Catalog, CatalogSummary } from "@/bindings";
 import {
   catalogKey,
@@ -70,25 +70,4 @@ export function useCachedRead(
   useEffect(() => {
     if (readDue(present, failed, ready)) void read();
   }, [present, failed, ready, read]);
-}
-
-/** Issue `read` for the current subject, and report whether it is still
- * out. A page rendering a cached answer must not act on it until the read
- * that would confirm it lands: the cache may predate what it now describes,
- * and every action offered over it is judged against the fresher record.
- * `read` has to be stable — a new identity re-issues the read. */
-export function useRefresh(ready: boolean, read: () => Promise<void>): boolean {
-  const [refreshing, setRefreshing] = useState(false);
-  useEffect(() => {
-    if (!ready) return;
-    let live = true;
-    setRefreshing(true);
-    void read().finally(() => {
-      if (live) setRefreshing(false);
-    });
-    return () => {
-      live = false;
-    };
-  }, [ready, read]);
-  return refreshing;
 }
