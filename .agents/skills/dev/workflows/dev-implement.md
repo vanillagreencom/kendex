@@ -154,7 +154,7 @@ Update docs when the implementation changes a documented API or architecture.
 
 ## 5. Validate
 
-Before deterministic validation, list every callee whose call the change deletes. For each one, run `git grep -n -F --untracked --exclude-standard -- <callee>`, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup); the build and tests below validate every deletion.
+Before deterministic validation, run `git grep -n -F --untracked --exclude-standard -- <callee>` for every callee whose call the change deletes, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup). A one-off measurement script follows the completion summary's `handoff_to_submit_pr:` contract, is not committed, and is not a check the change adds or modifies.
 
 Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs in a repo where a baseline exists:
 
@@ -167,7 +167,7 @@ Deterministic gates first — every finding is fixed here, never carried into re
 
 Then the project's validation command — the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints (empty → the project's documented build/test/lint command), run from the worktree root — plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
 
-A script written only to produce a number for the issue follows the completion summary's `handoff_to_submit_pr:` measurement contract and is not committed. Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)); a temporary measurement that does not ship is not a check the change adds or modifies.
+Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)).
 
 **Visual QA** — **skip if** the issue has no `design` label. Otherwise use the project's visual QA skills to confirm what your change affects renders correctly, not the full checklist. Do NOT capture golden baselines.
 
@@ -242,7 +242,7 @@ Omit any section that has nothing in it. Discovered Work is backlog work beyond 
 
 **Discovered Work marker prefixes.** A bullet belonging to a later stage of THIS PR rather than to the backlog carries a marker as the first token of the bullet text, before `[Type]`. Unmarked bullets go through the TPM audit as backlog work.
 
-- `handoff_to_submit_pr:` — content for the PR body. Measurement payload shape: `measurement: <script text or exact command>; exit: <status>; result: <result>`.
+- `handoff_to_submit_pr:` — content for the PR body. Measurement shape: `measurement: <script text or exact command>; exit: <status>; result: <result>`. The completion-summary file carries these payloads in its round artifact; a bundle copies child payloads into its parent summary.
 - `handoff_to_merge_pr:` — something the eventual merge-pr step handles.
 - `current_workflow_action:` — something the current review-pr cycle should handle itself.
 
@@ -262,7 +262,7 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] [--qa-label [LABEL]]...
 ```
 
-One `--qa-label` per § 8 signal, none if nothing triggered. GitHub and ad-hoc rounds append `--no-summary --summary-file tmp/completion-summary-[ISSUE_ID].md`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
+One `--qa-label` per § 8 signal, none if nothing triggered. Every round appends `--summary-file` with its § 9 summary; GitHub and ad-hoc rounds also append `--no-summary`. A bundle uses the parent summary from § 11 after copying child handoffs, then adds `--bundled` and its `--item` flags.
 
 **A read-only analysis round**: § 5, § 7, and § 8 do not apply. Pass the recommendation inline or as a file — exactly one of the two:
 

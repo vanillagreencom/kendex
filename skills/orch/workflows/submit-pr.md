@@ -84,7 +84,7 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
    `status` of `no_pr` means create one in step 4. Stop and report auth, token, timeout, or parse errors.
 
-3. **Build the PR body.** Put every `handoff_to_submit_pr:` payload from accepted completion summaries in its applicable PR-body section. [dev-implement § Discovered Work marker prefixes](../../dev/workflows/dev-implement.md#91-completion-comment) owns the payload contract; a payload that violates it stops submission. Write the body to a file with the harness file-write tool or `apply_patch`, never redirection or a heredoc, at `[WORKTREE_PATH]/tmp/pr-body-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`), and use that path as `BODY_FILE`.
+3. **Build the PR body.** Read summaries only from validated accepted dev-return artifacts, and put every `handoff_to_submit_pr:` payload in its applicable section. [dev-implement § Discovered Work marker prefixes](../../dev/workflows/dev-implement.md#91-completion-comment) owns the contract; a missing or unreadable summary, or an invalid measurement payload, stops submission. Write the body to a file with the harness file-write tool or `apply_patch`, never redirection or a heredoc, at `[WORKTREE_PATH]/tmp/pr-body-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`), and use that path as `BODY_FILE`.
 
    ```markdown
    ## Summary
