@@ -30,20 +30,21 @@ cache_utc_days_ago() {
 #
 # One definition, called from `cache issues list --cycle`, `cache cycles list
 # --type` and `session-status`. As copied expressions their no-working-cycle
-# fallbacks had already drifted apart: `cache issues list` refused, `cache
-# cycles list` returned the whole date-sorted set, and `session-status` took
-# the ends of that list, which inverted previous and next.
+# fallbacks had already drifted apart.
 cache_working_cycle() {
+    # sync writes this array in the order Linear paged it, so the sort carries
+    # weight. One term per line keeps it separately provable from the end taken.
     jq --arg today "$(cache_now_utc)" \
-        '[.[] | select(.startsAt <= $today and .progress < 1)] | sort_by(.startsAt) | last // null'
+        '[.[] | select(.startsAt <= $today and .progress < 1)]
+           | sort_by(.startsAt)
+           | last // null'
 }
 
 # Cycles before the working one, most recent first. Reads the cycle array on
 # stdin; $1 is the working cycle `cache_working_cycle` printed.
 #
 # With no cycle running the cut falls at now rather than at a position in the
-# list: answering "past" with the whole date-sorted set reported a cycle that
-# has not started as the previous one.
+# list.
 cache_cycles_before() {
     local working="${1:-null}"
     jq --argjson w "$working" --arg today "$(cache_now_utc)" '
@@ -55,7 +56,7 @@ cache_cycles_before() {
 }
 
 # Cycles after the working one, earliest first. Same inputs, same cut at now
-# where no cycle is running — the next cycle to start, not the oldest on record.
+# where no cycle is running.
 cache_cycles_after() {
     local working="${1:-null}"
     jq --argjson w "$working" --arg today "$(cache_now_utc)" \

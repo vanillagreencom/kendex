@@ -10,9 +10,8 @@
 # UTC) or the previous one, or nothing at all where no earlier cycle was
 # incomplete (west of it).
 #
-# So TZ is PINNED here, not read from the host, and the fixture's cycles sit
-# hours from now — inside the offset. The assertions state the UTC answer, which
-# is the only right one at any TZ.
+# So TZ is PINNED here, not read from the host. The assertions state the UTC
+# answer, which is the only right one at any TZ.
 #
 # The same helpers carry the second defect: with no cycle running, prev/next and
 # past/upcoming fell back to a POSITION in the date-sorted list rather than to a
@@ -52,8 +51,7 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 LINEAR="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 CACHE="$TMP_ROOT/.cache/linear"
 
-# UTC+14, no DST, so the pin is the same offset in every month of the year, and
-# far enough ahead that the local-time form reads as tomorrow.
+# UTC+14, no DST, so the pin is the same offset in every month of the year.
 TZ_PIN="Pacific/Kiritimati"
 
 # jq's `now`, not `date -d '+6 hours'`: the suite already depends on jq, and
@@ -121,7 +119,7 @@ ids() { jq -r '[.[].id] | sort | join(",")' <<<"$1"; }
 cycles "$(jq -cn --argjson a "$(cycle_record old KEN -3456000 -2246400 1)" \
   --argjson b "$(cycle_record lingering KEN -1728000 -518400 0.9)" \
   --argjson c "$(cycle_record running KEN -7200 1123200 0.5)" \
-  --argjson d "$(cycle_record soon KEN 21600 1231200 0)" '[$a, $b, $c, $d]')"
+  --argjson d "$(cycle_record soon KEN 21600 1231200 0)" '[$d, $c, $b, $a]')"
 
 assert_eq "cache issues list --cycle current resolves the running cycle, not the one starting later today" \
   "$(ids "$(run cache issues list --cycle current --all-projects 2>/dev/null)")" "IN-RUNNING"
@@ -155,13 +153,11 @@ assert_eq "session-status research reads the same day-count cutoff" \
 # --- No cycle is running: the fallback must anchor on a date, not a position -
 #
 # Two cycles on each side of now, so the ORDER each helper promises is
-# observable: `before` newest-first, `after` earliest-first. Every caller reads
-# the head of that list, and falling back to the ends of the whole date-sorted
-# set answers each question with the other one's cycle.
+# observable: `before` newest-first, `after` earliest-first.
 cycles "$(jq -cn --argjson a "$(cycle_record ancient KEN -10368000 -9158400 1)" \
   --argjson b "$(cycle_record old KEN -3456000 -2246400 1)" \
   --argjson c "$(cycle_record soon KEN 21600 1231200 0)" \
-  --argjson d "$(cycle_record soonB KEN 108000 1317600 0)" '[$a, $b, $c, $d]')"
+  --argjson d "$(cycle_record soonB KEN 108000 1317600 0)" '[$d, $c, $b, $a]')"
 
 assert_eq "with no cycle running, --type upcoming is the NEXT cycle to start, not the farthest out" \
   "$(names "$(run cache cycles list --type upcoming 2>/dev/null)")" "soon"
