@@ -10,5 +10,5 @@ control_replace scripts/commands/sync.sh 1 \
 # whose delta is empty never reaches it (kendex#799).
 control_expect "a sync whose delta is empty still sweeps the legacy per-issue locks"
 control_replace scripts/commands/sync.sh 1 \
-    '    rm -f "$CACHE_DIR"/comments/*.json.lock' \
+    '    rm -f "$CACHE_DIR"/comments/*.json.lock || true' \
     '    :'

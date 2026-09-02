@@ -672,13 +672,16 @@ main() {
     cache_ensure_dir
 
     # One-time sweep of the per-issue lock files a pre-kendex#799 cache
-    # accumulated. Nothing opens those paths any more, comment writes share
-    # $CACHE_DIR/.comments.lock, so this cannot disturb a live lock; without it
-    # a cache that already carries them keeps them forever. It sits here, above
-    # the full/delta branch and inside the sync lock, because a sync that finds
-    # nothing changed must sweep too — put it on a write path and the common
-    # case never reaches it.
-    rm -f "$CACHE_DIR"/comments/*.json.lock
+    # accumulated. Nothing opens those paths any more — comment writes share
+    # $CACHE_DIR/.comments.lock — so this disturbs no live lock, and without it
+    # a cache that carries them keeps them forever. It sits inside the sync lock
+    # and above the full/delta branch because a sync that finds nothing changed
+    # must sweep too; on a write path the common case never reaches it. Then
+    # `|| true`, because cleanup of files nothing opens must never refuse a
+    # sync: an unmatched glob exits 0 already, but one matched file that will
+    # not unlink would end the run right here, before any sync work and short
+    # of cache_unlock, blaming a dead lock file for it.
+    rm -f "$CACHE_DIR"/comments/*.json.lock || true
 
     local start_time
     start_time=$(date +%s)
