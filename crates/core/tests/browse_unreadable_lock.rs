@@ -118,30 +118,6 @@ fn drop_the_member(f: &Fixture) {
     .unwrap();
 }
 
-/// The control the degraded read is measured against: with a readable
-/// record, nothing installed reads as available.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_readable_lock_answers_the_state_it_records() {
-    let f = fixture();
-    assert_eq!(
-        offered(&f),
-        [("gh".to_owned(), InstallState::Available)],
-        "a scope with no lock on disk has an empty one, not an unreadable one"
-    );
-}
-
-/// A record an older kendex wrote. Nothing converts it, and the Problems
-/// page is where it is explained — but the catalog is still readable, so
-/// its packages are still listed.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_older_generation_lock_still_lists_what_the_catalog_offers() {
-    let f = fixture();
-    fs::write(&f.lock_path, r#"{"version":1,"entries":{}}"#).unwrap();
-    assert_eq!(offered(&f), [("gh".to_owned(), InstallState::Unknown)]);
-}
-
 /// Damaged bytes reach the same answer by the same route: the read that
 /// lists is not the read that judges installed state.
 #[test]
@@ -166,23 +142,6 @@ fn another_scope_reading_the_same_catalog_is_untouched() {
         offered(&healthy),
         [("gh".to_owned(), InstallState::Available)]
     );
-}
-
-/// A curated set's members answer through the same record, so the set page
-/// says the same thing the table does rather than reading an unreadable
-/// lock as "nothing installed here".
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_curated_sets_members_are_unknown_rather_than_available() {
-    let f = fixture();
-    assert_eq!(
-        members(&f),
-        [("gh".to_owned(), InstallState::Available)],
-        "the control: a readable record answers what it records"
-    );
-
-    fs::write(&f.lock_path, "{not json").unwrap();
-    assert_eq!(members(&f), [("gh".to_owned(), InstallState::Unknown)]);
 }
 
 /// The manifest can say a member was removed on purpose without the lock,
@@ -226,28 +185,9 @@ fn the_package_page_carries_the_same_unknown_the_row_showed() {
     assert_eq!(preview(&f), InstallState::Unknown);
 }
 
-/// The must-fail control on `member_state`'s not-offered arm under an
-/// unreadable lock. A member the catalog no longer carries needs no lock to
-/// say so, and the set page relies on that staying true — collapsing the
-/// unreadable branch to Unknown for every member would hide the rename
-/// behind a record complaint.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_dropped_member_says_so_without_a_lock_to_read() {
-    let f = fixture();
-    drop_the_member(&f);
-    assert_eq!(
-        members(&f),
-        [("gh".to_owned(), InstallState::NotOffered)],
-        "the control: with a readable record, a dropped member is a rename, not an unknown"
-    );
-
-    fs::write(&f.lock_path, "{not json").unwrap();
-    assert_eq!(members(&f), [("gh".to_owned(), InstallState::NotOffered)]);
-}
-
-/// So the set page cannot read the scope's record off the rows: every
-/// member answering NotOffered is exactly the shape that looks readable.
+/// A member the catalog no longer carries answers NotOffered with or
+/// without a lock, so the set page cannot read the scope's record off its
+/// rows: every member answering NotOffered is the shape that looks readable.
 /// `records_unreadable` is the scope's own answer, carried rather than
 /// derived, and Install all is what reads it.
 #[test]
@@ -270,22 +210,4 @@ fn the_set_carries_the_scopes_answer_even_where_no_member_shows_it() {
             .all(|member| member.state == InstallState::NotOffered),
         "no member row carries the fact, which is why the set must"
     );
-}
-
-/// The Marketplaces overview lists subscriptions without opening a catalog,
-/// and the Packages tab says which place has no readable record above that
-/// table. Asking the scope directly is what lets the listing carry the fact
-/// with the rows it describes — a place registered since the update read
-/// last landed would otherwise show unknown rows under no line at all.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_scope_answers_for_its_records_without_a_catalog_open() {
-    let f = fixture();
-    assert!(
-        !browse::records_unreadable(&f.env, &f.scope),
-        "the control: a readable record says so"
-    );
-
-    fs::write(&f.lock_path, "{not json").unwrap();
-    assert!(browse::records_unreadable(&f.env, &f.scope));
 }

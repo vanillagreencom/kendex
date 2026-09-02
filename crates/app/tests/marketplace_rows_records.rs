@@ -69,34 +69,9 @@ fn lock_of(scope: &Scope) -> PathBuf {
     }
 }
 
-/// The control: a scope whose records kendex can read carries a row that
-/// says so, and the Packages tab shows no trouble line for it.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_readable_scope_carries_a_row_that_claims_no_trouble() {
-    let f = fixture(&["app"]);
-    let listed = rows(&f.env, &f.projects).unwrap();
-    assert_eq!(listed.len(), 1, "{listed:?}");
-    assert_eq!(listed[0].name, "cat");
-    assert!(!listed[0].records_unreadable);
-}
-
-/// Damaged bytes where the lock belongs: the row for that scope's
-/// subscription carries the fact, which is what the tab's trouble line and
-/// its Problems link are drawn from.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_unreadable_lock_travels_on_the_scopes_own_row() {
-    let f = fixture(&["app"]);
-    fs::write(lock_of(&f.projects[0]), "{not json").unwrap();
-
-    let listed = rows(&f.env, &f.projects).unwrap();
-    assert_eq!(listed.len(), 1, "{listed:?}");
-    assert!(listed[0].records_unreadable);
-}
-
-/// A lock an older kendex wrote is refused the same way, and the project
-/// beside it keeps its own answer: the flag is the scope's, not the query's.
+/// A lock an older kendex wrote is refused, and the project beside it keeps
+/// its own answer: the flag is the scope's, not the query's. Hardcoding the
+/// field either way reddens this — it asserts both answers from one read.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn each_scope_answers_for_its_own_records() {

@@ -4,7 +4,6 @@ import { AboutSection } from "@/components/marketplaces/about-section";
 import { BundleCards } from "@/components/marketplaces/bundle-cards";
 import { DetailHeader } from "@/components/marketplaces/detail-header";
 import { PackagesTable } from "@/components/marketplaces/packages-table";
-import { RecordsUnreadableNote } from "@/components/marketplaces/packages-trouble";
 import {
   useCachedRead,
   useCatalog,
@@ -123,16 +122,6 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                   <p className="mb-4 text-xs text-warning">
                     Shown from the last download — {summary.warning}
                   </p>
-                ) : null}
-                {/* Above the tab content rather than inside one tab: the
-                    same unreadable record leaves the Packages rows saying
-                    "not known" and the Bundles cards offering an Install
-                    all the engine would refuse, so both carry the reason
-                    and the way to it. */}
-                {row?.recordsUnreadable ? (
-                  <div className="mb-4">
-                    <RecordsUnreadableNote scope={row.scope} />
-                  </div>
                 ) : null}
                 <TabsContent value="bundles">
                   <BundleCards

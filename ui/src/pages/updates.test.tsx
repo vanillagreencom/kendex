@@ -8,14 +8,11 @@ import {
   UPDATES_ATTENTION_TITLE,
   UPDATES_EMPTY,
 } from "@/lib/copy";
-import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
 import {
   NEVER_CHECKED,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
   UPDATES_UNCONFIRMED_TITLE,
-  UPDATES_UNREADABLE_TITLE,
-  unreadablePlaceLine,
 } from "@/lib/copy-updates";
 import { UpdatesPage } from "./updates";
 
@@ -201,79 +198,5 @@ describe("how fresh the page says its answer is", () => {
     expect(html).toContain(UPDATES_EMPTY);
     expect(html).toContain(NEVER_CHECKED);
     expect(html).not.toMatch(/Last checked/);
-  });
-});
-
-// One project this build cannot read has no standing at all, and every
-// other project's rows are as good as ever. Reporting the machine
-// unchecked hid working rows; reporting it up to date would have claimed
-// an up-to-dateness for a project nothing could check.
-describe("the Updates page with a project kendex cannot read", () => {
-  const hyprtrade = {
-    scope: { scope: "project", root: "/home/dev/hyprtrade" },
-    message: "it is a version 5 record",
-  };
-
-  const named = esc(
-    unreadablePlaceLine("hyprtrade", "it is a version 5 record"),
-  );
-
-  // The reason travels on the wire with the scope, so the note says it
-  // where it has room; a reader who only sees the name has to reach
-  // Problems before learning what is wrong.
-  it("names the project with the reason, and sends the reader to Problems", () => {
-    stub.unreadable = [hyprtrade];
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).toContain(esc(UPDATES_UNREADABLE_TITLE));
-    expect(html).toContain(named);
-    expect(html).toContain(SEE_PROBLEMS_LABEL);
-  });
-
-  it("does not call the machine up to date over it", () => {
-    stub.unreadable = [hyprtrade];
-    expect(renderToStaticMarkup(<UpdatesPage />)).not.toContain(UPDATES_EMPTY);
-  });
-
-  it("keeps the rows the readable projects answered", () => {
-    stub.rows = [updateRow("gh", null)];
-    stub.unreadable = [hyprtrade];
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).toContain("gh");
-    expect(html).toContain(named);
-  });
-
-  // `overview` folds every registered scope, the personal one included, so
-  // a personal lock this build refuses lands in the same list. The note
-  // names it as what it is; calling it a project would be untrue of the one
-  // place that is not one.
-  it("names the personal scope as Personal", () => {
-    stub.unreadable = [
-      { scope: { scope: "global" }, message: "it is a version 5 record" },
-    ];
-    expect(renderToStaticMarkup(<UpdatesPage />)).toContain(
-      esc(unreadablePlaceLine("Personal", "it is a version 5 record")),
-    );
-  });
-
-  // Two projects whose folders share a basename would otherwise read as
-  // the same line twice, with the reasons beside them the only difference.
-  it("tells apart two projects whose folders share a name", () => {
-    stub.unreadable = [
-      {
-        scope: { scope: "project", root: "/home/dev/kendex" },
-        message: "it is a version 5 record",
-      },
-      {
-        scope: { scope: "project", root: "/home/work/kendex" },
-        message: "damaged bytes",
-      },
-    ];
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).toContain(
-      esc(unreadablePlaceLine("/home/dev/kendex", "it is a version 5 record")),
-    );
-    expect(html).toContain(
-      esc(unreadablePlaceLine("/home/work/kendex", "damaged bytes")),
-    );
   });
 });

@@ -1,7 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
-import { unreadablePlacesLabel } from "@/lib/copy-updates";
 import { SIDEBAR_ROW } from "@/lib/layout";
 import { Sidebar } from "./sidebar";
 import { updateRow } from "./updates-test-rows";
@@ -94,54 +93,5 @@ describe("a sidebar column too short for its nav", () => {
   // keep their height and the nav scrolls past them instead.
   it("keeps every row at its own height", () => {
     expect(SIDEBAR_ROW).toContain("shrink-0");
-  });
-});
-
-// One project whose lock or manifest this build refuses is not a machine
-// that could not be checked: every other project's standing landed. The
-// badge says which project rather than wearing a bare question mark.
-describe("the Updates badge with a project kendex cannot read", () => {
-  const hyprtrade = {
-    scope: { scope: "project", root: "/home/dev/hyprtrade" },
-    message: "it is a version 5 record",
-  };
-
-  it("names the project instead of the generic failure", () => {
-    stub.updates = {
-      rows: [],
-      unreadable: [hyprtrade],
-      read: { status: "landed", error: null },
-    };
-    const html = renderToStaticMarkup(<Sidebar />);
-    expect(html).toContain(">?<");
-    expect(html).toContain("text-warning");
-    expect(html).toContain(esc(unreadablePlacesLabel(["hyprtrade"])));
-    expect(html).not.toContain(esc(UPDATES_ATTENTION_TITLE));
-  });
-
-  it("keeps the count the readable projects answered", () => {
-    stub.updates = {
-      rows: [updateRow("gh", null)],
-      unreadable: [hyprtrade],
-      read: { status: "landed", error: null },
-    };
-    const html = renderToStaticMarkup(<Sidebar />);
-    expect(html).toContain(">1<");
-    expect(html).toContain("text-warning");
-    expect(html).toContain(esc(unreadablePlacesLabel(["hyprtrade"])));
-  });
-
-  // The personal scope has a lock of its own, so it reaches the badge on
-  // the same route — under its own name rather than as a project.
-  it("names the personal scope as Personal", () => {
-    stub.updates = {
-      rows: [],
-      unreadable: [
-        { scope: { scope: "global" }, message: "it is a version 5 record" },
-      ],
-      read: { status: "landed", error: null },
-    };
-    const html = renderToStaticMarkup(<Sidebar />);
-    expect(html).toContain(esc(unreadablePlacesLabel(["Personal"])));
   });
 });

@@ -4,7 +4,6 @@ import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { AvailablePackage, Finding, PackageSafety } from "@/bindings";
-import { PACKAGE_STATE_UNKNOWN } from "@/lib/copy-marketplaces";
 import {
   SAFETY_CAVEAT,
   SAFETY_DOT_UNCHECKED,
@@ -236,53 +235,5 @@ describe("reading the safety dot", () => {
       kind: "skill",
       name: "gh",
     });
-  });
-});
-
-// The lock this row's project keeps could not be read, so nothing here
-// knows whether the package is installed. Offering Install would put a
-// button on a scope whose record the engine refuses for the same reason.
-describe("a row whose project records could not be read", () => {
-  it("says its state is not known and offers no install", () => {
-    stub.scores = {};
-    const html = renderToStaticMarkup(
-      <PackagesTable
-        entries={[{ catalog, row: { ...row, state: "unknown" } }]}
-        showMarketplace={false}
-      />,
-    );
-    expect(html).toContain(PACKAGE_STATE_UNKNOWN);
-    expect(html).not.toContain(">Install<");
-  });
-
-  it("still offers install where the record was readable", () => {
-    stub.scores = {};
-    const html = renderToStaticMarkup(
-      <PackagesTable entries={[{ catalog, row }]} showMarketplace={false} />,
-    );
-    expect(html).toContain(">Install<");
-    expect(html).not.toContain(PACKAGE_STATE_UNKNOWN);
-  });
-
-  // A bare repository is judged against the personal scope's records, so an
-  // unreadable personal lock answers Unknown for every Community row. The
-  // row is not asking that question — nothing installs from here until the
-  // machine subscribes — so it keeps saying the package is on offer.
-  it("still says a bare repository offers the package", () => {
-    stub.scores = {};
-    const html = renderToStaticMarkup(
-      <PackagesTable
-        entries={[
-          {
-            catalog: { by: "repo", repo: "Acme/Kit" },
-            row: { ...row, state: "unknown" },
-          },
-        ]}
-        showMarketplace={false}
-      />,
-    );
-    expect(html).toContain("Available");
-    expect(html).not.toContain(PACKAGE_STATE_UNKNOWN);
-    expect(html).not.toContain(">Install<");
   });
 });

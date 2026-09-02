@@ -149,14 +149,6 @@ function PackageRow({
           <span className="text-xs text-muted-foreground">
             No longer offered
           </span>
-        ) : catalog.by === "repo" ? (
-          // Installing needs a subscription; the page's Subscribe button
-          // is the one action, so the row only says the package is here.
-          // Ahead of the unknown arm: a bare repository is judged against
-          // the personal scope's records, so an unreadable personal lock
-          // would otherwise answer "not known" about an install this row
-          // never offers.
-          <span className="text-xs text-muted-foreground">Available</span>
         ) : row.state === "unknown" ? (
           // This place's lock could not be read, so nothing here knows
           // whether the package is installed — and an install would meet
@@ -164,6 +156,10 @@ function PackageRow({
           <span className="text-xs text-muted-foreground">
             {PACKAGE_STATE_UNKNOWN}
           </span>
+        ) : catalog.by === "repo" ? (
+          // Installing needs a subscription; the page's Subscribe button
+          // is the one action, so the row only says the package is here.
+          <span className="text-xs text-muted-foreground">Available</span>
         ) : offersInstall(row.state) ? (
           // Scores arrive one at a time, and a read that fails leaves a
           // row without one until it mounts again, so a row is offered

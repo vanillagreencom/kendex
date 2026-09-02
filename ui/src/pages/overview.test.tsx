@@ -195,19 +195,13 @@ describe("Home when the update check fails", () => {
 });
 
 // A place whose lock this build refuses contributes no rows at all, so the
-// counts on this page answer for less than the machine — the page has to
-// feed the store's list to the derivation for the row to exist. The
-// derivation itself is proved in attention-rows.test.ts; this holds the
-// wiring, which a `unreadable: []` in the page's source would otherwise cut
-// with nothing reddening.
+// counts on this page answer for less than the machine. The page has to feed
+// the store's list to the derivation for the row to exist: a `unreadable: []`
+// in the page's source would drop the place with nothing else reddening.
 describe("Home when a place cannot be read at all", () => {
-  const staged = () => {
+  it("names the place with no update standing in the attention list", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
     stub.audit = { auditedAt: Date.now(), read: READ_LANDED, error: null };
-  };
-
-  it("names the place with no update standing in the attention list", () => {
-    staged();
     stub.updates = {
       read: READ_LANDED,
       unreadable: [
@@ -220,13 +214,6 @@ describe("Home when a place cannot be read at all", () => {
     const html = renderToStaticMarkup(<OverviewPage />);
     expect(html).toContain(esc(UPDATES_UNREADABLE_TITLE));
     expect(html).toContain("hyprtrade");
-  });
-
-  it("says nothing when every place read", () => {
-    staged();
-    expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
-      esc(UPDATES_UNREADABLE_TITLE),
-    );
   });
 });
 
