@@ -47,6 +47,22 @@ gate could not measure is never skipped. A tracked path containing a tab or
 newline is refused loudly (exit 2; exclude it to skip the gate) — it cannot
 be represented in the line-oriented records.
 
+Every blob bound for a LINE class is sniffed for a NUL in its leading 8000
+bytes, git's own text/binary rule, which growth-guards states as
+`gg_blob_is_binary`. A hit is a collection error (exit 2) naming the path and
+the byte's offset, never the byte itself: git records such a blob as binary,
+so it has no diff, no `git grep` hit and no line count anyone can check,
+while `wc -l` still returns a number. One raw control byte typed in place of
+its escape puts a source file in that state and nothing else in a commit
+chain notices. Byte classes skip the sniff. They measure the whole blob, and
+a real asset belongs there or in the exclusion list.
+
+The sniff runs in two stages, so it costs no subprocess on the files that
+pass. A bounded `read -d ''` stops at a NUL and forks nothing. In a multibyte
+locale that bound counts characters, so a stop can sit past the window while
+a miss never can, because every character read consumed at least one byte. An
+exact `od` scan of the leading 8000 bytes then confirms a stop and locates it.
+
 The baseline is policy input and never enters the measured set. A self row is
 therefore stale. This makes seed, update, and staged tightening converge
 without re-measuring output that contains its own measurement.

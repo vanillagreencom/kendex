@@ -58,6 +58,13 @@ that. Markdown is measured in bytes and code in lines. Flags and exit codes:
   rows whose unit no longer matches their class, and removes rows for files
   now at/under their own threshold or no longer counted. It never adds a row
   or raises a number whose unit stayed the same, then re-checks.
+- **Refused as unmeasurable** (exit 2): a blob in a LINE class carrying a NUL
+  inside its leading 8000 bytes — git's own text/binary rule. Git records such
+  a blob as binary, so it has no diff, no `git grep` hit and no line count that
+  means anything, while `wc -l` still returns one. The diagnostic names the
+  path and the byte's offset and never the byte itself; the fix is the escape
+  the language spells it with. A real binary asset belongs in a byte class or
+  the [exclusion list](#exclusion-list), neither of which counts lines.
 - Exit codes: `0` clean, `1` violations, `2` usage/config/collection error.
 
 ## Trusted HEAD baseline

@@ -44,6 +44,12 @@ Reference, repoint, raise, and unit-change behavior is one rule:
 [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
 A shrunk row under `--staged` is already lowered and staged by the run itself.
 
+**A NUL is refused, not measured.** A blob in a line class carrying a NUL in
+its leading 8000 bytes is what git calls binary: no diff, no `git grep` hit,
+no line count worth printing. The gate exits 2 naming the path and the byte's
+offset. Write the escape the language spells the byte with; a real binary
+asset belongs in a byte class or the exclusion list.
+
 **Check composition before the seam.** A file over its cap whose bulk is
 inline tests needs those tests moved to the language's separate-test
 convention, not its concepts split; that move has no seam in it. In Rust

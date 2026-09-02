@@ -543,6 +543,39 @@ flush_batch() { # UNIT — appends one "<path><TAB><count>" row per pending file
   cat "$TMP/batch.tsv" >>"$TMP/counts.raw" || collection_error "could not append the re-measured counts — the measurement is incomplete, refusing to report a verdict"
   clear_batch "$unit"
 }
+# A blob git reads as binary has no line count anyone can check. Git's own
+# heuristic is a NUL inside the leading bytes, the rule growth-guards states
+# as gg_blob_is_binary, and it drops the blob from every diff, `git grep` and
+# review, while `wc -l` still returns a number with nothing readable behind
+# it. One raw control byte typed into a source file instead of its escape
+# puts the file in that state and nothing else notices: the byte renders as a
+# space in every editor and tool, and every other gate passes the file. Only
+# LINE classes ask the question. A real asset carries the byte legitimately
+# and belongs in a byte class or the exclusion list, where nothing counts its
+# lines.
+NUL_SNIFF_BYTES=8000
+note_if_binary() { # PATH BLOBFILE — records a line-class blob git reads as binary
+  local chunk status=0 off
+  # `read -d ''` stops at a NUL and -n bounds the read, at no subprocess cost.
+  # In a multibyte locale that bound counts CHARACTERS, so a stop here can sit
+  # past the sniff window while a miss never can: every character read consumed
+  # at least one byte. So this decides the misses — every text file, every run
+  # — and the exact byte scan below decides and locates the rest.
+  { IFS= read -r -d '' -n "$NUL_SNIFF_BYTES" chunk || status=$?; } <"$2" \
+    || collection_error "cannot read tracked file '$1' — its content cannot be classified, refusing to skip it"
+  { [ "$status" -eq 0 ] && [ "${#chunk}" -lt "$NUL_SNIFF_BYTES" ]; } || return 0
+  # No early exit anywhere in this pipeline: an awk that stopped reading would
+  # SIGPIPE od and, under pipefail, fail the scan on the files that need it.
+  off="$(LC_ALL=C od -An -v -tx1 -N "$NUL_SNIFF_BYTES" <"$2" | awk '
+    found == 0 { for (i = 1; i <= NF; i++) if ($i == "00") { off = seen + i - 1; found = 1; break } }
+    { seen += NF }
+    END { if (found) print off }
+  ')" || collection_error "could not scan '$1' for the offset of its NUL byte — refusing to report a verdict"
+  [ -n "$off" ] || return 0
+  printf '%s\t%s\n' "$1" "$off" >>"$TMP/binary.paths" \
+    || collection_error "could not record the binary-content finding for '$1' — refusing to report a verdict"
+}
+: >"$TMP/binary.paths" || collection_error "could not initialize the binary-content scratch file"
 while IFS= read -r -d '' rec; do
   mode="${rec%% *}"
   f="${rec#*"$TAB"}"
@@ -558,9 +591,15 @@ while IFS= read -r -d '' rec; do
   path_threshold "$f"
   if [ "$PU" = "b" ]; then wcflag="-c"; else wcflag="-l"; fi
   if [ "$STAGED" -eq 1 ] || [ ! -f "$f" ] || [ -h "$f" ]; then
-    if ! n="$(git show ":$f" | wc "$wcflag")"; then
+    # Materialized once: the count and the content sniff read the same bytes,
+    # and a second `git show` per path would double the walk under --staged.
+    if ! git show ":$f" >"$TMP/blob"; then
       collection_error "cannot read index blob for tracked file '$f' — its size is unmeasurable, refusing to skip it"
     fi
+    if ! n="$(wc "$wcflag" <"$TMP/blob")"; then
+      collection_error "cannot read index blob for tracked file '$f' — its size is unmeasurable, refusing to skip it"
+    fi
+    [ "$PU" = "b" ] || note_if_binary "$f" "$TMP/blob"
     n="${n#"${n%%[![:space:]]*}"}" # strip wc's leading whitespace (BSD wc pads)
     case "$n" in
       "" | *[!0-9]*) collection_error "$(unit_noun "$PU") count for index blob of '$f' came back as '$n', not a number — its size is unmeasurable, refusing to skip it" ;;
@@ -573,6 +612,7 @@ while IFS= read -r -d '' rec; do
       flush_batch b
     fi
   else
+    note_if_binary "$f" "$f"
     WT_BATCH_L+=("$f")
     WT_BATCH_L_CHARS=$((WT_BATCH_L_CHARS + ${#f} + 1))
     if [ "${#WT_BATCH_L[@]}" -ge "$BATCH_MAX_FILES" ] || [ "$WT_BATCH_L_CHARS" -ge "$BATCH_MAX_CHARS" ]; then
@@ -583,6 +623,14 @@ while IFS= read -r -d '' rec; do
 done <"$TMP/files.z"
 flush_batch l
 flush_batch b
+if [ -s "$TMP/binary.paths" ]; then
+  # The offset alone, never the byte: echoing it back would put a NUL into the
+  # diagnostic, and the log, terminal or CI annotation carrying it next.
+  while IFS="$TAB" read -r bin_path bin_off; do
+    echo "$bin_path: a NUL byte at offset $bin_off" >&2
+  done <"$TMP/binary.paths"
+  collection_error "the path(s) above are measured in lines but carry a NUL inside their leading $NUL_SNIFF_BYTES bytes, so git records them as binary: no diff, no grep hit, no line count that means anything. Write the escape your language spells the byte with (\\0, \\u0000, \\x00) instead of the raw character; a real binary asset belongs in a byte class or the exclusion list."
+fi
 counted="$(count_nonempty_lines "$TMP/counts.raw")"
 [ "$counted" -eq "$checked" ] || collection_error "counted $counted of the $checked tracked file(s) selected for measurement — the collection is incomplete, refusing to report a verdict"
 : >"$TMP/counts.classed" || collection_error "could not initialize the classified-counts scratch file"
