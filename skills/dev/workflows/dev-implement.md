@@ -300,6 +300,7 @@ Summary: [ISSUE_ID] ✓
 1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags — the union of every sub-issue's § 8 signals. No tracker mutation.
 
 2. **Post the parent summary** (Linear only): write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`.
+   The file write runs for every tracker and includes every child handoff; only `comments create` is Linear-only.
 
    ```markdown
    ## Bundle Complete

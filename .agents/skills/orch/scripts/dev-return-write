@@ -367,7 +367,7 @@ tmp="$(mktemp "$out_dir/.dev-return-$issue.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 
 # Summary content (inline --summary, --summary-file content, or null) rides
-# along for GitHub/ad-hoc recovery, where the completion summary is returned to
+# along for every implement round. For GitHub/ad-hoc it is returned to
 # the orchestrator rather than posted to a tracker; summary_posted stays honest
 # (true only for the Linear-posted case).
 if [[ "$summary_file_given" == "true" ]]; then
