@@ -340,7 +340,7 @@ uppercase issue keys (`fix(ABC-123): ...`) and issue numbers
 longer header is a body sentence on the line every log shows.
 
 **The changelog a commit owes.** When `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS`
-(empty by default) names a glob some staged path matches, the commit must also
+(empty by default) names a glob a path the commit changes matches, it must also
 add or modify a path under `GROWTH_GUARDS_CHANGELOG_PATHS` — the fragment
 scope changelog-entries judges, resolved by the same library — or carry
 `[no-changelog]` in the header. Deleting a fragment is not writing one, so
@@ -361,6 +361,19 @@ source loses its content, the destination gains it — and a chmod is a touch
 and nothing else, because its blob did not move. A letter that says only
 "modified" cannot tell a rewrite from a permission bit, and a changelog
 requirement satisfied by one is a requirement satisfied by nothing.
+
+Both lists are read against the parent the commit will HAVE, which is HEAD for
+an ordinary commit and HEAD's own parent for an amend. `--cached` alone shows
+what was staged ON TOP of the commit an amend replaces, so a fragment already
+inside that commit read as no fragment at all and the lane refused a commit
+that satisfied it — with the escape being the flag that skips the whole hook
+chain. git tells a `commit-msg` hook nothing about an amend, so the lane reads
+it off the argv of the `git commit` process it is a descendant of: only when
+`GIT_INDEX_FILE` says this run is a hook git started, and only from the
+nearest `git` ancestor, which is the command doing the committing. Anything
+unreadable — no `/proc`, the process already gone, no `git` in eight
+generations — is not an amend, so the lane widens only where it can prove the
+parent moved.
 
 `GROWTH_GUARDS_CHANGELOG_RECORD` counts as that entry only under
 `GROWTH_GUARDS_CHANGELOG_COLLATE=1`, the same declaration the record scope

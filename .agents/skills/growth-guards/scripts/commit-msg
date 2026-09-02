@@ -38,6 +38,8 @@ source "$SCRIPT_DIR/lib/settings.sh"
 source "$SCRIPT_DIR/lib/commit-header.sh"
 # shellcheck source=lib/changelog-grammar.sh
 source "$SCRIPT_DIR/lib/changelog-grammar.sh"
+# shellcheck source=lib/commit-parent.sh
+source "$SCRIPT_DIR/lib/commit-parent.sh"
 
 usage() {
   cat <<'EOF'
@@ -62,8 +64,11 @@ kendex.settings.toml [env] > default):
   GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS
                                space-separated globs against the full
                                repo-relative path ('*' crosses '/'); a commit
-                               that stages a matching path must also write a
-                               changelog entry (default empty = rule off)
+                               that changes a matching path must also write a
+                               changelog entry (default empty = rule off).
+                               Both sets are read from the commit as a whole,
+                               so an amend is judged against the parent it
+                               will have, not against the HEAD it replaces
   GROWTH_GUARDS_CHANGELOG_PATHS   what counts as a written entry, with
   GROWTH_GUARDS_CHANGELOG_RECORD  — the same two scopes the changelog-entries
                                check judges (defaults "changelog.d/*/*.md"
@@ -207,8 +212,19 @@ if [ -n "$REQUIRED" ]; then
   # reaches the globs as the bytes git recorded: a quoted name matches no
   # glob, which is a rule that stops seeing the files it is about. Read back
   # from a FILE rather than a pipe, so the loops set variables in this shell.
+  #
+  # The base is the parent the commit will HAVE, which is HEAD for an ordinary
+  # commit and HEAD's own parent for an amend: an amend replaces HEAD rather
+  # than following it, so `--cached` alone shows only what was staged on top
+  # of a fragment the commit already carries, and refuses a commit that
+  # satisfies the rule. GG_COMMIT_BASE is empty in the ordinary case, where
+  # `--cached` already means HEAD, and unquoted for exactly that reason — it
+  # is one revision or no argument at all, never a path and never a glob.
   gg_tmpdir
+  gg_commit_base
+  # shellcheck disable=SC2086
   git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
+    $GG_COMMIT_BASE \
     >"$GG_TMP/raw.z" \
     || gg_collection_error "could not read the staged file list — the changelog rule could not run"
 
