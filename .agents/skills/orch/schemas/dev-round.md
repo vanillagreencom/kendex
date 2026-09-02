@@ -70,7 +70,7 @@ The record is input, never receipt: it proves what was delegated, not that anyth
 
 The gate checks additions only. Git rename detection keeps moves and renames outside it.
 
-`base_sha` is the reference, and the only one: a file already in that tree is not this round's, which is what keeps a later round from re-refusing an addition an earlier one authorized. A rebase orphans it, and the orphaned tree reads every file the base branch advanced by as an addition this round made. Once `base_sha` is no longer an ancestor of `HEAD` the gate does not run at all: `dev-artifact-check` says so on stderr, names no file, and the round is neither refused nor cleared on this ground. The repair for a round that needed the gate is a fresh round, stamped on the rebased branch, never an `Adds:` line for a path nobody on the branch added.
+`base_sha` is the reference, and the only one: a file already in that tree is not this round's, which is what keeps a later round from re-refusing an addition an earlier one authorized. A rebase orphans it, and the orphaned tree reads every file the base branch advanced by as an addition this round made. Once `base_sha` is no longer an ancestor of `HEAD` the gate does not run at all. `dev-artifact-check` then accepts the round on its other gates and reports `warning: "additions_gate_skipped"`, naming no file: an accept carrying that warning is one the additions gate never cleared. The repair for a round that needed the gate is a fresh round, stamped on the rebased branch, never an `Adds:` line for a path nobody on the branch added.
 
 Protected additions are:
 

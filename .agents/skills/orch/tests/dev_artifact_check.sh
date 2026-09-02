@@ -445,23 +445,25 @@ set -e
 assert_eq "$comparison_rc" "1" "a failed snapshot probe refuses acceptance"
 assert_eq "$(jq -r '.reason' <<<"$comparison_out")" "comparison_failed" \
   "a failed snapshot probe keeps the distinct reason"
-routing_mutant="$TMP_ROOT/routing-mutant"
-cp "$CHECK" "$routing_mutant"
+# A mutant takes the whole scripts directory: the check sources a sibling lib.
+mutant_scripts="$TMP_ROOT/mutant-scripts"
+mkdir -p "$mutant_scripts"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$mutant_scripts/"
+routing_mutant="$mutant_scripts/scripts/dev-artifact-check"
 sed -i.bak 's/emit false "$file" "comparison_failed"/emit false "$file" "unapproved_additions"/' "$routing_mutant"
 chmod +x "$routing_mutant"
 set +e
 routing_mutant_out="$(REAL_GIT="$real_git" PATH="$git_shim_dir:$PATH" "$routing_mutant" \
   --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --expect-items-from-round 2>/dev/null)"
 set -e
-if [[ "$(jq -r '.reason' <<<"$routing_mutant_out")" == "comparison_failed" ]]; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "routing control detects a comparison-failure misroute"
-else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "routing control detects a comparison-failure misroute"
-fi
+# The misroute must show as the reason the mutation names. Asserting only
+# "not comparison_failed" would also pass for a mutant that never ran.
+assert_eq "$(jq -r '.reason' <<<"$routing_mutant_out")" "unapproved_additions" \
+  "routing control detects a comparison-failure misroute"
 
 # --- kendex#944: a rebase stops the gate rather than misattributing to it ---
-# base_sha still resolves after a restack, so comparing against it reads every
-# file the base branch advanced by as this round's addition.
+# base_sha still resolves after a restack, so comparing against it would read
+# the base branch's whole advance as this round's own additions.
 rebase_wt="$TMP_ROOT/rebase"
 mkdir -p "$rebase_wt"
 git -C "$rebase_wt" init -q -b main
@@ -471,12 +473,10 @@ git -C "$rebase_wt" config commit.gpgsign false
 git -C "$rebase_wt" commit -q --allow-empty -m base
 init_growth_state "$STATE" "$rebase_wt" issue-944 seed 1000000
 git -C "$rebase_wt" checkout -q -b feature
-# The rebase rewrites the branch's own commits, so the record must pin one.
 printf 'branch work\n' > "$rebase_wt/branch.md"
 git -C "$rebase_wt" add branch.md
 git -C "$rebase_wt" commit -q -m branch-work
 "$ROUND_WRITE" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
-# main advances with a protected file of its own, then the branch restacks.
 git -C "$rebase_wt" checkout -q main
 mkdir -p "$rebase_wt/crates/upstream"
 printf 'upstream\n' > "$rebase_wt/crates/upstream/lib.rs"
@@ -484,21 +484,21 @@ git -C "$rebase_wt" add crates/upstream/lib.rs
 git -C "$rebase_wt" commit -q -m upstream-advance
 git -C "$rebase_wt" checkout -q feature
 git -C "$rebase_wt" rebase -q main >/dev/null
-rebase_head="$(git -C "$rebase_wt" rev-parse HEAD)"
+# The receipt names the commit this rebase orphaned, so both halves apply and
+# the answer must report the one that changes what to do next.
 "$WRITE" --worktree "$rebase_wt" --kind fix --issue issue-944 --round-id 1-1 --branch feature \
-  --commit "$rebase_head" --validate pass --item 1 Applied done >/dev/null
+  --commit "$(jq -r '.base_sha' "$rebase_wt/tmp/dev-round-issue-944-1-1.json")" \
+  --validate pass --item 1 Applied done >/dev/null
 set +e
 rebase_out="$("$CHECK" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/rebase.err")"
 set -e
-assert_eq "$(jq -c '[.reason, .files]' <<<"$rebase_out")" '["valid",[]]' \
-  "a rebased round is not accused of the additions its base cannot attribute"
-assert_eq "$(grep -cF 'the protected-additions gate did not run' "$TMP_ROOT/rebase.err")" "1" \
-  "the check says plainly that the gate did not run"
+assert_eq "$(jq -c '[.reason, .files, .warning]' <<<"$rebase_out")" '["valid",[],"additions_gate_skipped"]' \
+  "a rebased round is not accused, and the answer names the gate that did not run over the orphaned commit"
+assert_eq "$(grep -cF 'the protected-additions gate did not run' "$TMP_ROOT/rebase.err")" "1" "and says so on stderr too"
 
 # Must-fail control: without the stop, the round is billed the file main merged,
-# which is also what proves the fixture still orphans the base and still reads
-# that file as an addition against it.
-stop_mutant="$TMP_ROOT/orphan-stop-mutant"
+# which also proves the fixture still orphans that base. Pristine copy first.
+stop_mutant="$mutant_scripts/scripts/dev-artifact-check"
 cp "$CHECK" "$stop_mutant"
 assert_eq "$(grep -cF 'if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then' "$stop_mutant")" "1" \
   "control finds exactly one orphaned-base stop to remove"

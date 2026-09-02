@@ -115,21 +115,23 @@ that runs while the branch is over its size tripwire. Its receipt is accepted
 only when the branch came back to twice workflow state pr.baseline_lines: over
 that cap is reason=cut_not_shrunk, and a cap that cannot be measured at all is
 reason=cut_unmeasurable. Every other gate applies unchanged.
-Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
+Protected-addition scope, and what the gate does once a rebase orphans base_sha:
+skills/orch/schemas/dev-round.md § Protected additions.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
                       "comparison_failed"|"classifier_failed"|
                       "unapproved_additions"|"cut_not_shrunk"|
                       "cut_unmeasurable"|"incomplete",
-              warning: "commit_unreachable"|null,
+              warning: "commit_unreachable"|"additions_gate_skipped"|null,
               hint: usage diagnosis (count-vs-set --expect-items misuse)|null,
               files: [repo-relative paths]}
 
 Gates ordered: missing → (round_id mismatch → invalid) → scalars → invalid →
 commit object → commit_unresolvable → additions probe → comparison_failed or
-classifier_failed or unapproved_additions → cut size (declared cuts only) →
-cut_not_shrunk or cut_unmeasurable → items → incomplete → valid.
+classifier_failed or unapproved_additions, or warning=additions_gate_skipped
+when the probe did not run → cut size (declared cuts only) → cut_not_shrunk or
+cut_unmeasurable → items → incomplete → valid.
 
 Exit status reflects artifact validity only: a valid artifact whose recorded
 validation is failing exits 0 with verdict "retry". Acceptance keys on the
@@ -150,7 +152,10 @@ reason meanings when ok=false:
   unapproved_additions
               a fix round added a protected file since the round record's
               base_sha without naming that exact file in adds. The files field
-              names every refused path. Renames and moves do not count.
+              names every refused path. Renames and moves do not count. This
+              gate runs only while base_sha is an ancestor of HEAD; once a
+              rebase orphans it the gate does not run at all and the answer
+              carries warning=additions_gate_skipped instead.
   comparison_failed
               Git could not compare the round record's base_sha to HEAD. No file
               classification is inferred from a failed comparison.
@@ -169,10 +174,20 @@ reason meanings when ok=false:
               or non-empty-well-formed (kind fix OR bundled==true). kind implement
               without bundled keeps allowing items: [].
 
-warning=commit_unreachable (NON-FATAL, ok stays true): the .commit resolves as a
-commit object but is not an ancestor of the current HEAD — the signature of a
-receipt orphaned by a later rebase (kendex#994). Expected after a legitimate
-rebase; the orchestrator decides what it means for the round.
+warning (NON-FATAL, ok stays true) — both values are the same rebase seen from
+two sides, so when both apply additions_gate_skipped is the one reported: it is
+the one that changes what the reader does.
+  commit_unreachable
+              the .commit resolves as a commit object but is not an ancestor of
+              the current HEAD — the signature of a receipt orphaned by a later
+              rebase (kendex#994). Expected after a legitimate rebase; the
+              orchestrator decides what it means for the round.
+  additions_gate_skipped
+              the round record's base_sha is no longer an ancestor of HEAD, so
+              the protected-additions gate did not run and no file was
+              classified either way. An accept carrying it is an accept the
+              additions gate never cleared: the repair is a fresh round stamped
+              on the rebased branch, never an Adds: line (kendex#944).
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
@@ -374,7 +389,10 @@ collect_unapproved_additions() {
     printf '%s: round base %s is not an ancestor of HEAD in %s (orphaned by a rebase?); the protected-additions gate did not run, because no comparison can attribute an addition to this round once its base is off the branch\n' \
       "$PROG" "$base_sha" "$repo" >&2
     printf '[]\n' > "$result" || return 3
-    return 0
+    # 4, not 0: a gate that did not run and a gate that cleared the round are
+    # the same empty file, and the caller has to tell them apart on the channel
+    # the orchestrator reads — the JSON, not this stderr line.
+    return 4
   fi
   probe="$(mktemp "$repo/tmp/.dev-artifact-additions.XXXXXX")" \
     || return 3
@@ -460,6 +478,15 @@ validate_artifact() {
       scratch_files+=("$refused_file")
       collect_unapproved_additions "$repo" "$round_record" "$refused_file" \
         || additions_rc=$?
+    fi
+    # 4 is the orphaned-base stop: no refusal, but the gate did not run, and
+    # the answer says so. It overwrites commit_unreachable rather than
+    # queueing behind it — one rebase sets both, and this is the one that
+    # changes what the reader does, so precedence is decided here and not by
+    # which check happens to run first.
+    if (( additions_rc == 4 )); then
+      warning="additions_gate_skipped"
+      additions_rc=0
     fi
     if (( additions_rc == 2 )); then
       [[ -n "$refused_file" ]] && rm -f -- "$refused_file"

@@ -30,9 +30,9 @@
 # not block, and neither does a worktree with no state file.
 #
 # `--check-live-round` runs that question alone and exits on its answer,
-# pushing nothing. It exists for the one other path that rebases — merge-pr's
-# restack cycle, which never reaches this script's push — so that path asks the
-# owner of the predicate instead of restating its arms in prose (kendex#944).
+# pushing nothing. It exists for merge-pr's restack cycle, which rebases
+# without reaching this script's push, so that path asks the owner of the
+# predicate instead of restating its arms in prose (kendex#944).
 #
 # The rebase happens BEFORE the network push, so a rejected push can still
 # have rewritten the branch: the map is applied to workflow state whatever the

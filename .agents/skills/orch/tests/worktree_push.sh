@@ -333,20 +333,29 @@ fi
 exit 0
 EOF
 chmod +x "$check_stub_root/scripts/workflow-state" "$check_stub"
+# Every refusal in this script exits 1, so the exit code alone cannot tell one
+# arm from the one below it: each case asserts the message its own arm prints.
+check_err="$TMP_ROOT/check-stub.err"
 check_rc() {
   local rc=0
   (cd "$live_state" && "$@" --check-live-round --worktree "$live_wt" --issue KEN-LIVE) \
-    >/dev/null 2>&1 || rc=$?
+    >/dev/null 2>"$check_err" || rc=$?
   printf '%s' "$rc"
 }
 assert_eq "$(check_rc env "$check_stub")" "0" \
   "control: an honest stub answering no round permits the rebase"
 assert_eq "$(check_rc env STUB_EXISTS=fail "$check_stub")" "1" \
   "an exists that fails hands back rather than permitting"
+assert_contains "$(cat "$check_err")" "could not resolve the workflow state" \
+  "and hands back through the arm that names the failed exists"
 assert_eq "$(check_rc env STUB_EXISTS_JSON='{"path":"/x","exists":"maybe"}' "$check_stub")" "1" \
   "an answer that is neither yes nor no hands back"
+assert_contains "$(cat "$check_err")" "unexpected exists --json answer" \
+  "and hands back through the arm that names the malformed answer"
 assert_eq "$(check_rc env STUB_GET=fail "$check_stub")" "1" \
   "a round read that fails hands back rather than permitting"
+assert_contains "$(cat "$check_err")" "could not read the active dev round" \
+  "and hands back through the arm that names the failed round read"
 
 echo
 echo "=== a failed push still applies its map (rebase precedes the push) ==="
