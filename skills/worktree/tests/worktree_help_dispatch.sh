@@ -102,11 +102,13 @@ fi
 NOREPO="$TMP_ROOT/norepo"
 mkdir -p "$NOREPO"
 export GIT_CEILING_DIRECTORIES="$TMP_ROOT"
-if norepo_root=$(git -C "$NOREPO" rev-parse --show-toplevel 2>/dev/null); then
+norepo_status=0
+norepo_probe=$(LC_ALL=C git -C "$NOREPO" rev-parse --show-toplevel 2>&1) || norepo_status=$?
+if [[ "$norepo_status" -eq 0 ]]; then
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n        got:      %s\n' \
-    "the no-repository fixture is outside a git repository" "$norepo_root"
-else
+    "the no-repository fixture is outside a git repository" "$norepo_probe"
+elif [[ "$norepo_status" -eq 128 && "$norepo_probe" == *"not a git repository"* ]]; then
   PASS=$((PASS + 1))
   printf '  ok    %s\n' "the no-repository fixture is outside a git repository"
   for cmd in list path exists; do
@@ -114,6 +116,10 @@ else
     out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" "$cmd" --help) || status=$?
     assert_eq "$status" 0 "worktree $cmd --help exits 0 outside a git repository"
   done
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  %s\n        status:   %s\n        diagnostic: %s\n' \
+    "the no-repository fixture probe returns Git's expected result" "$norepo_status" "$norepo_probe"
 fi
 
 # The top-level help states the loader's real precedence, lowest to highest.
