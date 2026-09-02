@@ -153,7 +153,10 @@ make_repo() {
   git -C "$repo" config user.name Test
   git -C "$repo" config commit.gpgsign false
   printf 'orig\n' > "$repo/file.txt"
-  git -C "$repo" add file.txt
+  # A second tracked file no rebase in this suite touches, so a test can dirty
+  # the worktree without touching the conflicting path.
+  printf 'orig\n' > "$repo/other.txt"
+  git -C "$repo" add file.txt other.txt
   git -C "$repo" commit -q -m base
   # Pin the historical sibling trees/ base so this file's path assertions stay
   # explicit; default base-dir resolution is covered by worktree_base_dir.sh.
@@ -436,6 +439,111 @@ set -e
 assert_eq "$chained_push_code" "0" "consecutive clean restacks push with the original exact lease"
 assert_eq "$(git --git-dir="$CHAINED_ROOT/origin.git" rev-parse refs/heads/issue-chained-restack)" "$chained_second_head" "consecutive restack push publishes the final rewritten head"
 assert_eq "$(git -C "$CHAINED_WT" config --worktree --get kendex-restack.authorizedHead 2>/dev/null || true)" "" "consecutive restack push consumes authorization"
+
+# --- A clean index with unstaged changes is not an unresolved conflict --------
+# Git refuses to continue while a tracked file differs from the index, and says
+# "You must edit all merge conflicts" whatever the real cause. Repeating that
+# against an index with no unmerged paths sends the resolver back to files it
+# already staged, and the empty-commit skip beside it would drop the commit
+# whose conflicts they just resolved (kendex#1195).
+UNSTAGED_ROOT="$TMP_ROOT/unstaged"
+make_conflict_pair "$UNSTAGED_ROOT" issue-unstaged
+UNSTAGED_WT="$UNSTAGED_ROOT/trees/issue-unstaged"
+set +e
+(cd "$UNSTAGED_ROOT/main" && "$WORKTREE_SCRIPT" create issue-unstaged --restack >/dev/null 2>&1)
+set -e
+printf 'resolved\n' > "$UNSTAGED_WT/file.txt"
+git -C "$UNSTAGED_WT" add file.txt
+printf 'edited after staging\n' > "$UNSTAGED_WT/other.txt"
+assert_eq "$(git -C "$UNSTAGED_WT" ls-files -u)" "" "the unstaged-change fixture leaves no unmerged index entry"
+set +e
+(cd "$UNSTAGED_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-unstaged >/dev/null 2>"$UNSTAGED_ROOT/continue.err")
+unstaged_code=$?
+set -e
+unstaged_err="$(cat "$UNSTAGED_ROOT/continue.err")"
+assert_eq "$unstaged_code" "1" "guarded continue over unstaged changes exits 1"
+assert_contains "$unstaged_err" "unstaged changes" "the refusal names unstaged changes as the real cause"
+assert_contains "$unstaged_err" "other.txt" "the refusal names the unstaged file"
+assert_not_contains "$unstaged_err" "may be empty" "a clean index is not reported as an empty commit"
+assert_not_contains "$unstaged_err" "restack skip" "a clean index does not offer the skip that would drop the resolved commit"
+assert_rebase_in_progress "$UNSTAGED_WT" "the refused continuation leaves the restack paused"
+assert_eq "$(git -C "$UNSTAGED_WT" config --worktree --get kendex-restack.pending)" "true" "the refused continuation keeps its pending authorization"
+git -C "$UNSTAGED_WT" checkout -- other.txt
+unstaged_out=$(cd "$UNSTAGED_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-unstaged 2>"$UNSTAGED_ROOT/resume.err")
+assert_contains "$unstaged_out" "Completed guarded restack" "discarding the unstaged change resumes the same guarded restack"
+assert_eq "$(cat "$UNSTAGED_WT/file.txt")" "resolved" "the resumed restack keeps the resolution staged before the refusal"
+
+# --- A recorded restack whose Git state is gone still has a guarded exit ------
+# Nothing can continue or abort a rebase that is not running, and every control
+# refuses a missing paused state, so without this the tool's own record can only
+# be unset by hand (kendex#1195).
+ORPHAN_ROOT="$TMP_ROOT/orphan"
+make_conflict_pair "$ORPHAN_ROOT" issue-orphan
+ORPHAN_WT="$ORPHAN_ROOT/trees/issue-orphan"
+set +e
+(cd "$ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-orphan --restack >/dev/null 2>&1)
+set -e
+orphan_original_head="$(git -C "$ORPHAN_WT" config --worktree --get kendex-restack.originalHead)"
+git -C "$ORPHAN_WT" rebase --abort
+assert_no_rebase_in_progress "$ORPHAN_WT" "the out-of-band abort removed the Git rebase state"
+assert_eq "$(git -C "$ORPHAN_WT" config --worktree --get kendex-restack.pending)" "true" "the tool's own restack record outlives the Git state"
+set +e
+orphan_out=$(cd "$ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-orphan 2>"$ORPHAN_ROOT/abort.err")
+orphan_code=$?
+set -e
+assert_eq "$orphan_code" "0" "guarded abort exits 0 when only the tool's record is left"
+assert_contains "$orphan_out" "cleared the recorded restack state" "guarded abort clears a record whose paused rebase is gone"
+assert_eq "$(git -C "$ORPHAN_WT" config --worktree --get-regexp '^kendex-restack\.' || true)" "" "guarded abort leaves no kendex-restack key to unset by hand"
+assert_eq "$(git -C "$ORPHAN_WT" branch --show-current)" "issue-orphan" "guarded abort leaves the worktree on its recorded branch"
+assert_eq "$(git -C "$ORPHAN_WT" rev-parse HEAD)" "$orphan_original_head" "guarded abort leaves the branch at its recorded original head"
+
+# A live paused restack whose HEAD was moved off the base still aborts. continue
+# and skip replay onto that base and must refuse, but abort restores the
+# recorded original head from the paused state's own metadata, and refusing it
+# here left raw git as the only way out (kendex#1195).
+MOVED_HEAD_ROOT="$TMP_ROOT/moved-head"
+make_conflict_pair "$MOVED_HEAD_ROOT" issue-moved-head
+MOVED_HEAD_WT="$MOVED_HEAD_ROOT/trees/issue-moved-head"
+moved_head_original="$(git -C "$MOVED_HEAD_WT" rev-parse HEAD)"
+set +e
+(cd "$MOVED_HEAD_ROOT/main" && "$WORKTREE_SCRIPT" create issue-moved-head --restack >/dev/null 2>&1)
+set -e
+git -C "$MOVED_HEAD_WT" checkout -f issue-moved-head >/dev/null 2>&1
+assert_rebase_in_progress "$MOVED_HEAD_WT" "the raw checkout leaves the paused rebase in place"
+set +e
+(cd "$MOVED_HEAD_ROOT/main" && "$WORKTREE_SCRIPT" restack continue issue-moved-head >/dev/null 2>"$MOVED_HEAD_ROOT/continue.err")
+moved_head_continue_code=$?
+set -e
+assert_eq "$moved_head_continue_code" "1" "guarded continue still refuses a HEAD moved off the recorded base"
+assert_contains "$(cat "$MOVED_HEAD_ROOT/continue.err")" "no longer based on its recorded commits" "the continue refusal names the moved base"
+set +e
+moved_head_out=$(cd "$MOVED_HEAD_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-moved-head 2>"$MOVED_HEAD_ROOT/abort.err")
+moved_head_abort_code=$?
+set -e
+assert_eq "$moved_head_abort_code" "0" "guarded abort exits 0 with HEAD moved off the recorded base"
+assert_contains "$moved_head_out" "Aborted guarded restack" "guarded abort reports the restored branch"
+assert_no_rebase_in_progress "$MOVED_HEAD_WT" "guarded abort clears the paused rebase"
+assert_eq "$(git -C "$MOVED_HEAD_WT" rev-parse HEAD)" "$moved_head_original" "guarded abort restores the recorded original head"
+assert_eq "$(git -C "$MOVED_HEAD_WT" config --worktree --get-regexp '^kendex-restack\.' || true)" "" "guarded abort leaves no kendex-restack key to unset by hand"
+
+# A record whose branch no longer matches is refused, not silently dropped.
+MOVED_ORPHAN_ROOT="$TMP_ROOT/orphan-moved"
+make_conflict_pair "$MOVED_ORPHAN_ROOT" issue-orphan-moved
+MOVED_ORPHAN_WT="$MOVED_ORPHAN_ROOT/trees/issue-orphan-moved"
+set +e
+(cd "$MOVED_ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" create issue-orphan-moved --restack >/dev/null 2>&1)
+set -e
+git -C "$MOVED_ORPHAN_WT" rebase --abort
+printf 'later\n' > "$MOVED_ORPHAN_WT/later.txt"
+git -C "$MOVED_ORPHAN_WT" add later.txt
+git -C "$MOVED_ORPHAN_WT" commit -q -m 'work committed after the restack record'
+set +e
+(cd "$MOVED_ORPHAN_ROOT/main" && "$WORKTREE_SCRIPT" restack abort issue-orphan-moved >/dev/null 2>"$MOVED_ORPHAN_ROOT/abort.err")
+moved_orphan_code=$?
+set -e
+assert_eq "$moved_orphan_code" "1" "a record whose branch moved off its recorded head is refused"
+assert_contains "$(cat "$MOVED_ORPHAN_ROOT/abort.err")" "no longer at its recorded pre-restack commit" "the refusal names why the record cannot be cleared"
+assert_eq "$(git -C "$MOVED_ORPHAN_WT" config --worktree --get kendex-restack.pending)" "true" "the refused abort preserves the recorded state"
 
 # --- Remote movement while conflict resolution is pending fails closed -------
 PENDING_MOVE_ROOT="$TMP_ROOT/pending-move"

@@ -370,6 +370,30 @@ assert_eq "$(git -C "$ABORT_WT" branch --show-current)" "issue-replay-abort" "gu
 assert_eq "$(git -C "$ABORT_WT" status --porcelain)" "" "guarded abort leaves the worktree clean"
 assert_eq "$(git -C "$ABORT_WT" config --worktree --get-regexp '^kendex-restack\.' 2>/dev/null || true)" "" "guarded abort clears pending state without authorization"
 
+# --- An orphaned record is cleared from the detached replay base ---------------
+# A replay never moves the branch, so a sequencer state that disappears out of
+# band leaves HEAD detached at the base with the tool's record still standing.
+# The guarded exit has to reattach the recorded branch (kendex#1195).
+DETACHED_ROOT="$TMP_ROOT/detached"
+make_conflict_pair "$DETACHED_ROOT" issue-replay-detached
+DETACHED_WT="$DETACHED_ROOT/trees/issue-replay-detached"
+detached_pre_head="$(git -C "$DETACHED_WT" rev-parse HEAD)"
+set +e
+(cd "$DETACHED_ROOT/main" && "$WORKTREE_SCRIPT" create issue-replay-detached --restack --replay >/dev/null 2>&1)
+set -e
+git -C "$DETACHED_WT" cherry-pick --abort
+assert_no_replay_paused "$DETACHED_WT" "the out-of-band cherry-pick abort removed the sequencer state"
+assert_eq "$(git -C "$DETACHED_WT" branch --show-current)" "" "the out-of-band abort leaves HEAD detached at the replay base"
+set +e
+detached_out="$(cd "$DETACHED_ROOT/main" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" restack abort issue-replay-detached 2>"$DETACHED_ROOT/abort.err")"
+detached_code=$?
+set -e
+assert_eq "$detached_code" "0" "guarded abort exits 0 when only the tool's record is left"
+assert_contains "$detached_out" "cleared the recorded restack state" "guarded abort clears the orphaned replay record"
+assert_eq "$(git -C "$DETACHED_WT" branch --show-current)" "issue-replay-detached" "guarded abort reattaches the recorded branch"
+assert_eq "$(git -C "$DETACHED_WT" rev-parse HEAD)" "$detached_pre_head" "guarded abort leaves the branch at its recorded original head"
+assert_eq "$(git -C "$DETACHED_WT" config --worktree --get-regexp '^kendex-restack\.' 2>/dev/null || true)" "" "guarded abort leaves no kendex-restack key to unset by hand"
+
 # --- Remote movement while paused refuses continuation, abort still works ------
 MOVED_ROOT="$TMP_ROOT/moved"
 make_conflict_pair "$MOVED_ROOT" issue-replay-moved
