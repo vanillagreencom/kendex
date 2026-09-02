@@ -1,1 +1,1 @@
-- Text inside a raw HTML block is left exactly as authored, tool references included; markdown reads nothing there. Put a blank line under the opening tag to have the prose below it translated again.
+- Text inside a raw HTML block is left as authored, tool references included. A blank line ends a `<div>` or `<details>`; `<pre>`, `<script>` and `<!-- -->` end at their own closing marker.

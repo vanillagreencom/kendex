@@ -6,8 +6,11 @@ pub mod skill;
 pub mod validate;
 pub mod vocab;
 
-/// Where a rendered document keeps its code, line by line.
-pub(crate) use blocks::{Code, code_by_line};
+/// Where a rendered document keeps its code, line by line. The reading's
+/// own type is `blocks::Code`, which no caller names: each takes the field
+/// it asked for and the module is `render`'s own, so a caller that wants
+/// to hold one re-exports it then.
+pub(crate) use blocks::code_by_line;
 
 /// One thing the user should hear about a rendering, with the fix when
 /// there is one — every render lint travels through this shape.

@@ -1,0 +1,1 @@
+- A four-space-indented ``` at the top level no longer protects the text below it: markdown reads that indent as a code block whose one line is the backticks, not as an open fence.

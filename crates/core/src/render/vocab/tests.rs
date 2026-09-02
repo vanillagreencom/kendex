@@ -172,10 +172,7 @@ fn an_indented_fence_is_still_a_fence() {
     for harness in [HarnessId::Codex, HarnessId::Opencode, HarnessId::Cursor] {
         let (text, warnings) = rewrite_prose(body, harness);
         assert_eq!(text, body, "{harness:?} rewrote an indented block");
-        assert!(
-            warnings.is_empty(),
-            "{harness:?} warned: {harness:?} {warnings:?}"
-        );
+        assert!(warnings.is_empty(), "{harness:?} warned: {warnings:?}");
     }
     assert_eq!(
         rewrite("    ```\nuse the Read tool\n", HarnessId::Opencode),
@@ -256,6 +253,37 @@ fn prose_a_blank_line_below_a_wrapper_is_still_prose() {
             HarnessId::Opencode
         ),
         "<div>\n\nUse the read tool here.\n\n</div>\n"
+    );
+}
+
+/// The cost of reading a raw HTML block as markup, on a line carrying no
+/// code mark at all: prose tight under a wrapper keeps Claude's words and
+/// no warning names it. That is the whole of what the Changed entry
+/// promises, and a fixture carrying a fence or a backtick cannot pin it —
+/// narrowing the HTML arm to blocks that hold code marks would leave those
+/// green and revert this.
+#[test]
+fn prose_tight_under_a_wrapper_is_left_in_claudes_words() {
+    for body in [
+        "<div>\nUse the Read tool here.\n</div>\n",
+        "<details>\nUse the Read tool here.\n</details>\n",
+        "<br>\nUse the Read tool here.\n",
+    ] {
+        let (text, warnings) = rewrite_prose(body, HarnessId::Opencode);
+        assert_eq!(text, body, "rewrote prose inside raw HTML: {body:?}");
+        assert!(warnings.is_empty(), "warned: {warnings:?}");
+    }
+}
+
+/// The converse, and the reading main did not have: a fence line inside an
+/// HTML block opens no fence, because markdown never read it as one. So
+/// the blank line below it ends the block rather than the fence, and what
+/// follows is prose.
+#[test]
+fn a_fence_inside_a_raw_html_block_opens_nothing() {
+    assert_eq!(
+        rewrite("<div>\n```\n\nuse the Read tool\n", HarnessId::Opencode),
+        "<div>\n```\n\nuse the read tool\n"
     );
 }
 

@@ -3,7 +3,7 @@
 //! left as authored rather than mangled.
 
 use super::super::RenderWarning;
-use super::super::{Code, code_by_line};
+use super::super::code_by_line;
 use super::{CLAUDE_TOOLS, SKILL_POINTER, Word, word};
 use crate::model::HarnessId;
 
@@ -36,9 +36,12 @@ pub fn rewrite_prose(body: &str, harness: HarnessId) -> (String, Vec<RenderWarni
     // rewrites bytes the author fenced off to be copied verbatim.
     //
     // `Code` carries one entry per line of the same split, so the index is
-    // the same line either way. A line it does not answer for is treated
-    // as code: if the two ever drift, a body renders untranslated rather
-    // than silently edited inside a sample.
+    // the same line either way. The block lookup is the one that decides
+    // whether this line is read at all, so it is the one that answers for
+    // a line out of range, and it answers "code": were the two splits ever
+    // to drift, a body renders untranslated rather than silently edited
+    // inside a sample. Past it the index is proven, and `spans` is indexed
+    // directly — a second fallback here could only disagree with the first.
     let code = code_by_line(body);
     for (at, line) in body.split_inclusive('\n').enumerate() {
         let quoted = code.block.get(at).copied().unwrap_or(true);
@@ -48,8 +51,7 @@ pub fn rewrite_prose(body: &str, harness: HarnessId) -> (String, Vec<RenderWarni
         }
         out.push_str(&rewrite_line(
             line,
-            &code,
-            at,
+            &code.spans[at],
             harness,
             &mut reworded,
             &mut kept,
@@ -99,20 +101,19 @@ fn with_article(name: &str) -> String {
     }
 }
 
-/// Line `at` of the body, rewritten against the code spans `code` found on
-/// it — read off the whole document rather than off the line. A span that
-/// opens on this line covers it from the opening backtick to the line's
-/// end; one that crosses the line whole covers its whole length; one that
-/// closes here covers from byte 0 to its closing run.
+/// One line, rewritten against this line's entry in a
+/// [`Code`](super::super::blocks::Code) — read off
+/// the whole document rather than off the line. A span that opens on this
+/// line covers it from the opening backtick to the line's end; one that
+/// crosses the line whole covers its whole length; one that closes here
+/// covers from byte 0 to its closing run.
 fn rewrite_line(
     line: &str,
-    code: &Code,
-    at: usize,
+    spans: &[(usize, usize)],
     harness: HarnessId,
     reworded: &mut Vec<String>,
     kept: &mut Vec<String>,
 ) -> String {
-    let spans = code.spans.get(at).map_or(&[][..], Vec::as_slice);
     let links = link_ranges(line);
     let mut out = String::with_capacity(line.len());
     let mut copied = 0;

@@ -91,10 +91,15 @@ pub struct Code {
 /// A raw HTML block counts with the code blocks, because inside one
 /// markdown reads nothing: a fence there is three literal backticks and a
 /// span is two, so a reader that took those lines for prose would find no
-/// marks on a sample and rewrite straight through it. Blocks of the shape
-/// that carry prose end at a blank line, and the paragraph after that
-/// blank line is markdown's again — which is how a body says a wrapper
-/// holds prose rather than markup.
+/// marks on a sample and rewrite straight through it.
+///
+/// Where such a block ends is markdown's answer too, and it is two
+/// answers. `<pre>`, `<script>`, `<style>`, `<textarea>` and `<!-- -->`
+/// run to their own closing marker, and no blank line shortens them — an
+/// unclosed one runs to the end of the document. Every other shape — a
+/// `<div>`, a `<details>`, a bare `<br>`, any complete tag standing alone
+/// on a line, a closing tag included — runs to the next blank line, and
+/// the paragraph after that blank line is markdown's again.
 pub fn code_by_line(text: &str) -> Code {
     let lines = line_spans(text);
     let mut code = Code {
@@ -176,10 +181,12 @@ mod tests {
     use super::{code_by_line, line_spans};
 
     /// The two readings are handed to callers that zip them against
-    /// `str::lines`, so a range list one line short or one line long
-    /// silently pairs every line below it with another line's answer.
-    /// Each ending is checked: none, one, a run, and the `\r` that
-    /// `str::lines` takes off but the byte offsets still carry.
+    /// `str::lines` or against `str::split_inclusive`, so a range list one
+    /// line short or one line long silently pairs every line below it with
+    /// another line's answer — or, for the caller that indexes directly,
+    /// reaches past the end. Each ending is checked: none, one, a run, and
+    /// the `\r` that `str::lines` takes off but the byte offsets still
+    /// carry.
     #[test]
     fn every_line_gets_one_range_holding_its_own_bytes() {
         for text in [
@@ -194,6 +201,10 @@ mod tests {
             let spans = line_spans(text);
             let lines: Vec<&str> = text.lines().collect();
             assert_eq!(spans.len(), lines.len(), "{text:?}");
+            // The prose rewrite indexes these by a `split_inclusive`
+            // walk and indexes `spans` directly, so the two splits
+            // agreeing on the count is what keeps that index in range.
+            assert_eq!(text.split_inclusive('\n').count(), spans.len(), "{text:?}");
             for (line, (start, end)) in lines.iter().zip(&spans) {
                 assert_eq!(&text[*start..*end], *line, "{text:?}");
             }
@@ -242,10 +253,21 @@ mod tests {
     /// the one that ended it.
     ///
     /// A raw HTML block is the one that does not end where it looks like
-    /// it does: markdown closes it on a blank line, not on the closing
-    /// tag, so a line tight under `</div>` is still the block's. That is
-    /// the rule the rewrite inherits — a blank line is what hands the text
-    /// below a wrapper back to markdown.
+    /// it does. A `<div>`, a `<details>`, a bare `<br>` — any complete tag
+    /// alone on a line, a closing tag included — runs to the next blank
+    /// line rather than to its own closer, so a line tight under `</div>`
+    /// is still the block's, and `</div>` has opened one of its own. The
+    /// `<pre>`, `<script>`, `<style>`, `<textarea>` and `<!-- -->` family
+    /// runs the other way, to its closing marker, which a blank line does
+    /// not stand in for.
+    ///
+    /// The prose rewrite inherits both, and pays for them in silence: a
+    /// tool reference in prose under a wrapper is left in Claude's words
+    /// with no warning naming it, because the line was never read. That is
+    /// the safe direction — left as authored, never mangled — but it is
+    /// the one place the rewrite does not report what it could not say. A
+    /// blank line ending the block is the author's fix where the block is
+    /// one a blank line ends.
     #[test]
     fn a_block_covers_its_own_lines_and_stops() {
         let text = concat!(
