@@ -72,10 +72,7 @@ struct PrintedFinding {
 }
 
 fn safety_block(row: &ItemSafety) -> SafetyBlock {
-    let root = row
-        .targets
-        .first()
-        .map_or("", |target| target.location.as_str());
+    let root = row.targets.first().map_or("", |at| at.location.as_str());
     let advisory = &row.advisory;
     SafetyBlock {
         score: advisory.safety.score,
@@ -112,12 +109,12 @@ fn within<'a>(location: &'a str, root: &str) -> Option<&'a str> {
 }
 
 /// Every other rendering this block covers, at this finding's own place
-/// inside it. The score line names every harness, but the finding prints
-/// one absolute location, right for the rendering it was read from and
-/// wrong for the rest; a place the output does not name is a place the
-/// reader cannot go to, which is the rule `print_conflicts` names its own
-/// positions under. Empty where the finding is not inside its own root,
-/// there being nothing to re-root.
+/// and line inside it. The score line names every harness, but the
+/// finding prints one `PATH:LINE`, right for the rendering it was read
+/// from and wrong for the rest; a place the output does not name is a
+/// place the reader cannot go to, the rule `print_conflicts` names its
+/// own positions under. Every member of a block shares the line, which
+/// the key compares. Empty where the finding is not inside its own root.
 fn also_at(finding: &Finding, targets: &[SafetyTarget]) -> Vec<String> {
     let Some((first, rest)) = targets.split_first() else {
         return Vec::new();
@@ -125,10 +122,13 @@ fn also_at(finding: &Finding, targets: &[SafetyTarget]) -> Vec<String> {
     let Some(place) = within(&finding.location, &first.location) else {
         return Vec::new();
     };
+    let line = finding
+        .line
+        .map_or(String::new(), |line| format!(":{line}"));
     let mut places: Vec<String> = Vec::new();
     for target in rest {
-        let at = format!("{}{place}", target.location);
-        if at != finding.location && !places.contains(&at) {
+        let at = format!("{}{place}{line}", target.location);
+        if at != format!("{}{line}", finding.location) && !places.contains(&at) {
             places.push(at);
         }
     }
@@ -168,21 +168,20 @@ pub fn print_advisory(
     at: ScoredAt<'_>,
     advisory: &kendex_core::quality::AuditResult,
 ) {
-    let targets = match at {
-        ScoredAt::Targets(targets) => targets,
-        ScoredAt::CatalogPath(_) => &[],
-    };
-    let at = match at {
-        ScoredAt::Targets(targets) => format!(
-            " for {}",
-            targets
-                .iter()
-                .map(|target| target.harness.display_name())
-                .collect::<Vec<_>>()
-                .join(", ")
+    let (targets, at) = match at {
+        ScoredAt::Targets(targets) => (
+            targets,
+            format!(
+                " for {}",
+                targets
+                    .iter()
+                    .map(|target| target.harness.display_name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         ),
-        ScoredAt::CatalogPath("") => String::new(),
-        ScoredAt::CatalogPath(path) => format!(" at {}", path),
+        ScoredAt::CatalogPath("") => (&[][..], String::new()),
+        ScoredAt::CatalogPath(path) => (&[][..], format!(" at {}", path)),
     };
     say(&format!(
         "safety: {} {}{at} scores {}/100",
@@ -361,7 +360,7 @@ mod tests {
         ];
         assert_eq!(
             also_at(&row.advisory.findings[0], &targets),
-            ["/home/one/.codex/skills/deploy/SKILL.md"],
+            ["/home/one/.codex/skills/deploy/SKILL.md:12"],
             "a file in a tree is re-rooted under the other rendering"
         );
 
@@ -372,7 +371,7 @@ mod tests {
         ];
         assert_eq!(
             also_at(&row.advisory.findings[0], &labelled),
-            ["/home/one/.gemini/settings.json (command)"],
+            ["/home/one/.gemini/settings.json (command):12"],
             "a hook's place rejoins by the space it was taken off by"
         );
 
