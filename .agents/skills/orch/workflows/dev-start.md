@@ -31,6 +31,12 @@ Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` as 
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
+```bash
+.agents/skills/worktree/scripts/worktree-session-guard claim [WT_PATH] --owner [ISSUE_ID]
+```
+
+Claim it once the path resolves, so the untargeted `worktree cleanup` sweeper skips it; **skip** when `[WT_PATH]` is the main checkout, which the guard refuses. Do not pass `--repo`. Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding.
+
 Initialize state unless it exists:
 
 ```bash

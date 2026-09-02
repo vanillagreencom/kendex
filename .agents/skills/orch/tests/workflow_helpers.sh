@@ -150,10 +150,17 @@ assert_file_contains "$submit_workflow" 'scripts/worktree-push --worktree' \
 # ban. That rule lives only in prose and the wrapper pin above carries the
 # mechanism instead.
 
-# The lease is what stops two sessions working the same tree.
-assert_file_contains "$SKILL_DIR/workflows/start-worktree.md" \
-  'worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID]' \
-  "start-worktree keeps the session-guard claim step"
+# The lease is what keeps `worktree cleanup` off a tree still being worked in:
+# with no lease the sweeper's probe exits 3 and it removes a merged-branch
+# worktree, uncommitted work included. `worktree create` never claims, so every
+# route that resolves or creates one has to claim it itself — start-worktree is
+# not on the path of a standalone dev-start, dev-fix or review-pr-comments run,
+# nor of ci-fix's own worktree resolution.
+for doc in start-worktree dev-start dev-fix review-pr-comments ci-fix; do
+  assert_file_contains "$SKILL_DIR/workflows/$doc.md" \
+    'worktree-session-guard claim ' \
+    "$doc claims the session-guard lease on the worktree it works in"
+done
 
 echo
 echo "=== round-closure contract ==="
