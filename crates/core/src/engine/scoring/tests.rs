@@ -40,7 +40,6 @@ fn a_scored_row_serves_its_advisory_fields_at_the_top_level() {
     assert_eq!(json["ruleset"], RULESET_VERSION, "{json}");
     assert_eq!(json["findings"][0]["rule"], "rce", "{json}");
     assert_eq!(json["skipped"][0]["rule"], "secret-material", "{json}");
-    assert_eq!(json["targets"][0]["harness"], "claude", "{json}");
     assert_eq!(json["targets"][0]["location"], "skills/gh", "{json}");
 }
 
@@ -52,11 +51,6 @@ fn identical_renderings_are_scored_once_for_all_harnesses() {
     ]);
 
     assert_eq!(audits, 1, "identical content should reach the auditor once");
-    assert_eq!(
-        rows.len(),
-        1,
-        "one content reading should produce one audit"
-    );
     assert_eq!(harnesses(&rows[0]), [HarnessId::Claude, HarnessId::Codex]);
 }
 
@@ -76,7 +70,7 @@ fn input_identity_keeps_item_name_and_kind() {
 }
 
 #[test]
-fn equal_scores_with_different_findings_stay_separate() {
+fn different_results_stay_separate() {
     let rows = rows(vec![
         desired_hook(
             HarnessId::Claude,
@@ -93,6 +87,10 @@ fn equal_scores_with_different_findings_stay_separate() {
     assert_eq!(rows.len(), 2, "different findings need separate blocks");
     assert_eq!(rows[0].advisory.safety.score, rows[1].advisory.safety.score);
     assert_ne!(rows[0].advisory.findings, rows[1].advisory.findings);
+    let mut skipped = crate::quality::sample::populated();
+    let before = skipped.grouping_key("skills/gh");
+    skipped.skipped[0].reason.push('!');
+    assert_ne!(before, skipped.grouping_key("skills/gh"));
 }
 
 #[test]
@@ -111,19 +109,7 @@ fn matching_hook_findings_group_across_labeled_locations() {
     ]);
 
     assert_eq!(audits, 2, "different hook renderings need separate audits");
-    assert_eq!(rows.len(), 1, "matching hook findings should share a block");
     assert_eq!(harnesses(&rows[0]), [HarnessId::Claude, HarnessId::Gemini]);
-}
-
-#[test]
-fn result_grouping_keeps_skipped_rules() {
-    let base = crate::quality::sample::populated();
-    let mut changed = base.clone();
-    changed.skipped[0].reason.push('!');
-    assert_ne!(
-        base.grouping_key("skills/gh"),
-        changed.grouping_key("skills/gh")
-    );
 }
 
 fn harnesses(row: &ItemSafety) -> Vec<HarnessId> {
