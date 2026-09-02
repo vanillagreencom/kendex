@@ -208,10 +208,6 @@ fn installable(
                     decl.source
                 ),
             });
-            state.underived_bundles.insert(BundleRef {
-                source: decl.source.clone(),
-                name: name.to_owned(),
-            });
             return Vec::new();
         }
     };

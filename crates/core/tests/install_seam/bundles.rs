@@ -272,38 +272,41 @@ fn a_set_whose_members_the_catalog_does_not_offer_is_refused() {
     assert!(f.project.join(".claude/skills/dev").exists());
 }
 
-/// A catalog whose set stops reading keeps what it already installed: the
-/// members derive to nothing while the body is unreadable, and `kendex apply`
-/// sweeps what nothing derives, so a catalog-side edit would otherwise trash
-/// a consumer's files. The plan names the key instead.
+/// A catalog whose set stops reading keeps what it already installed — the
+/// member, and what the member requires. Both derive to nothing while the
+/// body is unreadable, and `kendex apply` sweeps what nothing derives, so a
+/// catalog-side edit would otherwise trash a consumer's files and tell them
+/// they were no longer wanted. The plan names the key instead.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unreadable_set_keeps_its_installed_members_and_names_the_key() {
     let f = world();
     let catalog = f.home.join("catalog");
-    skill(&catalog, "dev");
-    skill(&catalog, "docs");
+    write(
+        &catalog,
+        "skills/dev/SKILL.md",
+        "---\nname: dev\ndescription: the dev skill\ndependencies:\n  required: [helper]\n---\nBody.\n",
+    );
+    skill(&catalog, "helper");
     write(
         &catalog,
         "kendex.toml",
-        "[bundles.starter]\nskills = [\"dev\"]\n\n[bundles.other]\nskills = [\"docs\"]\n",
+        "[bundles.starter]\nskills = [\"dev\"]\n",
     );
     manifest_with(
         &f,
         &[("cat", &catalog)],
-        "[bundles.starter]\nsource = \"cat\"\n\n[bundles.other]\nsource = \"cat\"\n",
+        "[bundles.starter]\nsource = \"cat\"\n",
     );
     apply_now(&f);
     let member = f.project.join(".claude/skills/dev");
-    let sibling = f.project.join(".claude/skills/docs");
-    assert!(member.exists() && sibling.exists(), "both install first");
+    let required = f.project.join(".claude/skills/helper");
+    assert!(member.exists() && required.exists(), "both install first");
 
-    // One set stops reading; the set beside it drops its member in the shape
-    // the reader does read, so that one is a real orphan and must go.
     write(
         &catalog,
         "kendex.toml",
-        "[bundles.starter]\nskills = [\"dev\"]\nversion = \"1.0\"\n\n[bundles.other]\nskills = []\n",
+        "[bundles.starter]\nskills = [\"dev\"]\nversion = \"1.0\"\n",
     );
     let report = kendex_core::engine::plan_apply(
         &f.env,
@@ -317,11 +320,8 @@ fn an_unreadable_set_keeps_its_installed_members_and_names_the_key() {
     .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
 
-    assert!(member.exists(), "an unreadable set trashed its members");
-    assert!(
-        !sibling.exists(),
-        "a set that reads fine stopped sweeping what it no longer carries"
-    );
+    assert!(member.exists(), "an unreadable set trashed its member");
+    assert!(required.exists(), "it trashed what that member requires");
     let said = report.notes.join(" | ");
     assert!(
         said.contains("source 'cat': kendex.toml") && said.contains("version"),

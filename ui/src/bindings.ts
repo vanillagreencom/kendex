@@ -833,6 +833,11 @@ export type CatalogFinding = {
 	location: string,
 	problem: string,
 	fix: string,
+	/**
+	 *  Whether this alone means the catalog would not install something it
+	 *  offers — carried from where that is known, never re-read from the text.
+	 */
+	breakage: boolean,
 };
 
 /**

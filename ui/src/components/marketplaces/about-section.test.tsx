@@ -41,6 +41,7 @@ const finding: CatalogFinding = {
   location: "kendex.toml",
   problem: "no skills root",
   fix: "add one",
+  breakage: false,
 };
 
 describe("the About tab as a profile", () => {

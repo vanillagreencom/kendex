@@ -38,6 +38,9 @@ pub struct CatalogFinding {
     pub location: String,
     pub problem: String,
     pub fix: String,
+    /// Whether this alone means the catalog would not install something it
+    /// offers — carried from where that is known, never re-read from the text.
+    pub breakage: bool,
 }
 
 impl fmt::Display for CatalogFinding {
@@ -56,6 +59,15 @@ impl CatalogFinding {
             location: location.into(),
             problem: problem.into(),
             fix: fix.into(),
+            breakage: false,
+        }
+    }
+
+    /// The same finding, as something the catalog cannot install past.
+    pub(super) fn breaking(self) -> Self {
+        CatalogFinding {
+            breakage: true,
+            ..self
         }
     }
 }

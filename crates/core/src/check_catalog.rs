@@ -238,20 +238,12 @@ pub fn check_with(
             kind: CATALOG_PASS,
             name: display.to_owned(),
             pass: CATALOG_PASS.to_owned(),
-            severity: match config.mode {
-                CatalogMode::Unusable => "error",
-                // A set whose body will not read installs nothing, which is
-                // what this check exits non-zero for. The catalog around it
-                // is usable, so its mode cannot say so — metadata that will
-                // not read stays the advisory it is.
-                _ if config
-                    .unreadable_bundles
-                    .values()
-                    .any(|p| *p == finding.problem) =>
-                {
-                    "error"
-                }
-                _ => "warning",
+            // A set whose body will not read installs nothing, which is what
+            // this check exits non-zero for. The catalog around it is usable,
+            // so its mode cannot say so and the finding carries it instead.
+            severity: match config.mode == CatalogMode::Unusable || finding.breakage {
+                true => "error",
+                false => "warning",
             },
             rule: None,
             message: finding.problem.clone(),

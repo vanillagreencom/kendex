@@ -64,12 +64,14 @@ impl SourceConfig {
             .chain(self.discovery.findings.iter())
     }
 
-    /// Whether this reading hides the whole source: an unusable control file
-    /// hides every item and set at once, and nothing deciding a removal reads
-    /// it as the whole truth. A set whose body will not read is not that — it
-    /// costs the rest nothing, and holds back only its own members.
+    /// Whether this reading answers with less than the catalog offers: an
+    /// unusable control file, or a set whose body will not read. Nothing
+    /// deciding a removal reads such a catalog as the whole truth — a sweep
+    /// that deletes files on a catalog-side typo fails in the wrong
+    /// direction, and holding an orphan whose sibling set reads fine is the
+    /// visible, recoverable cost of that.
     pub fn hides_content(&self) -> bool {
-        self.mode == CatalogMode::Unusable
+        self.mode == CatalogMode::Unusable || !self.unreadable_bundles.is_empty()
     }
 
     fn unusable(&mut self, file: &'static str, problem: String, fix: &str) {
@@ -222,13 +224,17 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
     // content, or as a set an install would refuse.
     let offers_them = config.plugin_registry.is_none();
     for (name, problem) in unreadable {
-        config.config_findings.push(CatalogFinding::new(
+        let finding = CatalogFinding::new(
             crate::manifest::MANIFEST_FILE,
             problem.problem.clone(),
             problem.fix,
-        ));
-        if offers_them {
-            config.unreadable_bundles.insert(name, problem.problem);
+        );
+        match offers_them {
+            true => {
+                config.config_findings.push(finding.breaking());
+                config.unreadable_bundles.insert(name, problem.problem);
+            }
+            false => config.config_findings.push(finding),
         }
     }
     if let Some(mapping) = table.get("agent-skills").and_then(|t| t.as_table()) {
