@@ -103,6 +103,20 @@ gh_stub_answer api 'broad'
 eq "$(gh api 'a%b')" "broad" "the foreign spelling falls through to the one-word key"
 eq "$(gh api 'a/b')" "slashed" "the claimant still gets its own answer"
 
+echo "=== a one-word call does not take a two-word claim ==="
+
+# The join is blind to arity: the two-word `api user` and the one-word
+# command `api-user` both key on `api-user`. The claim is what keeps them
+# apart, and without it a suite goes green after the code under test ran a
+# command gh does not have.
+gh_stub_reset
+eq "$(gh api user)" "test-user" "must-fail control: the two-word call still resolves"
+if out="$(gh api-user 2>&1)"; then
+  bad "the one-word call took the two-word answer" "got: $out"
+else
+  ok "must-fail: a one-word call does not take a two-word claim"
+fi
+
 echo "=== @ is reserved for selector slots ==="
 
 # The stub mints `<stem>@<id>` for a selector's slot. A verb or a call
