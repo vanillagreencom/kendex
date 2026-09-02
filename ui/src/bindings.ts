@@ -797,8 +797,9 @@ export type CandidateOrigin = {
 	 */
 	hash: string,
 	/**
-	 *  Why these bytes are not on offer, when they are not: an agent in a
-	 *  format a catalog cannot store.
+	 *  Why these bytes are not on offer, when a catalog is what refused
+	 *  them: an agent in a format it cannot store. Null where the bytes
+	 *  were never read at all.
 	 */
 	problem: string | null,
 };

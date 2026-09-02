@@ -46,8 +46,9 @@ pub struct CandidateOrigin {
     /// Content identity — what apply revalidates before copying. Empty
     /// where there is nothing to select.
     pub hash: String,
-    /// Why these bytes are not on offer, when they are not: an agent in a
-    /// format a catalog cannot store.
+    /// Why these bytes are not on offer, when a catalog is what refused
+    /// them: an agent in a format it cannot store. Null where the bytes
+    /// were never read at all.
     pub problem: Option<String>,
 }
 
@@ -179,9 +180,9 @@ pub(super) struct ResolvedSelection {
 }
 
 /// Every package the given scopes hold, grouped and deduplicated. Origins
-/// with nothing to select are listed with an empty hash and their
-/// `problem` so the wizard can show them and say why; selecting one
-/// refuses at apply.
+/// with nothing to select are listed with an empty hash, and with a
+/// `problem` where a catalog is what refused them, so the wizard can show
+/// them and say why; selecting one refuses at apply.
 pub fn inventory(env: &Env, scopes: &[Scope]) -> Result<Vec<ImportCandidate>> {
     let unmanaged = unmanaged_paths(env, scopes);
     let mut candidates: BTreeMap<(ItemKind, String), Vec<CandidateOrigin>> = BTreeMap::new();
@@ -240,11 +241,13 @@ pub fn inventory(env: &Env, scopes: &[Scope]) -> Result<Vec<ImportCandidate>> {
 }
 
 /// The versioned envelope `marketplace import --json` wraps its candidates
-/// in. Schema 2 gives every origin a `problem` saying why its bytes are
-/// not on offer, and widens what an empty `hash` means: under schema 1 it
-/// was a read that failed, and it now also covers bytes read fine that a
-/// catalog cannot store. The addition is free; the change of meaning in a
-/// field that was already there is what the bump is for, the same call
+/// in. Schema 2 adds a `problem` to an origin whose bytes read fine but a
+/// catalog cannot store them, and widens what an empty `hash` means: under
+/// schema 1 it was a read that failed, and it now also covers those
+/// unstorable bytes. `problem` tells the two apart. Null is still the
+/// schema-1 read that failed, and a set one names the new case. The
+/// addition is free; the change of meaning in a field that was already
+/// there is what the bump is for, the same call
 /// [`crate::check_catalog::CHECK_SCHEMA`] made when a finding's line came
 /// out of `file`.
 pub const IMPORT_SCHEMA: u32 = 2;
