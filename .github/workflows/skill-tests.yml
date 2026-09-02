@@ -131,22 +131,6 @@ jobs:
         if: always() && matrix.shard == 'rest'
         run: skills/growth-guards/scripts/todo-ban
 
-      # Every skill must route problem reports through `kendex report`: a
-      # skill carrying only a `bugs:` URL sends agents to hand-file in this
-      # repo regardless of who owns the asset.
-      - name: skills point reports at `kendex report`
-        if: matrix.shard == 'rest'
-        run: |
-          set -u
-          fail=0
-          while IFS= read -r f; do
-            if ! grep -qF 'kendex report' "$f"; then
-              echo "missing \`kendex report\` guidance: $f"
-              fail=1
-            fi
-          done < <(git ls-files -- 'skills/*/SKILL.md')
-          exit "$fail"
-
       # One scan for Bash 4+ syntax over the roster `tools/bash32-lint --list`
       # prints. bash32-lint.test.sh proves its teeth.
       - name: bash32-lint (Bash 3.2 portability across the roster)

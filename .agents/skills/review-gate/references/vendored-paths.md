@@ -94,8 +94,9 @@ Once per re-vendor train, on ONE consumer PR, collect upstream-remedy findings
 from BOTH surfaces: the review bodies, AND EVERY vendored-path thread a
 location-bound reviewer left.
 
-File the report against the catalog repo through the owner's configured
-route.
+Use the reporting route in this skill's injected `## Project Instructions`.
+If no route is injected, return the defect to the orchestrating agent and
+user without filing.
 
 The lock is the one judge, and it records provenance for every kind — skills,
 agents, hooks and Pi extensions alike. A name routes upstream when the lock
@@ -208,10 +209,12 @@ the catalog repo and to the PR author out of band. Under a flat rule there is
 no on-PR surface left, which also removes the consolidated-comment fallback
 the vendored template gives a location-bound reviewer.
 
-**The report files against the catalog repo**, through the owner's configured
-route and the same lock ownership rule as § The consumer session's half. An
-item rendered from a third-party catalog carries that catalog in its lock
-entries and reports here instead, so open that issue by hand.
+**File against the catalog repo only when this skill's injected `## Project
+Instructions` supplies a reporting route.** Follow that route and the same
+lock ownership rule as § The consumer session's half. With no injected route,
+return the defect to the orchestrating agent and user without filing. An item
+rendered from a third-party catalog carries that catalog in its lock entries
+and reports here instead, so open that issue by hand.
 
 Wire it with the vendored template: copy it, set `applyTo` to the render
 trees, and apply its RENDER VARIANT block, which carries the replacement text

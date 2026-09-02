@@ -95,9 +95,10 @@ that most often survive and they are the two the flat rule forbids.
    REVIEW SUMMARY BODY) with:
 
    - **The fix lands in these rendered bytes**: do not raise it on this PR, on
-     any surface. The session that runs the refresh files it against the
-     catalog repo through the owner's configured route, and the fix arrives
-     here as a later render.
+     any surface. The session that runs the refresh follows the reporting route
+     in this skill's injected `## Project Instructions`. With no injected route,
+     it returns the defect to the orchestrating agent and user without filing.
+     The fix arrives here as a later render.
 
 4. REPLACE the third routing bullet ("[UPSTREAM_REPO]'s own docs …") with:
 

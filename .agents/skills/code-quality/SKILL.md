@@ -21,7 +21,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Code Quality
 
-Repo-specific standards live in each repo's `## Project Instructions` section below and add to these rules.
+Repo-specific standards live in each repo's `## Project Instructions` section and add to these rules.
 
 ## Core Principle
 
