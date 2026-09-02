@@ -233,8 +233,10 @@ Use the output as `MAIN_REPO_ROOT`.
    | `unknown` | Unrecognized, or `status: error`: hand back with the `error` and `cause` fields, and never re-arm |
 
    A `still_progressing` repeat is left unbounded on purpose. It terminates:
-   the signal stays true only while a check-run is not completed, and GitHub's
-   own workflow timeout finally fails a run whose runner died. Returning early
+   the signal stays true only while a check-run is not completed or the queue
+   entry is still moving, and GitHub's own workflow timeout finally fails a run
+   whose runner died. Entry movement ends too — a position only falls, so the
+   PR reaches the front and merges or leaves the queue. Returning early
    would leave the PR armed with the merge free to fire behind a departed lane,
    and steps 5 and 6 would never run on it — which is the whole reason the lane
    waits here rather than handing back.
