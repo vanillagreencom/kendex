@@ -136,7 +136,7 @@ Your return states the blocker, the domain and labels for the new issue, and tha
 
 Implement per your domain expertise and run quality gates before completion.
 
-A refusal, a validator, a lock, a retry, or a test exists only for an input a shipped writer emits or a user types; name that producer beside it, or do not write it.
+Before writing a refusal, a validator, a lock, a retry, or a test, read [dev SKILL.md § Engineering Rules](../SKILL.md#engineering-rules).
 
 - **Scope growing?** Linear: `linear.sh issues create --state "Backlog" --project "[PARENT_PROJECT]" --parent [PARENT_ID] --labels "[VALIDATED_LABELS]" --description-file [BODY_FILE]` — the parent's project, `Backlog`, and the complete label set (your own `agent:*` label plus every category the project requires) validated against the live inventory. The body follows project-management's [issue-description-template.md](../../project-management/templates/issue-description-template.md), whose `Reached by:` line names what in this implementation run arrives at the discovered work. GitHub and ad-hoc report the discovered scope in § 9 instead; never create issues without orchestrator approval.
 - **Work outside scope?** Note it under Discovered Work in § 9.
