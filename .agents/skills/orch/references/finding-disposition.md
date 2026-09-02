@@ -27,7 +27,7 @@ Uncertain about category, prefer `fix` (if related); uncertain about relevance, 
 |--------|----------|
 | Small, quick to apply | `fix` |
 | Doc or reference updates for changed code | `fix`, always, regardless of size |
-| Test coverage added to an existing test | `fix` when [`bot-instructions` § no-preferences](../../bot-instructions/SKILL.md#no-preferences) permits it; otherwise `decline` |
+| Test coverage added to an existing test | `fix` when the diff changes behavior no test exercises (AGENTS.md § Code Review Rules); otherwise `decline` |
 | Test coverage needing a new file, suite, or scenarios | `issue` when the untested path can fail in real usage without a test reddening, the failure named; else `decline` |
 | Performance fix inside touched code | `fix` |
 | Performance work needing benchmarks | `issue` |
