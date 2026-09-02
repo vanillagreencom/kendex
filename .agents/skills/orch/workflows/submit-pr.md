@@ -346,6 +346,16 @@ Ask once, naming what the diff touches and which gate is unmet: `Admin-merge pas
 
 **Skip if** managed → § 7.
 
+`MERGE_READY = false` records the unmet gate here, so § 7 returns a named stop
+instead of reading as complete; only the managed `start-worktree.md` § 5 caller
+recorded it before. `record-if-empty` keeps a precise upstream stop, and only
+`recorded` writes the file the post below sends:
+
+```bash
+.agents/skills/orch/scripts/workflow-state post-pr-stop record-if-empty [ISSUE_ID] merge-gates-unmet merge "[UNMET_GATE_AND_REMAINING_WORK]" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
+.agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
+```
+
 Post a summary comment when there were fixes or created issues. Fix SHAs come from workflow state; artifact-sourced SHAs resolve through `.rebase_map` first. Write the summary to a file and post it:
 
 ```bash

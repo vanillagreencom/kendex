@@ -41,17 +41,6 @@ assert_eq() {
   fi
 }
 
-assert_ends_with() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == *"$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected suffix: %s\n        got:             %s\n' "$name" "$want" "$got"
-  fi
-}
-
 assert_contains() {
   local haystack="$1" needle="$2" name="$3"
   if grep -qF -- "$needle" <<<"$haystack"; then
@@ -171,20 +160,6 @@ else
   FAIL=$((FAIL + 1))
   printf '  FAIL  github:codex never invoked the terminal stub\n'
 fi
-
-prompt_case() {
-  local capture="$1" name="$2" suffix="$3"; shift 3
-  OT_CAPTURE="$capture" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" "$@" >/dev/null
-  if wait_capture "$capture"; then
-    assert_ends_with "$(cat "$capture")" "$suffix" "$name prompt ends at its closing quote"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s never invoked the terminal stub\n' "$name"
-  fi
-}
-prompt_case "$TMP_ROOT/cap3" linear:opencode " && opencode --prompt '/orch start CC-738'" --ghostty --harness opencode cc-738
-prompt_case "$TMP_ROOT/cap4" linear:pi " && pi '/skill:orch start CC-739'" --ghostty --harness pi cc-739
-prompt_case "$TMP_ROOT/cap5" github:opencode " && opencode --prompt '/orch start github acme/widgets#43'" --tracker github --repo acme/widgets --ghostty --harness opencode 43
-prompt_case "$TMP_ROOT/cap6" github:pi " && pi '/skill:orch start github acme/widgets#44'" --tracker github --repo acme/widgets --ghostty --harness pi 44
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

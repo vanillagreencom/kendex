@@ -18,6 +18,11 @@ Verify the merge conditions and merge PR(s).
 
 With no argument, present the list and ask which to merge. With `all`, process every ready PR sequentially.
 
+**`merge_mode: admin` goes straight to § 4**, running § 3's per-PR state
+resolution on the way and nothing else in § 2 or § 3: `submit-pr.md` § 6.2 asks
+only where a gate is unmet, so re-judging it here would stop the answered PR at
+`merge-check-blocked` and discard the answer.
+
 Resolve the decision mode once for every post-PR choice in this workflow. Named stops use [SKILL.md § The Cycle](../SKILL.md#the-cycle).
 
 ```bash
