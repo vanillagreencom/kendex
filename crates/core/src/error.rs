@@ -155,6 +155,13 @@ pub enum CoreError {
     #[error("credential refresh is busy: another kendex process holds {lock}")]
     CredentialRefreshBusy { lock: PathBuf },
 
+    /// The OS keychain would not serve the sign-in: locked, denied at the
+    /// prompt, or unreachable from this session. Separate from
+    /// `RegistryUnavailable` because nothing here is remote — reported as a
+    /// directory outage, it sends the user to check a working network.
+    #[error("the credential store on this machine could not be used: {why}")]
+    CredentialStoreUnavailable { why: String },
+
     #[error("app update check is busy: another kendex process holds {lock}")]
     AppUpdateBusy { lock: PathBuf },
 

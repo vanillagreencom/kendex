@@ -82,13 +82,43 @@ fn transaction_lock_file(
         .join(format!(".kendex-credential-{digest}.lock"))
 }
 
+/// Which keychain call would not answer. Every arm reports the credential
+/// store as the cause, because that is what failed: a locked keyring, a
+/// denied prompt, or a session that cannot reach the keychain. None of them
+/// is the community directory, and a user told otherwise checks a network
+/// that is working.
+#[derive(Clone, Copy, Debug)]
+enum StoreRefusal {
+    /// No keychain answered, so no entry could be opened.
+    NoStore,
+    /// The sign-in could not be written.
+    Save,
+    /// The stored sign-in could not be read back.
+    Load,
+    /// The stored sign-in could not be removed.
+    Clear,
+}
+
+impl StoreRefusal {
+    fn refused(self, error: &keyring::Error) -> CoreError {
+        CoreError::CredentialStoreUnavailable {
+            why: match self {
+                Self::NoStore => format!("no keychain answered: {error}"),
+                Self::Save => format!(
+                    "the sign-in was refused: {error}. Nothing was written anywhere \
+                     else — there is no plaintext fallback."
+                ),
+                Self::Load => format!("the stored sign-in could not be read: {error}"),
+                Self::Clear => format!("the removal was refused: {error}"),
+            },
+        }
+    }
+}
+
 fn entry() -> Result<keyring::Entry> {
     let identity = active_identity();
-    keyring::Entry::new(identity.service, &identity.endpoint).map_err(|error| {
-        CoreError::RegistryUnavailable {
-            why: format!("no usable credential store: {error}"),
-        }
-    })
+    keyring::Entry::new(identity.service, &identity.endpoint)
+        .map_err(|error| StoreRefusal::NoStore.refused(&error))
 }
 
 impl CredentialStore for KeyringStore {
@@ -99,12 +129,7 @@ impl CredentialStore for KeyringStore {
             })?;
         entry()?
             .set_password(&json)
-            .map_err(|error| CoreError::RegistryUnavailable {
-                why: format!(
-                    "the credential store refused to hold the sign-in: {error}. \
-                     Nothing was written anywhere else — there is no plaintext fallback."
-                ),
-            })
+            .map_err(|error| StoreRefusal::Save.refused(&error))
     }
 
     fn load(&self) -> Result<Option<Credential>> {
@@ -121,18 +146,14 @@ impl CredentialStore for KeyringStore {
                 Ok(Some(credential))
             }
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(CoreError::RegistryUnavailable {
-                why: format!("the credential store could not be read: {error}"),
-            }),
+            Err(error) => Err(StoreRefusal::Load.refused(&error)),
         }
     }
 
     fn clear(&self) -> Result<()> {
         match entry()?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(CoreError::RegistryUnavailable {
-                why: format!("the credential store refused the removal: {error}"),
-            }),
+            Err(error) => Err(StoreRefusal::Clear.refused(&error)),
         }
     }
 
@@ -173,6 +194,37 @@ mod tests {
             serde_json::from_str(stored).expect("a stored credential still reads");
         assert_eq!(credential.refresh_token, "kxr");
         assert!(credential.sign_in.is_empty());
+    }
+
+    /// The keychain is local, so its failures must not read as the
+    /// community directory being down: a user sent to check their network
+    /// never finds the locked keyring that actually refused.
+    #[test]
+    fn every_keychain_refusal_names_the_credential_store() {
+        for refusal in [
+            StoreRefusal::NoStore,
+            StoreRefusal::Save,
+            StoreRefusal::Load,
+            StoreRefusal::Clear,
+        ] {
+            let shown = refusal
+                .refused(&keyring::Error::NoStorageAccess(Box::new(
+                    std::io::Error::other("the keyring is locked"),
+                )))
+                .to_string();
+            assert!(
+                shown.contains("the credential store on this machine"),
+                "{refusal:?} names the store that refused: {shown}"
+            );
+            assert!(
+                !shown.contains("community directory"),
+                "{refusal:?} sends the user to the network instead: {shown}"
+            );
+            assert!(
+                shown.contains("the keyring is locked"),
+                "{refusal:?} drops the reason the OS gave: {shown}"
+            );
+        }
     }
 
     #[test]
