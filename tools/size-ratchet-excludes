@@ -7,6 +7,7 @@
 # lives inside a tree the render rows exclude.
 
 .agents/*	kendex's render of skills/, agents/ and hooks/, whose SOURCE is governed, so governing the mirror doubles every finding and freezes the render
+!.agents/hooks/*	adopted hook scripts: this tree IS the source, so the row above must not cover it
 !.agents/skills/app-deploy/*	in-place skill (kendex-local.toml): this tree IS the source, so the row above must not cover it
 !.agents/skills/kendex-issues/*	in-place skill (kendex-local.toml): this tree IS the source, so the row above must not cover it
 .claude/skills/*	rendered skill links into .agents/skills

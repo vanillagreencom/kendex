@@ -367,17 +367,18 @@ glob_match() { # PATH PATTERN — 0 when the glob matches the whole path
   return 1
 }
 is_excluded() { # PATH — 0 when an exclusion glob matches and no `!` row carves it back
-  local pat
-  # The baseline is policy input, never measured content, and sits ahead of
-  # the carve rows so no `!` pattern can pull it into its own gate.
+  local pat excluded=1
+  # The baseline is policy input and sits ahead of both loops, so no `!` row
+  # pulls it into its own gate; only an excluded path can be carved back.
   [ "$1" != "$BASELINE_FILE" ] || return 0
+  for pat in ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"}; do
+    glob_match "$1" "$pat" && excluded=0 && break
+  done
+  [ "$excluded" -eq 0 ] || return 1
   for pat in ${CARVE_PATTERNS[@]+"${CARVE_PATTERNS[@]}"}; do
     glob_match "$1" "$pat" && return 1
   done
-  for pat in ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"}; do
-    glob_match "$1" "$pat" && return 0
-  done
-  return 1
+  return 0
 }
 path_threshold() { # PATH
   local i=0 frozen="" shadowed="" skipped="" hit="" s

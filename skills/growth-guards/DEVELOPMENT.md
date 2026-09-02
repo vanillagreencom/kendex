@@ -414,8 +414,8 @@ lines and `#` comments ignored; a pattern without a reason is a config
 error. A pattern opening with `!` is a CARVE: it pulls its matches back into
 the scanned set and beats every exclusion row regardless of order, so the
 list reads as policy rather than as a sequence. It exists because a tree
-wildcard is the only way to name a rendered install, and a repo keeping
-hand-written source inside that tree — a skill declared `source =
+wildcard is the only maintainable way to name a rendered install, and a repo
+keeping hand-written source inside that tree — a skill declared `source =
 "in-place"` — otherwise has no way to say so, while enumerating the rendered
 siblings by hand is a defect generator. A bare `!` with no pattern after it
 is a config error; `!` is not escapable, so a path literally beginning with

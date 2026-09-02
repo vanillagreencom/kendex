@@ -323,20 +323,10 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
 
 # Shell glob matched against the full repo-relative path (`*` crosses `/`);
 # blank lines and `#` comments are ignored; a pattern without a reason is a
-# config error. A missing file is an empty list.
-#
-# A row whose pattern opens with `!` CARVES the paths it matches back into the
-# scanned set. It exists because a tree wildcard is the only way to name a
-# rendered install (`.agents/**`) and a repo that keeps hand-written source
-# inside that tree — a skill declared `source = "in-place"` — otherwise has no
-# way to say so, and enumerating the rendered siblings instead is a defect
-# generator. Carving wins over every exclusion row regardless of order, so a
-# list stays readable as policy rather than as a sequence.
-#
-# `!` is not escapable: a repo path that literally begins with `!` therefore
-# cannot be excluded by a row naming it. That direction is the safe one — the
-# path is SCANNED, and the guard says so out loud — where an escape would add
-# a second dialect to every list for a path shape no repo here has.
+# config error. A missing file is an empty list. A `!` pattern CARVES its
+# matches back into the scanned set and beats every exclusion row whatever the
+# order (DEVELOPMENT.md § Excludes format). `!` is not escapable: a path that
+# literally begins with it is scanned, the safe direction.
 gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS and GG_EXCLUDE_CARVES
   local file="$1" line lineno pat reason carve content status=0
   GG_EXCLUDE_PATTERNS=()

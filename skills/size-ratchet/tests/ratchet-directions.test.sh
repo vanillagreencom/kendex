@@ -301,15 +301,24 @@ run_sr
   || bad "a carve above the row it cuts into carves just the same" "rc=$RC out=$OUT"
 
 # A carve cannot pull the baseline into its own gate: the baseline is policy
-# input, and measuring it would make every row it gains a violation.
+# input, and measuring it would make every row it gains a violation. The
+# baseline written here carries 11 rows against this suite's threshold of 10,
+# so the exemption is the only thing keeping it off the offender list — a
+# shorter one would pass whether the exemption held or not. Every row names a
+# file the `!*` row carves back in and that is over the threshold, so no row
+# reads as stale.
+for i in 1 2 3 4 5 6 7 8 9; do mkfile ".agents/skills/in-place/part$i.txt" 11; done
 printf '!*\tcarve everything back in\n' >"$R/tools/size-ratchet-excludes"
-printf '.agents/skills/in-place/big.txt\t50\n.agents/skills/rendered/big.txt\t50\n' >"$R/tools/size-ratchet-baseline.tsv"
+{
+  printf '.agents/skills/in-place/big.txt\t50\n'
+  for i in 1 2 3 4 5 6 7 8 9; do printf '.agents/skills/in-place/part%s.txt\t11\n' "$i"; done
+  printf '.agents/skills/rendered/big.txt\t50\n'
+} >"$R/tools/size-ratchet-baseline.tsv"
 git -C "$R" add -A
 run_sr
-case "$OUT" in
-  *"tools/size-ratchet-baseline.tsv"*) bad "a carve must not make the baseline measured content" "$OUT" ;;
-  *) ok "the baseline stays exempt ahead of every carve row" ;;
-esac
+[ "$RC" -eq 0 ] && case "$OUT" in *"tools/size-ratchet-baseline.tsv"*) false ;; *) true ;; esac \
+  && ok "the baseline stays exempt ahead of every carve row, at 11 rows over the threshold" \
+  || bad "the baseline stays exempt ahead of every carve row" "rc=$RC out=$OUT"
 
 # A bare '!' names nothing; silently keeping it would widen or narrow the
 # scanned set by a typo.
