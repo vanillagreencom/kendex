@@ -9,6 +9,15 @@ export const REMOVE_LABEL = "Remove";
 export const UPDATE_ALL_LABEL = "Update all";
 export const REMOVE_ALL_LABEL = "Remove all";
 export const DELETE_LABEL = "Delete";
+/** What each card's two buttons are called to a screen reader. The visible
+ *  labels stay one word — the card names its place right beside them — but
+ *  read on their own every card's buttons are the same word, and nothing
+ *  says which installation the click reaches. Each keeps its visible label
+ *  as the first word of the spoken one, so speaking the label out loud
+ *  still names a button on screen. */
+export const updateInLabel = (place: string): string => `Update in ${place}`;
+export const removeFromLabel = (place: string): string =>
+  `Remove from ${place}`;
 
 /** When this copy was put here, or null where the record does not say —
  *  a date the app has not read is a line it does not print. */

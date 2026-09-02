@@ -1,7 +1,12 @@
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { UPDATE_LABEL } from "@/lib/copy";
-import { installedAgo, REMOVE_LABEL } from "@/lib/copy-projects";
+import {
+  installedAgo,
+  REMOVE_LABEL,
+  removeFromLabel,
+  updateInLabel,
+} from "@/lib/copy-projects";
 import { scopePath } from "@/lib/labels";
 import type { PackagePlace } from "@/lib/package-places";
 import { useNowTick } from "@/lib/use-now-tick";
@@ -45,7 +50,12 @@ export function ProjectCard({
         {/* Offered only where the update can actually be taken here — a
             button the engine would refuse is worse than no button. */}
         {place.updatable ? (
-          <Button size="sm" disabled={busy} onClick={onUpdate}>
+          <Button
+            size="sm"
+            disabled={busy}
+            aria-label={updateInLabel(place.name)}
+            onClick={onUpdate}
+          >
             {UPDATE_LABEL}
           </Button>
         ) : null}
@@ -58,6 +68,7 @@ export function ProjectCard({
             size="sm"
             variant="outline"
             disabled={busy}
+            aria-label={removeFromLabel(place.name)}
             onClick={onRemove}
           >
             {REMOVE_LABEL}

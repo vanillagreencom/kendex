@@ -26,7 +26,9 @@ import {
   PROJECTS_LOADING,
   REMOVE_ALL_LABEL,
   REMOVE_LABEL,
+  removeFromLabel,
   UPDATE_ALL_LABEL,
+  updateInLabel,
 } from "@/lib/copy-projects";
 import { READ_LANDED } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
@@ -423,5 +425,49 @@ describe("removing a package from one place", () => {
       buttons(host).filter((one) => one.textContent === REMOVE_LABEL),
     ).toEqual([]);
     expect(host.textContent).not.toContain(REMOVE_ALL_LABEL);
+  });
+});
+
+// Every card carries the same two one-word buttons, so read on their own
+// they announce no place and there is no telling which installation the
+// click reaches.
+describe("what a card's buttons are called", () => {
+  /** Every card button's spoken name, in the order they are on screen. The
+   *  section's own links carry none, so they are not in here. */
+  const spokenNames = (host: HTMLElement) =>
+    buttons(host).flatMap((one) => {
+      const name = one.getAttribute("aria-label");
+      return name === null ? [] : [name];
+    });
+
+  it("names the place, so no two cards' buttons read alike", async () => {
+    useUpdatesStore.setState({ rows: [row(VG, true), row(HYPR, true)] });
+    const host = await openTab([VG, HYPR]);
+
+    const names = spokenNames(host);
+    expect(names).toEqual([
+      updateInLabel("vg"),
+      removeFromLabel("vg"),
+      updateInLabel("hyprtrade"),
+      removeFromLabel("hyprtrade"),
+    ]);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  // Spoken names that dropped the visible word would leave somebody saying
+  // "Update" with nothing on screen to match it.
+  it("keeps each button's visible label at the front of its spoken one", async () => {
+    useUpdatesStore.setState({ rows: [row(VG, true)] });
+    const host = await openTab([VG]);
+
+    const named = buttons(host).filter(
+      (one) => one.getAttribute("aria-label") !== null,
+    );
+    expect(named).toHaveLength(2);
+    for (const one of named) {
+      expect(one.getAttribute("aria-label")).toMatch(
+        new RegExp(`^${one.textContent} `),
+      );
+    }
   });
 });

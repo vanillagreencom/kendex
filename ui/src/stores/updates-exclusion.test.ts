@@ -5,7 +5,7 @@
 // a time, which is what lets `busy` be a flag rather than a count.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type UpdateRow } from "@/bindings";
-import { packageVersionActions } from "@/components/package/use-package-data";
+import { packageVersionActions } from "@/components/package/package-version-actions";
 import { updateRow } from "@/components/updates-test-rows";
 import { READ_LANDED } from "@/lib/read-state";
 import { useUpdatesStore } from "./updates";

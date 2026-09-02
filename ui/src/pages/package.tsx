@@ -6,10 +6,11 @@ import { PackageActions } from "@/components/package/package-actions";
 import { PackageBody } from "@/components/package/package-body";
 import { PackageHeader } from "@/components/package/package-header";
 import { PackageTabs } from "@/components/package/package-tabs";
+import { packageVersionActions } from "@/components/package/package-version-actions";
 import {
   diffHarness,
   type PackageView,
-  packageVersionActions,
+  packageReadNote,
   useManifestBusy,
   usePackageData,
   usePackageDiff,
@@ -79,7 +80,7 @@ export function PackagePage() {
     ...(ref ? [ref.scope] : []),
     ...(group ? groupScopes(group) : []),
   ]);
-  const { meta, files, versions, load: reload } = usePackageData(ref);
+  const { meta, files, versions, read, load: reload } = usePackageData(ref);
   const diff = usePackageDiff(
     ref,
     view,
@@ -118,6 +119,12 @@ export function PackagePage() {
   const displayName = packageDisplayName(ref);
   const installed = installedRow(versions);
   const latest = latestRow(versions);
+  // Why there is no Update, in the order the reasons rank. The page's own
+  // reads answer first: a record or a timeline that did not land leaves no
+  // version to move to and no held-or-following answer, so every reason
+  // below goes quiet exactly where the page knows least, and the reader is
+  // left with an empty action bar and nothing to act on.
+  const readNote = packageReadNote(read);
   // The button and the note beside it come from the one string above, so
   // wherever there is a newer version to move to, a reason the update read
   // carries — its own state, or the row's — is always said where the
@@ -127,12 +134,12 @@ export function PackagePage() {
     latest,
     installed,
     metaLoaded: meta != null,
-    withheld,
+    withheld: readNote ?? withheld,
   });
   // A newer version to move to and an installed one to move from: what
   // the read-only diff needs, and what the note below has to explain.
   const newer = latest != null && !latest.installed;
-  const updateWithheld = newer ? withheld : null;
+  const updateWithheld = readNote ?? (newer ? withheld : null);
 
   // Every scope this package sits in, one at a time — each apply takes
   // that scope's writer lock — and stopping at the first that fails.

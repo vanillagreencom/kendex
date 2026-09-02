@@ -51,6 +51,14 @@ export const heldByParentNote = (parent: string): string =>
 // no reason on it.
 export const NO_UPDATE_STANDING_NOTE =
   "The update check has not spoken for this package here";
+// The package page's own two reads: the record that says held or
+// following, and the timeline Update moves along. Neither is the update
+// check, so this sends nobody to press Check — it carries what the read
+// itself came back with, which is the whole difference between a package
+// with nothing to update and one the page could not read.
+export const PACKAGE_READ_FAILED = "Couldn't read this package here";
+export const packageReadFailedNote = (reason: string): string =>
+  `${PACKAGE_READ_FAILED} — ${reason}`;
 
 // An edited copy is the user's work: no update touches it. The newest
 // version can only land beside it, under the name it always had, with the
