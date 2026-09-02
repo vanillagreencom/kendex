@@ -76,7 +76,9 @@ in bytes, and forks nothing — which makes that stage git's rule outright: a
 status of 0 over a chunk short of the window is a NUL inside the window and
 nothing else. An `od` scan of the leading 8000 bytes then locates the byte.
 Because the prefilter is byte-exact, a scan that runs, succeeds, and finds
-nothing is a contradiction, and refuses rather than reporting clean.
+nothing means one of two things: the sniff is wrong, or, on the worktree path
+where the two stages read the file separately, a write landed between them.
+Either way it refuses rather than reporting clean, and says both causes.
 
 The baseline is policy input and never enters the measured set. A self row is
 therefore stale. This makes seed, update, and staged tightening converge

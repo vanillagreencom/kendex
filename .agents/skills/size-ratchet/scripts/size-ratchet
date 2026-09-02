@@ -578,10 +578,10 @@ note_if_binary() { # PATH BLOBFILE — records a line-class blob git reads as bi
     { seen += NF }
     END { if (found) print off }
   ')" || collection_error "could not scan '$1' for the offset of its NUL byte — refusing to report a verdict"
-  # A scan that ran, succeeded and found nothing contradicts the byte-exact
-  # prefilter that sent it here. Reporting clean on it would be the fail-open
-  # this whole sniff exists to close.
-  [ -n "$off" ] || collection_error "the content prefilter for '$1' stopped at a NUL inside its leading $NUL_SNIFF_BYTES bytes and the scan then located none — refusing to report a verdict over the contradiction"
+  # A scan that ran, succeeded and found nothing means a broken sniff, or a
+  # write between the two reads of a worktree path (staged reads one copy).
+  # Reporting clean either way is the fail-open this sniff exists to close.
+  [ -n "$off" ] || collection_error "the content prefilter for '$1' stopped at a NUL inside its leading $NUL_SNIFF_BYTES bytes and the scan then located none — the two stages read the path separately, so either the file was written between them or the sniff is wrong; refusing to report a verdict either way"
   printf '%s\t%s\n' "$1" "$off" >>"$TMP/binary.paths" \
     || collection_error "could not record the binary-content finding for '$1' — refusing to report a verdict"
 }
