@@ -66,15 +66,18 @@ The sniff's one exemption is git's own record. `git check-attr diff` answers
 `unset` for a path given `-diff` and `binary` for one given a binary diff
 driver; either way git keeps the path out of every textual diff, so its bytes
 were never reviewable text. That is the escape hatch for a real binary asset.
-The size exclusion list answers a different question — which paths carry no
-size bound — so it grants no content exemption: a size-excluded text file is
-sniffed like every other tracked path, and only a path that is both
-size-excluded and diff-exempt is skipped outright. The attribute is resolved
-for the whole tracked set in ONE
-`git ls-files -z | git check-attr -z --stdin diff`, `--cached` under `--staged`; a fork per
-path is the cost shape that measured 5x when the sniff itself was tried
-per-file. Under `--staged`, and for any path absent from the worktree, the
-blob is materialized once and the count and the sniff read that one copy.
+The read pins `core.attributesFile` to `/dev/null`, so no user-global file
+grants it; a repo-local `.git/info/attributes` still does — per-clone, never
+committed, never reviewed, and git offers no switch to skip it. The size
+exclusion list answers a different question — which paths carry no size bound
+— so it grants no content exemption: a size-excluded text file is sniffed like
+every other tracked path, and only a path that is both size-excluded and
+diff-exempt is skipped outright. The attribute is resolved for the whole
+tracked set in ONE `git ls-files -z | git check-attr -z --stdin diff`,
+`--cached` under `--staged`; a fork per path is the cost shape that measured
+5x when the sniff itself was tried per-file. Under `--staged`, and for any
+path absent from the worktree, the blob is materialized once and the count and
+the sniff read that one copy.
 
 The sniff runs in two stages, so it costs no subprocess on the files that
 pass. A bounded `read -d ''` under `LC_ALL=C` stops at a NUL and bounds

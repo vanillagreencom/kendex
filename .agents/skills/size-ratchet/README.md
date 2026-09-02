@@ -58,18 +58,19 @@ that. Markdown is measured in bytes and code in lines. Flags and exit codes:
   rows whose unit no longer matches their class, and removes rows for files
   now at/under their own threshold or no longer counted. It never adds a row
   or raises a number whose unit stayed the same, then re-checks.
-- **Refused as unmeasurable** (exit 2): any tracked blob carrying a NUL inside
-  its leading 8000 bytes — git's own text/binary rule, so the blob has no
-  textual diff and no line of it reaches a `git grep` review. Every class is
-  covered, and no class at all: the content decides, not the unit counted. The
-  diagnostic names the path and the byte's offset, never the byte; the fix is
-  the escape the language spells it with. The one exemption is git's own
-  record — a path `.gitattributes` gives `binary` or `-diff` is one git keeps
-  out of every textual diff, the remedy for a tracked `.png`, `.ico` or
-  `.ttf`. The [exclusion list](#exclusion-list) answers a different question,
-  which paths carry no size bound, and grants no content exemption. `--seed`
-  and `--update` refuse the same way. Under `--staged` that record is the index's,
-  and no global `core.attributesFile` is read. Mechanism: `DEVELOPMENT.md`.
+- **Refused as unmeasurable** (exit 2): any tracked blob carrying a NUL
+  inside its leading 8000 bytes — git's own text/binary rule, so the blob has
+  no textual diff and no line of it reaches a `git grep` review. Every class
+  is covered, and no class at all: the content decides, not the unit counted.
+  The diagnostic names the path and the byte's offset, never the byte; the
+  fix is the escape the language spells it with. The one exemption is git's
+  own record — a path `.gitattributes` gives `binary` or `-diff` is one git
+  keeps out of every textual diff. The [exclusion list](#exclusion-list)
+  answers a different question, which paths carry no size bound, and grants
+  no content exemption. `--seed` and `--update` refuse the same way. Under
+  `--staged` that record is the index's, and no global `core.attributesFile`
+  is read; a repo-local `.git/info/attributes` still applies and is neither
+  committed nor reviewed. Mechanism: `DEVELOPMENT.md`.
 - Exit codes: `0` clean, `1` violations, `2` usage/config/collection error.
 
 ## Trusted HEAD baseline
