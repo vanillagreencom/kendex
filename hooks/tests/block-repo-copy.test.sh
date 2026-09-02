@@ -112,6 +112,11 @@ run_hook "cp -r $REPO/.git /tmp";            assert_eq "$rc" 2 'the temp root it
 # Every other run in the pattern refuses to cross one.
 run_hook "$(printf 'cp -r %s/.git /tmp\necho done' "$REPO")"
 assert_eq "$rc" 2 'a newline ends the destination word rather than reaching past it'
+# The newline is one member of ENDERS and END_EDGE holds ENDERS whole, so this
+# row stands for the class: an exact temp root ended by a command ender rather
+# than by a slash, a quote, whitespace or the end of the string.
+run_hook "cp -r $REPO/.git /tmp; echo ok"
+assert_eq "$rc" 2 'a command ender ends the destination word too'
 run_hook "cp -r $REPO/.git \"/tmp/x\"";      assert_eq "$rc" 2 'a quoted destination is still the destination'
 # Same verb, same source, a destination outside every temp root: the
 # destination half is what decides, and its trailing boundary is what keeps
@@ -259,6 +264,11 @@ assert_eq "$rc" 2 'a copy spelled inside a quoted string is refused as the copy 
 # log rather than the copy's destination is read as the destination.
 run_hook "cp -r $REPO/target /srv/keep > /tmp/copy.log"
 assert_eq "$rc" 2 'a temp path reached across a redirection is read as the destination'
+# END_EDGE is the quotes, whitespace and ENDERS, so a separator ENDERS does
+# not hold — the pipe left out of it on purpose, the parenthesis closing a
+# subshell — ends the destination word for the shell and not for the scan.
+run_hook "cp -r $REPO/.git /tmp|cat"
+assert_eq "$rc" 0 'an exact temp root ended by a separator outside ENDERS is not seen'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

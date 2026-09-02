@@ -54,9 +54,13 @@ fi
 #             so three unrelated commands on three lines are three commands.
 #   GAP       the whitespace standing between two words of ONE command:
 #             horizontal whitespace and nothing else, since the only
-#             whitespace character in ENDERS is the newline. END_EDGE is the
-#             one place a newline is still whitespace, because there it ends
-#             the destination word rather than reaching past it.
+#             whitespace character in ENDERS is the newline. END_EDGE holds
+#             ENDERS whole, because there a command's end is the destination
+#             word's end rather than something to reach past — which is also
+#             the one place a newline is still whitespace. A separator ENDERS
+#             does not hold ends a word for the shell all the same, so an
+#             exact temp root followed by a pipe or a closing parenthesis is
+#             not seen; that cost is a row.
 #
 # Both edges of the marker component are tested and both carry a case: the
 # `/?` and quote-or-GAP after it are what keep it last, so `target/debug/kendex`
@@ -102,7 +106,7 @@ QUOTE="[${QUOTES}]"
 VERB="(cp|rsync|tar|git${GAP}+clone)"
 LEFT_EDGE="[/${QUOTES}${BLANK}]"
 RIGHT_EDGE="[${QUOTES}${BLANK}]"
-END_EDGE="[${QUOTES}${SPACE_ANY}]"
+END_EDGE="[${QUOTES}${SPACE_ANY}${ENDERS}]"
 MARKER='(\.git|target)'
 DEST='(/tmp|/var/tmp|\$\{TMPDIR\}|\$TMPDIR)'
 BLOCK_RE="(^|[^[:alnum:]_.-])${VERB}(${GAP}|${JOIN})(${RUN}(${LEFT_EDGE}|${JOIN}))?${MARKER}/?${RIGHT_EDGE}(${RUN}(${GAP}|${JOIN}))?${QUOTE}?${DEST}(/|${END_EDGE}|\$)"
