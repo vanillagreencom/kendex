@@ -213,33 +213,70 @@ fn a_safety_finding_is_reported_and_fails_nothing() {
     assert_eq!(report.failing(true), 0, "advisory under --strict too");
 }
 
-/// A `[bundles.<name>]` body key no reader reads is a set that carries
-/// nothing, and the check says so: kendex's own four sets were written with
-/// a `members = [...]` list, installed nothing, and every check ran green.
+/// Every way a `[bundles.<name>]` body can carry a member this reader will
+/// not read, each reported under `--strict` naming the set and the key, with
+/// the set beside it and every item still offered: the breakage is the set's,
+/// not the catalog's. kendex's own four sets shipped one of these shapes.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_bundle_key_no_reader_reads_is_breakage() {
-    let (_tmp, root) = repo();
-    skill_at(&root, "skills", "gh");
-    fs::write(
-        root.join("kendex.toml"),
-        "[bundles.starter]\ndescription = \"the basics\"\nmembers = [\"skill/gh\"]\n",
-    )
-    .unwrap();
-    let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
-    assert!(report.tally().breakage >= 1);
-    assert!(report.failing(false) >= 1, "it fails without --strict too");
-    let finding = &report.catalog[0];
-    assert_eq!(finding.severity, "error");
-    assert!(finding.message.contains("members"), "{}", finding.message);
-    assert!(
-        finding.message.contains("[bundles.starter]"),
-        "{}",
-        finding.message
-    );
-    for list in ["agents", "skills", "commands", "hooks", "mcp-servers"] {
-        assert!(finding.fix.contains(list), "{}: {}", list, finding.fix);
+fn every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing() {
+    for (body, named) in [
+        // The spelling kendex's own catalog shipped, and a typo of a list.
+        ("members = [\"skill/gh\"]", "members"),
+        ("skils = [\"gh\"]", "skils"),
+        // A key the manifest requires of an installed set, beside members:
+        // neither shape, and the set vanished silently one key over.
+        ("source = \"cat\"\nskills = [\"gh\"]", "source"),
+        // A list nothing readable backs loses members the same way a key
+        // this reader skips does.
+        ("skills = \"gh\"", "skills"),
+        ("skills = [[\"gh\"]]", "skills"),
+        ("skills = { a = \"gh\" }", "skills"),
+        ("skills = [\"gh\", 3]", "skills"),
+    ] {
+        let (_tmp, root) = repo();
+        skill_at(&root, "skills", "gh");
+        fs::write(
+            root.join("kendex.toml"),
+            format!("[bundles.starter]\n{body}\n\n[bundles.other]\nskills = [\"gh\"]\n"),
+        )
+        .unwrap();
+        let sealed = SealedSource::open(&root).unwrap();
+        let report = check(&sealed, "repo").unwrap();
+        assert!(report.failing(true) >= 1, "{body}: --strict passed it");
+        let finding = &report.catalog[0];
+        assert!(
+            finding.message.contains(named),
+            "{body}: {}",
+            finding.message
+        );
+        assert!(
+            finding.message.contains("[bundles.starter]"),
+            "{body}: {}",
+            finding.message
+        );
+        if named == "members" {
+            for list in ["agents", "skills", "commands", "hooks", "mcp-servers"] {
+                assert!(finding.fix.contains(list), "{list}: {}", finding.fix);
+            }
+        }
+        let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["gh"],
+            "{body}: the catalog stopped offering its item"
+        );
+        let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
+        let sets: Vec<String> = kendex_core::source::bundles::offered(&sealed, &config)
+            .unwrap()
+            .iter()
+            .map(|set| set.name.clone())
+            .collect();
+        assert_eq!(sets, ["other"], "{body}: the set beside it went too");
+        assert!(
+            kendex_core::source::bundles::find(&sealed, &config, "starter").is_err(),
+            "{body}: asking for the set answered rather than refused"
+        );
     }
 }
 

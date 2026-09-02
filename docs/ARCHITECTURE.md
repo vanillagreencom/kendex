@@ -744,11 +744,14 @@ lives in one capability table read by core and UI.
   both, a set switched on installs it switched on, anything else is a
   finding naming both. Authoring lives with the catalog — `[bundles.<name>]`
   in the source's own `kendex.toml`, or nothing for a plugin-registry-shaped
-  catalog — and a set's members are its own catalog's items. A body key that
-  is neither `description` nor one of the member lists makes the catalog
-  unreadable naming the key: everything that reader skips is a member the
-  set silently loses. A body carrying `source` is the manifest's record of
-  an installed set, read by the manifest and not as a set on offer.
+  catalog — and a set's members are its own catalog's items. A body this
+  reader will not read — a key that is neither `description` nor a member
+  list, a list that is not a list of names, `source` beside members — drops
+  that set alone and is reported: everything skipped is a member the set
+  silently loses, and a catalog answering with less than it offers keeps
+  what it already installed rather than having it swept. A body carrying
+  only `source` is the manifest's record of an installed set, read by the
+  manifest and not as a set on offer.
 - **A namespaced name is the identity; the separator is per tool.** Items
   from plugin-registry-shaped catalogs are `<plugin>/<item>` in manifest,
   lock and UI. The `/` never reaches disk: the halves are joined — `__` by

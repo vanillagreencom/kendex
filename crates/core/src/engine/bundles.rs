@@ -187,11 +187,16 @@ fn installable(
     let Some((sealed, config, _)) = catalogs.get(&decl.source, decl.rev.as_deref(), state) else {
         return Vec::new();
     };
+    // What the catalog says is wrong with itself, on this path too: a set is
+    // reached through here and never through the item pass, so without this
+    // a bundle-only manifest is told nothing its catalog reported.
+    super::catalog::notes(config, &decl.source, state);
     let offered = match crate::source::bundles::find(sealed, config, name) {
         Ok(offered) => offered,
-        // The set is installed and this pass cannot say what it holds, so
-        // the plan carries the catalog it could not read rather than the
-        // empty set it would otherwise derive.
+        // The set is installed and this pass cannot say what it holds. It
+        // derives to nothing either way; what changes is that the plan names
+        // the catalog rather than the set's own name, and the removal pass
+        // keeps what this could not account for.
         Err(problem) => {
             state.notes.push(format!(
                 "bundle {name}: the catalog '{}' could not be read — {problem}",

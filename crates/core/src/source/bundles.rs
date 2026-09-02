@@ -70,8 +70,8 @@ pub struct CatalogBundle {
     pub members: Vec<BundleMember>,
 }
 
-/// A `[bundles.<name>]` body written in a shape this reader does not read,
-/// as the problem and fix the catalog's own breakage is reported with.
+/// A `[bundles.<name>]` body written in a shape this reader will not read,
+/// as the problem and fix that set is reported with.
 pub(super) struct UnreadableBundle {
     pub problem: String,
     pub fix: String,
@@ -85,73 +85,105 @@ const DESCRIPTION: &str = "description";
 /// catalog that offers them, so a set names no source of its own.
 const INSTALL_DECLARATION: &str = "source";
 
-/// The `[bundles]` table of a catalog's own `kendex.toml`. A member list that
-/// is not a list of names carries no members, and the declaration that
-/// installs the set is where a name nothing backs gets reported — but a body
-/// key that is neither a member list nor `description` is the catalog's own
-/// breakage, because everything this reader does not read is a member the
-/// set silently loses. That is how `members = [...]` shipped as four sets
-/// that installed nothing.
+/// The `[bundles]` table of a catalog's own `kendex.toml`: the sets it
+/// offers, and the ones this reader will not read.
+///
+/// A set is only ever as real as what comes out of this, so nothing in a
+/// body is skipped — everything skipped is a member the set silently loses,
+/// which is how `members = [...]` shipped as four sets that installed
+/// nothing. The breakage is the set's, never the catalog's: one unreadable
+/// body costs the other sets and every item nothing, the way `[marketplace]`
+/// metadata that will not read leaves the catalog working.
 pub(super) fn declared(
     table: &toml::Table,
-) -> std::result::Result<BTreeMap<String, CatalogBundle>, UnreadableBundle> {
+) -> (
+    BTreeMap<String, CatalogBundle>,
+    BTreeMap<String, UnreadableBundle>,
+) {
     let mut bundles = BTreeMap::new();
+    let mut unreadable = BTreeMap::new();
     let Some(declared) = table.get("bundles").and_then(toml::Value::as_table) else {
-        return Ok(bundles);
+        return (bundles, unreadable);
     };
     for (name, body) in declared {
         let Some(body) = body.as_table() else {
             continue;
         };
         // One file is both when a project offers what it installs: the
-        // manifest records an installed set under this same table name, and
-        // that body belongs to the manifest reader, not here.
-        if body.contains_key(INSTALL_DECLARATION) {
+        // manifest records an installed set under this same table name. Only
+        // a body that records an install and nothing else is the manifest
+        // reader's, since a record carries no members.
+        if body.contains_key(INSTALL_DECLARATION)
+            && !MEMBER_LISTS
+                .iter()
+                .any(|(list, _)| body.contains_key(*list))
+        {
             continue;
         }
-        for key in body.keys() {
-            if key == DESCRIPTION || MEMBER_LISTS.iter().any(|(list, _)| list == key) {
-                continue;
+        match read_set(name, body) {
+            Ok(set) => {
+                bundles.insert(name.clone(), set);
             }
-            return Err(UnreadableBundle {
+            Err(problem) => {
+                unreadable.insert(name.clone(), problem);
+            }
+        }
+    }
+    (bundles, unreadable)
+}
+
+/// One `[bundles.<name>]` body as the set it declares: its keys first, then
+/// its lists in reading order, each held to the all-or-nothing rule every
+/// other catalog-side list is held to.
+fn read_set(
+    name: &str,
+    body: &toml::Table,
+) -> std::result::Result<CatalogBundle, UnreadableBundle> {
+    let at = format!("`[bundles.{}]`", crate::names::shown(name));
+    for key in body.keys() {
+        if key == DESCRIPTION || MEMBER_LISTS.iter().any(|(list, _)| list == key) {
+            continue;
+        }
+        return Err(match key.as_str() {
+            INSTALL_DECLARATION => UnreadableBundle {
+                problem: format!("{at} carries both `{INSTALL_DECLARATION}` and a member list"),
+                fix: "a record of an installed set carries no members and a set on offer names no source — write one or the other".to_owned(),
+            },
+            _ => UnreadableBundle {
                 problem: format!(
-                    "`[bundles.{}]` carries `{}`, which is not one of the lists a set's members are read from",
-                    crate::names::shown(name),
+                    "{at} carries `{}`, which is not one of the lists a set's members are read from",
                     crate::names::shown(key)
                 ),
                 fix: format!(
                     "remove it, or write the members under one of: {}",
                     member_list_keys()
                 ),
-            });
-        }
-        let mut members = Vec::new();
-        for (list, kind) in MEMBER_LISTS {
-            let Some(names) = body.get(list).and_then(toml::Value::as_array) else {
-                continue;
-            };
-            for member in names.iter().filter_map(toml::Value::as_str) {
-                members.push(BundleMember {
-                    kind,
-                    name: member.to_owned(),
-                });
-            }
-        }
-        bundles.insert(
-            name.clone(),
-            CatalogBundle {
-                name: name.clone(),
-                description: body
-                    .get(DESCRIPTION)
-                    .and_then(toml::Value::as_str)
-                    .map(crate::names::shown),
-                version: None,
-                category: None,
-                members,
             },
-        );
+        });
     }
-    Ok(bundles)
+    let mut members = Vec::new();
+    for (list, kind) in MEMBER_LISTS {
+        let Some(value) = body.get(list) else {
+            continue;
+        };
+        let Some(names) = super::config::string_list(Some(value)) else {
+            return Err(UnreadableBundle {
+                problem: format!("{at} `{list}` is not a list of member names"),
+                fix: "write it as an array of strings, or remove the key".to_owned(),
+            });
+        };
+        members.extend(names.into_iter().map(|name| BundleMember { kind, name }));
+    }
+    Ok(CatalogBundle {
+        name: name.to_owned(),
+        description: body
+            .get(DESCRIPTION)
+            .and_then(toml::Value::as_str)
+            .map(crate::names::shown),
+        version: None,
+        category: None,
+        members,
+    })
 }
 
 /// Every set this catalog offers.
@@ -167,12 +199,21 @@ pub fn offered(sealed: &SealedSource, config: &SourceConfig) -> Result<Vec<Catal
 }
 
 /// The set this catalog offers under one name, or `None` when it offers none.
+/// A set the catalog declares in a shape this reader will not read is
+/// neither: answering `None` would send the person to fix the name they
+/// typed, and the catalog is where the problem is.
 pub fn find(
     sealed: &SealedSource,
     config: &SourceConfig,
     name: &str,
 ) -> Result<Option<CatalogBundle>> {
     let Some(registry) = &config.plugin_registry else {
+        if let Some(problem) = config.unreadable_bundles.get(name) {
+            return Err(crate::error::CoreError::UnreadableBundle {
+                name: name.to_owned(),
+                problem: problem.clone(),
+            });
+        }
         return Ok(config.bundles.get(name).cloned());
     };
     match registry.entry(name) {

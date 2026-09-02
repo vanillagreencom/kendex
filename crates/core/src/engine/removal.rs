@@ -275,6 +275,13 @@ pub(super) fn origin_readable(
     state: &desired::DesiredState,
     source: &str,
 ) -> bool {
+    // A catalog that resolved and could not say what it offers is not a
+    // readable origin: what it derived this pass is short through no choice
+    // of the person's, and "nothing requires it anymore" is exactly what
+    // this pass does not know about the difference.
+    if state.unreadable_catalogs.contains(source) {
+        return false;
+    }
     match state.sources.get(source) {
         Some(resolution) => matches!(resolution, crate::source::SourceState::Ready(_)),
         None => matches!(

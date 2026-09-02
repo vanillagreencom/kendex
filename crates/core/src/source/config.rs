@@ -32,6 +32,10 @@ pub struct SourceConfig {
     /// The curated sets this catalog offers by name. Empty for a
     /// plugin-registry-shaped catalog, whose plugins are its sets.
     pub bundles: BTreeMap<String, CatalogBundle>,
+    /// The sets this catalog declares in a shape the reader will not read,
+    /// by name with the problem. Not offered, and a lookup for one of these
+    /// names refuses with the problem rather than answering "no such set".
+    pub unreadable_bundles: BTreeMap<String, String>,
     /// What the catalog says about itself in `[marketplace]`, capped.
     pub marketplace: Option<MarketplaceMeta>,
     /// Set when the source carries a plugin registry: its items live
@@ -58,6 +62,13 @@ impl SourceConfig {
                     .flat_map(|registry| registry.findings.iter()),
             )
             .chain(self.discovery.findings.iter())
+    }
+
+    /// Whether this reading answers with less than the catalog offers: an
+    /// unusable control file, or a set's body that would not read. Nothing
+    /// deciding a removal reads such a catalog as the whole truth.
+    pub fn hides_content(&self) -> bool {
+        self.mode == CatalogMode::Unusable || !self.unreadable_bundles.is_empty()
     }
 
     fn unusable(&mut self, file: &'static str, problem: String, fix: &str) {
@@ -199,20 +210,18 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
             )),
         },
     }
-    match bundles::declared(table) {
-        Ok(declared) => config.bundles = declared,
-        // A set nothing readable backs is a catalog that installs nothing
-        // under a name it offers, so it is the control file's breakage
-        // rather than a shorter set — the same verdict a `[catalog]` list
-        // this reader cannot read gets.
-        Err(unreadable) => {
-            config.unusable(
-                crate::manifest::MANIFEST_FILE,
-                unreadable.problem,
-                &unreadable.fix,
-            );
-            return;
-        }
+    // A set whose body will not read is that set's breakage and no more:
+    // it is dropped, reported, and everything else the catalog offers —
+    // its other sets and every item — still installs.
+    let (readable, unreadable) = bundles::declared(table);
+    config.bundles = readable;
+    for (name, problem) in unreadable {
+        config.config_findings.push(CatalogFinding::new(
+            crate::manifest::MANIFEST_FILE,
+            problem.problem.clone(),
+            problem.fix,
+        ));
+        config.unreadable_bundles.insert(name, problem.problem);
     }
     if let Some(mapping) = table.get("agent-skills").and_then(|t| t.as_table()) {
         for (agent, skills) in mapping {
@@ -245,8 +254,10 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
 }
 
 /// A list of strings and nothing else — a member of any other type makes
-/// the whole value unreadable rather than a shorter list.
-fn string_list(value: Option<&toml::Value>) -> Option<Vec<String>> {
+/// the whole value unreadable rather than a shorter list. The one judge of
+/// that, for every catalog-side list: a set's member lists are held to it
+/// too, so a list nothing readable backs is never a shorter set.
+pub(super) fn string_list(value: Option<&toml::Value>) -> Option<Vec<String>> {
     let list = value?.as_array()?;
     list.iter().map(|v| v.as_str().map(str::to_owned)).collect()
 }

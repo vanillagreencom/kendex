@@ -3,9 +3,11 @@
 //!
 //! The four sets this catalog offers were declared with a
 //! `members = ["skill/orch", ...]` list, which the reader beside this file
-//! has never looked at: `kendex add --bundle` recorded the set and installed
-//! nothing, with every check green. A set is only ever as real as what
-//! [`super::declared`] gets out of it, so that is what is asserted here.
+//! never looked at: `kendex add --bundle` recorded the set and installed
+//! nothing, with every check green. That key is now the set's own breakage,
+//! but a set is still only ever as real as what [`super::declared`] gets out
+//! of it — a list key spelt right and pointing nowhere reads back empty —
+//! so that is what is asserted here.
 //!
 //! A set also has to carry what its agent members load. The agent-to-skill
 //! expansion in `engine::ops::add` walks `request.agents` — the agents asked
@@ -39,10 +41,10 @@ const DRAWN_FROM: [&str; 3] = ["orchestration", "code-review", "commit-guards"];
 const BEYOND: [(ItemKind, &str); 1] = [(ItemKind::Skill, "deep-research")];
 
 /// One member per kind these sets carry, each of which has to read back.
-/// [`super::declared`] skips a list key it does not know, so a `hooks` list
-/// misspelt `hook` in kendex.toml leaves the set carrying its other kinds
-/// and nothing says the hooks went missing — the same silence, in the same
-/// file, as the `members = [...]` lists this whole issue is about.
+/// [`super::declared`] refuses a body key it does not know, so a `hooks`
+/// list misspelt `hook` is reported — but a `hooks` list this catalog
+/// offers nothing under is not, and it leaves the set carrying its other
+/// kinds and nothing said. That is what naming one member per kind buys.
 const A_MEMBER: [(&str, ItemKind, &str); 3] = [
     ("workflow", ItemKind::Agent, "reviewer-arch"),
     ("workflow", ItemKind::Skill, "orch"),
@@ -95,8 +97,10 @@ fn carries(bundle: &super::CatalogBundle, kind: ItemKind, name: &str) -> bool {
 
 /// Every set this catalog offers carries members, each member is an item
 /// this same catalog offers, and [`A_MEMBER`] names one of every kind that
-/// has to read back. Emptiness is what this walk cannot see on its own: a
-/// list key the reader does not know is a list that was never there.
+/// has to read back. A set whose whole body will not read is not among
+/// these at all — [`super::declared`] drops it — so a set that vanished
+/// entirely is caught by the count, and a kind that quietly went missing
+/// by [`A_MEMBER`].
 #[test]
 fn every_bundle_carries_members_this_catalog_offers() {
     let (sealed, config) = open();
@@ -106,9 +110,9 @@ fn every_bundle_carries_members_this_catalog_offers() {
     for (name, kind, member) in A_MEMBER {
         assert!(
             carries(&set(&sealed, &config, name), kind, member),
-            "the set '{name}' does not read back {} '{member}' — check the list key \
-             its kendex.toml entry writes that kind under, since a key the reader \
-             does not know is a list it never sees",
+            "the set '{name}' does not read back {} '{member}' — check that its \
+             kendex.toml entry still lists that name, and that this catalog \
+             still offers it under that kind",
             kind.name()
         );
     }

@@ -169,6 +169,11 @@ pub struct DesiredState {
     /// nothing has altered it, which is worth doing once and wasteful to
     /// repeat for every item the source carries.
     pub sources: BTreeMap<String, SourceState>,
+    /// Sources whose catalog resolved and then answered with less than it
+    /// offers — an unusable control file, a set whose body will not read.
+    /// What one derived this pass is short through no choice of the
+    /// person's, so no removal is decided on it.
+    pub unreadable_catalogs: BTreeSet<String>,
     /// Resolutions for item-level pins, keyed `(source, rev)` — kept apart
     /// from `sources` so the lock's per-source record never picks up a
     /// commit only one pinned item reads.

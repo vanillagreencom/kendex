@@ -314,6 +314,12 @@ impl Catalogs<'_> {
         };
         let sealed = SealedSource::open(&ready.root).ok()?;
         let config = source_config(&sealed, crate::source::repo_leaf(&ready.provenance)).ok()?;
+        // Everything derived — a set's members, a skill's dependencies —
+        // reaches its catalog through here, so this is where the removal
+        // pass learns that a catalog is answering with less than it offers.
+        if config.hides_content() {
+            state.unreadable_catalogs.insert(source.to_owned());
+        }
         Some((sealed, config, super::deps::OfferedSkills::default()))
     }
 }

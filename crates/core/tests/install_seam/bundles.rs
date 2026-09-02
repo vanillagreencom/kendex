@@ -223,29 +223,35 @@ fn a_set_whose_members_the_catalog_does_not_offer_is_refused() {
     write(
         &catalog,
         "kendex.toml",
-        "[bundles.ghost]\ndescription = \"gone\"\nskills = [\"nope\"]\n\n[bundles.starter]\nskills = [\"dev\"]\n",
+        "[bundles.ghost]\ndescription = \"gone\"\nskills = [\"nope\"]\n\n[bundles.hollow]\ndescription = \"nothing\"\n\n[bundles.starter]\nskills = [\"dev\"]\n",
     );
     manifest_with(&f, &[("cat", &catalog)], "");
     let before = fs::read_to_string(f.project.join("kendex.toml")).unwrap();
 
-    let error = ops::add(
-        &f.env,
-        &f.scope,
-        &ops::AddRequest {
-            source: Some("cat".to_owned()),
-            bundles: vec!["ghost".into()],
-            no_auto_skills: true,
-            ..ops::AddRequest::default()
-        },
-    )
-    .unwrap_err();
-
+    let refuse = |name: &str| {
+        ops::add(
+            &f.env,
+            &f.scope,
+            &ops::AddRequest {
+                source: Some("cat".to_owned()),
+                bundles: vec![name.to_owned()],
+                no_auto_skills: true,
+                ..ops::AddRequest::default()
+            },
+        )
+        .unwrap_err()
+    };
+    // A set whose members the catalog does not offer, and one that names no
+    // members at all: both install nothing, and each says which it is.
+    let error = refuse("ghost");
     let said = error.to_string();
     assert!(
         matches!(error, CoreError::BundleInstallsNothing { ref name, .. } if name == "ghost"),
         "{said}"
     );
     assert!(said.contains("nope"), "the member it cannot offer: {said}");
+    let hollow = refuse("hollow").to_string();
+    assert!(hollow.contains("carries no members"), "{hollow}");
     assert_eq!(
         fs::read_to_string(f.project.join("kendex.toml")).unwrap(),
         before,
@@ -264,4 +270,51 @@ fn a_set_whose_members_the_catalog_does_not_offer_is_refused() {
         },
     );
     assert!(f.project.join(".claude/skills/dev").exists());
+}
+
+/// A catalog whose set stops reading keeps what it already installed: the
+/// members derive to nothing while the body is unreadable, and `kendex apply`
+/// sweeps what nothing derives, so a catalog-side edit would otherwise trash
+/// a consumer's files. The plan names the key instead.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unreadable_set_keeps_its_installed_members_and_names_the_key() {
+    let f = world();
+    let catalog = starter_catalog(&f, "catalog");
+    manifest_with(
+        &f,
+        &[("cat", &catalog)],
+        "[bundles.starter]\nsource = \"cat\"\n",
+    );
+    apply_now(&f);
+    let member = f.project.join(".claude/skills/dev");
+    assert!(
+        member.exists(),
+        "the member installs before the catalog breaks"
+    );
+
+    write(
+        &catalog,
+        "kendex.toml",
+        "[bundles.starter]\ndescription = \"the starter set\"\nskills = [\"dev\", \"docs\"]\nversion = \"1.0\"\n",
+    );
+    let report = kendex_core::engine::plan_apply(
+        &f.env,
+        &f.scope,
+        &kendex_core::engine::PlanOptions {
+            remove_orphans: true,
+            removal_filter: None,
+            ..kendex_core::engine::PlanOptions::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+
+    assert!(member.exists(), "an unreadable set trashed its members");
+    let said = report.notes.join(" | ");
+    assert!(said.contains("version"), "the key is not named: {said}");
+    assert!(
+        !said.contains("offers no set by that name"),
+        "the set's own name is blamed: {said}"
+    );
 }

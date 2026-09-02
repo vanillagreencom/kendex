@@ -418,11 +418,22 @@ fn a_set_whose_catalog_cannot_be_read_names_it_in_the_plan() {
     .unwrap();
 
     let report = audit(&f.env, &f.scope).unwrap();
+    // The cause, not the two names: the pre-existing note for a set the
+    // catalog does not offer carries both of those, and a read failure read
+    // as "no such set" is the silence this guards.
     assert!(
         report
             .notes
             .iter()
-            .any(|note| note.contains("data-science") && note.contains("market")),
+            .any(|note| note.contains("could not be read") && note.contains("plugin.json")),
+        "{:?}",
+        report.notes
+    );
+    assert!(
+        !report
+            .notes
+            .iter()
+            .any(|note| note.contains("offers no set by that name")),
         "{:?}",
         report.notes
     );
@@ -430,4 +441,74 @@ fn a_set_whose_catalog_cannot_be_read_names_it_in_the_plan() {
         !f.project.join(".claude/skills/data-science__eda").exists(),
         "nothing derives from a set that could not be read"
     );
+}
+
+/// A registry catalog's `[bundles]` table is dead weight — its plugins are
+/// its sets — so a key nothing reads there costs it nothing, the way a
+/// kendex.toml that is not even parseable TOML is only a finding here:
+/// the registry outranks the control file.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_registry_catalogs_bundles_table_cannot_brick_it() {
+    let f = fixture("\"claude\"", "");
+    write(
+        &f.market,
+        "kendex.toml",
+        "[bundles.starter]\nmembers = [\"skill/eda\"]\n",
+    );
+    ops::add(
+        &f.env,
+        &f.scope,
+        &ops::AddRequest {
+            source: Some("market".to_owned()),
+            skills: vec!["data-science/eda".into()],
+            no_auto_skills: true,
+            ..ops::AddRequest::default()
+        },
+    )
+    .expect("the catalog still offers its items");
+}
+
+/// A plugin is a set already, and `add --bundle` installs it as one. A plugin
+/// that ships nothing is refused instead: recording it would install no files
+/// and report success.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_plugin_set_installs_its_members_and_an_empty_one_is_refused() {
+    let f = fixture("\"claude\"", "");
+    let add = |name: &str| {
+        ops::add(
+            &f.env,
+            &f.scope,
+            &ops::AddRequest {
+                source: Some("market".to_owned()),
+                bundles: vec![name.to_owned()],
+                no_auto_skills: true,
+                ..ops::AddRequest::default()
+            },
+        )
+    };
+    let report = add("data-science").expect("a plugin installs as the set it is");
+    apply::execute(&f.env, &report.plan).unwrap();
+    assert!(
+        f.project.join(".claude/skills/data-science__eda").exists(),
+        "{:?}",
+        report.notes
+    );
+
+    write(&f.market, "plugins/hollow/.claude-plugin/plugin.json", "{}");
+    write(
+        &f.market,
+        ".claude-plugin/marketplace.json",
+        &REGISTRY.replace(
+            r#""plugins": ["#,
+            r#""plugins": [{"name": "hollow", "source": "./plugins/hollow"},"#,
+        ),
+    );
+    let error = add("hollow").unwrap_err();
+    assert!(
+        matches!(error, kendex_core::error::CoreError::BundleInstallsNothing { ref name, .. } if name == "hollow"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("carries no members"), "{error}");
 }

@@ -398,6 +398,9 @@ pub enum CoreError {
     #[error("source '{source_name}' offers no bundle called '{name}'")]
     NoSuchBundle { name: String, source_name: String },
 
+    #[error("the bundle '{name}' is not readable in its catalog — {problem}")]
+    UnreadableBundle { name: String, problem: String },
+
     /// The name is real and what it holds is not: declaring it would record
     /// an install and put nothing anywhere. Beside [`Self::NoSuchBundle`]
     /// because it is the same refusal one step in — the catalog offers the
