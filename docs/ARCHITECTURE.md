@@ -483,9 +483,11 @@ lives in one capability table read by core and UI.
   the rules in full. The capability row says what the mechanism supports;
   labels read carrier reality (`pi_ext::carrier`), and Pi loads project and
   global settings both, so a project-installed hook with only a global carrier
-  is still enforced. The session-start drift report rides the same mechanism:
-  same script, same kill-switch, fire-and-forget into session start; a
-  reloaded or resumed session never repeats it.
+  is still enforced. The session-start drift report is not that
+  mechanism: `hooks/session-drift-check.sh` names harnesses without pi, so
+  kendex renders it nothing and no registry is read. The carrier hosts a
+  native listener of its own running `kendex check --quiet`, sharing the
+  kill-switch and not the script; a reload or resume never repeats it.
 - **A settings template applies once, when its skill arrives.**
   A skill's `# required` keys are written into `kendex.settings.toml` when it
   arrives, write-if-absent, and arrival is the consumer's `kendex.toml` gaining

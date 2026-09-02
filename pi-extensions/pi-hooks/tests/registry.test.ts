@@ -3,14 +3,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { GUARD_SETTING_NAMES } from "../extensions/hooks.ts";
-import { renderedName, TOOL_CALL_LISTENER } from "../extensions/registry.ts";
-import { claudeToolName, PI_BUILTIN_TOOLS } from "../extensions/vocab.ts";
+import piHooks, { GUARD_SETTING_NAMES } from "../extensions/hooks.ts";
+import { registeredHooks, renderedName, TOOL_CALL_LISTENER } from "../extensions/registry.ts";
+import { claudeToolInput, claudeToolName, PI_BUILTIN_TOOLS } from "../extensions/vocab.ts";
 import {
 	CONFIG_ID,
 	initRustRepo,
 	installToolCallHandler,
 	readLog,
+	registerProjectHook,
 	registerRendered,
 	renderStub,
 	renderUserStub,
@@ -276,6 +277,20 @@ describe("pi-hooks registry dispatch: a registry that did not answer", () => {
 		}
 	});
 
+	// ENOTDIR is the other shape of absent: a regular file standing where
+	// `kendex/` should be a directory holds no registry, so the call is allowed
+	// rather than refused for a document nobody wrote.
+	test("a file where the kendex directory should be allows the call", async () => {
+		const project = initCleanRustRepo("pi-hooks-notdir-");
+		try {
+			writeFileSync(join(project, ".pi", "kendex"), "not a directory\n");
+			const handler = installToolCallHandler();
+			expect(await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project))).toBeUndefined();
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	// An absent registry is the one reading that allows: kendex has installed
 	// no hook here, and the package installs from npm on its own.
 	test("no registry at all allows the call", async () => {
@@ -384,10 +399,15 @@ describe("pi-hooks registry dispatch: names, matchers and budgets at their edges
 		const project = initCleanRustRepo("pi-hooks-label-");
 		const secret = "kendex-941-inline-token";
 		try {
+			// A registration this call does not match stands ahead of it in the
+			// file, so the ordinal is a position in the file rather than in the
+			// list this call happened to build — the label is there so a person
+			// can find the entry, and a per-call number finds nothing.
+			registerRendered(join(project, ".pi"), "tool_call", "Read", "exit 0");
 			registerRendered(join(project, ".pi"), "tool_call", "Bash", `echo ${secret} > /dev/null; exit 3`);
 			const handler = installToolCallHandler();
 			const refused = await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project)) as { reason?: string };
-			expect(refused.reason).toContain("custom hook 1 in ");
+			expect(refused.reason).toContain("custom hook 2 in ");
 			expect(refused.reason).not.toContain(secret);
 		} finally {
 			rmSync(project, { recursive: true, force: true });
@@ -423,6 +443,7 @@ test("an untrusted project's withheld hooks are named once, not on every call", 
 		const ctx = { cwd: project, isProjectTrusted: () => false, hasUI: true, ui: { notify: (message: string) => notices.push(message) } };
 		expect(await handler({ toolName: "bash", input: { command: "ls" } }, ctx)).toBeUndefined();
 		expect(notices).toHaveLength(1);
+		expect(notices[0]).toContain("1 kendex hook(s)");
 		expect(notices[0]).toContain("not running");
 		expect(notices[0]).toContain(project);
 
@@ -431,4 +452,171 @@ test("an untrusted project's withheld hooks are named once, not on every call", 
 	} finally {
 		rmSync(project, { recursive: true, force: true });
 	}
+});
+
+describe("pi-hooks registry dispatch: a rendered hook whose script is gone", () => {
+	test("a healthy global guard answers over a broken project registration", async () => {
+		const project = initCleanRustRepo("pi-hooks-broken-project-");
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-hooks-broken-global-"));
+		const globalLog = join(agentDir, "global.log");
+		const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		try {
+			// The project registers the guard and its render is gone — a partial
+			// apply, or a registry committed from a machine whose renders this
+			// clone does not carry. The person's own copy still judges.
+			registerProjectHook(project, "pre-commit-check");
+			renderUserStub(agentDir, "pre-commit-check", { exitCode: 2, stderr: "global copy refused", log: globalLog });
+			const handler = installToolCallHandler();
+			const refused = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { reason?: string };
+			expect(refused.reason).toBe("global copy refused");
+			expect(readLog(globalLog)).toContain("git commit -m x");
+		} finally {
+			if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
+			rmSync(project, { recursive: true, force: true });
+			rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	test("a render no scope holds refuses naming the render, not bash's error", async () => {
+		const project = initCleanRustRepo("pi-hooks-broken-only-");
+		try {
+			registerProjectHook(project, "pre-commit-check");
+			const handler = installToolCallHandler();
+			const refused = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
+			expect(refused.block).toBe(true);
+			expect(refused.reason).toContain("rendered script is missing");
+			expect(refused.reason).toContain("kendex refresh");
+			expect(refused.reason).not.toContain("No such file or directory");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("pi-hooks registry dispatch: the counts and the vocabulary", () => {
+	// The notice fires once and is never corrected, so its number has to be
+	// what the project installed rather than what the first call matched.
+	test("the withheld count is the project's registrations, not this call's", async () => {
+		const project = initCleanRustRepo("pi-hooks-count-");
+		const notices: string[] = [];
+		try {
+			const root = join(project, ".pi");
+			for (const matcher of ["Bash", "Bash", "Bash", "Read", "Read"]) {
+				registerRendered(root, "tool_call", matcher, "exit 0");
+			}
+			const handler = installToolCallHandler();
+			// A read call, which two of the five match.
+			await handler({ toolName: "read", input: { path: "/etc/hosts" } }, {
+				cwd: project,
+				isProjectTrusted: () => false,
+				hasUI: true,
+				ui: { notify: (message: string) => notices.push(message) },
+			});
+			expect(notices).toHaveLength(1);
+			expect(notices[0]).toContain("5 kendex hook(s)");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("a global registry that cannot be read refuses too", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-hooks-global-broken-"));
+		const workspace = mkdtempSync(join(tmpdir(), "pi-hooks-global-broken-cwd-"));
+		const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		try {
+			// The scope `sudo kendex apply -g` leaves root-owned.
+			mkdirSync(join(agentDir, "kendex"), { recursive: true });
+			writeFileSync(join(agentDir, "kendex", "hooks.json"), "{ not json");
+			const handler = installToolCallHandler();
+			const refused = await handler({ toolName: "bash", input: { command: "ls" } }, { cwd: workspace, isProjectTrusted: () => false }) as { block?: boolean; reason?: string };
+			expect(refused.block).toBe(true);
+			expect(refused.reason).toContain(join(agentDir, "kendex", "hooks.json"));
+		} finally {
+			if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
+			rmSync(agentDir, { recursive: true, force: true });
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	// Derived from the map, this list could not see a row leave it.
+	test("the vocabulary table covers exactly the tools Pi ships", () => {
+		expect(PI_BUILTIN_TOOLS).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
+		for (const [tool, claude] of [["bash", "Bash"], ["edit", "Edit"], ["find", "Glob"], ["grep", "Grep"], ["ls", "LS"], ["powershell", "powershell"], ["read", "Read"], ["write", "Write"]] as const) {
+			expect(claudeToolName(tool), tool).toBe(claude);
+		}
+		// An extension's own tool keeps its id, so a matcher naming it matches.
+		expect(claudeToolName("my_tool")).toBe("my_tool");
+	});
+
+	test("a matcher naming an extension's own tool matches it", async () => {
+		const project = initCleanRustRepo("pi-hooks-extension-tool-");
+		const log = join(project, "mytool.log");
+		try {
+			registerRendered(join(project, ".pi"), "tool_call", "my_tool", customCommand(log, "my_tool: refused", 2));
+			const handler = installToolCallHandler();
+			const refused = await handler({ toolName: "my_tool", input: { anything: 1 } }, trusted(project)) as { reason?: string };
+			expect(refused.reason).toBe("my_tool: refused");
+			// And the payload carries the id, not a name invented for it.
+			expect(JSON.parse(readLog(log)).tool_name).toBe("my_tool");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("the path rename is per tool, and reshapes nothing else", () => {
+		for (const tool of ["Read", "Write", "Edit"]) {
+			expect(claudeToolInput(tool, { path: "/a", offset: 2 }), tool).toEqual({ file_path: "/a", offset: 2 });
+		}
+		// Not a path tool: Bash's own keys ride through untouched.
+		expect(claudeToolInput("Bash", { command: "ls", path: "/a" })).toEqual({ command: "ls", path: "/a" });
+		// Pi's edit shape is not Claude Code's, and is not mapped onto it.
+		expect(claudeToolInput("Edit", { path: "/a", edits: [{ oldText: "x", newText: "y" }] }))
+			.toEqual({ file_path: "/a", edits: [{ oldText: "x", newText: "y" }] });
+		expect(claudeToolInput("Read", undefined)).toEqual({});
+	});
+
+	// The count has one consumer, the notice. With nobody to tell — a headless
+	// session, or a project already told — an untrusted workspace's registry is
+	// not parsed: work with no consumer, on a file whose size that untrusted
+	// party chooses.
+	test("an untrusted project's registry is not counted when nothing can say so", () => {
+		const project = initCleanRustRepo("pi-hooks-nocount-");
+		try {
+			registerRendered(join(project, ".pi"), "tool_call", "Bash", "exit 0");
+			expect(registeredHooks(TOOL_CALL_LISTENER, "Bash", project, false, true).withheld).toBe(1);
+			expect(registeredHooks(TOOL_CALL_LISTENER, "Bash", project, false, false).withheld).toBe(0);
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	// "Once per session" has to survive the session ending: this module outlives
+	// one and can be installed more than once in a process.
+	test("a fresh session is told again about withheld hooks", async () => {
+		const project = initCleanRustRepo("pi-hooks-resession-");
+		const notices: string[] = [];
+		try {
+			writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
+				kendex: { extensionManager: { config: { [CONFIG_ID]: { sessionDriftCheck: false } } } },
+			}));
+			registerRendered(join(project, ".pi"), "tool_call", "Bash", "exit 0");
+			const handlers = new Map<string, (event: Record<string, unknown>, ctx: Record<string, unknown>) => Promise<unknown>>();
+			piHooks({ on: (event: string, cb: never) => handlers.set(event, cb) } as never);
+			const ctx = { cwd: project, isProjectTrusted: () => false, hasUI: true, ui: { notify: (m: string) => notices.push(m) } };
+
+			await handlers.get("tool_call")!({ toolName: "bash", input: { command: "ls" } }, ctx);
+			await handlers.get("tool_call")!({ toolName: "bash", input: { command: "ls" } }, ctx);
+			expect(notices).toHaveLength(1);
+
+			await handlers.get("session_start")!({ reason: "resume" }, ctx);
+			await handlers.get("tool_call")!({ toolName: "bash", input: { command: "ls" } }, ctx);
+			expect(notices).toHaveLength(2);
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
 });

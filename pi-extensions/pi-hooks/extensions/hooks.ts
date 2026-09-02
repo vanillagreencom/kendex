@@ -36,7 +36,8 @@ export const GUARD_SETTING_NAMES = [...GUARD_SETTINGS.keys()];
 /**
  * Projects already told about a project registry their trust answer withheld.
  * Once per session per project: the person decides trust once, and repeating
- * it on every tool call would be noise about a state they chose.
+ * it on every tool call would be noise about a state they chose. Cleared at
+ * every session start, reload and resume included.
  */
 const WITHHELD_TOLD = new Set<string>();
 
@@ -83,6 +84,14 @@ type Verdict = { block: true; reason: string } | undefined;
  */
 export async function runRegisteredHook(hook: RegisteredHook, payload: string, ctx: ExtensionContext, ceilingMs: number): Promise<Verdict> {
 	const name = hook.label;
+	// Refused without spawning: bash's own "No such file or directory" says
+	// nothing about which render is missing or how to put it back.
+	if (hook.missing) {
+		return {
+			block: true,
+			reason: `pi-hooks: ${name} is registered for this project but its rendered script is missing (${hook.script}), so this command was not judged; run kendex refresh, or kendex remove ${name} if you no longer want it.`,
+		};
+	}
 	const budgetMs = Math.min(hook.budgetMs ?? ceilingMs, ceilingMs);
 	const args = hook.script === undefined ? ["-c", hook.command] : [hook.script];
 	const result = await runCommandAsync("bash", args, ctx.cwd, budgetMs, payload);
@@ -136,6 +145,10 @@ export default function piHooks(pi: ExtensionAPI): void {
 	// place. Fire-and-forget — an informational check never gates startup.
 	pi.on("session_start", (event, ctx: ExtensionContext) => {
 		recordProjectTrust(ctx);
+		// Ahead of the early return, because this module outlives a session:
+		// otherwise a resumed one is told nothing about hooks installed and
+		// not running, the silence the count exists to break.
+		WITHHELD_TOLD.clear();
 		if (event.reason === "reload" || event.reason === "resume") return;
 		const cfg = readConfig(ctx.cwd);
 		if (!getBool(cfg, "enabled") || !getBool(cfg, "sessionDriftCheck")) return;
@@ -167,7 +180,10 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// advance, which is what lets a custom hook run at all. The tool is
 		// named and its input keyed the way a hook was authored to read them.
 		const toolName = claudeToolName(event.toolName);
-		const registry = registeredHooks(TOOL_CALL_LISTENER, toolName, project, projectTrusted(ctx));
+		// The count's one consumer is the notice below; where that cannot
+		// fire there is nothing to read an untrusted registry for.
+		const countWithheld = ctx.hasUI === true && project !== undefined && !WITHHELD_TOLD.has(project);
+		const registry = registeredHooks(TOOL_CALL_LISTENER, toolName, project, projectTrusted(ctx), countWithheld);
 
 		// A registry kendex wrote and this could not read is not the person
 		// standing their guards down, and these hooks are labelled enforced.
@@ -177,7 +193,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 				reason: `pi-hooks: the rendered hook registry could not be read, so this command was not judged; a guard that did not run does not stand aside. ${registry.unreadable}`,
 			};
 		}
-		if (registry.withheld > 0 && project !== undefined && ctx.hasUI && !WITHHELD_TOLD.has(project)) {
+		if (registry.withheld > 0 && project !== undefined && countWithheld) {
 			WITHHELD_TOLD.add(project);
 			ctx.ui.notify(
 				`pi-hooks: ${registry.withheld} kendex hook(s) are installed in ${project} and are not running, because Pi does not report this workspace trusted. Trust it to arm them.`,

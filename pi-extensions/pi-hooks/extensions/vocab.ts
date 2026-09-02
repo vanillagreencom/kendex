@@ -11,14 +11,22 @@
  */
 
 /**
- * Pi's built-in tools, as its own extension reference lists them (`docs/
- * extensions.md`, "Extensions can override built-in tools"), each said the way
- * `render::vocab::claude_tool_name` says it. tests/registry.test.ts holds this
- * table to that function.
+ * Pi's built-in tools, as its extension reference lists them (`docs/
+ * extensions.md`, "Extensions can override built-in tools"). Written out
+ * rather than read off the table below, which is the thing it checks: a list
+ * derived from that map cannot see a row go missing from it.
+ */
+export const PI_BUILTIN_TOOLS = ["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"];
+
+/**
+ * Each of those said the way `render::vocab::claude_tool_name` says it.
+ * tests/registry.test.ts holds this table to that function and its key set to
+ * the list above.
  *
- * `powershell` is here with no Claude name of its own because the Rust table
- * has none either: an unmapped tool keeps its own id, which is what a hook
- * matcher naming an extension's tool needs too.
+ * `powershell` maps to itself because the Rust table has no name for it either
+ * — Claude Code has no such tool — and an unmapped tool keeps its own id,
+ * which is what a matcher naming an extension's tool needs too. So a matcher
+ * for it is spelled `powershell`; `PowerShell` names nothing.
  */
 const CLAUDE_TOOL_NAMES = new Map<string, string>([
 	["bash", "Bash"],
@@ -30,9 +38,6 @@ const CLAUDE_TOOL_NAMES = new Map<string, string>([
 	["read", "Read"],
 	["write", "Write"],
 ]);
-
-/** The names Pi ships, for the coupling test and nothing else. */
-export const PI_BUILTIN_TOOLS = [...CLAUDE_TOOL_NAMES.keys()];
 
 /**
  * The tool as a hook matcher spells it. An unmapped name — an extension's own
@@ -52,9 +57,10 @@ export function claudeToolName(toolName: string): string {
 const PATH_KEY_TOOLS = new Set(["Read", "Write", "Edit"]);
 
 /**
- * The tool's input as Claude Code sends it. Only the keys this knows are
- * renamed; everything else rides through, since a hook reading a key Pi alone
- * has is better served by the value than by its absence.
+ * The tool's input with the keys this table knows renamed. Everything else
+ * rides through in Pi's own shape: an `edit` call carries Pi's `edits` array,
+ * which is not Claude Code's `old_string`/`new_string` pair and is not mapped
+ * onto it — different shapes, and any mapping loses something.
  */
 export function claudeToolInput(claudeName: string, input: unknown): Record<string, unknown> {
 	if (input === null || typeof input !== "object" || Array.isArray(input)) return {};

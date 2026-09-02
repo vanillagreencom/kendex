@@ -57,17 +57,26 @@ only place it exists; a carrier spelling out script names reported it
 enforced and ran nothing (KEN-941). Absent, empty and `*` matchers cover
 every tool.
 
-The tool is named, and its input keyed, the way the hook was authored to
-read them — `render::vocab::claude_tool_name`, so Pi's `find` is `Glob` and
-the `path` of a `read` reaches the hook as `file_path`. A matcher is a
-whole-string regex over that name, with Claude Code's own flags; one that
-will not compile judges the call rather than being skipped.
+The tool is named the way a matcher writes it —
+`render::vocab::claude_tool_name`, so Pi's `find` is `Glob` and its
+`powershell`, which Claude Code has no name for, keeps its own spelling. The
+keying is the carrier's own (`vocab.ts`'s `PATH_KEY_TOOLS`) and is one
+rename: the `path` of a `read`, `write` or `edit` arrives as `file_path`.
+Nothing else is reshaped, so an `edit` carries Pi's `edits` array rather
+than Claude Code's `old_string` and `new_string` — different shapes, and
+any mapping loses something. A matcher is a whole-string regex over the
+name with Claude Code's own flags; one that will not compile judges the
+call rather than being skipped.
 
 Exit 2 is the refusal, and its stderr is what the agent reads. Every other
 nonzero status blocks as well, under a reason the carrier writes itself: a
-hook exiting 1, a spawn that failed, a run past its budget, and a registry
-that exists and could not be read are all a guard that reached no verdict,
-and a guard that did not run does not stand aside. Only an absent registry
+hook exiting 1, a spawn that failed, a run past its budget, a registry that
+exists and could not be read, and a rendered hook the registry names whose
+script no scope holds are all a guard that reached no verdict, and a guard
+that did not run does not stand aside. The missing render is refused
+without spawning, so the reason names it and the repair rather than bash's
+own exit-127 text; where a second scope registers the same guard and does
+hold the file, that copy answers instead of being shadowed. Only an absent registry
 allows, because that is kendex having installed nothing here. A refusal
 names a command-bodied hook by where it is registered rather than by its
 text, which is the person's and can hold a secret inline. That budget is the registration's own `timeout`, capped by the

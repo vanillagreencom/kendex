@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { piUserDir } from "./config.js";
@@ -26,7 +26,9 @@ export interface RegisteredHook {
 	/**
 	 * How a refusal names this hook. A command-bodied hook is named by where it
 	 * is registered, never by its own text: that text is the person's, it can
-	 * hold a credential written inline, and a reason reaches the model.
+	 * hold a credential written inline, and a reason reaches the model. The
+	 * ordinal counts registrations in the file, not the ones this call matched,
+	 * so the person can find the entry the reason names.
 	 */
 	label: string;
 	/**
@@ -44,6 +46,12 @@ export interface RegisteredHook {
 	 * has no such path and is run as written.
 	 */
 	script?: string;
+	/**
+	 * A rendered hook whose script no scope holds. Still refused, kendex having
+	 * registered it — but under a reason naming the render and its repair,
+	 * rather than bash's exit-127 text from a spawn that judged nothing.
+	 */
+	missing?: true;
 	/** Milliseconds the registration asks for, from its `timeout` in seconds. */
 	budgetMs?: number;
 }
@@ -59,9 +67,10 @@ export interface RegistryRead {
 	 */
 	unreadable?: string;
 	/**
-	 * How many registrations the project's registry held that trust withheld.
-	 * Silence here reads as no hooks installed, which is the one thing it is
-	 * not.
+	 * How many registrations the project's registry holds under this listener,
+	 * where trust withheld them. Counted before the matcher, so the number is
+	 * what the project has installed rather than what this one call happened
+	 * to match — a notice given once has to be right the first time.
 	 */
 	withheld: number;
 }
@@ -75,9 +84,10 @@ export interface RegistryRead {
  *
  * A pattern that will not compile judges the call rather than skipping it. It
  * is a matcher kendex registered and labels enforced, and the alternative is a
- * guard that is silently off for every tool: a stray bracket is the author's
- * to see, and the reason names it. The flags are Claude Code's — none — so a
- * matcher that compiles and matches there compiles and matches here.
+ * guard that is silently off for every tool. Nothing here says which matcher
+ * failed to compile: the hook runs, so its own verdict is what the person
+ * sees. The flags are Claude Code's — none — so a matcher that compiles and
+ * matches there compiles and matches here.
  */
 function matches(matcher: unknown, toolName: string): boolean {
 	if (typeof matcher !== "string") return true;
@@ -112,7 +122,12 @@ function absent(error: unknown): boolean {
 	return code === "ENOENT" || code === "ENOTDIR";
 }
 
-/** The registrations one scope root holds for a listener, in file order. */
+/**
+ * The registrations one scope root holds for a listener, in file order.
+ * Position is counted before the matcher and the shape check, so both numbers
+ * describe the file rather than this one call: the label points at an entry a
+ * person can go and read, and `withheld` says what the project installed.
+ */
 function readRegistry(root: string, listener: string, toolName: string): RegistryRead {
 	const path = resolve(root, "hooks.json");
 	let parsed: unknown;
@@ -131,12 +146,15 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
 	if (!Array.isArray(groups)) return { hooks: [], withheld: 0 };
 
 	const hooks: RegisteredHook[] = [];
+	let position = 0;
 	for (const group of groups) {
 		const entry = group as { matcher?: unknown; hooks?: unknown };
-		if (!matches(entry.matcher, toolName) || !Array.isArray(entry.hooks)) continue;
+		if (!Array.isArray(entry.hooks)) continue;
+		const covers = matches(entry.matcher, toolName);
 		for (const registration of entry.hooks) {
+			position += 1;
 			const hook = registration as { type?: unknown; command?: unknown; timeout?: unknown };
-			if (hook.type !== "command" || typeof hook.command !== "string" || hook.command === "") continue;
+			if (!covers || hook.type !== "command" || typeof hook.command !== "string" || hook.command === "") continue;
 			const timeout = typeof hook.timeout === "number" && Number.isFinite(hook.timeout) && hook.timeout > 0
 				? hook.timeout * 1000
 				: undefined;
@@ -144,13 +162,13 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
 			hooks.push({
 				command: hook.command,
 				name,
-				label: name === "" ? `custom hook ${hooks.length + 1} in ${path}` : name,
+				label: name === "" ? `custom hook ${position} in ${path}` : name,
 				script: name === "" ? undefined : resolve(root, "hooks", `${name}.sh`),
 				budgetMs: timeout,
 			});
 		}
 	}
-	return { hooks, withheld: 0 };
+	return { hooks, withheld: position };
 }
 
 /**
@@ -169,39 +187,57 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
  * answer for this workspace: a clone the person has not trusted must not get
  * its own code run on the first tool call of the session. Untrusted, the
  * project scope contributes nothing but its count, and the global registry
- * still answers: the person's own hooks are not the project's.
+ * still answers: the person's own hooks are not the project's. That count has
+ * one consumer, so `countWithheld` false skips the read entirely — work with
+ * no consumer, on a file whose size an untrusted party chooses.
  *
  * One installation of a guard runs once. Where both scopes register the same
- * rendered script, the project's is the one that answers, as it was before the
- * carrier read the registry at all; two command-bodied hooks are two hooks and
- * both run, because nothing but the person's own command identifies them.
+ * rendered script the project's answers — unless its script is not on disk,
+ * which is a broken registration, and the healthy copy at the next scope
+ * answers rather than being shadowed by it. Two command-bodied hooks are two
+ * hooks and both run, nothing but the command identifying them.
  */
-export function registeredHooks(listener: string, toolName: string, project: string | undefined, trusted: boolean): RegistryRead {
+export function registeredHooks(listener: string, toolName: string, project: string | undefined, trusted: boolean, countWithheld = true): RegistryRead {
 	const hooks: RegisteredHook[] = [];
-	const seen = new Set<string>();
+	const byName = new Map<string, number>();
 	let unreadable: string | undefined;
 	let withheld = 0;
 
 	const answering: RegistryRead[] = [];
-	if (project !== undefined) {
+	if (project !== undefined && (trusted || countWithheld)) {
 		const read = readRegistry(resolve(project, ".pi", "kendex"), listener, toolName);
 		// Untrusted, this registry says only how many hooks were withheld.
 		// Its failure to parse is not carried: refusing on it would let a
 		// clone nobody has trusted stop every tool call in the session.
 		if (trusted) answering.push(read);
-		else withheld += read.hooks.length;
+		else withheld += read.withheld;
 	}
 	answering.push(readRegistry(resolve(piUserDir(), "kendex"), listener, toolName));
 
 	for (const read of answering) {
 		unreadable ??= read.unreadable;
 		for (const hook of read.hooks) {
-			if (hook.name !== "") {
-				if (seen.has(hook.name)) continue;
-				seen.add(hook.name);
+			if (hook.name === "") {
+				hooks.push(hook);
+				continue;
 			}
-			hooks.push(hook);
+			const at = byName.get(hook.name);
+			if (at === undefined) {
+				byName.set(hook.name, hooks.length);
+				hooks.push(hook);
+				continue;
+			}
+			// A registration whose render is gone judges nothing, so it must
+			// not stand in front of a healthy copy at the next scope down.
+			if (hooks[at]!.script !== undefined && !existsSync(hooks[at]!.script!) && hook.script !== undefined && existsSync(hook.script)) {
+				hooks[at] = hook;
+			}
 		}
+	}
+	// Stat-ed once, at the end, rather than per scope above it.
+	for (const [, at] of byName) {
+		const hook = hooks[at]!;
+		if (hook.script !== undefined && !existsSync(hook.script)) hooks[at] = { ...hook, missing: true };
 	}
 	return { hooks, withheld, ...(unreadable === undefined ? {} : { unreadable }) };
 }
