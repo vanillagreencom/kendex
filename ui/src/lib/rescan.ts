@@ -72,9 +72,9 @@ export async function rescanEverything(opts?: {
     // Forced: a write moved the very bytes a score answers for, and the
     // audit's freshness window would otherwise answer from before it.
     useAuditStore.getState().refresh({ force: true }),
-    // Answers false rather than throwing, and nothing here acts on the
-    // answer: a join that could not be read is the previous rows staying
-    // put, which is what every reader already handles.
+    // Answers a boolean rather than throwing, and nothing here acts on it:
+    // a join that could not be read is the previous rows staying put, which
+    // is what every reader already handles.
     useProvenanceStore.getState().reload(),
   ]);
 }
@@ -84,8 +84,8 @@ export async function rescanEverything(opts?: {
 // only once the running one has finished — so every write is answered by a
 // read that began after it, and a page of writes does not pay a whole-machine
 // read each. The scan and audit stores hold a queue of this shape for their
-// own leg; the provenance join has none, so an older join can still land
-// over a newer one — KEN-1183.
+// own leg, and the provenance join ranks its reads by when they began, so
+// none of the three answers a write with a read that predates it.
 let running: Promise<void> | null = null;
 let queued: Promise<void> | null = null;
 

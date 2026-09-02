@@ -6,6 +6,7 @@ import {
   type ProvenanceRow,
   type Scope,
 } from "@/bindings";
+import { readOrder } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 
 interface ProvenanceState {
@@ -17,15 +18,26 @@ interface ProvenanceState {
    */
   loaded: boolean;
   load: () => Promise<void>;
-  /** Read the join again and say whether it landed. `rescanEverything` calls
-   * this, which is how a write anywhere reaches every reader of the join
-   * without any of them guessing at when something installed. Anything about
-   * to act irreversibly on the answer — a delete naming the places it will
-   * remove — still asks for its own read and waits on this boolean, because
-   * a refresh that failed is indistinguishable from one that changed
-   * nothing. */
+  /** Read the join again and say whether `rows` is now a landed read's
+   * answer with nothing newer on its way. `rescanEverything` calls this,
+   * which is how a write anywhere reaches every reader of the join without
+   * any of them guessing at when something installed. Anything about to act
+   * irreversibly on the answer — a delete naming the places it will remove —
+   * still asks for its own read and waits on this boolean, because a refresh
+   * that failed is indistinguishable from one that changed nothing.
+   *
+   * The boolean answers for the rows on screen rather than for this call's
+   * own answer: a read a newer one overtook writes nothing, and what its
+   * caller then reads is the newer read's rows, current or still coming. */
   reload: () => Promise<boolean>;
 }
+
+/** The join's reads in the order they were asked for, so the newest answer
+ * is the one on screen. Several are routinely out at once: `rescanEverything`
+ * refreshes the join behind every write while the Scan again buttons, a
+ * delete dialog opening and a marketplace table mounting all ask for their
+ * own, and the slower read is not the truer one. */
+const order = readOrder();
 
 /** Where every installation came from — the Library's From column and a
  * marketplace's Installed in column read this join and match rows into their
@@ -38,18 +50,24 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => ({
     await get().reload();
   },
   reload: async () => {
+    const ticket = order.begin();
     try {
       const response = await commands.libraryProvenance();
-      if (response.status !== "ok") return false;
-      set({ rows: response.data, loaded: true });
-      return true;
+      // A read that failed takes no landing: leaving the newest ticket
+      // outstanding is what keeps this call, and every read it overtook,
+      // from calling the rows it never replaced current.
+      if (response.status === "ok" && order.lands(ticket))
+        set({ rows: response.data, loaded: true });
     } catch {
       // The wrapper folds a rejected command into an error status, so this
       // is the last guard rather than the first: a read that never answered
       // at all is still a failed read, not a rejection for every caller of
       // this store to catch.
-      return false;
     }
+    // True only where no read is still on its way, which is the same fact
+    // as `rows` holding the newest answer — this call's own, or that of the
+    // newer read which landed while this one was coming.
+    return !order.outstanding();
   },
 }));
 
