@@ -321,6 +321,12 @@ delete_comment() {
 action="${1:-help}"
 shift || true
 
+case "$action" in
+    help|--help|-h) show_help; exit 0 ;;
+esac
+
+linear_attachments_init
+
 # Fail closed: a write needs a resolved team target before any API call.
 linear_guard_write_action "$action" "create update delete" "$@" || exit 1
 
@@ -352,9 +358,6 @@ case "$action" in
             exit 1
         fi
         delete_comment "$1"
-        ;;
-    help|--help|-h)
-        show_help
         ;;
     *)
         echo "Error: Unknown action '$action'" >&2

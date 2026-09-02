@@ -35,10 +35,10 @@ linear_attach_project_root() {
     linear_attach_canonical_existing_dir "$root"
 }
 
-ATTACH_CACHE_PROJECT_ROOT="$(linear_attach_project_root)"
-ATTACH_DIR="$ATTACH_CACHE_PROJECT_ROOT/.cache/linear/attachments"
-ATTACH_FILES_DIR="$ATTACH_DIR/files"
-ATTACH_MANIFEST="$ATTACH_DIR/manifest.json"
+ATTACH_CACHE_PROJECT_ROOT=""
+ATTACH_DIR=""
+ATTACH_FILES_DIR=""
+ATTACH_MANIFEST=""
 
 # Viewable file types (agents can read these directly)
 ATTACH_VIEWABLE_EXTENSIONS="png|jpg|jpeg|gif|webp|svg|pdf|md|txt|rs|ts|js|py|sh|json|toml|yaml|yml|csv|log|html|css|ron"
@@ -112,6 +112,7 @@ attach_download_url() {
     local source_id="${2:-unknown}"
     local context="${3:-unknown}"
 
+    linear_attachments_init
     attach_ensure_dir
 
     # Check manifest - skip if already downloaded (return 2 = already cached)
@@ -119,15 +120,6 @@ attach_download_url() {
     existing=$(jq -r --arg url "$url" '.[$url].local_path // empty' "$ATTACH_MANIFEST" 2>/dev/null)
     if [[ -n "$existing" && -f "$existing" ]]; then
         return 2
-    fi
-
-    # Source API key from project config/secrets.
-    if [[ -z "${LINEAR_API_KEY:-}" ]]; then
-        local lib_dir
-        lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        # shellcheck source=kendex-env.sh
-        source "$lib_dir/kendex-env.sh"
-        kendex_load_project_env "$ATTACH_CACHE_PROJECT_ROOT"
     fi
 
     if ! resolve_linear_api_key; then

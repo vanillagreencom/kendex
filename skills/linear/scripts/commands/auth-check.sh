@@ -47,6 +47,8 @@ EOF
   esac
 done
 
+linear_init
+
 # Team declared by project files, read independently of the process environment
 # so a box-global export that shadows project config is visible here.
 project_declared_team=""

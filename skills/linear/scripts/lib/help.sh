@@ -1,73 +1,84 @@
 #!/bin/bash
-# Classify help before any project-controlled configuration is read.
+# Runtime initialization deferred until command dispatch has ruled out help.
 
-linear_help_requested() {
-    local surface="${1##*/}" arg="" skip_value=0
-    shift || true
+linear_init() {
+    [[ "$LINEAR_INITIALIZED" == 1 ]] && return 0
 
-    case "$surface" in
-    cache-query.sh | comments.sh | cycles.sh | documents.sh | initiatives.sh | \
-        issues.sh | labels.sh | milestones.sh | project-labels.sh | projects.sh | \
-        statuses.sh | teams.sh | users.sh)
-        [[ $# -gt 0 ]] || return 0
-        ;;
-    esac
+    local project_root_raw
+    project_root_raw="$(git rev-parse --show-toplevel 2>/dev/null)"
+    PROJECT_ROOT="$(linear_canonical_existing_dir "$project_root_raw")"
 
-    case "${1:-}" in
-    help | --help | -h) return 0 ;;
-    esac
+    _CALLER_LINEAR_API_KEY="${LINEAR_API_KEY:-}"
+    unset LINEAR_API_KEY
+    _CALLER_LINEAR_TEAM_SET="${LINEAR_TEAM+x}"
+    _CALLER_LINEAR_TEAM="${LINEAR_TEAM:-}"
 
-    if [[ "$surface" == cache-query.sh && "${2:-}" == help ]]; then
-        return 0
-    fi
+    kendex_load_project_env "$PROJECT_ROOT"
 
-    # Skip values consumed by options so literal "--help" data keeps its
-    # normal meaning.
-    for arg in "$@"; do
-        if [[ "$skip_value" == 1 ]]; then
-            skip_value=0
-            continue
-        fi
-        case "$arg" in
-        --help | -h) return 0 ;;
-        --after | --agent | --assignee | --attach | --before | --blocked-by | \
-            --blocks | --body | --body-file | --by | --color | --content | \
-            --created-since | --cycle | --description | --description-file | \
-            --duplicate | --end | --estimate | --format | --health | --id | \
-            --if-stale | --include | --include-children-of | --label | \
-            --labels | --limit | --milestone | --name | --parent | --position | \
-            --priority | --project | --project-id | --reason | --related | \
-            --research-days | --search | --sort-order | --start | --state | \
-            --status | --summary | --summary-file | --target-date | --team | \
-            --title | --type | --updated-since) skip_value=1 ;;
-        esac
-    done
-    return 1
-}
-
-linear_prepare_invocation() {
-    local surface="$1"
-    shift || true
-    LINEAR_HELP_ONLY=0
-    if linear_help_requested "$surface" "$@"; then
-        LINEAR_HELP_ONLY=1
-        PROJECT_ROOT="$(linear_canonical_existing_dir "$PWD")"
-        return
-    fi
-
-    local root
-    root="$(git rev-parse --show-toplevel 2>/dev/null)"
-    PROJECT_ROOT="$(linear_canonical_existing_dir "$root")"
-}
-
-linear_load_invocation_env() {
-    if [[ "$LINEAR_HELP_ONLY" == 0 ]]; then
-        kendex_load_project_env "$PROJECT_ROOT"
+    _PROJECT_LINEAR_API_KEY="${LINEAR_API_KEY:-}"
+    if [[ -n "${LINEAR_API_KEY_OVERRIDE:-}" ]]; then
+        LINEAR_API_KEY="$LINEAR_API_KEY_OVERRIDE"
+        export LINEAR_API_KEY
+        LINEAR_API_KEY_SOURCE="override"
+    elif [[ -n "$_PROJECT_LINEAR_API_KEY" ]]; then
+        LINEAR_API_KEY_SOURCE="project-config"
+    elif [[ -n "$_CALLER_LINEAR_API_KEY" ]]; then
+        LINEAR_API_KEY="$_CALLER_LINEAR_API_KEY"
+        export LINEAR_API_KEY
+        LINEAR_API_KEY_SOURCE="environment"
     else
-        # An unrecognized help position must fail before any inherited
-        # credential can reach the API.
-        unset LINEAR_API_KEY LINEAR_API_KEY_OVERRIDE
-        _CALLER_LINEAR_API_KEY=""
+        LINEAR_API_KEY_SOURCE="unset"
     fi
-    unset LINEAR_HELP_ONLY
+
+    LINEAR_API_KEY_ENV_SHADOWED=0
+    LINEAR_API_KEY_ENV_FINGERPRINT=""
+    LINEAR_API_KEY_PROJECT_FINGERPRINT=""
+    if [[ "$LINEAR_API_KEY_SOURCE" == "project-config" && -n "$_CALLER_LINEAR_API_KEY" &&
+        "$_CALLER_LINEAR_API_KEY" != "$_PROJECT_LINEAR_API_KEY" ]]; then
+        LINEAR_API_KEY_ENV_SHADOWED=1
+        LINEAR_API_KEY_ENV_FINGERPRINT="$(linear_key_fingerprint "$_CALLER_LINEAR_API_KEY")"
+        LINEAR_API_KEY_PROJECT_FINGERPRINT="$(linear_key_fingerprint "$_PROJECT_LINEAR_API_KEY")"
+    fi
+
+    if [[ -n "$_CALLER_LINEAR_TEAM" ]]; then
+        LINEAR_TEAM_SOURCE="environment"
+    elif [[ -n "${LINEAR_TEAM:-}" ]]; then
+        LINEAR_TEAM_SOURCE="project-config"
+    else
+        LINEAR_TEAM_SOURCE="unset"
+    fi
+
+    if [[ -n "$_CALLER_LINEAR_TEAM_SET" && -z "$_CALLER_LINEAR_TEAM" ]]; then
+        LINEAR_TEAM_ENV_BLANK=1
+    else
+        LINEAR_TEAM_ENV_BLANK=0
+    fi
+
+    unset _CALLER_LINEAR_API_KEY _PROJECT_LINEAR_API_KEY _CALLER_LINEAR_TEAM _CALLER_LINEAR_TEAM_SET
+
+    DEFAULT_TEAM="${LINEAR_TEAM:-}"
+    DEFAULT_FORMAT="${LINEAR_FORMAT:-safe}"
+    DEFAULT_PREFIX="${LINEAR_TEAM_PREFIX:-PROJ}"
+    LINEAR_TEAM_TARGET="$DEFAULT_TEAM"
+
+    if [[ "$LINEAR_RESOLVE_API_KEY" == 1 ]]; then
+        resolve_linear_api_key || return 1
+    fi
+    LINEAR_INITIALIZED=1
+}
+
+linear_cache_init() {
+    [[ -n "$CACHE_DIR" ]] && return 0
+    linear_init
+    CACHE_PROJECT_ROOT="$(linear_cache_project_root)"
+    CACHE_DIR="$CACHE_PROJECT_ROOT/.cache/linear"
+}
+
+linear_attachments_init() {
+    [[ -n "$ATTACH_DIR" ]] && return 0
+    linear_cache_init
+    ATTACH_CACHE_PROJECT_ROOT="$(linear_attach_project_root)"
+    ATTACH_DIR="$ATTACH_CACHE_PROJECT_ROOT/.cache/linear/attachments"
+    ATTACH_FILES_DIR="$ATTACH_DIR/files"
+    ATTACH_MANIFEST="$ATTACH_DIR/manifest.json"
 }

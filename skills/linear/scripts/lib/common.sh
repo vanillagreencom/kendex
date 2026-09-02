@@ -25,9 +25,16 @@ linear_canonical_existing_dir() {
 # shellcheck source=bash-version.sh
 source "$_LIB_DIR/bash-version.sh"
 linear_require_supported_bash || exit $?
+# shellcheck source=kendex-env.sh
+source "$_LIB_DIR/kendex-env.sh"
+# shellcheck source=formatters.sh
+source "$_LIB_DIR/formatters.sh"
+
+LINEAR_INITIALIZED=0
+LINEAR_RESOLVE_API_KEY=1
+[[ "${LINEAR_SKIP_API_KEY_RESOLUTION:-}" == 1 ]] && LINEAR_RESOLVE_API_KEY=0
 # shellcheck source=help.sh
 source "$_LIB_DIR/help.sh"
-linear_prepare_invocation "${BASH_SOURCE[1]:-}" "$@"
 
 # First 12 hex chars of sha256 — enough to tell two keys apart in a diagnostic
 # without exposing key material. macOS ships shasum, not sha256sum.
@@ -38,98 +45,6 @@ linear_key_fingerprint() {
         printf '%s' "$1" | shasum -a 256 | cut -c1-12
     fi
 }
-
-# LINEAR_API_KEY precedence, highest first:
-#   1. LINEAR_API_KEY_OVERRIDE — the explicit inline channel. Tests rely on it
-#      so fake/op:// values are not replaced by a developer's .env.local.
-#   2. Project files (settings [env], then .env.local).
-#   3. Plain inherited LINEAR_API_KEY — only when no file provides a key.
-# Per-repo workspaces make a box-global export actively wrong for every other
-# repo, so unlike LINEAR_TEAM the inherited key must never shadow the project's
-# own (#1002). kendex_load_project_env re-asserts parent env over project files,
-# so the inherited value is snapshotted and unset before the files load.
-_CALLER_LINEAR_API_KEY="${LINEAR_API_KEY:-}"
-unset LINEAR_API_KEY
-
-# Captured before project files load so auth-check can tell a box-global export
-# (which reaches whatever workspace the key owns) from project configuration.
-# An exported-but-empty value is tracked separately: the env snapshot in
-# kendex-env.sh makes it win over the project files, so it silently blocks a
-# configured team rather than being absent.
-_CALLER_LINEAR_TEAM_SET="${LINEAR_TEAM+x}"
-_CALLER_LINEAR_TEAM="${LINEAR_TEAM:-}"
-
-# Load public config and local secrets before deriving defaults.
-# shellcheck source=kendex-env.sh
-source "$_LIB_DIR/kendex-env.sh"
-linear_load_invocation_env
-
-# Where each target-selecting value came from: override (LINEAR_API_KEY_OVERRIDE),
-# project-config (kendex.settings.toml / .env.local), environment (process
-# env, used because the project files provided nothing), or unset. auth-check
-# reports these; a global key with no project team is the combination that
-# writes into another project's workspace.
-_PROJECT_LINEAR_API_KEY="${LINEAR_API_KEY:-}"
-if [[ -n "${LINEAR_API_KEY_OVERRIDE:-}" ]]; then
-    LINEAR_API_KEY="$LINEAR_API_KEY_OVERRIDE"
-    export LINEAR_API_KEY
-    LINEAR_API_KEY_SOURCE="override"
-elif [[ -n "$_PROJECT_LINEAR_API_KEY" ]]; then
-    LINEAR_API_KEY_SOURCE="project-config"
-elif [[ -n "$_CALLER_LINEAR_API_KEY" ]]; then
-    LINEAR_API_KEY="$_CALLER_LINEAR_API_KEY"
-    export LINEAR_API_KEY
-    LINEAR_API_KEY_SOURCE="environment"
-else
-    LINEAR_API_KEY_SOURCE="unset"
-fi
-
-# The silent-shadowing signature: an inherited env key existed, a differing
-# project-file key won. auth-check surfaces it as a warning — fingerprints
-# only, never key material.
-LINEAR_API_KEY_ENV_SHADOWED=0
-LINEAR_API_KEY_ENV_FINGERPRINT=""
-LINEAR_API_KEY_PROJECT_FINGERPRINT=""
-if [[ "$LINEAR_API_KEY_SOURCE" == "project-config" && -n "$_CALLER_LINEAR_API_KEY" &&
-    "$_CALLER_LINEAR_API_KEY" != "$_PROJECT_LINEAR_API_KEY" ]]; then
-    LINEAR_API_KEY_ENV_SHADOWED=1
-    LINEAR_API_KEY_ENV_FINGERPRINT="$(linear_key_fingerprint "$_CALLER_LINEAR_API_KEY")"
-    LINEAR_API_KEY_PROJECT_FINGERPRINT="$(linear_key_fingerprint "$_PROJECT_LINEAR_API_KEY")"
-fi
-
-if [[ -n "$_CALLER_LINEAR_TEAM" ]]; then
-    LINEAR_TEAM_SOURCE="environment"
-elif [[ -n "${LINEAR_TEAM:-}" ]]; then
-    LINEAR_TEAM_SOURCE="project-config"
-else
-    LINEAR_TEAM_SOURCE="unset"
-fi
-
-# 1 when the process environment exported LINEAR_TEAM as an empty value, which
-# resolves to no target while shadowing anything the project files declare.
-if [[ -n "$_CALLER_LINEAR_TEAM_SET" && -z "$_CALLER_LINEAR_TEAM" ]]; then
-    LINEAR_TEAM_ENV_BLANK=1
-else
-    LINEAR_TEAM_ENV_BLANK=0
-fi
-
-unset _CALLER_LINEAR_API_KEY _PROJECT_LINEAR_API_KEY _CALLER_LINEAR_TEAM _CALLER_LINEAR_TEAM_SET
-
-# Default values can be overridden by kendex.settings.toml [env] or .env.local.
-# LINEAR_TEAM has no built-in fallback on purpose: a team name resolves inside
-# whatever workspace the API key reaches, so a guessed default silently targets
-# another project's tracker. Unset means "no team" — reads drop the team filter,
-# writes refuse (see linear_require_team_target).
-DEFAULT_TEAM="${LINEAR_TEAM:-}"
-DEFAULT_FORMAT="${LINEAR_FORMAT:-safe}"    # safe, raw, ids, table
-DEFAULT_PREFIX="${LINEAR_TEAM_PREFIX:-PROJ}" # Issue identifier prefix (e.g., PROJ-123)
-
-# Team target for this invocation. An explicit --team registers over the
-# configured value through linear_set_team_target.
-LINEAR_TEAM_TARGET="$DEFAULT_TEAM"
-
-# Source formatters
-source "$_LIB_DIR/formatters.sh"
 
 # Resolve 1Password references when the env file contains op:// secrets.
 resolve_linear_api_key() {
@@ -157,14 +72,6 @@ resolve_linear_api_key() {
 
     return 0
 }
-
-# Most commands hit the Linear API and should resolve op:// references during
-# startup so authentication failures surface before any mutation/read work.
-# Local-cache commands source this file only for shared formatters/defaults; they
-# must not require API auth for documented cache-only reads.
-if [[ "${LINEAR_SKIP_API_KEY_RESOLUTION:-}" != "1" ]]; then
-    resolve_linear_api_key || exit 1
-fi
 
 # Validate API key
 check_api_key() {

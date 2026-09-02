@@ -423,7 +423,5 @@ case "$action" in
     --help|-h|help)
         show_help
         ;;
-    *)
-        get_session_status "$@"
-        ;;
+    *) linear_cache_init; get_session_status "$@" ;;
 esac

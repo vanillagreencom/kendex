@@ -241,17 +241,6 @@ Examples:
 EOF
 }
 
-case "${1:-help}" in
-    help|--help|-h) show_help; exit 0 ;;
-esac
-
-# shellcheck source=../lib/help.sh
-source "$SCRIPT_DIR/../lib/help.sh"
-if linear_help_requested "${BASH_SOURCE[0]}" "$@"; then
-    show_help
-    exit 0
-fi
-
 source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/cache.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
@@ -3091,6 +3080,15 @@ main() {
     # Main routing
     action="${1:-help}"
     shift || true
+
+    case "$action" in
+    help | --help | -h) show_help; return 0 ;;
+    esac
+    case "${1:-}" in
+    --help | -h) show_help; return 0 ;;
+    esac
+
+    linear_attachments_init
 
     # Fail closed: a write needs a resolved team target before any API call.
     linear_guard_write_action "$action" \

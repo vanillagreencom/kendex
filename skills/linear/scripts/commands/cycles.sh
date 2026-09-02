@@ -318,6 +318,12 @@ update_cycle() {
 action="${1:-help}"
 shift || true
 
+case "$action" in
+    help|--help|-h) show_help; exit 0 ;;
+esac
+
+linear_init
+
 # Fail closed: a write needs a resolved team target before any API call.
 linear_guard_write_action "$action" "update" "$@" || exit 1
 
@@ -330,9 +336,6 @@ case "$action" in
         ;;
     update)
         update_cycle "$@"
-        ;;
-    help|--help|-h)
-        show_help
         ;;
     *)
         echo "Error: Unknown action '$action'" >&2

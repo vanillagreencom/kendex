@@ -623,8 +623,8 @@ main() {
             *) break ;;
         esac
     done
-
-    # Fail-closed budget guard (kendex#1032): when the cache dir is a
+    linear_attachments_init
+    # Fail-closed budget guard (kendex#1032): the cache dir can be a
     # clobbered worktree-local real directory, refuse before touching the lock
     # or the API. Gated to syncs that would go full (--full, or no meta.json —
     # exactly what a freshly re-materialized empty dir looks like) or
