@@ -2,9 +2,9 @@
 # mutation-stability — prove a test can fail, then prove it is stable.
 #
 # Copies WORKTREE at SHA into a fresh temp dir (git archive; the shared tree
-# is never touched), runs TEST there as a control (must pass), applies MUTATE
-# (a shell command run inside the copy), builds the mutant, reruns TEST (must
-# now fail = mutant killed), then runs TEST N more times on a clean copy at elevated
+# is never touched), builds and tests the control copy, applies MUTATE (a shell
+# command run inside the copy), builds the mutant, reruns TEST (must now fail =
+# mutant killed), then runs TEST N more times on a clean copy at elevated
 # parallelism and prints the one summary line reviewers report:
 #
 #   mutation: killed 1/1; stability: N/N at T threads
@@ -20,7 +20,7 @@ usage: mutation-stability --worktree PATH --sha SHA --test CMD --build CMD
                           [--timeout S] [--keep]
 
   --test CMD       run via bash -c inside the copy; exit 0 = pass
-  --build CMD      compile the mutated copy without running its tests
+  --build CMD      compile the copy without running its tests
   --mutate CMD     run via bash -c inside the copy before the kill check
   --stability N    clean-copy repeat runs (default 10; minimum 1)
   --threads T      exported to TEST as THREADS and RUST_TEST_THREADS
@@ -64,6 +64,7 @@ case "$TIMEOUT" in *[!0-9]*|''|0) echo "--timeout wants a positive integer" >&2;
 
 ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX") || exit 2
 ACTIVE_PID="" ACTIVE_GROUP="" WATCHDOG_PID="" WATCHDOG_GROUP=""
+COMMAND_TIMED_OUT=0
 
 terminate_group() {
   group="$1"
@@ -109,6 +110,7 @@ extract() { # extract SHA into $1, stamped past the build before it
 run_command() { # run $2 in $1, capture output in $3, label it $4
   dir="$1" command="$2" log="$3" label="$4"
   timed_out="$log.timed-out"
+  COMMAND_TIMED_OUT=0
   rm -f "$timed_out"
 
   set -m
@@ -142,6 +144,7 @@ run_command() { # run $2 in $1, capture output in $3, label it $4
   ACTIVE_PID="" ACTIVE_GROUP="" WATCHDOG_PID="" WATCHDOG_GROUP=""
 
   if [ -f "$timed_out" ]; then
+    COMMAND_TIMED_OUT=1
     echo "$label timed out after ${TIMEOUT}s" >&2
     return 124
   fi
@@ -171,6 +174,14 @@ cargo_selection_nonempty() {
 
 extract "$ROOT/mutant" || { echo "control: git archive failed for $SHA" >&2; exit 2; }
 
+control_build_status=0
+run_command "$ROOT/mutant" "$BUILD" "$ROOT/control-build.log" "control build" || control_build_status=$?
+if [ "$control_build_status" -ne 0 ]; then
+  echo "control: build fails before any mutation — not a usable instrument" >&2
+  [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
+  exit 2
+fi
+
 control_status=0
 run_test "$ROOT/mutant" "$ROOT/control.log" || control_status=$?
 if [ "$control_status" -ne 0 ]; then
@@ -198,8 +209,15 @@ if [ "$build_status" -ne 0 ]; then
   exit 2
 fi
 
+mutant_status=0
+run_test "$ROOT/mutant" "$ROOT/mutant.log" || mutant_status=$?
+if [ "$COMMAND_TIMED_OUT" = 1 ]; then
+  echo "mutation: instrument-failure; mutant test timed out" >&2
+  [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
+  exit 2
+fi
 KILLED=1
-if run_test "$ROOT/mutant" "$ROOT/mutant.log"; then KILLED=0; fi
+[ "$mutant_status" -ne 0 ] || KILLED=0
 
 PASSES=0
 extract "$ROOT/clean" || { echo "control: second archive failed" >&2; exit 2; }
