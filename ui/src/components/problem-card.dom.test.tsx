@@ -2,7 +2,7 @@
 // The card a person reaches when kendex could not read one of its own
 // files. What it says first, and how the two blocks under that read: the
 // engine's message is the longest thing on the card and the only line
-// carrying the path, and the steps are prose a reader works through.
+// naming the file, and the steps are prose a reader works through.
 import { describe, expect, it, vi } from "vitest";
 import type { Scope } from "@/bindings";
 import { ProblemCard } from "@/components/problem-card";
@@ -77,7 +77,12 @@ describe("a scan that could not finish", () => {
       />,
     );
 
-    expect(host.textContent).toContain("the machine could not be read");
-    expect(host.textContent).not.toContain("The file is");
+    // Every paragraph the card holds, in order. Read as a whole rather
+    // than searched for today's wording: a lead invented for this kind is
+    // a paragraph that isn't here, whatever words it were given.
+    expect([...host.querySelectorAll("p")].map((p) => p.textContent)).toEqual([
+      "This machine",
+      "the machine could not be read",
+    ]);
   });
 });

@@ -17,14 +17,20 @@ describe("problemsFooterLabel", () => {
   });
 });
 
-// A problem card renders for Personal as readily as for a project, and the
-// two scopes keep their locks under different names and their harness
-// files under different roots. kendex.toml is absent from this list
-// because both scopes call it that; a name only one scope has is the thing
-// this copy cannot know.
+// A problem card renders for Personal as readily as for a project, and no
+// filename holds across every place a problem arrives from: the two scopes
+// keep their locks under different names and their harness files under
+// different roots, and a source catalog's install state is
+// kendex-local.toml while its kendex.toml is the catalog it publishes
+// (`manifest::file::manifest_path`). kendex.toml sat off this list on the
+// premise that both scopes call it that, which that routing falsifies — a
+// card naming it above an error naming kendex-local.toml points the steps'
+// "move the file named above" at the wrong file.
 const SCOPE_SPECIFIC = [
   ".kendex-lock.json",
   "lock.json",
+  "kendex.toml",
+  "kendex-local.toml",
   ".pi",
   ".claude",
   ".codex",
@@ -63,6 +69,9 @@ describe("problem copy", () => {
     expect(PROBLEM_STEPS["manifest-outdated"].join(" ")).toContain(
       "the file named above",
     );
+    expect(PROBLEM_STEPS["manifest-invalid"].join(" ")).toContain(
+      "the file named above",
+    );
   });
 
   // The same rule the lock's own refusal holds in crates/core: nothing
@@ -82,12 +91,18 @@ describe("the lead line", () => {
     for (const line of ALL_LEADS) expect(line).toContain(PLACE);
   });
 
+  // By role, never by name: the SCOPE_SPECIFIC guard above holds every
+  // filename out, so what is left has to say which file it means.
   it("names the file for every kind that has one to name", () => {
-    expect(PROBLEM_LEADS["lock-corrupt"]?.(PLACE)).toContain("installed in");
-    expect(PROBLEM_LEADS["manifest-outdated"]?.(PLACE)).toContain(
-      "kendex.toml",
+    expect(PROBLEM_LEADS["lock-corrupt"]?.(PLACE)).toContain(
+      "record of what it installed",
     );
-    expect(PROBLEM_LEADS["manifest-invalid"]?.(PLACE)).toContain("kendex.toml");
+    expect(PROBLEM_LEADS["manifest-outdated"]?.(PLACE)).toContain(
+      "declares what it wants installed",
+    );
+    expect(PROBLEM_LEADS["manifest-invalid"]?.(PLACE)).toContain(
+      "declares what it wants installed",
+    );
   });
 
   // A too-new schema can be either file and a scan failure is about no

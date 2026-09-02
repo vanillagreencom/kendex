@@ -33,9 +33,10 @@ export function ProblemCard({ problem }: { problem: Problem }) {
       path={path}
     >
       {lead ? <p className="text-sm">{lead(name)}</p> : null}
-      {/* The engine's own words, verbatim, and the only line on the card
-          carrying the path. It takes the card's own text colour: muted is
-          for trim, and this is the longest thing here to read. */}
+      {/* The engine's own words, verbatim, and the only line naming the
+          file — the card's own path line above names the folder. It takes
+          the card's own text colour: muted is for trim, and this is the
+          longest thing here to read. */}
       <p className="break-words rounded-md bg-muted/50 p-2 font-mono text-xs">
         {problem.message}
       </p>
