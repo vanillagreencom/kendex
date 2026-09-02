@@ -7,15 +7,13 @@
 //! lines, key order and the spelling of every untouched value survive
 //! because nothing rewrote them.
 //!
-//! Two things the walk is careful about.
-//!
-//! What a write may remove is settled by `held`, a third document: the same
-//! serialization taken of the manifest read back out of this very file. A key
-//! it names and the target does not is a key the manifest really dropped, and
-//! the sweep takes it. A key it never names was never the manifest's — a note
-//! somebody left inside a declaration, or a flag the serializer omits at its
-//! default — and the sweep passes over it. Nothing here has to know which keys
-//! the model can spell.
+//! Two things the walk is careful about. What a write may remove is settled by
+//! `held`, a third document: the same serialization taken of the manifest read
+//! back out of this very file. A key it names and the target does not is one
+//! the manifest really dropped, and the sweep takes it. A key it never names
+//! was never the manifest's — a note somebody left inside a declaration, or a
+//! flag the serializer omits at its default — and the sweep passes over it, so
+//! nothing here has to know which keys the model can spell.
 //!
 //! Lists are edited in the shape they were written in. An inline
 //! `custom-hooks = [{ … }]` and a `[[custom-hooks]]` array say the same thing,
@@ -39,12 +37,13 @@
 //! from the file rather than moved between declarations, because a dropped key
 //! is visible where a migrated one reads as if a person put it there.
 //!
-//! Which half of the price a write pays is decided by whether anything left or
-//! arrived around the entry, not by what the write meant: an entry replacing
-//! another inherits the comment and the keys that sat in its slot, because it
-//! hands the fold the same document an ordinary edit does, and that edit has
-//! to keep its own. [`own_slot`] names both pairs of shapes this cannot tell
-//! apart and what each one therefore comes back as.
+//! Which half a write pays is decided by whether the entries AROUND the
+//! changed one fix which slot was its own — not by what the write meant, nor
+//! by whether it added or removed anything. Two changes side by side leave
+//! each other unplaceable and both lose their keys though the list never
+//! changed length; a removal well past a change leaves that change one slot it
+//! could have come from, and it keeps everything. [`own_slot`] is that
+//! question, and names the pairs of shapes it cannot tell apart.
 
 use toml_edit::{DocumentMut, Item, TableLike, Value};
 
@@ -148,14 +147,15 @@ fn fold_item(destination: &mut Item, held: Option<&Item>, target: &Item) {
 /// An entry nothing identified took its slot by position, and whether that slot
 /// was forced is [`own_slot`]'s question, asked per entry.
 ///
-/// Forced: nothing moved the slot, so the fold reads the entry as the
-/// declaration that held it, edited, and it keeps what was written around the
-/// slot AND the keys inside it. That is what an ordinary edit needs, and why
-/// an entry REPLACING another inherits the same.
+/// Forced: one slot was in reach and this entry alone was looking for it, so
+/// the fold reads the entry as the declaration that held it, edited, and it
+/// keeps what was written around the slot AND the keys inside it — what an
+/// ordinary edit needs, and why an entry REPLACING another inherits the same.
 ///
-/// Not forced: an entry went or arrived, and this entry is standing where
-/// another declaration stood. It keeps what was written AROUND that slot,
-/// which is the price pairing in order has always had. It keeps none of the
+/// Not forced: more than one slot is in reach, or more than one entry looking
+/// for the one that is, so as far as anything here can say this entry stands
+/// where another declaration stood. It keeps what was written AROUND that
+/// slot, which is the price pairing in order has always had. It keeps none of the
 /// keys INSIDE it: `held` cannot answer for a declaration it is not the model
 /// view of, and [`stripped`] takes them before the fold, because a key dropped
 /// is visible where one migrating into a declaration a person never put it in

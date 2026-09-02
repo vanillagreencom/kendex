@@ -458,6 +458,22 @@ fn the_keys_in_a_slot_go_only_where_the_slot_was_not_the_entrys_own() {
         }),
         "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./z.sh\"\n\n[[custom-hooks]]\nevent = \"Notification\"\ncommand = \"./ping.sh\"\n"
     );
+    // Same length, nothing in or out, and the keys still go: two changes side
+    // by side leave each other unplaceable — either could have come from
+    // either slot — so neither is standing in one anything can call its own.
+    assert_eq!(
+        folding(THREE, |manifest| {
+            manifest.custom_hooks[0].command = "./g2.sh".to_owned();
+            manifest.custom_hooks[1].command = "./d2.sh".to_owned();
+        }),
+        THREE
+            .replace("./guard.sh", "./g2.sh")
+            .replace("./done.sh", "./d2.sh")
+            .replace(
+                "command = \"./g2.sh\"\nnote = \"a note\"\n",
+                "command = \"./g2.sh\"\n"
+            )
+    );
     // Shorter, and the removal is after the change: the changed entry is
     // bounded by the anchor below it and one free slot, so it kept its own.
     assert_eq!(
