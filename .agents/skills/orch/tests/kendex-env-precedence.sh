@@ -40,11 +40,13 @@ echo "=== kendex-env precedence ==="
 PROJ="$TMP_ROOT/proj"
 mkdir -p "$PROJ/.kendex"
 printf 'FOO="from-dotenv"\nQUX="only-in-dotenv"\n' > "$PROJ/.env"
-cat > "$PROJ/kendex.settings.toml" <<'TOML'
-[env]
-FOO = "from-settings"
-BAR = "bar-settings"
-TOML
+# Indented header, indented key, and trailing spaces on both — a shape the
+# loader accepts only because it trims every line, and the fixture that
+# makes the trim's RESULT load-bearing rather than just its call: lose the
+# assignment (a shadowed out-var, a fork) and `  [env]  ` stops reading as
+# a header, so the whole table is silently dropped and scenario 1's FOO is
+# unset. Written with printf so the trailing runs survive an editor.
+printf '  [env]  \n  FOO = "from-settings"  \nBAR = "bar-settings"\n' > "$PROJ/kendex.settings.toml"
 printf '[env]\nBAR = "bar-nested"\n' > "$PROJ/.kendex/settings.toml"
 printf 'BAZ="from-local"\n' > "$PROJ/.env.local"
 
@@ -242,25 +244,33 @@ else
   s8_case "an UNREADABLE kendex.settings.toml" 'printf "[env]\nX = \"y\"\n" > kendex.settings.toml && chmod 000 kendex.settings.toml' "kendex.settings.toml: source exists but is unreadable"
 fi
 
-# Scenario 9: the per-line path forks no subshell. kendex_trim and
-# kendex_decode_value assign into a caller-named variable, so a counting
-# wrapper around the real helper sees every call the loader makes. Read
-# back through a command substitution instead — a forked subshell per line
-# of every settings file every skill script reads — each increment lands in
-# the forked copy and the count comes back short, 0 when every call site
-# forks. The count is exact so that ONE reverted call site is caught too:
-# three lines trimmed, plus one key trim and one kendex_decode_value trim
-# for each of the two assignments.
+# Scenario 9: the per-line path forks no subshell. A wrapper delegating to
+# the real kendex_trim records two things per call. $BASH_SUBSHELL is the
+# direct measure — a fork raises it, and no variable can carry that back
+# out of the fork, so each call appends its depth relative to the loader's
+# own frame to a file; every recorded depth is 0 or a call ran inside a
+# subshell, wherever in the loop the fork was introduced. The call count is
+# the second: it is exact, so ONE call site reverted to a command
+# substitution is caught by the increment lost with its subshell. Seven for
+# a three-line file — every line trimmed, plus the key trim and the
+# kendex_decode_value trim for each of the two assignments.
 PROJ9="$TMP_ROOT/proj9"
 mkdir -p "$PROJ9"
 printf '[env]\nK1 = "v1"\nK2 = "v2"\n' > "$PROJ9/kendex.settings.toml"
+S9_LEVELS="$TMP_ROOT/s9-subshell-levels"
+: > "$S9_LEVELS"
 set +e
 s9_out=$(
   set -euo pipefail
   source "$LIB"
   trim_body="$(declare -f kendex_trim)"
   eval "_kendex_trim_real${trim_body#kendex_trim}"
-  kendex_trim() { TRIM_CALLS=$((TRIM_CALLS + 1)); _kendex_trim_real "$@"; }
+  S9_BASE=$BASH_SUBSHELL
+  kendex_trim() {
+    TRIM_CALLS=$((TRIM_CALLS + 1))
+    printf '%s\n' "$((BASH_SUBSHELL - S9_BASE))" >> "$S9_LEVELS"
+    _kendex_trim_real "$@"
+  }
   TRIM_CALLS=0
   kendex_load_settings_file "$PROJ9/kendex.settings.toml"
   printf '%s|%s|%s\n' "$TRIM_CALLS" "$K1" "$K2"
@@ -269,6 +279,7 @@ s9_code=$?
 set -e
 assert_eq "$s9_code" "0" "scenario 9 loads without error"
 assert_eq "$s9_out" "7|v1|v2" "scenario 9: every kendex_trim call the loader makes is visible in its own shell, none lost to a command substitution"
+assert_eq "$(sort -u "$S9_LEVELS" | paste -sd, -)" "0" "scenario 9: every kendex_trim call runs at the loader's own subshell depth, none inside a fork"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

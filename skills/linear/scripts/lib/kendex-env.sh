@@ -85,11 +85,18 @@ kendex_source_env_file() {
 }
 
 # Both helpers assign into a caller-named variable instead of printing.
-# kendex_load_settings_file calls them once or twice per line, and a helper
-# that printed could only be read back through a command substitution — a
-# forked subshell per line of every settings file every skill script reads.
-# Their locals carry a `_kendex_` prefix so an out-variable name cannot
-# shadow one and lose the assignment to the local.
+# kendex_load_settings_file reaches kendex_trim once for every line, and
+# three times on an assignment line — twice directly, for the line and for
+# the key, and once more inside kendex_decode_value. A helper that printed
+# could only be read back through a command substitution, so every one of
+# those was a fork, on every settings file every skill script loads.
+#
+# The assignment is a `printf -v` into a name the CALLER chose, so it is
+# lost to the helper's own local whenever the two spellings meet: never
+# pass `_kendex_trimmed`, `_kendex_decode_raw` or `_kendex_decode_regex` as
+# an out-var. Nothing enforces that — kendex_decode_value is itself such a
+# caller, which is why its scratch names are spelled apart from
+# kendex_trim's rather than sharing a `_kendex_raw`.
 kendex_trim() { # OUT_VAR RAW — RAW without leading or trailing whitespace, assigned to OUT_VAR
   local _kendex_trimmed="$2"
   _kendex_trimmed="${_kendex_trimmed#"${_kendex_trimmed%%[!$' \t\r\n']*}"}"
@@ -100,10 +107,10 @@ kendex_trim() { # OUT_VAR RAW — RAW without leading or trailing whitespace, as
 # Decode one [env] value per the settings contract: a single-line basic
 # string containing no `"` and no `\`, optionally followed by a `#`
 # comment. Anything else is a shape the contract does not carry.
-kendex_decode_value() { # OUT_VAR RAW — decoded value assigned to OUT_VAR; 1 = not contract shape, OUT_VAR untouched
-  local _kendex_raw _kendex_regex='^"([^"\]*)"[[:space:]]*(#.*)?$'
-  kendex_trim _kendex_raw "$2"
-  [[ "$_kendex_raw" =~ $_kendex_regex ]] || return 1
+kendex_decode_value() { # OUT_VAR RAW — decoded value assigned to OUT_VAR; 1 = not contract shape, OUT_VAR untouched; overwrites the caller's BASH_REMATCH, since the match runs in the caller's shell rather than a subshell
+  local _kendex_decode_raw _kendex_decode_regex='^"([^"\]*)"[[:space:]]*(#.*)?$'
+  kendex_trim _kendex_decode_raw "$2"
+  [[ "$_kendex_decode_raw" =~ $_kendex_decode_regex ]] || return 1
   printf -v "$1" '%s' "${BASH_REMATCH[1]}"
 }
 
