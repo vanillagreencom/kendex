@@ -62,10 +62,12 @@ unsafe_code = "forbid"
 # A doc citation naming something that no longer exists is worse than none:
 # it sends a reader looking for a symbol the rename already took away. The
 # guard documents private items, so an unresolvable citation is caught
-# whether what it named was public or not. What that leaves is rustdoc
-# saying a public comment's link to a private item would break in a page
-# built without that flag — and these comments are written for whoever is
-# reading the source, not for a page anybody builds.
+# whether what it named was public or not, across the lib and bin targets
+# cargo doc builds. It offers no test-target flag, so the citations under
+# crates/*/tests/ go unchecked. What that leaves is rustdoc saying a public
+# comment's link to a private item would break in a page built without that
+# flag — and these comments are written for whoever is reading the source,
+# not for a page anybody builds.
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
 private_intra_doc_links = "allow"
