@@ -21,7 +21,7 @@ kendex_github_has_env_token() {
 kendex_github_token_auth_status() {
   kendex_github_has_env_token || return 1
   local auth_timeout="${KENDEX_GITHUB_AUTH_TIMEOUT:-10}"
-  kendex_github_run_bounded "$auth_timeout" gh api user --jq '.login' >/dev/null
+  kendex_github_run_bounded "$auth_timeout" gh api user --jq '.login' >/dev/null 2>&1
 }
 
 kendex_github_token_auth_status_capture() {
@@ -59,7 +59,7 @@ kendex_github_auth_status_capture() {
 
 kendex_github_keyring_auth_status() {
   local auth_timeout="${KENDEX_GITHUB_AUTH_TIMEOUT:-10}"
-  kendex_github_run_bounded "$auth_timeout" env -u GH_TOKEN -u GITHUB_TOKEN gh auth status >/dev/null
+  kendex_github_run_bounded "$auth_timeout" env -u GH_TOKEN -u GITHUB_TOKEN gh auth status >/dev/null 2>&1
 }
 
 kendex_github_resolve_op_reference_to_var() {
