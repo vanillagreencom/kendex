@@ -75,11 +75,6 @@ export function DetailHeader({
   // fold answers null for those, and null is the answer that leaves the
   // provenance as plain text instead of a link that opens nothing.
   const repoKey = row?.repoKey ?? summary?.repoKey ?? listing?.repoKey ?? null;
-  const metaLine = [
-    commit ? `@ ${shortRevision(commit)}` : null,
-    meta?.license,
-    meta?.author ? `by ${meta.author}` : null,
-  ].filter((part): part is string => !!part);
   // One line, one separator. Each part is a node with its own name, and the
   // interleaving is spelled once, so nothing re-derives whether anything
   // precedes it and every gap is the same gap.
@@ -104,7 +99,20 @@ export function DetailHeader({
           ),
         }
       : null,
-    ...metaLine.map((part) => ({ key: part, node: <span>{part}</span> })),
+    // Keyed by which field it is, never by the text: these are the
+    // catalog's own strings, and two fields carrying the same one — an
+    // author and a license naming the same party, say — would key two
+    // siblings alike and let reconciliation keep or drop the wrong one.
+    // Both still render; it is only the key that has to be distinct.
+    commit
+      ? { key: "commit", node: <span>{`@ ${shortRevision(commit)}`}</span> }
+      : null,
+    meta?.license
+      ? { key: "license", node: <span>{meta.license}</span> }
+      : null,
+    meta?.author
+      ? { key: "author", node: <span>{`by ${meta.author}`}</span> }
+      : null,
   ].filter((part) => part !== null);
   const tags = [...new Set([...(meta?.tags ?? []), ...(listing?.tags ?? [])])];
 
