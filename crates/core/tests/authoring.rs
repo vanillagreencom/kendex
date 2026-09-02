@@ -497,19 +497,19 @@ fn only_a_github_url_is_a_candidate_to_submit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_scaffold_matches_its_checked_in_golden_digest() {
-    assert_eq!(kendex_core::author::scaffold::SCAFFOLD_VERSION, 1);
+    assert_eq!(kendex_core::author::scaffold::SCAFFOLD_VERSION, 2);
     for (license, expected) in [
         (
             License::Mit,
-            "df65c4e972e7fcf85459c2030b2933ecf5d9af06f26f321f663d1843a6ea1ded",
+            "3314ea3c24efa01b4f5d6b0693b72788348d63db49ab2af9fb2b68c6e8f8da18",
         ),
         (
             License::Apache2,
-            "7f8703f6999631efc692e1bfe9db21dfa5636e96a930177f74ba1ecf957093e8",
+            "ba340037e1eeae2b72f17b9b8ed5d8f7619012ad146ab71d877debe2ce41d289",
         ),
         (
             License::NoneYet,
-            "f99f2b34f98f9a480b34e1b3b543d2ddf731dc27c783c61aaa109d61b5c1116e",
+            "4038839a19299791a402f451394fb457b0b913b6ed73cc23041ccd685d7f7958",
         ),
     ] {
         let files: Vec<(std::path::PathBuf, Vec<u8>)> =

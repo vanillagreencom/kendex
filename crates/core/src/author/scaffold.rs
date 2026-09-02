@@ -16,7 +16,7 @@ use crate::error::{CoreError, Result};
 use super::status::MineRow;
 
 /// Part of the golden contract: bump when any emitted byte changes shape.
-pub const SCAFFOLD_VERSION: u32 = 1;
+pub const SCAFFOLD_VERSION: u32 = 2;
 
 const MIT_TEXT: &str = include_str!("assets/mit.txt");
 const APACHE_TEXT: &str = include_str!("assets/apache-2.0.txt");
@@ -227,10 +227,12 @@ fn manifest_text(name: &str, description: &str, author: &str, license: License) 
     }
     text.push_str(
         "\n# Items live in agents/, skills/, hooks/, commands/ and mcp/.\n\
-         # Curated sets: [bundles.<name>] with description and members, e.g.\n\
+         # Curated sets: [bundles.<name>] with a description and one list of\n\
+         # bare names per kind — agents, skills, commands, hooks, mcp-servers.\n\
          # [bundles.starter]\n\
          # description = \"Everything a new project needs\"\n\
-         # members = [\"skill/my-skill\", \"agent/my-agent\"]\n",
+         # skills = [\"my-skill\"]\n\
+         # agents = [\"my-agent\"]\n",
     );
     text
 }

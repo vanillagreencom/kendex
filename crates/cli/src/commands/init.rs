@@ -69,7 +69,8 @@ fn declare_catalog(cwd: &Path) -> CliResult {
         "# This file marks the folder as a kendex catalog. Items live in\n\
          # agents/, skills/, hooks/, commands/ and mcp/. Optional tables:\n\
          # [marketplace] name, description, author, license, tags\n\
-         # [bundles.<name>] description, members\n",
+         # [bundles.<name>] description, then agents/skills/commands/hooks/\n\
+         # mcp-servers lists of bare names\n",
     )?;
     say(&format!("declared the catalog ({})", control.display()));
     Ok(())

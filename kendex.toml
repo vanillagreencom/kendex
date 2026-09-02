@@ -17,60 +17,108 @@ homepage = "https://kendex.ai"
 tags = ["agents", "skills", "hooks", "official"]
 
 # Curated sets, drawn from how these packages depend on one another. Install
-# a whole set with one preview, or pick from it.
+# a whole set with one preview, or pick from it. Members are bare names in
+# one list per kind — the shape `[bundles]` is read in. `workflow` is the
+# whole agent workflow in one install; the four sets under it are the
+# partial installs it is drawn from.
+[bundles.workflow]
+description = "Every agent, skill and hook a full agent workflow runs on"
+agents = [
+  "reviewer-arch",
+  "reviewer-correctness",
+  "reviewer-doc",
+  "reviewer-error",
+  "reviewer-perf",
+  "reviewer-quality",
+  "reviewer-safety",
+  "reviewer-security",
+  "reviewer-test",
+]
+skills = [
+  "orch",
+  "dev",
+  "github",
+  "worktree",
+  "project-management",
+  "decider",
+  "reviewer",
+  "linear",
+  "review-gate",
+  "second-opinion",
+  "code-quality",
+  "deep-research",
+  "growth-guards",
+  "size-ratchet",
+  "preflight",
+]
+hooks = [
+  "block-bare-cd",
+  "block-repo-copy",
+  "block-unsafe-rm",
+  "pre-commit-check",
+  "session-drift-check",
+  "task-completed-check",
+]
+
 [bundles.orchestration]
 description = "Multi-agent workflow orchestration and the skills it drives"
-members = [
-  "skill/orch",
-  "skill/dev",
-  "skill/github",
-  "skill/worktree",
-  "skill/project-management",
-  "skill/decider",
-  "skill/reviewer",
-  "skill/linear",
+skills = [
+  "orch",
+  "dev",
+  "github",
+  "worktree",
+  "project-management",
+  "decider",
+  "reviewer",
+  "linear",
 ]
 
 [bundles.code-review]
 description = "The review agents and the skills that run a review"
-members = [
-  "agent/reviewer-arch",
-  "agent/reviewer-correctness",
-  "agent/reviewer-doc",
-  "agent/reviewer-error",
-  "agent/reviewer-perf",
-  "agent/reviewer-quality",
-  "agent/reviewer-safety",
-  "agent/reviewer-security",
-  "agent/reviewer-test",
-  "skill/reviewer",
-  "skill/review-gate",
-  "skill/second-opinion",
-  "skill/code-quality",
+agents = [
+  "reviewer-arch",
+  "reviewer-correctness",
+  "reviewer-doc",
+  "reviewer-error",
+  "reviewer-perf",
+  "reviewer-quality",
+  "reviewer-safety",
+  "reviewer-security",
+  "reviewer-test",
+]
+skills = [
+  "reviewer",
+  "review-gate",
+  "second-opinion",
+  "code-quality",
 ]
 
 [bundles.research]
 description = "Research and planning agents with the deep-research skill"
-members = [
-  "agent/researcher",
-  "agent/scout",
-  "agent/planner",
-  "skill/deep-research",
-  "skill/decider",
+agents = [
+  "researcher",
+  "scout",
+  "planner",
+]
+skills = [
+  "deep-research",
+  "decider",
 ]
 
 [bundles.commit-guards]
 description = "Hooks and skills that guard what gets committed"
-members = [
-  "hook/block-bare-cd",
-  "hook/block-repo-copy",
-  "hook/block-unsafe-rm",
-  "hook/pre-commit-check",
-  "hook/session-drift-check",
-  "hook/task-completed-check",
-  "skill/growth-guards",
-  "skill/size-ratchet",
-  "skill/preflight",
+hooks = [
+  "block-bare-cd",
+  "block-repo-copy",
+  "block-unsafe-rm",
+  "pre-commit-check",
+  "session-drift-check",
+  "task-completed-check",
+]
+skills = [
+  "growth-guards",
+  "size-ratchet",
+  "preflight",
 ]
 
 # Skill mappings per agent — always loaded into context.
