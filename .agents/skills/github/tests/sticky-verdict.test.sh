@@ -12,11 +12,15 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIXTURES="$TEST_DIR/fixtures"
 LIB="$TEST_DIR/../scripts/lib/github-api.sh"
 
-# get_repo_info / project root helpers in github-api.sh shell out to gh + git.
-# Stub project root to the test dir so `set -u` does not blow up at source time.
-PROJECT_ROOT="$TEST_DIR"
+# The lib resolves PROJECT_ROOT itself at source time; both readers under
+# test are pure string functions that never reach it, gh, or the network.
 # shellcheck source=/dev/null
 source "$LIB"
+
+# Read up front so a missing or unreadable fixture fails the suite under
+# set -e rather than passing an empty body into an assertion.
+summary_fixture="$(cat "$FIXTURES/claude_review_summary_comments.json")"
+untrusted_fixture="$(cat "$FIXTURES/untrusted_status_comments.json")"
 
 PASS=0
 FAIL=0
@@ -39,7 +43,8 @@ assert_eq "$(verdict "View job\n- [ ] todo")" "pending" "checklist with no revie
 assert_eq "$(verdict "## Review\n✅ Approved")" "approved" "review section + ✅ + approved = approved"
 assert_eq "$(verdict "## Review\n⚠️ changes requested")" "changes" "review section + ⚠️ = changes"
 assert_eq "$(verdict "## Review\n✅ Approved with ⚠️ caveats")" "changes" "mixed signals = changes"
-assert_eq "$(verdict "$(jq -r '.[0].body' "$FIXTURES/claude_review_summary_comments.json")")" "approved" "Claude Review Summary approved despite unrelated changes prose"
+summary_body="$(jq -r '.[0].body' <<<"$summary_fixture")"
+assert_eq "$(verdict "$summary_body")" "approved" "Claude Review Summary approved despite unrelated changes prose"
 assert_eq "$(verdict "Verdict: changes")" "changes" "bare Verdict: changes = changes"
 assert_eq "$(verdict "Status: changes")" "changes" "bare Status: changes = changes"
 assert_eq "$(verdict "Recommendation: approve")" "approved" "bare Recommendation: approve = approved"
@@ -59,9 +64,12 @@ assert_eq "$(verdict "Recommendation: no approval")" "changes" "no approval text
 
 echo
 echo "=== select_sticky_comment_from_comments ==="
-selected=$(select_sticky_comment_from_comments "$(cat "$FIXTURES/untrusted_status_comments.json")" "review-bot[bot]" true)
+# The empty selection is only meaningful if the fixture held candidates to
+# reject: assert it is non-empty before asserting nothing was picked.
+assert_eq "$(jq 'length' <<<"$untrusted_fixture")" "1" "untrusted fixture holds one comment to reject"
+selected=$(select_sticky_comment_from_comments "$untrusted_fixture" "review-bot[bot]" true)
 assert_eq "$selected" "" "known-bot fallback ignores a non-review bot status comment"
-selected=$(select_sticky_comment_from_comments "$(cat "$FIXTURES/claude_review_summary_comments.json")" "claude[bot]" false)
+selected=$(select_sticky_comment_from_comments "$summary_fixture" "claude[bot]" false)
 assert_eq "$(jq -r '.user.login' <<<"$selected")" "claude[bot]" "the requested bot's own review summary is selected"
 
 echo

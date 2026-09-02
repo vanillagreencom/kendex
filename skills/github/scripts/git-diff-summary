@@ -77,14 +77,22 @@ resolve_default_base() {
 # failure during scanning also keeps it (fail closed: an unreadable declaring
 # module could have held an ungated route).
 #
-# Only the literal declaration form above is read — the three lines at column
-# zero, `pub`/`pub(...)` accepted, `#[path]` optional. Every #[cfg(test)]
-# module declaration the fleet emits is written that way. Anything else
-# (a declaration inside a body or a macro, an `include!`, one spelled across
-# lines or hidden in a string or comment) emits NO record for the shape, so
-# it falls back to the file-local classification rather than a guessed one.
-# This is review-flag hygiene, not an adversarial control: a miss moves a
-# panic line between panic_path_added and the informational
+# The scan is LINE-BASED — no comment or literal masking, no nesting state.
+# It reads a run of column-zero outer attributes followed by a column-zero
+# `mod name;`: `pub`/`pub(...)` accepted, `#[path]` optional, `#[cfg(test)]`
+# anywhere in the run. Every #[cfg(test)] module declaration the fleet emits
+# is written that way.
+# Two consequences, stated rather than defended against:
+#   - Column-zero text that is not a top-level item reads as one anyway — the
+#     pair written flush left inside a block comment, a raw string, a macro
+#     body, or an inline `mod`. No fleet file is written that way.
+#   - A declaration the scan cannot see (an `include!`, one indented inside a
+#     body, one spelled across lines) emits nothing, and a candidate whose
+#     every VISIBLE declaration is gated is test scope — so a file reachable
+#     in production only through one of those, while also carrying a gated
+#     declaration, still classifies as test.
+# This is review-flag hygiene, not an adversarial control: a miss either way
+# moves a panic line between panic_path_added and the informational
 # test_panic_path_added, and the reviewer still reads the diff.
 
 # Mode of a path's new-side entry, empty when it has none. Reads main()'s
@@ -181,6 +189,11 @@ scan_decl_records() {
             pathattr = substr($0, RSTART + 1, RLENGTH - 2)
             next
         }
+        # Any other outer attribute in the run: it belongs to the same
+        # declaration, so it carries the pending gate rather than clearing
+        # it. `#[cfg(test)]` above `#[allow(clippy::unwrap_used)]` above
+        # `mod tests;` is the second most common shape in the fleet.
+        /^#\[/ { next }
         /^(pub([[:space:]]*[(][^)]*[)][[:space:]]*|[[:space:]]+))?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*;[[:space:]]*$/ {
             name = $0
             sub(/^pub([[:space:]]*[(][^)]*[)][[:space:]]*|[[:space:]]+)/, "", name)

@@ -34,7 +34,7 @@ gh api user -q .login
 
 **Filter.** Exclude noise bots (`dependabot[bot]`, `github-actions[bot]`, `renovate[bot]`, tracker sync bots) from both sources, plus anything created before `SUMMARY_TS` on a re-run. Exclude resolved and outdated review threads, and PR-level status updates with no actionable content. Keep every reviewer comment — human or bot — with actionable content on an unresolved, current thread.
 
-**Bot review summaries.** Derive bot logins from the authors present in the data (anything ending in `[bot]`, plus reaction-only bots) and fetch each one's summary comment, one command per bot with the literal login:
+**Bot review summaries.** Derive bot logins from the authors present in the data (anything ending in `[bot]`) and fetch each one's summary comment, one command per bot with the literal login:
 
 ```bash
 .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --author "[BOT_LOGIN]" --review-summary
