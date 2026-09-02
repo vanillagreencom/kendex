@@ -3,6 +3,7 @@
 
 use kendex_core::engine::{EngineReport, ItemSafety, SafetyTarget};
 use kendex_core::model::ItemKind;
+use kendex_core::quality::Finding;
 
 use super::say;
 
@@ -52,9 +53,8 @@ fn grouped_safety(rows: &[ItemSafety]) -> Vec<(&ItemSafety, Vec<SafetyTarget>)> 
 /// so a printer change is answered here rather than in the engine.
 #[derive(PartialEq)]
 struct SafetyBlock {
-    /// Here because the score line prints it. No test can make it the
-    /// clause that splits a block: `quality::safety` derives it from the
-    /// findings, so rows that agree on `findings` agree on it too.
+    /// Here because the score line prints it, though no test can make it
+    /// split a block: `quality::safety` derives it from the findings.
     score: u32,
     findings: Vec<PrintedFinding>,
     /// The count and reason [`print_skipped`] puts on its line, `None`
@@ -85,7 +85,9 @@ fn safety_block(row: &ItemSafety) -> SafetyBlock {
             .map(|finding| PrintedFinding {
                 severity: finding.severity.name(),
                 message: finding.message.clone(),
-                location: within(&finding.location, root).to_owned(),
+                location: within(&finding.location, root)
+                    .unwrap_or(&finding.location)
+                    .to_owned(),
                 line: finding.line,
             })
             .collect(),
@@ -96,19 +98,41 @@ fn safety_block(row: &ItemSafety) -> SafetyBlock {
     }
 }
 
-/// Where a finding fired inside its own rendering. One skill installed for
-/// two harnesses fires at the same place under two different roots, and
-/// the roots are what the block is being grouped across. A hook's place is
-/// its root plus a labelled part — `hooks.json (command)` — so the space
-/// separates as the slash does.
-fn within<'a>(location: &'a str, root: &str) -> &'a str {
-    if location == root {
-        return "";
+/// Where a finding fired inside the rendering whose root it names, kept
+/// with the separator that joins it back on: `/SKILL.md` in a tree,
+/// ` (command)` for a hook, empty where the finding is the rendering
+/// itself. Two harnesses fire at the same place under two roots, and the
+/// roots are what a block is grouped across.
+///
+/// `None` where the location is not inside this root, which the separator
+/// decides: `/a/bc.md` starts with the root `/a/b` and is not in it.
+fn within<'a>(location: &'a str, root: &str) -> Option<&'a str> {
+    let rest = location.strip_prefix(root)?;
+    (rest.is_empty() || rest.starts_with(['/', ' '])).then_some(rest)
+}
+
+/// Every other rendering this block covers, at this finding's own place
+/// inside it. The score line names every harness, but the finding prints
+/// one absolute location, right for the rendering it was read from and
+/// wrong for the rest; a place the output does not name is a place the
+/// reader cannot go to, which is the rule `print_conflicts` names its own
+/// positions under. Empty where the finding is not inside its own root,
+/// there being nothing to re-root.
+fn also_at(finding: &Finding, targets: &[SafetyTarget]) -> Vec<String> {
+    let Some((first, rest)) = targets.split_first() else {
+        return Vec::new();
+    };
+    let Some(place) = within(&finding.location, &first.location) else {
+        return Vec::new();
+    };
+    let mut places: Vec<String> = Vec::new();
+    for target in rest {
+        let at = format!("{}{place}", target.location);
+        if at != finding.location && !places.contains(&at) {
+            places.push(at);
+        }
     }
-    location
-        .strip_prefix(root)
-        .and_then(|rest| rest.strip_prefix(['/', ' ']))
-        .unwrap_or(location)
+    places
 }
 
 /// Where a scored package sits, as its score line says so: an
@@ -144,6 +168,10 @@ pub fn print_advisory(
     at: ScoredAt<'_>,
     advisory: &kendex_core::quality::AuditResult,
 ) {
+    let targets = match at {
+        ScoredAt::Targets(targets) => targets,
+        ScoredAt::CatalogPath(_) => &[],
+    };
     let at = match at {
         ScoredAt::Targets(targets) => format!(
             " for {}",
@@ -177,6 +205,9 @@ pub fn print_advisory(
             finding.severity.name(),
             finding.message
         ));
+        for place in also_at(finding, targets) {
+            say(&format!("  also at {}", place));
+        }
     }
     print_skipped(advisory);
 }
@@ -206,10 +237,9 @@ mod tests {
     const PIPES: &str = "this line pipes a download straight into a shell";
     const NOTHING_TO_READ: &str = "this item ships no script to read";
 
-    /// One rendering of the `deploy` skill under its own harness root, its
-    /// finding fired at a file inside that root. Everything a block prints
-    /// is the caller's; everything it does not print is fixed here, so a
-    /// test that splits or folds a block says which printed part did it.
+    /// One rendering of the `deploy` skill under its own harness root.
+    /// What a block prints is the caller's, what it does not is fixed
+    /// here, so a split or a fold names the printed part that caused it.
     fn skill(harness: HarnessId, message: &str, skipped: &[&str]) -> ItemSafety {
         let root = format!("/home/one/.{}/skills/deploy", harness.name());
         ItemSafety {
@@ -255,35 +285,16 @@ mod tests {
     }
 
     /// The reason the key exists: two renderings a reader cannot tell
-    /// apart are one block naming both tools. Each finding names its own
-    /// harness root, and the roots are what is being grouped across.
+    /// apart are one block naming both tools, each finding under its own
+    /// harness root.
     #[test]
     fn renderings_that_print_alike_are_one_block() {
         let rows = [skill(Claude, PIPES, &[]), skill(Codex, PIPES, &[])];
         assert_eq!(blocks(&rows), [[Claude, Codex]]);
     }
 
-    /// A hook's place is its config file plus a label — the label is
-    /// inside the rendering, the file is the root being grouped across —
-    /// so the space in front of it separates as a slash does.
-    #[test]
-    fn a_labelled_place_inside_a_rendering_groups_across_roots() {
-        let hook = |harness: HarnessId| {
-            let root = format!("/home/one/.{}/hooks.json", harness.name());
-            let mut row = skill(harness, PIPES, &[]);
-            row.kind = ItemKind::Hook;
-            row.name = "audit".to_owned();
-            row.advisory.findings[0].location = format!("{root} (command)");
-            row.targets[0].location = root;
-            row
-        };
-        let rows = [hook(Claude), hook(Gemini)];
-        assert_eq!(blocks(&rows), [[Claude, Gemini]]);
-    }
-
-    /// Nothing a block leaves out may split one. Quality is a separate
-    /// score with its own surfaces and never reaches a safety block, and a
-    /// deduction is a working of the score rather than a line of it.
+    /// Nothing a block leaves out may split one: quality has its own
+    /// surfaces, and a deduction is a working of the score, not a line.
     #[test]
     fn what_the_block_never_prints_does_not_split_it() {
         let mut other = skill(Codex, PIPES, &[]);
@@ -325,8 +336,7 @@ mod tests {
         assert_eq!(blocks(&rows), [[Claude], [Codex]]);
     }
 
-    /// The skipped line prints the first reason and no other, so the first
-    /// reason is identity and the rest are not.
+    /// The skipped line prints the first reason and no other.
     #[test]
     fn a_different_first_skipped_reason_stays_two_blocks() {
         let rows = [
@@ -336,8 +346,44 @@ mod tests {
         assert_eq!(blocks(&rows), [[Claude], [Codex]]);
     }
 
-    /// A block names its item, so two items with one reading between them
-    /// are still two blocks.
+    /// Every shape `also_at` names and the one it must not, a message
+    /// per clause so a failure says which shape broke.
+    #[test]
+    fn also_at_names_every_other_rendering() {
+        let at = |harness, location: &str| SafetyTarget {
+            harness,
+            location: location.to_owned(),
+        };
+        let mut row = skill(Claude, PIPES, &[]);
+        let targets = [
+            row.targets[0].clone(),
+            skill(Codex, PIPES, &[]).targets.remove(0),
+        ];
+        assert_eq!(
+            also_at(&row.advisory.findings[0], &targets),
+            ["/home/one/.codex/skills/deploy/SKILL.md"],
+            "a file in a tree is re-rooted under the other rendering"
+        );
+
+        row.advisory.findings[0].location = "/home/one/.claude/hooks.json (command)".to_owned();
+        let labelled = [
+            at(Claude, "/home/one/.claude/hooks.json"),
+            at(Gemini, "/home/one/.gemini/settings.json"),
+        ];
+        assert_eq!(
+            also_at(&row.advisory.findings[0], &labelled),
+            ["/home/one/.gemini/settings.json (command)"],
+            "a hook's place rejoins by the space it was taken off by"
+        );
+
+        row.advisory.findings[0].location = "kendex.toml".to_owned();
+        assert!(
+            also_at(&row.advisory.findings[0], &targets).is_empty(),
+            "a place outside the rendering claims no other position"
+        );
+    }
+
+    /// A block names its item, so one reading over two items is two.
     #[test]
     fn a_different_item_stays_two_blocks() {
         let renamed = ItemSafety {

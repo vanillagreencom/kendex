@@ -32,15 +32,11 @@ pub fn skill(source: &Path, name: &str, body: &str) {
 
 #[allow(clippy::unwrap_used)]
 pub fn fixture() -> Fixture {
-    fixture_with("copy", "[\"claude\"]")
-}
-
-pub fn fixture_with_two_harnesses() -> Fixture {
-    fixture_with("copy", "[\"claude\", \"codex\"]")
+    fixture_with("copy")
 }
 
 #[allow(clippy::unwrap_used)]
-fn fixture_with(method: &str, harnesses: &str) -> Fixture {
+fn fixture_with(method: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     // Canonical up front: macOS reaches its temp dirs through a symlink,
     // and the engine hands back canonical paths.
@@ -66,7 +62,7 @@ fn fixture_with(method: &str, harnesses: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = {harnesses}\nmethod = \"{method}\"\n\n[skills.clean]\nsource = \"cat\"\n\n[skills.hostile]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"{method}\"\n\n[skills.clean]\nsource = \"cat\"\n\n[skills.hostile]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )

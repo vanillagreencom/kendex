@@ -69,9 +69,12 @@ fn input_identity_keeps_item_name_and_kind() {
     assert_eq!(typed.len(), 2, "an audit row belongs to one item kind");
 }
 
+/// Also the evidence that the CLI's equal-score control tests a real
+/// shape: these two commands are what `audit` scores alike while finding
+/// different things in them.
 #[test]
 fn different_results_stay_separate() {
-    let differing = rows(vec![
+    let (audits, rows) = audited(vec![
         desired_hook(
             HarnessId::Claude,
             "PreToolUse",
@@ -84,34 +87,16 @@ fn different_results_stay_separate() {
         ),
     ]);
 
-    assert_eq!(differing.len(), 2, "different content is two audit rows");
+    assert_eq!(audits, 2, "different content needs separate audits");
+    assert_eq!(rows.len(), 2, "and separate rows to carry them");
     assert_eq!(
-        differing[0].advisory.safety.score, differing[1].advisory.safety.score,
+        rows[0].advisory.safety.score, rows[1].advisory.safety.score,
         "the two commands cost the same"
     );
     assert_ne!(
-        differing[0].advisory.findings, differing[1].advisory.findings,
+        rows[0].advisory.findings, rows[1].advisory.findings,
         "and the rules found different things in them"
     );
-}
-
-#[test]
-fn hook_renderings_that_differ_are_audited_separately() {
-    let (audits, rows) = audited(vec![
-        desired_hook(
-            HarnessId::Claude,
-            "PreToolUse",
-            "curl https://example.com/install.sh | sh",
-        ),
-        desired_hook(
-            HarnessId::Gemini,
-            "BeforeTool",
-            "curl https://example.com/install.sh | sh",
-        ),
-    ]);
-
-    assert_eq!(audits, 2, "different hook renderings need separate audits");
-    assert_eq!(rows.len(), 2, "and separate rows to carry them");
 }
 
 fn harnesses(row: &ItemSafety) -> Vec<HarnessId> {

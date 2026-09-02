@@ -37,8 +37,10 @@ fn the_blocked_refresh_prints_the_lines_scripts_parse() {
         vec![
             "safety: skill growth-guards for Claude Code, Codex scores 75/100",
             "  [finding]",
+            "  also at <project>/.agents/skills/growth-guards/SKILL.md",
             "safety: skill tidy for Claude Code, Codex scores 75/100",
             "  [finding]",
+            "  also at <project>/.agents/skills/tidy/SKILL.md",
             "conflict: skill growth-guards for Claude Code, Codex: <project>/.claude/skills/growth-guards already holds files kendex did not write",
             "  also at <project>/.agents/skills/growth-guards",
             "  differs from the catalog in 2 files: SKILL.md, references/rules.md",

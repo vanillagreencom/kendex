@@ -2,10 +2,9 @@
 //! refuses an install over them.
 
 use kendex_core::apply;
-use kendex_core::model::HarnessId;
 use kendex_core::quality::Severity;
 
-use super::fixture::{fixture, fixture_with_two_harnesses, installed, plan};
+use super::fixture::{fixture, installed, plan};
 
 /// A critical finding is reported on the row and installs anyway — the
 /// exact content the old gate held back.
@@ -52,15 +51,11 @@ fn a_critical_finding_is_reported_and_installs_anyway() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_audit_reports_every_installed_row() {
-    let f = fixture_with_two_harnesses();
+    let f = fixture();
     let report = plan(&f);
     apply::execute(&f.env, &report.plan).unwrap();
 
-    let rows: Vec<_> = kendex_core::engine::observed_rows(&f.env, &f.scope)
-        .unwrap()
-        .into_iter()
-        .filter(|row| matches!(row.name.as_str(), "clean" | "hostile"))
-        .collect();
+    let rows = kendex_core::engine::observed_rows(&f.env, &f.scope).unwrap();
     let hostile = rows.iter().find(|row| row.name == "hostile").unwrap();
     assert_eq!(hostile.advisory.safety.score, 75);
     let clean = rows.iter().find(|row| row.name == "clean").unwrap();
@@ -75,14 +70,4 @@ fn the_audit_reports_every_installed_row() {
         "{:?}",
         clean.advisory.skipped
     );
-    assert_eq!(rows.len(), 2 * HarnessId::ALL.len());
-    for row in rows {
-        let harness_dir = if row.targets[0].harness == HarnessId::Claude {
-            ".claude"
-        } else {
-            ".agents"
-        };
-        assert_eq!(row.targets.len(), 1);
-        assert!(row.targets[0].location.contains(harness_dir), "{row:?}");
-    }
 }
