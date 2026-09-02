@@ -300,6 +300,46 @@ fn a_deleted_pi_delegation_list_survives_the_fork() {
     );
 }
 
+/// Pi cannot render an allowlist. A person can add that project override
+/// after installation and then ask to keep a hand-tightened rendering as a
+/// fork, so capture must surface Pi's refusal instead of recording a fork it
+/// cannot prove preserves the restriction.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pi_allowlist_that_cannot_render_refuses_the_fork() {
+    let w = agent_world(
+        "\"pi\"",
+        "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Pi, "rev");
+    edit_line(&file, "deny-tools:", "deny-tools: Bash,");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::write(
+        path,
+        format!(
+            "{}\n[agent-frontmatter.pi]\nrev = {{ allow-tools = [\"Read\"] }}\n",
+            manifest_text(&w)
+        ),
+    )
+    .unwrap();
+
+    let refused = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Pi).unwrap_err();
+    assert!(
+        matches!(refused, CoreError::ForkWidensAccess { .. }),
+        "{refused:?}"
+    );
+    let said = refused.to_string();
+    assert!(said.contains("Pi"), "the refusal names the harness: {said}");
+    assert!(
+        said.contains("cannot express a tool allowlist"),
+        "the refusal keeps the renderer's reason: {said}"
+    );
+    assert!(!captured(&w, "rev").exists(), "nothing was written");
+    assert!(!manifest_text(&w).contains("[forks.agent.rev]"));
+}
+
 /// A hook written into a Claude agent file gates tool use from inside that
 /// file. No override table holds one — a hook is a custom-hooks entry with
 /// a selector, not a field — so a hook the fork would not run again is a

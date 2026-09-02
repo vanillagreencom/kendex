@@ -51,15 +51,21 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         hooks: hooks_for_agent(env, scope, harness, manifest, &publisher),
     };
 
-    let edited_text = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
-    let read = wrapper(scope, &publisher, harness, &around);
-    let bytes = source_form(&published, &edited_text, name, read.as_ref())?;
-    let captured = parse_source_agent(&String::from_utf8_lossy(&bytes))
-        .map_err(|problem| unreadable(name, &decl.source, problem))?;
     let refused = |problem: String| CoreError::ForkWidensAccess {
         name: crate::names::shown(name),
         problem,
     };
+    let render_refused = |problem: String| {
+        refused(format!(
+            "its {} renderer refused it: {problem}",
+            harness.display_name()
+        ))
+    };
+    let edited_text = std::fs::read_to_string(edited).map_err(|e| CoreError::io(edited, e))?;
+    let read = wrapper(scope, &publisher, harness, &around).map_err(&render_refused)?;
+    let bytes = source_form(&published, &edited_text, name, read.as_ref())?;
+    let captured = parse_source_agent(&String::from_utf8_lossy(&bytes))
+        .map_err(|problem| unreadable(name, &decl.source, problem))?;
     let on_disk = stated(harness, &edited_text).map_err(|problem| {
         refused(format!(
             "the tool settings its {} file states: its frontmatter cannot be read ({problem})",
@@ -70,13 +76,7 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
         name: installed_as.to_owned(),
         ..captured.clone()
     };
-    let Some(rendering) = render(scope, &named, harness, &around) else {
-        return Ok(CapturedAgent {
-            bytes,
-            carry,
-            read_at,
-        });
-    };
+    let rendering = render(scope, &named, harness, &around).map_err(render_refused)?;
     let after = stated(harness, &rendering)
         .map_err(|problem| refused(format!("its own rendering reads back as {problem}")))?;
     if let Some(problem) = dropped(&on_disk, &after, harness) {
@@ -234,16 +234,20 @@ fn wrapper(
     publisher: &SourceAgent,
     harness: HarnessId,
     around: &Around,
-) -> Option<(String, String)> {
+) -> std::result::Result<Option<(String, String)>, String> {
     const STAND_IN: &str = "kendexstandsinfortheagentsownprose";
     let source = SourceAgent {
         body: STAND_IN.to_owned(),
         ..publisher.clone()
     };
     let text = render(scope, &source, harness, around)?;
-    let (_, body) = crate::frontmatter::split(&text).ok()?;
-    let (before, after) = body.split_once(STAND_IN)?;
-    Some((before.to_owned(), after.to_owned()))
+    let Some((_, body)) = crate::frontmatter::split(&text).ok() else {
+        return Ok(None);
+    };
+    let Some((before, after)) = body.split_once(STAND_IN) else {
+        return Ok(None);
+    };
+    Ok(Some((before.to_owned(), after.to_owned())))
 }
 
 fn render(
@@ -251,7 +255,7 @@ fn render(
     source: &SourceAgent,
     harness: HarnessId,
     around: &Around,
-) -> Option<String> {
+) -> std::result::Result<String, String> {
     let permissions = EffectiveAgent::intent(source, &around.overrides);
     let effective = EffectiveAgent {
         source,
@@ -264,7 +268,5 @@ fn render(
         additional_instructions: around.additional.clone(),
         custom_hooks: around.hooks.clone(),
     };
-    crate::render::agent::generate(&effective)
-        .ok()
-        .map(|rendered| rendered.text)
+    crate::render::agent::generate(&effective).map(|rendered| rendered.text)
 }
