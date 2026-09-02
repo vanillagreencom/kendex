@@ -14,6 +14,11 @@
 # diagnostic naming the cwd rather than dying at git's bare 128 (KEN-1166).
 set -euo pipefail
 
+# A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
+# call in this file back at the real repository: the fixtures below would be
+# built in it, and the no-repository fixture would look like a repository.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
@@ -130,12 +135,24 @@ elif [[ "$norepo_status" -eq 128 && "$norepo_probe" == *"not a git repository"* 
     out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" $cmd 2>"$TMP_ROOT/norepo.err") || status=$?
     err=$(cat "$TMP_ROOT/norepo.err")
     assert_eq "$status" 1 "worktree $cmd exits 1 outside a git repository"
-    assert_contains "$err" "not inside a git repository: $NOREPO" \
+    assert_contains "$err" "could not resolve a git repository from: $NOREPO" \
       "worktree $cmd names the cwd it could not resolve a repository from"
-    assert_contains "$err" "Run it from the checkout" \
+    assert_contains "$err" "Run it from a checkout instead" \
       "worktree $cmd names what to do instead"
     assert_eq "$out" "" "worktree $cmd prints nothing on stdout outside a git repository"
   done
+
+  # The cause is git's, not the script's guess at it. A repository with no git
+  # to read it is the case that separates the two: the cwd IS a checkout, and
+  # a message asserting otherwise sends the operator to a second one.
+  mkdir -p "$TMP_ROOT/empty-bin"
+  status=0
+  out=$(cd "$TEST_DIR" && PATH="$TMP_ROOT/empty-bin" "$WORKTREE_SCRIPT" list 2>"$TMP_ROOT/nogit.err") || status=$?
+  err=$(cat "$TMP_ROOT/nogit.err")
+  assert_eq "$status" 1 "worktree list exits 1 when git is not on PATH"
+  assert_contains "$err" "git: command not found" \
+    "the refusal quotes git's own account rather than asserting a cause"
+  assert_eq "$out" "" "worktree list prints nothing on stdout when git is not on PATH"
 else
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n        status:   %s\n        diagnostic: %s\n' \

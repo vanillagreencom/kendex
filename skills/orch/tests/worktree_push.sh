@@ -147,8 +147,8 @@ assert_contains "$(cat "$args_log")" "push $wt --force" "the rejected flag reach
 # lives in one place. This case runs the REAL worktree script, so the two
 # scripts' wiring is held: the argument order the wrapper sends, and push's
 # own diagnostic reaching the caller. It runs FROM the worktree because the
-# worktree script resolves its project at startup and exits 128 before
-# parsing anything when its working directory is not a repository.
+# worktree script resolves its project at startup and refuses before parsing
+# anything when its working directory is not a repository.
 work="$TMP_ROOT/work-owned-typo"
 reset_state "$work"
 typo_before="$(state_json "$work")"
