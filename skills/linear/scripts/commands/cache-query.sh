@@ -967,6 +967,10 @@ cache_list_cycles() {
             team="$2"
             shift 2
             ;;
+        --team=*)
+            team="${1#--team=}"
+            shift
+            ;;
         --limit)
             limit="$2"
             shift 2
@@ -986,8 +990,11 @@ cache_list_cycles() {
     local cycles
     cycles=$(cache_jq_file "$CACHE_DIR/cycles.json" "[]" '.') || return 1
 
-    # Team first: current/upcoming/past pick one cycle off whatever set they
-    # get, so filtering after them answers for the wrong team.
+    # Team first. sync scopes cycles to a team only when one is configured, so
+    # with none configured the cache holds every team's. current and upcoming
+    # then pick one cycle out of whatever set they are handed, and past cuts at
+    # the working cycle's start, so filtering after the selection answers for
+    # the wrong team either way.
     if [[ -n "$team" ]]; then
         cycles=$(echo "$cycles" | jq --arg t "$team" '[.[] | select(.team.name == $t)]')
     fi
@@ -1008,7 +1015,11 @@ cache_list_cycles() {
             cycles=$(echo "$cycles" | jq --argjson w "$working" \
                 '[.[] | select(.startsAt > $w.startsAt)] | sort_by(.startsAt) | [first // empty]')
         else
-            cycles=$(echo "$cycles" | jq 'sort_by(.startsAt) | [first // empty]')
+            # No working cycle in this set — a team between cycles, or one whose
+            # running cycle already hit progress 1. The next cycle is the
+            # earliest one still ahead of today, never the oldest one on record.
+            cycles=$(echo "$cycles" | jq --arg today "$today_iso" \
+                '[.[] | select(.startsAt > $today)] | sort_by(.startsAt) | [first // empty]')
         fi
         ;;
     past)
@@ -1019,7 +1030,10 @@ cache_list_cycles() {
             cycles=$(echo "$cycles" | jq --arg ws "$working_start" \
                 '[.[] | select(.startsAt < $ws)] | sort_by(.startsAt) | reverse')
         else
-            cycles=$(echo "$cycles" | jq 'sort_by(.startsAt) | reverse')
+            # Same case for past: with no working cycle to cut at, today is the
+            # cutoff, so a future cycle is not reported as past.
+            cycles=$(echo "$cycles" | jq --arg today "$today_iso" \
+                '[.[] | select(.startsAt <= $today)] | sort_by(.startsAt) | reverse')
         fi
         ;;
     esac
