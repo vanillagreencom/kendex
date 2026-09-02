@@ -296,3 +296,146 @@ fn an_entry_in_another_declarations_slot_carries_none_of_its_keys() {
         "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./finish.sh\"\n"
     );
 }
+
+/// `deny-tools` as a bare list, so a case can state the whole span.
+fn deny(list: &str) -> String {
+    format!("schema = 6\n\n[agent-frontmatter.claude.orch]\ndeny-tools = {list}\n")
+}
+
+/// A gained entry is placed against what is already there, in every shape a
+/// list can be in when it has nothing to place it against. An empty list has
+/// no entry to take an indent from, one whose first entry shares the opening
+/// line says nothing about the margin, and a list holding only a comment says
+/// it in the whitespace holding its bracket out.
+#[test]
+fn a_gained_value_is_placed_against_the_list_it_lands_in() {
+    let one = |list: &str, add: &[&str]| {
+        folding(&deny(list), |manifest| {
+            denied(manifest).extend(add.iter().map(|tool| (*tool).to_owned()));
+        })
+    };
+    assert_eq!(one("[]", &["Bash"]), deny("[\"Bash\"]"));
+    assert_eq!(one("[]", &["aaa", "zzz"]), deny("[\"aaa\", \"zzz\"]"));
+    assert_eq!(
+        one("[\n  # nothing yet\n]", &["Bash"]),
+        deny("[\n  \"Bash\"\n  # nothing yet\n]")
+    );
+    assert_eq!(
+        one("[\"Bash\",\n  \"Write\",\n]", &["Edit"]),
+        deny("[\"Bash\",\n  \"Write\",\n  \"Edit\",\n]")
+    );
+    assert_eq!(
+        folding(&deny("[\n  \"Bash\",\n  \"Write\",\n]"), |manifest| {
+            denied(manifest).insert(0, "Agent".to_owned());
+        }),
+        deny("[\n  \"Agent\",\n  \"Bash\",\n  \"Write\",\n]")
+    );
+}
+
+/// The run before `]` belongs to the bracket. An entry that stood mid-list
+/// carries the separator that led to the neighbour after it, so an entry
+/// promoted to last by a removal must not bring it: the space before the
+/// bracket would be a separator to nothing.
+#[test]
+fn removing_the_last_entry_leaves_no_separator_behind() {
+    assert_eq!(
+        folding(&deny("[\"Bash\", \"Write\"]"), |manifest| {
+            denied(manifest).pop();
+        }),
+        deny("[\"Bash\"]")
+    );
+    // The same in the other spelling, and the same run one level in: the
+    // spacing before an inline table's brace sits on whichever key is last, so
+    // an entry that loses that key must hand the run back to the brace. Here
+    // `matcher` is written last and is what the strip takes.
+    let inline = "schema = 6\ncustom-hooks = [{ event = \"A\", command = \"c\", matcher = \"x\" }, { event = \"B\", command = \"d\" }]\n";
+    assert_eq!(
+        folding(inline, |manifest| {
+            manifest.custom_hooks.pop();
+        }),
+        "schema = 6\ncustom-hooks = [{ event = \"A\", command = \"c\", matcher = \"x\" }]\n"
+    );
+    assert_eq!(
+        folding(inline, |manifest| {
+            manifest.custom_hooks.remove(0);
+            manifest.custom_hooks[0].command = "z".to_owned();
+        }),
+        "schema = 6\ncustom-hooks = [{ event = \"B\", command = \"z\" }]\n"
+    );
+}
+
+/// Where the run before `]` is kept depends on a comma: the array's trailing
+/// text when the list ends with one, the last value's suffix when it does not.
+/// A write naming another key entirely must return either spelling byte for
+/// byte — reading the wrong one deletes the comment on the last entry, or the
+/// space before the bracket.
+#[test]
+fn a_list_that_ends_without_a_comma_comes_back_whole() {
+    let elsewhere = |current: &str| {
+        folding(current, |manifest| {
+            manifest.install.method = Method::Copy;
+        })
+    };
+    let gained = "\n[install]\nmethod = \"copy\"\n";
+    let broken = deny("[\n  \"Bash\",\n  \"Write\"   # the last one\n]");
+    assert_eq!(elsewhere(&broken), format!("{broken}{gained}"));
+    let flat = deny("[\"Bash\", \"Write\" ]");
+    assert_eq!(elsewhere(&flat), format!("{flat}{gained}"));
+}
+
+/// Three hooks, each under its own comment, the first and last carrying a
+/// `note` the model does not hold.
+const THREE: &str = "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n\n# about C\n[[custom-hooks]]\nevent = \"Notification\"\ncommand = \"./ping.sh\"\nnote = \"c note\"\n";
+
+/// Whether an entry keeps the keys in its slot is asked per entry, not of the
+/// list. What decides it is whether the slot was FORCED: the entries `held`
+/// recognized hold their own places, so an unrecognized entry between two of
+/// them can only have come from a slot between the same two.
+///
+/// Three shapes the list's own length gets wrong. A same-length write that
+/// removes one entry and adds another moves the added one into the removed
+/// one's slot, so its `note` must not follow. A write that only ADDS still
+/// leaves an entry unplaceable — two looking for one free slot — so neither is
+/// its own. And a removal well AFTER the changed entry leaves that entry's
+/// slot forced, so it keeps everything written about it.
+#[test]
+fn the_keys_in_a_slot_go_only_where_the_slot_was_not_the_entrys_own() {
+    let ping = || CustomHook {
+        name: None,
+        event: "Notification".to_owned(),
+        matcher: None,
+        command: "./ping.sh".to_owned(),
+        description: None,
+        timeout: None,
+        harnesses: None,
+        enabled: true,
+        agents: crate::manifest::default_hook_agents(),
+    };
+    // Same length, one out and one in: the arrival stands in A's slot, under
+    // A's comment, and carries none of A's keys.
+    assert_eq!(
+        folding(NOTED, |manifest| {
+            manifest.custom_hooks.remove(0);
+            manifest.custom_hooks.push(ping());
+        }),
+        "schema = 6\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"b note\"\n\n# about A\n[[custom-hooks]]\nevent = \"Notification\"\ncommand = \"./ping.sh\"\n"
+    );
+    // Longer, and nothing removed: two entries nothing recognized compete for
+    // the one free slot, so neither of them is standing in its own.
+    assert_eq!(
+        folding(NOTED, |manifest| {
+            manifest.custom_hooks[1].command = "./z.sh".to_owned();
+            manifest.custom_hooks.push(ping());
+        }),
+        "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./z.sh\"\n\n[[custom-hooks]]\nevent = \"Notification\"\ncommand = \"./ping.sh\"\n"
+    );
+    // Shorter, and the removal is after the change: the changed entry is
+    // bounded by the anchor below it and one free slot, so it kept its own.
+    assert_eq!(
+        folding(THREE, |manifest| {
+            manifest.custom_hooks.pop();
+            manifest.custom_hooks[0].command = "./g2.sh".to_owned();
+        }),
+        "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./g2.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n"
+    );
+}

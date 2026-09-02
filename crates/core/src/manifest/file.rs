@@ -145,10 +145,10 @@ pub(super) fn is_true(value: &bool) -> bool {
 /// writes nothing, the way a structured config edit does.
 ///
 /// One shape reaches further than the keys it names, and the fold's own module
-/// doc states it: a write that removes one entry of a list and changes another
-/// places the changed entry by position, where it comes back under the comment
-/// written about the entry that held that position and without the keys the
-/// model does not carry.
+/// doc states it: an entry of a list the write CHANGED can only be placed by
+/// position, and where the entries around it do not force that position it
+/// comes back under the comment written about whatever declaration held it,
+/// carrying none of the keys the model does not spell.
 pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
     // Stamped at the write, the way the lock stamps its version: the
     // schema is a fact about the build doing the writing, and two places

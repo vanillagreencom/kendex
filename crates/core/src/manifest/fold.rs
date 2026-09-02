@@ -27,17 +27,26 @@
 //! placed by position instead, [`writing`] owns what that means for the bytes
 //! and `fold_entries` owns what it means for the keys.
 //!
-//! The price, in full, and it is one shape: a write that both removes an entry
-//! and changes another. The changed entry can only be placed by position, and
-//! with the slots moved under it that position is another declaration's. It
-//! comes back under the comment written about that declaration, and the keys
-//! the model does not carry — a note somebody left inside either one — are
-//! gone from the file rather than moved between declarations, because a
-//! dropped key is visible where a migrated one reads as if a person put it
-//! there. A write that only removes, only adds, only re-sorts, or only changes
-//! an entry pays none of it.
+//! The price, in full, and it is not about removal. An entry the target
+//! changed matches no `held` entry — a value that changed is not the value it
+//! changed from — so it can only be placed by position, and the question is
+//! whether that position was its own declaration's. Where the entries `held`
+//! did recognize leave exactly one free slot in reach and exactly one entry
+//! looking for it, it was, and everything written about it stands. Where they
+//! do not, the entry is standing where another declaration stood: it comes
+//! back under the comment written about that declaration, and the keys the
+//! model does not carry — a note somebody left inside either one — are gone
+//! from the file rather than moved between declarations, because a dropped key
+//! is visible where a migrated one reads as if a person put it there.
+//!
+//! Two pairs of writes are the same two documents to the fold and cannot come
+//! back differently: an entry edited in place and an entry replaced by an
+//! unrelated one, and a re-sort that edits an entry against a removal that adds
+//! one. Both resolve toward the slot being another declaration's.
 
 use toml_edit::{DocumentMut, Item, TableLike, Value};
+
+use writing::{List, entries};
 
 mod writing;
 
@@ -134,33 +143,39 @@ fn fold_item(destination: &mut Item, held: Option<&Item>, target: &Item) {
 /// target entry it continues, so the writing around it and the keys inside it
 /// the manifest does not carry stay where they were put.
 ///
-/// An entry nothing identified took its slot by position, and what that slot
-/// still says about it depends on whether the list kept its length. It did:
-/// nothing has shifted, so the slot is the one this entry would have had, an
-/// edit is an edit, and the writing around it and the keys inside it are still
-/// about it. It did not: an entry is gone and every slot after it has moved
-/// under something else, so this entry is standing where another declaration
-/// stood. It keeps what was written AROUND that slot, which is the price
-/// pairing in order has always had and which the module doc names. It keeps
-/// none of the keys INSIDE it: `held` cannot answer for a declaration it is not
-/// the model view of, and a key migrating into a declaration a person never put
-/// it in reads exactly as if they had. [`stripped`] takes those before the
-/// fold, because dropping a key is visible and moving one is not.
+/// An entry nothing identified took its slot by position, and whether that slot
+/// is its own declaration's is [`own_slot`]'s question, asked per entry. Yes:
+/// an edit is an edit, and the writing around it and the keys inside it are
+/// still about it. No: it is standing where another declaration stood. It keeps
+/// what was written AROUND that slot, which is the price pairing in order has
+/// always had and which the module doc names. It keeps none of the keys INSIDE
+/// it: `held` cannot answer for a declaration it is not the model view of, and
+/// a key migrating into a declaration a person never put it in reads exactly as
+/// if they had. [`stripped`] takes those before the fold, because dropping a
+/// key is visible and moving one is not.
 fn fold_entries(destination: &mut Item, held: Option<&Item>, target: &Item) -> bool {
-    let (Some(standing), Some(wanted)) = (entries(destination), entries(target)) else {
+    let (Some(list), Some(wanted)) = (List::of(destination), entries(target)) else {
         return false;
     };
+    let standing = list.entries();
     let held = held.and_then(entries).unwrap_or_default();
-    let settled = standing.len() == wanted.len();
+    let pairing = paired(standing.len(), &held, &wanted);
     let rebuilt: Vec<(Option<usize>, Item)> = wanted
         .iter()
-        .zip(paired(standing.len(), &held, &wanted))
-        .map(|(wanted, slot)| match slot {
+        .zip(&pairing)
+        .enumerate()
+        .map(|(index, (wanted, slot))| match slot {
             Some(Slot { at, identified }) => {
+                let at = *at;
                 let mut entry = standing[at].clone();
-                let mine = identified || settled;
+                let mine = *identified || own_slot(&pairing, standing.len(), index, at);
                 if !mine {
+                    // Before `stripped`, not inside `fold_item`: the run an
+                    // inline table keeps before its brace sits on whichever key
+                    // is last, and stripping can take that key.
+                    let brace = brace_run(&entry);
                     stripped(&mut entry, wanted);
+                    reseat_brace(&mut entry, brace);
                 }
                 fold_item(&mut entry, mine.then(|| held.get(at)).flatten(), wanted);
                 (Some(at), entry)
@@ -168,8 +183,51 @@ fn fold_entries(destination: &mut Item, held: Option<&Item>, target: &Item) -> b
             None => (None, writing::fresh(wanted)),
         })
         .collect();
-    writing::rebuild(destination, &rebuilt);
+    list.rebuild(&rebuilt);
     true
+}
+
+/// Whether the slot an unidentified entry took is the one its own declaration
+/// held.
+///
+/// Nothing in the two documents says whether such an entry is a declaration
+/// edited or one the list did not have — the fold sees two serializations, and
+/// an entry that changed is not equal to what it changed from. What the two
+/// documents DO say is whether the slot was forced.
+///
+/// The entries `held` recognized are anchors: each is still itself, in its own
+/// place. An unidentified entry between two of them can only have come from a
+/// slot between the same two. Where exactly one free slot lies in that range
+/// and exactly one entry is looking for it, the slot is the entry's own and no
+/// guess was made. Where none lies there, or several entries compete for it, or
+/// the entry landed outside the range, the slot was another declaration's as
+/// far as anything here can tell, and that is the answer the fold acts on.
+///
+/// Two shapes it cannot separate, both by construction rather than by
+/// omission: an entry edited in place and an entry REPLACED by an unrelated one
+/// present the fold identical documents, and so do a re-sort that edits an
+/// entry and a removal that adds one. Both resolve toward the slot being
+/// another's, so a key is dropped rather than moved.
+fn own_slot(pairing: &[Option<Slot>], standing: usize, index: usize, at: usize) -> bool {
+    let anchored = |slot: &Option<Slot>| slot.filter(|slot| slot.identified);
+    let before = pairing[..index].iter().rposition(|s| anchored(s).is_some());
+    let after = pairing[index + 1..]
+        .iter()
+        .position(|s| anchored(s).is_some())
+        .map(|found| index + 1 + found);
+    let low = before.and_then(|at| anchored(&pairing[at])).map(|s| s.at);
+    let high = after.and_then(|at| anchored(&pairing[at])).map(|s| s.at);
+    let claimed: Vec<usize> = pairing.iter().filter_map(anchored).map(|s| s.at).collect();
+    let free: Vec<usize> = (0..standing)
+        .filter(|slot| !claimed.contains(slot))
+        .filter(|slot| low.is_none_or(|low| *slot > low))
+        .filter(|slot| high.is_none_or(|high| *slot < high))
+        .collect();
+    let looking = pairing[before.map_or(0, |at| at + 1)..after.unwrap_or(pairing.len())]
+        .iter()
+        .filter(|slot| anchored(slot).is_none())
+        .count();
+    free == [at] && looking == 1
 }
 
 /// Everything the target does not name, taken off an entry that is about to
@@ -265,17 +323,6 @@ fn same_entry(left: &Item, right: &Item) -> bool {
         (Item::Value(left), Item::Value(right)) => same_value(left, right),
         (Item::None, Item::None) => true,
         _ => false,
-    }
-}
-
-/// A read-only view of a list's entries, whichever way it is spelled.
-fn entries(item: &Item) -> Option<Vec<Item>> {
-    match item {
-        Item::ArrayOfTables(tables) => Some(tables.iter().cloned().map(Item::Table).collect()),
-        Item::Value(Value::Array(values)) => {
-            Some(values.iter().cloned().map(Item::Value).collect())
-        }
-        _ => None,
     }
 }
 

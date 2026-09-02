@@ -84,14 +84,20 @@ impl Span {
         Span {
             opener: split(prefixes.first().unwrap_or(&trailing)).0.to_owned(),
             closer: split(&closing).1.to_owned(),
-            // The last line of the first entry's lead, because a lead can
-            // carry whole comment lines of its own and only the run after the
-            // final break is what holds a value out from the margin.
-            indent: entries
-                .first()
-                .and_then(|first| first.lead.rsplit('\n').next())
-                .unwrap_or_default()
-                .to_owned(),
+            // What a line of this array is indented by: the run after the
+            // last break of the first PREFIX that takes one, because the first
+            // entry may share the opening line and say nothing about the
+            // margin, and the whitespace holding the closing bracket out where
+            // no entry has a break at all — an array with only a comment in it
+            // still says where its lines start.
+            indent: prefixes
+                .iter()
+                .find(|prefix| prefix.contains('\n'))
+                .and_then(|prefix| prefix.rsplit('\n').next())
+                .unwrap_or_else(|| split(&closing).1)
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect(),
             broken: prefixes
                 .iter()
                 .chain(&suffixes)
@@ -103,12 +109,14 @@ impl Span {
 
     /// What was written about the entry that stood at `at`.
     ///
-    /// An entry the list did not have has nothing written about it, so it
-    /// takes the shape the list is already in: the array's own indent and a
-    /// line of its own where the array breaks across lines, and otherwise the
-    /// single space that separates entries — before it where it lands last,
-    /// after it everywhere else, because the entry it displaced carries its
-    /// own lead and would double the space.
+    /// An entry the list did not have has nothing written about it, so it takes
+    /// the shape the list is already in: the array's own indent and a line of
+    /// its own where the array breaks across lines, and otherwise the single
+    /// space that separates entries — before it where it lands last, after it
+    /// everywhere else, because the entry it displaced carries its own lead and
+    /// would double the space. An entry that ends the list has nothing after it
+    /// to separate from, and one that begins it is separated by [`as_array`],
+    /// which is where what precedes it is known.
     pub(super) fn written(&self, at: Option<usize>, last: bool) -> Written {
         match at.and_then(|at| self.entries.get(at)) {
             Some(written) => written.clone(),
@@ -117,14 +125,31 @@ impl Span {
                 tail: "\n".to_owned(),
                 ..Written::default()
             },
-            None if last => Written {
-                lead: " ".to_owned(),
-                ..Written::default()
-            },
+            None if last => Written::default(),
             None => Written {
                 tail: " ".to_owned(),
                 ..Written::default()
             },
+        }
+    }
+
+    /// The run the array keeps before its `]`, given what was written about
+    /// the entry that ends the list now.
+    ///
+    /// That entry's own run stands where it ends a line: it is the rest of the
+    /// line the entry sat on — its trailing comment — and it is the entry's to
+    /// keep wherever the entry lands. A run with no line break is not that. It
+    /// is the separator that led to the neighbour after it, and that neighbour
+    /// may be the one that went, so the bracket takes what the entry that WAS
+    /// last held instead and the separator goes with the entry it separated.
+    fn closing(&self, ends: &Written) -> String {
+        match ends.tail.contains('\n') {
+            true => ends.tail.clone(),
+            false => self
+                .entries
+                .last()
+                .map(|last| last.tail.clone())
+                .unwrap_or_default(),
         }
     }
 }
@@ -148,20 +173,60 @@ fn decoration(raw: Option<&RawString>) -> String {
         .to_owned()
 }
 
-/// Both spellings put an entry back with the writing about that entry, and this
-/// is the one place that says what that means. A table carries its own
-/// decoration, so [`as_tables`] moves the table; a value does not, so
-/// [`as_array`] goes through [`Span`], which reads the bracket run into
-/// the writing about each entry before anything moves. A list spelled some
-/// third way reaches neither and cannot be rebuilt, rather than being rebuilt
-/// out of raw decoration that means something else.
-pub(super) fn rebuild(destination: &mut Item, rebuilt: &[(Option<usize>, Item)]) {
-    match destination {
-        Item::ArrayOfTables(tables) => *tables = as_tables(rebuilt),
-        Item::Value(Value::Array(array)) => *array = as_array(array, rebuilt),
-        // `entries` answered for this item one statement ago, and it admits
-        // exactly the two spellings above.
-        other => unreachable!("a list is a table array or an array, not {other:?}"),
+/// A list, held as the spelling it is written in.
+///
+/// TOML has exactly these two, and this type is where that is said. Reading a
+/// list, and putting one back, both go through it, so a spelling that ever has
+/// to be added fails to BUILD at every site that must learn about it rather
+/// than reaching a run-time arm somebody remembered to write.
+pub(super) enum List<'a> {
+    /// `[[key]]` blocks.
+    Tables(&'a mut ArrayOfTables),
+    /// `key = [ … ]`, whether it holds scalars or inline tables.
+    Values(&'a mut Array),
+}
+
+impl<'a> List<'a> {
+    /// The one place an [`Item`] is read as a list. Anything else is not one,
+    /// and the caller folds it as a leaf.
+    pub(super) fn of(item: &'a mut Item) -> Option<List<'a>> {
+        match item {
+            Item::ArrayOfTables(tables) => Some(List::Tables(tables)),
+            Item::Value(Value::Array(values)) => Some(List::Values(values)),
+            _ => None,
+        }
+    }
+
+    /// The entries as they stand, in one shape whichever spelling holds them.
+    pub(super) fn entries(&self) -> Vec<Item> {
+        match self {
+            List::Tables(tables) => tables.iter().cloned().map(Item::Table).collect(),
+            List::Values(values) => values.iter().cloned().map(Item::Value).collect(),
+        }
+    }
+
+    /// The folded entries put back with the writing about each of them, in the
+    /// spelling they came out of. A table carries its own decoration, so
+    /// [`as_tables`] moves the table and nothing else; a value does not, so
+    /// [`as_array`] goes through [`Span`], which reads the bracket run into
+    /// what was written about each entry before anything moves.
+    pub(super) fn rebuild(self, rebuilt: &[(Option<usize>, Item)]) {
+        match self {
+            List::Tables(tables) => *tables = as_tables(rebuilt),
+            List::Values(values) => *values = as_array(values, rebuilt),
+        }
+    }
+}
+
+/// [`List::entries`] for an item nothing may mutate — the target and the model
+/// view. The same two spellings, said in the one other place they have to be.
+pub(super) fn entries(item: &Item) -> Option<Vec<Item>> {
+    match item {
+        Item::ArrayOfTables(tables) => Some(tables.iter().cloned().map(Item::Table).collect()),
+        Item::Value(Value::Array(values)) => {
+            Some(values.iter().cloned().map(Item::Value).collect())
+        }
+        _ => None,
     }
 }
 
@@ -211,27 +276,35 @@ fn as_array(destination: &Array, rebuilt: &[(Option<usize>, Item)]) -> Array {
     *built.decor_mut() = destination.decor().clone();
     let last = rebuilt.len().saturating_sub(1);
     let mut lead = span.opener.clone();
-    let mut tail = String::new();
+    let mut ends = Written::default();
     for (index, (at, entry)) in rebuilt.iter().enumerate() {
         let written = span.written(*at, index == last);
         let mut value = match entry {
             Item::Value(value) => value.clone(),
             Item::Table(table) => Value::InlineTable(table.clone().into_inline_table()),
+            // A list entry is a table or a value; `Item`'s other two shapes are
+            // an array of tables, which no list holds as an entry, and `None`,
+            // which nothing puts in one.
             other => unreachable!("an array holds values, not {other:?}"),
         };
-        value
-            .decor_mut()
-            .set_prefix(format!("{lead}{}", written.lead));
-        value.decor_mut().set_suffix(written.close);
+        let mut prefix = format!("{lead}{}", written.lead);
+        // An entry the list did not have needs separating from the comma
+        // before it, and the entry it follows may have been the last one,
+        // whose own run faced the bracket rather than a neighbour.
+        if at.is_none() && index > 0 && prefix.is_empty() {
+            prefix = " ".to_owned();
+        }
+        value.decor_mut().set_prefix(prefix);
+        value.decor_mut().set_suffix(written.close.clone());
         built.push_formatted(value);
         lead.clone_from(&written.tail);
-        tail = written.tail;
+        ends = written;
     }
     // A list nothing is left in closes on the bracket it opened on: the lines
     // its entries stood on are the entries', and they went with them.
     built.set_trailing(match rebuilt.is_empty() {
         true => String::new(),
-        false => format!("{tail}{}", span.closer),
+        false => format!("{}{}", span.closing(&ends), span.closer),
     });
     built
 }
