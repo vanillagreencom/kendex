@@ -30,6 +30,9 @@ unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_DEFAULT_CLASSES S
 # shipped-defaults.test.sh. Every fixture here declares its own thresholds,
 # so both start empty and a case that needs one sets it.
 export SIZE_RATCHET_DEFAULT_CLASSES="" SIZE_RATCHET_FROZEN_CLASSES=""
+# A fixture repo is its own repo: an inherited git environment would make the
+# fixture `git add` write into the index of whatever repo invoked this suite.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -250,6 +253,25 @@ run_bin "$GIT_SHIM"
   && ok "the streamed byte-class read is a collection error: exit 2, naming assets/big.bin" \
   || bad "an unreadable byte-class blob is a collection error naming the file" "rc=$RC out=$OUT"
 case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany the byte-class collection failure" "$OUT" ;; *) ok "no OK verdict accompanies the byte-class collection failure" ;; esac
+
+echo "=== fail-closed: a blob that materializes but cannot be counted terminates ==="
+# The line class materializes the index blob and then counts it, so the read
+# succeeding says nothing about the count. Under --staged with one line-class
+# file that count is the run's only wc invocation, so the blanket wc shim
+# reaches it and the asserted wording pins which guard fired.
+new_repo blobcount
+mkfile small.txt 5
+git -C "$R" add -A
+run_sr --staged
+[ "$RC" -eq 0 ] && case "$OUT" in *"size-ratchet: OK"*) true ;; *) false ;; esac \
+  && ok "shim-free control: the materialized index blob is counted and passes" \
+  || bad "shim-free control: the materialized index blob is counted" "rc=$RC out=$OUT"
+run_sr_shimmed "$WC_SHIM" --staged
+[ "$RC" -eq 2 ] && case "$OUT" in *"cannot count the materialized index blob for tracked file 'small.txt'"*) true ;; *) false ;; esac \
+  && ok "an uncountable materialized blob is a collection error: exit 2, naming small.txt" \
+  || bad "an uncountable materialized blob is a collection error naming the file" "rc=$RC out=$OUT"
+case "$OUT" in *"simulated read failure"*) ok "wc's own stderr is surfaced, pinning the cause to the failed count" ;; *) bad "wc's own stderr is surfaced" "$OUT" ;; esac
+case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany an uncountable materialized blob" "$OUT" ;; *) ok "no OK verdict accompanies the uncountable materialized blob" ;; esac
 
 echo "=== fail-closed: a baselined unreadable blob refuses --update, baseline untouched ==="
 new_repo updfail

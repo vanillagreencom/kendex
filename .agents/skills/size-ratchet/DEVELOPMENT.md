@@ -78,7 +78,8 @@ nothing else. An `od` scan of the leading 8000 bytes then locates the byte.
 Because the prefilter is byte-exact, a scan that runs, succeeds, and finds
 nothing means one of two things: the sniff is wrong, or, on the worktree path
 where the two stages read the file separately, a write landed between them.
-Either way it refuses rather than reporting clean, and says both causes.
+Either way it refuses rather than reporting clean; the refusal itself names
+the path and says the scan located none, and leaves the mechanism here.
 
 The baseline is policy input and never enters the measured set. A self row is
 therefore stale. This makes seed, update, and staged tightening converge

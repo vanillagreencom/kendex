@@ -217,8 +217,8 @@ else
 
   echo "=== must-fail control: without LC_ALL=C the same fixture is refused ==="
   # Exit 0 is also what a sniff that never ran returns, so the case above is
-  # evidence only beside a control that reds. The control removes the two words
-  # that make the bound bytes and nothing else.
+  # evidence only beside a control that reds. The control removes the
+  # `LC_ALL=C` assignment that makes the bound bytes, and nothing else.
   BOUND="$TMP/bound-scripts"
   mkdir -p "$BOUND"
   cp -R "$SKILL_DIR/scripts/." "$BOUND/"
