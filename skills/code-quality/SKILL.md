@@ -49,7 +49,7 @@ A new or modified check, guard, assertion, or test ships with a must-fail contro
 - **Bash**: `set -euo pipefail` in every new script; check the result of every effectful substitution; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales.
 - In any `pipefail` script, never leave a pipeline unguarded when an early-closing `head` or `grep -q` can stop reading while its producer still writes: the 141 SIGPIPE status aborts the run where `errexit` fires, and in condition position, where it does not, reads as a plain false that drops the result with no error.
 - Measure a commit header with growth-guards' locale-stable `gg_chars`, never raw `awk length` or `wc -c`.
-- **TypeScript/JS**: distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries.
+- **TypeScript/JS**: distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries. A store selector returns a stable reference: never mint an array, object or Set inside one (a fresh value re-renders forever and blanks the page).
 
 ## Comments and Prose
 
