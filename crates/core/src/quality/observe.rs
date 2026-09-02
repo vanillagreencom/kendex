@@ -9,10 +9,7 @@
 //! scanner never visits), the input says so and every rule that would have
 //! read them reports itself not applicable.
 
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-
-use sha2::{Digest as _, Sha256};
 
 use crate::model::{HarnessId, ItemKind, ObservedItem};
 use crate::source_read::{TREE_BOUND, TreeBound};
@@ -22,23 +19,18 @@ use super::{
     TreeFile, UNREAD_MCP_ENTRY, UNREADABLE_PLUGIN,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct AuditInputKey([u8; 32]);
-
 impl AuditInput {
-    /// Everything that can change what rules find. Harness and root only
-    /// locate the rendering; no rule reads either one.
-    pub(crate) fn grouping_key(&self) -> AuditInputKey {
+    /// The identity of the content rules read. Name, harness and root are
+    /// caller-owned identity and location, so they stay out of this hash.
+    pub(crate) fn content_hash(&self) -> String {
         let AuditInput {
             kind,
-            name,
+            name: _,
             harness: _,
             location: _,
             content,
         } = self;
-        let mut hasher = Sha256Hasher::default();
-        (kind, name, content).hash(&mut hasher);
-        AuditInputKey(hasher.finalize())
+        crate::hash::hash_bytes(format!("{}|{content:?}", kind.name()).as_bytes())
     }
 }
 
@@ -80,28 +72,6 @@ impl AuditResult {
             *location = relative_to_root(location, root).to_owned();
         }
         key
-    }
-}
-
-#[derive(Default)]
-struct Sha256Hasher(Sha256);
-
-impl Sha256Hasher {
-    fn finalize(self) -> [u8; 32] {
-        self.0.finalize().into()
-    }
-}
-
-impl Hasher for Sha256Hasher {
-    fn finish(&self) -> u64 {
-        let bytes = self.0.clone().finalize();
-        let mut first = [0; 8];
-        first.copy_from_slice(&bytes[..8]);
-        u64::from_le_bytes(first)
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.update(bytes);
     }
 }
 

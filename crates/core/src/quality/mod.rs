@@ -113,7 +113,7 @@ impl Severity {
 /// that had to be replaced are reported by `undecodable-content`. Refusing
 /// to read such a file would mean one appended byte turns a payload
 /// invisible to every rule, which is a pass nobody earned.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeFile {
     /// Relative to the tree's root, and `/`-spelled wherever it becomes
     /// text: the links it is compared against are written that way.
@@ -147,7 +147,7 @@ impl TreeFile {
 }
 
 /// One MCP server as a harness records it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct McpEntry {
     pub command: Option<String>,
     pub args: Vec<String>,
@@ -198,7 +198,7 @@ impl McpEntry {
 }
 
 /// A plugin's readable sources.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PluginSources {
     /// Manifest file names found beside the plugin.
     pub manifests: Vec<String>,
@@ -216,7 +216,7 @@ pub const UNREADABLE_PLUGIN: &str = "the plugin's own files are not readable her
 pub const UNREAD_MCP_ENTRY: &str = "this server's command line lives inside a shared config file that was not re-read for this audit";
 
 /// What a rule reads, defined per kind.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Content {
     /// One authored file: agents and commands.
     Document {

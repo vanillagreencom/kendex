@@ -51,11 +51,16 @@ fn identical_renderings_are_scored_once_for_all_harnesses() {
         desired("deploy", HarnessId::Codex, b"same rendered body"),
     ]);
 
-    let first = input_for(&state.items[0]).grouping_key();
-    let second = input_for(&state.items[1]).grouping_key();
-    let rows = run(&Scope::Global, &state);
+    let first = input_for(&state.items[0]).content_hash();
+    let second = input_for(&state.items[1]).content_hash();
+    let mut audits = 0;
+    let rows = run_with(&Scope::Global, &state, |input| {
+        audits += 1;
+        crate::quality::audit(input)
+    });
 
     assert_eq!(first, second, "identical content should share one audit");
+    assert_eq!(audits, 1, "identical content should reach the auditor once");
     assert_eq!(
         rows.len(),
         1,
@@ -71,8 +76,8 @@ fn different_clean_renderings_share_one_reported_block() {
         desired("deploy", HarnessId::Codex, b"Read the diff.\n"),
     ]);
 
-    let first = input_for(&state.items[0]).grouping_key();
-    let second = input_for(&state.items[1]).grouping_key();
+    let first = input_for(&state.items[0]).content_hash();
+    let second = input_for(&state.items[1]).content_hash();
     let rows = run(&Scope::Global, &state);
 
     assert_ne!(first, second, "different content needs separate audits");
@@ -115,6 +120,20 @@ fn identical_content_from_different_items_stays_separate() {
     assert_eq!(rows.len(), 2, "an audit row belongs to one named item");
     assert_eq!(rows[0].name, "deploy");
     assert_eq!(rows[1].name, "release");
+}
+
+#[test]
+fn identical_document_content_from_different_kinds_stays_separate() {
+    let state = state(vec![
+        desired_document(ItemKind::Agent, "deploy", HarnessId::Claude, b"same body"),
+        desired_document(ItemKind::Command, "deploy", HarnessId::Codex, b"same body"),
+    ]);
+
+    let rows = run(&Scope::Global, &state);
+
+    assert_eq!(rows.len(), 2, "an audit row belongs to one item kind");
+    assert_eq!(rows[0].kind, ItemKind::Agent);
+    assert_eq!(rows[1].kind, ItemKind::Command);
 }
 
 #[test]
@@ -187,8 +206,17 @@ fn state(items: Vec<crate::engine::desired::Desired>) -> DesiredState {
 }
 
 fn desired(name: &str, harness: HarnessId, bytes: &[u8]) -> crate::engine::desired::Desired {
+    desired_document(ItemKind::Skill, name, harness, bytes)
+}
+
+fn desired_document(
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+    bytes: &[u8],
+) -> crate::engine::desired::Desired {
     item(
-        ItemKind::Skill,
+        kind,
         name,
         harness,
         crate::engine::desired::Artifact::File {

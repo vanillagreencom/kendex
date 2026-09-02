@@ -45,7 +45,7 @@ fn shape(setup: &[&str], args: &[&str]) -> Vec<String> {
 }
 
 /// The block every verb that plans prints before its own lines: one
-/// score per item and reading, one conflict however many tools it blocks.
+/// score per item and matching result, one conflict however many tools it blocks.
 fn planned_block() -> Vec<&'static str> {
     vec![
         "safety: skill growth-guards for Claude Code, Codex scores 75/100",

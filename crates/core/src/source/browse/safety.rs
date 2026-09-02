@@ -15,7 +15,7 @@ use specta::Type;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::ItemKind;
-use crate::quality::{AuditInput, AuditResult, Content, RULESET_VERSION};
+use crate::quality::{AuditResult, RULESET_VERSION};
 use crate::source::DISCOVERY_VERSION;
 
 use super::{Browsed, Catalog};
@@ -124,7 +124,7 @@ fn scored(
     item: &Item,
 ) -> Result<(CachedScore, bool)> {
     let input = input_for(browsed, kind, name, item)?;
-    let content_hash = content_hash(&input);
+    let content_hash = input.content_hash();
     let cache = cache_path(env, browsed, kind, name);
     if let Some(path) = &cache
         && let Some(hit) = verified(path, &content_hash)
@@ -148,58 +148,6 @@ fn scored(
         }
     }
     Ok((fresh, false))
-}
-
-/// The cache key: the identity of the bytes the rules read, so a re-read
-/// of the same content is answered without re-scoring and a parser change
-/// that moves bytes between items re-scores.
-fn content_hash(input: &AuditInput) -> String {
-    // The location stays out of the material: the same files are the same
-    // content wherever the catalog keeps them.
-    let mut material = format!("{}|", input.kind.name());
-    match &input.content {
-        Content::Document { text } => material.push_str(text),
-        // Sorted, so the order the tree was read in never changes the key.
-        Content::SkillTree { files } => {
-            let mut entries: Vec<String> = files
-                .iter()
-                .map(|file| {
-                    format!(
-                        "{}:{}:{}\n",
-                        file.path.display(),
-                        file.bytes,
-                        file.text.as_deref().unwrap_or_default()
-                    )
-                })
-                .collect();
-            entries.sort();
-            material.push_str(&entries.concat());
-        }
-        Content::Hook {
-            event,
-            matcher,
-            command,
-            values,
-            script,
-        } => {
-            material.push_str(&format!(
-                "{event}|{}|{command}|{}",
-                matcher.as_deref().unwrap_or_default(),
-                script.as_deref().unwrap_or_default()
-            ));
-            // Appended, not slotted, so a hook that stores no values hashes
-            // exactly as it did. Digested first, so a value carrying the
-            // join character cannot move a boundary.
-            if let Some(values) = values {
-                material.push('|');
-                material.push_str(&crate::hash::hash_bytes(values.as_bytes()));
-            }
-        }
-        Content::Mcp(entry) => material.push_str(&format!("{entry:?}")),
-        Content::Plugin(sources) => material.push_str(&format!("{sources:?}")),
-        Content::Unread { why } => material.push_str(why),
-    }
-    crate::hash::hash_bytes(material.as_bytes())
 }
 
 /// A cached record, only if every part of its key still holds. Anything

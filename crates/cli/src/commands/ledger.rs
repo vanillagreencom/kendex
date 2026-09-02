@@ -22,8 +22,7 @@ use super::scope_label;
 use crate::ui;
 
 /// Items the safety block above carries a finding against. Counted from
-/// the rows that block was printed from, so the number and the lines it
-/// sends the reader to are one reading of one set of bytes.
+/// the result rows that block printed, deduplicated by item identity.
 fn flagged(scored: &[ItemSafety]) -> usize {
     scored
         .iter()

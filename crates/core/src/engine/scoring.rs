@@ -53,12 +53,20 @@ pub struct SafetyTarget {
 
 /// Audit byte-distinct renderings once, then group matching results for output.
 pub(super) fn run(scope: &Scope, state: &DesiredState) -> Vec<ItemSafety> {
+    run_with(scope, state, crate::quality::audit)
+}
+
+fn run_with(
+    scope: &Scope,
+    state: &DesiredState,
+    mut audit: impl FnMut(crate::quality::AuditInput) -> AuditResult,
+) -> Vec<ItemSafety> {
     let mut rows: Vec<ItemSafety> = Vec::new();
-    let mut input_rows: HashMap<crate::quality::observe::AuditInputKey, usize> = HashMap::new();
+    let mut input_rows: HashMap<(String, String), usize> = HashMap::new();
     let mut result_rows: HashMap<(ItemKind, String, AuditResult), usize> = HashMap::new();
     for item in &state.items {
         let input = input_for(item);
-        let input_key = input.grouping_key();
+        let input_key = (item.name.clone(), input.content_hash());
         let target = SafetyTarget {
             harness: item.harness,
             location: input.location.clone(),
@@ -68,7 +76,7 @@ pub(super) fn run(scope: &Scope, state: &DesiredState) -> Vec<ItemSafety> {
             continue;
         }
 
-        let advisory = crate::quality::audit(input);
+        let advisory = audit(input);
         let result_key = (
             item.kind,
             item.name.clone(),
