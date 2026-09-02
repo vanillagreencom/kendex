@@ -38,9 +38,9 @@ lands in which file, in what order, and why each omission is deliberate.
 ## Three verbs
 
 ```bash
-scripts/bot-instructions render [--repo REPO] [--spec SPEC] [--staged] [--dry-run]
+scripts/bot-instructions render [--repo REPO] [--spec SPEC] [--dry-run]
 scripts/bot-instructions check [--repo REPO] [--spec SPEC] [--staged]
-scripts/bot-instructions adopt [--repo REPO] [--spec SPEC] [--staged]
+scripts/bot-instructions adopt [--repo REPO] [--spec SPEC]
 ```
 
 `render` builds and validates in a scratch tree, then writes — and the checks

@@ -68,9 +68,9 @@ It is also policy, not mechanism — the gate binds only merges routed through
 
 ## Exit 75 recovery
 
-`pr-merge --auto` recovery belongs to [orch](../orch/SKILL.md) § Detached merge boundary.
+Use [orch](../orch/SKILL.md) § Detached merge boundary before `pr-merge --auto`; it prepares the exact-head watcher.
+If `pr-merge --auto` exits 75, the orch workflow launches that prepared watcher.
 Branch rebasing and publication belong to [worktree](../worktree/SKILL.md) § Commands.
-Use those workflows after an exit 75.
 
 Where branch protection *is* enabled, the opposite problem appears: after a
 rebase or force-push an outdated thread can become unreachable in the UI —
