@@ -555,7 +555,7 @@ flush_batch() { # UNIT — appends one "<path><TAB><count>" row per pending file
 # per line; a newline in a path would misalign it, and the walk refuses every
 # such path before any verdict — a shift exempts nothing regardless.
 ATTR_EXEMPT=""
-if ! { git ls-files -z | git -c core.attributesFile=/dev/null check-attr -z ${ATTR_SCOPE} --stdin diff >"$TMP/attr.z"; }; then
+if ! { git ls-files -z | GIT_ATTR_NOSYSTEM=1 git -c core.attributesFile=/dev/null check-attr -z ${ATTR_SCOPE} --stdin diff >"$TMP/attr.z"; }; then
   config_error "could not resolve the 'diff' attribute over the tracked set (git ls-files | git check-attr failed) — refusing to guess what git keeps out of its textual diffs"
 fi
 attr_exempt="$(LC_ALL=C tr '\000' '\n' <"$TMP/attr.z" | awk '
