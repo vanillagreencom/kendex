@@ -42,9 +42,9 @@ describe("defaultReadProcessIdentity live (bash exec drift)", () => {
 
 		const spawnIdentity = defaultReadProcessIdentity(pid);
 		if (spawnIdentity === null) {
-			// /proc + ps both unavailable in this environment; nothing
-			// meaningful to assert.
-			expect(true).toBe(true);
+			// /proc + ps both unavailable in this environment; there is
+			// nothing to observe, so the case ends here rather than
+			// asserting something it did not measure.
 			return;
 		}
 
@@ -60,14 +60,10 @@ describe("defaultReadProcessIdentity live (bash exec drift)", () => {
 		// identityMatches MUST treat them as the same process, even if
 		// comm rotated bash -> sleep. comm is diagnostic-only.
 		expect(identityMatches(spawnIdentity, drifted)).toBe(true);
-		// We expect to observe the drift on this platform; if comm
-		// matches both reads (e.g. the kernel didn't rotate it before
-		// the first probe), the test still passes the identity check
-		// above so the bug is still gated.
-		if (spawnIdentity.comm === "bash" && drifted?.comm === "sleep") {
-			// Drift was observed; identity check survived it.
-			expect(true).toBe(true);
-		}
+		// comm may or may not have rotated by the time of the second
+		// read — the kernel does not promise when. Either way the
+		// identity check above is what gates the bug, so nothing here
+		// depends on observing the rotation.
 	});
 
 	test("identityMatches is false after the process actually exits", async () => {

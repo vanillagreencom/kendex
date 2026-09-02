@@ -177,6 +177,29 @@ test("every Pi extension carries a consumer-facing CHANGELOG.md", () => {
 	}
 });
 
+// A package carrying no test file used to drop out of the wiring gate before
+// any of its assertions ran: no suite files means no entry point to demand and
+// nothing for a CI step to invoke, so shipping a package untested looked
+// exactly like shipping one covered. Naming them here is what turns that state
+// into a declaration a reviewer reads, and the drift reader below reds on both
+// sides — an undeclared bare package, and a declaration the tree outgrew.
+//
+// pi-prompt-stash: editor shortcut plus popup rendering against pi-tui, with no
+// behaviour extracted behind a testable seam yet (KEN-1016).
+const NO_SUITE = ["pi-prompt-stash"];
+
+// Both directions of the NO_SUITE declaration against the tree. Taking the
+// per-package suite counts as an argument is what lets the control below run
+// this exact reader over a mutated tree instead of asserting against a second
+// literal.
+function suiteDeclarationDrift(counts) {
+	const bare = counts.filter(([, files]) => files === 0).map(([dir]) => dir);
+	return [
+		...bare.filter((dir) => !NO_SUITE.includes(dir)).map((dir) => `${dir}: carries no test file and is not declared in NO_SUITE`),
+		...NO_SUITE.filter((dir) => !bare.includes(dir)).map((dir) => `${dir}: declared in NO_SUITE but carries test files — drop the declaration`),
+	];
+}
+
 // Packages whose declared CI entry point no enabled step invokes. Taking the
 // workflow source as an argument is what lets the control below run this exact
 // reader over a mutated copy instead of asserting against a second literal.
@@ -195,7 +218,8 @@ test("every Pi extension suite runs in CI under the package's own test script", 
 	const workflow = readFileSync(workflowPath, "utf8");
 	const steps = ciSteps(workflow);
 	const dirs = packages().map(({ dir }) => dir);
-	const bearing = packages().filter(({ dir }) => suiteFiles(join(root, dir)).length > 0).map(({ dir }) => dir);
+	const counts = packages().map(({ dir }) => [dir, suiteFiles(join(root, dir)).length]);
+	const bearing = counts.filter(([, files]) => files > 0).map(([dir]) => dir);
 	// Every side is derived from the tree and the workflow, so a reader that
 	// matched nothing would pass this case vacuously — which is the gap it
 	// exists to close. Floor each reader first; a zero here means the reader is
@@ -203,6 +227,15 @@ test("every Pi extension suite runs in CI under the package's own test script", 
 	// own: a reader that found no entry point fails the next assertion.
 	assert.ok(steps.length > 0, `no per-package steps found in ${workflowPath} — the workflow reader is broken`);
 	assert.ok(bearing.length > 0, "no package carries test files — the suite-file walker is broken");
+
+	// Before the filter below narrows to packages that carry tests, hold the
+	// ones that carry none against the declaration — that narrowing is where an
+	// untested package used to leave the gate unremarked.
+	assert.deepEqual(
+		suiteDeclarationDrift(counts),
+		[],
+		"a Pi package carries no test file without NO_SUITE declaring it, or a NO_SUITE declaration is stale",
+	);
 
 	assert.deepEqual(
 		packages().filter(({ dir, pkg }) => bearing.includes(dir) && !ciEntryPoint(pkg)).map(({ dir }) => dir),
@@ -238,3 +271,24 @@ test("a step conditioned on a shard the matrix does not run is reported, not acc
 	assert.deepEqual(unrunPackages(typo), ["pi-claude-bridge: no step on a shard the matrix runs invokes `npm run test:ci`"]);
 });
 
+
+// Must-fail control for the declaration above: with every package in the tree
+// either covered or declared, the drift reader returns the same empty list a
+// reader that had stopped looking would, so both directions are mutated here.
+test("a package carrying no test file is reported unless NO_SUITE declares it", () => {
+	const counts = packages().map(({ dir }) => [dir, suiteFiles(join(root, dir)).length]);
+	assert.deepEqual(suiteDeclarationDrift(counts), [], "precondition: the real tree matches NO_SUITE");
+
+	const stripped = counts.find(([dir, files]) => files > 0 && !NO_SUITE.includes(dir));
+	assert.ok(stripped, "no covered package to strip — this control no longer mutates the tree it reads");
+	assert.deepEqual(
+		suiteDeclarationDrift(counts.map(([dir, files]) => [dir, dir === stripped[0] ? 0 : files])),
+		[`${stripped[0]}: carries no test file and is not declared in NO_SUITE`],
+	);
+
+	assert.ok(NO_SUITE.length > 0, "NO_SUITE is empty — the stale-declaration direction below mutates nothing");
+	assert.deepEqual(
+		suiteDeclarationDrift(counts.map(([dir, files]) => [dir, NO_SUITE.includes(dir) ? 1 : files])),
+		NO_SUITE.map((dir) => `${dir}: declared in NO_SUITE but carries test files — drop the declaration`),
+	);
+});
