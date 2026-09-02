@@ -154,6 +154,8 @@ Update docs when the implementation changes a documented API or architecture.
 
 ## 5. Validate
 
+Before deterministic validation, list every callee whose call the change deletes. Run `git grep -n -F -- <callee>` for each one; this fixed-string search covers the tracked tree, including tracked ignored paths. Apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup) when only a repository-private definition remains. Do not treat the absence of internal callers as proof that a supported external API is unused. The build and tests below validate every deletion.
+
 Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs in a repo where a baseline exists:
 
 ```bash
@@ -165,9 +167,7 @@ Deterministic gates first — every finding is fixed here, never carried into re
 
 Then the project's validation command — the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints (empty → the project's documented build/test/lint command), run from the worktree root — plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
 
-For every call the change deletes, run `rg -n <callee>` across the repository. Delete any public item that has no callers left.
-
-A script written only to produce a number for the issue is temporary evidence. Put its result in the PR body and do not commit the script. Every check, guard, assertion, or test the change ships must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)).
+A script written only to produce a number for the issue is temporary evidence. Do not commit it. Carry its text or the exact command, its exit status, and its result in the completion summary as a `handoff_to_submit_pr:` Discovered Work bullet. Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)); a temporary measurement that does not ship is not a check the change adds or modifies.
 
 **Visual QA** — **skip if** the issue has no `design` label. Otherwise use the project's visual QA skills to confirm what your change affects renders correctly, not the full checklist. Do NOT capture golden baselines.
 
@@ -242,7 +242,7 @@ Omit any section that has nothing in it. Discovered Work is backlog work beyond 
 
 **Discovered Work marker prefixes.** A bullet belonging to a later stage of THIS PR rather than to the backlog carries a marker as the first token of the bullet text, before `[Type]`. Unmarked bullets go through the TPM audit as backlog work.
 
-- `handoff_to_submit_pr:` — content the upcoming submit-pr step produces, e.g. PR-body material.
+- `handoff_to_submit_pr:` — content the upcoming submit-pr step puts in the PR body. Measurement evidence names the script text or exact command, exit status, and result.
 - `handoff_to_merge_pr:` — something the eventual merge-pr step handles.
 - `current_workflow_action:` — something the current review-pr cycle should handle itself.
 

@@ -84,7 +84,9 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
    `status` of `no_pr` means create one in step 4. Stop and report auth, token, timeout, or parse errors.
 
-3. **Build the PR body.** Write it to a file with the harness file-write tool or `apply_patch`, never redirection or a heredoc, at `[WORKTREE_PATH]/tmp/pr-body-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`), and use that path as `BODY_FILE`.
+3. **Build the PR body.** Read the accepted completion summaries first: Linear summaries come from the issue comments; GitHub and ad-hoc summaries come from the accepted dev-return artifact's `summary`. Collect every Discovered Work bullet prefixed `handoff_to_submit_pr:` and put its payload in the applicable PR-body section. A measurement payload is complete only when it carries the script text or exact command, exit status, and result.
+
+   Write the body to a file with the harness file-write tool or `apply_patch`, never redirection or a heredoc, at `[WORKTREE_PATH]/tmp/pr-body-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`), and use that path as `BODY_FILE`.
 
    ```markdown
    ## Summary
@@ -103,6 +105,9 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
    ## QA Metrics
    [Results from the QA agents that ran — project-configurable.]
+
+   ## Measurement Evidence
+   [Measurement handoffs from completion summaries.]
 
    ## Test Plan
    [validation steps]

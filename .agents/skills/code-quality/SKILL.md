@@ -87,4 +87,4 @@ One judge per question: never re-implement a decision (classify, validate, parse
 
 ## Cleanup
 
-Remove unused code completely: no backwards-compatibility shims, no renamed `_vars`, no commented-out blocks, no `// removed` markers, no re-exports without callers. Breaking removals get a CHANGELOG note, not a compat layer.
+Remove unused code completely. A repository-private item whose last caller is removed leaves in the same commit. A supported external API is not unused merely because the repository has no internal caller. No backwards-compatibility shims, renamed `_vars`, commented-out blocks, `// removed` markers, or re-exports without callers. Breaking removals get a CHANGELOG note, not a compat layer.
