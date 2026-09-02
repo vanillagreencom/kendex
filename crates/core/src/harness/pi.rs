@@ -8,6 +8,58 @@ pub struct Pi;
 
 const EXTENSION_EXTS: &[&str] = &["ts", "js"];
 
+// pi-root-policy:global-root begin
+fn pi_root_is_absolute_for(value: &str, windows: bool) -> bool {
+    if !windows {
+        return value.starts_with('/');
+    }
+    let bytes = value.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
+    {
+        return true;
+    }
+    let Some(rest) = value
+        .strip_prefix(r"\\")
+        .or_else(|| value.strip_prefix("//"))
+    else {
+        return false;
+    };
+    let mut parts = rest.split(['\\', '/']);
+    matches!((parts.next(), parts.next()), (Some(server), Some(share)) if !server.is_empty() && !share.is_empty())
+}
+
+fn pi_global_root(env: &Env) -> PathBuf {
+    let default = || env.home.join(".pi/agent");
+    let Some(dir) = env
+        .var("PI_CODING_AGENT_DIR")
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+    else {
+        return default();
+    };
+    let root = crate::paths::expand_tilde(&env.home, dir);
+    if pi_root_is_absolute_for(&root.to_string_lossy(), cfg!(windows)) {
+        root
+    } else {
+        default()
+    }
+}
+
+#[cfg(test)]
+const PI_ROOT_ABSOLUTE_CASES: &[(&str, bool, bool)] = &[
+    ("/root", true, false),
+    ("C:/root", false, true),
+    ("C:\\root", false, true),
+    ("//server/share", true, true),
+    ("\\\\server\\share", false, true),
+    ("\\root", false, false),
+    ("relative/root", false, false),
+];
+// pi-root-policy:global-root end
+
 /// The segment kendex parks its Pi hook storage under, at both scopes.
 /// Pi warns about a `hooks/` directory sitting directly beside a root it
 /// loads on the name alone, whatever it holds, and the migration it names
@@ -72,16 +124,7 @@ impl HarnessAdapter for Pi {
     }
 
     fn default_global_root(&self, env: &Env) -> PathBuf {
-        let default = || env.home.join(".pi/agent");
-        let Some(dir) = env
-            .var("PI_CODING_AGENT_DIR")
-            .map(str::trim)
-            .filter(|dir| !dir.is_empty())
-        else {
-            return default();
-        };
-        let root = crate::paths::expand_tilde(&env.home, dir);
-        if root.is_absolute() { root } else { default() }
+        pi_global_root(env)
     }
 
     fn project_markers(&self) -> &'static [ProjectMarker] {
@@ -175,6 +218,14 @@ mod tests {
             ),
             PathBuf::from("/h/.pi/agent")
         );
+    }
+
+    #[test]
+    fn pi_root_absoluteness_matches_the_generated_contract() {
+        for (value, posix, windows) in PI_ROOT_ABSOLUTE_CASES {
+            assert_eq!(pi_root_is_absolute_for(value, false), *posix, "{value}");
+            assert_eq!(pi_root_is_absolute_for(value, true), *windows, "{value}");
+        }
     }
 
     #[test]

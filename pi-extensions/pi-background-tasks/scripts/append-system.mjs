@@ -23,9 +23,9 @@
 //    without Pi must not create stray files.
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { piGlobalRoot } from "./pi-root.mjs";
 
 const action = process.argv[2];
 if (action !== "install" && action !== "remove") {
@@ -82,12 +82,6 @@ try {
 	process.exit(0);
 }
 
-function piUserDir() {
-	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
-	const expanded = configured?.replace(/^~(?=\/|$)/, homedir());
-	return expanded && isAbsolute(expanded) ? resolve(expanded) : join(homedir(), ".pi", "agent");
-}
-
 function findScopeRoot(start) {
 	let dir = start;
 	while (true) {
@@ -103,14 +97,14 @@ function findScopeRoot(start) {
 	// Fallback: the conventional Pi user dir, but only when it already exists.
 	// This catches legacy global-prefix installs without mutating arbitrary user
 	// state on machines without Pi installed.
-	const piDir = piUserDir();
+	const piDir = piGlobalRoot();
 	return existsSync(piDir) ? piDir : undefined;
 }
 
 function isPiScopeRoot(scopeRoot) {
 	if (existsSync(join(scopeRoot, "settings.json"))) return true;
 	if (basename(scopeRoot) === ".pi") return true;
-	const piDir = piUserDir();
+	const piDir = piGlobalRoot();
 	return resolve(scopeRoot) === resolve(piDir);
 }
 

@@ -5,8 +5,8 @@
 // so it can be unit-tested without the pi-coding-agent / pi-ai peer deps.
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { piGlobalRoot } from "./pi-root.js";
 
 import { QOL_BUDGET_HANDOFF_FOLDER, QOL_BUDGET_HANDOFF_LATEST } from "./constants.js";
 
@@ -22,15 +22,8 @@ export interface QolBudgetHandoff {
 	model?: string;
 }
 
-function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
-
 export function piUserDir(): string {
-	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
-	return isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
+	return piGlobalRoot();
 }
 
 export function safeFileName(value: string): string {

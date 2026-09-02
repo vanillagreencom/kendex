@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-web-tools";
 export const WEB_PROVIDERS = ["auto", "exa", "perplexity", "gemini", "exa-mcp", "duckduckgo", "openai-native"] as const;
@@ -63,20 +64,11 @@ function expandHome(input: string): string {
 }
 
 export function piUserDir(): string {
-	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
-	return isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
+	return piGlobalRoot();
 }
 
 export function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -237,13 +229,8 @@ function parseEnvFile(path: string): SettingsRecord {
 }
 
 function projectEnvFiles(cwd: string): string[] {
-	let current = resolve(cwd);
-	while (true) {
-		if (existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json")) || existsSync(join(current, ".pi"))) return [join(current, ".env"), join(current, ".env.local")];
-		const parent = dirname(current);
-		if (parent === current) return [join(resolve(cwd), ".env"), join(resolve(cwd), ".env.local")];
-		current = parent;
-	}
+	const root = piProjectRoot(cwd) ?? resolve(cwd);
+	return [join(root, ".env"), join(root, ".env.local")];
 }
 
 function readProjectEnvConfig(cwd: string): SettingsRecord {

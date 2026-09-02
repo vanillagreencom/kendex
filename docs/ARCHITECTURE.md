@@ -446,7 +446,9 @@ lives in one capability table read by core and UI.
   the rules in full. The capability row says what the mechanism supports;
   labels read carrier reality (`pi_ext::carrier`). The carrier reads a project
   root only after Pi trusts it, and reads the default global root or an absolute
-  `PI_CODING_AGENT_DIR`. Pi loads project and global settings both, so a
+  `PI_CODING_AGENT_DIR`; `pi-extensions/pi-root-policy.mjs` generates that rule
+  and the project markers for Rust and every standalone Pi package. Pi loads
+  project and global settings both, so a
   project-installed hook with only a global carrier is still enforced. The
   session-start drift report rides the same
   mechanism: same script, same kill-switch, fire-and-forget into session

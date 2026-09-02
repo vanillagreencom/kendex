@@ -4,8 +4,8 @@
 // resolves them at runtime.
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 
 export type Mode = "off" | "lite" | "full" | "ultra" | "micro";
 export type ActiveMode = Exclude<Mode, "off">;
@@ -14,22 +14,8 @@ export type kendexConfig = Record<string, unknown>;
 export const MODE_VALUES: readonly Mode[] = ["off", "lite", "full", "ultra", "micro"];
 export const CONFIG_ID = "@vanillagreen/pi-caveman";
 
-export function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
-
 export function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -66,8 +52,7 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 
 
 export function piSettingsPaths(cwd = process.cwd()): string[] {
-	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
-	const userDir = isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
+	const userDir = piGlobalRoot();
 	const user = join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];
@@ -110,8 +95,7 @@ export interface ConfigurationSource {
 // and reports which file's `mode` key won the merge, plus any legacy keys
 // (`enabled`, `defaultMode`) present alongside `mode`. Project wins on tie.
 export function configurationSource(cwd?: string): ConfigurationSource {
-	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
-	const userDir = isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
+	const userDir = piGlobalRoot();
 	const userPath = join(userDir, "settings.json");
 	const projectPath = projectSettingsPath(cwd ?? process.cwd());
 	const activePaths = new Set(piSettingsPaths(cwd));

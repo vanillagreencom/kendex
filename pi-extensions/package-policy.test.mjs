@@ -5,6 +5,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
+
+import { ABSOLUTE_CASES, checkOutputs, INSTALL_OUTPUTS, TYPESCRIPT_OUTPUTS } from "./pi-root-policy.mjs";
 
 const root = new URL(".", import.meta.url).pathname;
 
@@ -144,6 +147,27 @@ test("vendored append-system helpers stay identical", () => {
 	}
 	assert.ok(hashes.length > 0, "expected append-system helper copies");
 	assert.equal(new Set(hashes.map(([, hash]) => hash)).size, 1, `append-system helpers differ: ${JSON.stringify(hashes)}`);
+});
+
+test("every shipped Pi root helper matches the generated contract", async () => {
+	assert.deepEqual(checkOutputs(), []);
+	assert.deepEqual(
+		new Set(TYPESCRIPT_OUTPUTS.map((path) => path.split("/")[0])),
+		new Set(packages().map(({ dir }) => dir)),
+	);
+	for (const output of [...TYPESCRIPT_OUTPUTS, ...INSTALL_OUTPUTS]) {
+		const module = await import(`${pathToFileURL(join(root, output)).href}?conformance`);
+		assert.equal(module.piGlobalRoot("relative/root", "/home/pat", "posix"), "/home/pat/.pi/agent", output);
+		assert.equal(module.piGlobalRoot("~/custom", "/home/pat", "posix"), "/home/pat/custom", output);
+		assert.equal(module.piGlobalRoot("~/custom", "C:\\Users\\pat", "win32"), "C:\\Users\\pat\\custom", output);
+	}
+	for (const output of TYPESCRIPT_OUTPUTS) {
+		const module = await import(`${pathToFileURL(join(root, output)).href}?absolute-cases`);
+		for (const [value, posixExpected, windowsExpected] of ABSOLUTE_CASES) {
+			assert.equal(module.piRootIsAbsolute(value, "posix"), posixExpected, `${output}: posix ${value}`);
+			assert.equal(module.piRootIsAbsolute(value, "win32"), windowsExpected, `${output}: win32 ${value}`);
+		}
+	}
 });
 
 test("Pi extension TypeScript stays compatible with Node strip-only parsing", () => {

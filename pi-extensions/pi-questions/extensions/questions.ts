@@ -13,8 +13,9 @@ import {
 import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 
 import { publishQuestionActivity, publishQuestionDebug } from "./activity.js";
 import { emitAnswerSteer } from "./answer-steer.js";
@@ -117,22 +118,8 @@ interface PendingQuestion extends PendingQuestionView {
 	uiDone?: (result: QuestionResult) => void;
 }
 
-function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
-
 function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -168,8 +155,7 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 }
 
 function piSettingsPaths(cwd = process.cwd()): string[] {
-	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
-	const userDir = isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
+	const userDir = piGlobalRoot();
 	const user = join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];

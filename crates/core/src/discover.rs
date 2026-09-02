@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{CoreError, Result};
 
+// pi-root-policy:project-markers begin
 const MARKER_DIRS: [&str; 7] = [
     ".claude",
     ".codex",
@@ -13,6 +14,7 @@ const MARKER_DIRS: [&str; 7] = [
     ".agents",
     ".gemini",
 ];
+// pi-root-policy:project-markers end
 const MARKER_FILES: [&str; 6] = [
     "kendex.toml",
     ".kendex-lock.json",

@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 
 export function expandHome(input: string): string {
 	if (input === "~") return homedir();
@@ -9,17 +10,7 @@ export function expandHome(input: string): string {
 }
 
 export function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) {
-			return candidate;
-		}
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -56,8 +47,7 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 
 
 export function piSettingsPaths(cwd = process.cwd()): string[] {
-	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
-	const userDir = isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
+	const userDir = piGlobalRoot();
 	const user = join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];

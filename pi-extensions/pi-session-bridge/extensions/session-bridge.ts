@@ -18,6 +18,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 
 import { installPiActivityBridgePublisher } from "./activity-broker.js";
 import { resolveSessionId } from "./child-session-id.js";
@@ -150,15 +151,7 @@ function expandHome(input: string): string {
 }
 
 function projectSettingsPath(cwd: string): string {
-	let current = path.resolve(cwd);
-	while (true) {
-		const candidate = path.join(current, ".pi", "settings.json");
-		if (fs.existsSync(candidate)) return candidate;
-		if (fs.existsSync(path.join(current, ".pi")) || fs.existsSync(path.join(current, ".git")) || fs.existsSync(path.join(current, ".kendex-lock.json"))) return candidate;
-		const parent = path.dirname(current);
-		if (parent === current) return path.join(path.resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+	return path.join(piProjectRoot(cwd) ?? path.resolve(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -194,8 +187,7 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 }
 
 function piSettingsPaths(cwd = process.cwd()): string[] {
-	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
-	const userDir = path.isAbsolute(configured) ? path.resolve(configured) : path.join(homedir(), ".pi", "agent");
+	const userDir = piGlobalRoot();
 	const user = path.join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];

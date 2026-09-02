@@ -15,6 +15,10 @@ kendex trims `PI_CODING_AGENT_DIR`, expands `~` against the configured home,
 and uses an override only when it is absolute. Empty, whitespace-only, and
 relative values use `~/.pi/agent`.
 
+`pi-extensions/pi-root-policy.mjs` owns this parsing and the project-marker
+list. Its `--write` command emits each standalone package helper and the Rust
+blocks; `pi-extensions/package-policy.test.mjs` rejects stale outputs.
+
 Project markers: a `.pi/` or `.agents/` directory. Owner:
 `crates/core/src/harness/pi.rs`.
 

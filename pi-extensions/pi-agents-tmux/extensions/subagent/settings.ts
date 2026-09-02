@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./agents.js";
 import { safeFileName } from "./names.js";
@@ -16,15 +17,8 @@ import { glyphStyle } from "./glyphs.js";
 
 export const DEFAULT_BG_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 
-export function expandHome(input: string): string {
-	if (input === "~") return os.homedir();
-	if (input.startsWith("~/")) return path.join(os.homedir(), input.slice(2));
-	return input;
-}
-
 export function piUserDir(): string {
-	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
-	return path.isAbsolute(configured) ? path.resolve(configured) : path.join(os.homedir(), ".pi", "agent");
+	return piGlobalRoot();
 }
 
 export function sessionIdForContext(ctx: ExtensionContext): string {
@@ -57,15 +51,7 @@ export function runtimeDirForContext(ctx: ExtensionContext): string {
 }
 
 export function projectSettingsPath(cwd: string): string {
-	let current = path.resolve(cwd);
-	while (true) {
-		const candidate = path.join(current, ".pi", "settings.json");
-		if (fs.existsSync(candidate)) return candidate;
-		if (fs.existsSync(path.join(current, ".pi")) || fs.existsSync(path.join(current, ".git")) || fs.existsSync(path.join(current, ".kendex-lock.json"))) return candidate;
-		const parent = path.dirname(current);
-		if (parent === current) return path.join(path.resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+	return path.join(piProjectRoot(cwd) ?? path.resolve(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");

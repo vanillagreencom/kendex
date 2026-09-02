@@ -26940,25 +26940,85 @@ function splitPrefixSuffix(input, options = {}) {
 
 // src/config.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
-import { homedir } from "os";
-import { dirname as dirname2, isAbsolute as isAbsolute2, join as join3, resolve as resolve2, sep as sep2 } from "path";
+import { homedir as homedir2 } from "os";
+import { dirname as dirname3, join as join4, resolve as resolve3, sep as sep2 } from "path";
+
+// src/pi-root.ts
+import { statSync as statSync2 } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join as join2, posix, resolve as resolve2, win32 } from "node:path";
+var PI_PROJECT_MARKER_DIRS = [
+  ".claude",
+  ".codex",
+  ".opencode",
+  ".cursor",
+  ".pi",
+  ".agents",
+  ".gemini"
+];
+function platformPath(platform) {
+  return platform === "win32" ? win32 : posix;
+}
+function piRootIsAbsolute(value, platform) {
+  if (platform === "posix") return value.startsWith("/");
+  if (/^[A-Za-z]:[\\/]/.test(value)) return true;
+  return /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/.test(value);
+}
+function expandTilde(value, home, platform) {
+  const paths = platformPath(platform);
+  if (value === "~") return home;
+  if (value.startsWith("~/")) return paths.join(home, value.slice(2));
+  return value;
+}
+function piGlobalRoot(value = process.env.PI_CODING_AGENT_DIR, home = homedir(), platform = process.platform === "win32" ? "win32" : "posix") {
+  const paths = platformPath(platform);
+  const configured = value?.trim();
+  if (!configured) return paths.resolve(home, ".pi", "agent");
+  const expanded = expandTilde(configured, home, platform);
+  return piRootIsAbsolute(expanded, platform) ? paths.resolve(expanded) : paths.resolve(home, ".pi", "agent");
+}
+function isDirectory(path) {
+  try {
+    return statSync2(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function isFile(path) {
+  try {
+    return statSync2(path).isFile();
+  } catch {
+    return false;
+  }
+}
+function piProjectRoot(cwd, home = homedir()) {
+  let current = resolve2(cwd);
+  const stop = resolve2(home);
+  while (true) {
+    if (isFile(join2(current, ".kendex-lock.json"))) return current;
+    if (current !== stop && PI_PROJECT_MARKER_DIRS.some((marker) => isDirectory(join2(current, marker)))) return current;
+    const parent = dirname(current);
+    if (parent === current) return void 0;
+    current = parent;
+  }
+}
 
 // src/debug.ts
 import { appendFileSync as appendFileSync2, chmodSync, mkdirSync as mkdirSync2 } from "fs";
-import { dirname, join as join2 } from "path";
+import { dirname as dirname2, join as join3 } from "path";
 var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
-var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join2(piUserDir(), "claude-bridge.log");
+var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join3(piUserDir(), "claude-bridge.log");
 function diagLogPath() {
-  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join2(piUserDir(), "claude-bridge-diag.log");
+  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join3(piUserDir(), "claude-bridge-diag.log");
 }
 function diagGuidance() {
   return DEBUG ? `see ${diagLogPath()}` : "re-run with CLAUDE_BRIDGE_DEBUG=1 to capture a diagnostic dump";
 }
 if (DEBUG) {
   try {
-    mkdirSync2(dirname(DEBUG_LOG_PATH), { recursive: true, mode: 448 });
-    mkdirSync2(dirname(diagLogPath()), { recursive: true, mode: 448 });
-    chmodSync(dirname(DEBUG_LOG_PATH), 448);
+    mkdirSync2(dirname2(DEBUG_LOG_PATH), { recursive: true, mode: 448 });
+    mkdirSync2(dirname2(diagLogPath()), { recursive: true, mode: 448 });
+    chmodSync(dirname2(DEBUG_LOG_PATH), 448);
     chmodSync(DEBUG_LOG_PATH, 384);
   } catch {
   }
@@ -27005,13 +27065,13 @@ function makeCliDebugOptions(tag) {
   if (!DEBUG) return {};
   const seq = nextCliDebugSeq++;
   const ts2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-  const logDir = join2(dirname(DEBUG_LOG_PATH), "cc-cli-logs");
+  const logDir = join3(dirname2(DEBUG_LOG_PATH), "cc-cli-logs");
   try {
     mkdirSync2(logDir, { recursive: true, mode: 448 });
     chmodSync(logDir, 448);
   } catch {
   }
-  const debugFile = join2(logDir, `${ts2}-${tag}-${seq}.log`);
+  const debugFile = join3(logDir, `${ts2}-${tag}-${seq}.log`);
   debug(`cli-debug: ${tag} #${seq} \u2192 ${debugFile}`);
   return {
     debug: true,
@@ -27030,7 +27090,7 @@ function diagDump(label, data) {
     const entry = { ts: ts2, moduleInstanceId, label, ...data };
     const path = diagLogPath();
     try {
-      mkdirSync2(dirname(path), { recursive: true, mode: 448 });
+      mkdirSync2(dirname2(path), { recursive: true, mode: 448 });
     } catch {
     }
     appendFileSync2(path, JSON.stringify(entry) + "\n", { mode: 384 });
@@ -27048,14 +27108,8 @@ function diagDump(label, data) {
 var PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
 var EXTERNAL_CONFIG_RESOLVER_SYMBOL = /* @__PURE__ */ Symbol.for("kendex.pi.extension-config-resolver");
 var VALID_EFFORT_LEVELS = /* @__PURE__ */ new Set(["low", "medium", "high", "xhigh", "max"]);
-function expandHome(input) {
-  if (input === "~") return homedir();
-  if (input.startsWith("~/")) return join3(homedir(), input.slice(2));
-  return input;
-}
 function piUserDir() {
-  const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
-  return isAbsolute2(configured) ? resolve2(configured) : join3(homedir(), ".pi", "agent");
+  return piGlobalRoot();
 }
 function isolatedFromEnv() {
   const v2 = (process.env.CLAUDE_BRIDGE_ISOLATED ?? "").trim().toLowerCase();
@@ -27074,15 +27128,7 @@ function mergeDeep(target, source) {
   return target;
 }
 function projectSettingsPath(cwd) {
-  let current = resolve2(cwd);
-  while (true) {
-    const candidate = join3(current, ".pi", "settings.json");
-    if (existsSync2(candidate)) return candidate;
-    if (existsSync2(join3(current, ".pi")) || existsSync2(join3(current, ".git")) || existsSync2(join3(current, ".kendex-lock.json"))) return candidate;
-    const parent = dirname2(current);
-    if (parent === current) return join3(resolve2(cwd), ".pi", "settings.json");
-    current = parent;
-  }
+  return join4(piProjectRoot(cwd) ?? resolve3(cwd), ".pi", "settings.json");
 }
 var PROJECT_TRUST_SYMBOL = /* @__PURE__ */ Symbol.for("kendex.pi.project-trust");
 function projectTrustRegistry() {
@@ -27110,7 +27156,7 @@ function projectSettingsTrusted(settingsPath) {
   return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 function settingsPaths(cwd) {
-  const user = join3(piUserDir(), "settings.json");
+  const user = join4(piUserDir(), "settings.json");
   if (isolatedFromEnv()) return [];
   const project = projectSettingsPath(cwd);
   return projectSettingsTrusted(project) ? [user, project] : [user];
@@ -27126,7 +27172,7 @@ function tryParseJson(path) {
 }
 function readManagerConfig(cwd) {
   const merged = {};
-  const userPath = join3(piUserDir(), "settings.json");
+  const userPath = join4(piUserDir(), "settings.json");
   for (const path of settingsPaths(cwd)) {
     if (!existsSync2(path)) continue;
     try {
@@ -27257,12 +27303,12 @@ function legacyFileConfig(path) {
   };
 }
 function legacyLayers(cwd) {
-  const globalPath = join3(piUserDir(), "claude-bridge.json");
+  const globalPath = join4(piUserDir(), "claude-bridge.json");
   const layers = [{ path: globalPath, config: legacyFileConfig(globalPath) }];
   if (isolatedFromEnv()) return layers;
   const projectSettings = projectSettingsPath(cwd);
   if (!projectSettingsTrusted(projectSettings)) return layers;
-  const projectPath = join3(dirname2(projectSettings), "claude-bridge.json");
+  const projectPath = join4(dirname3(projectSettings), "claude-bridge.json");
   return [...layers, { path: projectPath, config: stripUserScopeOnlyProviderKeys(legacyFileConfig(projectPath)) }];
 }
 function mergeLayers(layers) {
@@ -27307,7 +27353,7 @@ function configValueForKey(config2, key) {
   return void 0;
 }
 function displayPath(path) {
-  const home = homedir();
+  const home = homedir2();
   return home && path.startsWith(home + sep2) ? `~${path.slice(home.length)}` : path;
 }
 function resolveExternalConfigValue(key, cwd) {
@@ -29036,12 +29082,12 @@ function teardownQuery(queryCtx, sdkQuery, cause, cwd, isReentrant) {
 
 // src/auth-presence.ts
 import { existsSync as existsSync3, readFileSync as readFileSync3 } from "fs";
-import { homedir as homedir2, platform as osPlatform } from "os";
-import { join as join4 } from "path";
+import { homedir as homedir3, platform as osPlatform } from "os";
+import { join as join5 } from "path";
 function resolveClaudeConfigDir(env = process.env) {
   const configured = env.CLAUDE_CONFIG_DIR;
   if (typeof configured === "string" && configured.trim().length > 0) return configured.trim();
-  return join4(homedir2(), ".claude");
+  return join5(homedir3(), ".claude");
 }
 function nonEmptyEnv(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -29052,7 +29098,7 @@ function envTruthy(value) {
 }
 function hasApiKeyHelper(configDir) {
   try {
-    const settingsPath = join4(configDir, "settings.json");
+    const settingsPath = join5(configDir, "settings.json");
     if (!existsSync3(settingsPath)) return false;
     const parsed = JSON.parse(readFileSync3(settingsPath, "utf8"));
     return typeof parsed?.apiKeyHelper === "string" && parsed.apiKeyHelper.trim().length > 0;
@@ -29070,7 +29116,7 @@ function hasClaudeCredentials(env = process.env, platform = osPlatform()) {
   if (envTruthy(env.CLAUDE_CODE_USE_ANTHROPIC_AWS)) return true;
   if (envTruthy(env.CLAUDE_CODE_USE_MANTLE)) return true;
   const configDir = resolveClaudeConfigDir(env);
-  if (existsSync3(join4(configDir, ".credentials.json"))) return true;
+  if (existsSync3(join5(configDir, ".credentials.json"))) return true;
   if (hasApiKeyHelper(configDir)) return true;
   if (platform === "darwin") return true;
   return false;
@@ -43688,7 +43734,7 @@ async function resolveGetModels(root, loadCompat = () => dynamicImport("@earendi
 // src/connector-cache.ts
 import { createHash } from "node:crypto";
 import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, writeFileSync } from "node:fs";
-import { dirname as dirname3, join as join5 } from "node:path";
+import { dirname as dirname4, join as join6 } from "node:path";
 var CACHE_VERSION = 2;
 var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 function scopeKeyFor(claudeConfigDir) {
@@ -43702,7 +43748,7 @@ function connectorCacheScopeDigest(scopeKey) {
 }
 function connectorCachePath(scopeKey = connectorCacheScopeKey()) {
   const digest = connectorCacheScopeDigest(scopeKey).slice(0, 16);
-  return join5(piUserDir(), "connector-cache", `${digest}.json`);
+  return join6(piUserDir(), "connector-cache", `${digest}.json`);
 }
 function readCachedConnectors(scopeKey = connectorCacheScopeKey(), now = Date.now()) {
   let raw;
@@ -43732,7 +43778,7 @@ function writeCachedConnectors(connectors, scopeKey = connectorCacheScopeKey(), 
   if (!Array.isArray(connectors) || connectors.length === 0) return false;
   const path = connectorCachePath(scopeKey);
   try {
-    mkdirSync3(dirname3(path), { recursive: true, mode: 448 });
+    mkdirSync3(dirname4(path), { recursive: true, mode: 448 });
     writeFileSync(
       path,
       JSON.stringify({ version: CACHE_VERSION, scope: connectorCacheScopeDigest(scopeKey), savedAt: now, connectors }),
@@ -43832,12 +43878,12 @@ function connectorServersSnapshot(claudeConfigDir) {
 
 // src/claude-executable.ts
 import { spawn as spawnProcess } from "child_process";
-import { accessSync, constants as fsConstants, readFileSync as readFileSync5, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
-import { delimiter, join as join6 } from "path";
+import { accessSync, constants as fsConstants, readFileSync as readFileSync5, realpathSync as realpathSync2, statSync as statSync3 } from "fs";
+import { delimiter, join as join7 } from "path";
 function executableFromPath(name) {
   const paths = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
   for (const dir of paths) {
-    const candidate = join6(dir, name);
+    const candidate = join7(dir, name);
     try {
       accessSync(candidate, fsConstants.X_OK);
       return candidate;
@@ -43905,7 +43951,7 @@ function classifyClaudeExecutableBytes(bytes) {
 function preflightClaudeExecutable(path, cwd) {
   let realCwd;
   try {
-    const cwdStat = statSync2(cwd);
+    const cwdStat = statSync3(cwd);
     if (!cwdStat.isDirectory()) {
       throw makeClaudePreflightError("Claude Code spawn cwd preflight failed: cwd is not a directory.", {
         code: "ENOTDIR",
@@ -43929,7 +43975,7 @@ function preflightClaudeExecutable(path, cwd) {
   }
   let realPath;
   try {
-    const stat = statSync2(path);
+    const stat = statSync3(path);
     if (!stat.isFile()) {
       throw makeClaudePreflightError("Claude Code executable preflight failed: resolved path is not a file.", {
         code: "EACCES",
@@ -44049,11 +44095,11 @@ function spawnClaudeCodeWithDiagnostics(options) {
 // ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/cc-session-io/dist/chunk-7RWUSC7F.js
 import { randomUUID } from "crypto";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync4, rmSync as rmSync2 } from "fs";
-import { dirname as dirname4 } from "path";
+import { dirname as dirname5 } from "path";
 import { readFileSync as readFileSync6 } from "fs";
 import { realpathSync as realpathSync3 } from "fs";
-import { homedir as homedir3 } from "os";
-import { join as join7 } from "path";
+import { homedir as homedir4 } from "os";
+import { join as join8 } from "path";
 function parseJsonl(content) {
   return content.split("\n").filter((line) => line.trim()).map(parseRecord);
 }
@@ -44071,7 +44117,7 @@ function serializeRecord(record2) {
 }
 var MAX_SANITIZED_LENGTH = 200;
 function getClaudeDir(claudeDir) {
-  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join7(homedir3(), ".claude");
+  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join8(homedir4(), ".claude");
 }
 function normalizeProjectPath(projectPath) {
   try {
@@ -44089,10 +44135,10 @@ function projectPathToHash(projectPath) {
   return `${sanitized.slice(0, MAX_SANITIZED_LENGTH)}-${Math.abs(h).toString(36)}`;
 }
 function getProjectDir(projectPath, claudeDir) {
-  return join7(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
+  return join8(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
 }
 function getSessionPath(sessionId, projectPath, claudeDir) {
-  return join7(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
+  return join8(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
 }
 function repairToolPairing(messages) {
   const result = [];
@@ -44431,7 +44477,7 @@ var Session = class {
   /** Write pending records to disk. Creates the file/directory if needed. */
   save() {
     if (this._pendingRecords.length === 0) return;
-    const dir = dirname4(this.jsonlPath);
+    const dir = dirname5(this.jsonlPath);
     if (!existsSync4(dir)) {
       mkdirSync4(dir, { recursive: true });
     }
@@ -44495,11 +44541,11 @@ function readSession(jsonlPath, projectPath) {
 
 // src/session-persistence.ts
 import { createHash as createHash2 } from "crypto";
-import { realpathSync as realpathSync4, statSync as statSync4 } from "fs";
+import { realpathSync as realpathSync4, statSync as statSync5 } from "fs";
 import { resolve as pathResolve } from "path";
 
 // src/session-verify.ts
-import { closeSync as closeSync2, openSync as openSync2, readSync as readSync2, statSync as statSync3 } from "fs";
+import { closeSync as closeSync2, openSync as openSync2, readSync as readSync2, statSync as statSync4 } from "fs";
 import { StringDecoder } from "node:string_decoder";
 function forEachJsonlLine(path, onLine) {
   const fd = openSync2(path, "r");
@@ -44543,7 +44589,7 @@ function verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount)
   const warnings = [];
   let st2;
   try {
-    st2 = statSync3(jsonlPath);
+    st2 = statSync4(jsonlPath);
   } catch (e) {
     warnings.push(`file missing after save \u2014 path=${jsonlPath} err=${e.message}`);
     return warnings;
@@ -44572,8 +44618,8 @@ function verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount)
 }
 
 // src/account-router.ts
-import { homedir as homedir4 } from "node:os";
-import { join as join8 } from "node:path";
+import { homedir as homedir5 } from "node:os";
+import { join as join9 } from "node:path";
 
 // src/rate-limit.ts
 var RATE_LIMIT_AUTO_RESUME_EVENT = "kendex:rate-limit";
@@ -44684,7 +44730,7 @@ function subscriberProfileEnv(profile, base = process.env) {
   return env;
 }
 function claudeDirForProfile(profile) {
-  return profile.configDir?.trim() || join8(homedir4(), ".claude");
+  return profile.configDir?.trim() || join9(homedir5(), ".claude");
 }
 function accountSessionScope(profile) {
   return profile ? { accountProfileId: profile.profileId, claudeConfigDir: claudeDirForProfile(profile) } : {};
@@ -44867,7 +44913,7 @@ function latestPersistedBridgeSession(sessionManager) {
 function claudeSessionExists(sessionId, cwd, claudeDir) {
   try {
     const session = openSession({ sessionId, projectPath: cwd, claudeDir });
-    statSync4(session.jsonlPath);
+    statSync5(session.jsonlPath);
     return true;
   } catch {
     return false;
@@ -45061,7 +45107,7 @@ function debugSessionPaths(label, cwd, jsonlPath, claudeDir) {
   let fileSize = null;
   let fileExists = false;
   try {
-    const st2 = statSync4(jsonlPath);
+    const st2 = statSync5(jsonlPath);
     fileExists = true;
     fileSize = st2.size;
   } catch {
@@ -46099,7 +46145,7 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
   if (accountProbe) {
     await Promise.race([
       accountProbe,
-      new Promise((resolve5) => setTimeout(resolve5, 1500))
+      new Promise((resolve6) => setTimeout(resolve6, 1500))
     ]);
   }
   debug(`consumeQuery: for-await loop exited, wasAborted=${wasAborted()}, capturedSessionId=${capturedSessionId?.slice(0, 8) ?? "none"}, failure=${failure?.kind ?? "none"}`);
@@ -46107,14 +46153,14 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
 }
 
 // src/agents-md.ts
-import { lstatSync as lstatSync2, readFileSync as readFileSync7, statSync as statSync5 } from "fs";
-import { dirname as dirname5, join as join9, resolve as resolve3 } from "path";
+import { lstatSync as lstatSync2, readFileSync as readFileSync7, statSync as statSync6 } from "fs";
+import { dirname as dirname6, join as join10, resolve as resolve4 } from "path";
 var CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD"];
 function contextFileInDir(dir) {
   for (const filename of CONTEXT_FILE_CANDIDATES) {
-    const candidate = join9(dir, filename);
+    const candidate = join10(dir, filename);
     try {
-      if (statSync5(candidate).isFile()) return candidate;
+      if (statSync6(candidate).isFile()) return candidate;
     } catch (error51) {
       let lstatCode;
       let entryExists = false;
@@ -46140,11 +46186,11 @@ function resolveAgentsMdPath() {
   return contextFileInDir(piUserDir());
 }
 function findAgentsMdInParents(startDir) {
-  let current = resolve3(startDir);
+  let current = resolve4(startDir);
   while (true) {
     const candidate = contextFileInDir(current);
     if (candidate) return candidate;
-    const parent = dirname5(current);
+    const parent = dirname6(current);
     if (parent === current) break;
     current = parent;
   }
@@ -46176,7 +46222,7 @@ function sanitizeAgentsContent(content) {
 
 // src/prompt-context.ts
 import { existsSync as existsSync5, readFileSync as readFileSync8 } from "fs";
-import { dirname as dirname6, join as join10, resolve as resolve4 } from "path";
+import { dirname as dirname7, join as join11, resolve as resolve5 } from "path";
 function readTrimmed(path) {
   try {
     if (!existsSync5(path)) return void 0;
@@ -46188,11 +46234,11 @@ function readTrimmed(path) {
   }
 }
 function findProjectAppendSystem(startDir) {
-  let current = resolve4(startDir);
+  let current = resolve5(startDir);
   while (true) {
-    const candidate = join10(current, ".pi", "APPEND_SYSTEM.md");
+    const candidate = join11(current, ".pi", "APPEND_SYSTEM.md");
     if (existsSync5(candidate)) return candidate;
-    const parent = dirname6(current);
+    const parent = dirname7(current);
     if (parent === current) break;
     current = parent;
   }
@@ -46200,7 +46246,7 @@ function findProjectAppendSystem(startDir) {
 }
 function readAppendSystemPromptFiles(cwd) {
   const files = [
-    { label: "global APPEND_SYSTEM.md", path: join10(piUserDir(), "APPEND_SYSTEM.md") }
+    { label: "global APPEND_SYSTEM.md", path: join11(piUserDir(), "APPEND_SYSTEM.md") }
   ];
   const projectPath = isolatedFromEnv() ? void 0 : findProjectAppendSystem(cwd);
   if (projectPath) files.push({ label: "project .pi/APPEND_SYSTEM.md", path: projectPath });
@@ -46539,14 +46585,14 @@ function buildMcpServers(tools, queryCtx) {
         () => finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs),
         `mcp-invocation:${tool.name}`
       );
-      return new Promise((resolve5) => {
+      return new Promise((resolve6) => {
         queryCtx.pendingToolCalls.set(toolCallId, {
           toolName: tool.name,
           args: mappedArgs,
           generation: queryCtx.callbackGeneration,
           resolve: (result) => {
             queryCtx.markToolResultResolved(toolCallId);
-            resolve5(result);
+            resolve6(result);
           }
         });
       });

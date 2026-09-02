@@ -168,20 +168,17 @@ describe("pi-hooks root selection", () => {
 		}
 	});
 
-	test("an untrusted project contributes no executable root", async () => {
+	test("an untrusted project contributes no executable root", () => {
 		const project = initRustRepo("pi-hooks-untrusted-");
+		const home = mkdtempSync(join(tmpdir(), "pi-hooks-untrusted-home-"));
 		const log = join(project, "payload.log");
 		try {
 			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "must not run", log });
-			const result = await withAgentDir("relative/root", () =>
-				installToolCallHandler()(
-					{ toolName: "bash", input: { command: "git commit -m x" } },
-					{ cwd: project, isProjectTrusted: () => false },
-				),
-			);
-			expect(result).toBeUndefined();
+			const child = runHandlerChild({ home, workspace: project, agentDir: "relative/root", trusted: false });
+			expect(child.status, child.stderr).toBe(0);
 			expect(readLog(log)).toBe("");
 		} finally {
+			rmSync(home, { recursive: true, force: true });
 			rmSync(project, { recursive: true, force: true });
 		}
 	});
@@ -255,24 +252,18 @@ describe("pi-hooks root selection", () => {
 		}
 	});
 
-	test("a relative override is not an executable global root", async () => {
+	test("a relative override is not an executable global root", () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-hooks-relative-home-"));
 		const workspace = mkdtempSync(join(tmpdir(), "pi-hooks-relative-"));
 		const relative = join("relative", "agent");
 		const log = join(workspace, "payload.log");
-		const savedCwd = process.cwd();
 		try {
 			renderUserStub(join(workspace, relative), "pre-commit-check", { exitCode: 2, stderr: "must not run", log });
-			process.chdir(workspace);
-			const result = await withAgentDir(relative, () =>
-				installToolCallHandler()(
-					{ toolName: "bash", input: { command: "git commit -m x" } },
-					{ cwd: workspace, isProjectTrusted: () => false },
-				),
-			);
-			expect(result).toBeUndefined();
+			const child = runHandlerChild({ home, workspace, agentDir: relative, trusted: false });
+			expect(child.status, child.stderr).toBe(0);
 			expect(readLog(log)).toBe("");
 		} finally {
-			process.chdir(savedCwd);
+			rmSync(home, { recursive: true, force: true });
 			rmSync(workspace, { recursive: true, force: true });
 		}
 	});

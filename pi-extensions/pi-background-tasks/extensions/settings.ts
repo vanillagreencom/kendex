@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 
 import { CONFIG_ID } from "./constants.js";
 import type { kendexConfig } from "./types.js";
@@ -12,15 +13,7 @@ export function expandHome(input: string): string {
 }
 
 function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -57,8 +50,7 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 
 
 function piSettingsPaths(cwd = process.cwd()): string[] {
-	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
-	const userDir = isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
+	const userDir = piGlobalRoot();
 	const user = join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];
@@ -116,9 +108,7 @@ export function logFilePath(id: string, now: number = Date.now()): string {
 }
 
 function piAgentDir(): string {
-	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
-	const expanded = configured?.replace(/^~(?=\/|$)/, homedir());
-	return expanded && isAbsolute(expanded) ? resolve(expanded) : join(homedir(), ".pi", "agent");
+	return piGlobalRoot();
 }
 
 export function taskEnv(): NodeJS.ProcessEnv {

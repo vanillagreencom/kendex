@@ -5,8 +5,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 import { frameGlyphs, glyphs } from "./glyphs.js";
 
 const PACKAGE_ID = "@vanillagreen/pi-prompt-stash";
@@ -46,14 +46,8 @@ interface StashStore {
 
 type kendexConfig = Record<string, unknown>;
 
-function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
 function piUserDir(): string {
-	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
-	return isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
+	return piGlobalRoot();
 }
 
 function safeFileName(value: string): string {
@@ -93,15 +87,7 @@ function migrateLegacyPackageStore(ctx: ExtensionContext): void {
 }
 
 function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -178,20 +164,7 @@ function settingString(key: string, fallback: string, cwd?: string): string {
 }
 
 function projectRoot(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		if (
-			existsSync(join(current, ".git")) ||
-			existsSync(join(current, ".kendex-lock.json")) ||
-			existsSync(join(current, ".pi")) ||
-			existsSync(join(current, ".agents"))
-		) {
-			return current;
-		}
-		const parent = dirname(current);
-		if (parent === current) return resolve(cwd);
-		current = parent;
-	}
+	return piProjectRoot(cwd) ?? resolve(cwd);
 }
 
 function configuredStoreFile(ctx: ExtensionContext): string {
