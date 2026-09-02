@@ -372,15 +372,16 @@ only when `GIT_INDEX_FILE` says this run is a hook git started and only from
 the nearest `git` ancestor, the command doing the committing.
 
 Some of those bytes are the committer's own, so `--amend` counts as the flag
-only where nothing ahead of it could have been reaching for a value: after the
-`commit` subcommand, every token between the two a no-value option, matched by
-prefix the way git matches an abbreviation. `--no-amend` behind the flag takes
-it back and the bare `--` stops the scan, both as git reads them. Everything
-else is not an amend — `-m --amend`, `--mess --amend`, `--message=--amend`,
-`-am`, a pathspec, an option a later git adds — a refusal the writer clears
-with `[no-changelog]` or a fragment, never a commit excused by an entry it does
-not carry. It costs `git commit -m … --amend`, the flag behind the message,
-read as an ordinary commit; put the flag ahead of `-m`.
+only where nothing could have been reaching for a value. A value-taking option
+consumes the NEXT argument and nothing further, so the one token that can
+swallow the flag is the one immediately before it: dash-prefixed and not a
+no-value option means it did, with long names matched by prefix the way git
+matches an abbreviation. That refuses `--mess --amend`, `-am --amend`,
+`--message=--amend` and an option a later git ships — refusals the writer
+clears with `[no-changelog]` or a fragment, never a commit excused by an entry
+it does not carry. Anything else never reached for a value, so `git commit -m
+'msg' --amend` is the amend it is. `--no-amend` takes the flag back under the
+same guard; the bare `--` stops the scan.
 
 Nothing readable is nothing to widen on: a process already gone, no `git` in
 eight generations, or no `/proc` at all, which is every macOS host, where an

@@ -62,11 +62,8 @@ more_code() { # DIR — another crate change, staged
   git -C "$1" add -A
 }
 commit_in() { # DIR MESSAGE [git-commit-arg...] — a real commit; sets OUT and RC
-  # The flag goes AHEAD of `-m`, which is where the scan reads it: `-m` is a
-  # token the scan does not understand, because the argument behind it is the
-  # committer's to choose, and one of those ends the scan at "not an amend".
   OUT=""; RC=0
-  OUT="$(git -C "$1" commit "${@:3}" -m "$2" 2>&1)" || RC=$?
+  OUT="$(git -C "$1" commit -m "$2" "${@:3}" 2>&1)" || RC=$?
 }
 new_repo() { # NAME — a fresh seeded repo at $TMP/NAME, named by R; one fixture
   R="$TMP/$1"          # per pin, so a pin skipped for want of /proc leaves
@@ -144,12 +141,13 @@ argv_pin() { # LABEL WANT ARG... — WANT is `amend` or `plain`
   [ "$got" = "$want" ] && ok "$label" || bad "$label" "read as $got, wanted $want"
 }
 argv_pin "the flag itself is the flag" amend git commit --amend
+argv_pin "the flag BEHIND a message is the flag: the message is not dash-prefixed" amend git commit -m 'fix(KEN-1): change a crate' --amend
 argv_pin "--am is git's abbreviation of it, an amend this lane must widen for" amend git commit --am
 argv_pin "a no-value option ahead of the flag is stepped over" amend git commit --no-edit --amend
 argv_pin "a rebase reword's own argv widens" amend git commit --amend --no-gpg-sign -e --allow-empty
 argv_pin "the wrapper's arguments, ahead of the subcommand, are not the commit's" amend git -c user.name=x commit --amend --no-edit
 argv_pin "the flag BEFORE a value-taking option is still the flag" amend git commit --amend -m 'fix(KEN-1): change a crate'
-argv_pin "must-fail: the argument -m consumes is a message" plain git commit -m --amend
+argv_pin "must-fail: the argument -m consumes IS the message" plain git commit -m --amend
 argv_pin "must-fail: --mess is that same option, abbreviated" plain git commit --mess --amend
 argv_pin "must-fail: --templ takes a template path" plain git commit --templ --amend
 argv_pin "must-fail: --trail takes a trailer" plain git commit --trail --amend

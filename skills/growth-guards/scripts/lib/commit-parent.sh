@@ -31,9 +31,8 @@ gg_parent_pid() { # PID — its parent's pid on stdout, empty when unreadable
 }
 
 gg_opt_abbrev() { # ARG NAME — 0 when ARG is `--x…` and NAME begins with it
-  # git's parser takes any unambiguous abbreviation, so a scan matching full
-  # spellings by equality reads `--mess` as a token it has never heard of. ARG
-  # is quoted into the pattern: it matches as bytes, never as a glob.
+  # git's parser takes any unambiguous abbreviation, so equality alone reads
+  # `--mess` as an unknown token. ARG is quoted in: bytes, never a glob.
   case "$1" in --?*) ;; *) return 1 ;; esac
   case "$2" in "$1"*) return 0 ;; esac
   return 1
@@ -41,40 +40,38 @@ gg_opt_abbrev() { # ARG NAME — 0 when ARG is `--x…` and NAME begins with it
 
 gg_no_value_opt() { # ARG — 0 when ARG is a `git commit` option taking NO value
   # The whole vocabulary the scan below understands. Every option that takes a
-  # value is absent by construction, in every spelling, and absence means "not
-  # an amend" — so an omission costs a refusal the writer clears, never a commit
-  # excused by an entry it does not carry. A name added here that git DOES take
-  # a value for would fail open: the one thing an edit to this list is read for.
+  # value is absent by construction, in every spelling, and absence means "this
+  # one swallowed the token behind it" — so an omission costs a refusal the
+  # writer clears, never a commit excused by an entry it does not carry. A name
+  # added here that git DOES take a value for would fail open: the one thing an
+  # edit to this list is read for.
   local name
   case "$1" in
     -[aeinopqsuvzS]) return 0 ;;
   esac
   for name in --all --patch --interactive --include --only --signoff --dry-run \
-    --no-signoff --verify --edit --no-edit --no-post-rewrite --quiet \
-    --allow-empty --allow-empty-message --gpg-sign --no-gpg-sign --verbose \
-    --reset-author --untracked-files --pathspec-file-nul; do
+    --no-signoff --verify --edit --no-edit --no-post-rewrite --quiet --amend \
+    --no-amend --allow-empty --allow-empty-message --gpg-sign --no-gpg-sign \
+    --verbose --reset-author --untracked-files --pathspec-file-nul; do
     if gg_opt_abbrev "$1" "$name"; then return 0; fi
   done
   return 1
 }
 
 gg_argv_is_amend() { # FILE — 0 when the NUL-delimited argv in FILE is an amend
-  # Read NUL-delimited, the bytes the kernel holds: what keeps an argument
-  # carrying whitespace or a newline ONE argument rather than several. The
-  # committer chooses some of those bytes, and a value that happens to spell
-  # the flag is not the flag. Rather than name the options whose values to step
-  # over — a list git grows, and one whose every gap is a commit excused
-  # wrongly — `--amend` counts as the flag only where nothing ahead of it could
-  # have been reaching for a value: after the `commit` subcommand, every token
-  # between the two a no-value option. The first token that is anything else
-  # ends the scan at "not an amend", so `-m --amend` is a message, `--templ
-  # --amend` a template path, and `--message=…`, `-am` and an option git has
-  # not shipped yet are all refusals. The bare `--` stops the scan where git
-  # stops; `--no-amend` behind the flag takes it back, git's last-spelling
-  # boolean. The wrapper's arguments, ahead of `commit`, are skipped rather than
-  # judged: the flag cannot be among them, so `git -c user.name=x commit
-  # --amend` reads as the amend it is without `-c` being understood.
-  local arg seen=0 sub=0 amend=1
+  # Read NUL-delimited, the bytes the kernel holds, so an argument carrying
+  # whitespace or a newline stays ONE argument. The committer chooses some of
+  # those bytes, and a value that happens to spell the flag is not the flag.
+  # Rather than name the options whose values to step over — a list git grows,
+  # whose every gap is a commit excused wrongly — the scan reads the token
+  # IMMEDIATELY BEFORE each `--amend`: a value-taking option consumes the next
+  # argument and nothing further, so it is the only token that can swallow the
+  # flag. Dash-prefixed and not a no-value option means it did, refusing `--mess
+  # --amend`, `-am --amend`, `--message=…` and an option git has not shipped
+  # yet; anything else never reached for a value, so `-m msg --amend` is the
+  # amend it is. Same guard for `--no-amend`. The bare `--` stops the scan, and
+  # the wrapper's arguments ahead of `commit` are skipped, so `-c` is never read.
+  local arg prev="" eaten seen=0 sub=0 amend=1
   while IFS= read -r -d '' arg; do
     if [ "$seen" -eq 0 ]; then seen=1; continue; fi
     if [ "$sub" -eq 0 ]; then
@@ -82,10 +79,14 @@ gg_argv_is_amend() { # FILE — 0 when the NUL-delimited argv in FILE is an amen
       continue
     fi
     case "$arg" in --) break ;; esac
-    if gg_opt_abbrev "$arg" --no-amend; then amend=1; continue; fi
-    if gg_opt_abbrev "$arg" --amend; then amend=0; continue; fi
-    if [ "$amend" -eq 0 ]; then continue; fi
-    if ! gg_no_value_opt "$arg"; then break; fi
+    eaten=0
+    case "$prev" in -?*) gg_no_value_opt "$prev" || eaten=1 ;; esac
+    if [ "$eaten" -eq 0 ]; then
+      if gg_opt_abbrev "$arg" --no-amend; then amend=1
+      elif gg_opt_abbrev "$arg" --amend; then amend=0
+      fi
+    fi
+    prev="$arg"
   done <"$1"
   return "$amend"
 }
