@@ -384,12 +384,13 @@ collect_unapproved_additions() {
     && jq -e '(type == "array") and all(.[]; type == "string")' "$result" >/dev/null 2>&1
 }
 
-# Shared gate: existence → (round_id match, when expected) → required scalars
-# (invalid) → commit object (commit_unresolvable, kendex#994) → items/summary
-# (incomplete) → valid. Emits {ok, path, reason, warning}, returns 0 iff valid.
+# Shared gate. `--help` § "Gates ordered" is the single statement of the order
+# these run in; keep the two in step when a gate is added or moved. Emits
+# {ok, path, reason, warning}, returns 0 iff valid.
 # want_round "" skips the round_id match (--file mode without --round-id).
 # expect_items "" uses the fix/bundled fallback instead of the exact-set rule.
-# round_record "" skips the protected-additions gate (no delegated adds set).
+# round_record "" skips both record-derived gates — protected additions (no
+# delegated adds set) and the declared-cut size check.
 # repo "" skips the commit checks (--file mode); so does a worktree that is not
 # a git repo — production worktrees always are, and a check that cannot run
 # proves nothing either way.
@@ -617,7 +618,7 @@ elif [[ "${1:-}" == --* ]]; then
             and ((.text | gsub("[[:space:]]"; "")) != ""))
       and (([.items[].n] | length) == ([.items[].n] | unique | length))
     ' "$round_record" >/dev/null 2>&1 \
-      || die "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', base_sha of exactly 40 lowercase hex, unique repository-relative adds[] whose paths carry no ASCII whitespace and do not begin with '-', a boolean cut when present, non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
+      || die "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', base_sha of exactly 40 lowercase hex, unique repository-relative adds[] whose paths carry no ASCII whitespace and do not begin with '-', a cut that is missing, null or boolean, non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
     expect_items="$(jq -r '[.items[].n | tostring] | join(",")' "$round_record")"
   fi
 else

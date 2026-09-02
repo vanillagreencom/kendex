@@ -207,13 +207,13 @@ assert_eq "$after_push_rc" "3" "the same oversized branch is refused after its f
 mutant_scripts="$(copy_scripts tripwire-mutant)"
 mutant_write="$mutant_scripts/dev-round-write"
 mutant_check="$mutant_scripts/dev-artifact-check"
-assert_eq "$(grep -Fc 'run_size_tripwire "$worktree" "$issue"' "$mutant_write")" "1" \
+assert_eq "$(grep -Fc 'run_size_tripwire "$worktree" "$issue" "$cut"' "$mutant_write")" "1" \
   "tripwire control finds exactly one live gate call"
 assert_eq "$(grep -Fc 'if (.pr.baseline_lines // null) == null' "$mutant_check")" "1" \
   "tripwire control finds exactly one set-once guard"
-sed -i.bak 's|^run_size_tripwire "$worktree" "$issue"$|: # tripwire removed by must-fail control|' "$mutant_write"
+sed -i.bak 's|^run_size_tripwire "$worktree" "$issue" "$cut"$|: # tripwire removed by must-fail control|' "$mutant_write"
 sed -i.bak 's/if (.pr.baseline_lines \/\/ null) == null/if true/' "$mutant_check"
-assert_eq "$([[ "$(grep -Fc 'run_size_tripwire "$worktree" "$issue"' "$mutant_write")" == 0 ]] && ! cmp -s "$mutant_write" "$WRITE_BIN" && echo yes)" \
+assert_eq "$([[ "$(grep -Fc 'run_size_tripwire "$worktree" "$issue" "$cut"' "$mutant_write")" == 0 ]] && ! cmp -s "$mutant_write" "$WRITE_BIN" && echo yes)" \
   "yes" "tripwire control removes the gate only from its private copy"
 "$STATE" --state-dir "$growth_wt/tmp" set KEN-GROWTH dev_round_id 5-5 >/dev/null
 env ORCH_STATE_DIR="$growth_wt/tmp" "$mutant_write" --worktree "$growth_wt" --issue KEN-GROWTH --round-id 5-5 --item 1 mutant "$OK_REACH" >/dev/null

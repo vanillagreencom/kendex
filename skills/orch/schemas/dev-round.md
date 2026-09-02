@@ -37,7 +37,7 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 | `issue` | Yes | `--issue` | Normalized workflow-state key |
 | `base_sha` | Yes | captured from `HEAD` | Commit at delegation time; exactly 40 lowercase hex with nothing before or after, and readers refuse anything else — it reaches `git diff` as a revision argument |
 | `adds` | Yes | `--adds "PATH [PATH...]"` | Exact protected additions the round may make; an empty array allows none in the protected scope |
-| `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers accept a record without the field as `false`, and refuse any non-boolean value |
+| `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers treat a missing or `null` `cut` as `false`, and refuse any other non-boolean value |
 | `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
 
 `--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
@@ -54,7 +54,9 @@ The `Adds:` delegation line and `--adds` carry the same blank-separated path lis
 
 A cut is the round that brings an oversized branch back to the Done-when, so it is the one round that must start while the branch is over the size tripwire. Refusing to record it left the cut with no record, and therefore no way to accept its receipt: `dev-artifact-check` requires `--expect-items-from-round` for every `fix` receipt, and that flag reads a record the writer would not write (KEN-1165).
 
-`--cut` records `"cut": true` and skips the size check. It skips nothing else — the item set, the reach bar, the protected additions, and immutability all apply as on any other round. The check moves rather than disappearing: on a record carrying `"cut": true`, `dev-artifact-check` measures the branch again at acceptance and refuses the receipt with `cut_not_shrunk` when it is still above twice `pr.baseline_lines`, or `cut_unmeasurable` when that cap cannot be measured at all. So a round declared a cut that does not shrink the branch cannot be accepted, and the declaration is a way to run the cut, never a way past the tripwire.
+A cut round's items name work rather than a finding, so the `reach` row's definition reads differently for them: a cut item's reach is the branch this round shrinks. It is still required, and still refused when it is empty or one of the writer's listed shapes — `the finding` among them.
+
+`--cut` records `"cut": true` and skips the over-limit refusal. It skips nothing else — the branch is still measured, so an unreadable or non-positive `pr.baseline_lines` still refuses at stamp time, and the item set, the reach bar, the protected additions, and immutability all apply as on any other round. The over-limit check moves rather than disappearing: on a record carrying `"cut": true`, `dev-artifact-check` measures the branch again at acceptance and refuses the receipt with `cut_not_shrunk` when it is still above twice `pr.baseline_lines`, or `cut_unmeasurable` when that cap cannot be measured at all. So a round declared a cut that does not shrink the branch cannot be accepted, and the declaration is a way to run the cut, never a way past the tripwire.
 
 ## Readers
 

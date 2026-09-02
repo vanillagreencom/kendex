@@ -99,6 +99,8 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --cut
    ```
 
+   A cut item's `reach` is the branch this round shrinks — cut items name work, not a finding, so do not improvise a finding-shaped value; `the finding` is on the writer's refusal list and exits 2.
+
    Accept it through step 5 like any other round: its item set is checked the same way, and `--expect-items-from-round` additionally refuses the receipt unless the branch came back to the cap. Declare `--cut` only on the round that does the cutting — a round declared a cut that leaves the branch oversized cannot be accepted at all. Resume the item-by-item fix path with another fresh round once the branch is under the cap.
 
    `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]' '[REACH]'` groups inline in one command instead.

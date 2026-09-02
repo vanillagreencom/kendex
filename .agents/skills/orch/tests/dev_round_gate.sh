@@ -12,6 +12,11 @@
 
 set -euo pipefail
 
+# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C` and
+# would stage fixture blobs into the real repository.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
@@ -214,6 +219,39 @@ grew_head="$(git -C "$cut_wt" rev-parse HEAD)"
   --commit "$grew_head" --validate pass --item 1 Applied "cut to the Done-when" >/dev/null
 assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 2-2 --expect-items-from-round)" \
   "cut_not_shrunk" "a round declared a cut that grew the branch is refused"
+
+# Must-fail: the cap goes unreadable between stamp and acceptance. Nothing about
+# the branch changes — only the baseline the cap is computed from. The refusal
+# has to be positive: measure_size_tripwire sets BRANCH_GROWTH_CURRENT and
+# BRANCH_GROWTH_LIMIT only on success, so a caller that let the failure through
+# would compare two empty strings, find them not greater, and accept a cut
+# whose branch was never measured.
+"$STATE" --state-dir "$cut_wt/tmp" set issue-1165 pr '{"baseline_lines":null}' >/dev/null
+assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 2-2 --expect-items-from-round)" \
+  "cut_unmeasurable" "a cut whose cap cannot be read is refused, never accepted unmeasured"
+# The same unreadable cap at stamp time: --cut skips the over-limit refusal, not
+# the measurement, so the environment failure is loud before a round is minted
+# rather than after one has been delegated against an immutable record.
+set +e
+"$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 --cut \
+  --item 1 "cut the branch back to the Done-when" "the branch this round shrinks" >/dev/null 2>&1
+assert_eq "$?" "2" "a declared cut over an unreadable baseline refuses at stamp time"
+set -e
+assert_eq "$([[ -e "$cut_wt/tmp/dev-round-issue-1165-3-3.json" ]] && echo wrote || echo none)" "none" \
+  "the refused cut wrote no record"
+"$STATE" --state-dir "$cut_wt/tmp" set issue-1165 pr '{"baseline_lines":2}' >/dev/null
+
+# Must-fail: the record's cut is a boolean, and a hand-edited string is not it.
+# Only the field's type differs from the arm above — same token, same items,
+# same base_sha — so a refusal here can come from nothing else.
+cut_record="$cut_wt/tmp/dev-round-issue-1165-2-2.json"
+jq '.cut = "true"' "$cut_record" > "$TMP_ROOT/cut-string.json"
+cp "$TMP_ROOT/cut-string.json" "$cut_record"
+set +e
+env ORCH_STATE_DIR="$cut_wt/tmp" "$CHECK" --worktree "$cut_wt" --issue issue-1165 \
+  --round-id 2-2 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "a round record whose cut is a non-boolean fails closed"
+set -e
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
