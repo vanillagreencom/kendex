@@ -191,7 +191,8 @@ beforeEach(() => {
     status: "ok",
     data: { rows, warnings: [], unreadable: [], lastFetched: null },
   });
-  // The page asks for an audit on mount; nothing here reads it.
+  // Asked twice over: the page audits on mount, and a landed flip re-reads
+  // the scan and the audit behind its own standing.
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
   vi.mocked(commands.scanMachine).mockResolvedValue({
     status: "ok",
@@ -300,6 +301,11 @@ describe("the Follow source switch", () => {
     await settle();
 
     expect(commands.updatesOverview).toHaveBeenCalled();
+    // And so are the scan and the audit: the error came back over an apply
+    // that had already persisted the revision, so it is no account of what
+    // is on disk.
+    expect(commands.scanMachine).toHaveBeenCalled();
+    expect(commands.auditAll).toHaveBeenCalled();
     // The flip is retired before that read, so the rows come back as the
     // engine has them rather than wearing a position it never took.
     expect(useUpdatesStore.getState().pendingFollows).toEqual([]);
@@ -313,13 +319,12 @@ describe("the Follow source switch", () => {
     ).toHaveLength(1);
   });
 
-  // What a landed flip refreshes, and what it leaves. The apply resolves
-  // the package at its source's tip and moves installed bytes, so the scan
-  // that lists them and the audit that scored them are both out of date
-  // afterwards — and neither is re-asked. That is how the flip has always
-  // behaved; this holds it as it is, so a change to it is a decision
-  // somebody makes rather than a thing that drifts.
-  it("reads the standing back and leaves the scan and the audit dated", async () => {
+  // What a landed flip refreshes. The apply resolves the package at its
+  // source's tip and moves installed bytes, so the scan that lists them and
+  // the audit that scored them both answer for content that is gone until
+  // they are asked again — the same three reads `updateOne` runs behind the
+  // identical apply.
+  it("reads the standing, the scan and the audit back after a landed flip", async () => {
     vi.mocked(commands.packageSetRev).mockResolvedValue(okMoved as never);
     mount(<Live />);
     await openPlaces();
@@ -331,8 +336,27 @@ describe("the Follow source switch", () => {
 
     expect(commands.packageSetRev).toHaveBeenCalled();
     expect(commands.updatesOverview).toHaveBeenCalled();
-    expect(commands.scanMachine).not.toHaveBeenCalled();
-    expect(commands.auditAll).not.toHaveBeenCalled();
+    expect(commands.scanMachine).toHaveBeenCalled();
+    expect(commands.auditAll).toHaveBeenCalled();
+  });
+
+  // A flip that answers with nothing moved is asked for anyway. No field of
+  // that answer is a complete account of what the apply wrote — `moved`
+  // covers two of the drift states, `removed` the other destructive one,
+  // and a dropped rendering answers with all three empty — so gating the
+  // rescan on any of them is the stale page this reads against.
+  it("reads the scan and the audit back after a flip that moved nothing", async () => {
+    vi.mocked(commands.packageSetRev).mockResolvedValue(ok as never);
+    mount(<Live />);
+    await openPlaces();
+
+    await act(async () => {
+      followSwitch("gh", USER_LEVEL_PLACE).click();
+    });
+    await settle();
+
+    expect(commands.scanMachine).toHaveBeenCalled();
+    expect(commands.auditAll).toHaveBeenCalled();
   });
 
   it("refuses a second flip, in the settling scope or any other", async () => {

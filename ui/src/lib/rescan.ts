@@ -9,12 +9,10 @@
 // package coming current, a registry change. The buttons offering to look
 // again call it because nothing else knows what changed.
 //
-// Two writes do not. The audit's item actions have no need: each answers
-// with the scope's fresh view and refreshes the scan itself. The
-// Follow-source flip does need it and has never had it — it moves
-// installed bytes and reads back its own standing alone, so both of these
-// stay dated until something else asks. `update-follow.dom.test.tsx` holds
-// that as it is, not as it ought to be.
+// The audit's item actions do not: each answers with the scope's fresh view
+// and refreshes the scan itself. The Follow-source flip does — it runs the
+// same apply an update does, so the bytes both reads answer for move under
+// it — and calls this once its own standing has landed.
 //
 // Adding a project, dropping one, or moving a harness's folder changes
 // which scopes the audit reads, and a scope with no view of its own counts
