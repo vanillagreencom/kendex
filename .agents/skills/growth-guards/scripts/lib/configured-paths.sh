@@ -324,9 +324,23 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
 # Shell glob matched against the full repo-relative path (`*` crosses `/`);
 # blank lines and `#` comments are ignored; a pattern without a reason is a
 # config error. A missing file is an empty list.
-gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS
-  local file="$1" line lineno pat reason content status=0
+#
+# A row whose pattern opens with `!` CARVES the paths it matches back into the
+# scanned set. It exists because a tree wildcard is the only way to name a
+# rendered install (`.agents/**`) and a repo that keeps hand-written source
+# inside that tree — a skill declared `source = "in-place"` — otherwise has no
+# way to say so, and enumerating the rendered siblings instead is a defect
+# generator. Carving wins over every exclusion row regardless of order, so a
+# list stays readable as policy rather than as a sequence.
+#
+# `!` is not escapable: a repo path that literally begins with `!` therefore
+# cannot be excluded by a row naming it. That direction is the safe one — the
+# path is SCANNED, and the guard says so out loud — where an escape would add
+# a second dialect to every list for a path shape no repo here has.
+gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS and GG_EXCLUDE_CARVES
+  local file="$1" line lineno pat reason carve content status=0
   GG_EXCLUDE_PATTERNS=()
+  GG_EXCLUDE_CARVES=()
   # The read runs in a command substitution, so a gg_collection_error inside
   # it dies in that SUBSHELL and arrives here as a status. Only status 1 is
   # the answer "the commit has no such file" (an empty list); anything else
@@ -349,12 +363,21 @@ gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS
     if [ "$pat" = "$line" ] || [ -z "$pat" ] || [ -z "$reason" ]; then
       gg_config_error "$(gg_shown "$file"):$lineno: expected 'pattern<TAB>reason' (every exclusion carries its justification)"
     fi
-    GG_EXCLUDE_PATTERNS+=("$pat")
+    case "$pat" in
+      "!"*)
+        carve="${pat#!}"
+        [ -n "$carve" ] \
+          || gg_config_error "$(gg_shown "$file"):$lineno: '!' carves matching paths back into the scanned set and needs a pattern after it"
+        GG_EXCLUDE_CARVES+=("$carve")
+        ;;
+      *) GG_EXCLUDE_PATTERNS+=("$pat") ;;
+    esac
   done <<<"$content"
 }
 
-gg_is_excluded() { # PATH — 0 when some exclusion glob matches the full path
-  # The loaded list, matched by the one spelling above. Guarded expansion: an
+gg_is_excluded() { # PATH — 0 when an exclusion glob matches and no `!` row carves it back
+  # The loaded lists, matched by the one spelling above. Guarded expansion: an
   # empty array is an unbound variable under Bash 3.2 with set -u.
-  gg_path_matches "$1" ${GG_EXCLUDE_PATTERNS[@]+"${GG_EXCLUDE_PATTERNS[@]}"}
+  gg_path_matches "$1" ${GG_EXCLUDE_PATTERNS[@]+"${GG_EXCLUDE_PATTERNS[@]}"} || return 1
+  ! gg_path_matches "$1" ${GG_EXCLUDE_CARVES[@]+"${GG_EXCLUDE_CARVES[@]}"}
 }

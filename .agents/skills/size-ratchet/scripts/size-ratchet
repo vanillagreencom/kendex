@@ -324,6 +324,7 @@ case "$excludes_state" in
     ;;
 esac
 EXCLUDE_PATTERNS=()
+CARVE_PATTERNS=()
 while IFS= read -r line; do
   [ -n "$line" ] || continue
   EXCLUDE_PATTERNS+=("${line%%"$TAB"*}")
@@ -343,7 +344,19 @@ if [ -f "$EXCLUDES_SOURCE" ]; then
     if [ "$pat" = "$line" ] || [ -z "$pat" ] || [ -z "$reason" ]; then
       config_error "$EXCLUDES_LABEL:$lineno: expected 'pattern<TAB>reason' (every exclusion carries its justification)"
     fi
-    EXCLUDE_PATTERNS+=("$pat")
+    # A `!` pattern CARVES its matches back into the measured set, the only
+    # way to govern hand-written source living inside an excluded render tree
+    # (README.md § Exclusion list). `!` is not escapable: a path that literally
+    # begins with it is measured, the safe direction.
+    case "$pat" in
+      "!"*)
+        carve="${pat#!}"
+        [ -n "$carve" ] \
+          || config_error "$EXCLUDES_LABEL:$lineno: '!' carves matching paths back into the measured set and needs a pattern after it"
+        CARVE_PATTERNS+=("$carve")
+        ;;
+      *) EXCLUDE_PATTERNS+=("$pat") ;;
+    esac
   done <"$EXCLUDES_SOURCE"
 fi
 glob_match() { # PATH PATTERN — 0 when the glob matches the whole path
@@ -353,9 +366,14 @@ glob_match() { # PATH PATTERN — 0 when the glob matches the whole path
   esac
   return 1
 }
-is_excluded() { # PATH — 0 when some exclusion glob matches the full path
+is_excluded() { # PATH — 0 when an exclusion glob matches and no `!` row carves it back
   local pat
+  # The baseline is policy input, never measured content, and sits ahead of
+  # the carve rows so no `!` pattern can pull it into its own gate.
   [ "$1" != "$BASELINE_FILE" ] || return 0
+  for pat in ${CARVE_PATTERNS[@]+"${CARVE_PATTERNS[@]}"}; do
+    glob_match "$1" "$pat" && return 1
+  done
   for pat in ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"}; do
     glob_match "$1" "$pat" && return 0
   done

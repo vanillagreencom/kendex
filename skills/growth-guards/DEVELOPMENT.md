@@ -411,7 +411,17 @@ so all relative paths are repo-root-relative.
 **Excludes format** (all four lists): `pattern<TAB>reason` per line — shell
 glob matched against the full repo-relative path (`*` crosses `/`); blank
 lines and `#` comments ignored; a pattern without a reason is a config
-error. **Baseline format**: `path<TAB>count`, `LC_ALL=C` sorted, unique
+error. A pattern opening with `!` is a CARVE: it pulls its matches back into
+the scanned set and beats every exclusion row regardless of order, so the
+list reads as policy rather than as a sequence. It exists because a tree
+wildcard is the only way to name a rendered install, and a repo keeping
+hand-written source inside that tree — a skill declared `source =
+"in-place"` — otherwise has no way to say so, while enumerating the rendered
+siblings by hand is a defect generator. A bare `!` with no pattern after it
+is a config error; `!` is not escapable, so a path literally beginning with
+it cannot be excluded by a row naming it and is scanned instead — the safe
+direction, and the reason no second dialect is worth carrying.
+**Baseline format**: `path<TAB>count`, `LC_ALL=C` sorted, unique
 paths, positive counts; malformed, unsorted, or duplicated rows are config
 errors (exit 2), never repaired silently. **Path-globs format**
 (`GROWTH_GUARDS_CHANGELOG_PATHS`, `GROWTH_GUARDS_PROSE_PATHS`, both loaded

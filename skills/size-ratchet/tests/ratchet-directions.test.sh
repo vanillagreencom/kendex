@@ -263,6 +263,63 @@ run_sr
   && ok "a baseline row for an excluded file is stale — excluded files leave the counted set" \
   || bad "a baseline row for an excluded file is stale" "rc=$RC out=$OUT"
 
+echo "=== a ! row carves a subtree back into the measured set ==="
+# A rendered install can only be named by a tree wildcard, and a repo that
+# keeps hand-written source inside that tree — a skill declared
+# `source = "in-place"` — needs a way to say so. Without it the coverage is
+# silently absent, which is the fail-open direction for a gate.
+new_repo carve
+mkfile .agents/skills/rendered/big.txt 50   # a real render: stays excluded
+mkfile .agents/skills/in-place/big.txt 50   # the source of record: carved back
+mkdir -p "$R/tools"
+printf '.agents/*\tkendex render, governed at its source\n' >"$R/tools/size-ratchet-excludes"
+git -C "$R" add -A
+
+# Control: the blanket row alone silences BOTH, which is the defect.
+run_sr
+[ "$RC" -eq 0 ] && ok "control: the blanket .agents/* row silences both trees" \
+  || bad "control: the blanket .agents/* row silences both trees" "rc=$RC out=$OUT"
+
+printf '.agents/*\tkendex render, governed at its source\n!.agents/skills/in-place/*\tin-place skill: this tree IS the source\n' >"$R/tools/size-ratchet-excludes"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *".agents/skills/in-place/big.txt"*) true ;; *) false ;; esac \
+  && ok "the carved tree is measured again and its offender is named" \
+  || bad "the carved tree is measured again" "rc=$RC out=$OUT"
+case "$OUT" in
+  *".agents/skills/rendered/big.txt"*) bad "the carve must not widen past its own pattern" "$OUT" ;;
+  *) ok "the sibling render under the same blanket row stays excluded" ;;
+esac
+
+# Order is not policy: the carve wins whether it precedes or follows the row
+# it cuts into, so a list reads as a set of rules rather than as a sequence.
+printf '!.agents/skills/in-place/*\tin-place skill: this tree IS the source\n.agents/*\tkendex render, governed at its source\n' >"$R/tools/size-ratchet-excludes"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *".agents/skills/in-place/big.txt"*) true ;; *) false ;; esac \
+  && ok "a carve above the row it cuts into carves just the same" \
+  || bad "a carve above the row it cuts into carves just the same" "rc=$RC out=$OUT"
+
+# A carve cannot pull the baseline into its own gate: the baseline is policy
+# input, and measuring it would make every row it gains a violation.
+printf '!*\tcarve everything back in\n' >"$R/tools/size-ratchet-excludes"
+printf '.agents/skills/in-place/big.txt\t50\n.agents/skills/rendered/big.txt\t50\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_sr
+case "$OUT" in
+  *"tools/size-ratchet-baseline.tsv"*) bad "a carve must not make the baseline measured content" "$OUT" ;;
+  *) ok "the baseline stays exempt ahead of every carve row" ;;
+esac
+
+# A bare '!' names nothing; silently keeping it would widen or narrow the
+# scanned set by a typo.
+printf '.agents/*\tkendex render\n!\ta carve with no pattern\n' >"$R/tools/size-ratchet-excludes"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 2 ] && case "$OUT" in *":2: '!' carves"*) true ;; *) false ;; esac \
+  && ok "a bare ! row is a config error naming its line" \
+  || bad "a bare ! row is a config error naming its line" "rc=$RC out=$OUT"
+
 echo "=== --baseline flag relocates the baseline ==="
 new_repo flagpath
 mkfile big.txt 15

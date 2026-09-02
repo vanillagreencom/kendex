@@ -88,6 +88,11 @@ Settings follow [README.md § Configuration](README.md#configuration).
 
 **Excludes format** — `pattern<TAB>reason` per line (shell glob against the
 full repo-relative path; `*` crosses `/`); a pattern without a reason is a
-config error. **Baseline format** — `path<TAB>count`, `LC_ALL=C` sorted,
+config error. A pattern opening with `!` carves its matches back into the
+scanned set, and wins over every exclusion row whatever the order — that is
+how hand-written source inside an otherwise excluded render tree
+(`.agents/**` plus `!.agents/skills/my-skill/**`) stays governed. `!` is not
+escapable; a path literally beginning with it is scanned.
+**Baseline format** — `path<TAB>count`, `LC_ALL=C` sorted,
 unique paths, positive counts.
 Seeding a first baseline and CI wiring: [README.md](README.md). Hook install and removal details: [DEVELOPMENT.md](DEVELOPMENT.md).

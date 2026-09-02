@@ -1,8 +1,13 @@
 # suppression-ban exclusion list — vendored trees only. Hand-written source
 # is never excluded: every lint suppression there states its reason.
 # Format: pattern<TAB>reason (gitignore-style against the repo-relative path; ** crosses /).
+# A `!` pattern carves its matches back into the scanned set and beats every
+# row above or below it — the only way to govern hand-written source that
+# lives inside a tree the render rows exclude.
 
-.agents/**	kendex's render of skills/, agents/ and hooks/, whose SOURCE is governed by the rows below; the in-place skill trees here have no source elsewhere, and this dialect cannot carve them back in (KEN-708)
+.agents/**	kendex's render of skills/, agents/ and hooks/, whose SOURCE is governed by the rows below
+!.agents/skills/app-deploy/**	in-place skill (kendex-local.toml): this tree IS the source, so the row above must not cover it
+!.agents/skills/kendex-issues/**	in-place skill (kendex-local.toml): this tree IS the source, so the row above must not cover it
 .claude/skills/**	rendered skill links into .agents/skills
 .claude/agents/**	kendex-rendered agent copies, source in agents/
 .claude/hooks/**	kendex-rendered hook copies, source in hooks/

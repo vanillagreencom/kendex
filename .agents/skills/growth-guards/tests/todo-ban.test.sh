@@ -184,6 +184,58 @@ run_tb
   && ok "must-fail control: the crossing shorthand silences the first-party tree too" \
   || bad "the crossing shorthand did not cross" "rc=$RC out=$OUT"
 
+# The one exclusion row that ADDS coverage. A rendered install can only be
+# named by a tree wildcard, so a repo keeping hand-written source inside that
+# tree — a skill declared `source = "in-place"` — has no other way to say so,
+# and the coverage goes silently absent: the fail-open direction for a gate.
+echo "=== excludes: a ! row carves a subtree back into the scanned set ==="
+new_repo carve
+mkdir -p "$R/.agents/skills/rendered" "$R/.agents/skills/in-place" "$R/tools"
+printf '// %s: a marker in the render\n' "$TD" >"$R/.agents/skills/rendered/lib.rs"
+printf '// %s: a marker in the source of record\n' "$TD" >"$R/.agents/skills/in-place/lib.rs"
+printf '.agents/**\tkendex render, governed at its source\n' >"$R/tools/todo-ban-excludes"
+git -C "$R" add -A
+
+# Control: the blanket row alone silences BOTH planted markers.
+run_tb
+[ "$RC" -eq 0 ] && ok "control: the blanket .agents/** row silences both planted markers" \
+  || bad "control: the blanket .agents/** row silences both markers" "rc=$RC out=$OUT"
+
+printf '.agents/**\tkendex render, governed at its source\n!.agents/skills/in-place/**\tin-place skill: this tree IS the source\n' >"$R/tools/todo-ban-excludes"
+git -C "$R" add -A
+run_tb
+[ "$RC" -eq 1 ] && case "$OUT" in *".agents/skills/in-place/lib.rs:1:"*) true ;; *) false ;; esac \
+  && ok "the carved tree is scanned again and its planted marker fires" \
+  || bad "the carved tree is scanned again" "rc=$RC out=$OUT"
+case "$OUT" in
+  *".agents/skills/rendered/lib.rs"*) bad "the carve must not widen past its own pattern" "$OUT" ;;
+  *) ok "the sibling render under the same blanket row stays silent" ;;
+esac
+
+# Order is not policy: the carve wins whether it precedes or follows the row
+# it cuts into, so a list reads as a set of rules rather than as a sequence.
+printf '!.agents/skills/in-place/**\tin-place skill: this tree IS the source\n.agents/**\tkendex render, governed at its source\n' >"$R/tools/todo-ban-excludes"
+git -C "$R" add -A
+run_tb
+[ "$RC" -eq 1 ] && case "$OUT" in *".agents/skills/in-place/lib.rs:1:"*) true ;; *) false ;; esac \
+  && ok "a carve above the row it cuts into carves just the same" \
+  || bad "a carve above the row it cuts into carves just the same" "rc=$RC out=$OUT"
+
+# A carve still needs its reason, like every other row, and a bare '!' names
+# nothing — keeping it silently would widen the scanned set by a typo.
+printf '.agents/**\tkendex render\n!.agents/skills/in-place/**\n' >"$R/tools/todo-ban-excludes"
+git -C "$R" add -A
+run_tb
+[ "$RC" -eq 2 ] && case "$OUT" in *":2: expected 'pattern<TAB>reason'"*) true ;; *) false ;; esac \
+  && ok "a carve row without a reason is the same config error as any other" \
+  || bad "a carve row without a reason is a config error" "rc=$RC out=$OUT"
+printf '.agents/**\tkendex render\n!\ta carve with no pattern\n' >"$R/tools/todo-ban-excludes"
+git -C "$R" add -A
+run_tb
+[ "$RC" -eq 2 ] && case "$OUT" in *":2: '!' carves"*) true ;; *) false ;; esac \
+  && ok "a bare ! row is a config error naming its line" \
+  || bad "a bare ! row is a config error naming its line" "rc=$RC out=$OUT"
+
 echo "=== a URL is not a comment leader ==="
 new_repo url
 printf 'see http://%s:8080/path for the mock\n' "$TD" >"$R/u.md"
