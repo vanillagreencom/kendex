@@ -80,16 +80,11 @@ rather than reporting a clean raise check.
 
 For a candidate row in the same unit, the reference number is its ceiling. A
 larger open row or a first row beside an existing reference set needs
-`RATCHET_RAISE=1`; a frozen row never rises. When the units differ, the two
-numbers are not compared: an open row needs the same declaration, and a frozen
-row — which has no declaration — is measured against HEAD's own blob in the new
-unit instead. It is admitted only when it is this run's measurement AND that
-measurement is at or below HEAD's blob, so `--update` carries the re-measure
-across and refuses the growth under it; a path HEAD carries no blob for refuses.
-That comparison is against the committed bytes, so a repo converting line
-endings on checkout can see a refusal on a file that did not change.
-The gate reads no commit message, so put the declaration's reason in the commit
-body.
+`RATCHET_RAISE=1`; a frozen row never rises. When the units differ, the numbers
+are not compared: an open row needs the same declaration, and a frozen row is
+admitted only at this run's measurement of the file, and only while that
+measurement sits at or below HEAD's blob in the same unit. The gate reads no
+commit message, so put the declaration's reason in the commit body.
 
 ## Baseline format
 
