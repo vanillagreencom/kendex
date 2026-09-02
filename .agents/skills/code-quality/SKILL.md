@@ -71,7 +71,7 @@ Don't:
 Markdown placement rules:
 
 - Never state a rule twice within or across package files; make later statements point to the first.
-- Never put mechanics, rationale, or history in `SKILL.md` or agent files; keep rules and commands there.
+- Never write `SKILL.md` or agent Markdown for anyone but agents; keep rules and commands there, not mechanics, rationale, or history.
 - Never put internal explanations, rationale, invariant details, or test mechanics outside `DEVELOPMENT.md`; keep actionable rules and commands loaded.
 - Never put anything but purpose, high-level behavior, features, user settings, and installation in a package `README.md`.
 - Never keep content in `references/*.md` unless a named workflow loads it on demand.
