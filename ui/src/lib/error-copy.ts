@@ -51,6 +51,29 @@ export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
   ],
 };
 
+// Which file, and where. The engine's message names the exact path, but it
+// names it inside a sentence written for a terminal; the card says the same
+// thing first, in the words the reader already has for the place. It names
+// no path of its own for the same reason the steps below don't: the two
+// scopes keep their locks under different names, and only the error knows
+// which one this was.
+//
+// Null where there is no one file to name — a scan failure is about no
+// place at all, `other` is whatever the engine couldn't finish, and a
+// too-new schema can be either file. A lead line there would be a guess.
+export const PROBLEM_LEADS: Record<
+  ProblemKind,
+  ((place: string) => string) | null
+> = {
+  "lock-corrupt": (place) =>
+    `The file is kendex's record of what it installed in ${place}.`,
+  "manifest-outdated": (place) => `The file is the kendex.toml in ${place}.`,
+  "manifest-invalid": (place) => `The file is the kendex.toml in ${place}.`,
+  "schema-too-new": null,
+  other: null,
+  "scan-failure": null,
+};
+
 export const PROBLEMS_SUBTITLE =
   "What kendex can't finish on its own, and what to do about it";
 export const PROBLEMS_EMPTY = "No problems right now.";

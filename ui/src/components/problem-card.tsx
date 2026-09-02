@@ -3,7 +3,11 @@ import { commands } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PlaceCard } from "@/components/place-card";
 import { Button } from "@/components/ui/button";
-import { PROBLEM_HEADLINES, PROBLEM_STEPS } from "@/lib/error-copy";
+import {
+  PROBLEM_HEADLINES,
+  PROBLEM_LEADS,
+  PROBLEM_STEPS,
+} from "@/lib/error-copy";
 import { scopeName, scopePath } from "@/lib/labels";
 import { rescanEverything } from "@/lib/rescan";
 import type { Problem } from "@/stores/problems";
@@ -19,6 +23,7 @@ export function ProblemCard({ problem }: { problem: Problem }) {
     problem.scope?.scope === "project" ? problem.scope.root : null;
   const name = problem.scope ? scopeName(problem.scope) : "This machine";
   const path = problem.scope ? scopePath(problem.scope) : null;
+  const lead = PROBLEM_LEADS[problem.kind];
 
   return (
     <PlaceCard
@@ -27,10 +32,14 @@ export function ProblemCard({ problem }: { problem: Problem }) {
       name={name}
       path={path}
     >
-      <p className="break-words rounded-md bg-muted/50 p-2 font-mono text-xs text-muted-foreground">
+      {lead ? <p className="text-sm">{lead(name)}</p> : null}
+      {/* The engine's own words, verbatim, and the only line on the card
+          carrying the path. It takes the card's own text colour: muted is
+          for trim, and this is the longest thing here to read. */}
+      <p className="break-words rounded-md bg-muted/50 p-2 font-mono text-xs">
         {problem.message}
       </p>
-      <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+      <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
         {PROBLEM_STEPS[problem.kind].map((step) => (
           <li key={step}>{step}</li>
         ))}
