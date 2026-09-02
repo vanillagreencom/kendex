@@ -121,11 +121,9 @@ lives in one capability table read by core and UI.
    wrote (recorded for skills and codex commands, derived elsewhere) —
    never from the lock key alone, from an entry merely on the books, or
    from a project record another root wrote or naming a position outside its own root. A link the user put at a shared config file or a manifest
-   (dotfiles) is not foreign: the edit goes through it, link kept, and the
-   precondition binds to the bytes reachable there; whether a link may sit
-   at a position is decided at plan time, never by the write. The
-   precondition binds bytes, not the entry type: a same-byte link arriving
-   after planning passes and the write follows it.
+   (dotfiles) is not foreign: the edit goes through it, link kept, and the precondition
+   binds to the bytes reachable there whatever entry type carries them; whether a link
+   may sit at a position is decided at plan time, never by the write.
 7. Applies are transactional: preconditions revalidate against observed
    hashes immediately before mutation; pre-images are journaled first; any
    failure rolls back and interrupted applies recover on next launch.
@@ -477,13 +475,9 @@ lives in one capability table read by core and UI.
 - **Catalogs are adversarial input.** Every catalog read goes through
   `source_read`: resolves against the canonical root, refuses symlinks,
   carries depth/count/byte budgets; raw filesystem reads over catalog
-  paths are guard-banned. Structured frontmatter values parse as bounded
-  YAML with aliases and duplicate keys refused; tolerant readers keep the
-  plain one-line values harnesses accept. Renderers pass foreign values for
-  generated fields through the target format's scalar encoder. Fork,
-  import, and namespaced skill installation share one compact
-  frontmatter-name rewrite for YAML skills and agents: it replaces or
-  inserts a literal `name:` line and relies on target validation.
+  paths are guard-banned. Frontmatter parses as bounded YAML (aliases and duplicate
+  keys refused); generated fields take the target format's scalar encoder, and fork,
+  import and namespaced install rename copies by their `name:` line.
 - **The source store is immutable; revisions are declared.** Each commit
   is materialized once into a directory named after its object id,
   published by rename, read unchanged thereafter; fetching touches only a
@@ -501,11 +495,9 @@ lives in one capability table read by core and UI.
   time. Holds flow through derivation — a pinned bundle pins its members, a
   pinned skill's dependencies read the pinned catalog, two parents
   demanding different revisions of one dependency conflict and write
-  nothing. Agent skill availability is separate and reads each source's
-  current checkout; an assignment found only at an item pin is unavailable
-  to rendering and fork resolution. A held item hashes clean against its
-  held tree; the Updates page asks the mirror (pinned sources too) what newer
-  content exists, its timeline listing only commits that touched the package's files,
+  nothing. Agent skill availability reads current checkouts, not pins. A held item hashes
+  clean against its held tree; the Updates page asks the mirror (pinned sources too) what
+  newer content exists, its timeline listing only commits that touched the package's files,
   tag-decorated, never tag-replaced. `UpdatesReport::last_fetched` dates
   the standing — the newest successful fetch among the sources the scope
   installs from, the newest across scopes in the overview — so "Everything
@@ -673,18 +665,12 @@ lives in one capability table read by core and UI.
   structural problems whole, dropping only unusable rows. `generation.rs` is
   the one cache mechanism: an endpoint-keyed generation written atomically
   under `Env::registry_cache_dir`, a failed refresh serving the last fetch as
-  stale. `cache.rs` adds the directory's one-hour TTL; the identity (`me.rs`)
-  has none, is keyed to its sign-in, and is forgotten on sign-in, sign-out and
-  expiry. An identity read settles under the sign-in it started with. It
-  performs no final credential check after the authenticated call, so a
-  sign-out or account switch landing in that final request window does not
-  change the answer. All reads go through the `Fetch` trait (curl via
-  `Hardened`, plain http only under `KENDEX_API`); tests inject transports.
-  Bearer calls route
-  through `registry/client.rs`: one named cross-process lock serializes login,
-  logout and refresh rotation, saving rotations before retry. A rejected
-  request re-takes that lock and clears the credential current then, including
-  a login completed while the request was in flight. `skillssh.rs`
+  stale. `cache.rs` adds the directory's one-hour TTL; the identity (`me.rs`) has none, is
+  keyed to the sign-in the read opened under, and is forgotten on sign-in, sign-out and
+  expiry. All reads go through the `Fetch` trait (curl via `Hardened`, plain http only under
+  `KENDEX_API`); tests inject transports. Bearer calls route through `registry/client.rs`: one
+  named cross-process lock serializes login, logout and refresh rotation, saving rotations
+  before retry; a rejected request re-takes it to clear the current credential. `skillssh.rs`
   pins its public wire schema and kill switch (`KENDEX_SKILLSSH=off`); a hit
   is a lead, never an identity, and installs through the same subscribe path.
   Collections and deep links arrive with W3/W4.
@@ -712,10 +698,9 @@ lives in one capability table read by core and UI.
   from plugin-registry-shaped catalogs are `<plugin>/<item>` in manifest,
   lock and UI. The `/` never reaches disk: the halves are joined — `__` by
   default, `-` where names must be lower-kebab — by a rule beside the name
-  rule in `harness/caps.rs` and checked against it. Skill copies use the
-  shared frontmatter-name rewrite; generated agent renderings carry the
-  installed name through the agent renderer. The catalog keeps what it wrote.
-  Two declarations landing on one file — `a/b`
+  rule in `harness/caps.rs` and checked against it, and rendered copies carry the
+  installed name (SKILL.md rewritten, agent frontmatter generated; the catalog
+  keeps what it wrote). Two declarations landing on one file — `a/b`
   against a literal `a__b`, or two names a filesystem folds (case, trailing
   dots and spaces, Unicode composition) — install neither, naming both. Only
   agents, commands and skills may carry a plugin segment; a `/` in a hook or
