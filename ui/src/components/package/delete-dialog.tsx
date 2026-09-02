@@ -13,22 +13,29 @@ import { scopePath } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
 import { useAuditStore } from "@/stores/audit";
-import { originsFor, useProvenanceStore } from "@/stores/provenance";
+import {
+  joinCurrent,
+  originsFor,
+  useProvenanceStore,
+} from "@/stores/provenance";
 
 /** Every marketplace a deleted package can be had from again.
  *
  *  The read is taken on every open rather than once. `loaded` says only
  *  that some snapshot landed, never that it covers this installation: a
  *  rescan refreshes the join behind every write, but a refresh that failed
- *  leaves the previous rows standing and says so only in its return, which
- *  nothing on a standing read looks at.
+ *  leaves the previous rows standing.
  *
- *  Until this open's own read lands there is no note. The rows standing
- *  from an earlier one may answer for a different installation, and a
- *  marketplace named wrongly at the confirm step of a deletion is worse
- *  than none. Delete is not held for it either way: the note is where to
- *  get the package again, not what the deletion does, and the engine
- *  answers for the removal. */
+ *  There is no note until this open has asked AND the store says the rows
+ *  are the newest read's answer with nothing newer on its way. So a read
+ *  that failed names nothing, and neither does one still coming — and where
+ *  this open's read was overtaken, the note arrives with the read that
+ *  overtook it, because that second condition is store state rather than
+ *  this call's own answer. The rows standing from an earlier open may
+ *  answer for a different installation, and a marketplace named wrongly at
+ *  the confirm step of a deletion is worse than none. Delete is not held
+ *  for it either way: the note is where to get the package again, not what
+ *  the deletion does, and the engine answers for the removal. */
 function useReinstallNote(
   kind: ItemKind,
   name: string,
@@ -36,23 +43,24 @@ function useReinstallNote(
   open: boolean,
 ): string | null {
   const rows = useProvenanceStore((s) => s.rows);
+  const current = useProvenanceStore(joinCurrent);
   const reload = useProvenanceStore((s) => s.reload);
-  const [landed, setLanded] = useState(false);
+  const [asked, setAsked] = useState(false);
   // Cleared on the way out as well as the way in: the dialog is mounted
   // whether or not it is open, so a flag left standing from the last open
   // is a note built from that open's rows on the next one's first render.
   useEffect(() => {
-    setLanded(false);
+    setAsked(false);
     if (!open) return;
     let cancelled = false;
-    void reload().then((read) => {
-      if (!cancelled) setLanded(read);
+    void reload().then(() => {
+      if (!cancelled) setAsked(true);
     });
     return () => {
       cancelled = true;
     };
   }, [open, reload]);
-  if (!landed) return null;
+  if (!asked || !current) return null;
   const origins = originsFor(rows, kind, name, scopes);
   // Every marketplace among them, sorted so the note reads the same on
   // every open: this deletion reaches each place, and each place records

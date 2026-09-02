@@ -30,7 +30,7 @@ import {
   UPDATE_ALL_LABEL,
   updateInLabel,
 } from "@/lib/copy-projects";
-import { READ_LANDED } from "@/lib/read-state";
+import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
 import { useProvenanceStore } from "@/stores/provenance";
@@ -181,7 +181,12 @@ beforeEach(() => {
     updateOne,
     updateRows,
   });
-  useProvenanceStore.setState({ rows: [], loaded: false });
+  useProvenanceStore.setState({
+    rows: [],
+    loaded: false,
+    read: READ_PENDING,
+    reading: false,
+  });
   joinSays(ownedBy([VG, OURS], [HYPR, OURS]));
   scanFound(install(VG), install(HYPR));
   vi.mocked(commands.packageMeta).mockImplementation((scope) =>

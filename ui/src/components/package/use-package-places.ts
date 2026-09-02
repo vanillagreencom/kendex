@@ -11,21 +11,11 @@ import {
   packagePlaces,
 } from "@/lib/package-places";
 import { scopeKey } from "@/lib/scope";
-import { useProvenanceStore } from "@/stores/provenance";
+import { joinCurrent, useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 
 type Metas = Record<string, PackageMeta_Serialize | null>;
-
-/** What one pass over a package's places came back with: each place's own
- *  record, and whether the ownership join landed. Held together so a card
- *  never draws on one without the other. */
-interface Read {
-  metas: Metas;
-  /** The provenance read answered. False keeps every removal closed: the
-   *  rows on hand may predate an install or a take-over. */
-  joined: boolean;
-}
 
 /** Every place this package sits in, with its install date and its update
  *  standing.
@@ -55,12 +45,19 @@ export function usePackagePlaces(
   // refresh that failed leaves the previous rows standing, and a stale
   // snapshot would hide Remove on a package that was just installed.
   const provenance = useProvenanceStore((s) => s.rows);
+  // Whether those rows are the newest read's answer, read off the store
+  // rather than from this hook's own read: a read of the join this tab
+  // started can be overtaken by a rescan behind a write, and the answer
+  // then belongs to the read that overtook it. Held as store state, the
+  // cards re-render when it lands; latched from this call's own read, they
+  // would sit with Remove hidden until the package or its copies changed.
+  const joined = useProvenanceStore(joinCurrent);
   const reloadProvenance = useProvenanceStore((s) => s.reload);
   // What is actually installed in each place, harness by harness. The join
   // answers per harness too, so this is what says whether every one of a
   // place's copies is accounted for.
   const installed = useScanStore((s) => s.result?.items);
-  const [read, setRead] = useState<Read | null>(null);
+  const [metas, setMetas] = useState<Metas | null>(null);
   // The scan rebuilds the group on every read, so what is watched is which
   // places those are, not the array they arrived in.
   const subject = `${kind}|${name}|${scopes.map(scopeKey).join("|")}`;
@@ -77,7 +74,7 @@ export function usePackagePlaces(
     // already on screen rather than flashing the loading state over them.
     if (shown.current !== subject) {
       shown.current = subject;
-      setRead(null);
+      setMetas(null);
     }
     void Promise.all([
       // Both reads settle before any card draws: a card is its date and
@@ -102,8 +99,8 @@ export function usePackagePlaces(
           }
         }),
       ),
-    ]).then(([joined, pairs]) => {
-      if (!cancelled) setRead({ metas: Object.fromEntries(pairs), joined });
+    ]).then(([, pairs]) => {
+      if (!cancelled) setMetas(Object.fromEntries(pairs));
     });
     return () => {
       cancelled = true;
@@ -116,15 +113,16 @@ export function usePackagePlaces(
       kind,
       name,
       rows,
-      read?.metas ?? {},
+      metas ?? {},
       { read: updatesRead, checking, reading, pendingFollows },
-      // A read that failed leaves the store's older rows in place, and
-      // those say nothing about who owns these copies now. Passing none
-      // holds the removal controls closed rather than deriving a
-      // destructive button from a snapshot that may have gone stale.
-      read?.joined ? provenance : [],
+      // A read that failed leaves the store's older rows in place, and a
+      // newer read still coming is about to replace them; neither says who
+      // owns these copies now. Passing none holds the removal controls
+      // closed rather than deriving a destructive button from a snapshot
+      // that may have gone stale.
+      joined ? provenance : [],
       installed ?? [],
     ),
-    loading: read === null,
+    loading: metas === null,
   };
 }

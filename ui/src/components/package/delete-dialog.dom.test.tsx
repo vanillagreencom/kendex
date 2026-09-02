@@ -8,6 +8,7 @@ import {
   REINSTALL_OWN,
   reinstallFrom,
 } from "@/lib/copy-projects";
+import { READ_PENDING } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useProvenanceStore } from "@/stores/provenance";
 import { mount, settle } from "@/test/dom";
@@ -28,7 +29,12 @@ beforeEach(() => {
     error: "not in this test",
   });
   useAuditStore.setState({ busy: false, removeItem: vi.fn() });
-  useProvenanceStore.setState({ rows: [], loaded: true });
+  useProvenanceStore.setState({
+    rows: [],
+    loaded: true,
+    read: READ_PENDING,
+    reading: false,
+  });
 });
 
 /** The dialog's Delete button, read out of the portal. */
@@ -73,6 +79,17 @@ const from = (...origins: [Scope, Origin][]) => {
     data: rows,
   });
 };
+
+/** A join read this test answers by hand, to hold one open. */
+const park = () => {
+  let land: (value: JoinAnswer) => void = () => {};
+  const promise = new Promise<JoinAnswer>((resolve) => {
+    land = resolve;
+  });
+  return { promise, land };
+};
+
+type JoinAnswer = Awaited<ReturnType<typeof commands.libraryProvenance>>;
 
 const MARKET = (source: string): Origin => ({
   origin: "marketplace",
@@ -187,6 +204,34 @@ describe("the read behind the note", () => {
     const said = await openDialog([VG]);
     expect(said).not.toContain(reinstallFrom(["acme"]));
     expect(said).not.toContain(REINSTALL_OWN);
+  });
+
+  // The dialog's own read is routinely overtaken: the sidebar's Scan again
+  // and every write's rescan read the same join, and an open landing under
+  // one gets the newer read's answer. The note has to arrive with that
+  // read — a dialog latching its own call's verdict would go the whole open
+  // with nothing under the confirm step.
+  it("names the marketplace the read that overtook this open's landed", async () => {
+    useProvenanceStore.setState({ rows: rowsFor([[VG, OWN]]), loaded: true });
+    const mine = park();
+    const rescan = park();
+    vi.mocked(commands.libraryProvenance)
+      .mockReturnValueOnce(mine.promise)
+      .mockReturnValueOnce(rescan.promise);
+
+    const said = await openDialog([VG]);
+    expect(said).not.toContain(reinstallFrom(["acme"]));
+
+    // A rescan behind a write begins its own read while this open's is
+    // still out, then this open's answers first and is overtaken.
+    void useProvenanceStore.getState().reload();
+    mine.land({ status: "ok", data: rowsFor([[VG, OWN]]) });
+    await settle();
+    expect(document.body.textContent).not.toContain(REINSTALL_OWN);
+
+    rescan.land({ status: "ok", data: rowsFor([[VG, MARKET("acme")]]) });
+    await settle();
+    expect(document.body.textContent).toContain(reinstallFrom(["acme"]));
   });
 
   it("names nothing off rows a rejected read left standing", async () => {

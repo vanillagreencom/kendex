@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type ProvenanceRow } from "@/bindings";
+import { READ_PENDING } from "@/lib/read-state";
 import {
+  joinCurrent,
   originFor,
   originLabel,
   originTitle,
@@ -90,9 +92,16 @@ type JoinAnswer = Awaited<ReturnType<typeof commands.libraryProvenance>>;
 const BEFORE: ProvenanceRow[] = [ROWS[0]];
 const AFTER: ProvenanceRow[] = ROWS;
 
+const store = () => useProvenanceStore.getState();
+
 describe("overlapping reads of the join", () => {
   beforeEach(() => {
-    useProvenanceStore.setState({ rows: [], loaded: false });
+    useProvenanceStore.setState({
+      rows: [],
+      loaded: false,
+      read: READ_PENDING,
+      reading: false,
+    });
     vi.clearAllMocks();
   });
 
@@ -106,37 +115,96 @@ describe("overlapping reads of the join", () => {
       .mockReturnValueOnce(slow.promise)
       .mockResolvedValueOnce({ status: "ok", data: AFTER });
 
-    const older = useProvenanceStore.getState().reload();
-    await useProvenanceStore.getState().reload();
-    expect(useProvenanceStore.getState().rows).toEqual(AFTER);
+    const older = store().reload();
+    await store().reload();
+    expect(store().rows).toEqual(AFTER);
 
     slow.land({ status: "ok", data: BEFORE });
+    await older;
 
-    // The overtaken read writes nothing, and says the rows are current
-    // because the read that overtook it has already landed them.
-    expect(await older).toBe(true);
-    expect(useProvenanceStore.getState().rows).toEqual(AFTER);
+    expect(store().rows).toEqual(AFTER);
+    expect(store().read.status).toBe("landed");
   });
 
-  // A caller about to act irreversibly waits on this boolean, so the answer
-  // while a newer read is still coming is the closed one: the rows on screen
-  // are neither this read's answer nor yet the newest.
-  it("tells an overtaken read the rows are not current while a newer one is out", async () => {
+  // The rows are not current while a read that supersedes them is still
+  // coming, and the two gating surfaces read that off the store rather than
+  // off their own call — so the landing that makes them current re-renders
+  // them.
+  it("holds the join uncurrent until the newest read lands", async () => {
     const slow = park();
     const newer = park();
     vi.mocked(commands.libraryProvenance)
       .mockReturnValueOnce(slow.promise)
       .mockReturnValueOnce(newer.promise);
 
-    const older = useProvenanceStore.getState().reload();
-    const outstanding = useProvenanceStore.getState().reload();
-    slow.land({ status: "ok", data: BEFORE });
+    const older = store().reload();
+    const outstanding = store().reload();
 
-    expect(await older).toBe(false);
-    expect(useProvenanceStore.getState().rows).toEqual([]);
+    slow.land({ status: "ok", data: BEFORE });
+    await older;
+    expect(joinCurrent(store())).toBe(false);
+    expect(store().rows).toEqual([]);
 
     newer.land({ status: "ok", data: AFTER });
-    expect(await outstanding).toBe(true);
-    expect(useProvenanceStore.getState().rows).toEqual(AFTER);
+    await outstanding;
+    expect(joinCurrent(store())).toBe(true);
+    expect(store().rows).toEqual(AFTER);
+  });
+
+  // A read that failed keeps the rows it had and says why. It spends its
+  // ticket like any other answer, so nothing is left looking outstanding —
+  // the failure, not a read still on its way, is what holds the gate shut.
+  it("keeps the rows a failed read could not replace, and says why", async () => {
+    vi.mocked(commands.libraryProvenance)
+      .mockResolvedValueOnce({ status: "ok", data: AFTER })
+      .mockResolvedValueOnce({
+        status: "error",
+        error: "the join did not read",
+      });
+
+    await store().reload();
+    await store().reload();
+
+    expect(store().rows).toEqual(AFTER);
+    expect(store().reading).toBe(false);
+    expect(store().read).toEqual({
+      status: "failed",
+      error: "the join did not read",
+    });
+    expect(joinCurrent(store())).toBe(false);
+  });
+
+  // Nothing awaits the read behind a write, so a call that throws where a
+  // promise was expected — a page with no Tauri behind the wrapper — would
+  // be an unhandled rejection at the window rather than a read that failed.
+  it("lands a call that throws outright as a failed read", async () => {
+    vi.mocked(commands.libraryProvenance).mockImplementationOnce(() => {
+      throw new Error("nothing behind the call");
+    });
+
+    await expect(store().reload()).resolves.toBeUndefined();
+
+    expect(store().read).toEqual({
+      status: "failed",
+      error: "nothing behind the call",
+    });
+    expect(store().reading).toBe(false);
+  });
+
+  // A rejection is the same failed read as a returned refusal: the
+  // generated wrapper rethrows a transport failure, and a read that never
+  // answered must not leave the gate open or the join reading forever.
+  it("lands a rejected call as a failed read", async () => {
+    vi.mocked(commands.libraryProvenance).mockRejectedValueOnce(
+      new Error("the channel is gone"),
+    );
+
+    await store().reload();
+
+    expect(store().read).toEqual({
+      status: "failed",
+      error: "the channel is gone",
+    });
+    expect(store().reading).toBe(false);
   });
 });

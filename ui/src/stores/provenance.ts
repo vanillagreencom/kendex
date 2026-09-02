@@ -6,8 +6,14 @@ import {
   type ProvenanceRow,
   type Scope,
 } from "@/bindings";
-import { readOrder } from "@/lib/read-state";
+import {
+  READ_PENDING,
+  type ReadState,
+  readOf,
+  readOrder,
+} from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
+import { settled } from "@/lib/settled";
 
 interface ProvenanceState {
   rows: ProvenanceRow[];
@@ -17,20 +23,37 @@ interface ProvenanceState {
    * which is the right answer for a column and the wrong one for a decision.
    */
   loaded: boolean;
+  /** How the last read of the join went. A failure keeps the rows it had
+   * and says why: a delete dialog naming where to get the package again and
+   * a places tab drawing Remove both gate on this, and acting on rows
+   * nothing confirmed is exactly the fail-open that gate closes. */
+  read: ReadState;
+  /** True while a read of the join is on its way: a mount, a rescan behind
+   * a write and a dialog opening all ask, and the rows under a reader's
+   * buttons are about to be replaced. */
+  reading: boolean;
   load: () => Promise<void>;
-  /** Read the join again and say whether `rows` is now a landed read's
-   * answer with nothing newer on its way. `rescanEverything` calls this,
-   * which is how a write anywhere reaches every reader of the join without
-   * any of them guessing at when something installed. Anything about to act
-   * irreversibly on the answer — a delete naming the places it will remove —
-   * still asks for its own read and waits on this boolean, because a refresh
-   * that failed is indistinguishable from one that changed nothing.
+  /** Read the join again. `rescanEverything` calls this, which is how a
+   * write anywhere reaches every reader of the join without any of them
+   * guessing at when something installed.
    *
-   * The boolean answers for the rows on screen rather than for this call's
-   * own answer: a read a newer one overtook writes nothing, and what its
-   * caller then reads is the newer read's rows, current or still coming. */
-  reload: () => Promise<boolean>;
+   * How the read went is published as [read] and [reading] rather than
+   * returned: the answer belongs to the store and not to the call, so a
+   * caller whose own read was overtaken re-renders when the read that
+   * overtook it lands, instead of holding a boolean that was true for one
+   * instant. [joinCurrent] is that pair read as the one question a caller
+   * gating on the join asks. */
+  reload: () => Promise<void>;
 }
+
+/** Whether `rows` is the newest read's answer with nothing newer on its
+ *  way. False covers both halves: a read that failed, and a read still
+ *  coming that will replace these rows. Anything about to act irreversibly
+ *  on the join — a delete naming the places it will remove — asks this,
+ *  because rows nothing has confirmed are indistinguishable from rows a
+ *  read confirmed. */
+export const joinCurrent = (state: ProvenanceState): boolean =>
+  state.read.status === "landed" && !state.reading;
 
 /** The join's reads in the order they were asked for, so the newest answer
  * is the one on screen. Several are routinely out at once: `rescanEverything`
@@ -46,28 +69,47 @@ const order = readOrder();
 export const useProvenanceStore = create<ProvenanceState>((set, get) => ({
   rows: [],
   loaded: false,
+  read: READ_PENDING,
+  reading: false,
   load: async () => {
     await get().reload();
   },
   reload: async () => {
     const ticket = order.begin();
+    set({ reading: true });
     try {
-      const response = await commands.libraryProvenance();
-      // A read that failed takes no landing: leaving the newest ticket
-      // outstanding is what keeps this call, and every read it overtook,
-      // from calling the rows it never replaced current.
-      if (response.status === "ok" && order.lands(ticket))
-        set({ rows: response.data, loaded: true });
-    } catch {
-      // The wrapper folds a rejected command into an error status, so this
-      // is the last guard rather than the first: a read that never answered
-      // at all is still a failed read, not a rejection for every caller of
-      // this store to catch.
+      // `settled` lands a rejected call as the same failed read as a
+      // returned refusal: the generated wrapper rethrows a transport
+      // failure, and a read that never answered is a failed read, not a
+      // rejection for every caller to catch.
+      //
+      // Called through a `then` because the wrapper reaches Tauri as it is
+      // CALLED, so a page with nothing behind that call throws where a
+      // promise was expected. Nothing awaits this read — `writingRepo`
+      // starts it with `void` — so a throw escaping here is an unhandled
+      // rejection at the window rather than a read that failed.
+      const response = await settled<ProvenanceRow[]>(
+        Promise.resolve().then(() => commands.libraryProvenance()),
+      );
+      // The newest read owns the answer, whatever it says. An older one
+      // landing behind it writes nothing, rows and read state alike; a
+      // failed newest read leaves the rows it had standing and says why
+      // nothing confirmed them, which is [ReadState]'s own contract. So the
+      // rows an overtaken read answered with are dropped even where the
+      // read that overtook it failed: they are older than the state that
+      // failure is about, and preferring them would need a second rank
+      // beside the ticket.
+      if (!order.lands(ticket)) return;
+      set(
+        response.status === "ok"
+          ? { rows: response.data, loaded: true, read: readOf(response) }
+          : { read: readOf(response) },
+      );
+    } finally {
+      // Not simply false: another read begun behind this one is still out,
+      // and the rows are still about to be replaced.
+      set({ reading: order.outstanding() });
     }
-    // True only where no read is still on its way, which is the same fact
-    // as `rows` holding the newest answer — this call's own, or that of the
-    // newer read which landed while this one was coming.
-    return !order.outstanding();
   },
 }));
 

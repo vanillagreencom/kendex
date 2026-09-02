@@ -136,9 +136,10 @@ beforeEach(() => {
 
 /** What every case below asks: the machine was read again behind a command
  *  that answered with a refusal. Two of the three reads, not all of them —
- *  the provenance join answers false rather than throwing and no store
- *  mocked here would tell a join that ran from one that could not, so it is
- *  asserted through neither. */
+ *  the provenance join's read answers nothing at all, publishing how it
+ *  went as its store's own read state, and no store mocked here would tell
+ *  a join that ran from one that could not, so it is asserted through
+ *  neither. */
 const readAgain = () => {
   expect(commands.scanMachine).toHaveBeenCalled();
   expect(commands.auditAll).toHaveBeenCalled();
