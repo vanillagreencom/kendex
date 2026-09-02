@@ -236,6 +236,18 @@ run_tb
   && ok "a bare ! row is a config error naming its line" \
   || bad "a bare ! row is a config error naming its line" "rc=$RC out=$OUT"
 
+# `!` is escapable, which is the only way left to name a path that literally
+# begins with one: `\!name` opens with a backslash, so it never reaches the
+# carve arm, and the case matcher reads it as that literal path.
+new_repo bang
+mkdir -p "$R/tools"
+printf '// %s: a marker under a bang-leading name\n' "$TD" >"$R/!bang.rs"
+printf '\\!bang.rs\tan escaped literal bang path\n' >"$R/tools/todo-ban-excludes"
+git -C "$R" add -A
+run_tb
+[ "$RC" -eq 0 ] && ok "an escaped row excludes the literal bang path rather than carving it" \
+  || bad "an escaped row excludes the literal bang path" "rc=$RC out=$OUT"
+
 echo "=== a URL is not a comment leader ==="
 new_repo url
 printf 'see http://%s:8080/path for the mock\n' "$TD" >"$R/u.md"

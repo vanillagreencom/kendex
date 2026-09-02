@@ -99,9 +99,8 @@ full repo-relative path; `*` crosses `/`); a pattern without a reason is a
 config error. A pattern opening with `!` carves its matches back into the
 scanned set, and wins over every exclusion row whatever the order — that is
 how hand-written source inside an otherwise excluded render tree
-(`.agents/**` plus `!.agents/skills/my-skill/**`) stays governed. `!` is not
-escapable, so a path literally beginning with it cannot be excluded by a row
-naming it, and is scanned instead.
+(`.agents/**` plus `!.agents/skills/my-skill/**`) stays governed. To exclude a
+path that literally begins with `!`, escape it: `\!foo`.
 **Baseline format** — `path<TAB>count`, `LC_ALL=C` sorted,
 unique paths, positive counts.
 Seeding a first baseline and CI wiring: [README.md](README.md). Hook install and removal details: [DEVELOPMENT.md](DEVELOPMENT.md).

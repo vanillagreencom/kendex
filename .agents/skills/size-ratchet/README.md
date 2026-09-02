@@ -220,9 +220,9 @@ say so:
 !.agents/skills/my-skill/*	in-place skill: this tree IS the source
 ```
 
-A bare `!` with no pattern after it is a config error. `!` is not escapable,
-so a path literally beginning with it cannot be excluded by a row naming it
-and is measured instead — the safe direction. The baseline file is exempt
+A bare `!` with no pattern after it is a config error. A row that must name a
+path literally beginning with `!` escapes it: `\!foo` never reaches the carve
+arm and matches that path. The baseline file is exempt
 ahead of the carve rows, so no `!` row pulls it into its own gate.
 
 ## Configuration

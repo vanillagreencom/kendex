@@ -342,6 +342,19 @@ run_sr
   && ok "a bare ! row is a config error naming its line" \
   || bad "a bare ! row is a config error naming its line" "rc=$RC out=$OUT"
 
+# `!` is escapable, which is the only way left to name a path that literally
+# begins with one: `\!name` opens with a backslash, so it never reaches the
+# carve arm, and the case matcher reads it as that literal path.
+new_repo bang
+mkfile '!bang.txt' 11
+mkdir -p "$R/tools"
+printf '\\!bang.txt\tan escaped literal bang path\n' >"$R/tools/size-ratchet-excludes"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 0 ] && case "$OUT" in *"!bang.txt"*) false ;; *) true ;; esac \
+  && ok "an escaped row excludes the literal bang path rather than carving it" \
+  || bad "an escaped row excludes the literal bang path" "rc=$RC out=$OUT"
+
 echo "=== --baseline flag relocates the baseline ==="
 new_repo flagpath
 mkfile big.txt 15
