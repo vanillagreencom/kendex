@@ -474,22 +474,49 @@ assert_eq "$([[ -n "$path_grammar" ]] && echo found || echo missing)" "found" \
   "control: ADDS_PATH_GRAMMAR was lifted from dev-round-write"
 assert_eq "$(git -C "$REPO_ROOT" rev-parse --is-inside-work-tree 2>/dev/null || echo no)" "true" \
   "precondition: the grammar sweep needs a git checkout at $REPO_ROOT"
-unexpressible=""
-protected_seen=0
-while IFS= read -r tracked_path; do
-  is_protected_addition "$tracked_path" || continue
-  protected_seen=$((protected_seen + 1))
-  [[ "$tracked_path" =~ ^${path_grammar}$ ]] && continue
-  unexpressible="$unexpressible$tracked_path "
-done < <(git -C "$REPO_ROOT" -c core.quotePath=false ls-files)
-assert_eq "$unexpressible" "" \
+
+# One sweep, run over any checkout, printing "<classified count>TAB<unnameable
+# paths>". Taking a repository argument is what lets the planted-defect control
+# below run the SAME code over a tree that carries the defect, instead of
+# asserting the predicate is right and hoping.
+sweep_unnameable() {
+  local repo="$1" tracked count=0 unnameable=""
+  while IFS= read -r tracked; do
+    is_protected_addition "$tracked" || continue
+    count=$((count + 1))
+    [[ "$tracked" =~ ^${path_grammar}$ ]] && continue
+    unnameable="${unnameable}[$tracked]"
+  done < <(git -C "$repo" -c core.quotePath=false ls-files)
+  printf '%s\t%s' "$count" "$unnameable"
+}
+
+sweep_result="$(sweep_unnameable "$REPO_ROOT")"
+protected_seen="${sweep_result%%$'\t'*}"
+assert_eq "${sweep_result#*$'\t'}" "" \
   "every tracked protected path can be named in an Adds: line"
 assert_eq "$([[ "$protected_seen" -gt 100 ]] && echo many || echo "$protected_seen")" "many" \
   "control: the sweep actually classified protected paths"
-# The predicate must be the single-path rule: the whole-value grammar admits a
-# space-carrying path as a two-path list, so it cannot see this class at all.
-assert_eq "$([[ "crates/one file.rs" =~ ^${path_grammar}$ ]] && echo admit || echo refuse)" "refuse" \
-  "control: the swept predicate refuses a space-carrying path"
+
+# PLANTED DEFECT. A green sweep proves nothing unless it goes red on a tree
+# that carries the class it exists to catch, and this class is invisible to the
+# obvious predicate: the whole-VALUE grammar matches 'tools/one helper.sh' as a
+# two-path list, so a sweep written against it stays green with the defect
+# committed. The path is protected (root tools/), so only the predicate decides.
+planted_repo="$TMP_ROOT/planted-sweep"
+mkdir -p "$planted_repo/tools"
+git -C "$planted_repo" init -q -b main
+git -C "$planted_repo" config user.email test@example.com
+git -C "$planted_repo" config user.name Test
+git -C "$planted_repo" config commit.gpgsign false
+printf 'helper\n' > "$planted_repo/tools/one helper.sh"
+printf 'helper\n' > "$planted_repo/tools/plain-helper.sh"
+git -C "$planted_repo" add -A
+git -C "$planted_repo" commit -q -m planted
+planted_result="$(sweep_unnameable "$planted_repo")"
+assert_eq "${planted_result%%$'\t'*}" "2" \
+  "control: the planted tree classified both paths as protected"
+assert_eq "${planted_result#*$'\t'}" "[tools/one helper.sh]" \
+  "control: the sweep names a planted space-carrying protected path"
 # Default ls-files quoting would hand the sweep C-quoted spellings of the
 # non-ASCII paths — `"...frapp\303\251-..."` — which carry no blank and no
 # leading dash, so the grammar would admit a form the writer never sees and the
