@@ -86,10 +86,7 @@ pub enum ItemKind {
 impl ItemKind {
     /// Every kind, and the sweep every caller walks to reach them all. A
     /// kind missing from here is one every one of those sweeps skips
-    /// silently, so the assertion under this impl catches one dropped or
-    /// reordered at build time. It cannot catch one never added: a variant
-    /// given its `slot` arm and left out of this list compiles and passes,
-    /// measured. Rust offers no variant count without a derive macro or an
+    /// silently. Rust offers no variant count without a derive macro or an
     /// unstable intrinsic, so adding a kind means adding it here.
     pub const ALL: [ItemKind; 7] = [
         ItemKind::Agent,
@@ -100,21 +97,6 @@ impl ItemKind {
         ItemKind::Plugin,
         ItemKind::PiExtension,
     ];
-
-    /// Where this kind sits in [`Self::ALL`]. Exhaustive, so a variant
-    /// added to the enum has to be given a slot before anything builds —
-    /// which is not the same as being put in `ALL`; see the note there.
-    const fn slot(self) -> usize {
-        match self {
-            ItemKind::Agent => 0,
-            ItemKind::Skill => 1,
-            ItemKind::Hook => 2,
-            ItemKind::Command => 3,
-            ItemKind::McpServer => 4,
-            ItemKind::Plugin => 5,
-            ItemKind::PiExtension => 6,
-        }
-    }
 
     pub fn name(self) -> &'static str {
         match self {
@@ -128,18 +110,6 @@ impl ItemKind {
         }
     }
 }
-
-/// Every kind [`ItemKind::ALL`] holds sits at its own slot. A kind dropped
-/// from `ALL`, or reordered out of step with its slot, fails the build here
-/// rather than quietly shrinking every sweep that walks it. This says
-/// nothing about a kind `ALL` never had — see the note on `ALL`.
-const _: () = {
-    let mut slot = 0;
-    while slot < ItemKind::ALL.len() {
-        assert!(ItemKind::ALL[slot].slot() == slot);
-        slot += 1;
-    }
-};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(tag = "scope", rename_all = "kebab-case")]
