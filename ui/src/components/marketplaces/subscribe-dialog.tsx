@@ -40,21 +40,30 @@ export function SubscribeDialog({
 }) {
   const subscribe = useMarketplacesStore((s) => s.subscribe);
   const busy = useMarketplacesStore((s) => s.busy);
-  const error = useMarketplacesStore((s) => s.error);
   const projects = useSettingsStore((s) => s.settings?.projects ?? []);
   const [reference, setReference] = useState(initialReference);
   const [name, setName] = useState("");
   const [where, setWhere] = useState("global");
 
-  // The page mounts this dialog permanently, and `error` is a slot every
-  // marketplaces action writes — a failed overview read, an unsubscribe
-  // refusal, a refused subscribe the person then cancelled. Opening would
-  // otherwise show whichever of those was last, beside an empty reference
-  // field, about a repository nobody typed. The dialog owns what it shows,
-  // the way UnsubscribeDialog already resets its own.
+  // The refusal this dialog shows is its own, held here and set from what
+  // `subscribe` handed back. The store's shared `error` is written by every
+  // marketplaces action and cleared by `load` on each landing overview
+  // read, so rendering it meant a read finishing under an open dialog wiped
+  // the refusal off the screen — dialog open, input intact, no account of
+  // why nothing happened. UnsubscribeDialog already keeps its own for the
+  // same reason.
+  const [error, setError] = useState<string | null>(null);
+  // The page mounts this dialog permanently, so each opening starts clean
+  // rather than showing the refusal of an attempt the person cancelled.
+  // `clearError` empties the shared slot alongside it: nothing renders that
+  // slot any more, and leaving a stale message in it would mislead the next
+  // reader of the store.
   const clearError = useMarketplacesStore((s) => s.clearError);
   useEffect(() => {
-    if (open) clearError();
+    if (open) {
+      setError(null);
+      clearError();
+    }
   }, [open, clearError]);
 
   const scopes = everyPlace(projects);
@@ -67,8 +76,13 @@ export function SubscribeDialog({
     void subscribe(target, reference.trim(), name.trim() || null).then(
       (outcome) => {
         // A refusal keeps the dialog open with the input intact — the
-        // error shows right here, never on another page.
-        if ("error" in outcome) return;
+        // error shows right here, never on another page, and from what the
+        // call answered rather than from a slot a concurrent read clears.
+        if ("error" in outcome) {
+          setError(outcome.error);
+          return;
+        }
+        setError(null);
         setReference("");
         setName("");
         onOpenChange(false);
