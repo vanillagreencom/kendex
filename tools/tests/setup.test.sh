@@ -1,17 +1,50 @@
 #!/usr/bin/env bash
 # Pins what tools/setup arms: the growth-guards installer writes both shims,
 # nothing is spliced in beside them, and the clone then commits through the
-# armed hooks in both directions — the package's header, subject and changelog
-# verdicts have to be reachable from a real commit, or the chain is wired to
-# nothing. The refusing direction runs first in every pair.
+# armed hooks in both directions — one package verdict has to be reachable
+# from a real commit, or the chain is wired to nothing. The refusing direction
+# runs first in every pair.
+#
+# TWO SUITES, TWO DIRECTIONS, AND NEITHER SEES THE OTHER'S. The fixture here is
+# built from the .agents RENDER of the package; growth-guards' own suites run
+# the source under skills/. The repo requires the two to move together, not to
+# be byte-identical, so a render that has drifted from its source is a state
+# both can be green in.
+#
+#   a SOURCE regression  — skills/growth-guards/tests/: commit-msg.test.sh for
+#                          the header shape, the subject cap and the changelog
+#                          rule, pre-commit-chain.test.sh for the lane order,
+#                          install-git-hooks*.test.sh for the installer. No arm
+#                          in THIS file can red on one.
+#   a RENDER divergence  — only here. The render is the hook `tools/setup`
+#                          installs, so a rule the source still carries and the
+#                          render has lost is enforced by nothing, and the
+#                          source suite structurally cannot see it.
+#
+# That is why this file keeps a sample of the package's verdicts rather than
+# none: enough to prove the installed hook still carries the rules, not enough
+# to duplicate the matrix. A reader trimming it for being unable to catch a
+# source regression is trimming the only thing watching the other direction —
+# that cut shipped once, and this is the arm that came back.
+#
+# The changelog obligation is therefore held here from two sides, because it
+# can be switched off from two and neither catches the other's:
+#
+#   the CONFIGURED VALUE — the settings arm below, reading THIS repo's
+#     committed kendex.settings.toml rather than the fixture's. A key that
+#     names no tree the repo rule names obliges nothing, whatever the hook is.
+#   the INSTALLED HOOK  — the crates/ arm further down, committing through the
+#     render-built fixture. A render that has lost the rule enforces nothing,
+#     whatever the key says.
+#
+# Neither is covered anywhere else. The package's own suites hand themselves a
+# fixture toml and command-line overrides, so they stay green whatever this
+# repo commits and whatever its render carries.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS="$(cd "$TEST_DIR/.." && pwd)"
 REPO="$(cd "$TOOLS/.." && pwd)"
-# Enforcement in this repo rests on these keys, and an empty list is a
-# documented rule-off — so a hardcoded copy here would stay green after a key
-# stopped naming the trees this repo means.
 REQUIRED_PATHS="$(sed -n 's/^GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "\(.*\)"$/\1/p' "$REPO/kendex.settings.toml")"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -21,9 +54,52 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
-[ -n "$REQUIRED_PATHS" ] \
-  && ok "kendex.settings.toml names the paths that oblige a changelog entry" \
-  || bad "kendex.settings.toml names the paths that oblige a changelog entry" "GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS is empty"
+# THE OBLIGATION IS A REACH, NOT A NON-EMPTY STRING. The repo rule (AGENTS.md,
+# and the package's own diagnostic) is that a change under crates/ or ui/ ships
+# a changelog fragment or says [no-changelog]. Non-empty does not carry that:
+# GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS set to "docs/*" is non-empty, names a
+# real tree, and leaves every crates/ and ui/ commit through the gate with no
+# diagnostic. So this asks whether the committed globs REACH each obliged tree,
+# and an emptied value fails the same arm because it reaches nothing.
+#
+# The question goes to the package's own matcher, sourced rather than restated,
+# so the globs are read here exactly as commit-msg reads them at commit time —
+# `*` crossing `/` included, which is the difference between a value that
+# covers a tree and one that covers only its top level.
+# shellcheck source=../../skills/growth-guards/scripts/lib/configured-paths.sh
+. "$REPO/skills/growth-guards/scripts/lib/configured-paths.sh"
+
+# A REAL tracked file from each tree, the deepest one there is. A path written
+# out here would go stale the day the tree was reorganized, and a shallow one
+# would be reached by a glob that covers only the top level.
+#
+# awk keeps the maximum rather than `sort | head`, which under this file's
+# `pipefail` would take the whole suite down on the SIGPIPE that closing the
+# pipe early sends git.
+deepest_tracked() { # DIR — deepest tracked path under it, empty when none
+  git -C "$REPO" ls-files -- "$1" \
+    | awk -F/ 'NF > depth { depth = NF; path = $0 } END { if (depth) print path }'
+}
+
+# `set -f` for the same reason lib/configured-paths.sh documents: the list is
+# word-split unquoted to act as globs, and pathname expansion here would
+# resolve each pattern against the work tree instead.
+unreached=""
+set -f
+for obliged_tree in crates ui; do
+  probe="$(deepest_tracked "$obliged_tree")"
+  if [ -z "$probe" ]; then
+    unreached="$unreached $obliged_tree/ (no tracked file to probe with)"
+  elif ! gg_path_matches "$probe" $REQUIRED_PATHS; then
+    unreached="$unreached $obliged_tree/ (nothing matches $probe)"
+  fi
+done
+set +f
+
+[ -z "$unreached" ] \
+  && ok "kendex.settings.toml obliges a changelog entry across crates/ and ui/" \
+  || bad "kendex.settings.toml obliges a changelog entry across crates/ and ui/" \
+       "GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = \"$REQUIRED_PATHS\" does not reach:$unreached — a change there would commit with no changelog entry and nothing red anywhere"
 
 new_fixture() { # NAME — a clone-shaped repo carrying the package and these tools
   R="$TMP/$1"
@@ -32,6 +108,9 @@ new_fixture() { # NAME — a clone-shaped repo carrying the package and these to
   cp "$TOOLS/setup" "$R/tools/"
   printf '#!/usr/bin/env bash\necho "repo-local lane ran"\n' >"$R/tools/guard"
   chmod +x "$R/tools/guard"
+  # The obliging globs are THIS repo's, not a literal: the crates/ arm below
+  # asks whether the installed hook still refuses what this repo says it must,
+  # so a fixture holding its own value would answer a question nobody asked.
   printf '[env]\nGROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"\nGROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "%s"\n' \
     "$REQUIRED_PATHS" >"$R/kendex.settings.toml"
   printf '# fixture\n' >"$R/README.md"
@@ -84,142 +163,22 @@ OUT="$(git -C "$R" commit -m "docs: a conventional subject" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "a conventional subject passes" \
   || bad "a conventional subject passes" "rc=$RC out=$OUT"
 
-echo "=== the package judges the changelog this repo's paths oblige ==="
+echo "=== the installed hook still obliges the changelog this repo's paths ask for ==="
+# ONE arm, and it is here for the render, not for the rule. commit-msg.test.sh
+# proves the whole changelog matrix against skills/ — the fragment that
+# satisfies, the README that does not stand in, [no-changelog], a deleted
+# fragment, the release commit. None of that is repeated here. What none of it
+# can see is the render losing the rule while the source keeps it, and the
+# render is the hook `tools/setup` installs. So this commits a crates/ change
+# with no fragment through the installed chain and requires the refusal: it is
+# the one arm that reds when the two copies disagree about the changelog.
 printf 'fn main() {}\n' >"$R/crates/a.rs"
 git -C "$R" add -A
 RC=0
 OUT="$(git -C "$R" commit -m "feat: a crate change" 2>&1)" || RC=$?
 [ "$RC" -ne 0 ] && case "$OUT" in *"without a changelog entry"*) true ;; *) false ;; esac \
-  && ok "a crates/ change with no changelog entry is refused by the package lane" \
-  || bad "a crates/ change with no changelog entry is refused by the package lane" "rc=$RC out=$OUT"
-mkdir -p "$R/changelog.d"
-printf '# changelog.d\n' >"$R/changelog.d/README.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "feat: a crate change" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"without a changelog entry"*) true ;; *) false ;; esac \
-  && ok "changelog.d's own README does not stand in for a fragment" \
-  || bad "changelog.d's own README does not stand in for a fragment" "rc=$RC out=$OUT"
-mkdir -p "$R/changelog.d/fixed"
-printf -- '- A crate fix consumers see.\n' >"$R/changelog.d/fixed/ken-1.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "feat: a crate change" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "a changelog.d fragment satisfies the rule" \
-  || bad "a changelog.d fragment satisfies the rule" "rc=$RC out=$OUT"
-printf 'fn other() {}\n' >"$R/crates/b.rs"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "feat: a crate change [no-changelog]" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "[no-changelog] in the subject releases it" \
-  || bad "[no-changelog] in the subject releases it" "rc=$RC out=$OUT"
-printf 'fn third() {}\n' >"$R/crates/c.rs"
-rm -f "$R/changelog.d/fixed/ken-1.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "feat: a crate change" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"without a changelog entry"*) true ;; *) false ;; esac \
-  && ok "deleting a fragment is not writing one" \
-  || bad "deleting a fragment is not writing one" "rc=$RC out=$OUT"
-printf '# Changelog\n\n## [Unreleased]\n' >"$R/CHANGELOG.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "chore(release): the collated changelog" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"without a changelog entry"*) true ;; *) false ;; esac \
-  && ok "the record alone is no entry while nothing declares a collation" \
-  || bad "the record alone is no entry while nothing declares a collation" "rc=$RC out=$OUT"
-RC=0
-OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_COLLATE=1 git commit -m "chore(release): the collated changelog" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "CHANGELOG.md counts under the declaration, the way the release commit needs" \
-  || bad "CHANGELOG.md counts under the declaration" "rc=$RC out=$OUT"
-printf 'fn fourth() {}\n' >"$R/crates/d.rs"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "Merge branch 'topic' into main" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"without a changelog entry"*) true ;; *) false ;; esac \
-  && ok "a Merge subject is exempt from shape and length, never from the changelog" \
-  || bad "a Merge subject is exempt from shape and length, never from the changelog" "rc=$RC out=$OUT"
-mkdir -p "$R/changelog.d/fixed"
-printf -- '- A merged fix consumers see.\n' >"$R/changelog.d/fixed/ken-2.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "Merge branch 'topic' into main" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "control: the same Merge with a fragment passes" \
-  || bad "control: the same Merge with a fragment passes" "rc=$RC out=$OUT"
-
-echo "=== the documented release commit passes the gate it has to pass ==="
-# The flow in docs/RELEASING.md, .pi/prompts/gh-release.md and the app-deploy
-# skill: collate the fragments into the record, delete them, bump the version
-# under crates/, stage exactly those paths, commit. The bump obliges an entry
-# and the fragments are gone, so the record has to count — and it counts only
-# under the declaration all three of those documents now carry.
-git -C "$R" reset -q --hard HEAD
-mkdir -p "$R/changelog.d/fixed" "$R/crates/app"
-printf -- '- A fix consumers see.\n' >"$R/changelog.d/fixed/ken-9.md"
-printf '{ "version": "1.0.0" }\n' >"$R/crates/app/tauri.conf.json"
-printf '# Changelog\n\n## [Unreleased]\n' >"$R/CHANGELOG.md"
-git -C "$R" add -A
-git -C "$R" commit -qm "chore: a release to cut [no-changelog]"
-# The collation, as the flow runs it: the entry moves into the record and the
-# fragment is deleted.
-rm -f "$R/changelog.d/fixed/ken-9.md"
-printf '# Changelog\n\n## [Unreleased]\n\n## [1.0.1] - 2026-01-01\n\n### Fixed\n\n- A fix consumers see.\n' >"$R/CHANGELOG.md"
-printf '{ "version": "1.0.1" }\n' >"$R/crates/app/tauri.conf.json"
-git -C "$R" add -A -- CHANGELOG.md changelog.d crates/app/tauri.conf.json
-RC=0
-OUT="$(git -C "$R" commit -m "chore(release): v1.0.1" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"without a changelog entry"*) true ;; *) false ;; esac \
-  && ok "control: without the declaration the release commit is refused" \
-  || bad "control: without the declaration the release commit is refused" "rc=$RC out=$OUT"
-RC=0
-OUT="$(cd "$R" && GROWTH_GUARDS_CHANGELOG_COLLATE=1 git commit -m "chore(release): v1.0.1" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "the documented release commit, declaration and all, is accepted" \
-  || bad "the documented release commit, declaration and all, is accepted" "rc=$RC out=$OUT"
-
-echo "=== the package caps the subject; git's own subjects are exempt ==="
-LONG="docs: $(printf 'x%.0s' $(seq 1 70))" # 76 characters
-printf 'y\n' >>"$R/README.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "$LONG" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"header is 76 characters"*) true ;; *) false ;; esac \
-  && ok "a 76-character subject is refused, naming the count" \
-  || bad "a 76-character subject is refused, naming the count" "rc=$RC out=$OUT"
-printf 'w\n' >>"$R/README.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "docs: $(printf 'x%.0s' $(seq 1 67))" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"header is 73 characters"*) true ;; *) false ;; esac \
-  && ok "73 characters is one too many" \
-  || bad "73 characters is one too many" "rc=$RC out=$OUT"
-printf 'm\n' >>"$R/README.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "Merge $(printf 'x%.0s' $(seq 1 70))" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "a long Merge subject passes — git wrote it, nobody sized it" \
-  || bad "a long Merge subject passes — git wrote it, nobody sized it" "rc=$RC out=$OUT"
-printf 'z\n' >>"$R/README.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "docs: $(printf 'x%.0s' $(seq 1 66))" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "a 72-character subject passes" \
-  || bad "a 72-character subject passes" "rc=$RC out=$OUT"
-# -F keeps comment lines (cleanup=whitespace), so the header is not line 1.
-# Reading the first physical line would measure the comment and pass.
-printf '# a comment git keeps\n\n%s\n' "$LONG" >"$TMP/msg-with-comment"
-printf 'c\n' >>"$R/README.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -F "$TMP/msg-with-comment" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"header is 76 characters"*) true ;; *) false ;; esac \
-  && ok "the header is the first non-blank non-comment line, not line 1" \
-  || bad "the header is the first non-blank non-comment line, not line 1" "rc=$RC out=$OUT"
-printf 'f\n' >>"$R/README.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "fixup! $(printf 'x%.0s' $(seq 1 70))" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "a long fixup! subject passes — the exemption is the package's whole list" \
-  || bad "a long fixup! subject passes — the exemption is the package's whole list" "rc=$RC out=$OUT"
+  && ok "a crates/ change with no changelog entry is refused by the installed hook" \
+  || bad "a crates/ change with no changelog entry is refused by the installed hook" "rc=$RC out=$OUT"
 
 echo "=== hooks the installer will not vouch for are each named ==="
 # It refuses an interpreter it cannot verify rather than rewriting somebody

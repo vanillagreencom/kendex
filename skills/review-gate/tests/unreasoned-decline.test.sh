@@ -1,8 +1,24 @@
 #!/usr/bin/env bash
-# Behavioral coverage for the unreasoned-decline term: the predicate's thread
-# jq (extracted from the script, not restated) counts a thread whose newest
-# non-bot reply is a `Declined:` that names no mechanism — an empty reason, or
-# nothing but non-reason tokens and filler.
+# Behavioral coverage for BOTH thread terms the predicate's thread jq decides,
+# because one program decides them and the fixtures that separate them are the
+# same fixtures. The jq is extracted from the script, not restated.
+#
+# unreasoned-decline counts a thread whose newest non-bot reply is a
+# `Declined:` that names no mechanism — an empty reason, or nothing but
+# non-reason tokens and filler.
+#
+# untracked-claim counts a thread whose newest non-bot reply THAT IS A
+# DISPOSITION OR CARRIES A TRACK-WORD claims tracking and names no issue.
+# Replies of any other kind never move it, so a thread ending in ordinary
+# conversation still counts — `a reply that is neither claim nor disposition
+# does not move it` is that case. A comments page the program cannot finish
+# fails closed. The two terms divide the disposition space between them and a
+# reply can fall in the seam, which is why `caught_by_either` below reads both
+# counts rather than one.
+#
+# Neither verdict's mapping to a failure status is here: review-writer.test.sh
+# runs both through the writer, w8/w8b for unreasoned-decline and w9/w9b for
+# untracked-claim.
 #
 # The fixtures are tests/corpus/, not literals in here, and adding a label
 # starts there — see the sweep below. The declines that shipped KEN-884..
@@ -66,8 +82,8 @@ planted() { # planted LABEL SHAPE VARIANT   SHAPE: move | sub | del:N
   fi
   return 0
 }
-thread() { # thread ISRESOLVED COMMENT_JSON… (comma-joined)
-  printf '{"isResolved":%s,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[%s]}}' "$1" "$2"
+thread() { # thread ISRESOLVED COMMENT_JSON… (comma-joined) [HASNEXTPAGE]
+  printf '{"isResolved":%s,"comments":{"pageInfo":{"hasNextPage":%s},"nodes":[%s]}}' "$1" "${3:-false}" "$2"
 }
 human() { printf '{"body":%s,"author":{"__typename":"User"}}' "$(jq -Rn --arg b "$1" '$b')"; }
 bot()   { printf '{"body":%s,"author":{"__typename":"Bot"}}'  "$(jq -Rn --arg b "$1" '$b')"; }
@@ -192,6 +208,57 @@ case "$out" in "0 1 0 "*) ok "an untracked claim is still counted, and is not a 
 
 out=$(page "$(thread false "$(human 'looking')")")
 case "$out" in "1 0 0 "*) ok "unresolved counting unchanged";; *) bad "unresolved counting unchanged" "$out";; esac
+
+echo "=== the untracked-claim term: a claim naming no issue, judged on the standing reply ==="
+# Field 2 throughout. Each thread is judged by its newest non-bot comment that
+# is a `Fixed in <sha>`/`Declined:` reply or carries a track-word: a claim with
+# no issue id counts, such a reply never does, and later replies of any other
+# kind, bot replies and resolving the thread do not move it.
+
+out=$(page "$(thread true "$(human 'Out of scope for this PR, tracked.')")")
+case "$out" in "0 1 "*) ok "issue-less tracking claim counts";; *) bad "issue-less tracking claim counts" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Tracked: KEN-12oops')"),$(thread true "$(human 'tracked in #34abc')")")
+case "$out" in "0 2 "*) ok "a malformed id does not anchor a claim";; *) bad "a malformed id does not anchor a claim" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Tracked: KEN-536')"),$(thread true "$(human 'Tracked: DRV-12')"),$(thread true "$(human 'Fixed in abc123, tracked as #77')")")
+case "$out" in "0 0 "*) ok "claims naming KEN-/other-prefix/#id pass";; *) bad "claims naming KEN-/other-prefix/#id pass" "$out";; esac
+
+out=$(page "$(thread true "$(bot 'this should be tracked somewhere')")")
+case "$out" in "0 0 "*) ok "bot comments are exempt";; *) bad "bot comments are exempt" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Declined: probe is intentional')")")
+case "$out" in "0 0 "*) ok "a decline is not a claim";; *) bad "a decline is not a claim" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Declined: probe is intentional')")")
+case "$out" in "0 0 "*) ok "a later Declined: reply clears a naked claim";; *) bad "a later Declined: reply clears a naked claim" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Fixed in abc1234')")")
+case "$out" in "0 0 "*) ok "a later Fixed in <sha> reply clears a naked claim";; *) bad "a later Fixed in <sha> reply clears a naked claim" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'Tracked: KEN-637')")")
+case "$out" in "0 0 "*) ok "a later Tracked: <id> reply clears a naked claim";; *) bad "a later Tracked: <id> reply clears a naked claim" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Fixed in abc1234, every tracked caller now runs')")")
+case "$out" in "0 0 "*) ok "a Fixed in reply is never a claim, whatever its prose";; *) bad "a Fixed in reply is never a claim, whatever its prose" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(bot 'Thanks, noted')")")
+case "$out" in "0 1 "*) ok "a bot reply does not move the disposition";; *) bad "a bot reply does not move the disposition" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Fixed in abc1234'),$(human 'the rest is tracked for later')")")
+case "$out" in "0 1 "*) ok "a resolved thread with a naked last reply still counts";; *) bad "a resolved thread with a naked last reply still counts" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Out of scope, tracked.'),$(human 'ok')"),$(thread true "$(human 'Out of scope, tracked.'),$(human 'Which issue?')")")
+case "$out" in "0 2 "*) ok "a reply that is neither claim nor disposition does not move it";; *) bad "a reply that is neither claim nor disposition does not move it" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Fixed in a follow-up, tracked separately')")")
+case "$out" in "0 1 "*) ok "Fixed in without a sha is not a disposition";; *) bad "Fixed in without a sha is not a disposition" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Declined: the caller is tracked by the loader already')")")
+case "$out" in "0 0 "*) ok "a Declined: reply with a naked track-word is never a claim";; *) bad "a Declined: reply with a naked track-word is never a claim" "$out";; esac
+
+out=$(page "$(thread true "$(human 'Tracked: KEN-1')" true)")
+case "$out" in malformed) ok "a 50+-comment thread fails closed as malformed";; *) bad "a 50+-comment thread fails closed as malformed" "$out";; esac
 
 echo "=== the verdict reaches its consumers ==="
 # The writer's mapping is RUN, not grepped: review-writer.test.sh w8/w8b
