@@ -109,8 +109,40 @@ linear	scripts/commands/issues.sh	Issue Operations	get --help
 linear	scripts/commands/issues.sh	Issue Operations	validate-completion --help
 linear	scripts/commands/issues.sh	Issue Operations	get KEN-1 --help
 linear	scripts/commands/issues.sh	Issue Operations	list --limit 5 -h
+linear	scripts/commands/projects.sh	Project Operations	--help
+linear	scripts/commands/cycles.sh	Cycle Operations	--help
+linear	scripts/commands/labels.sh	Label Operations	--help
+linear	scripts/commands/comments.sh	Comment Operations	--help
+linear	scripts/commands/milestones.sh	Project Milestone Operations	--help
+linear	scripts/commands/initiatives.sh	Initiative Operations	--help
+linear	scripts/commands/sync.sh	Linear Cache Sync	--help
+linear	scripts/commands/cache-query.sh	Linear Cache Query	--help
+linear	scripts/commands/auth-check.sh	Auth + target preflight	--help
+linear	scripts/commands/session-status.sh	Session Status	--help
+linear	scripts/commands/teams.sh	Team Operations	--help
+linear	scripts/commands/users.sh	User Operations	--help
+linear	scripts/commands/statuses.sh	Workflow State Operations	--help
+linear	scripts/commands/documents.sh	Document Operations	--help
+linear	scripts/commands/project-labels.sh	Project Label Operations	--help
+linear	scripts/commands/comments.sh	Comment Operations	create KEN-1 --body --help	command,environment
 linear	scripts/linear.sh	Linear GraphQL API CLI	--help
 linear	scripts/linear.sh	Issue Operations	issues --help
+linear	scripts/linear.sh	Project Operations	projects --help
+linear	scripts/linear.sh	Cycle Operations	cycles --help
+linear	scripts/linear.sh	Label Operations	labels --help
+linear	scripts/linear.sh	Comment Operations	comments --help
+linear	scripts/linear.sh	Project Milestone Operations	milestones --help
+linear	scripts/linear.sh	Initiative Operations	initiatives --help
+linear	scripts/linear.sh	Linear Cache Sync	sync --help
+linear	scripts/linear.sh	Linear Cache Query	cache --help
+linear	scripts/linear.sh	Auth + target preflight	auth-check --help
+linear	scripts/linear.sh	Session Status	session-status --help
+linear	scripts/linear.sh	Team Operations	teams --help
+linear	scripts/linear.sh	User Operations	users --help
+linear	scripts/linear.sh	Workflow State Operations	statuses --help
+linear	scripts/linear.sh	Document Operations	documents --help
+linear	scripts/linear.sh	Project Label Operations	project-labels --help
+linear	scripts/linear.sh	Comment Operations	comments create KEN-1 --body --help	command,environment
 orch	scripts/approval-wait	Usage: approval-wait	--help
 orch	scripts/approval-wait	Usage: approval-wait	-h
 orch	scripts/approval-wait	Usage: approval-wait	help
