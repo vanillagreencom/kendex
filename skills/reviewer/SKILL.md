@@ -37,7 +37,7 @@ Shared contract for every review specialist; each agent's domain and probes live
 - **A claim needs the line that makes it true.** For every sentence the diff adds to a `--help`, SKILL.md, CHANGELOG entry, comment, or diagnostic that states an order, a source set, an exit code, or a guarantee, find the code that makes it true. None found is a blocker; the claim is the defect, not the code.
 - For Markdown findings, cite [code-quality § Comments and Prose](../code-quality/SKILL.md#comments-and-prose); never restate its rules.
 - Fewer high-conviction findings beat lists of nits.
-- A reviewer deletes every probe it wrote under the tracked tree and returns only when `git status --porcelain` is empty.
+- A reviewer deletes every probe it wrote and leaves the tree exactly as it found it.
 - Project decisions and architecture docs outrank generic heuristics. Do not contradict or re-litigate the decisions the delegation lists.
 - Do not re-verify what deterministic gates already enforce (preflight, size-ratchet, project lint/CI); cite gate output instead of re-deriving it.
 - `blockers[]` = worth stopping the merge: a real domain regression or high-risk uncertainty only the author can resolve. `suggestions[]` = actionable now (`fix`) or worth tracking (`issue`). Cosmetic items belong in neither. `pass` means your domain has no verified blocker in scope.
