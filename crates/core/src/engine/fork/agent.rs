@@ -195,10 +195,28 @@ fn source_form(
 fn prose(body: &str, wrapper: Option<&(String, String)>) -> String {
     let mut kept = body;
     if let Some((before, after)) = wrapper {
+        // The renderer always writes LF and the file is whatever the
+        // person's editor saved, so each edge is compared in the
+        // document's own convention. The slice still comes off the
+        // original text, which is what keeps their endings.
+        let as_saved = |edge: &String| match crlf(body) {
+            true => edge.replace('\n', "\r\n"),
+            false => edge.clone(),
+        };
+        let (before, after) = (as_saved(before), as_saved(after));
         kept = kept.strip_prefix(before.as_str()).unwrap_or(kept);
         kept = kept.strip_suffix(after.as_str()).unwrap_or(kept);
     }
     format!("{}\n", kept.trim_start_matches('\n').trim_end())
+}
+
+/// Whether this document ends its lines CRLF, read off the first line
+/// terminator in it. A file an editor rewrote ends every line the one
+/// way; one that mixes them matches no edge and nothing comes off, which
+/// is the same answer a document nobody can read whole gets.
+fn crlf(body: &str) -> bool {
+    body.find('\n')
+        .is_some_and(|at| body.as_bytes()[..at].last() == Some(&b'\r'))
 }
 
 struct Around<'a> {

@@ -155,3 +155,65 @@ fn a_banner_line_the_body_spells_as_an_example_is_kept() {
         "{text}"
     );
 }
+
+/// A rendering an editor saved with CRLF endings is still that rendering.
+/// The wrapper comes off, so nothing it wrote stands twice after the next
+/// render, and the lines the person kept still end the way they saved
+/// them — the half that proves the cut came off their own text.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_crlf_rendering_forks_with_its_wrapper_off_and_its_endings_kept() {
+    let w = world();
+    write_agent(&w.upstream, "rev", "Upstream body.\n\nSecond line.");
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[agent-launch-instructions]\nrev = \"Read the brief first.\"\n\n[agent-additional-instructions]\nrev = \"Say what you changed.\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    for (section, count) in [
+        ("## Launch Instructions", 1),
+        ("## Additional Instructions", 1),
+    ] {
+        assert_eq!(times(&text, section), count, "{section}: {text}");
+    }
+    assert_eq!(banners(&text), 1, "{text}");
+    // What an editor that rewrites line endings leaves behind: every one
+    // of them, frontmatter and body alike.
+    let crlf = text
+        .replace("Upstream body.", "My body.")
+        .replace('\n', "\r\n");
+    fs::write(&file, &crlf).unwrap();
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert_eq!(
+        banners(&source),
+        0,
+        "the wrapper has to come off a CRLF rendering too: {source:?}"
+    );
+    for section in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&source, section), 0, "{section}: {source:?}");
+    }
+    assert!(
+        source.contains("My body.\r\n"),
+        "the kept line keeps the ending it was saved with: {source:?}"
+    );
+
+    let after = fs::read_to_string(&file).unwrap();
+    assert_eq!(banners(&after), 1, "{after}");
+    for section in ["## Launch Instructions", "## Additional Instructions"] {
+        assert_eq!(times(&after, section), 1, "{section}: {after}");
+    }
+}
