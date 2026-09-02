@@ -18,7 +18,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import { piGlobalRoot } from "../scripts/pi-root.js";
+import { piGlobalRoot, piProjectRoot } from "../scripts/pi-root.js";
 
 import { installPiActivityBridgePublisher } from "./activity-broker.js";
 import { resolveSessionId } from "./child-session-id.js";
@@ -150,16 +150,9 @@ function expandHome(input: string): string {
 	return input;
 }
 
-function projectSettingsPath(cwd: string): string {
-	let current = path.resolve(cwd);
-	while (true) {
-		const candidate = path.join(current, ".pi", "settings.json");
-		if (fs.existsSync(candidate)) return candidate;
-		if (fs.existsSync(path.join(current, ".pi")) || fs.existsSync(path.join(current, ".git")) || fs.existsSync(path.join(current, ".kendex-lock.json"))) return candidate;
-		const parent = path.dirname(current);
-		if (parent === current) return path.join(path.resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+function projectSettingsPath(cwd: string): string | undefined {
+	const root = piProjectRoot(cwd);
+	return root ? path.join(root, ".pi", "settings.json") : undefined;
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -187,7 +180,8 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	}
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	const settingsPath = projectSettingsPath(ctx.cwd);
+	if (settingsPath) registry.projectSettings.set(settingsPath, trusted);
 }
 
 function projectSettingsTrusted(settingsPath: string): boolean {
@@ -198,7 +192,7 @@ function piSettingsPaths(cwd = process.cwd()): string[] {
 	const userDir = piGlobalRoot();
 	const user = path.join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
-	return projectSettingsTrusted(project) ? [user, project] : [user];
+	return project && projectSettingsTrusted(project) ? [user, project] : [user];
 }
 
 function readkendexConfig(cwd?: string): kendexConfig {

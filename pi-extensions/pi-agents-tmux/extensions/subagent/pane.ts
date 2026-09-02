@@ -368,25 +368,25 @@ export function setCurrentTmuxPaneTitle(title: string): void {
 }
 
 function resolveSessionBridgeExtension(cwd?: string): string | undefined {
-	const projectPackagesDir = path.join(path.dirname(projectSettingsPath(cwd ?? process.cwd())), "packages");
+	const settingsPath = projectSettingsPath(cwd ?? process.cwd()), projectPackagesDir = settingsPath ? path.join(path.dirname(settingsPath), "packages") : undefined;
 	const candidates = [
 		process.env.PI_SESSION_BRIDGE_EXTENSION,
 		path.join(piUserDir(), "packages", SESSION_BRIDGE_PACKAGE_ID, "extensions", "session-bridge.ts"),
-		path.join(projectPackagesDir, SESSION_BRIDGE_PACKAGE_ID, "extensions", "session-bridge.ts"),
+		projectPackagesDir ? path.join(projectPackagesDir, SESSION_BRIDGE_PACKAGE_ID, "extensions", "session-bridge.ts") : undefined,
 		path.resolve(cwd ?? process.cwd(), "pi-extensions", "pi-session-bridge", "extensions", "session-bridge.ts"),
 	].filter((candidate): candidate is string => Boolean(candidate));
 	return candidates.find((candidate) => fs.existsSync(candidate));
 }
 
 async function resolvePiBridgeBin(): Promise<string | undefined> {
-	const projectBinDir = path.join(path.dirname(projectSettingsPath(process.cwd())), "bin");
-	const projectPackagesDir = path.join(path.dirname(projectSettingsPath(process.cwd())), "packages");
+	const settingsPath = projectSettingsPath(process.cwd());
+	const projectRoot = settingsPath ? path.dirname(settingsPath) : undefined;
 	const candidates = [
 		process.env.PI_BRIDGE_BIN,
 		path.join(piUserDir(), "bin", "pi-bridge"),
 		path.join(piUserDir(), "packages", SESSION_BRIDGE_PACKAGE_ID, "bin", "pi-bridge.js"),
-		path.join(projectBinDir, "pi-bridge"),
-		path.join(projectPackagesDir, SESSION_BRIDGE_PACKAGE_ID, "bin", "pi-bridge.js"),
+		projectRoot ? path.join(projectRoot, "bin", "pi-bridge") : undefined,
+		projectRoot ? path.join(projectRoot, "packages", SESSION_BRIDGE_PACKAGE_ID, "bin", "pi-bridge.js") : undefined,
 	].filter((candidate): candidate is string => Boolean(candidate));
 	for (const candidate of candidates) {
 		if (fs.existsSync(candidate)) return candidate;

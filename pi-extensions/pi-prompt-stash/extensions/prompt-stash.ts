@@ -6,7 +6,7 @@ import {
 import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { piGlobalRoot } from "./pi-root.js";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 import { frameGlyphs, glyphs } from "./glyphs.js";
 
 const PACKAGE_ID = "@vanillagreen/pi-prompt-stash";
@@ -86,16 +86,9 @@ function migrateLegacyPackageStore(ctx: ExtensionContext): void {
 	}
 }
 
-function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+function projectSettingsPath(cwd: string): string | undefined {
+	const root = piProjectRoot(cwd);
+	return root ? join(root, ".pi", "settings.json") : undefined;
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -123,7 +116,8 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	}
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	const settingsPath = projectSettingsPath(ctx.cwd);
+	if (settingsPath) registry.projectSettings.set(settingsPath, trusted);
 }
 
 function projectSettingsTrusted(settingsPath: string): boolean {
@@ -131,13 +125,14 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 }
 
 function projectSettingsTrustedForCwd(cwd = process.cwd()): boolean {
-	return projectSettingsTrusted(projectSettingsPath(cwd));
+	const path = projectSettingsPath(cwd);
+	return path ? projectSettingsTrusted(path) : false;
 }
 
 function piSettingsPaths(cwd = process.cwd()): string[] {
 	const user = join(piUserDir(), "settings.json");
 	const project = projectSettingsPath(cwd);
-	return projectSettingsTrustedForCwd(cwd) ? [user, project] : [user];
+	return project && projectSettingsTrustedForCwd(cwd) ? [user, project] : [user];
 }
 
 function readkendexConfig(cwd?: string): kendexConfig {
@@ -171,21 +166,8 @@ function settingString(key: string, fallback: string, cwd?: string): string {
 	return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
-function projectRoot(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		if (
-			existsSync(join(current, ".git")) ||
-			existsSync(join(current, ".kendex-lock.json")) ||
-			existsSync(join(current, ".pi")) ||
-			existsSync(join(current, ".agents"))
-		) {
-			return current;
-		}
-		const parent = dirname(current);
-		if (parent === current) return resolve(cwd);
-		current = parent;
-	}
+function projectRoot(cwd: string): string | undefined {
+	return piProjectRoot(cwd);
 }
 
 function configuredStoreFile(ctx: ExtensionContext): string {
@@ -200,12 +182,14 @@ function storePath(ctx: ExtensionContext): string {
 	return join(sessionStoreDir(ctx), configuredStoreFile(ctx));
 }
 
-function legacyProjectStorePath(ctx: ExtensionContext): string {
-	return join(projectRoot(ctx.cwd), ".pi", configuredStoreFile(ctx));
+function legacyProjectStorePath(ctx: ExtensionContext): string | undefined {
+	const root = projectRoot(ctx.cwd);
+	return root ? join(root, ".pi", configuredStoreFile(ctx)) : undefined;
 }
 
 function migrateLegacyProjectStore(ctx: ExtensionContext, nextPath: string): void {
 	const legacyPath = legacyProjectStorePath(ctx);
+	if (!legacyPath) return;
 	if (!existsSync(legacyPath)) return;
 	const legacyItems = loadItems(legacyPath);
 	if (legacyItems.length === 0) return;

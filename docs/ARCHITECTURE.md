@@ -444,9 +444,12 @@ lives in one capability table read by core and UI.
   it loads, so storage sits under `kendex/` and nothing reads or writes a
   registry beside the root — [docs/adapters/pi.md](adapters/pi.md) carries
   the rules in full. The capability row says what the mechanism supports;
-  labels read carrier reality (`pi_ext::carrier`). The carrier reads Pi's exact
-  current project only after Pi trusts it, and reads the generated global-root
-  rule (`pi-extensions/pi-root-policy.mjs`). Pi loads project and global settings both, so a
+  labels read carrier reality (`pi_ext::carrier`). The carrier executes a project
+  guard only at Pi's exact current root after Pi trusts it and finds the
+  protected `.pi/settings.json` companion. An installed ancestor or hook-only
+  root refuses without executing project code. Standalone packages read the
+  generated global-root and home-bounded project-walk rules from
+  `pi-extensions/pi-root-policy.mjs`. Pi loads project and global settings both, so a
   project-installed hook with only a global carrier is still enforced. The
   session-start drift report rides the same
   mechanism: same script, same kill-switch, fire-and-forget into session

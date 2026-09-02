@@ -14,6 +14,7 @@ function updatePatterns(current: string[], pattern: string, enabled: boolean): s
 
 function getTopLevelPattern(skill: SkillEntry, cwd: string): string {
 	const baseDir = skill.scope === "project" ? findProjectPiDir(cwd) : getAgentDir();
+	if (!baseDir) throw new Error("The home directory is not a project skill root.");
 	return relative(baseDir, skill.path);
 }
 

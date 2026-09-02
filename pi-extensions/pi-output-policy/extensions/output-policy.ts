@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { piGlobalRoot } from "./pi-root.js";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-output-policy.installed");
 const CONFIG_ID = "@vanillagreen/pi-output-policy";
@@ -193,11 +193,8 @@ function migrateLegacyPackageArtifacts(ctx: ExtensionContext): void {
 
 function legacyProjectArtifactDirs(cwd: string): string[] {
 	const candidates = [join(cwd, ".pi", "artifacts", "output-policy")];
-	try {
-		candidates.push(join(dirname(projectSettingsPath(cwd)), "artifacts", "output-policy"));
-	} catch {
-		// Ignore project-root probing failures; the direct cwd candidate is enough.
-	}
+	const settingsPath = projectSettingsPath(cwd);
+	if (settingsPath) candidates.push(join(dirname(settingsPath), "artifacts", "output-policy"));
 	return [...new Set(candidates.map((candidate) => resolve(candidate)))];
 }
 
@@ -221,16 +218,9 @@ function migrateLegacyProjectArtifacts(ctx: ExtensionContext): void {
 	}
 }
 
-function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+function projectSettingsPath(cwd: string): string | undefined {
+	const root = piProjectRoot(cwd);
+	return root ? join(root, ".pi", "settings.json") : undefined;
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -258,7 +248,8 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	}
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	const settingsPath = projectSettingsPath(ctx.cwd);
+	if (settingsPath) registry.projectSettings.set(settingsPath, trusted);
 }
 
 function projectSettingsTrusted(settingsPath: string): boolean {
@@ -266,13 +257,14 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 }
 
 function projectSettingsTrustedForCwd(cwd = process.cwd()): boolean {
-	return projectSettingsTrusted(projectSettingsPath(cwd));
+	const path = projectSettingsPath(cwd);
+	return path ? projectSettingsTrusted(path) : false;
 }
 
 function piSettingsPaths(cwd = process.cwd()): string[] {
 	const user = join(piUserDir(), "settings.json");
 	const project = projectSettingsPath(cwd);
-	return projectSettingsTrustedForCwd(cwd) ? [user, project] : [user];
+	return project && projectSettingsTrustedForCwd(cwd) ? [user, project] : [user];
 }
 
 function readkendexConfig(cwd?: string): kendexConfig {

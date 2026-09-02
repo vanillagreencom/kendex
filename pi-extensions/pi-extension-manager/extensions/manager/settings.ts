@@ -62,13 +62,14 @@ function isProjectTrusted(ctx: ExtensionContext): boolean {
 
 export function loadSettingsFiles(ctx: ExtensionContext): SettingsFile[] {
 	const projectBase = findProjectPiDir(ctx.cwd);
+	const projectPathBase = projectBase ?? join(ctx.cwd, ".pi");
 	const userBase = userPiDir();
 	const user = readJsonObject(join(userBase, "settings.json"));
-	const projectTrusted = isProjectTrusted(ctx);
-	const project = projectTrusted ? readJsonObject(join(projectBase, "settings.json")) : { json: {}, exists: false };
+	const projectTrusted = projectBase !== undefined && isProjectTrusted(ctx);
+	const project = projectTrusted ? readJsonObject(join(projectPathBase, "settings.json")) : { json: {}, exists: false };
 	return [
 		{ scope: "user", baseDir: userBase, path: join(userBase, "settings.json"), json: user.json, exists: user.exists },
-		{ scope: "project", baseDir: projectBase, path: join(projectBase, "settings.json"), json: project.json, exists: project.exists, projectTrusted },
+		{ scope: "project", baseDir: projectPathBase, path: join(projectPathBase, "settings.json"), json: project.json, exists: project.exists, projectTrusted },
 	];
 }
 

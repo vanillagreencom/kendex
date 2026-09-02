@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { piGlobalRoot } from "../../scripts/pi-root.js";
+import { piGlobalRoot, piProjectRoot } from "../../scripts/pi-root.js";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./agents.js";
 import { safeFileName } from "./names.js";
@@ -50,16 +50,9 @@ export function runtimeDirForContext(ctx: ExtensionContext): string {
 	return sessionRuntimeDir(runtimeSessionId(ctx));
 }
 
-export function projectSettingsPath(cwd: string): string {
-	let current = path.resolve(cwd);
-	while (true) {
-		const candidate = path.join(current, ".pi", "settings.json");
-		if (fs.existsSync(candidate)) return candidate;
-		if (fs.existsSync(path.join(current, ".pi")) || fs.existsSync(path.join(current, ".git")) || fs.existsSync(path.join(current, ".kendex-lock.json"))) return candidate;
-		const parent = path.dirname(current);
-		if (parent === current) return path.join(path.resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+export function projectSettingsPath(cwd: string): string | undefined {
+	const root = piProjectRoot(cwd);
+	return root ? path.join(root, ".pi", "settings.json") : undefined;
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -87,7 +80,8 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	}
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	const settingsPath = projectSettingsPath(ctx.cwd);
+	if (settingsPath) registry.projectSettings.set(settingsPath, trusted);
 }
 
 function projectSettingsTrusted(settingsPath: string): boolean {
@@ -95,13 +89,14 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 }
 
 export function projectSettingsTrustedForCwd(cwd = process.cwd()): boolean {
-	return projectSettingsTrusted(projectSettingsPath(cwd));
+	const path = projectSettingsPath(cwd);
+	return path ? projectSettingsTrusted(path) : false;
 }
 
 export function piSettingsPaths(cwd = process.cwd()): string[] {
 	const user = path.join(piUserDir(), "settings.json");
 	const project = projectSettingsPath(cwd);
-	return projectSettingsTrustedForCwd(cwd) ? [user, project] : [user];
+	return project && projectSettingsTrustedForCwd(cwd) ? [user, project] : [user];
 }
 
 export function readkendexConfig(cwd?: string): kendexConfig {

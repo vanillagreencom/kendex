@@ -118,7 +118,7 @@ const result = await handler(
 	{ toolName: "bash", input: { command: "git commit -m x" } },
 	{ cwd: ${JSON.stringify(workspace)}, isProjectTrusted: () => ${trusted} },
 );
-if (result !== undefined) process.exit(1);
+process.stdout.write(JSON.stringify(result ?? null));
 `;
 	return spawnSync(process.execPath, ["-e", program], {
 		cwd: workspace,
@@ -128,7 +128,7 @@ if (result !== undefined) process.exit(1);
 }
 
 describe("pi-hooks root selection", () => {
-	test("isolated roots never authorize an ancestor, an untrusted project, or a relative global override", () => {
+	test("ancestor and untrusted project guards refuse without executing, while a relative global override stays absent", () => {
 		const home = mkdtempSync(join(tmpdir(), "pi-hooks-isolated-home-"));
 		const outer = mkdtempSync(join(tmpdir(), "pi-hooks-outer-"));
 		const nested = join(outer, "nested");
@@ -140,13 +140,58 @@ describe("pi-hooks root selection", () => {
 			renderStub(outer, "pre-commit-check", { exitCode: 2, stderr: "must not run", log: logs[0]! });
 			renderStub(untrusted, "pre-commit-check", { exitCode: 2, stderr: "must not run", log: logs[1]! });
 			renderUserStub(join(relative, "relative", "agent"), "pre-commit-check", { exitCode: 2, stderr: "must not run", log: logs[2]! });
-			for (const [workspace, trusted, log] of [[nested, true, logs[0]!], [untrusted, false, logs[1]!], [relative, false, logs[2]!]] as const) {
+			for (const [workspace, trusted, log, reason] of [
+				[nested, true, logs[0]!, "cannot confirm trust for that exact project"],
+				[untrusted, false, logs[1]!, "does not report that exact project as trusted"],
+				[relative, false, logs[2]!, undefined],
+			] as const) {
 				const child = runHandlerChild(home, workspace, "relative/agent", trusted);
 				expect(child.status, child.stderr).toBe(0);
+				const verdict = JSON.parse(child.stdout) as { block?: boolean; reason?: string } | null;
+				if (reason) {
+					expect(verdict?.block).toBe(true);
+					expect(verdict?.reason).toContain(reason);
+				} else expect(verdict).toBeNull();
 				expect(readLog(log)).toBe("");
 			}
 		} finally {
 			for (const dir of [home, outer, untrusted, relative]) rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("absolute and whitespace-default global roots execute the user's hook", () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-hooks-global-home-"));
+		const workspace = mkdtempSync(join(tmpdir(), "pi-hooks-global-workspace-"));
+		const absolute = mkdtempSync(join(tmpdir(), "pi-hooks-global-absolute-"));
+		const cases = [[absolute, absolute], ["   ", join(home, ".pi", "agent")]] as const;
+		try {
+			for (const [agentDir, root] of cases) {
+				const log = join(root, "payload.log");
+				renderUserStub(root, "pre-commit-check", { exitCode: 0, log });
+				const child = runHandlerChild(home, workspace, agentDir, false);
+				expect(child.status, child.stderr).toBe(0);
+				expect(JSON.parse(child.stdout)).toBeNull();
+				expect(readLog(log)).toContain("git commit -m x");
+			}
+		} finally {
+			for (const dir of [home, workspace, absolute]) rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("a hook-only checkout refuses all project guards before spawn", async () => {
+		for (const name of ["block-bare-cd", "block-repo-copy", "pre-commit-check"]) {
+			const project = mkdtempSync(join(tmpdir(), "pi-hooks-hook-only-"));
+			const log = join(project, "payload.log");
+			try {
+				renderStub(project, name, { exitCode: 0, log });
+				const handler = installToolCallHandler();
+				const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
+				expect(result.block).toBe(true);
+				expect(result.reason).toContain("has no .pi/settings.json trust companion");
+				expect(readLog(log)).toBe("");
+			} finally {
+				rmSync(project, { recursive: true, force: true });
+			}
 		}
 	});
 });

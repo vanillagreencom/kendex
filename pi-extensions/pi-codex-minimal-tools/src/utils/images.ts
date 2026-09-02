@@ -1,8 +1,8 @@
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { extname, isAbsolute, join, resolve } from "node:path";
 import type { CodexMinimalToolsSettings } from "../settings.js";
+import { piProjectRoot } from "../pi-root.js";
 
 export interface SavedImageInfo {
 	path: string;
@@ -12,19 +12,16 @@ export interface SavedImageInfo {
 	bytes: number;
 }
 
-export function projectRoot(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		if (existsSync(join(current, ".git")) || existsSync(join(current, ".pi")) || existsSync(join(current, ".kendex-lock.json"))) return current;
-		const parent = dirname(current);
-		if (parent === current) return resolve(cwd);
-		current = parent;
-	}
+export function projectRoot(cwd: string): string | undefined {
+	return piProjectRoot(cwd);
 }
 
 export function imageOutputDir(cwd: string, settings: Pick<CodexMinimalToolsSettings, "imageOutputDir">): string {
 	const configured = settings.imageOutputDir || ".pi/openai-codex-images";
-	return isAbsolute(configured) ? resolve(configured) : resolve(projectRoot(cwd), configured);
+	if (isAbsolute(configured)) return resolve(configured);
+	const root = projectRoot(cwd);
+	if (!root) throw new Error("The home directory is not a project image root.");
+	return resolve(root, configured);
 }
 
 export function imageFormatToMime(format: string | undefined): string {

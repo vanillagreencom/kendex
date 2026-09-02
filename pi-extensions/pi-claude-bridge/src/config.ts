@@ -7,8 +7,9 @@
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { dirname, join, resolve, sep } from "path";
+import { dirname, join, sep } from "path";
 import { debug } from "./debug.js";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
 
@@ -89,10 +90,6 @@ export interface Config {
 
 type SettingsRecord = Record<string, unknown>;
 
-// pi-root-policy:claude begin
-function piGlobalRoot() { const home=homedir(), raw=process.env.PI_CODING_AGENT_DIR?.trim(), path=raw === "~" ? home : raw?.startsWith("~/") ? join(home, raw.slice(2)) : raw, absolute=process.platform === "win32" ? (/^[A-Za-z]:[\\/]/.test(path ?? "") || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/.test(path ?? "")) : path?.startsWith("/"); return absolute ? resolve(path) : resolve(home, ".pi", "agent"); }
-// pi-root-policy:claude end
-
 /**
  * The Pi agent config dir: an absolute `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
  * Every bridge default that used to hardcode `~/.pi/agent` routes through this
@@ -131,16 +128,9 @@ function mergeDeep<T extends SettingsRecord>(target: T, source: SettingsRecord):
 	return target;
 }
 
-function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+function projectSettingsPath(cwd: string): string | undefined {
+	const root = piProjectRoot(cwd);
+	return root ? join(root, ".pi", "settings.json") : undefined;
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -172,7 +162,8 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	}
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	const settingsPath = projectSettingsPath(ctx.cwd);
+	if (settingsPath) registry.projectSettings.set(settingsPath, trusted);
 }
 
 function projectSettingsTrusted(settingsPath: string): boolean {
@@ -187,7 +178,7 @@ function settingsPaths(cwd: string): string[] {
 	// must not be consulted even at user scope.
 	if (isolatedFromEnv()) return [];
 	const project = projectSettingsPath(cwd);
-	return projectSettingsTrusted(project) ? [user, project] : [user];
+	return project && projectSettingsTrusted(project) ? [user, project] : [user];
 }
 
 export function tryParseJson(path: string): Partial<Config> {
@@ -383,7 +374,7 @@ function legacyLayers(cwd: string): LegacyLayer[] {
 	const layers: LegacyLayer[] = [{ path: globalPath, config: legacyFileConfig(globalPath) }];
 	if (isolatedFromEnv()) return layers;
 	const projectSettings = projectSettingsPath(cwd);
-	if (!projectSettingsTrusted(projectSettings)) return layers;
+	if (!projectSettings || !projectSettingsTrusted(projectSettings)) return layers;
 	const projectPath = join(dirname(projectSettings), "claude-bridge.json");
 	// Project trust covers ordinary options only; the connector keys stay
 	// user-scope/env (see USER_SCOPE_ONLY_PROVIDER_KEYS).

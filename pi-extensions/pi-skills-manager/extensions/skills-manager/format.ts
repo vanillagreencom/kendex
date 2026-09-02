@@ -15,7 +15,10 @@ export function normalizeSkillName(name: string): string {
 }
 
 export function getTargetDir(ctx: ExtensionContext, location: SkillLocation, skillName: string): string {
-	return location === "global" ? join(getAgentDir(), "skills", skillName) : join(findProjectPiDir(ctx.cwd), "skills", skillName);
+	if (location === "global") return join(getAgentDir(), "skills", skillName);
+	const project = findProjectPiDir(ctx.cwd);
+	if (!project) throw new Error("The home directory is not a project skill root.");
+	return join(project, "skills", skillName);
 }
 
 function formatScalar(value: unknown): string {

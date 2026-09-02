@@ -186,6 +186,10 @@ test("vendored append-system script installs and removes from Pi npm scope", () 
 		join(packageDir, "scripts", "append-system.mjs"),
 		readFileSync(join(import.meta.dir, "..", "..", "pi-session-bridge", "scripts", "append-system.mjs"), "utf8"),
 	);
+	writeFileSync(
+		join(packageDir, "scripts", "pi-root.js"),
+		readFileSync(join(import.meta.dir, "..", "..", "pi-session-bridge", "scripts", "pi-root.js"), "utf8"),
+	);
 
 	const script = join(packageDir, "scripts", "append-system.mjs");
 	const childEnv = { ...process.env, PI_CODING_AGENT_DIR: userPi } as Record<string, string>;

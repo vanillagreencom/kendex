@@ -32,7 +32,8 @@ function getOrCreateRecord(parent: Record<string, unknown>, key: string): Record
 
 function piSettingsFiles(cwd = process.cwd()): SettingsFile[] {
 	const user = readJsonObject(join(userPiDir(), "settings.json"));
-	return projectSettingsTrusted(cwd) ? [user, readJsonObject(projectSettingsPath(cwd))] : [user];
+	const project = projectSettingsPath(cwd);
+	return project && projectSettingsTrusted(cwd) ? [user, readJsonObject(project)] : [user];
 }
 
 function packageConfigFromFile(file: SettingsFile): Record<string, unknown> | undefined {
@@ -87,6 +88,7 @@ export function updatePackageConfig(cwd: string, updates: Record<string, unknown
 	const firstKey = Object.keys(updates)[0] ?? "enabled";
 	const targetScope = scope ?? writeScopeForConfigKey(cwd, firstKey);
 	const path = targetScope === "global" ? join(userPiDir(), "settings.json") : projectSettingsPath(cwd);
+	if (!path) throw new Error("The home directory is not a project settings root.");
 	const file = readJsonObject(path);
 	const kendex = getOrCreateRecord(file.json, "kendex");
 	const extensionManager = getOrCreateRecord(kendex, "extensionManager");

@@ -96,11 +96,8 @@ export function taskArtifactPaths(runtimeRoot: string, record: Pick<PaneTaskReco
 
 export function legacyProjectRuntimeDirs(cwd: string): string[] {
 	const candidates = [path.join(cwd, ".pi", "subagent-runtime")];
-	try {
-		candidates.push(path.join(path.dirname(projectSettingsPath(cwd)), "subagent-runtime"));
-	} catch {
-		// Ignore project-root probing failures; the direct cwd candidate is enough.
-	}
+	const settingsPath = projectSettingsPath(cwd);
+	if (settingsPath) candidates.push(path.join(path.dirname(settingsPath), "subagent-runtime"));
 	return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
 }
 

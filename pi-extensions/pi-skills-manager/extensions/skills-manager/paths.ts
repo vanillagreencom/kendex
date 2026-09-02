@@ -1,7 +1,6 @@
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
-import { piGlobalRoot } from "./pi-root.js";
+import { join, resolve, sep } from "node:path";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionInstallScope } from "./types.js";
@@ -10,20 +9,14 @@ export function userPiDir(): string {
 	return piGlobalRoot();
 }
 
-export function findProjectPiDir(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi");
-		current = parent;
-	}
+export function findProjectPiDir(cwd: string): string | undefined {
+	const root = piProjectRoot(cwd);
+	return root ? join(root, ".pi") : undefined;
 }
 
-export function projectSettingsPath(cwd: string): string {
-	return join(findProjectPiDir(cwd), "settings.json");
+export function projectSettingsPath(cwd: string): string | undefined {
+	const root = piProjectRoot(cwd);
+	return root ? join(root, ".pi", "settings.json") : undefined;
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -51,11 +44,13 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	}
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	const settingsPath = projectSettingsPath(ctx.cwd);
+	if (settingsPath) registry.projectSettings.set(settingsPath, trusted);
 }
 
 export function projectSettingsTrusted(cwd = process.cwd()): boolean {
-	return projectTrustRegistry().projectSettings?.get(projectSettingsPath(cwd)) === true;
+	const settingsPath = projectSettingsPath(cwd);
+	return settingsPath ? projectTrustRegistry().projectSettings?.get(settingsPath) === true : false;
 }
 
 function normalizeDir(path: string): string {
@@ -70,7 +65,8 @@ function isWithin(path: string, parent: string): boolean {
 export function detectExtensionInstallScope(cwd: string): ExtensionInstallScope {
 	try {
 		const extensionFile = fileURLToPath(import.meta.url);
-		if (isWithin(extensionFile, findProjectPiDir(cwd))) return "project";
+		const project = findProjectPiDir(cwd);
+		if (project && isWithin(extensionFile, project)) return "project";
 		if (isWithin(extensionFile, getAgentDir())) return "global";
 	} catch {
 		// Fall through to global for unusual loaders.

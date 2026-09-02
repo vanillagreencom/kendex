@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { piGlobalRoot } from "./pi-root.js";
+import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-codex-minimal-tools";
 
@@ -52,16 +52,9 @@ export function piUserDir(): string {
 	return piGlobalRoot();
 }
 
-export function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+export function projectSettingsPath(cwd: string): string | undefined {
+	const root = piProjectRoot(cwd);
+	return root ? join(root, ".pi", "settings.json") : undefined;
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -89,7 +82,8 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	}
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	const settingsPath = projectSettingsPath(ctx.cwd);
+	if (settingsPath) registry.projectSettings.set(settingsPath, trusted);
 }
 
 function projectSettingsTrusted(settingsPath: string): boolean {
@@ -100,7 +94,7 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 export function piSettingsPaths(cwd = process.cwd()): string[] {
 	const user = join(piUserDir(), "settings.json");
 	const project = projectSettingsPath(cwd);
-	return projectSettingsTrusted(project) ? [user, project] : [user];
+	return project && projectSettingsTrusted(project) ? [user, project] : [user];
 }
 
 function asRecord(value: unknown): SettingsRecord | undefined {

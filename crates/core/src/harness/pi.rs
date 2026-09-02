@@ -30,6 +30,7 @@ fn pi_root_is_absolute_for(value: &str, windows: bool) -> bool {
     let mut parts = rest.split(['\\', '/']);
     matches!((parts.next(), parts.next()), (Some(server), Some(share)) if !server.is_empty() && !share.is_empty())
 }
+
 fn pi_global_root(env: &Env) -> PathBuf {
     let default = || env.home.join(".pi/agent");
     let Some(dir) = env
@@ -40,12 +41,13 @@ fn pi_global_root(env: &Env) -> PathBuf {
         return default();
     };
     let root = crate::paths::expand_tilde(&env.home, dir);
-    if pi_root_is_absolute_for(&root.to_string_lossy(), cfg!(windows)) {
+    if pi_root_is_absolute_for(&root.to_string_lossy(), env.is_windows()) {
         root
     } else {
         default()
     }
 }
+
 #[cfg(test)]
 const PI_ROOT_ABSOLUTE_CASES: &[(&str, bool, bool)] = &[
     ("/root", true, false),
@@ -219,10 +221,28 @@ mod tests {
     }
 
     #[test]
-    fn global_root_absoluteness_is_testable_for_both_platform_rules() {
-        for (value, posix, windows) in PI_ROOT_ABSOLUTE_CASES {
-            assert_eq!(pi_root_is_absolute_for(value, false), *posix, "{value}");
-            assert_eq!(pi_root_is_absolute_for(value, true), *windows, "{value}");
+    fn global_root_uses_the_environment_platform_rule() {
+        let posix_env = Env::fake("/home/pat", FakeOs::Linux);
+        let windows_env = Env::fake(r"C:\Users\pat", FakeOs::Windows);
+        for (value, posix_absolute, windows_absolute) in PI_ROOT_ABSOLUTE_CASES {
+            assert_eq!(
+                Pi.default_global_root(&posix_env.clone().with_var("PI_CODING_AGENT_DIR", value)),
+                if *posix_absolute {
+                    PathBuf::from(value)
+                } else {
+                    posix_env.home.join(".pi/agent")
+                },
+                "POSIX {value}"
+            );
+            assert_eq!(
+                Pi.default_global_root(&windows_env.clone().with_var("PI_CODING_AGENT_DIR", value)),
+                if *windows_absolute {
+                    PathBuf::from(value)
+                } else {
+                    windows_env.home.join(".pi/agent")
+                },
+                "Windows {value}"
+            );
         }
     }
 

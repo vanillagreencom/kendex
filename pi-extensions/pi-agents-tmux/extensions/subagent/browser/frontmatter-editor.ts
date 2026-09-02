@@ -11,6 +11,7 @@ import type { AgentConfig } from "../agents.js";
 import { ansiGreen, ansiYellow, simpleFrame } from "../format.js";
 import { AGENT_EDIT_CONFIRM_WIDTH, type AgentFrontmatterEdit } from "../types.js";
 import { compactAgentPath } from "./shared.js";
+import { piProjectRoot } from "../../../scripts/pi-root.js";
 
 function stripYamlQuotes(value: string): string {
 	const trimmed = value.trim();
@@ -104,31 +105,18 @@ function iskendexManagedAgentFile(agent: AgentConfig): boolean {
 	}
 }
 
-function projectRootForAgentFile(agent: AgentConfig, cwd: string): string {
+function projectRootForAgentFile(agent: AgentConfig, cwd: string): string | undefined {
 	const normalized = path.resolve(agent.filePath);
 	for (const marker of [`${path.sep}.pi${path.sep}agents${path.sep}`, `${path.sep}.claude${path.sep}agents${path.sep}`]) {
 		const idx = normalized.indexOf(marker);
 		if (idx >= 0) return normalized.slice(0, idx);
 	}
-	let current = path.resolve(cwd);
-	while (true) {
-		if (fs.existsSync(path.join(current, "kendex.toml")) || fs.existsSync(path.join(current, ".kendex-lock.json")) || fs.existsSync(path.join(current, ".git"))) return current;
-		const parent = path.dirname(current);
-		if (parent === current) return path.resolve(cwd);
-		current = parent;
-	}
+	return piProjectRoot(cwd, ["kendex.toml", ".kendex-lock.json", ".git"]);
 }
 
 function kendexTomlPathForAgent(agent: AgentConfig, cwd: string): string | undefined {
-	let current = projectRootForAgentFile(agent, cwd);
-	while (true) {
-		const candidate = path.join(current, "kendex.toml");
-		if (fs.existsSync(candidate)) return candidate;
-		if (fs.existsSync(path.join(current, ".kendex-lock.json")) || fs.existsSync(path.join(current, ".git"))) return candidate;
-		const parent = path.dirname(current);
-		if (parent === current) return undefined;
-		current = parent;
-	}
+	const root = projectRootForAgentFile(agent, cwd);
+	return root ? path.join(root, "kendex.toml") : undefined;
 }
 
 function tomlString(value: string): string {

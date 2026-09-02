@@ -7,7 +7,7 @@ import { join, posix, win32 } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { ABSOLUTE_CASES, checkOutputs, OUTPUTS } from "./pi-root-policy.mjs";
+import { ABSOLUTE_CASES, checkOutputs, checkRustBlock, OUTPUTS, ROOT_CASES, RUST_BLOCK, writeRustBlock } from "./pi-root-policy.mjs";
 
 const root = new URL(".", import.meta.url).pathname;
 
@@ -157,6 +157,36 @@ test("generated Pi global-root helpers share one cross-platform contract", async
 			assert.equal(piGlobalRoot(value, "/home/pat", "posix"), posixAbsolute ? posix.resolve(value) : "/home/pat/.pi/agent", `${output}: posix ${value}`);
 			assert.equal(piGlobalRoot(value, "C:\\Users\\pat", "win32"), windowsAbsolute ? win32.resolve(value) : "C:\\Users\\pat\\.pi\\agent", `${output}: win32 ${value}`);
 		}
+		for (const [value, posixExpected, windowsExpected] of ROOT_CASES) {
+			assert.equal(piGlobalRoot(value, "/home/pat", "posix"), posixExpected, `${output}: posix ${JSON.stringify(value)}`);
+			assert.equal(piGlobalRoot(value, "C:\\Users\\pat", "win32"), windowsExpected, `${output}: win32 ${JSON.stringify(value)}`);
+		}
+	}
+});
+
+test("generated block checks fail closed on missing markers and changed literals", () => {
+	assert.equal(checkRustBlock("fn pi_global_root() {}", "missing.rs"), false);
+	assert.throws(() => writeRustBlock("fn pi_global_root() {}", "missing.rs"), /expected one generated Rust block/);
+	assert.equal(checkRustBlock(RUST_BLOCK.replace('"relative/root"', '"relative/ROOT"'), "drift.rs"), false);
+});
+
+test("project-root helpers stop before a home-level .pi marker", async () => {
+	const home = mkdtempSync(join(tmpdir(), "pi-project-home-"));
+	const cwd = join(home, "work", "unmarked");
+	mkdirSync(join(home, ".pi"), { recursive: true });
+	mkdirSync(cwd, { recursive: true });
+	try {
+		for (const [output, markers] of [
+			["pi-web-tools/scripts/pi-root.js", [".pi", ".git", ".kendex-lock.json"]],
+			["pi-prompt-stash/extensions/pi-root.js", [".pi", ".git", ".kendex-lock.json", ".agents"]],
+		]) {
+			const { PI_PROJECT_MARKERS, piProjectRoot } = await import(`${pathToFileURL(join(root, output)).href}?project-contract`);
+			assert.deepEqual(PI_PROJECT_MARKERS, markers, `${output}: package marker data`);
+			assert.equal(piProjectRoot(cwd, undefined, home), cwd, output);
+			assert.equal(piProjectRoot(home, undefined, home), undefined, `${output}: home is not a project root`);
+		}
+	} finally {
+		rmSync(home, { recursive: true, force: true });
 	}
 });
 

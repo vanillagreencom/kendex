@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import { piGlobalRoot } from "../scripts/pi-root.js";
+import { isAbsolute, join, resolve } from "node:path";
+import { piGlobalRoot, piProjectRoot } from "../scripts/pi-root.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-web-tools";
 export const WEB_PROVIDERS = ["auto", "exa", "perplexity", "gemini", "exa-mcp", "duckduckgo", "openai-native"] as const;
@@ -67,16 +67,9 @@ export function piUserDir(): string {
 	return piGlobalRoot();
 }
 
-export function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
+export function projectSettingsPath(cwd: string): string | undefined {
+	const root = piProjectRoot(cwd);
+	return root ? join(root, ".pi", "settings.json") : undefined;
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -104,7 +97,8 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	}
 	const registry = projectTrustRegistry();
 	if (!registry.projectSettings) registry.projectSettings = new Map();
-	registry.projectSettings.set(projectSettingsPath(ctx.cwd), trusted);
+	const settingsPath = projectSettingsPath(ctx.cwd);
+	if (settingsPath) registry.projectSettings.set(settingsPath, trusted);
 }
 
 function projectSettingsTrusted(settingsPath: string): boolean {
@@ -112,13 +106,14 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 }
 
 export function projectSettingsTrustedForCwd(cwd = process.cwd()): boolean {
-	return projectSettingsTrusted(projectSettingsPath(cwd));
+	const path = projectSettingsPath(cwd);
+	return path ? projectSettingsTrusted(path) : false;
 }
 
 export function piSettingsPaths(cwd = process.cwd()): string[] {
 	const user = join(piUserDir(), "settings.json");
 	const project = projectSettingsPath(cwd);
-	return projectSettingsTrustedForCwd(cwd) ? [user, project] : [user];
+	return project && projectSettingsTrustedForCwd(cwd) ? [user, project] : [user];
 }
 
 function asRecord(value: unknown): SettingsRecord | undefined {
@@ -237,13 +232,8 @@ function parseEnvFile(path: string): SettingsRecord {
 }
 
 function projectEnvFiles(cwd: string): string[] {
-	let current = resolve(cwd);
-	while (true) {
-		if (existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json")) || existsSync(join(current, ".pi"))) return [join(current, ".env"), join(current, ".env.local")];
-		const parent = dirname(current);
-		if (parent === current) return [join(resolve(cwd), ".env"), join(resolve(cwd), ".env.local")];
-		current = parent;
-	}
+	const root = piProjectRoot(cwd);
+	return root ? [join(root, ".env"), join(root, ".env.local")] : [];
 }
 
 function readProjectEnvConfig(cwd: string): SettingsRecord {
