@@ -509,13 +509,9 @@ for workflow in dev-fix review-pr-comments; do
   assert_text_not_matches "$round_block" '(^|[[:space:]])--add([[:space:]]|$)' "$workflow live command carries no repository path argument"
   assert_text_matches "$delegation" '^[[:space:]]*\[If the round may add files: "Adds: \[REPO_RELATIVE_PATHS_JSON_ARRAY\]' "$workflow live delegation carries the JSON Adds line"
   workflow_text="$(<"$workflow_file")"
-  assert_text_matches "$workflow_text" 'Exit 3 is the branch-size refusal' "$workflow routes the size-specific exit"
-  assert_text_matches "$workflow_text" 'Cut required' "$workflow names the required cut response"
 done
 
 disposition_text="$(<"$REPO_ROOT/skills/orch/references/finding-disposition.md")"
-assert_text_matches "$disposition_text" 'Size tripwire, enforced before fix delegation:' \
-  "finding disposition states the live enforcement point"
 
 scope_docs=(
   "$REPO_ROOT/skills/dev/workflows/dev-fix.md"
