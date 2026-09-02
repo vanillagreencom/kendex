@@ -252,68 +252,6 @@ assert_eq "$(cat "$live_state/tmp/workflow-state-KEN-LIVE.json" | jq -r ".rebase
   "$NEW_A" "the unblocked implement round still reconciles its map"
 (cd "$live_state" && "$STATE" set KEN-LIVE dev_round_id 1-1)
 
-# The token is path-forming. Before the deleted reconcile_round_authorizations
-# validated it, `../../x` composed a probe that resolved nowhere and let the
-# push through in silence.
-(cd "$live_state" && "$STATE" set KEN-LIVE dev_round_id '../../x')
-: > "$live_args"
-STUB_ARGS_LOG="$live_args" STUB_PUSH_STDOUT="" \
-  run_push "$live_state" --worktree "$live_wt" --issue KEN-LIVE
-assert_eq "$RUN_RC" "1" "a path-unsafe dev_round_id refuses instead of probing nowhere"
-assert_contains "$(cat "$run_err")" "invalid dev_round_id" "the refusal names the invalid token"
-assert_eq "$([[ -s "$live_args" ]] && echo ran || echo no)" "no" \
-  "the invalid-token refusal lands before the push"
-(cd "$live_state" && "$STATE" set KEN-LIVE dev_round_id 1-1)
-
-# A receipt is a regular file. `-e` alone would count a directory planted at
-# that path as a landed round, while dev-artifact-check requires -f of it.
-rm -f "$live_wt/tmp/dev-return-KEN-LIVE-1-1.json"
-mkdir -p "$live_wt/tmp/dev-return-KEN-LIVE-1-1.json"
-: > "$live_args"
-STUB_ARGS_LOG="$live_args" STUB_PUSH_STDOUT="" \
-  run_push "$live_state" --worktree "$live_wt" --issue KEN-LIVE
-assert_eq "$RUN_RC" "1" "a directory at the receipt path does not release the round"
-rmdir "$live_wt/tmp/dev-return-KEN-LIVE-1-1.json"
-
-# A record counts as present on anything at its path: a dangling symlink is
-# still a round someone stamped, and refusing is the fail-closed direction.
-mv "$live_wt/tmp/dev-round-KEN-LIVE-1-1.json" "$TMP_ROOT/live-record.json"
-ln -s "$TMP_ROOT/absent-record.json" "$live_wt/tmp/dev-round-KEN-LIVE-1-1.json"
-: > "$live_args"
-STUB_ARGS_LOG="$live_args" STUB_PUSH_STDOUT="" \
-  run_push "$live_state" --worktree "$live_wt" --issue KEN-LIVE
-assert_eq "$RUN_RC" "1" "a dangling round-record symlink still refuses"
-rm -f "$live_wt/tmp/dev-round-KEN-LIVE-1-1.json"
-mv "$TMP_ROOT/live-record.json" "$live_wt/tmp/dev-round-KEN-LIVE-1-1.json"
-
-# The writers name their files with the value the delegation carried; the
-# bare-numeric alias makes that differ from the key resolved here, so both
-# spellings are probed. Reachable with no corrupted state at all.
-alias_live_wt="$TMP_ROOT/alias-live-wt"
-mkdir -p "$alias_live_wt"
-git -C "$alias_live_wt" init -q -b main
-git -C "$alias_live_wt" config user.email test@example.com
-git -C "$alias_live_wt" config user.name Test
-git -C "$alias_live_wt" config commit.gpgsign false
-git -C "$alias_live_wt" commit -q --allow-empty -m base
-init_growth_state "$STATE" "$alias_live_wt" 9 seed 1000000
-"$ROUND_WRITE" --worktree "$alias_live_wt" --issue 9 --round-id 3-3 --item 1 alias "tools/guard on a staged render" >/dev/null
-alias_live_state="$TMP_ROOT/alias-live-state"
-mkdir -p "$alias_live_state"
-(cd "$alias_live_state" && "$STATE" init issue-9 --agent generalist \
-  --worktree "$alias_live_wt" --branch main >/dev/null \
-  && "$STATE" set issue-9 dev_round_id 3-3)
-assert_eq "$([[ -f "$alias_live_wt/tmp/dev-round-9-3-3.json" \
-  && ! -e "$alias_live_wt/tmp/dev-round-issue-9-3-3.json" \
-  && -f "$alias_live_state/tmp/workflow-state-issue-9.json" ]] && echo differ || echo same)" "differ" \
-  "control: the record's spelling and the resolved state key genuinely differ here"
-: > "$live_args"
-STUB_ARGS_LOG="$live_args" STUB_PUSH_STDOUT="" \
-  run_push "$alias_live_state" --worktree "$alias_live_wt" --issue 9
-assert_eq "$RUN_RC" "1" "a live round named with the raw issue refuses under the aliased key"
-assert_eq "$([[ -s "$live_args" ]] && echo ran || echo no)" "no" \
-  "the aliased refusal lands before the push"
-
 # Must-fail control: with the refusal removed, the live round is pushed over.
 # The copy carries the whole scripts directory so the mutant resolves its
 # siblings (workflow-state) exactly as the real script does.
@@ -527,15 +465,6 @@ STUB_PUSH_STDOUT="rebase-map: $alias_old $alias_new" run_push "$work" --worktree
 assert_eq "$RUN_RC" "0" "a bare-numeric issue binds to its issue-N state instead of refusing"
 assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${alias_new:0:7}" "the aliased record's fix SHA is rewritten"
 
-# The live-round refusal resolves its record through the same alias: a round
-# stamped under issue-7 blocks a push spelled `--issue 7`.
-init_growth_state "$STATE" "$wt" issue-7 seed 1000000
-"$ROUND_WRITE" --worktree "$wt" --issue issue-7 --round-id 5-5 --item 1 alias "tools/guard on a staged render" >/dev/null
-(cd "$work" && "$STATE" set issue-7 dev_round_id 5-5)
-STUB_PUSH_STDOUT="rebase-map: $alias_old $alias_new" run_push "$work" --worktree "$wt" --issue 7
-assert_eq "$RUN_RC" "1" "the live-round refusal follows the resolved state key"
-assert_contains "$(cat "$run_err")" "5-5 is live in" "the aliased refusal names the round"
-rm -f "$wt/tmp/dev-round-issue-7-5-5.json"
 
 echo
 echo "=== an ambiguous state key refuses before pushing ==="

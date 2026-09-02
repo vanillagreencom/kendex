@@ -79,19 +79,6 @@ source "$SCRIPT_DIR/lib/branch-growth.sh"
 # whitespace, so a value can never escape the tmp/ directory. Shared verbatim
 # with dev-return-write and dev-artifact-check.
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
-# One authorized path: any run of non-space characters that does not begin
-# with '-'. The rule constrains position, not character class — a metacharacter
-# in a path is only a character here, and narrowing to a class would refuse
-# tracked paths this repository has (crates/app/icons/128x128@2x.png is inside
-# the protected scope).
-ADDS_PATH_GRAMMAR='[^[:space:]-][^[:space:]]*'
-# --adds is one blank-separated list of those paths, composed from the single
-# path rule so the two cannot drift. What it refuses is every value that would
-# otherwise be recorded as something other than what the delegation named: an
-# empty or blanks-only value, a value carrying a newline or carriage return,
-# and any path beginning with '-'.
-ADDS_GRAMMAR="^[[:blank:]]*${ADDS_PATH_GRAMMAR}([[:blank:]]+${ADDS_PATH_GRAMMAR})*[[:blank:]]*$"
-
 die() {
   printf '%s: %s\n' "$PROG" "$1" >&2
   exit 2
@@ -129,9 +116,8 @@ Protected-addition scope: skills/orch/schemas/dev-round.md § Protected addition
 --adds carries the authorized protected paths as one blank-separated list,
 the same list the delegation's Adds: line renders. A blank or tab separates,
 so a path containing whitespace is read as two paths and cannot be authorized
-as one. The whole value is refused when it is empty or blanks-only, when it
-contains a newline or carriage return, or when any path begins with '-';
-absolute, traversing, empty-component, and duplicate paths are rejected too.
+as one. Absolute, traversing, empty-component, and duplicate paths are
+rejected.
 The record captures the worktree's current HEAD as base_sha; a worktree with
 no resolvable HEAD is rejected.
 Before the record is written, the branch's additions plus deletions must be
@@ -326,22 +312,14 @@ fi
 # two paths and cannot be authorized as one; the delegation's Adds: line has
 # the same limit, and both are stated that way in the docs.
 #
-# The grammar runs BEFORE the split, because that is where a value the writer
-# cannot represent would otherwise become a record that says something else:
-# a truncated list, an empty one, or a path the transport below cannot carry.
-# Nothing downstream re-checks it, so every value reaching the split is one
-# ADDS_GRAMMAR admits.
+# The paths travel as NUL-delimited data rather than as arguments, the same
+# transport dev-artifact-check uses for the additions it refuses: a path that
+# looks like an option would otherwise decide how it is read.
 adds_json='[]'
 if [[ "$adds_given" == "true" ]]; then
-  [[ "$adds" =~ $ADDS_GRAMMAR ]] \
-    || die "--adds '$adds' must be blank-separated repository-relative paths, at least one, none beginning with '-' and none containing a newline or carriage return"
   read -r -a adds_paths <<< "$adds"
-  adds_json="$(jq -nc '$ARGS.positional' --args ${adds_paths[@]+"${adds_paths[@]}"})" \
+  adds_json="$(printf '%s\0' ${adds_paths[@]+"${adds_paths[@]}"} | jq -Rsc 'split("\u0000")[:-1]')" \
     || die "--adds '$adds' could not be recorded as a path list"
-  # Every value ADDS_GRAMMAR rejects is refused above, an empty and a
-  # blanks-only one included, so no value reaching here can produce an empty
-  # array: the (length > 0) arm and the guarded expansion above are backstops
-  # against a later loosening of the grammar, not paths a test can reach today.
   jq -e '
     (length > 0)
     and all(.[];

@@ -96,7 +96,6 @@ skills/orch/scripts/approval-wait	1156
 skills/orch/scripts/ci-wait	669
 skills/orch/scripts/dev-artifact-check	696
 skills/orch/scripts/dev-return-write	444
-skills/orch/scripts/dev-round-write	408
 skills/orch/scripts/lanes	622
 skills/orch/scripts/merge-queue-watch	556
 skills/orch/scripts/open-terminal	703

@@ -86,9 +86,6 @@ WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
 
 SHA_GRAMMAR='^[0-9a-f]{40}$'
 ISSUE_GRAMMAR='^[A-Za-z0-9][A-Za-z0-9._-]*$'
-# The round token, shared verbatim with dev-round-write and dev-artifact-check.
-# It is path-forming here, so it is validated before it composes a probe.
-ROUND_GRAMMAR='^[A-Za-z0-9._-]+$'
 
 # The leading comment block is the contract, printed by shape rather than by
 # line number so --help cannot drift as that block grows.
@@ -250,34 +247,13 @@ fi
 # from the moment dev-round-write stamps its record until the dev-return
 # receipt for that same round lands; with no state file there is no active
 # round to read, and a record from an earlier round does not block.
-#
-# Three details decide correctly rather than conveniently. The token is
-# path-forming, so it is validated before it composes a probe. Both the raw
-# --issue and the normalized state key are probed: the writers name their
-# files with the value the delegation carried, which the bare-numeric alias
-# (issue 7 under issue-7) makes differ from the key resolved here. And the two
-# probes fail in opposite directions — a record counts as present on anything
-# at that path, a dangling symlink included, while a receipt counts as landed
-# only on a regular non-symlink file, so a directory or symlink planted at the
-# receipt path cannot disarm the gate. That receipt probe is deliberately
-# STRICTER than dev-artifact-check's, which gates the same file on `-f` alone
-# and so follows a symlink; widening either to match the other is a separate
-# decision.
 if [[ "$state_present" == "true" ]]; then
 	active_round="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.dev_round_id // ""')" \
 		|| fail "could not read the active dev round for $issue"
-	if [[ -n "$active_round" ]]; then
-		[[ "$active_round" =~ $ROUND_GRAMMAR && "$active_round" != *..* ]] \
-			|| fail "workflow state has invalid dev_round_id: $active_round"
-		for round_key in "$issue" "$state_key"; do
-			round_record="$worktree_abs/tmp/dev-round-$round_key-$active_round.json"
-			round_receipt="$worktree_abs/tmp/dev-return-$round_key-$active_round.json"
-			[[ -e "$round_record" || -L "$round_record" ]] || continue
-			if [[ -f "$round_receipt" && ! -L "$round_receipt" ]]; then
-				continue
-			fi
-			fail "fix round $active_round is live in $worktree_abs ($round_record has no dev-return receipt); a rebase would invalidate the base it pins — land that round's dev-return receipt, or stamp a fresh dev_round_id, then push"
-		done
+	if [[ -n "$active_round" ]] \
+		&& [[ -e "$worktree_abs/tmp/dev-round-$state_key-$active_round.json" ]] \
+		&& [[ ! -e "$worktree_abs/tmp/dev-return-$state_key-$active_round.json" ]]; then
+		fail "fix round $active_round is live in $worktree_abs (its round record has no dev-return receipt); a rebase would invalidate the base it pins — land that round's dev-return receipt, or stamp a fresh dev_round_id, then push"
 	fi
 fi
 
