@@ -166,9 +166,9 @@ check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
   local head_lines="" head=""
   head_lines="$(helper_head 2>/dev/null | wc -l | tr -d ' ')" || head_lines=""
   if [ -z "$head_lines" ] \
-    || ! head="$(sed -e "$((head_lines + 1)),\$d" -- "$helper")" \
+    || ! head="$(sed -e "$((head_lines + 1)),\$d" "$helper")" \
     || ! check_helper_head "$head" 2>/dev/null \
-    || ! helper_program 2>/dev/null | cmp -s - <(sed -e "1,${head_lines}d" -- "$helper"); then
+    || ! helper_program 2>/dev/null | cmp -s - <(sed -e "1,${head_lines}d" "$helper"); then
     add_reason "helper $HELPER_NAME is not the one this installer generates, so what it runs cannot be verified"
     return 3
   fi
