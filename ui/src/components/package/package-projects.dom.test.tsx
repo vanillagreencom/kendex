@@ -352,9 +352,9 @@ describe("the age a card shows as time passes", () => {
   });
 });
 
-// The generated command wrapper rethrows a transport failure rather than
-// answering with an error status, so one unreachable place must not take
-// the whole read with it.
+// A read that rejects rather than answering must not take the whole read
+// with it: one unreachable place would throw away every place that did
+// answer.
 describe("a place whose record could not be read", () => {
   it("draws every other place and stops loading", async () => {
     vi.mocked(commands.packageMeta).mockImplementation((scope) =>

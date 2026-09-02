@@ -107,11 +107,11 @@ export function usePackageData(ref: PackageRef | null): {
       if (left === 0) setReading(false);
       return true;
     };
-    // `settled` on all three: the generated wrapper rethrows a transport
-    // failure rather than answering with one, and left raw the landing never
-    // ran at all — the read stayed pending for the life of the view, the
-    // note that says a read failed never appeared, and the rejection went
-    // out unhandled.
+    // `settled` on all three: it normalizes a refusal that says nothing,
+    // and it is the last guard behind the wrapper's own fold. A landing that
+    // never ran leaves the read pending for the life of the view, the note
+    // that says a read failed never appears, and the rejection goes out
+    // unhandled.
     void settled(commands.packageMeta(ref.scope, ref.kind, ref.name)).then(
       (response) => {
         if (!lands()) return;

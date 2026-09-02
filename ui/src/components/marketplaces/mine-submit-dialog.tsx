@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { refusalWords } from "@/lib/refusal";
 import { hasCredential, useAccountStore } from "@/stores/account";
 
 /** The preflight checklist and the submit itself. The server has the last
@@ -72,7 +73,7 @@ export function MineSubmitDialog({
         // The refusal answers the submit this person pressed, so it is
         // shown either way. Whether it is also news about the account is
         // the store's to decide.
-        setError(answer.error.message);
+        setError(refusalWords(answer.error));
         // An expired sign-in takes the offer away with it: the footer
         // reads the account, so this dialog stops offering a submit
         // nothing can carry and offers the sign-in that fixes it.

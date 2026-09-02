@@ -44,9 +44,10 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => ({
       set({ rows: response.data, loaded: true });
       return true;
     } catch {
-      // The generated wrapper rethrows a transport failure rather than
-      // answering with an error status. A read that never answered is a
-      // failed read, not a rejection for every caller to catch.
+      // The wrapper folds a rejected command into an error status, so this
+      // is the last guard rather than the first: a read that never answered
+      // at all is still a failed read, not a rejection for every caller of
+      // this store to catch.
       return false;
     }
   },

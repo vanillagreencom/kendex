@@ -92,11 +92,12 @@ export function usePackagePlaces(
               response.status === "ok" ? response.data : null,
             ] as const;
           } catch {
-            // The generated wrapper rethrows a transport failure, and one
-            // rejection would take the whole `Promise.all` with it: the
-            // places that answered would be thrown away and the tab would
-            // load forever. A place nobody could reach is a dateless card,
-            // the same as one whose record did not read.
+            // The wrapper folds a rejected command into an error status, so
+            // this is the last guard rather than the first: one rejection
+            // that did get out would take the whole `Promise.all` with it,
+            // the places that answered thrown away and the tab loading
+            // forever. A place nobody could reach is a dateless card, the
+            // same as one whose record did not read.
             return [scopeKey(scope), null] as const;
           }
         }),

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { type CommandNotice, commands, type InstallChannel } from "@/bindings";
 import { SETTINGS_MOVED_MESSAGE } from "@/lib/copy";
+import { refusalWords } from "@/lib/refusal";
 import { settled } from "@/lib/settled";
 
 /** The two versions the card names. Null until a check has found this
@@ -51,18 +52,15 @@ interface NoticeState {
 async function mute(version: string): Promise<string | null> {
   const read = await settled(commands.getSettings());
   if (read.status === "error") return read.error;
-  try {
-    const written = await commands.updateSettings(
-      { ...read.data.settings, "muted-app-notice": version },
-      read.data.base,
-    );
-    if (written.status === "ok") return null;
-    return written.error.kind === "failed"
-      ? written.error.message
-      : SETTINGS_MOVED_MESSAGE;
-  } catch (thrown) {
-    return thrown instanceof Error ? thrown.message : String(thrown);
-  }
+  const written = await commands.updateSettings(
+    { ...read.data.settings, "muted-app-notice": version },
+    read.data.base,
+  );
+  if (written.status === "ok") return null;
+  // The stale arm carries no words of its own, so the moved-file wording
+  // stands in for it alone — a transport failure has its own message and
+  // must not be reported as the file having moved.
+  return refusalWords(written.error) ?? SETTINGS_MOVED_MESSAGE;
 }
 
 /**

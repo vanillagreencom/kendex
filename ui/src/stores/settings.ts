@@ -7,6 +7,7 @@ import {
   type SettingsRead,
   ZOOM,
 } from "@/bindings";
+import { refusalKind, refusalWords } from "@/lib/refusal";
 import { rescanEverything } from "@/lib/rescan";
 import { useProblemsStore } from "./problems";
 import { type ProjectsSlice, projectActions } from "./settings-projects";
@@ -63,7 +64,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       return { ok: false, message: "Your settings haven't loaded yet." };
     let at = ticket();
     let response = await commands.updateSettings(change(settings), base);
-    if (response.status === "error" && response.error.kind === "stale") {
+    if (
+      response.status === "error" &&
+      refusalKind(response.error) === "stale"
+    ) {
       const reread = ticket();
       const fresh = await commands.getSettings();
       // The re-read is the way out of a stale refusal. Failing, the fault
@@ -86,8 +90,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       hold(response.data, at);
       return { ok: true };
     }
-    if (response.error.kind === "failed")
-      return { ok: false, message: response.error.message };
+    const said = refusalWords(response.error);
+    if (said !== null) return { ok: false, message: said };
     // A second stale refusal means the file moved again after the re-read,
     // so the copy in hand is behind it. One read-only refresh earns the
     // claim that the latest settings are shown; when even that read fails,

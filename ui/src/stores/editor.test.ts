@@ -5,6 +5,7 @@ import type {
   EditorInventory,
   Scope,
   ScopeSettings,
+  WriteRefused,
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { placeFacts, placesSource } from "@/lib/customized-places";
@@ -461,6 +462,25 @@ describe("editor store", () => {
     await useEditorStore.getState().save();
     expect(useEditorStore.getState().stale).toBe(false);
     expect(useEditorStore.getState().error).toBe("disk is full");
+  });
+
+  /// Save is fired and forgotten — `onSave={() => void save()}` — so a
+  /// transport failure that escaped here left the busy flag falling with
+  /// nothing shown. It folds into the refusal's place as the message alone
+  /// (`bindings.test.ts`), which is neither arm of `WriteRefused`: read by
+  /// `kind` it would answer as the stale arm and offer a reload for a
+  /// broken pipe.
+  it("shows the message when the transport failed rather than the engine refusing", async () => {
+    useEditorStore.setState({ draft: emptyDraft(), base: "b1" });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "error",
+      error: "the channel is gone" as unknown as WriteRefused,
+    });
+
+    await useEditorStore.getState().save();
+
+    expect(useEditorStore.getState().error).toBe("the channel is gone");
+    expect(useEditorStore.getState().stale).toBe(false);
   });
 
   /// The reload is the way out of a stale refusal: it replaces the copy

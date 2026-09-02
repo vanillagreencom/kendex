@@ -7,6 +7,7 @@ import {
   type SettingsEdit,
 } from "@/bindings";
 import { type Draft, emptyDraft } from "@/lib/editor-draft";
+import { refusalKind, refusalWords } from "@/lib/refusal";
 
 import { writingRepo } from "@/lib/rescan";
 import { everyPlace, sameScope } from "@/lib/scope";
@@ -153,10 +154,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
         // rather than taking the person's edits on its own. A refusal with
         // something to say about the packages leaving answers `failed`
         // instead, so nothing it said is dropped for the reload.
-        if (response.error.kind === "stale") {
+        if (refusalKind(response.error) === "stale") {
           set({ stale: true, error: null });
         } else {
-          set({ error: response.error.message, stale: false });
+          set({ error: refusalWords(response.error), stale: false });
         }
         return;
       }

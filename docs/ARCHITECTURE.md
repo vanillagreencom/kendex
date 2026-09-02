@@ -45,9 +45,16 @@ Observation (scanner truth) · Drift. Core modules mirror the verbs: `model`, `s
 both scores, disjoint from render and engine. `crates/app` — Tauri
 commands, one module per page domain.
 `crates/cli` — thin verbs over the same core. `ui/` — React 19 + Tailwind v4 +
-shadcn/ui + zustand over generated bindings (tauri-specta). Adapters in
-`core/harness/` own paths and rendering only; what each harness supports
-lives in one capability table read by core and UI.
+shadcn/ui + zustand over generated bindings (tauri-specta). Those bindings
+are exported and byte-checked by `crates/app/tests/bindings.rs`, so anything
+about them — the command surface, the constants the UI reads instead of
+copying, the runtime every command answers through — is changed in
+`specta_builder` and regenerated, never edited in `ui/src/bindings.ts`. That
+runtime folds a rejected invoke into the same `{ status: "error" }` a refusal
+answers with, so a caller that fires a write and forgets it cannot drop a
+transport failure in silence. Adapters in `core/harness/` own paths and
+rendering only; what each harness supports lives in one capability table read
+by core and UI.
 
 ## Invariants — what the product guarantees
 

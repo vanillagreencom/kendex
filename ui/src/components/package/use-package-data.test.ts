@@ -154,8 +154,8 @@ describe("packageVersionActions", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  // A transport failure rejects rather than refusing, and only a wrapper
-  // sees it. Unwrapped it said nothing to the person, left the page's own
+  // A write that rejects rather than refusing is only ever seen by a
+  // wrapper. Unwrapped it said nothing to the person, left the page's own
   // flag up for the life of the view, and skipped the read-back the
   // refusal path above promises happens either way.
   it("answers a rejected write the way it answers a refusal", async () => {

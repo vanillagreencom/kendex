@@ -171,8 +171,8 @@ describe("a read that could not be made", () => {
     expect(useAccountStore.getState().readError).toBeNull();
   });
 
-  // typedError rethrows an Error the transport raised, so a bridge that
-  // throws never reaches the Result path at all.
+  // A bridge that throws rather than replying never reaches the Result
+  // path at all, and the record has to say so either way.
   it("records a bridge that threw the same as one that said no", async () => {
     vi.mocked(commands.accountStatus).mockRejectedValue(
       new Error("ipc channel closed"),

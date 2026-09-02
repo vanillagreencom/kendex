@@ -67,10 +67,11 @@ export function packageVersionActions(
       return showError(UPDATES_ONE_AT_A_TIME_NOTE);
     setBusy(true);
     return holdingBusy(async () => {
-      // A transport failure rejects rather than refusing. Unwrapped it
-      // would skip the report, leave `setBusy` up for the life of the view
-      // and skip the read-back this promises either way. `saying` because
-      // a hold move can take a declaring package away with it.
+      // A promise that rejects here rather than answering would skip the
+      // report, leave `setBusy` up for the life of the view and skip the
+      // read-back this promises either way; `settled` also stands words in
+      // for a refusal that says nothing. `saying` because a hold move can
+      // take a declaring package away with it.
       const response = saying(await settled(call()));
       setBusy(false);
       if (response.status === "error") {

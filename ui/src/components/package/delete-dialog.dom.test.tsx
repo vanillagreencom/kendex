@@ -156,10 +156,10 @@ describe("the read behind the note", () => {
     expect(said).not.toContain(REINSTALL_OWN);
   });
 
-  // The generated wrapper rethrows a transport failure, which is the same
-  // failed read and must not come out as an unhandled rejection. The note
-  // is where to get the package again, not what the deletion does, so its
-  // absence leaves Delete live.
+  // A read that rejects rather than answering is the same failed read and
+  // must not come out as an unhandled rejection. The note is where to get
+  // the package again, not what the deletion does, so its absence leaves
+  // Delete live.
   it("leaves Delete live when the read never answers", async () => {
     vi.mocked(commands.libraryProvenance).mockRejectedValue(
       new Error("the channel is gone"),
