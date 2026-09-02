@@ -33,12 +33,15 @@ the gate; and merge-group statuses never read the mode, posting green as
 | `awaiting` | `pending` | No review evidence for this head yet. |
 | `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
 | `changes-requested` | `failure` | A reviewer objects. Red means objection — never a build failure. |
-| `untracked-claim` | `failure` | A thread's disposition reply carries a track-word — `track`, `tracked`, `tracking`, `tracks` — and names no issue. The match is lexical and anywhere in the reply, never a judgement of intent, so ordinary prose springs it: `the file is tracked by git` is a tracking claim. The last non-bot reply matching a reply form or a track-word is the one that counts, so a later `Fixed in <sha>` or `Declined:` clears it and resolving the thread does not. |
+| `untracked-claim` | `failure` | A disposition reply that claims tracking and names no issue fails the gate. |
 | `unreasoned-decline` | `failure` | A decline whose reason strips to nothing against the label vocabulary fails the gate. |
 | (exit 2, no verdict) | *unchanged* | A read failed or config is invalid. Take NO action; retry next pass. |
 
 Pending text names the head; which sources open the gate is
 [references/settings.md](references/settings.md) § Reading the pending status.
+How the two failure verdicts parse a reply is `DEVELOPMENT.md` § Tracking-claim
+parsing and § Decline parsing; what to write instead is orch's
+`references/finding-disposition.md`.
 
 # Working in a consumer repo
 

@@ -143,6 +143,17 @@ survives. The parser reads the reply by shape, so a decline written without
 the colon counts too; a label beside a real reason is fine. The reach and the
 shapes past it are pinned in `tests/corpus/declines-known-limit.txt`.
 
+## Tracking-claim parsing
+
+A thread's disposition reply fails as `untracked-claim` when it carries a
+track-word — `track`, `tracked`, `tracking`, `tracks` — and names no issue.
+The match is lexical and anywhere in the reply, never a judgement of intent,
+so ordinary prose springs it: `the file is tracked by git` is a tracking
+claim, and an author means `committed` there. Bot comments are exempt because
+they quote each other, so the reply that counts is the last NON-BOT one
+matching either a reply form or a track-word: a later `Fixed in <sha>` or
+`Declined:` clears the verdict, and resolving the thread does not.
+
 ## Predicate evidence and trust
 
 Evidence for the current head is any of:

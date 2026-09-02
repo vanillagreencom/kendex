@@ -14,12 +14,6 @@ Delegate fix items to a specialist dev agent. Standalone (user-initiated) or man
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
-```bash
-.agents/skills/worktree/scripts/worktree-session-guard claim [WT_PATH] --owner [ISSUE_ID]
-```
-
-Claim it once the path resolves, so the untargeted `worktree cleanup` sweeper skips it; **skip** when `[WT_PATH]` is the main checkout, which the guard refuses. Do not pass `--repo`. Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding.
-
 ## 1. Build Fix Items
 
 `items` provided (managed) → use them directly, → § 2.

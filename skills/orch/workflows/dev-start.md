@@ -31,12 +31,6 @@ Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` as 
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
-```bash
-.agents/skills/worktree/scripts/worktree-session-guard claim [WT_PATH] --owner [ISSUE_ID]
-```
-
-Claim it once the path resolves, so the untargeted `worktree cleanup` sweeper skips it; **skip** when `[WT_PATH]` is the main checkout, which the guard refuses. Do not pass `--repo`. Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding.
-
 Initialize state unless it exists:
 
 ```bash
@@ -167,8 +161,6 @@ git -C "[WORKTREE_PATH]" status --porcelain
 | `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
 | `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
-
-**Analysis rounds.** When THIS round was delegated as investigate-and-recommend, the receipt is `kind: analysis`: no `commit`, no `validate`, the recommendation in `summary`. B expects NO new commit and a clean worktree, with no exact-commit binding and no validate gate. On A `accept` + B pass, read the recommendation and decide the next step: delegate implementation as a fresh round, close with reasoning, or re-scope. A `kind` that does not match what was delegated → the `retry` row.
 
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
 

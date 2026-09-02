@@ -2,6 +2,8 @@
 
 The claim/release/status contract and exit codes live in `worktree-session-guard --help`; each worktree command's lease behaviour is in its own `--help`.
 
+Claiming is the caller's job: `create` never claims, the orchestrating workflow claims once the worktree is the session's, and `remove` releases at teardown. Probe with `status`, which is read-only, never with `claim` — `claim` takes or rewrites the lease.
+
 The lease is scoped to the OWNER string, which the calling workflow sets to the issue ID: two sessions on the same issue share one lease and either may release it. Bare `create <ID>` exits 75 on existing ownership; `create --reuse|--restack` skips that refusal, so **nothing prevents a second implementer there**. The per-issue claim lock is a repository-local flock held only inside one `create` invocation and is not that gate either.
 
 Staleness is heartbeat age with **no liveness check**. The heartbeat moves only when a caller re-enters or re-claims the tree, and nothing does so on a timer, so an unattended lease's age is the age of its claim and not of the session's last work in it: a session working steadily past its TTL is stale by this measure and will be unlocked by `release --stale` or `sweep`. `worktree-session-guard refresh <path> --owner <ISSUE_ID>` is what holds a live lease open. Nothing runs `sweep` automatically; confirm the owner is really gone before releasing.

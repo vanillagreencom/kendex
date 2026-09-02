@@ -37,7 +37,7 @@ Formatting, obvious lint, and a missing import are fixed directly; a test failur
 
 ### 3.1 Direct Fixes
 
-Resolve the worktree (`github.sh pr-issue [PR_NUMBER] --format=text`, then `worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing) as `[DIR]`; `WORKTREE_PATH` is `git-context repo-root "[DIR]"`. Claim it — `worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID]`, exit 75 meaning another session holds it — unless `[WORKTREE_PATH]` is the main checkout, which the guard refuses. Apply the fix, then:
+Resolve the worktree (`github.sh pr-issue [PR_NUMBER] --format=text`, then `worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing) as `[DIR]`; `WORKTREE_PATH` is `git-context repo-root "[DIR]"`. Apply the fix, then:
 
 ```bash
 git -C "[WORKTREE_PATH]" commit -am "fix([ISSUE_ID]): Resolve CI failure ([ERROR_TYPE])"
