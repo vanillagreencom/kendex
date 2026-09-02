@@ -50,7 +50,7 @@ fn lock_of(env: &Env, scope: &Scope) -> Option<Lock> {
     crate::lock::load(&crate::lock::lock_path(env, scope)).ok()
 }
 
-/// Whether this scope's lock could be read, asked without opening a
+/// Whether this scope's lock could NOT be read, asked without opening a
 /// catalog: a listing carries the fact for the scope each row lives in, so
 /// the answer arrives with the rows it describes rather than from a read on
 /// another clock.
@@ -124,7 +124,7 @@ impl Browsed {
         self.subscription.as_deref() == Some(source)
     }
 
-    /// Whether this scope's lock could be read at all.
+    /// Whether this scope's lock could NOT be read at all.
     pub(super) fn lock_unreadable(&self) -> bool {
         self.lock.is_none()
     }
@@ -144,8 +144,10 @@ impl Browsed {
     /// "where does this stand here", and both open with the same refusal:
     /// where the lock could not be read, every standing it alone could
     /// have given is [`InstallState::Unknown`]. Every surface offering an
-    /// install reads that state rather than deciding for itself, so a new
-    /// one inherits the rule instead of needing its own arm.
+    /// install for ONE package reads that state rather than deciding for
+    /// itself, so a new one inherits the rule instead of needing its own
+    /// arm. The set page's Install all asks about the set rather than a
+    /// package and reads [`super::BundleDetail::records_unreadable`].
     pub(super) fn state(&self, kind: ItemKind, name: &str) -> InstallState {
         if self.lock_unreadable() {
             return InstallState::Unknown;

@@ -87,11 +87,19 @@ pub struct MarketplaceRow {
 #[specta::specta]
 pub fn marketplaces_overview() -> Result<Vec<MarketplaceRow>, String> {
     let env = env()?;
+    rows(&env, &all_scopes(&env)?)
+}
+
+/// Every subscription in the scopes given, each row carrying its scope's
+/// own record standing. Separate from the command so the join above — a
+/// row's `records_unreadable` against the scope it came from — is reachable
+/// from a test, the way [`crate::update_check::overview`] is.
+pub fn rows(env: &Env, scopes: &[Scope]) -> Result<Vec<MarketplaceRow>, String> {
     let mut rows = Vec::new();
-    for scope in all_scopes(&env)? {
-        let records_unreadable = browse::records_unreadable(&env, &scope);
-        for row in source_ops::list_subscriptions(&env, &scope).map_err(|e| e.to_string())? {
-            let config = open_catalog(&env, &scope, &row.name).ok().map(|(_, c)| c);
+    for scope in scopes {
+        let records_unreadable = browse::records_unreadable(env, scope);
+        for row in source_ops::list_subscriptions(env, scope).map_err(|e| e.to_string())? {
+            let config = open_catalog(env, scope, &row.name).ok().map(|(_, c)| c);
             rows.push(MarketplaceRow {
                 scope: row.scope,
                 name: row.name,

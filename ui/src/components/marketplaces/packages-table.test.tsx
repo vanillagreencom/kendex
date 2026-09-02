@@ -263,4 +263,26 @@ describe("a row whose project records could not be read", () => {
     expect(html).toContain(">Install<");
     expect(html).not.toContain(PACKAGE_STATE_UNKNOWN);
   });
+
+  // A bare repository is judged against the personal scope's records, so an
+  // unreadable personal lock answers Unknown for every Community row. The
+  // row is not asking that question — nothing installs from here until the
+  // machine subscribes — so it keeps saying the package is on offer.
+  it("still says a bare repository offers the package", () => {
+    stub.scores = {};
+    const html = renderToStaticMarkup(
+      <PackagesTable
+        entries={[
+          {
+            catalog: { by: "repo", repo: "Acme/Kit" },
+            row: { ...row, state: "unknown" },
+          },
+        ]}
+        showMarketplace={false}
+      />,
+    );
+    expect(html).toContain("Available");
+    expect(html).not.toContain(PACKAGE_STATE_UNKNOWN);
+    expect(html).not.toContain(">Install<");
+  });
 });
