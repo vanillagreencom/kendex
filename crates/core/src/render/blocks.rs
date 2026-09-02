@@ -66,13 +66,18 @@ const EXTENSIONS: Options = Options::ENABLE_TABLES;
 pub struct Code {
     /// The code spans of each line, as byte ranges local to its own line.
     pub spans: Vec<Vec<(usize, usize)>>,
-    /// Whether the line is one markdown reads as something other than
-    /// prose: a code block, fenced or indented, or a raw HTML block.
+    /// Whether markdown reads the line as something other than prose: a
+    /// code block, fenced or indented, or a raw HTML block. Where any of
+    /// those starts and stops is the parser's answer, and this field is how
+    /// a caller gets it without asking again — so the answer is not written
+    /// out here as well, where it could drift from the one that ships.
+    /// [`reached`] is where a range becomes a set of lines.
     ///
-    /// A fenced block's range runs from its opening marker to past its
-    /// closing run, so both fence lines are covered. An indented block has
-    /// neither, and its range opens at the first content byte past the
-    /// indent. [`reached`] is where a range becomes a set of lines.
+    /// The prose rewrite pays for the raw-HTML half in silence: a tool
+    /// reference inside such a block keeps Claude's words and no warning
+    /// names it, because the line was never read. That is the safe
+    /// direction — left as authored, never mangled — but it is the one
+    /// place the rewrite does not report what it could not say.
     pub block: Vec<bool>,
 }
 
@@ -93,13 +98,11 @@ pub struct Code {
 /// span is two, so a reader that took those lines for prose would find no
 /// marks on a sample and rewrite straight through it.
 ///
-/// Where such a block ends is markdown's answer too, and it is two
-/// answers. `<pre>`, `<script>`, `<style>`, `<textarea>` and `<!-- -->`
-/// run to their own closing marker, and no blank line shortens them — an
-/// unclosed one runs to the end of the document. Every other shape — a
-/// `<div>`, a `<details>`, a bare `<br>`, any complete tag standing alone
-/// on a line, a closing tag included — runs to the next blank line, and
-/// the paragraph after that blank line is markdown's again.
+/// Where such a block starts and stops is markdown's answer too, and one
+/// worth leaving to it: which shapes open one, and what closes each, is
+/// not a rule short enough to restate correctly. The reach is the part a
+/// caller feels — a block left unclosed runs to the end of the document,
+/// and every line under it is the block's.
 pub fn code_by_line(text: &str) -> Code {
     let lines = line_spans(text);
     let mut code = Code {
@@ -183,10 +186,10 @@ mod tests {
     /// The two readings are handed to callers that zip them against
     /// `str::lines` or against `str::split_inclusive`, so a range list one
     /// line short or one line long silently pairs every line below it with
-    /// another line's answer — or, for the caller that indexes directly,
-    /// reaches past the end. Each ending is checked: none, one, a run, and
-    /// the `\r` that `str::lines` takes off but the byte offsets still
-    /// carry.
+    /// another line's answer. Both splits are checked, which is the
+    /// equivalence [`Code`](super::Code) states. Each ending is covered:
+    /// none, one, a run, and the `\r` that `str::lines` takes off but the
+    /// byte offsets still carry.
     #[test]
     fn every_line_gets_one_range_holding_its_own_bytes() {
         for text in [
@@ -201,9 +204,6 @@ mod tests {
             let spans = line_spans(text);
             let lines: Vec<&str> = text.lines().collect();
             assert_eq!(spans.len(), lines.len(), "{text:?}");
-            // The prose rewrite indexes these by a `split_inclusive`
-            // walk and indexes `spans` directly, so the two splits
-            // agreeing on the count is what keeps that index in range.
             assert_eq!(text.split_inclusive('\n').count(), spans.len(), "{text:?}");
             for (line, (start, end)) in lines.iter().zip(&spans) {
                 assert_eq!(&text[*start..*end], *line, "{text:?}");
@@ -252,22 +252,9 @@ mod tests {
     /// them, and an indented run covers the blank line it holds but not
     /// the one that ended it.
     ///
-    /// A raw HTML block is the one that does not end where it looks like
-    /// it does. A `<div>`, a `<details>`, a bare `<br>` — any complete tag
-    /// alone on a line, a closing tag included — runs to the next blank
-    /// line rather than to its own closer, so a line tight under `</div>`
-    /// is still the block's, and `</div>` has opened one of its own. The
-    /// `<pre>`, `<script>`, `<style>`, `<textarea>` and `<!-- -->` family
-    /// runs the other way, to its closing marker, which a blank line does
-    /// not stand in for.
-    ///
-    /// The prose rewrite inherits both, and pays for them in silence: a
-    /// tool reference in prose under a wrapper is left in Claude's words
-    /// with no warning naming it, because the line was never read. That is
-    /// the safe direction — left as authored, never mangled — but it is
-    /// the one place the rewrite does not report what it could not say. A
-    /// blank line ending the block is the author's fix where the block is
-    /// one a blank line ends.
+    /// The `<div>` is the raw-HTML case, and what it pins is that the
+    /// block reaches past its closing tag — not any rule for where one
+    /// ends, which is the parser's.
     #[test]
     fn a_block_covers_its_own_lines_and_stops() {
         let text = concat!(
