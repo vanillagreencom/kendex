@@ -303,7 +303,7 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 
 The word "tracked" (any form) without a tracker id turns the gate red (`untracked-claim`) unless the reply opens with `Fixed in <sha>` or `Declined:`; only a later reply of one of the three forms clears it, and resolving the thread does not. A decline is a decline — say so.
 
-`[REASON]` takes one of the forms [../references/finding-disposition.md](../references/finding-disposition.md) § Decision flow sets out; a reason that fails them turns the gate red (`unreasoned-decline`).
+`[REASON]` takes one of the forms [../references/finding-disposition.md](../references/finding-disposition.md) § Decision flow sets out, which also states how far the gate's `unreasoned-decline` verdict reaches and where the rule binds past it.
 
 ```bash
 .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" "[REPLY_BODY]" --pr "[PR_NUMBER]"

@@ -113,11 +113,21 @@ GATE4_READ='.pr_review.mode // ""'
 assert_eq "$("$WS" --state-dir "$sd" get issue-705c "$GATE4_READ")" "off" \
   "gate 4 read resolves a clean recorded mode"
 
-# Nothing recorded at all → empty, never an error.
+# Nothing recorded at all → empty output AND exit 0. A get that FAILS prints
+# nothing either, and a command substitution in an argument does not trip
+# set -e, so comparing stdout alone passes on a broken read. Status and output
+# are asserted together.
 "$WS" --state-dir "$sd" init issue-705e \
   --worktree "$REPO_ROOT" --branch issue-705 >/dev/null
-assert_eq "$("$WS" --state-dir "$sd" get issue-705e "$GATE4_READ")" "" \
-  "gate 4 read yields empty when no mode was recorded"
+out="$("$WS" --state-dir "$sd" get issue-705e "$GATE4_READ")" && rc=0 || rc=$?
+assert_eq "$rc|$out" "0|" \
+  "gate 4 read yields empty and exits 0 when no mode was recorded"
+
+# Teeth: the same read against a record that is not there exits 1 on empty
+# stdout, the shape the assertion above used to accept.
+out="$("$WS" --state-dir "$sd" get issue-705x "$GATE4_READ" 2>/dev/null)" && rc=0 || rc=$?
+assert_eq "$([[ "$rc|$out" != "0|" ]] && echo flagged)" "flagged" \
+  "the empty-state assertion reds on a failing read, not just a non-empty one"
 
 # The docs must carry exactly these shapes.
 assert_file_contains "$SUBMIT_DOC" \
