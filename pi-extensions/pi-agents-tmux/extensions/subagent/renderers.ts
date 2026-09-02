@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import { formatSize, getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer } from "@earendil-works/pi-tui";
-import { dirtyLabel, sanitizeCwdSnapshot } from "./cwd-snapshot.js";
+import { sanitizeCwdSnapshot } from "./cwd-snapshot.js";
 import { dashboardTraceRef } from "./dashboard.js";
 import {
 	addArtifactPathSection,
@@ -219,7 +219,7 @@ export function formatTaskRecordResult(record: PaneTaskRecord, verbose = false):
 function formatCwdSnapshot(snapshot: PaneTaskRecord["cwdSnapshot"]): string {
 	snapshot = sanitizeCwdSnapshot(snapshot);
 	if (!snapshot) return "";
-	const dirty = dirtyLabel(snapshot);
+	const dirty = snapshot.dirty ? "dirty" : "clean";
 	const lines = [
 		`CWD: ${snapshot.cwd}`,
 		`HEAD: ${snapshot.head.slice(0, 12)} (${dirty})`,

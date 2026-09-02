@@ -12,7 +12,7 @@ import {
 	type TruncationResult,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./agents.js";
-import { dirtyLabel, sanitizeCwdSnapshotText, setGitExecFileForTests as setSnapshotGitExecFileForTests, snapshotCwdGitState } from "./cwd-snapshot.js";
+import { sanitizeCwdSnapshotText, setGitExecFileForTests as setSnapshotGitExecFileForTests, snapshotCwdGitState } from "./cwd-snapshot.js";
 import { getFinalOutput, stringifyError } from "./format.js";
 import { safeFileName } from "./names.js";
 import {
@@ -168,10 +168,11 @@ function malformedAgentEndContentDiagnostic(payload: any): string | undefined {
 	return `compact-then-empty detector skipped malformed agent_end content: expected array/null/undefined, got ${typeof content}`;
 }
 
-export function compactThenEmptySummary(cwdSnapshot?: CwdSnapshot): string {
+function compactThenEmptySummary(cwdSnapshot?: CwdSnapshot): string {
 	const base = "Subagent compacted and exited without a final text message; inspect the worker cwd before assuming failure.";
 	if (!cwdSnapshot) return base;
-	return `${base} HEAD ${cwdSnapshot.head.slice(0, 12)} (${dirtyLabel(cwdSnapshot)}) ${cwdSnapshot.lastCommit.subject}`;
+	const dirty = cwdSnapshot.dirty ? "dirty" : "clean";
+	return `${base} HEAD ${cwdSnapshot.head.slice(0, 12)} (${dirty}) ${cwdSnapshot.lastCommit.subject}`;
 }
 
 function formatDurationMs(ms: number): string {

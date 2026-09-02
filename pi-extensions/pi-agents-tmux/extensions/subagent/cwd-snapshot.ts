@@ -9,27 +9,6 @@ let execFileProcess: ExecFileProcess = execFile;
 const GIT_SNAPSHOT_TIMEOUT_MS = 5_000;
 const GIT_SNAPSHOT_MAX_BUFFER = 256 * 1024;
 const GIT_STATUS_MAX_BUFFER = 8 * 1024 * 1024;
-export const DIRTY_STATE_UNAVAILABLE = "dirty state unavailable (git status did not complete)";
-
-export type DirtyState = "dirty" | "clean" | "unknown";
-
-/**
- * The one place a snapshot's dirty state becomes a word. `dirty` is a boolean
- * with no room for "the read failed", so a degraded snapshot would otherwise
- * read as clean on every surface that prints it. Every renderer goes through
- * this, and the sentinel in `status` is what tells the two apart.
- */
-export function dirtyStateOf(snapshot: Pick<CwdSnapshot, "dirty" | "status"> | undefined): DirtyState {
-	if (!snapshot) return "unknown";
-	if (snapshot.status === DIRTY_STATE_UNAVAILABLE) return "unknown";
-	return snapshot.dirty ? "dirty" : "clean";
-}
-
-/** The word every surface prints, so they cannot drift apart. */
-export function dirtyLabel(snapshot: Pick<CwdSnapshot, "dirty" | "status"> | undefined): string {
-	const state = dirtyStateOf(snapshot);
-	return state === "unknown" ? "dirty state unknown" : state;
-}
 const ANSI_ESCAPE_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
 
 export function setGitExecFileForTests(execFileOverride?: ExecFileProcess): void {
@@ -197,26 +176,19 @@ export async function snapshotCwdGitState(cwd: string | undefined, addDiagnostic
 		readDirtyStatus(resolvedCwd, addDiagnostic),
 		readGit(resolvedCwd, ["log", "-1", "--pretty=%s"], addDiagnostic),
 	]);
-	if (rawHead == null || lastCommitSubject == null) return undefined;
+	if (rawHead == null || dirtyStatus == null || lastCommitSubject == null) return undefined;
 	const head = rawHead.trim();
 	if (!/^[0-9a-f]{40}$/.test(head)) {
 		addDiagnostic(`cwdSnapshot git returned malformed HEAD for ${resolvedCwd}: ${JSON.stringify(rawHead)}`);
 		return undefined;
 	}
-	// A dirty read that failed (the 5s timeout on a large or cold worktree is the
-	// likely one) degrades the snapshot rather than discarding it: head and the
-	// last commit are what triage needs most. readGit already emitted the cause;
-	// the sentinel in `status` is what dirtyStateOf reads to tell a failed read
-	// from a clean tree, so a degraded snapshot prints as unknown, not clean.
-	if (dirtyStatus == null) addDiagnostic(`cwdSnapshot dirty state unavailable for ${resolvedCwd}; reporting head and last commit only`);
-	const status = dirtyStatus ?? DIRTY_STATE_UNAVAILABLE;
 	return sanitizeCwdSnapshot({
 		cwd: resolvedCwd,
-		dirty: (dirtyStatus?.length ?? 0) > 0,
-		dirtyStatus: status,
+		dirty: dirtyStatus.length > 0,
+		dirtyStatus,
 		head,
 		lastCommit: { subject: lastCommitSubject },
 		lastCommitSubject,
-		status,
+		status: dirtyStatus,
 	});
 }

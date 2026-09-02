@@ -1,4 +1,4 @@
-import { dirtyStateOf, sanitizeCwdSnapshot, type DirtyState } from "./cwd-snapshot.js";
+import { sanitizeCwdSnapshot } from "./cwd-snapshot.js";
 import type { CwdSnapshot } from "./types.js";
 
 export type PiActivitySeverity = "debug" | "info" | "success" | "warning" | "error";
@@ -152,15 +152,12 @@ function detailsFor(type: string, eventName: string, payload: Record<string, unk
 	return details;
 }
 
-function cwdSnapshotDetails(value: unknown): (Pick<CwdSnapshot, "cwd" | "head" | "dirty" | "status" | "lastCommit"> & { dirtyState: DirtyState }) | undefined {
+function cwdSnapshotDetails(value: unknown): Pick<CwdSnapshot, "cwd" | "head" | "dirty" | "status" | "lastCommit"> | undefined {
 	const record = sanitizeCwdSnapshot(value);
 	if (!record) return undefined;
 	return {
 		cwd: record.cwd,
-		// `dirty` stays for existing consumers; `dirtyState` is the one that can
-		// say the read failed rather than reporting a clean tree.
 		dirty: record.dirty,
-		dirtyState: dirtyStateOf(record),
 		head: record.head,
 		lastCommit: { subject: record.lastCommit.subject },
 		status: record.status,

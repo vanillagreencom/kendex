@@ -133,7 +133,6 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	if (!settingBoolean("enabled", true)) return;
 
 	let activeCtx: ExtensionContext | null = null;
-	let identityProbeWarned = false;
 	let requestWidgetRender: (() => void) | null = null;
 	let forceNextBashBackgroundAt: number | null = null;
 	const backgroundBashShortcut = settingString("backgroundBashShortcut", DEFAULT_BACKGROUND_BASH_SHORTCUT);
@@ -685,16 +684,6 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 		const spawnedPid = child.pid ?? 0;
 		const procIdent = spawnedPid > 0 ? (defaultReadProcessIdentity(spawnedPid) ?? undefined) : undefined;
-		// A null identity means the spawn-time probe failed, which is every win32
-		// task, and liveness then degrades to PID-only: a recycled pid holds the
-		// task "running" and its exit wake never lands. The log is debug-gated,
-		// so the notify, once per session, is what the operator actually sees.
-		if (spawnedPid > 0 && procIdent === undefined) {
-			const message = `background task ${id} (pid ${spawnedPid}) has no process identity: the spawn-time probe failed, so liveness is PID-only and a recycled pid could keep this task alive after it exits`;
-			logBackgroundDiagnostic(message);
-			// Latch only once the notify ran; activeCtx is null after shutdown.
-			if (!identityProbeWarned && activeCtx?.ui?.notify) { activeCtx.ui.notify(message, "warning"); identityProbeWarned = true; }
-		}
 		const task: ManagedTask = {
 			child,
 			closed: false,

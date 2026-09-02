@@ -32,40 +32,19 @@ The editor treats an external value as read-only for its own reset paths: `delet
 
 Enable, disable and uninstall run the package's own vendored
 `scripts/append-system.mjs`, the same artifact npm runs at `postinstall` and
-`preuninstall`. The manager holds no second copy of the upsert.
+`preuninstall`. The manager holds no second copy of the upsert. The spawn
+carries a bounded timeout and `SIGKILL`, because a package-supplied script runs
+on Pi's TUI thread.
 
 The script resolves its own scope by walking up from its package dir to a
 `packages/` or `npm/node_modules/` segment. Finding neither, it falls back to
 `PI_CODING_AGENT_DIR` (or `~/.pi/agent`), but only when that directory already
 exists, so installing one of these packages on a machine without Pi writes
-nothing. A package installed outside any Pi-managed tree, a legacy npm
-global-prefix install, therefore has its block written to the user-global
-`APPEND_SYSTEM.md`. That is where the package's own `postinstall` put it, so
-it is also the only place the manager can remove it from. All three branches
-are pinned in `test/actions.test.ts`: the `packages/` layout, the
-`npm/node_modules/` layout, and the fallback.
-
-The script is best-effort for npm's sake: given `install` or `remove` it exits
-0 on every failure and reports only on stderr. (Any other argv exits 1, which
-the manager never produces.) `append-system.ts` therefore treats a stderr line
-beginning with the script's own name as the failure signal, not any stderr at
-all, since `runCommand` inherits the environment and node's own warnings would
-otherwise read as one. It warns with the action, package dir and the script's own lines,
-and returns false; every caller folds that into what the user sees. The spawn
-carries a bounded timeout and `SIGKILL`, because a package-supplied script runs
-on Pi's TUI thread.
-
-The script is the only thing that removes a block, so a package directory that
-has already gone leaves one nothing can clear. Both uninstall paths report that
-and name the marker to delete by hand, rather than reporting success.
+nothing.
 
 The npm uninstall path runs the removal before `npm uninstall`, because npm 7+
 does not reliably run a removed package's own `preuninstall` and the script is
-deleted with the tree. Two consequences the messages have to carry: a removal
-that failed is permanent once npm deletes the tree, so the success message
-names the file to edit by hand; and if npm itself fails the package is still
-installed, so the block is rewritten, unless it was a disabled package that had
-no block to begin with.
+deleted with the tree.
 
 Test spawns go through `useSandboxedSpawn`, which pins the child's `HOME` and
 `PI_CODING_AGENT_DIR`. `spawnSync` snapshots the environment the process

@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { buildSubagentActivity, publishSubagentActivity, type PiActivityEvent } from "../activity.js";
-import { DIRTY_STATE_UNAVAILABLE } from "../cwd-snapshot.js";
 
 const BROKER_SYMBOL = Symbol.for("kendex.pi.activity");
 
@@ -74,7 +73,6 @@ describe("subagent activity", () => {
 		expect(events[0]?.details?.cwdSnapshot).toEqual({
 			cwd: "/repo",
 			dirty: true,
-			dirtyState: "dirty",
 			head: "abc123",
 			lastCommit: { subject: "last change" },
 			status: " M file.ts",
@@ -102,30 +100,10 @@ describe("subagent activity", () => {
 		expect(events[0]?.details?.cwdSnapshot).toEqual({
 			cwd: "/repo",
 			dirty: false,
-			dirtyState: "clean",
 			head: "def456",
 			lastCommit: { subject: "finished work" },
 			status: "",
 		});
-	});
-
-	test("a degraded cwdSnapshot publishes dirtyState unknown, not clean", () => {
-		const events = installBroker();
-		publishSubagentActivity("subagents:needs_completion", {
-			agent: "rust",
-			cwdSnapshot: {
-				cwd: "/repo",
-				dirty: false,
-				head: "def456",
-				lastCommit: { subject: "finished work" },
-				status: DIRTY_STATE_UNAVAILABLE,
-			},
-			reason: "turn-ended-without-complete-subagent",
-			status: "needs_completion",
-			taskId: "task-degraded",
-		});
-
-		expect(events[0]?.details?.cwdSnapshot).toMatchObject({ dirty: false, dirtyState: "unknown" });
 	});
 
 	test("cwdSnapshot details strip controls and escape fences", () => {

@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join, sep } from "node:path";
-import { removeAppendSystemBlockForUninstall, restoreAppendSystemBlockAfterFailedUninstall, syncAppendSystemForPackage } from "./append-system.js";
+import { removeAppendSystemBlockForUninstall, syncAppendSystemForPackage } from "./append-system.js";
 import { stringifyError } from "./format.js";
 import { normalizePackageEntry } from "./inventory.js";
 import { runCommand } from "./process.js";
@@ -110,35 +110,6 @@ function packageEntryMatches(item: InventoryItem, normalized: { source: string; 
 		|| normalized.source === item.packageSourceName;
 }
 
-// The uninstall stripped the APPEND_SYSTEM.md block up front; put it back and
-// say so if that fails, rather than letting the caller read "npm failed" as
-// "nothing changed". A package that was already disabled had no block to
-// strip, so restoring would write back instructions the user switched off.
-function appendSystemRestoreNote(item: InventoryItem, wasDisabled: boolean): string {
-	if (wasDisabled) return "";
-	return restoreAppendSystemBlockAfterFailedUninstall(item)
-		? ""
-		: " Its APPEND_SYSTEM.md block was removed before the uninstall and could not be restored; toggle the package off and on to rewrite it.";
-}
-
-// The script is the only thing that removes a block, so when it could not run
-// the block outlives the package. Name the marker, since nothing left on disk
-// can delete it and the user has to.
-function staleBlockNote(item: InventoryItem): string {
-	const name = item.packageName ?? item.sourceName;
-	const head = ` Its APPEND_SYSTEM.md block could not be removed and is now stale:`;
-	// A package tree still on disk can be tried again; one that has gone takes
-	// the only thing that could remove the block with it.
-	return item.packageDir && existsSync(item.packageDir)
-		? `${head} the package directory is still on disk, so retry the uninstall.`
-		: `${head} delete the lines from "<!-- kendex:append-system ${name} begin -->" to the matching end marker in APPEND_SYSTEM.md.`;
-}
-
-// Same two inputs toggleItem derives currentlyDisabled from.
-function isDisabledAtUninstall(item: InventoryItem, inventory: Inventory): boolean {
-	return item.state === "disabled" || inventory.managerState.disabledItems.includes(item.id);
-}
-
 export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: boolean; message: string } {
 	if (plan.method.kind === "kendex") {
 		const args = ["remove", plan.method.packageName];
@@ -158,34 +129,24 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 		if (!prepared.ok) return prepared;
 		// Before npm deletes the package tree: npm 7+ does not reliably run a
 		// removed package's own `preuninstall`, and the script that owns the
-		// APPEND_SYSTEM.md block goes with the tree. An uninstall that then
-		// fails leaves the package installed and enabled, so the block has to
-		// go back or its instructions silently stop reaching the model.
-		const wasDisabled = isDisabledAtUninstall(plan.item, inventory);
-		const blockRemoved = removeAppendSystemBlockForUninstall(plan.item);
+		// APPEND_SYSTEM.md block goes with the tree.
+		removeAppendSystemBlockForUninstall(plan.item);
 		const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
-		if (result.error) {
-			return { ok: false, message: `Failed to launch ${plan.method.command}: ${stringifyError(result.error)}${appendSystemRestoreNote(plan.item, wasDisabled)}` };
-		}
+		if (result.error) return { ok: false, message: `Failed to launch ${plan.method.command}: ${stringifyError(result.error)}` };
 		if ((result.status ?? 1) !== 0) {
 			const stderr = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit ${result.status}`;
-			return { ok: false, message: `npm uninstall failed: ${stderr}${appendSystemRestoreNote(plan.item, wasDisabled)}` };
+			return { ok: false, message: `npm uninstall failed: ${stderr}` };
 		}
 		const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
-		// npm has deleted the tree, and the script with it, so a failed strip is
-		// now permanent: nothing left can rewrite that file.
-		const blockNote = blockRemoved ? "" : staleBlockNote(plan.item);
-		return { ok: true, message: `npm uninstall ${plan.method.npmName} succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}${blockNote}` };
+		return { ok: true, message: `npm uninstall ${plan.method.npmName} succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}` };
 	}
 	const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 	// Orphan branch: the settings.json strip is the only other cleanup, so
-	// remove this package's APPEND_SYSTEM.md block too. The package dir stays
-	// on disk here, so a failed removal is retryable.
-	const orphanBlockRemoved = removeAppendSystemBlockForUninstall(plan.item);
-	const orphanBlockNote = orphanBlockRemoved ? "" : staleBlockNote(plan.item);
+	// remove this package's APPEND_SYSTEM.md block too.
+	removeAppendSystemBlockForUninstall(plan.item);
 	return stripped
-		? { ok: true, message: `Removed ${plan.item.sourceName} from ${plan.item.scope} settings.json.${orphanBlockNote}` }
-		: { ok: false, message: `Could not find a matching entry for ${plan.item.sourceName} in ${plan.item.scope} settings.json.${orphanBlockNote}` };
+		? { ok: true, message: `Removed ${plan.item.sourceName} from ${plan.item.scope} settings.json.` }
+		: { ok: false, message: `Could not find a matching entry for ${plan.item.sourceName} in ${plan.item.scope} settings.json.` };
 }
 
 export function planUpdate(item: InventoryItem, inventory: Inventory, ctx: ExtensionCommandContext | ExtensionContext): UpdatePlan | undefined {
@@ -313,9 +274,8 @@ export function toggleItem(_pi: ExtensionAPI, ctx: ExtensionCommandContext | Ext
 
 	if (item.kind === "package" && item.packageName) {
 		const changed = setPackageFiltered(item, inventory.settingsFiles, willDisable);
-		const appendSystemOk = syncAppendSystemForPackage(item, willDisable);
-		const base = changed ? "Package setting updated. Run /reload or restart Pi to apply module loading changes." : "Item toggle saved. Reload may be required.";
-		ctx.ui.notify(appendSystemOk ? base : `${base} Its APPEND_SYSTEM.md block could not be ${willDisable ? "removed" : "written"}; see the warning above.`, "warning");
+		syncAppendSystemForPackage(item, willDisable);
+		ctx.ui.notify(changed ? "Package setting updated. Run /reload or restart Pi to apply module loading changes." : "Item toggle saved. Reload may be required.", "warning");
 		return;
 	}
 
