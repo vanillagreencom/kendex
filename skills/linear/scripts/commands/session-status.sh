@@ -48,6 +48,7 @@ case "${1:-}" in help|--help|-h) show_help; exit 0 ;; esac
 
 source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/cache.sh"
+source "$SCRIPT_DIR/../lib/cache-dates.sh"
 
 get_session_status() {
     local research_days=7
@@ -70,7 +71,7 @@ get_session_status() {
 
     # Calculate date threshold for research
     local research_date
-    research_date=$(date -d "-$research_days days" -Iseconds 2>/dev/null || date -v-"${research_days}"d -Iseconds)
+    research_date=$(cache_utc_days_ago "$research_days")
 
     # =========================================================================
     # All data read from cache — zero API calls
@@ -190,30 +191,19 @@ get_session_status() {
     ' "$projects_file")
 
     # --- Cycles (was Q3c) ---
-    # Use date-based selection: working = most recent started + incomplete
-    local today_iso
-    today_iso=$(date -Iseconds)
+    # Date-based selection through the shared cache helpers: working = most
+    # recent started + incomplete, prev/next cut at its start, or at now where
+    # no cycle is running. Reading a position in the list instead — `last` for
+    # previous, `first` for next — inverted both answers between cycles, and
+    # this is the read cycle planning consumes.
     local all_cycles
     all_cycles=$(jq 'sort_by(.startsAt)' "$cycles_file")
     local working_cycle_json
-    working_cycle_json=$(echo "$all_cycles" | jq --arg today "$today_iso" \
-        '[.[] | select(.startsAt <= $today and .progress < 1)] | last // null')
+    working_cycle_json=$(cache_working_cycle <<<"$all_cycles")
     local prev_cycle_json
-    prev_cycle_json=$(echo "$all_cycles" | jq --argjson working "$working_cycle_json" '
-        if $working then
-            [.[] | select(.startsAt < $working.startsAt)] | last // null
-        else
-            last // null
-        end
-    ')
+    prev_cycle_json=$(cache_cycles_before "$working_cycle_json" <<<"$all_cycles" | jq 'first // null')
     local next_cycle_json
-    next_cycle_json=$(echo "$all_cycles" | jq --argjson working "$working_cycle_json" '
-        if $working then
-            [.[] | select(.startsAt > $working.startsAt)] | first // null
-        else
-            first // null
-        end
-    ')
+    next_cycle_json=$(cache_cycles_after "$working_cycle_json" <<<"$all_cycles" | jq 'first // null')
 
     # --- Project issues categorized (was Q4) ---
     # Aggregate from ALL started projects, tag each issue with project_name
