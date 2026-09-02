@@ -79,11 +79,9 @@ export const useScanStore = create<ScanState>((set, get) => {
       if (!inFlight) return start(opts);
       queued ??= inFlight
         // However the one in front ended. A scan that failed is said by
-        // `scan` above and is no reason to leave this request unread. No
-        // shipped path rejects — `settled` is what makes that true — and
-        // this covers it anyway, because clearing the slot only on
-        // fulfilment would strand every later overlapping request for the
-        // session, which is the wrong way for a queue to fail.
+        // `scan` above and is no reason to leave this request unread, and
+        // clearing the slot only on fulfilment would strand every later
+        // overlapping request for the session.
         .catch(() => {})
         .then(() => {
           queued = null;

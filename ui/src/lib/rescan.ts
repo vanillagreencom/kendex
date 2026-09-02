@@ -16,9 +16,7 @@
 //
 // The rule, for every write that reaches `repo_effects`: the machine is read
 // again once the write has been answered for, whatever it answered. No
-// caller carves itself out — a refusal is not an account of the disk, a
-// success is not a complete one, and the two paragraphs below say why no
-// predicate over the response is allowed to decide it.
+// caller carves itself out, for the two reasons below.
 //
 // A refusal is no account of what is on disk. `repo_effects::execute` runs
 // the leaving packages' uninstallers before the plan, so an `Undo` error
@@ -37,27 +35,23 @@
 // [`writingRepo`] carries the rule: a write that reaches `repo_effects` runs
 // its whole body inside it — the marketplace subscribe, install, repository
 // effect, source toggle and unsubscribe, the drift-report install, the
-// editor save, and the audit's item actions — and the read is asked for in a
-// `finally`, so a ninth cannot skip it and neither can a throw. The Updates
-// page spells the call out instead, running it whatever the apply answered
-// as the last step inside its own `holdingBusy`: `updates.ts`'s
-// [`updateOne`] and [`updateRows`], `updates-edits.ts`'s `run` and
-// `updates-follow.ts`'s [`followSwitch`]. The package page's
-// `package-version-actions.ts` `afterChange` makes the same call inside its
-// own busy block but does not await it, so nothing holds over the read.
-// Between them, `grep -rnE "writingRepo\(|rescanEverything\(" ui/src` is
+// editor save, and the audit's item actions — so a ninth cannot skip it.
+// The Updates page spells the call out instead, as the last step inside its
+// own `holdingBusy`: `updates.ts`'s [`updateOne`] and [`updateRows`],
+// `updates-edits.ts`'s `run` and `updates-follow.ts`'s [`followSwitch`].
+// The package page's `package-version-actions.ts` `afterChange` makes the
+// same call inside its busy block without awaiting it, so nothing holds
+// over the read. `grep -rnE "writingRepo\(|rescanEverything\(" ui/src` is
 // the whole set.
 //
-// The rest of the direct callers are not the writes this rule is about —
-// none of them reaches `repo_effects` — and each is right to ask on its own
-// terms: the Scan again buttons, because nothing else knows what a person
-// changed outside the app; `settings.ts`'s [`setHarnessRoot`] and
-// `settings-projects.ts`'s project register and unregister, because moving a
-// tool's folder or changing which projects are tracked changes which files
-// the scan finds and which scopes the audit reads — not because a write
-// might have half-landed. Those three write the settings file and nothing
-// else, so one that failed left nothing on disk for a stale page to report,
-// and gating them on the answer is correct.
+// The rest of the direct callers are not the writes this rule is about:
+// none of them reaches `repo_effects`. The Scan again buttons ask because
+// nothing else knows what a person changed outside the app;
+// `settings.ts`'s [`setHarnessRoot`] and `settings-projects.ts`'s project
+// register and unregister because moving a tool's folder or changing which
+// projects are tracked changes which files the scan finds and which scopes
+// the audit reads. Those three write the settings file and nothing else, so
+// gating them on the answer is correct.
 //
 // A scope with no view of its own counts zero unmanaged items, which is how
 // a project card ends up hiding the only way to the ones it holds — the
@@ -85,30 +79,13 @@ export async function rescanEverything(opts?: {
   ]);
 }
 
-// The read behind the writes, and how many of them one read answers for.
-//
-// A page of writes goes out one at a time — `adopt-all.ts` over every
-// unmanaged item, the delete dialog over every scope a package lives in,
-// the package page's every-scope toggle — and a machine-wide read per item
-// is seconds of work per item, all of it answering the same question. So
-// one read runs at a time and exactly one waits behind it: a request that
-// arrives under a running read joins the follow-up rather than stacking
-// another identical read. A run of writes then pays for as many reads as
-// finish alongside it, never one per write.
-//
-// The guarantee survives that. A read already running may have passed the
-// files this write just changed, so it is never handed back as this write's
-// answer — the follow-up it joins starts only once that one has finished,
-// which is after this write landed.
-//
-// It survives one level down too, for two of the three legs: the scan store
-// and the audit store each hold a queue of this same shape, so a leg that
-// finds its own read already out waits and takes a fresh one behind it
-// rather than being served the older answer. The provenance join is the
-// exception — `reload` has no such queue, and an older join can still land
-// over a newer one — tracked as KEN-1183. Neither store's queue can stand in
-// for this one: both are asked by background readers and buttons too, and
-// this is about the writes.
+// The read behind the writes. One runs at a time and exactly one waits: a
+// request arriving under a running read joins that follow-up, which starts
+// only once the running one has finished — so every write is answered by a
+// read that began after it, and a page of writes does not pay a whole-machine
+// read each. The scan and audit stores hold a queue of this shape for their
+// own leg; the provenance join has none, so an older join can still land
+// over a newer one — KEN-1183.
 let running: Promise<void> | null = null;
 let queued: Promise<void> | null = null;
 
@@ -123,13 +100,10 @@ const start = (): Promise<void> => {
 const readBehindWrites = (): Promise<void> => {
   if (!running) return start();
   queued ??= running
-    // However the one in front ended. The three reads each report their own
-    // failures, so there is nothing here to pass on, and no shipped path
-    // rejects at all — both stores go through `settled` and the join
-    // catches. Clearing the slot only on fulfilment would nonetheless
-    // strand the mechanism this whole change rests on: one rejection and
-    // every later write arriving under a running read joins a dead promise
-    // and schedules no read of its own, silently, for the session.
+    // However the one in front ended. Clearing the slot only on fulfilment
+    // would leave a rejection sitting in it for the session: every later
+    // write arriving under a running read would join that dead promise and
+    // schedule no read of its own, silently.
     .catch(() => {})
     .then(() => {
       queued = null;
@@ -141,22 +115,18 @@ const readBehindWrites = (): Promise<void> => {
 /** Run a write that reaches `repo_effects` and read the machine again
  *  behind it.
  *
- *  `body` is the caller's whole action, unchanged: the command, its own
- *  busy flag, the toast, the state update, the re-reads it does itself, on
- *  the refusal arm as much as the landing one. Its value is this call's
- *  value.
+ *  `body` is the caller's whole action unchanged — the command, its own busy
+ *  flag, the toast, the state update, its own re-reads — on the refusal arm
+ *  as much as the landing one, and its value is this call's value.
  *
- *  The read is asked for in a `finally` — so a caller that throws over the
- *  answer, or a transport failure that rejects instead of refusing, leaving
- *  nobody able to say what the engine got as far as, still reads the machine
- *  before the throw goes on up.
- *
- *  Asked for, not waited on. The caller's promise settles on `body`'s own
- *  value, because a caller renders from it: the unsubscribe dialog draws its
- *  refusal beside the button rather than as a toast, and holding that back
- *  through a forced audit left a destructive button live, re-enabled, with
- *  nothing under it saying the last press failed. [`rescansSettled`] is how
- *  a test waits for what no caller waits for. */
+ *  The read is asked for in a `finally`, so neither a caller throwing over
+ *  the answer nor a transport failure rejecting instead of refusing can skip
+ *  it. It is not awaited: the caller's promise settles on `body`'s value,
+ *  because a caller renders from it — the unsubscribe dialog draws its
+ *  refusal beside the button, and holding that back through a forced audit
+ *  left a destructive button live with nothing under it. So no hold covers
+ *  the read, and every busy window stays where its caller had it.
+ *  [`rescansSettled`] is how a test waits for what no caller waits for. */
 export async function writingRepo<R>(body: () => Promise<R>): Promise<R> {
   try {
     return await body();
