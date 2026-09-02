@@ -180,8 +180,7 @@ export function recordProjectTrust(ctx: { cwd?: string; isProjectTrusted?: () =>
 	registry.projectSettings.set(settings, trusted);
 }
 
-function projectSettingsTrusted(settingsPath: string | undefined): boolean {
-	if (settingsPath === undefined) return false;
+function projectSettingsTrusted(settingsPath: string): boolean {
 	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 

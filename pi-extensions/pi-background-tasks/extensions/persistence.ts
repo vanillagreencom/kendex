@@ -13,6 +13,7 @@
 // everything per call.
 
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import {
 	mkdirSync,
 	renameSync,

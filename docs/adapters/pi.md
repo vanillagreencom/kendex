@@ -15,11 +15,13 @@ kendex trims `PI_CODING_AGENT_DIR`, expands `~` against the configured home,
 and uses an override only when it is anchored to a named root: a drive or a
 UNC share on Windows, a leading `/` on POSIX. Empty, whitespace-only, relative
 and driveless-rooted values use `~/.pi/agent`. `pi_root_is_absolute_for` in
-`crates/core/src/harness/pi.rs` is the rule; every standalone Pi package reads
-the variable through its own copy, and the pi-hooks suite holds that copy
-against the Rust source case for case. So no value makes a package's user
-scope follow the session's directory implicitly — naming that directory
-outright still points it there, which is the person's own choice.
+`crates/core/src/harness/pi.rs` is the rule, and every standalone Pi package's
+runtime readers apply their own copy of it, held against the Rust source case
+for case by the pi-hooks suite. So no value makes a package's user scope follow
+the session's directory implicitly — naming that directory outright still
+points it there, which is the person's own choice. The `scripts/append-system.mjs`
+install helpers are outside that: they resolve the variable as given, at
+install time, and only into a directory that already exists.
 
 Project markers: a `.pi/` or `.agents/` directory. Owner:
 `crates/core/src/harness/pi.rs`.
