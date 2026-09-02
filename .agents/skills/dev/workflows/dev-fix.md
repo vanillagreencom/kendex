@@ -6,7 +6,7 @@ The workflow for a dev agent receiving a review-fix delegation. Every path is wo
 
 ## 1. Read Context
 
-Confirm the shell's real working directory is the delegation's `Worktree:` path before any repo-relative command, by the check [dev-implement.md § 1](./dev-implement.md#1-environment-setup) states.
+Confirm the shell's real working directory is the delegation's `Worktree:` path before any repo-relative command, by the check at the top of [dev-implement.md](./dev-implement.md).
 
 Verify possession before reading or writing anything else. **Skip if** the delegation carries no `Worktree Lease:` line.
 

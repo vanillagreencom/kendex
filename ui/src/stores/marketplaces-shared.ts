@@ -35,8 +35,8 @@ export interface CatalogCaches {
   readErrors: Record<string, string>;
 }
 
-/** Bumped once by [droppedSetCaches] and [dropCatalogCaches], the only two
- * places a drop is declared. A read that began before one describes a
+/** Bumped by [droppedSetCaches], the one place a drop is declared;
+ * [dropCatalogCaches] spreads that result and bumps nothing itself. A read that began before one describes a
  * checkout that may no longer be the one installed from, and every derived
  * cache keys on presence rather than freshness — a stale answer landing in
  * the emptied slot would pin the commit before the change for the session,
