@@ -55,6 +55,15 @@ vi.mock("@/stores/preinstall-safety", async (importOriginal) => {
 
 const catalog = subscription({ scope: "global" }, "kendex");
 
+// Both stores these tests write, as they were before any of them ran. The
+// guard at the bottom of the file reads these back: a reset that covers one
+// store and drops the other has to redden, which is what a guard naming a
+// single store cannot do.
+const CAPTURED = {
+  provenance: useProvenanceStore.getState(),
+  nav: useNavStore.getState(),
+};
+
 const row: AvailablePackage = {
   kind: "skill",
   name: "gh",
@@ -545,12 +554,13 @@ describe("re-sorting a marketplace's packages", () => {
 // same commit that added it opened the same hole in another file. This is
 // what reddens if the shared reset goes.
 describe("what one test's store writes leave for the next", () => {
-  it("starts from the store as it was, not as the last test left it", () => {
-    // `rows` alone would not catch it: the tests above happen to end on one
-    // that sets an empty list. `loaded` is what only the reset puts back.
-    expect(useProvenanceStore.getState()).toMatchObject({
-      loaded: false,
-      rows: [],
-    });
+  it("hands every store back as it was, not as the last test left it", () => {
+    // Whole state, not one field: `rows` alone would not catch it, because
+    // the tests above happen to end on one that sets an empty list. And
+    // both stores, not one: these tests write provenance directly and nav
+    // through every mount, and a reset covering only the first would leave
+    // the second exactly as unguarded as it was before.
+    expect(useProvenanceStore.getState()).toEqual(CAPTURED.provenance);
+    expect(useNavStore.getState()).toEqual(CAPTURED.nav);
   });
 });
