@@ -33,12 +33,17 @@ function runAppendSystemScript(packageDir: string | undefined, action: "install"
 		console.warn(`pi-extension-manager: cannot run append-system remove, the package directory (${packageDir ?? "unknown"}) is gone; any APPEND_SYSTEM.md block it left is still there`);
 		return false;
 	}
-	// The dir is here, so the manifest answers it: a package that declares no
-	// pi.appendSystem never had a block, either to write or to remove.
+	// The dir is here, so the manifest decides before anything looks at the
+	// script: a package declaring no pi.appendSystem never had a block, and
+	// running the script for it only earns the script's own complaint about
+	// the missing declaration. An unreadable manifest is not an answer, so it
+	// falls through and lets the script be the one to report.
+	const declaration = declaresAppendSystem(packageDir);
+	if (declaration === "absent") return true;
 	const script = join(packageDir, "scripts", SCRIPT_NAME);
 	if (!existsSync(script)) {
-		if (!declaresAppendSystem(packageDir)) return true;
-		console.warn(`pi-extension-manager: ${packageDir} declares pi.appendSystem but ships no scripts/${SCRIPT_NAME}; APPEND_SYSTEM.md not updated`);
+		const why = declaration === "declared" ? "declares pi.appendSystem but" : "has an unreadable package.json and";
+		console.warn(`pi-extension-manager: ${packageDir} ${why} ships no scripts/${SCRIPT_NAME}; APPEND_SYSTEM.md not updated`);
 		return false;
 	}
 	const result = runCommand("node", [script, action], { cwd: packageDir, killSignal: "SIGKILL", timeout: APPEND_SYSTEM_TIMEOUT_MS });
@@ -73,13 +78,17 @@ function runAppendSystemScript(packageDir: string | undefined, action: "install"
 	return true;
 }
 
-/** Whether the package asks for an APPEND_SYSTEM.md block at all. */
-function declaresAppendSystem(packageDir: string): boolean {
+/**
+ * Whether the package asks for an APPEND_SYSTEM.md block at all. Three answers,
+ * not two: an unreadable manifest is not the same as one that declares nothing,
+ * and treating it as such would skip a package that may well want a block.
+ */
+function declaresAppendSystem(packageDir: string): "declared" | "absent" | "unreadable" {
 	try {
 		const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")) as { pi?: { appendSystem?: unknown } };
-		return typeof manifest?.pi?.appendSystem === "string";
+		return typeof manifest?.pi?.appendSystem === "string" ? "declared" : "absent";
 	} catch {
-		return false;
+		return "unreadable";
 	}
 }
 

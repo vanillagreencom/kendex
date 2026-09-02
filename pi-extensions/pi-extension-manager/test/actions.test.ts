@@ -479,3 +479,54 @@ test("an orphan uninstall whose package directory is gone names the stale block"
 	expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
 });
 
+// Row 5 of the guard table: the script is present but the package asked for no
+// block. Running it only earns the script's own missing-declaration complaint,
+// which the predicate then reads as a failure for a package that wanted
+// nothing. The manifest has to decide before the script is reached.
+test("a package that ships the script but declares no pi.appendSystem reports nothing", async () => {
+	const { buildInventory } = await import("../extensions/manager/inventory.ts");
+	const { toggleItem } = await import("../extensions/manager/actions.ts");
+	const { syncAppendSystemForPackage } = await import("../extensions/manager/append-system.ts");
+	const project = join(rootTmp, "project");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const packageDir = join(userPi, "npm", "node_modules", "@scope", "undeclaredpkg");
+	mkdirSync(join(project, ".pi"), { recursive: true });
+	writeJson(join(userPi, "settings.json"), { packages: ["npm:@scope/undeclaredpkg"] });
+	writeAppendSystemPackage(packageDir, "@scope/undeclaredpkg");
+	// Ships the vendored script, declares nothing.
+	writeJson(join(packageDir, "package.json"), { name: "@scope/undeclaredpkg", version: "1.0.0", pi: { extensions: ["./extension.ts"] } });
+	await useSandboxedSpawn();
+
+	const notices: string[] = [];
+	const ctx = { cwd: project, ui: { notify: (text: string) => notices.push(text) } } as never;
+	const inv = buildInventory({} as never, ctx);
+	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/undeclaredpkg")!;
+	expect(syncAppendSystemForPackage(item, false)).toBe(true);
+
+	toggleItem({} as never, ctx, inv, item);
+	expect(notices.join(" ")).not.toContain("APPEND_SYSTEM.md block could not be");
+	expect(existsSync(join(userPi, "APPEND_SYSTEM.md"))).toBe(false);
+});
+
+// An unreadable manifest is not a package that declares nothing: folding the
+// two together would silently skip a package that may well want a block.
+test("a package with an unreadable manifest is not treated as declaring nothing", async () => {
+	const { syncAppendSystemForPackage } = await import("../extensions/manager/append-system.ts");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const packageDir = join(userPi, "npm", "node_modules", "@scope", "corruptpkg");
+	writeAppendSystemPackage(packageDir, "@scope/corruptpkg");
+	writeFileSync(join(packageDir, "package.json"), "{ not json");
+	rmSync(join(packageDir, "scripts"), { force: true, recursive: true });
+	await useSandboxedSpawn();
+
+	const warnings: string[] = [];
+	const warn = console.warn;
+	console.warn = (text: string) => warnings.push(text);
+	try {
+		expect(syncAppendSystemForPackage({ kind: "package", packageName: "@scope/corruptpkg", packageDir } as never, false)).toBe(false);
+		expect(warnings.join(" ")).toContain("unreadable package.json");
+	} finally {
+		console.warn = warn;
+	}
+});
+
