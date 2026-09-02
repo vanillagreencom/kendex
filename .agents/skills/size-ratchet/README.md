@@ -73,8 +73,10 @@ explicit source contributes nothing to the historical lookup; if it assigns
 this key, the run refuses because that value has no historical form. The same
 rule applies to an untracked `.env.local`. The rows at the selected HEAD path are
 the only reference, even when the candidate uses another path or its target
-already held dormant rows. No rows there means a true bootstrap, and the gate
-says so on its verdict line rather than reporting a clean raise check.
+already held dormant rows. Repoint in a commit that changes nothing else, then
+change its rows next; the gate does not check that sequence. No rows at the
+selected path means a true bootstrap, and the gate says so on its verdict line
+rather than reporting a clean raise check.
 
 For a candidate row in the same unit, the reference number is its ceiling. A
 larger open row or a first row beside an existing reference set needs
