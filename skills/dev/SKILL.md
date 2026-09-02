@@ -60,7 +60,7 @@ Deterministic gate findings are fixed here, never carried into review. Fix what 
 
 **Invariant, every harness:** the completion tail (commit → QA labels → summary → artifact → return) is never dropped, and an interrupted run is never success. Re-check its real outcome and resume the tail. How you wait is your harness's:
 
-- **Claude Code.** Background the BARE command with output redirected to a log via `run_in_background`, never piped or chained; the log's `END OF OUTPUT — exit status: N` block is the authoritative verdict. Then end your turn. **Idling after backgrounding is normal, not a stall.** The orchestrator's watchdog closes the round. Never poll.
+- **Claude Code.** Background the BARE command with output redirected to a log via `run_in_background`, never piped or chained. The verdict is the exit code the harness reports when the task ends, in the completion notification and in the `[exited with code N]` line that closes the task's own output file. The log you redirected to holds command output and never an exit status. Then end your turn. **Idling after backgrounding is normal, not a stall.** The orchestrator's watchdog closes the round. Never poll.
 - **Codex.** Foreground and block.
 - **Pi.** Run it in the foreground.
 
