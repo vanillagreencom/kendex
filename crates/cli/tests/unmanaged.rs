@@ -143,6 +143,14 @@ fn content_nothing_declares_is_named_by_apply_and_by_verify() {
     assert!(planned.contains("not managed:"), "{planned}");
     assert!(planned.contains("shadcn"), "{planned}");
 
+    // Installed first, so the exit code below answers about the unmanaged
+    // tree and nothing else: verify refuses a scope that asks for packages
+    // and has no install record, and that refusal would stand in for this
+    // one. `--replace-unmanaged` clears the declaration `deploy` is blocked
+    // on and leaves the tree nothing declares exactly where it is.
+    let installed = kendex(home, &project, &["apply", "-y", "--replace-unmanaged"]);
+    assert!(installed.status.success(), "{installed:?}");
+
     let verified = kendex(home, &project, &["verify"]);
     assert!(verified.status.success(), "unmanaged content is not drift");
     let printed = said(&verified);

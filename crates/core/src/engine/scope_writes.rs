@@ -16,6 +16,7 @@ use crate::source::SourceState;
 
 use super::config_edits;
 use super::desired::DesiredState;
+use super::planned::recorded_by_the_plan;
 
 /// Whether a plan already persists the manifest. A caller about to insert
 /// its own save must know: a second write to the same file binds to bytes
@@ -165,56 +166,45 @@ pub(super) fn source_revisions(
     revisions
 }
 
-/// Whether installs of this kind happen outside the scope plan, so no
-/// entry for one can ever land in the record this pass builds.
+/// Whether the scope declares packages this pass derives no lock entry
+/// for, by the one account of that rule, [`recorded_by_the_plan`].
 ///
-/// Exhaustive on purpose: a kind added to the enum has to be classified
-/// here before this compiles, and a kind whose installs move out of the
-/// plan is one whose scope would otherwise lose its record.
-fn installs_outside_the_plan(kind: ItemKind) -> bool {
-    match kind {
-        // `kendex update-pi` compares installed bytes against the source
-        // and writes the package itself. Nothing about one is derived,
-        // planned or recorded here.
-        ItemKind::PiExtension => true,
-        // A plugin carries no content of its own, but the toggle that
-        // turns it on is planned and recorded like any other install.
-        ItemKind::Plugin => false,
-        ItemKind::Skill
-        | ItemKind::Agent
-        | ItemKind::Hook
-        | ItemKind::Command
-        | ItemKind::McpServer => false,
-    }
-}
-
-/// Whether the scope declares packages no plan can put in the record.
-/// Their scope still needs the file: it is what says which build wrote
-/// the record, and what verify, edit detection and the sweep key off.
-fn declares_unplanned_installs(manifest: &Manifest) -> bool {
+/// Their scope still needs the file. `verify`, edit detection and the
+/// sweep all read an absent record as an empty one and cannot tell the
+/// two apart, so none of them is the reason; what the file changes is
+/// that the verb stops reporting the scope up to date, that
+/// `discover::project_root_from` finds the marker it prefers when it
+/// resolves a project root, and that something on disk states which build
+/// wrote the record.
+///
+/// A declaration switched off is still a declaration here. `enabled` is
+/// carried on the lock entry rather than deciding whether one exists —
+/// a disabled agent installs and stays tracked — so the flag never
+/// decides whether a scope keeps a record.
+fn declares_unrecorded_installs(manifest: &Manifest) -> bool {
     ItemKind::ALL
         .iter()
-        .any(|kind| installs_outside_the_plan(*kind) && !manifest.declared(*kind).is_empty())
+        .any(|kind| !recorded_by_the_plan(*kind) && !manifest.declared(*kind).is_empty())
 }
 
 /// An old-version lock rewrites even when its entries are unchanged — the
 /// version bump is itself the change. So does a source that now resolves to
 /// another commit, once there are installations to reproduce: with nothing
-/// installed there is no record to keep, and no lock file is created for
-/// one.
+/// declared and nothing installed there is no record to keep, and no lock
+/// file is created for one.
 ///
-/// A scope declaring packages the plan never records gets the file back
-/// whatever its entries come out as. Nothing about a Pi extension is
-/// planned, so a scope declaring only those derives an empty record,
-/// which matches the empty one an absent file reads as: without this the
-/// plan is empty, the verb says the scope is up to date, and no file
-/// lands for verify, edit detection or the sweep to key off. That is the
-/// state the version floor leaves behind once a person moves an older
-/// lock aside.
+/// A scope declaring packages this pass derives no entry for gets the file
+/// back whatever its entries come out as. A Pi extension derives no lock
+/// entry, so a scope declaring only those derives an empty record, which
+/// matches the empty one an absent file reads as: without this the plan is
+/// empty, the verb reports the scope up to date, and nothing lands to stop
+/// it saying so, to mark the project root, or to state which build wrote
+/// the record. That is the state the version floor leaves behind once a
+/// person moves an older lock aside.
 ///
-/// An install this pass refused is not one of those. Its kind is planned
-/// and would be recorded; there is simply nothing to record yet, and the
-/// run closes on the conflict rather than on a write.
+/// An install this pass refused is not one of those. Its kind derives an
+/// entry and would be recorded; there is simply nothing to record yet, and
+/// the run closes on the conflict rather than on a write.
 pub(super) fn plan_lock_write(
     env: &Env,
     scope: &Scope,
@@ -230,8 +220,8 @@ pub(super) fn plan_lock_write(
     // Whether a file sits at the path is the one question left, and it is
     // asked only where the answer can change what this does: reading it
     // hashes the record, and a scope that has nothing to write and
-    // declares no unplanned install is done either way.
-    if unchanged && !declares_unplanned_installs(manifest) {
+    // declares nothing the plan leaves unrecorded is done either way.
+    if unchanged && !declares_unrecorded_installs(manifest) {
         return Ok(());
     }
     let path = lock_path(env, scope);

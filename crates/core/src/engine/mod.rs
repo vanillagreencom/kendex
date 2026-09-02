@@ -62,7 +62,7 @@ pub(crate) use desired_agent::contributes_to_agent;
 pub use expansion::{NO_PER_PACKAGE_UPDATE, plans_per_package};
 pub use item_source::ItemSource;
 pub use observed::observed_rows;
-pub use planned::{PlannedDeclaration, planned_declarations};
+pub use planned::{PlannedDeclaration, planned_declarations, recorded_by_the_plan};
 pub use scoring::{ItemSafety, SafetyTarget};
 
 /// The conservative "cannot prove these bytes are our render" hold.

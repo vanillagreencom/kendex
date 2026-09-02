@@ -1,9 +1,11 @@
 //! A scope that declares only Pi extensions still keeps an install record.
 //!
-//! Nothing about a Pi extension is planned, so this scope's plan derives no
-//! lock entries at all. The record still has to land: it is what `verify`,
-//! edit detection and the sweep read, and the version floor's remedy for an
-//! older lock is to move the file aside, which leaves exactly this shape.
+//! A Pi extension derives no lock entry, so this scope's plan derives none
+//! at all. The record still has to land: without it the verb reports the
+//! scope up to date, nothing marks the project root for the walk-up that
+//! prefers it, and nothing on disk states which build wrote the record. The
+//! version floor's remedy for an older lock is to move the file aside,
+//! which leaves exactly this shape.
 
 #![cfg(unix)]
 
@@ -125,21 +127,24 @@ fn refresh_writes_the_record_for_a_pi_extension_only_scope() {
     assert_record_landed(&project);
 }
 
+/// The scope asks for a package and has no record to weigh it against, so
+/// the run closes on that rather than reporting a machine with nothing
+/// installed on it. A pipeline running `kendex verify && deploy` after the
+/// version floor's move-it-aside remedy reads the refusal, not a pass.
 #[test]
-fn verify_names_declarations_the_record_does_not_hold() {
+fn verify_refuses_a_scope_with_no_install_record() {
     let (_tmp, home) = fixture();
     let project = home.join("dev/app");
 
     let output = kendex(&home, &project, &["verify"]);
 
-    assert!(output.status.success(), "{output:?}");
+    assert!(!output.status.success(), "{output:?}");
     let said = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(said.contains("pi-widgets"), "{said}");
-    assert!(said.contains("none in the install record"), "{said}");
+    assert!(said.contains("no install record"), "{said}");
     assert!(!said.contains("nothing installed"), "{said}");
 }
 

@@ -107,9 +107,11 @@ fn add() {
 /// The verdict closes the run, and the footnote about content nothing
 /// manages stands above it rather than after it.
 ///
-/// A scope that declares packages and has no record of any of them is not
-/// a machine with nothing installed on it: the declarations are named and
-/// the head says what the run checked, which was none of them.
+/// A scope that asks for packages and has no record of any of them is not
+/// a machine with nothing installed on it. There is nothing there to weigh
+/// a declaration against, so the run says which scope and where the record
+/// should be, and closes non-zero rather than counting a scope it never
+/// looked at.
 #[test]
 fn verify() {
     expect(
@@ -126,9 +128,8 @@ fn verify() {
     expect(
         shape(&[], &["verify", "--scope", "project"]),
         vec![
-            "<project>: 2 items declared, none in the install record and none checked",
-            "  - skill growth-guards",
-            "  - skill tidy",
+            "! <project>: no install record at <project>/.kendex-lock.json — nothing in this scope was checked",
+            "  to write one: kendex apply",
             "nothing checked",
         ],
     );
