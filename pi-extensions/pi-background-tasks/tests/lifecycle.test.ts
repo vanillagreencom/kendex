@@ -142,6 +142,16 @@ describe("restoredTaskFromSnapshot", () => {
 		expect(restored.stopReason).toBeNull();
 	});
 
+	// The field is always written now, so an absent one is a snapshot from
+	// before it existed: treat it as never notified and let the exit replay.
+	test("terminal snapshot without exitNotified is replay-eligible", () => {
+		const snapshot = fakeSnapshot({ status: "completed", exitCode: 0, notifyOnExit: true });
+		delete (snapshot as Partial<BackgroundTaskSnapshot>).exitNotified;
+		const restored = restoredTaskFromSnapshot(snapshot, { identityProbe: probeDead });
+		expect(restored.exitNotified).toBe(false);
+		expect(selectMissedExits([restored])).toHaveLength(1);
+	});
+
 	test("terminal-but-explicitly-never-notified task replays exit", () => {
 		const snapshot = fakeSnapshot({ status: "stopped", exitNotified: false });
 		const restored = restoredTaskFromSnapshot(snapshot, { identityProbe: probeDead });

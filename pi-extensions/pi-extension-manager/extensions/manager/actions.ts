@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { mkdirSync } from "node:fs";
 import { join, sep } from "node:path";
-import { removeAppendSystemBlockForUninstall, syncAppendSystemForPackage } from "./append-system.js";
+import { removeAppendSystemBlockForUninstall, restoreAppendSystemBlockAfterFailedUninstall, syncAppendSystemForPackage } from "./append-system.js";
 import { stringifyError } from "./format.js";
 import { normalizePackageEntry } from "./inventory.js";
 import { runCommand } from "./process.js";
@@ -110,6 +110,15 @@ function packageEntryMatches(item: InventoryItem, normalized: { source: string; 
 		|| normalized.source === item.packageSourceName;
 }
 
+// The uninstall stripped the APPEND_SYSTEM.md block up front; put it back and
+// say so if that fails, rather than letting the caller read "npm failed" as
+// "nothing changed".
+function appendSystemRestoreNote(item: InventoryItem): string {
+	return restoreAppendSystemBlockAfterFailedUninstall(item)
+		? ""
+		: " Its APPEND_SYSTEM.md block was removed before the uninstall and could not be restored; toggle the package off and on to rewrite it.";
+}
+
 export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: boolean; message: string } {
 	if (plan.method.kind === "kendex") {
 		const args = ["remove", plan.method.packageName];
@@ -129,13 +138,17 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 		if (!prepared.ok) return prepared;
 		// Before npm deletes the package tree: npm 7+ does not reliably run a
 		// removed package's own `preuninstall`, and the script that owns the
-		// APPEND_SYSTEM.md block goes with the tree.
+		// APPEND_SYSTEM.md block goes with the tree. An uninstall that then
+		// fails leaves the package installed and enabled, so the block has to
+		// go back or its instructions silently stop reaching the model.
 		removeAppendSystemBlockForUninstall(plan.item);
 		const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
-		if (result.error) return { ok: false, message: `Failed to launch ${plan.method.command}: ${stringifyError(result.error)}` };
+		if (result.error) {
+			return { ok: false, message: `Failed to launch ${plan.method.command}: ${stringifyError(result.error)}${appendSystemRestoreNote(plan.item)}` };
+		}
 		if ((result.status ?? 1) !== 0) {
 			const stderr = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit ${result.status}`;
-			return { ok: false, message: `npm uninstall failed: ${stderr}` };
+			return { ok: false, message: `npm uninstall failed: ${stderr}${appendSystemRestoreNote(plan.item)}` };
 		}
 		const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 		return { ok: true, message: `npm uninstall ${plan.method.npmName} succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}` };
@@ -274,8 +287,9 @@ export function toggleItem(_pi: ExtensionAPI, ctx: ExtensionCommandContext | Ext
 
 	if (item.kind === "package" && item.packageName) {
 		const changed = setPackageFiltered(item, inventory.settingsFiles, willDisable);
-		syncAppendSystemForPackage(item, willDisable);
-		ctx.ui.notify(changed ? "Package setting updated. Run /reload or restart Pi to apply module loading changes." : "Item toggle saved. Reload may be required.", "warning");
+		const appendSystemOk = syncAppendSystemForPackage(item, willDisable);
+		const base = changed ? "Package setting updated. Run /reload or restart Pi to apply module loading changes." : "Item toggle saved. Reload may be required.";
+		ctx.ui.notify(appendSystemOk ? base : `${base} Its APPEND_SYSTEM.md block could not be ${willDisable ? "removed" : "written"}; see the warning above.`, "warning");
 		return;
 	}
 

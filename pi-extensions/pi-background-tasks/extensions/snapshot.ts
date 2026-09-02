@@ -188,8 +188,9 @@ export interface RestoreOptions {
 //    caller can re-attach output streams (or at minimum surface the
 //    orphan in the dashboard) instead of falsely announcing it exited.
 //
-// Already-terminal snapshots flow through unchanged. Pre-kendex#15
-// only a fresh running->stopped coercion produces exitNotified=false.
+// Everything else takes snapshot.exitNotified === true, so a terminal
+// snapshot that never carried the field is replay-eligible, as is a fresh
+// running->stopped coercion.
 export function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, options: RestoreOptions = {}): ManagedTask {
 	const now = options.now ?? Date.now();
 	const probe = options.identityProbe ?? defaultReadProcessIdentity;

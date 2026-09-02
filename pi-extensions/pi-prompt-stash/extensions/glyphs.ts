@@ -1,4 +1,4 @@
-import { readPackageConfig } from "./prompt-stash.js";
+import { readPackageConfig } from "./settings.js";
 
 export type GlyphStyle = "unicode" | "ascii";
 export type GlobalGlyphStyleOverride = "inherit" | GlyphStyle;

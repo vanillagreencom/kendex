@@ -684,6 +684,12 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 		const spawnedPid = child.pid ?? 0;
 		const procIdent = spawnedPid > 0 ? (defaultReadProcessIdentity(spawnedPid) ?? undefined) : undefined;
+		// The probe reads /proc and falls back to `ps`, so it returns null for
+		// every win32 task. Liveness then degrades to PID-only, where a
+		// recycled pid holds the task "running" and its exit wake never lands.
+		if (spawnedPid > 0 && procIdent === undefined) {
+			logBackgroundDiagnostic(`background task ${id} (pid ${spawnedPid}) has no process identity: the spawn-time probe failed, so liveness is PID-only and a recycled pid could keep this task alive after it exits`);
+		}
 		const task: ManagedTask = {
 			child,
 			closed: false,

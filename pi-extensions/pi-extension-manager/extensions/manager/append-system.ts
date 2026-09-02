@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runCommand } from "./process.js";
 import type { InventoryItem } from "./types.js";
@@ -10,32 +10,72 @@ import type { InventoryItem } from "./types.js";
  *
  * The upsert/remove logic lives in one place per package: the vendored
  * `scripts/append-system.mjs` npm already runs at `postinstall` and
- * `preuninstall`. Enable/disable and orphan uninstall run the same script,
- * which resolves the scope from its own package dir. A package that ships no
- * script declares no `pi.appendSystem` and gets no block.
+ * `preuninstall`. Enable/disable and uninstall run that same script, which
+ * resolves the scope from its own package dir.
+ *
+ * The script is deliberately best-effort for npm's sake: it exits 0 on every
+ * failure and reports only on stderr, so the exit status alone says nothing.
+ * Everything it writes to stderr is surfaced here instead of dropped.
  */
-function runAppendSystemScript(packageDir: string | undefined, action: "install" | "remove"): void {
-	if (!packageDir) return;
+function runAppendSystemScript(packageDir: string | undefined, action: "install" | "remove"): boolean {
+	if (!packageDir) return true;
 	const script = join(packageDir, "scripts", "append-system.mjs");
-	if (!existsSync(script)) return;
+	if (!existsSync(script)) {
+		if (declaresAppendSystem(packageDir)) {
+			console.warn(`pi-extension-manager: ${packageDir} declares pi.appendSystem but ships no scripts/append-system.mjs; APPEND_SYSTEM.md not updated`);
+			return false;
+		}
+		return true;
+	}
 	const result = runCommand("node", [script, action], { cwd: packageDir });
-	// Best-effort, like the script itself: never block a toggle or uninstall
-	// on an APPEND_SYSTEM.md write.
-	if (result.error) console.warn(`pi-extension-manager: append-system ${action} failed to launch: ${String(result.error)}`);
+	if (result.error) {
+		console.warn(`pi-extension-manager: append-system ${action} failed to launch for ${packageDir}: ${String(result.error)}`);
+		return false;
+	}
+	const stderr = (result.stderr ?? "").trim();
+	const status = result.status ?? 0;
+	if (stderr || status !== 0) {
+		console.warn(`pi-extension-manager: append-system ${action} reported a problem for ${packageDir} (exit ${status}): ${stderr || "no output"}`);
+		return false;
+	}
+	return true;
 }
 
-export function syncAppendSystemForPackage(item: InventoryItem, willDisable: boolean): void {
-	if (item.kind !== "package" || !item.packageName) return;
-	runAppendSystemScript(item.packageDir, willDisable ? "remove" : "install");
+/** Whether the package asks for an APPEND_SYSTEM.md block at all. */
+function declaresAppendSystem(packageDir: string): boolean {
+	try {
+		const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")) as { pi?: { appendSystem?: unknown } };
+		return typeof manifest?.pi?.appendSystem === "string";
+	} catch {
+		return false;
+	}
+}
+
+/** Returns false when the block was not written; the caller decides what to say. */
+export function syncAppendSystemForPackage(item: InventoryItem, willDisable: boolean): boolean {
+	if (item.kind !== "package" || !item.packageName) return true;
+	return runAppendSystemScript(item.packageDir, willDisable ? "remove" : "install");
 }
 
 /**
- * APPEND_SYSTEM.md cleanup for an uninstall that npm's `preuninstall` did not
- * already do — the orphan path, where only the settings entry is removed and
- * the package tree stays on disk. Removing by package name is idempotent, so
- * running it after a `preuninstall` that already won is harmless.
+ * APPEND_SYSTEM.md removal for both uninstall paths: the npm branch runs it
+ * before `npm uninstall` deletes the tree the script lives in, and the orphan
+ * branch runs it when stripping the settings entry is the only other cleanup.
+ * Removal is keyed by package name and idempotent, so a `preuninstall` that
+ * already won makes this a no-op.
+ *
+ * Scope note: the script falls back to `PI_CODING_AGENT_DIR` (or `~/.pi/agent`)
+ * for a package dir outside a Pi-managed tree, so a legacy global-prefix
+ * install's block lands in the user-global file. That is where the package's
+ * own npm `postinstall` put it, so this is what can remove it again.
  */
-export function removeAppendSystemBlockForUninstall(item: InventoryItem): void {
-	if (!item.packageName) return;
-	runAppendSystemScript(item.packageDir, "remove");
+export function removeAppendSystemBlockForUninstall(item: InventoryItem): boolean {
+	if (!item.packageName) return true;
+	return runAppendSystemScript(item.packageDir, "remove");
+}
+
+/** Restores a block stripped ahead of an uninstall that then failed. */
+export function restoreAppendSystemBlockAfterFailedUninstall(item: InventoryItem): boolean {
+	if (!item.packageName) return true;
+	return runAppendSystemScript(item.packageDir, "install");
 }

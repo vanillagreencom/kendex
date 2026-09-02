@@ -302,7 +302,7 @@ describe("createOrphanWatcher.checkOnce", () => {
 		expect(hooks.events).toHaveLength(1);
 	});
 
-	test("pre-1.2.2 orphan with no procIdent degrades to PID-only liveness", () => {
+	test("orphan with no procIdent degrades to PID-only liveness", () => {
 		const hooks = recordingHooks();
 		const task = orphanTask({ id: "bg-legacy", pid: 4242 });
 		delete (task as Partial<ManagedTask>).procIdent;

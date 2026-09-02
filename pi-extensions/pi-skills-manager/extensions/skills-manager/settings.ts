@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { PACKAGE_ID } from "./constants.js";
-import { detectExtensionInstallScope, projectSettingsPath, projectSettingsTrusted, userPiDir } from "./paths.js";
+import { detectExtensionInstallScope, projectSettingsPath, projectSettingsTrusted, readPackageConfig, userPiDir } from "./paths.js";
 import type { ExtensionInstallScope, OverlaySize, SettingsFile } from "./types.js";
 
 export function readJsonObject(path: string): SettingsFile {
@@ -39,13 +39,11 @@ function packageConfigFromFile(file: SettingsFile): Record<string, unknown> | un
 	return asRecord(asRecord(asRecord(file.json.kendex)?.extensionManager)?.config)?.[PACKAGE_ID] as Record<string, unknown> | undefined;
 }
 
+// One reader for this package, in paths.ts, the way the other ten packages do
+// it. piSettingsFiles below stays for the write path, which needs the parsed
+// file and must throw on malformed JSON rather than overwrite it.
 function readkendexConfig(cwd = process.cwd()): Record<string, unknown> {
-	const merged: Record<string, unknown> = {};
-	for (const file of piSettingsFiles(cwd)) {
-		const config = packageConfigFromFile(file);
-		if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
-	}
-	return merged;
+	return readPackageConfig(PACKAGE_ID, cwd);
 }
 
 export function settingBoolean(key: string, fallback: boolean, cwd = process.cwd()): boolean {

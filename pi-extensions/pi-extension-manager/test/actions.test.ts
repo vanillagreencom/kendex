@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync as realSpawnSync, spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const rootTmp = join(import.meta.dir, "..", "tmp", "actions-test");
@@ -15,6 +16,20 @@ function writePackage(dir: string, name: string): void {
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, "package.json"), JSON.stringify({ name, version: "1.0.0", pi: { extensions: ["./extension.ts"] } }));
 	writeFileSync(join(dir, "extension.ts"), "export default function activate() {}\n");
+}
+
+// A package shaped like the six this repo ships: a pi.appendSystem manifest,
+// its instructions, and the vendored script npm runs at postinstall.
+function writeAppendSystemPackage(dir: string, name: string): void {
+	mkdirSync(join(dir, "scripts"), { recursive: true });
+	writeFileSync(join(dir, "package.json"), JSON.stringify({
+		name,
+		version: "1.0.0",
+		pi: { extensions: ["./extension.ts"], appendSystem: "instructions.md" },
+	}));
+	writeFileSync(join(dir, "extension.ts"), "export default function activate() {}\n");
+	writeFileSync(join(dir, "instructions.md"), "Append pkg instructions\n");
+	copyFileSync(join(import.meta.dir, "..", "..", "pi-session-bridge", "scripts", "append-system.mjs"), join(dir, "scripts", "append-system.mjs"));
 }
 
 beforeEach(() => {
@@ -102,4 +117,68 @@ test("invalid npmCommand is surfaced in npm action plans", async () => {
 	item.npmName = "@scope/bad-command";
 	const plan = planUpdate(item, inv, { cwd: project } as never)!;
 	expect(plan.description).toContain("invalid npmCommand");
+});
+
+// The strip has to precede `npm uninstall`: npm 7+ does not reliably run a
+// removed package's own preuninstall, and the script that owns the block is
+// deleted with the tree.
+test("npm uninstall strips the APPEND_SYSTEM.md block before npm runs, and restores it when npm fails", async () => {
+	const { buildInventory } = await import("../extensions/manager/inventory.ts");
+	const { planUninstall, runUninstall } = await import("../extensions/manager/actions.ts");
+	const project = join(rootTmp, "project");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const packageDir = join(userPi, "npm", "node_modules", "@scope", "appendpkg");
+	mkdirSync(join(project, ".pi"), { recursive: true });
+	writeJson(join(userPi, "settings.json"), { packages: ["npm:@scope/appendpkg"] });
+	writeAppendSystemPackage(packageDir, "@scope/appendpkg");
+	const target = join(userPi, "APPEND_SYSTEM.md");
+
+	// Real script, real block, so "the block is gone" is a filesystem fact.
+	expect(spawnSync("node", [join(packageDir, "scripts", "append-system.mjs"), "install"], { env: { ...process.env } as never }).status).toBe(0);
+	expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
+
+	// npm fails; the append-system spawn passes through to the real node.
+	const calls: string[][] = [];
+	const failingNpm = mock((command: string, args: string[], options?: never) => {
+		calls.push([command, ...args]);
+		if (command === "node") return realSpawnSync(command, args, { ...(options ?? {}), encoding: "utf8" } as never);
+		return { status: 1, stdout: "", stderr: "npm ERR! network", error: undefined, signal: null, output: [], pid: 0 };
+	});
+	const processModule = await import("../extensions/manager/process.ts");
+	processModule.__setSpawnSyncForTests(failingNpm as never);
+
+	const inv = buildInventory({} as never, { cwd: project } as never);
+	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/appendpkg")!;
+	const plan = planUninstall(item, inv, { cwd: project } as never)!;
+	const outcome = runUninstall(plan, inv);
+
+	const removeIndex = calls.findIndex((call) => call[0] === "node" && call.at(-1) === "remove");
+	const npmIndex = calls.findIndex((call) => call.includes("uninstall"));
+	expect(removeIndex).toBeGreaterThanOrEqual(0);
+	expect(npmIndex).toBeGreaterThanOrEqual(0);
+	expect(removeIndex).toBeLessThan(npmIndex);
+
+	expect(outcome.ok).toBe(false);
+	// npm left the package installed, so the block has to be back.
+	expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
+});
+
+test("toggling a package under the kendex packages/ layout writes and removes its block", async () => {
+	const { buildInventory } = await import("../extensions/manager/inventory.ts");
+	const { toggleItem } = await import("../extensions/manager/actions.ts");
+	const project = join(rootTmp, "project");
+	const projectPi = join(project, ".pi");
+	const packageDir = join(projectPi, "packages", "@scope", "clonepkg");
+	writeJson(join(projectPi, "settings.json"), { packages: ["packages/@scope/clonepkg"] });
+	writeAppendSystemPackage(packageDir, "@scope/clonepkg");
+	const target = join(projectPi, "APPEND_SYSTEM.md");
+	const ctx = { cwd: project, isProjectTrusted: () => true, ui: { notify() {} } } as never;
+
+	const off = buildInventory({} as never, ctx);
+	toggleItem({} as never, ctx, off, off.packages.find((pkg) => pkg.packageName === "@scope/clonepkg")!);
+	expect(existsSync(target) ? readFileSync(target, "utf8") : "").not.toContain("Append pkg instructions");
+
+	const on = buildInventory({} as never, ctx);
+	toggleItem({} as never, ctx, on, on.packages.find((pkg) => pkg.packageName === "@scope/clonepkg")!);
+	expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
 });

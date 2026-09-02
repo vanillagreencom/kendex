@@ -96,4 +96,4 @@ Routine wake/persistence diagnostics are written only when `PI_BG_TASK_DEBUG=1`,
 cd pi-extensions/pi-background-tasks && bun test
 ```
 
-Coverage: lifecycle (normal/abnormal exit, partial output), wake-events (metadata, voided, dedupe, transition, first-match-only), activity broker mapping, orphan watcher (alive PID, mid-poll PID-reuse, comm drift, pre-1.2.2 fallback), persistence round-trip.
+Coverage: lifecycle (normal/abnormal exit, partial output), wake-events (metadata, voided, dedupe, transition, first-match-only), activity broker mapping, orphan watcher (alive PID, mid-poll PID-reuse, comm drift, no-procIdent fallback), persistence round-trip.
