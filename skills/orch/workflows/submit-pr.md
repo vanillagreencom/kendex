@@ -233,9 +233,7 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
    .agents/skills/orch/scripts/workflow-state head-budget take [ISSUE_ID] review-wait [REVIEW_HEAD]
    ```
 
-   `continue` restarts step 1. `at-cap` records `review-round-cap` through
-   `post-pr-stop`, posts the rendered comment, returns `MERGE_READY = false`,
-   and skips § 5:
+   `continue` restarts step 1; `at-cap` records `review-round-cap` through `post-pr-stop`, posts the rendered comment, returns `MERGE_READY = false`, and skips § 5:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state post-pr-stop record [ISSUE_ID] review-round-cap review "[REMAINING_FEEDBACK]" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
@@ -251,8 +249,6 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
    `Triage again` is the user's override for one more pass, `Force merge`
    records the override and continues to step 2 with the § 6.1 gates applying,
    and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
-
-   Decision route: `auto-recommended` + `retry-budget` -> `restart-review-wait`; `auto-recommended` + `retry-cap` -> `record-review-round-cap`; `ask` -> `present-review-choice`.
 
    **On `timeout` under `ask`**: `Keep waiting` goes to the Restart check; `Force merge` records the override and continues to step 2 with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 

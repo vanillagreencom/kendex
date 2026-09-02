@@ -79,19 +79,21 @@ Before either summary, `MERGE_READY = false` preserves submit-pr's stop or creat
 .agents/skills/orch/scripts/workflow-state post-pr-stop record-if-empty [ISSUE_ID] merge-gates-unmet merge "[UNMET_GATE_AND_REMAINING_WORK]" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
 ```
 
-On `recorded`, post the rendered file. On `kept`, retain the upstream stop:
+`recorded` wrote that file, so post it:
 
 ```bash
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
 ```
+
+`kept` posts nothing. The file at that path is the one submit-pr rendered for
+the stop it recorded, and submit-pr already posted it; posting again would put
+a byte-identical duplicate on the PR.
 
 Read the final stop before § 5.1. `MERGE_READY = true` clears it:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'
 ```
-
-Stop route: `upstream-stop` -> `preserve`; `no-upstream-stop` -> `record-merge-gates-unmet`; `final-stop` -> `render-summaries`.
 
 ### 5.1 Post Summary
 

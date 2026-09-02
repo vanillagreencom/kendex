@@ -199,7 +199,9 @@ Still failing:
 </output_format>
 
 Managed failures return to the caller, which owns `CI_FIX_MAX_CYCLES`.
-Standalone `auto-recommended` spends the authoritative head's budget:
+Standalone `auto-recommended` spends a cycle of the PR's budget. The count runs
+across the heads these cycles push, because each cycle pushes its own fix; only
+the passing-CI clear in this section resets it:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
@@ -214,8 +216,6 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --j
 ```
 
 Under `ask`, present `Run ci-fix again` | `Stop`; continuation clears the stop.
-
-Decision route: `auto-recommended` + `retry-budget` -> `restart-ci-fix`; `auto-recommended` + `retry-cap` -> `record-ci-fix-cap`; `ask` -> `present-ci-fix-choice`.
 
 ## 6. Return
 

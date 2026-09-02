@@ -75,8 +75,20 @@ ORCH_STATE_DIR="$state_dir" "$WS" update issue-404 '.post_pr_budgets.review_wait
 assert_eq "$(ORCH_STATE_DIR="$state_dir" "$WS" get issue-404 '.post_pr_budgets.review_wait')" "null" "accepted review evidence clears its budget"
 ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=1 "$WS" head-budget take issue-404 ci-fix ci-head-a >/dev/null
 assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=1 "$WS" head-budget take issue-404 ci-fix ci-head-a)" "at-cap 1/1" "ci-fix persists its cap"
-assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=1 "$WS" head-budget take issue-404 ci-fix ci-head-b)" "continue 1/1" \
-  "ci-fix budget resets for a new authoritative head"
+# Every ci-fix cycle pushes its fix, so the next take always presents a new head.
+# A head-keyed reset here would return continue forever and CI_FIX_MAX_CYCLES
+# would bound nothing; the cap must survive the changed head. The two takes below
+# are the two cycles of a cap of 2, each on the head its own push produced.
+ORCH_STATE_DIR="$state_dir" "$WS" update issue-404 '.post_pr_budgets.ci_fix = null'
+assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=2 "$WS" head-budget take issue-404 ci-fix ci-head-a)" "continue 1/2" \
+  "ci-fix spends its first cycle"
+assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=2 "$WS" head-budget take issue-404 ci-fix ci-head-b)" "continue 2/2" \
+  "ci-fix counts a cycle on the head its own push produced"
+assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=2 "$WS" head-budget take issue-404 ci-fix ci-head-c)" "at-cap 2/2" \
+  "ci-fix reaches its cap across cycles that each push a new head"
+ORCH_STATE_DIR="$state_dir" "$WS" update issue-404 '.post_pr_budgets.ci_fix = null'
+assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=2 "$WS" head-budget take issue-404 ci-fix ci-head-d)" "continue 1/2" \
+  "a passing CI run clearing ci_fix is what resets the ci-fix budget"
 
 # Round-id identity: the token is the ONLY thing binding an artifact to its
 # delegation, so rapid consecutive mints must all differ. A regression to a

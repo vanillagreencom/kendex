@@ -261,10 +261,14 @@ cmd_post_pr_stop() {
 cmd_head_budget() {
     local action="${1:-}" issue_id="${2:-}" kind="${3:-}"
     [[ -n "$action" && -n "$issue_id" && -n "$kind" ]] || { echo "Error: head-budget needs an action, issue_id, and kind" >&2; return 2; }
-    local field setting
+    # review-wait resets on a changed head; ci-fix must not, which is what the
+    # flag exists for. Every ci-fix cycle pushes its fix, so the next take
+    # always sees a new head, and resetting there would give each retry a fresh
+    # count with CI_FIX_MAX_CYCLES bounding nothing. A passing CI run clears it.
+    local field setting head_keyed
     case "$kind" in
-        review-wait) field=review_wait; setting=REVIEW_MAX_EXTERNAL_ROUNDS ;;
-        ci-fix) field=ci_fix; setting=CI_FIX_MAX_CYCLES ;;
+        review-wait) field=review_wait; setting=REVIEW_MAX_EXTERNAL_ROUNDS; head_keyed=true ;;
+        ci-fix) field=ci_fix; setting=CI_FIX_MAX_CYCLES; head_keyed=false ;;
         *) echo "Error: unknown head budget: $kind" >&2; return 2 ;;
     esac
     case "$action" in
@@ -274,13 +278,13 @@ cmd_head_budget() {
             limit=$(cap_limit "$setting") || return 1
             report=$(cmd_update_report "$issue_id" '
               (.post_pr_budgets[$field] // null) as $saved |
-              (if (($saved.head // "") == $head) then ($saved.attempts // 0) else 0 end) as $used |
+              (if $head_keyed and (($saved.head // "") != $head) then 0 else ($saved.attempts // 0) end) as $used |
               if $used >= $limit then
                 {state: ., report: {verdict: "at-cap", attempts: $used, limit: $limit}}
               else
                 {state: (.post_pr_budgets[$field] = {head: $head, attempts: ($used + 1)}),
                  report: {verdict: "continue", attempts: ($used + 1), limit: $limit}}
-              end' --arg field "$field" --arg head "$head" --argjson limit "$limit") || return 1
+              end' --arg field "$field" --arg head "$head" --argjson limit "$limit" --argjson head_keyed "$head_keyed") || return 1
             jq -r '"\(.verdict) \(.attempts)/\(.limit)"' <<<"$report"
             ;;
         *) echo "Error: unknown head-budget action: $action" >&2; return 2 ;;
@@ -591,7 +595,10 @@ Commands:
                                 Atomically record or preserve the stop and
                                 render its Markdown comment
   head-budget take <issue_id> <review-wait|ci-fix> <head>
-                                Atomically spend a head-bound retry budget
+                                Atomically spend an automatic retry budget.
+                                review-wait restarts its count on a changed
+                                head; ci-fix counts across heads, since every
+                                cycle pushes one. A continuing action clears it
   append <issue_id> <field> <value>   Append to array field
   append-file <issue_id> <field> <file>
                                 Append the one JSON value in <file> to the
