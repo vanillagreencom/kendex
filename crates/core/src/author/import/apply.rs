@@ -166,8 +166,8 @@ fn declared_leaf(name: &str) -> &str {
 ///
 /// What reaches it is narrower than it was. An agent whose bytes are not
 /// markdown with a frontmatter block is no longer offered at all
-/// (`origins::agent_shape_problem`), so Codex's TOML is refused before
-/// selection rather than here; what is left for this to name is a
+/// (`origins::offer::agent_shape_problem`), so Codex's TOML is refused
+/// before selection rather than here; what is left for this to name is a
 /// frontmatter file whose `name` cannot be written — given twice, or
 /// running past its own line.
 fn origin_file(read_from: Option<&Path>) -> String {

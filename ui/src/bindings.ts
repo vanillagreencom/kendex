@@ -789,24 +789,16 @@ licenseRecognized: boolean } |
 
 export type CandidateOrigin = {
 	group: CandidateGroup,
-	/**
-	 *  Every place these exact bytes were seen, each in one of three
-	 *  shapes: a local path, `/`-spelled whatever the platform does; a
-	 *  marketplace's own bytes as `<repo>:<path>`, the same spelling
-	 *  repo-qualified; or the repo alone where nothing was fetched and
-	 *  there was no place to read. Only the first is a path a caller can
-	 *  match whole.
-	 */
+	/**  Every place these exact bytes were seen. */
 	locations: string[],
 	/**
 	 *  Content identity — what apply revalidates before copying. Empty
-	 *  where there is nothing to select, which is every origin carrying a
-	 *  `problem`.
+	 *  where there is nothing to select.
 	 */
 	hash: string,
 	/**
-	 *  Why these bytes are not on offer, when they are not: a marketplace
-	 *  nobody fetched, an agent in a format a catalog cannot store.
+	 *  Why these bytes are not on offer, when they are not: an agent in a
+	 *  format a catalog cannot store.
 	 */
 	problem: string | null,
 };

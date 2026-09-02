@@ -41,19 +41,13 @@ pub struct ImportCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct CandidateOrigin {
     pub group: CandidateGroup,
-    /// Every place these exact bytes were seen, each in one of three
-    /// shapes: a local path, `/`-spelled whatever the platform does; a
-    /// marketplace's own bytes as `<repo>:<path>`, the same spelling
-    /// repo-qualified; or the repo alone where nothing was fetched and
-    /// there was no place to read. Only the first is a path a caller can
-    /// match whole.
+    /// Every place these exact bytes were seen.
     pub locations: Vec<String>,
     /// Content identity — what apply revalidates before copying. Empty
-    /// where there is nothing to select, which is every origin carrying a
-    /// `problem`.
+    /// where there is nothing to select.
     pub hash: String,
-    /// Why these bytes are not on offer, when they are not: a marketplace
-    /// nobody fetched, an agent in a format a catalog cannot store.
+    /// Why these bytes are not on offer, when they are not: an agent in a
+    /// format a catalog cannot store.
     pub problem: Option<String>,
 }
 
@@ -247,12 +241,12 @@ pub fn inventory(env: &Env, scopes: &[Scope]) -> Result<Vec<ImportCandidate>> {
 
 /// The versioned envelope `marketplace import --json` wraps its candidates
 /// in. Schema 2 gives every origin a `problem` saying why its bytes are
-/// not on offer, and `locations` holds places alone: an unfetched
-/// marketplace's entry was `<repo> (not fetched)` under schema 1 and is
-/// the repo, with the reason in `problem`. The addition is free; the
-/// change of meaning in a field that was already there is what the bump is
-/// for, the same call [`crate::check_catalog::CHECK_SCHEMA`] made when a
-/// finding's line came out of `file`.
+/// not on offer, and widens what an empty `hash` means: under schema 1 it
+/// was a read that failed, and it now also covers bytes read fine that a
+/// catalog cannot store. The addition is free; the change of meaning in a
+/// field that was already there is what the bump is for, the same call
+/// [`crate::check_catalog::CHECK_SCHEMA`] made when a finding's line came
+/// out of `file`.
 pub const IMPORT_SCHEMA: u32 = 2;
 
 /// How the places under [`no_importable_bytes`] are laid out.

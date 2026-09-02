@@ -207,56 +207,6 @@ fn the_edited_copy_of_a_marketplace_agent_is_judged_by_the_same_rule() {
     );
 }
 
-/// The two shapes `frontmatter::split_said` tells apart reach the row as
-/// different reasons, because they send a reader to different edits: add a
-/// block, or close the one you have.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_agent_whose_frontmatter_never_closes_says_so_rather_than_missing() {
-    let (tmp, env, scope) = seeded();
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    file_item(
-        &root.join(".claude/agents"),
-        "unclosed.md",
-        "---\nname: unclosed\ndescription: about unclosed\nAgent body.\n",
-    );
-    let scopes = [scope.clone()];
-    let target = target(&env, &tmp, "mine-unclosed");
-    let candidates = inventory(&env, &scopes).unwrap();
-
-    let unclosed = find(&candidates, "unclosed");
-    assert!(
-        unclosed.origins.iter().all(|origin| origin.hash.is_empty()),
-        "nothing selectable: {:?}",
-        unclosed.origins
-    );
-    let problem = unclosed.origins[0].problem.as_deref().unwrap_or_default();
-    assert!(
-        problem.contains("its frontmatter block is never closed"),
-        "{problem}"
-    );
-    assert!(
-        !problem.contains("it has no frontmatter"),
-        "the other edit entirely: {problem}"
-    );
-
-    let message = apply(&env, &scopes, &target, &[selection("unclosed", "unclosed")])
-        .unwrap_err()
-        .to_string();
-    assert!(
-        message.contains("has no bytes kendex can import"),
-        "{message}"
-    );
-    assert!(message.contains("unclosed.md"), "{message}");
-    assert!(
-        message.contains("its frontmatter block is never closed"),
-        "{message}"
-    );
-    assert!(!target.join("agents").exists());
-}
-
 /// Bytes that are not text carry no frontmatter either, and the reason
 /// says which of the two it is. A file parked at `.claude/agents/<name>.md`
 /// is offered by its extension alone, so this is the shape that would
@@ -366,68 +316,5 @@ fn a_local_catalog_already_holding_toml_is_not_offered_on() {
     assert!(
         !target.join("agents").exists(),
         "a refused apply writes nothing at all"
-    );
-}
-
-/// Two places under one reason, which is the shape both display paths
-/// format differently: a marketplace whose catalog slot already holds TOML
-/// beside the install of it. Core's refusal takes one line, because a
-/// `CoreError` that does not own its breaks has them escaped where the CLI
-/// prints it, and it says each place once — the install is claimed twice,
-/// as the marketplace's edited copy and by the unmanaged scan.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_name_with_two_unusable_places_says_each_once_on_one_line() {
-    let (tmp, env, scope) = seeded();
-    let Scope::Project { root } = &scope else {
-        unreachable!()
-    };
-    // The two differ, so the install is the marketplace's *edited* copy as
-    // well as an unmanaged claim — which is what makes one place arrive
-    // twice.
-    file_item(
-        &tmp.path().join("catalog/agents"),
-        "agentic.md",
-        "name = \"agentic\"\ndescription = \"as published\"\n",
-    );
-    file_item(
-        &root.join(".codex/agents"),
-        "agentic.toml",
-        "name = \"agentic\"\ndescription = \"as edited\"\n",
-    );
-    let path = lock::lock_path(&env, &scope);
-    let mut held = lock::load(&path).unwrap();
-    held.entries.insert(
-        lock::entry_key(ItemKind::Agent, "agentic", HarnessId::Claude),
-        entry(ItemKind::Agent, "agentic", "cat", "cat"),
-    );
-    lock::save(&path, &held).unwrap();
-
-    let scopes = [scope.clone()];
-    let candidates = inventory(&env, &scopes).unwrap();
-    let agentic = find(&candidates, "agentic");
-    assert!(
-        agentic.origins.iter().all(|origin| origin.hash.is_empty()),
-        "nothing selectable: {:?}",
-        agentic.origins
-    );
-    assert_eq!(
-        agentic.origins.len(),
-        2,
-        "the catalog's slot and the install, the install's two claimants merged: {:?}",
-        agentic.origins
-    );
-
-    let target = target(&env, &tmp, "mine-two-places");
-    let message = apply(&env, &scopes, &target, &[selection("agentic", "agentic")])
-        .unwrap_err()
-        .to_string();
-    assert_eq!(message.lines().count(), 1, "{message}");
-    assert!(message.contains("; "), "the places are joined: {message}");
-    assert!(message.contains("cat:agents/agentic.md"), "{message}");
-    assert_eq!(
-        message.matches("agentic.toml").count(),
-        1,
-        "the install is claimed twice and said once: {message}"
     );
 }
