@@ -110,8 +110,8 @@ describe("updates store: edited places", () => {
 
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
-    // The machine is read anyway: a rejection is the answer that accounts
-    // for least, on `rescan.ts`'s rule.
+    // The machine is read anyway: the call never answered, so nothing says
+    // whether the apply ran.
     expect(commands.auditAll).toHaveBeenCalled();
   });
 
