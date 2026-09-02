@@ -281,6 +281,35 @@ fn an_edited_entry_keeps_the_writing_around_it_and_inside_it() {
     );
 }
 
+/// The same document as the case above, under another name, and that is the
+/// point: replacing an entry with an unrelated one and editing the entry that
+/// was there produce byte-identical input, differing only in how much the new
+/// entry resembles the old. So a replacement inherits the slot's comment and
+/// the `note` inside it. This is not independent evidence — it cannot red
+/// while the edit case passes — it is the claim written down where the prose
+/// that describes it can be checked against it.
+#[test]
+fn an_entry_replacing_another_inherits_what_was_written_in_its_slot() {
+    assert_eq!(
+        folding(NOTED, |manifest| {
+            manifest.custom_hooks[1] = CustomHook {
+                name: None,
+                event: "Notification".to_owned(),
+                matcher: None,
+                command: "./ping.sh".to_owned(),
+                description: None,
+                timeout: None,
+                harnesses: None,
+                enabled: true,
+                agents: crate::manifest::default_hook_agents(),
+            };
+        }),
+        NOTED
+            .replace("event = \"Stop\"", "event = \"Notification\"")
+            .replace("./done.sh", "./ping.sh")
+    );
+}
+
 /// A removal moves every slot after it, so an entry nothing identified is
 /// standing where another declaration stood. It keeps what was written AROUND
 /// that slot — `# about A`, the price pairing in order has always had — and

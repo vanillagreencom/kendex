@@ -146,9 +146,11 @@ pub(super) fn is_true(value: &bool) -> bool {
 ///
 /// One shape reaches further than the keys it names, and the fold's own module
 /// doc states it: an entry of a list the write CHANGED can only be placed by
-/// position, and where the entries around it do not force that position it
-/// comes back under the comment written about whatever declaration held it,
-/// carrying none of the keys the model does not spell.
+/// position, and what it finds there depends on whether the entries around it
+/// forced that position. Forced, it keeps the comment written about that
+/// position and the keys the model does not spell — which is what an edit
+/// needs, and what an entry replacing another inherits. Not forced, it keeps
+/// the comment and those keys are dropped.
 pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
     // Stamped at the write, the way the lock stamps its version: the
     // schema is a fact about the build doing the writing, and two places

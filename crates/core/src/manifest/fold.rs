@@ -39,10 +39,12 @@
 //! from the file rather than moved between declarations, because a dropped key
 //! is visible where a migrated one reads as if a person put it there.
 //!
-//! Two pairs of writes are the same two documents to the fold and cannot come
-//! back differently: an entry edited in place and an entry replaced by an
-//! unrelated one, and a re-sort that edits an entry against a removal that adds
-//! one. Both resolve toward the slot being another declaration's.
+//! Which half of the price a write pays is decided by whether anything left or
+//! arrived around the entry, not by what the write meant: an entry replacing
+//! another inherits the comment and the keys that sat in its slot, because it
+//! hands the fold the same document an ordinary edit does, and that edit has
+//! to keep its own. [`own_slot`] names both pairs of shapes this cannot tell
+//! apart and what each one therefore comes back as.
 
 use toml_edit::{DocumentMut, Item, TableLike, Value};
 
@@ -144,15 +146,20 @@ fn fold_item(destination: &mut Item, held: Option<&Item>, target: &Item) {
 /// the manifest does not carry stay where they were put.
 ///
 /// An entry nothing identified took its slot by position, and whether that slot
-/// is its own declaration's is [`own_slot`]'s question, asked per entry. Yes:
-/// an edit is an edit, and the writing around it and the keys inside it are
-/// still about it. No: it is standing where another declaration stood. It keeps
-/// what was written AROUND that slot, which is the price pairing in order has
-/// always had and which the module doc names. It keeps none of the keys INSIDE
-/// it: `held` cannot answer for a declaration it is not the model view of, and
-/// a key migrating into a declaration a person never put it in reads exactly as
-/// if they had. [`stripped`] takes those before the fold, because dropping a
-/// key is visible and moving one is not.
+/// was forced is [`own_slot`]'s question, asked per entry.
+///
+/// Forced: nothing moved the slot, so the fold reads the entry as the
+/// declaration that held it, edited, and it keeps what was written around the
+/// slot AND the keys inside it. That is what an ordinary edit needs, and why
+/// an entry REPLACING another inherits the same.
+///
+/// Not forced: an entry went or arrived, and this entry is standing where
+/// another declaration stood. It keeps what was written AROUND that slot,
+/// which is the price pairing in order has always had. It keeps none of the
+/// keys INSIDE it: `held` cannot answer for a declaration it is not the model
+/// view of, and [`stripped`] takes them before the fold, because a key dropped
+/// is visible where one migrating into a declaration a person never put it in
+/// reads exactly as if they had.
 fn fold_entries(destination: &mut Item, held: Option<&Item>, target: &Item) -> bool {
     let (Some(list), Some(wanted)) = (List::of(destination), entries(target)) else {
         return false;
@@ -203,11 +210,15 @@ fn fold_entries(destination: &mut Item, held: Option<&Item>, target: &Item) -> b
 /// the entry landed outside the range, the slot was another declaration's as
 /// far as anything here can tell, and that is the answer the fold acts on.
 ///
-/// Two shapes it cannot separate, both by construction rather than by
-/// omission: an entry edited in place and an entry REPLACED by an unrelated one
-/// present the fold identical documents, and so do a re-sort that edits an
-/// entry and a removal that adds one. Both resolve toward the slot being
-/// another's, so a key is dropped rather than moved.
+/// Two pairs of shapes this cannot separate, by construction rather than by
+/// omission, and each pair therefore gets one answer. An entry edited in place
+/// and an entry REPLACED by an unrelated one present identical documents, and
+/// both come back forced — the edit keeps its own comment and its own keys,
+/// which is what it needs, and the replacement inherits the slot's. A re-sort
+/// that edits an entry and a removal that adds one present identical documents
+/// too, and both come back unforced, keeping the comment and dropping the
+/// keys. Separating either pair would need to ask how much one entry resembles
+/// another, which is per-type identity knowledge nothing here has.
 fn own_slot(pairing: &[Option<Slot>], standing: usize, index: usize, at: usize) -> bool {
     let anchored = |slot: &Option<Slot>| slot.filter(|slot| slot.identified);
     let before = pairing[..index].iter().rposition(|s| anchored(s).is_some());
