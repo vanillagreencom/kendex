@@ -563,8 +563,7 @@ fn a_descendant_holding_the_pipes_does_not_outlive_the_timeout() {
 /// The producer `registry/client.rs` reads to tell a request that never
 /// went out from one the directory did not answer. A real spawn failure
 /// rather than a hand-built error: the classification is only worth
-/// anything if the shipped path raises the name the seam matches on, and
-/// the error it raised one commit before this was an ordinary `Io`.
+/// anything if the shipped path raises the name the seam matches on.
 #[test]
 fn a_program_that_cannot_be_spawned_says_it_never_started() {
     let error = Hardened::program("/nonexistent/kendex-not-a-program", &[])

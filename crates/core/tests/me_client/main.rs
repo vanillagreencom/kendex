@@ -475,6 +475,29 @@ fn a_cache_that_cannot_be_written_still_answers_the_fresh_name() {
     }
 }
 
+/// The same rule on the other side of the same file: the expiry is what
+/// this read learned, and a machine that will not let the cached identity
+/// go must not turn that into a refused unlink, leaving the surface naming
+/// someone as signed in under a credential the server has ended.
+#[test]
+fn an_expiry_survives_a_cache_that_cannot_be_dropped() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = rooted(&dir);
+    let env = env_in(&root);
+    let cache_dir = env.registry_cache_dir();
+    if let Some(parent) = cache_dir.parent() {
+        std::fs::create_dir_all(parent).expect("mkdir");
+    }
+    std::fs::write(&cache_dir, "not a directory").expect("plant");
+
+    let dead = Canned::new(vec![
+        ok(401, None, r#"{"error":"invalid_token"}"#),
+        ok(400, None, r#"{"error":"invalid_grant"}"#),
+    ]);
+    let state = me::load(&env, &dead, &MemoryStore::signed_in()).expect("expiry is the answer");
+    assert_eq!(state, AccountState::Expired);
+}
+
 #[test]
 fn network_away_with_nothing_cached_is_an_error() {
     let dir = tempfile::tempdir().expect("tempdir");
