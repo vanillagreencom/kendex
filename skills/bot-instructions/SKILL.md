@@ -24,20 +24,7 @@ tags: [review]
 ```
 
 Flags: `--repo`, `--spec`, `--staged`, `--dry-run`; `bot-instructions --help`.
-The generator needs Python 3.11 or newer for `tomllib` and nothing else — no
-third-party runtime, because every repo that vendors this has to be able to
-render and check with what it already has. This package's own suites are
-`tests/*.test.sh`, which this repo's CI picks up with every other skill's.
-
-Five review bots read four incompatible instruction files, and no two of them
-agree on where guidance goes. Written by hand, one repo's doctrine drifts from
-the next repo's, and an exclusion list falls behind the tree it excludes
-without anything saying so.
-
-This package holds the doctrine once. A per-repo TOML says what is true about
-that repo, and the generator writes each bot's native file from the pair. The
-rendered files are outputs: a hand edit to one is erased by the next render,
-and the drift validator reds before that happens.
+Python 3.11+.
 
 ## What reads what
 
@@ -49,23 +36,7 @@ and the drift validator reds before that happens.
 | Qodo | `.pr_agent.toml`, `best_practices.md`, `REVIEW.md` | the default branch root |
 | Macroscope | `.macroscope/ignore.md`, `.macroscope/correctness/*.md`, plus `.macroscope/check-run-agents/**` and `.macroscope/approvability.md`, which this package never writes | the pull request's most recent commit, or the default branch for a fork |
 
-Three of the five reach the `AGENTS.md` section — Codex, Copilot and
-CodeRabbit — which is why it is the doctrine root and why `[bots] codex = false`
-with `copilot` or `coderabbit` on is a `toml-schema` error. Qodo and Macroscope
-are the two that do not.
-
-A separate count decides which surfaces carry every block: Codex and Macroscope
-each read exactly one surface this package writes, so a block left out of that
-one reaches the bot nowhere. That is why `AGENTS.md` and
-`.macroscope/correctness/doctrine.md` carry all eight. The routing table in
-[schemas/renders.md](schemas/renders.md) is where that lives, one row per block
-and one column per destination.
-
-Verified caps, enum values and read semantics are in
-[references/limits.md](references/limits.md), each with the vendor page that
-states it, and each claim resting on fleet experience rather than a vendor page
-is labeled there as such. Nothing in the generator holds a limit that file does
-not carry.
+Routing per block and surface: [schemas/renders.md](schemas/renders.md) § Doctrine routing. Vendor caps: [references/limits.md](references/limits.md).
 
 ## The pieces
 
@@ -84,251 +55,45 @@ AGENTS.md § Code Review Rules   .coderabbit.yaml
 .github/copilot-instructions.md .pr_agent.toml + best_practices.md
 .github/instructions/*.md       .macroscope/
 ```
+A `[[surface]]` reaches Copilot, CodeRabbit and Macroscope. Only Macroscope honors `exclude_globs`, so narrow `globs` where scoping matters. Keys: [schemas/repo-toml.md](schemas/repo-toml.md). Validators: [schemas/validators.md](schemas/validators.md).
 
-A `[[surface]]` is authored once and reaches three bots: a Copilot
-`.instructions.md` file scoped by `applyTo`, a CodeRabbit `path_instructions`
-entry, and a Macroscope `correctness/` file scoped by `include`. Qodo has no
-per-path instruction mechanism, so surface text reaches it through
-`best_practices.md`.
+- `render` writes every enabled surface after validating it.
+- `check` re-renders and diffs, reading the index under `--staged`.
+- `adopt` takes a hand-written file or `AGENTS.md` region under management once.
 
-Authored once does not mean matched identically. Only Macroscope has a
-subtraction key, so `exclude_globs` is real scoping there and prose everywhere
-else. Where exact scoping matters, narrow `globs` rather than relying on
-`exclude_globs`. [schemas/renders.md](schemas/renders.md) states which
-mechanism each surface actually gets.
+The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bots] codex`, runs `adopt`, then `render`. A nested `AGENTS.md` carrying that heading is a `check` finding. Retire a surface with delete, then `render`. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
 
-The per-file render rules, including every escaping and ordering decision, are
-in [schemas/renders.md](schemas/renders.md). The TOML's keys and their types
-are in [schemas/repo-toml.md](schemas/repo-toml.md). What each validator
-rejects, and the silent failure it exists to catch, is in
-[schemas/validators.md](schemas/validators.md).
-
-## Commands
-
-The generator offers three verbs.
-
-- `render` writes every enabled surface from doctrine plus the repo TOML, after
-  validating what it built. It builds and validates in a scratch tree first, so
-  a validator failure leaves the repo untouched; a failure during the write
-  phase is reported naming every path already replaced, each of which holds
-  either its old bytes or its new ones — every replacement is atomic, so an
-  interrupt never leaves a truncated file. `AGENTS.md` is the exception to
-  scratch-then-replace, because it is the one output whose non-owned bytes
-  belong to the repo: what the build produces is the region's body, and the
-  write splices it into the file's bytes read at write time.
-  The validators that judge repository state rather than emitted bytes read the
-  repo, before the write, so a render that would orphan a file fails instead of
-  reporting a clean pass and then orphaning it. `schemas/validators.md` § Where
-  these run is the split.
-- `check` re-renders and compares. It reads the working tree by default; under
-  `--staged` it reads the index, for every render input as well as the outputs,
-  so a pre-commit lane judges one coherent staged state. Any difference is a
-  finding naming the path and the differing region.
-- `adopt` is the one-time verb for a repo that already has hand-written bot
-  files. `render` refuses to replace a file at a generated path that does not
-  carry this package's marker at its canonical position, and it reads that
-  marker at the moment of the replacement rather than on some prior pass over
-  the repo, which narrows the window to marker-read-until-rename rather than
-  closing it — `schemas/renders.md` § Common rules states what remains and
-  why; `adopt` takes such a file over, keeping its bytes and printing what it
-  took so the diff shows the content that has to survive in the TOML. It takes
-  a region over the same way, which is how a hand-added `AGENTS.md` heading
-  becomes managed, and it names every repo-root or `.github/` markdown file
-  the adopted content points at.
-
-There is no install-time placement step, no overwrite prompt, and no merge of
-hand edits back into doctrine. A generated file is either byte-identical to its
-render or a `check` finding.
-
-## Rendering into a file this package does not own
-
-`AGENTS.md` is the repo's own instruction file, written for working agents. The
-generator owns exactly the slice from the `## Code Review Rules` heading to the
-next heading at that level or above, and never the rest, and it opens that slice
-with the marker so the region is as identifiable as a whole file. It never
-creates `AGENTS.md` and never adds the heading: a repo without that section is
-an error telling the author to add the heading, set `[bots] codex`, `adopt`,
-then render. The flag comes before the `adopt` because `adopt` takes a region
-over only for a capability that is on, and the `adopt` is not optional because a
-hand-added heading is an unmarked region at a generated path, which is exactly
-what `render` refuses.
-
-Codex also reads the nearest nested `AGENTS.md` covering each changed file. The
-generator writes only the root section, so a nested `AGENTS.md` carrying a
-`## Code Review Rules` section is an unmanaged instruction surface that reaches
-Codex without passing through doctrine. `check` reports one.
-
-`.github/instructions/` and `.macroscope/correctness/` may hold hand-written
-files beside generated ones. The generator writes only the names the TOML's
-surfaces produce and reads nothing else. Telling the two apart is what the
-marker comment is for, and it is the only test: anything carrying the marker
-that the current TOML does not produce is an orphan. That is a retired surface's
-file, a retired bot's, and the `AGENTS.md` region when `codex` goes false. An
-unmarked file at one of those paths is the repo's own, whatever the flags say,
-and `adopt` is how one becomes managed.
-
-**Retiring one is delete-then-render, in that order**, because `render` fails on
-an orphan rather than creating one. `check` catches a retirement that skipped
-the render; it is not the normal path. `validators.md` § `orphan` carries the
-order and what deleting the `AGENTS.md` region means.
-
-**Ownership is the marker's, not the path's.** `render` replaces a generated
-path only when that file's first line is the marker this package writes — or
-its first line after a leading YAML frontmatter block or the
-`yaml-language-server` schema line, the two prologues an output's format puts
-above it. Anything else at that path is the repo's own file and the run
-refuses naming it. `renders.md` § Common rules is the rule; `adopt` is the way
-in.
-
-A path that fails is a finding naming the path, and a `check` finding never
-quotes a region out of a file that failed to read: what gets reported is the
-failure, not the contents.
-
-## Every rendered config excludes the render trees
-
-**A render-only diff opens no bot rounds.** That is the requirement, and it is
-what the exclusion set is for: a tracked tree this repo renders from an upstream
-package is not its code, so a finding on one costs a round nobody here can
-spend. Every config this package renders excludes those trees, and a surface
-with no file-based review exclusion carries the paths as prose, so the
-instruction names something rather than gesturing at it.
-
-**Two of the five subtract for real; three are asked.** CodeRabbit's
-`path_filters` and Macroscope's `ignore.md` remove the files from review. Codex,
-Copilot and Qodo receive the paths as prose, and **a bot asked to skip a path
-may still comment on it** — none of the three has a file-based review exclusion
-this package can reach. Naming the paths there makes the instruction actionable;
-it is not enforcement. `schemas/renders.md` § Doctrine routing says which
-surface gets which mechanism, and `references/checklist.md` says where
-enforcement for the three has to come from instead.
+Every render excludes the render trees. CodeRabbit and Macroscope subtract them; Codex, Copilot and Qodo receive the paths as prose and may still comment. Enforcement: [references/checklist.md](references/checklist.md) § Excluding the render trees.
 
 ## A pull request changing its own review
 
-Copilot, CodeRabbit and Macroscope read their instruction files from the pull
-request's own head. A pull request that edits a generated file, the doctrine
-source, the TOML, or the generator changes the review that pull request
-receives, and a re-render makes `check` pass on the weakened policy. Showing
-the change in the diff is not a trust boundary.
+- Treat every policy path below as invalidating prior review evidence.
+- Require trusted human approval on a pull request that touches a policy path.
+- Run `check` in CI from the default branch copy, with `--spec` naming the pull request tree's package copy.
 
-No repo file can close that, and this package does not claim to. What a repo
-whose merge gate consumes bot output has to do instead:
-
-- Treat every path in the policy set below as a policy path. A push touching one
-  invalidates review evidence gathered before it, so the deciding review is the
-  one that ran after the policy change was visible.
-- Require a trusted human approval on a pull request that touches a policy
-  path. Bot evidence gathered under head-branch policy the same pull request
-  wrote is not evidence.
-- Run `check` in CI from the default branch's copy of this package, never from
-  the pull request's checkout: a workflow that checks out the default branch
-  for the generator and validators, then points them at the pull request's
-  tree, passing `--spec` for the package copy in that tree. Inputs come
-  from the tree under judgment, because a legitimate doctrine or TOML change has
-  to be able to land; the trusted checkout supplies the code. What that buys is
-  that a tampered generator cannot report a clean render. It does not and cannot
-  stop a policy change, which is what the approval rule above is for.
-
-**The render inputs**, which is every path a render reads to produce bytes. This
-is the one statement of the set: the marker names them, `check --staged` reads
-each from the index, and the policy set below contains them.
-
+Render inputs:
 - `bot-instructions.toml`.
 - The spec copy's doctrine source and routing table.
-- `.bot-instructions/coderabbit-schema.json`, when `[bots] coderabbit` is true.
-- Both install manifests, when `[exclusions] derive_render` is true. It is a pair
-  rather than one file: the root `kendex.toml` is always read, because whether
-  it declares `is_source_catalog` is what decides where install state lives, and
-  `kendex-local.toml` is read as well when it does. Naming only the resolved one
-  would leave a staged lane reading routing bytes from the worktree and install
-  state from the index, judging a state nobody is committing.
-- The existing `AGENTS.md`, when `[bots] codex` is true.
+- `.bot-instructions/coderabbit-schema.json` when CodeRabbit is on.
+- `kendex.toml`, plus `kendex-local.toml` for a source catalog, when render exclusions are derived.
+- The existing `AGENTS.md` when Codex is on.
 
-What a repo-state validator reads is deliberately not in that set:
-`orphan`'s sweep of the trees `validators.md` § `orphan` names, and
-`agents-section`'s read of the repo's tracked nested `AGENTS.md` files. Those
-enumerate paths rather than reading a fixed input, so the marker could not
-name them and no render consumes their bytes. They are covered twice over
-anyway — every open is under the rule above, and a repo-state validator reads
-whichever tree `check`
-selected, the worktree by default and the index under `--staged`, so the
-staged lane still judges one coherent state. The policy set below does contain
-the trees they read.
-
-**The policy set**, which is every path whose bytes decide what a bot is told or
-whether a render validates. This list is the one statement of it; the checklist
-line points here rather than repeating it, so the two cannot drift.
-
+Policy set:
 - Every render input above.
-- This package's own installed tree: the generator and the validators, not only
-  the doctrine source and routing table the render inputs already name. They
-  decide whether a render validates, which is half the definition above. The
-  trusted CI checkout is why an edit to them cannot fool `check` in CI — that
-  lane runs the default branch's copy — but the local verbs run the head's, and
-  a policy path is about what a push invalidates rather than about what one
-  lane happens to read.
+- This package's installed tree.
 - Every generated path.
-- Every `AGENTS.md` in the repo. Codex reads the nearest nested one, so a file
-  the root render never touches still reaches it.
-- Every file under `.github/instructions/`, `.macroscope/correctness/`,
-  `.macroscope/check-run-agents/`, and `.macroscope/approvability.md`, marked or
-  not. Copilot and Macroscope load an unmarked file from those just as readily
-  as a generated one, and nothing else here judges it. The last two this package
-  never writes at all, which makes them unmanaged surfaces rather than
-  unmanaged files.
-- Any repo-wide reviewer file the repo keeps by hand.
-  `references/checklist.md` § Adding a repo says what becomes of one.
+- Every `AGENTS.md` in the repo.
+- Every file under `.github/instructions/`, `.macroscope/correctness/`, `.macroscope/check-run-agents/`, and `.macroscope/approvability.md`.
+- Any repo-wide reviewer file kept by hand.
 
-Two asymmetries are worth knowing. Macroscope reads the default branch for a
-fork pull request, so a fork cannot weaken its own review the way a branch
-pull request can. And an organization or workspace CodeRabbit override outranks
-the repo file entirely, which is the same problem from the other side: a
-setting the repo cannot see decides what the repo's file means.
-
-## What "shared doctrine" does and does not mean
-
-The generator reads the doctrine source from this package as installed in the
-consuming repo, so a repo running an older installed copy renders older
-doctrine, and both `render` and `check` pass. Nothing here compares one repo's
-doctrine against another's.
-
-What makes the staleness visible is the marker: it names this package and its
-version, so a version bump re-renders every file in that repo and the diff says
-which doctrine the repo is now on. A fleet-wide doctrine change is therefore an
-update of this package in each repo followed by a render, and the repos that
-have not done it are the ones whose marker still names the old version.
-
-That only works if a doctrine edit ships a version bump. Nothing in a consuming
-repo can check it, because a consumer sees one version and has nothing to
-compare it against; the rule belongs to the repo that publishes this package,
-and it is the reason the version is in the marker at all.
+A doctrine edit ships a version bump. The marker records the spec copy's version; a repo whose marker names an older version has not re-rendered.
 
 ## Doctrine
 
-The generator reads doctrine from a **spec copy**: a copy of this package, whose
-`SKILL.md` carries this section and whose `schemas/renders.md` carries the
-routing table. It defaults to the running copy, and `--spec <path>` names
-another, which is what lets a trusted checkout render a tree whose doctrine has
-moved. One flag for both files because they are one set: `doctrine-routing`
-holds the headings here to the rows there, so reading them from different
-copies would red on every legitimate doctrine change. The marker records the
-version from the spec copy's frontmatter, not the running copy's, and a spec
-copy with no readable version is an error — otherwise a doctrine change would
-land under a stamp naming doctrine it does not carry.
-
-The generator locates exactly one `## Doctrine` section in the doctrine source.
-Zero sections, or more than one, is an error rather than a guess. Blocks are the
-`###` headings inside that section, each sliced from its heading to the next
-heading at that level or above, still inside the section. A repeated block id
-inside the section is an error, and a heading found outside the section is not
-doctrine whatever it is named. That rule is what makes the parse safe against a
-project-instructions block a harness injected after the frontmatter.
-
-Block ids are frozen: `schemas/renders.md` names blocks by id, and a rename is
-a breaking change to every render.
-
-A block reaches a surface as prose. Nothing in a block may carry markdown a
-YAML or TOML scalar cannot hold verbatim, and nothing in it names a repo, a
-path, or an issue. Repo-specific text belongs in the TOML.
+The generator reads exactly one `## Doctrine` section from the spec copy named by `--spec`, or the running copy by default.
+Each `###` heading is a frozen block id.
+A block holds no repo, path, issue, or markdown that a YAML or TOML scalar cannot carry verbatim.
+Repo text goes in `bot-instructions.toml`.
 
 ### scope
 
@@ -392,11 +157,4 @@ recommend parsing them.
 
 ## Adding a repo
 
-The procedure is [references/checklist.md](references/checklist.md) § Adding a
-repo, beside the settings work it runs into, and it derives its order from
-`toml-schema`'s cross-flag clauses, `adopt`'s rule and `agents-section`'s
-ungated nested-`AGENTS.md` clause rather than restating one. The shape worth
-knowing before you start: nothing that depends on a flag is written before the
-flag, so a capability's surfaces, `adopt` and `render` all happen in the pass
-that turns it on — and the one constraint no flag carries, a nested
-`## Code Review Rules` section, is cleared before the first render of all.
+[references/checklist.md](references/checklist.md) § Adding a repo.
