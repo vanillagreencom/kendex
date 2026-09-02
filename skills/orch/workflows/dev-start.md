@@ -96,7 +96,7 @@ Labels: [LABELS]
 
 Group pending sub-issues by `agent:[TYPE]` label and order them per [SKILL.md § Coordination](../SKILL.md#coordination) sequencing. Process groups sequentially: delegate → wait → validate (§ 3) → collect handoff notes → next group.
 
-Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run all four § 2 stamps immediately before each group's delegation.
+Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run § 2's stamps immediately before each group's delegation.
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
