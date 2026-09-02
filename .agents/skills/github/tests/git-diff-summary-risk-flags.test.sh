@@ -93,9 +93,13 @@ assert_eq "Rust source still emits Rust risk flags" '["unsafe_code_added","repr_
 assert_eq "Rust source is production scope" "production" "$(jq -r '.scope' <<<"$rust_json")"
 
 # An early match must survive an input large enough for grep -q to close its
-# pipe while the producer is still writing. Under one 64 KB pipe buffer the
-# whole diff is buffered before grep reads, so the producer never blocks and
-# the bug cannot appear; two buffers' worth keeps git writing past the match.
+# pipe while its producer is still writing. git is not that producer:
+# scan_diff drains git diff to EOF into a shell variable, so the pipeline's
+# writer is the shell replaying that captured, ^+-filtered string. Under one
+# 64 KB pipe buffer the whole string fits and the writer never blocks, so the
+# bug cannot appear; two buffers' worth keeps it writing past the match.
+# wc -c measures the file, a conservative lower bound on the piped string,
+# which carries a + per line on top of it.
 large_repo="$SANDBOX/large-early-match"
 init_repo "$large_repo"
 mkdir -p "$large_repo/tests"
