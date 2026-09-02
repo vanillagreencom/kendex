@@ -82,10 +82,11 @@ For a candidate row in the same unit, the reference number is its ceiling. A
 larger open row or a first row beside an existing reference set needs
 `RATCHET_RAISE=1`; a frozen row never rises. When the units differ, the two
 numbers are not compared: an open row needs the same declaration, and a frozen
-row — which has no declaration — is measured against HEAD's own blob in the new
-unit instead. It is admitted only when it is this run's measurement AND that
-measurement is at or below HEAD's copy, so `--update` carries the re-measure
-across and refuses the growth under it; a path HEAD carries no copy of refuses.
+row — which has no declaration — is measured against HEAD's own copy in the new
+unit instead, read in whichever representation that run measured the candidate
+in. It is admitted only when it is this run's measurement AND that measurement
+is at or below HEAD's copy, so `--update` carries the re-measure across and
+refuses the growth under it; a path HEAD carries no copy of refuses.
 The gate reads no commit message, so put the declaration's reason in the commit
 body.
 
