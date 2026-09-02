@@ -291,12 +291,13 @@ describe("the Follow source switch", () => {
   });
 
   // A refused write is not a write that changed nothing. `package_set_rev`
-  // persists the revision through `set_rev_with` and only then runs the
-  // apply, so an apply that fails answers with an error over a manifest
-  // that already moved. Restoring the switch from the row the click read
-  // would show that as settled and re-open every action against it — so
-  // the standing is read again, and the engine's own answer decides where
-  // the switch sits.
+  // runs the leaving packages' uninstallers before the plan, and an error
+  // over those comes back with what they did standing; the manifest save is
+  // op 0 of the same journaled plan and rolls back with it. Either way the
+  // click has no account of where the switch belongs — restoring it from
+  // the row the click read would show that as settled and re-open every
+  // action against it — so the standing is read again, and the engine's own
+  // answer decides where the switch sits.
   it("reads the standing back when the write is refused", async () => {
     vi.mocked(commands.packageSetRev).mockResolvedValue({
       status: "error",

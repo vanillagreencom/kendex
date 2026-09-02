@@ -138,10 +138,11 @@ describe("packageVersionActions", () => {
   });
 
   // A refused write is not a write that changed nothing. `package_set_rev`
-  // persists the revision through `set_rev_with` and only then runs the
-  // apply, so an apply that fails answers with an error over a manifest
-  // that already moved. A page that returned on the error would go on
-  // showing the version it read before the click as the settled one.
+  // runs the leaving packages' uninstallers before the plan, and an error
+  // over those comes back with what they did standing; the manifest save is
+  // op 0 of the same journaled plan and rolls back with it. A page that
+  // returned on the error would go on showing the version it read before
+  // the click as the settled one, whichever of the two happened.
   it("reads the package back when the write is refused", async () => {
     const reload = vi.fn();
     vi.mocked(commands.packageSetRev).mockResolvedValue({

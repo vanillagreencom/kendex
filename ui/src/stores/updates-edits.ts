@@ -32,8 +32,10 @@ const run = <T>(work: () => Promise<Outcome<T>>): Promise<Outcome<T>> =>
     // committed and then failed, and the rows on screen must be what
     // actually landed.
     await useUpdatesStore.getState().reload();
+    // Then the machine, on `rescan.ts`'s rule: asked whatever the work
+    // answered, and inside the busy this wrapper holds.
+    await rescanEverything();
     if (answer.status === "error") return { error: answer.error };
-    if (!("error" in answer.data)) await rescanEverything();
     return answer.data;
   });
 

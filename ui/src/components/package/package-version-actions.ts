@@ -40,8 +40,8 @@ export function packageVersionActions(
   const afterChange = () => {
     reload();
     // The package's own reads, then the two the whole app derives from —
-    // the same call the updates store's own apply makes, which is where the
-    // reasoning for reading both back lives.
+    // the same call the updates store's own apply makes, on the rule
+    // `rescan.ts`'s header states.
     void rescanEverything();
   };
   // Every one of these applies a plan that can refuse a rendering, so
@@ -75,10 +75,12 @@ export function packageVersionActions(
       setBusy(false);
       if (response.status === "error") {
         showError(response.error);
-        // An error is not proof that nothing changed: `package_set_rev`
-        // persists the revision and only then applies, so a failed apply
-        // answers over a manifest that already moved. The page reads back
-        // either way, or it shows the old version as settled.
+        // An error is not proof that nothing changed: the write runs the
+        // leaving packages' uninstallers before the plan, and an error over
+        // those comes back with what they did standing. The manifest save is
+        // op 0 of the same journaled plan and rolls back with it, so the
+        // version this page shows as settled is the engine's answer to give.
+        // The page reads back either way.
         afterChange();
         return;
       }

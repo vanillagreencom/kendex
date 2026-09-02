@@ -96,8 +96,10 @@ describe("updates store: edited places", () => {
 
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
-    // run() stops at the failure instead of refreshing as if it landed.
-    expect(commands.auditAll).not.toHaveBeenCalled();
+    // The failure is reported, and the machine is read anyway: a rejection
+    // is the answer that accounts for least, and the uninstallers the write
+    // runs before its plan may already have moved what these two read.
+    expect(commands.auditAll).toHaveBeenCalled();
   });
 
   it("a discard whose transport failed surfaces the failure", async () => {
@@ -118,7 +120,7 @@ describe("updates store: edited places", () => {
 
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
-    expect(commands.auditAll).not.toHaveBeenCalled();
+    expect(commands.auditAll).toHaveBeenCalled();
   });
 
   // The action boundary owns the guarantee: a confirmation opened before
@@ -318,7 +320,10 @@ describe("updates store: installing beside an edited place", () => {
     expect(useProblemsStore.getState().dialog.open).toBe(false);
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
-    expect(commands.auditAll).not.toHaveBeenCalled();
+    // Refused for this name, but the write ran the leaving packages'
+    // uninstallers before its plan — the machine is read whatever it
+    // answered, on `rescan.ts`'s rule.
+    expect(commands.auditAll).toHaveBeenCalled();
   });
 
   // An error in neither phase — Tauri rejecting an unknown command or bad
@@ -335,7 +340,7 @@ describe("updates store: installing beside an edited place", () => {
     );
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
-    expect(commands.auditAll).not.toHaveBeenCalled();
+    expect(commands.auditAll).toHaveBeenCalled();
     expect(useUpdatesStore.getState().busy).toBe(false);
   });
 

@@ -23,6 +23,17 @@
 // same apply an update does, so the bytes both reads answer for move under
 // it — and calls this once its own standing has landed.
 //
+// A write that calls this calls it whatever the write answered, and no
+// caller gates on the answer. A refusal is no account of what is on disk:
+// `repo_effects::execute` runs the leaving packages' uninstallers before
+// the plan, and an `Undo` error comes back with what they did to the
+// repository standing. Neither is an answer that landed — `moved` covers
+// the two states `moving` counts, `removed` the other destructive one, and
+// a dropped rendering can answer with all three fields empty, so no
+// predicate over the response is complete. A write that turns out to have
+// moved nothing pays what every other one pays — the page held for a
+// machine-wide scan and a forced audit — rather than a page left dated.
+//
 // Adding a project, dropping one, or moving a harness's folder changes
 // which scopes the audit reads, and a scope with no view of its own counts
 // zero unmanaged items — which is how a project card ends up hiding the

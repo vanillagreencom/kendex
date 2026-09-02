@@ -139,7 +139,6 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       if (rowUnsettled(get(), row)) return needsCheck();
       await holdingBusy(async () => {
         const answer = await caught(applyRow(row, reportUpdate));
-        let applied = false;
         if (answer.status === "error") {
           // A transport failure rejects rather than refusing, and only
           // this catch sees it: unreported it would read as an update
@@ -151,7 +150,6 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           // is the whole point of asking the command what it did.
           // One package's apply, so a removal it reports is that package's.
           sayApply(updatedToastLabel(row.name), answer.data.update, 1);
-          applied = true;
         }
         // Whatever it answered, the standing is read again: the work can
         // commit and then fail, and the rows must be what landed.
@@ -159,7 +157,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         // why an error is not proof that nothing changed.
         wrote([row]);
         await reload();
-        if (applied) await rescanEverything();
+        // Then the machine, on `rescan.ts`'s rule: asked whatever the apply
+        // answered, and inside the busy the write holds.
+        await rescanEverything();
       });
     },
 
