@@ -29,8 +29,8 @@ Risk flags:
   unsafe_code_added, repr_c_struct_changed, extern_c_changed,
   atomics_modified
                  Rust-specific flags; each scans ADDED lines in .rs diffs
-                 only (unsafe blocks, #[repr(C)] structs, extern "C" items,
-                 atomics use)
+                 only, for a line containing `unsafe ` (fn/impl/trait/block),
+                 `#[repr(C)]`, `extern "C"`, or `Atomic`/`atomic::`
   panic_path_added
                  panic patterns (panic!/unwrap()) added to production source
   test_panic_path_added

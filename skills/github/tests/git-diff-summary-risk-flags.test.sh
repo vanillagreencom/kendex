@@ -12,6 +12,11 @@
 # Run: bash skills/github/tests/git-diff-summary-risk-flags.test.sh
 set -euo pipefail
 
+# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C` and
+# would stage fixture blobs into the real repository.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 SUMMARY="$REPO_ROOT/skills/github/scripts/git-diff-summary"
@@ -88,22 +93,31 @@ assert_eq "Rust source still emits Rust risk flags" '["unsafe_code_added","repr_
 assert_eq "Rust source is production scope" "production" "$(jq -r '.scope' <<<"$rust_json")"
 
 # An early match must survive an input large enough for grep -q to close its
-# pipe while the producer is still writing.
+# pipe while the producer is still writing. Under one 64 KB pipe buffer the
+# whole diff is buffered before grep reads, so the producer never blocks and
+# the bug cannot appear; two buffers' worth keeps git writing past the match.
 large_repo="$SANDBOX/large-early-match"
 init_repo "$large_repo"
 mkdir -p "$large_repo/tests"
 {
+    printf 'use std::sync::atomic::AtomicUsize;\n'
+    printf '#[repr(C)]\n'
+    printf 'pub struct Early { value: AtomicUsize }\n'
+    printf 'extern "C" { fn ffi_entry(); }\n'
     printf 'pub unsafe fn first() { panic!("boom"); }\n'
-    awk 'BEGIN { line = "// "; for (i = 0; i < 500; i++) line = line "x"; for (i = 0; i < 800; i++) print line }'
+    awk 'BEGIN { line = "// "; for (i = 0; i < 500; i++) line = line "x"; for (i = 0; i < 264; i++) print line }'
 } > "$large_repo/tests/large.rs"
 large_bytes=$(wc -c < "$large_repo/tests/large.rs")
-if [ "$large_bytes" -le 300000 ]; then
-    printf '  FAIL: large early-match fixture is only %s bytes\n' "$large_bytes" >&2
-    exit 1
+large_min_bytes=$((2 * 65536))
+if [ "$large_bytes" -ge "$large_min_bytes" ]; then
+    large_size="ok"
+else
+    large_size="$large_bytes bytes"
 fi
+assert_eq "large early-match fixture outruns two 64 KB pipe buffers" "ok" "$large_size"
 git -C "$large_repo" add tests/large.rs
 large_json="$($SUMMARY -C "$large_repo" --staged)"
-assert_eq "large diff keeps first-line Rust and test-panic flags" '["unsafe_code_added","test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$large_json")"
+assert_eq "large diff keeps every early-line risk flag" '["unsafe_code_added","repr_c_struct_changed","extern_c_changed","atomics_modified","test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$large_json")"
 
 # kendex#944: panic patterns in #[cfg(test)] modules inside production files
 cfg_test_repo="$SANDBOX/cfg-test"

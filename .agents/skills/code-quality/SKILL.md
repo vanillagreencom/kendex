@@ -53,7 +53,7 @@ A new or modified check, guard, assertion, or test ships with a must-fail contro
 
 - **Rust**: make illegal states unrepresentable; exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning. A test that hands a temporary path to code that may resolve symlinks binds its canonical root at creation and passes that binding, never the raw path; platform-only test APIs carry a `cfg` and, when the property is portable, a portable twin.
 - **Bash**: `set -euo pipefail` in every new script; check the result of every effectful substitution; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales.
-- In a `pipefail` suite, never leave a pipeline unguarded when an early-closing `head` or `grep -q` can stop reading while its producer still writes; SIGPIPE can return 141 and exit the suite.
+- In any `pipefail` script, never leave a pipeline unguarded when an early-closing `head` or `grep -q` can stop reading while its producer still writes: the 141 SIGPIPE status aborts the run where `errexit` fires, and in condition position, where it does not, reads as a plain false that drops the result with no error.
 - Measure a commit header with growth-guards' locale-stable `gg_chars`, never raw `awk length` or `wc -c`.
 - **TypeScript/JS**: distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries.
 
