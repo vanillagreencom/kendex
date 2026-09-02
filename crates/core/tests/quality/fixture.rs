@@ -32,14 +32,15 @@ pub fn skill(source: &Path, name: &str, body: &str) {
 
 #[allow(clippy::unwrap_used)]
 pub fn fixture() -> Fixture {
-    fixture_with_method("copy")
+    fixture_with("copy", "[\"claude\"]")
 }
 
-/// `method = "symlink"` installs read their content through the canonical
-/// tree — the path the gate hashes and the path the audit observes differ,
-/// which is exactly what the content hash must not care about.
+pub fn fixture_with_two_harnesses() -> Fixture {
+    fixture_with("copy", "[\"claude\", \"codex\"]")
+}
+
 #[allow(clippy::unwrap_used)]
-pub fn fixture_with_method(method: &str) -> Fixture {
+fn fixture_with(method: &str, harnesses: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     // Canonical up front: macOS reaches its temp dirs through a symlink,
     // and the engine hands back canonical paths.
@@ -65,7 +66,7 @@ pub fn fixture_with_method(method: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"{method}\"\n\n[skills.clean]\nsource = \"cat\"\n\n[skills.hostile]\nsource = \"cat\"\n",
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = {harnesses}\nmethod = \"{method}\"\n\n[skills.clean]\nsource = \"cat\"\n\n[skills.hostile]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )

@@ -8,7 +8,7 @@ use super::Severity;
 /// One safety problem, where it is, and what to do about it. The message
 /// never holds a matched secret — only its fingerprint (invariant of
 /// `secret::fingerprint_secret`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Finding {
     pub rule: String,

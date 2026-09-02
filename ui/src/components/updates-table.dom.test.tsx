@@ -359,9 +359,8 @@ describe("the findings behind a row's score", () => {
       {
         kind: "skill",
         name: "gh",
-        harnesses: ["claude"],
+        targets: [{ harness: "claude", location: "" }],
         scope: { scope: "global" },
-        location: "",
         findings: [
           {
             rule: "dangerous-commands",

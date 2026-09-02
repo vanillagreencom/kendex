@@ -9,7 +9,7 @@ use crate::env::Env;
 use crate::error::Result;
 use crate::model::Scope;
 
-use super::scoring::ItemSafety;
+use super::scoring::{ItemSafety, SafetyTarget};
 
 /// Every installation in this scope, scored — the clean ones included, so
 /// a package with nothing found still has a score to show.
@@ -31,9 +31,11 @@ pub fn observed_rows(env: &Env, scope: &Scope) -> Result<Vec<ItemSafety>> {
         .map(|(item, result)| ItemSafety {
             kind: item.kind,
             name: item.name.clone(),
-            harnesses: vec![item.harness],
+            targets: vec![SafetyTarget {
+                harness: item.harness,
+                location: crate::paths::slashed(&item.path),
+            }],
             scope: item.scope.clone(),
-            location: crate::paths::slashed(&item.path),
             advisory: result,
         })
         .collect())

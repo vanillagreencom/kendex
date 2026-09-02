@@ -113,7 +113,7 @@ impl Severity {
 /// that had to be replaced are reported by `undecodable-content`. Refusing
 /// to read such a file would mean one appended byte turns a payload
 /// invisible to every rule, which is a pass nobody earned.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TreeFile {
     /// Relative to the tree's root, and `/`-spelled wherever it becomes
     /// text: the links it is compared against are written that way.
@@ -147,7 +147,7 @@ impl TreeFile {
 }
 
 /// One MCP server as a harness records it.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct McpEntry {
     pub command: Option<String>,
     pub args: Vec<String>,
@@ -198,7 +198,7 @@ impl McpEntry {
 }
 
 /// A plugin's readable sources.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct PluginSources {
     /// Manifest file names found beside the plugin.
     pub manifests: Vec<String>,
@@ -216,7 +216,7 @@ pub const UNREADABLE_PLUGIN: &str = "the plugin's own files are not readable her
 pub const UNREAD_MCP_ENTRY: &str = "this server's command line lives inside a shared config file that was not re-read for this audit";
 
 /// What a rule reads, defined per kind.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Content {
     /// One authored file: agents and commands.
     Document {
@@ -328,7 +328,7 @@ pub trait AuditRule: Send + Sync {
 }
 
 /// A rule that applies here but could not run, and why.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SkippedRule {
     pub rule: String,
@@ -343,10 +343,10 @@ pub struct SkippedRule {
 ///
 /// A flattened field lands in its embedder's own key space and nothing
 /// catches a clash at compile time, so a new field here must avoid the
-/// keys those embedders already occupy: `kind`, `name`, `harnesses`,
-/// `scope`, `location`, `notes`, `contentHash`, `fromCache`, `format` and
+/// keys those embedders already occupy: `kind`, `name`, `targets`, `scope`,
+/// `notes`, `contentHash`, `fromCache`, `format` and
 /// `discovery`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AuditResult {
     pub findings: Vec<Finding>,

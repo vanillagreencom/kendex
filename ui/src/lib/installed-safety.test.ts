@@ -30,9 +30,8 @@ function row(
   return {
     kind: "skill",
     name: "github",
-    harnesses: [harness],
+    targets: [{ harness, location: "github" }],
     scope: GLOBAL,
-    location: "github",
     findings,
     skipped: [],
     safety: { score, deductions: [] },

@@ -22,7 +22,7 @@ use specta::Type;
 use super::{Finding, Severity};
 
 /// One rule firing once, and what it cost.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Deduction {
     pub rule: String,
@@ -33,7 +33,7 @@ pub struct Deduction {
     pub repeat: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SafetyScore {
     pub score: u32,

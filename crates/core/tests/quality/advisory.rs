@@ -4,7 +4,7 @@
 use kendex_core::apply;
 use kendex_core::quality::Severity;
 
-use super::fixture::{fixture, installed, plan};
+use super::fixture::{fixture, fixture_with_two_harnesses, installed, plan};
 
 /// A critical finding is reported on the row and installs anyway — the
 /// exact content the old gate held back.
@@ -55,7 +55,11 @@ fn the_audit_reports_every_installed_row() {
     let report = plan(&f);
     apply::execute(&f.env, &report.plan).unwrap();
 
-    let rows = kendex_core::engine::observed_rows(&f.env, &f.scope).unwrap();
+    let rows: Vec<_> = kendex_core::engine::observed_rows(&f.env, &f.scope)
+        .unwrap()
+        .into_iter()
+        .filter(|row| matches!(row.name.as_str(), "clean" | "hostile"))
+        .collect();
     let hostile = rows.iter().find(|row| row.name == "hostile").unwrap();
     assert_eq!(hostile.advisory.safety.score, 75);
     let clean = rows.iter().find(|row| row.name == "clean").unwrap();
@@ -70,4 +74,52 @@ fn the_audit_reports_every_installed_row() {
         "{:?}",
         clean.advisory.skipped
     );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn installed_rows_name_the_harness_and_location_the_scanner_found() {
+    let f = fixture_with_two_harnesses();
+    let report = plan(&f);
+    apply::execute(&f.env, &report.plan).unwrap();
+
+    let rows: Vec<_> = kendex_core::engine::observed_rows(&f.env, &f.scope)
+        .unwrap()
+        .into_iter()
+        .filter(|row| matches!(row.name.as_str(), "clean" | "hostile"))
+        .collect();
+    assert_eq!(
+        rows.len(),
+        2 * kendex_core::model::HarnessId::ALL.len(),
+        "the scanner should return each harness that reads the installs"
+    );
+    assert!(rows.iter().all(|row| row.targets.len() == 1));
+    let installed: std::collections::BTreeSet<_> = rows
+        .iter()
+        .map(|row| (row.name.as_str(), row.targets[0].harness))
+        .collect();
+    assert_eq!(
+        installed,
+        ["clean", "hostile"]
+            .into_iter()
+            .flat_map(|name| {
+                kendex_core::model::HarnessId::ALL
+                    .into_iter()
+                    .map(move |harness| (name, harness))
+            })
+            .collect()
+    );
+    for row in rows {
+        let target = &row.targets[0];
+        let harness_dir = match target.harness {
+            kendex_core::model::HarnessId::Claude => ".claude",
+            kendex_core::model::HarnessId::Codex => ".agents",
+            kendex_core::model::HarnessId::Opencode
+            | kendex_core::model::HarnessId::Cursor
+            | kendex_core::model::HarnessId::Pi
+            | kendex_core::model::HarnessId::Gemini
+            | kendex_core::model::HarnessId::Copilot => ".agents",
+        };
+        assert!(target.location.contains(harness_dir), "{target:?}");
+    }
 }

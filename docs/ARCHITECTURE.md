@@ -779,9 +779,9 @@ lives in one capability table read by core and UI.
   embeds: `engine::ItemSafety` for planned and installed rows
   (`engine/scoring.rs`, `engine/observed.rs`), `PackageSafety`
   (`browse/safety.rs`) and `CheckedItem` for what is not installed; the
-  bound shapes flatten it, so TS reads their fields at top level. Planned
-  rows audit identical rendered content once and name every harness sharing
-  that reading; harness renderings with different content remain separate.
+  bound shapes flatten it, so TS reads their fields at top level. Plans audit
+  distinct rendered content once, then group matching results and retain each
+  harness and location; differing results stay separate.
 - **Rules read typed per-kind inputs and say when they cannot read.** A
   skill carries its whole tree, a hook its registration and script, an MCP
   server its command, args, env and headers, a plugin its manifest and
