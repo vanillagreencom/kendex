@@ -44,7 +44,11 @@ pub fn repo_leaf(provenance: &str) -> &str {
 pub struct ResolvedSource {
     pub name: String,
     pub root: PathBuf,
-    /// Durable provenance: `owner/repo`, a canonical path, or `local`.
+    /// Durable provenance: the remote reference as the declaration spelled
+    /// it — `owner/repo` only where it was written that way, a full URL
+    /// where it was not — a canonical path, or `local`. Opaque, and
+    /// recorded verbatim as a lock entry's `source_repo`, so anything
+    /// matching on it compares the whole string rather than a fold of it.
     pub provenance: String,
     /// Remotes only: the commit this root holds. The root is that commit's
     /// own directory, so it cannot change while it is being read.

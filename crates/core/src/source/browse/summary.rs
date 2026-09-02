@@ -26,7 +26,9 @@ pub struct SubscriptionRef {
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogSummary {
-    /// `owner/repo`, a path, or `local` — what the catalog is.
+    /// What the catalog is, as its declaration spelled it: `owner/repo`
+    /// only where it was written that way, a full URL where it was not, a
+    /// path, or `local`. Opaque — `repo_key` below is the folded form.
     pub provenance: String,
     /// The canonical `owner/repo` the provenance folds to on GitHub — what
     /// a subscription's `repo_key` and a directory row are matched by,

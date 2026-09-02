@@ -848,7 +848,11 @@ export type CatalogGroupMeta = {
 export type CatalogMode = "plugin-registry" | "explicit" | "discovered" | "unusable";
 
 export type CatalogSummary = {
-	/**  `owner/repo`, a path, or `local` — what the catalog is. */
+	/**
+	 *  What the catalog is, as its declaration spelled it: `owner/repo`
+	 *  only where it was written that way, a full URL where it was not, a
+	 *  path, or `local`. Opaque — `repo_key` below is the folded form.
+	 */
 	provenance: string,
 	/**
 	 *  The canonical `owner/repo` the provenance folds to on GitHub — what
@@ -2036,13 +2040,20 @@ export type MarketplaceRow = {
 	 */
 	counts: { [key in string]: number } | null,
 	/**
-	 *  What this subscription resolved to, durably: `owner/repo` for a
-	 *  remote, the canonical slashed path for a path source, `local` for the
-	 *  reserved one. The same string the lock records as an installation's
-	 *  `source_repo`, so it is what a provenance join matches on — the
-	 *  declaration's own `repo` and `path` are what the person typed, and a
-	 *  relative path never matches a canonical one. Absent where the
-	 *  catalog could not be read.
+	 *  What this subscription resolved to, durably: the remote reference as
+	 *  the declaration spelled it for a git source — `owner/repo` where it
+	 *  was written that way, a full HTTPS or SSH URL where it was not — the
+	 *  canonical slashed path for a path source, `local` for the reserved
+	 *  one. Absent where the catalog could not be read.
+	 * 
+	 *  Opaque. It is the same string the lock records as an installation's
+	 *  `source_repo`, and a provenance join matches it VERBATIM, so a
+	 *  consumer must not fold, normalise or shorten it: folding a non-GitHub
+	 *  remote to something tidier breaks the match for every install from
+	 *  it, silently. [`Self::repo_key`] is the folded form, for the one
+	 *  question that wants it. The declaration's own `repo` and `path` are
+	 *  what the person typed, and a relative path never matches a canonical
+	 *  one, which is why neither is this.
 	 */
 	provenance: string | null,
 	/**  `[marketplace]` from the catalog's kendex.toml, where readable. */
