@@ -35,38 +35,22 @@ From the shell:
 
 ## Setup
 
-By default the skill runs exactly ONE reviewer: the highest-priority entry in `SECOND_OPINION_MODELS` that is available and is not the model your session runs. A Claude Code session gets Codex, a Codex session gets Claude, and nothing needs configuring beyond having the other CLI installed and logged in. From anywhere else — Pi, OpenCode, Cursor, a plain shell — export `SECOND_OPINION_CURRENT_MODEL` in **that session's environment** first; those clients front a model the script cannot probe, and a run refuses until you declare it. In a **detected** Claude Code or Codex session the key is not needed and not trusted over detection: an agreeing value is ignored, a contradicting one is refused naming both values — whatever its source, because an exported value is inherited by every nested session. `SECOND_OPINION_FOREGROUND_CAP` is the session-only alternative to passing `--foreground`; a project-file declaration is refused, and shipped workflows use the flag. Every other key belongs in `kendex.settings.toml` under `[env]`:
+By default the skill runs the first available entry in `SECOND_OPINION_MODELS` that differs from the current session model. A detected Claude Code session gets Codex and a detected Codex session gets Claude without configuration.
 
-| Key | Working example | What it does |
-|-----|-----------------|--------------|
-| `SECOND_OPINION_MODELS` | `"claude codex"` | Priority order. First eligible entry wins; an entry with no command still names a known model identity |
-| `SECOND_OPINION_<NAME>_CMD` | `SECOND_OPINION_PI_DEEPSEEK_CMD = "pi -p --model deepseek/deepseek-v4-pro"` | Full command for roster entry `pi-deepseek` (`claude` and `codex` have built-in commands) |
-| `SECOND_OPINION_<NAME>_MODEL` | `SECOND_OPINION_PI_DEEPSEEK_MODEL = "deepseek"` | The model that entry fronts, when it is not the entry's own name |
-| `SECOND_OPINION_COUNT` | `"2"` | Opinions a `review` collects; 2+ runs up to that many distinct models and unions the findings |
-| `SECOND_OPINION_CURRENT_MODEL` | `"claude"` (or `"opus"`, `"gpt-5.6-sol"`, `"openai-codex/gpt-5.6-sol"`, `"none"`) | The model your session runs — export per session, never in a project file. Detected for Claude Code and Codex, where detection wins over a contradicting value and an agreeing one is ignored; required in Pi, OpenCode, Cursor and undetected shells — `none` says there is no session model (CI, plain terminal) |
-| `SECOND_OPINION_ARTIFACT_DIR` | `"tmp/second-opinion"` | Where records land when you pass no `--output` (relative to `--cwd`, or `~/…`/absolute) |
-| `SECOND_OPINION_REVIEW_INSTRUCTIONS` | `"AGENTS.md review-bots.md .github/instructions/*.instructions.md"` | Repo instruction files appended to the review prompt; empty disables |
-| `SECOND_OPINION_TIMEOUT` | `"1080"` | Seconds to wait per external CLI invocation; a review's one retry on a malformed response can double the total. The script computes the detached run's deadline |
-
-This skill marks no key `# required`, so installing it writes nothing into your `kendex.settings.toml`. Every key above ships the value the scripts read when nothing assigns it, except `SECOND_OPINION_CURRENT_MODEL`, which has none and belongs in the session's environment as above — a value reaching it from a project file is refused — and `SECOND_OPINION_<NAME>_CMD`, which has a built-in command only for `claude` and `codex`. Run `scripts/second-opinion detect` to see which target a review would use from your current session.
-
-## Configuration
-
-Defaults work out of the box in a **detected Claude Code or Codex session** — there every key below is optional. Any other client must declare its session model: Pi, OpenCode, Cursor and undetected shells front a model the script cannot probe, so a run there refuses until `SECOND_OPINION_CURRENT_MODEL` names the model the session runs (or `none` when there is no session model, as in CI or a plain terminal). Set shared, non-sensitive defaults in `kendex.settings.toml` under `[env]`. Existing `.env.local` values still work and should be reserved for personal overrides.
-
-As under Setup above, an install writes nothing into `kendex.settings.toml`. Assign a key there only to change what its row below says it already does; `SECOND_OPINION_CURRENT_MODEL` and `SECOND_OPINION_TARGET` ship no default, and the first is session-only.
+Set shared, non-sensitive values in `kendex.settings.toml` under `[env]`. Keep personal overrides in `.env.local`. Installing the skill writes no settings because no key is marked `# required`.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `SECOND_OPINION_MODELS` | `claude codex` | Priority-ordered roster; the first available entry that is not your session's model wins |
 | `SECOND_OPINION_COUNT` | `1` | Opinions a `review` collects; 2+ runs up to that many distinct models and unions the findings, deduped by location (a shortfall is reported and marked degraded) |
-| `SECOND_OPINION_CURRENT_MODEL` | (unset) | The model your session runs, when the CLI cannot tell (Pi, OpenCode, Cursor, undetected — required there; `none` = no session model); Claude Code and Codex are detected. **Session-scoped: export it in the session, not in `kendex.settings.toml`, `.kendex/settings.toml` or `.env.local`** — a detected Claude Code or Codex session knows its own model, so any declaration is judged by what it adds there — **ignored** when it agrees, **refused naming both values** when it contradicts, whether you exported it or committed it (exported values are inherited by nested sessions, so "I set it" is not evidence about *this* one). Where the harness cannot be detected (Pi, OpenCode, Cursor) the declaration is all there is: an exported one is authoritative, while one from a project file is **refused naming the file**, since a shared file cannot describe a per-session model. Model ids normalize, provider prefix included (`opus`, `anthropic/claude-opus-4` → claude; `gpt-*`, `openai-codex/gpt-*` → codex); a value you set that the roster does not know is refused (a detected one is not — the roster may name only the target) |
+| `SECOND_OPINION_CURRENT_MODEL` | unset | Export the session model for Pi, OpenCode, Cursor, or an undetected shell; use `none` when no session model exists. Provider-prefixed IDs normalize and an unknown declared identity is refused; never store this key in a project file, because detected Claude Code and Codex sessions ignore an agreeing value and reject a conflicting one, while undetected clients reject project-file values |
 | `SECOND_OPINION_<NAME>_MODEL` | `<name>` | The model a roster entry runs, when it differs from its name (a Pi lane fronting Claude: `claude`) |
 | `SECOND_OPINION_<NAME>_CMD` | (none) | Full command for a roster entry — another model CLI is a settings entry, not new code |
 | `SECOND_OPINION_TARGET` | (unset) | Force one target; refused if it is your session's model |
 | `SECOND_OPINION_TIMEOUT` | `1080` | Seconds to wait per CLI invocation; a review's one retry can double the total |
+| `SECOND_OPINION_FOREGROUND_CAP` | unset | Session-only alternative to `--foreground`; set it to `1` so the script detaches and prints the wait command |
 | `SECOND_OPINION_ARTIFACT_DIR` | `tmp/second-opinion` | Where records and a multi-lane run's lane artifacts land when you pass no `--output` (relative to `--cwd`, or `~/…`/absolute; git-ignored on creation; falls back to a temp file, loudly, if it cannot be created or is a symlink) |
-| `SECOND_OPINION_REVIEW_INSTRUCTIONS` | (see above) | Instruction-file globs appended to the review prompt; set empty to disable |
+| `SECOND_OPINION_REVIEW_INSTRUCTIONS` | `AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md` | Instruction-file globs appended to the review prompt; set empty to disable |
 
 ### Default commands
 

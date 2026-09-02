@@ -59,17 +59,6 @@ those trees it committed.
   `git mv src/app.ts .agents/skills/x/app.ts` would list one harness path and
   nothing else — the deletion of `src/app.ts` would go unjudged. With the
   flag, both paths are listed and the diff answers `false`.
-- **The in-place read**: the manifests come from the selected head tree, and
-  the reader knows the one shape kendex writes — a `[skills.<name>]` header
-  holding a bare or plain double-quoted key, then `source = "in-place"`. It
-  does not parse the other spellings TOML allows. It counts every line that
-  could take part in spelling the value instead — a bare `in-place`, a
-  `\u`/`\U`/`\x` escape, a multiline `source` string — and carves every
-  `.agents/skills` path when one goes unaccounted. An apostrophe-quoted key,
-  a dotted key, an inline table, a nested table, a name wearing whitespace,
-  an escaped name and an escaped value all answer `false` that way, and so
-  does `source = "in-place"` under any table but `[skills.<name>]`, the only
-  one that accounts.
 - **Merge base on `pull_request`** (`base...head`): the base branch moves
   under an open PR, and only the merge base isolates what the PR changed.
 - **Two endpoints on `push` and `merge_group`** (`base head`): a force-push
@@ -100,26 +89,6 @@ Anything the classifier cannot prove answers `false`, which runs every lane:
 
 There is no flag that turns any of these into a `true`.
 
-## Tests
-
-`tests/` runs in kendex CI on every change to this repository:
-
-| Suite | Covers |
-| --- | --- |
-| `path-set` | Every render tree, mixed diffs, deletions, the near-miss paths |
-| `in-place` | Trees either manifest declares in place, `.agents/hooks`, the coarse carve for a spelling the reader does not name, the no-manifest control |
-| `rename-into-render` | The `git mv` into a render tree, and the control proving the flag is load-bearing |
-| `event-ranges` | The force-push case, the moving base branch, merge groups |
-| `fail-closed` | Unclassified events, unresolvable endpoints, an empty diff, a merge-base diff git refuses, a path git had to quote |
-| `wiring-errors` | Exit 2 on bad calls (a flag where a value belongs included), `--output` and `$GITHUB_OUTPUT` behaviour |
-| `wiring-shapes` | Every shape in `references/wiring.md` keeps each expression on one line, orders the push endpoints, names the shipped script path, and steps its indentation by two |
-
-Run one locally with `bash skills/harness-ci/tests/path-set.test.sh`.
-
-Bash 4+ syntax in the shipped script is `tools/bash32-lint`, which scans the
-roster `tools/bash32-lint --list` prints — consumer runners include macOS
-system Bash 3.2.
-
 ## Upgrades
 
 The script is upstream's. `kendex refresh` rewrites the render tree, and a
@@ -127,3 +96,5 @@ local edit to `.agents/skills/harness-ci/` is drift that the next refresh
 overwrites. Send changes to
 [vanillagreencom/kendex](https://github.com/vanillagreencom/kendex) via
 `kendex report`.
+
+Maintainer notes: [DEVELOPMENT.md](DEVELOPMENT.md).

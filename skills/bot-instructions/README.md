@@ -37,6 +37,12 @@ lands in which file, in what order, and why each omission is deliberate.
 
 ## Three verbs
 
+```bash
+scripts/bot-instructions render [--repo REPO] [--spec SPEC] [--staged] [--dry-run]
+scripts/bot-instructions check [--repo REPO] [--spec SPEC] [--staged]
+scripts/bot-instructions adopt [--repo REPO] [--spec SPEC] [--staged]
+```
+
 `render` builds and validates in a scratch tree, then writes — and the checks
 that judge repository state rather than emitted bytes read the repo before the
 write, since a scratch tree is the one place they cannot fail. `check`
@@ -49,20 +55,6 @@ printing what it replaced.
 Generated files are outputs. A hand edit is erased at the next render, and
 `check` reds before that happens. There is no overwrite prompt and no merge of
 hand edits back into the source.
-
-## Why validators
-
-Every bot in this set fails silently. An over-limit `.coderabbit.yaml` is
-discarded whole and the review runs with defaults, saying nothing. A
-`path_filters` entry missing its `!` turns the list into an allowlist and
-un-reviews the repo. An `excludeAgent` typo loads reviewer doctrine into the
-working agent. In each case the pull request looks reviewed.
-
-Each validator names the silent failure it catches, and each rejection clause it
-names ships a fixture carrying exactly that defect, asserted red on the
-validator's own message — plus one canonical render asserted green, so a
-validator that rejects everything fails the suite. What no validator can reach, because
-it lives in a vendor's web UI, is the settings checklist instead.
 
 ## What this does not solve
 
@@ -80,6 +72,7 @@ bot output has to do about it.
 | [schemas/repo-toml.md](schemas/repo-toml.md) | Every key of `bot-instructions.toml`, and the glob dialect |
 | [schemas/renders.md](schemas/renders.md) | Per-surface render rules, ordering and escaping |
 | [schemas/validators.md](schemas/validators.md) | Each validator's silent failure and what it rejects |
+| [references/validators.md](references/validators.md) | Why each validator needs a red fixture and a green control |
 | [references/limits.md](references/limits.md) | Vendor caps, enums and read semantics, each with its source |
 | [references/checklist.md](references/checklist.md) | How to add a repo, and the per-repo settings no file can configure |
 

@@ -26,6 +26,8 @@ Invoke through your AI coding harness (`/orch <command>`, `/skill:orch <command>
 | `review-pr-comments PR_NUMBER` | Triage PR review comments |
 | `submit-pr [PR_NUMBER]` | Push, open the PR, gate it, verify CI |
 | `merge-pr PR_NUMBER \| all` | Verify and merge |
+| `post-summary [ISSUE_ID]` | Post summary and handoff comments |
+| `oversee` | Run one session per unblocked item and shepherd every PR to merge |
 
 ## Setup
 
@@ -41,8 +43,8 @@ Invoke through your AI coding harness (`/orch <command>`, `/skill:orch <command>
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names (matched case-insensitively, then canonicalized: `issue-N` lowercase, Linear-style uppercase) | `([A-Z]+-[0-9]+\|issue-[0-9]+)` |
 | `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission or merge recovery | `6` |
 | `REVIEW_MAX_CYCLES` | Max internal re-review cycles per issue in review-pr § 4; the `rereview_panel` write raises `rereview_cycles` and refuses at it, so the number configured is the number of re-entries allowed. Nothing else spends it — § 7 QA re-checks write `qa_recheck_panel`, § 2 verification passes write `verification_panel`, and fix rounds tally in `cycles` | `4` |
-| `REVIEW_MAX_EXTERNAL_ROUNDS` | Max external review rounds on an open PR. review-pr-comments § 6.3 is the only writer of `pr_comment_review.iterations`; § 6.1 and submit-pr § 4's Restart check read it. At or past the cap, findings get dispositions and no fix push, and the wait does not restart on its own, except for the defect the cap paragraph of [references/finding-disposition.md](references/finding-disposition.md) exempts | `4` |
-| `REVIEWER_SLOT_BUDGET` | The runtime's total concurrent agent-session budget, counting the primary session; `0` = unlimited. On Codex, set it to the cap `spawn-adapter slots` reports | `0` |
+| `REVIEW_MAX_EXTERNAL_ROUNDS` | Max external review rounds on an open PR. At or past it a finding gets a disposition and no fix push, except a defect the diff introduces or arms | `4` |
+| `REVIEWER_SLOT_BUDGET` | Total concurrent agent-session budget, counting the primary; `0` = unlimited. Reviews run in waves when the reviewer set exceeds the free slots. On Codex, set it to the cap `spawn-adapter slots` reports | `0` |
 | `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` executes the recommended option and logs `auto-selected: [option] — [reason]` in workflow-state `auto_decisions`. Review findings disposition is by rule in EVERY mode — no mode presents a selection menu over findings. The always-ask set in [SKILL.md § The Cycle](SKILL.md#the-cycle) applies in every mode | `ask` |
 | `ORCH_MERGE_AUTONOMY` | `auto` merges without asking once every merge gate is green; `ask` presents the merge decision. A `MERGE_READY = false` state never auto-merges | `ask` |
 | `ORCH_OVERSEER_LANES` | Max concurrent lanes `oversee` keeps in flight | `3` |

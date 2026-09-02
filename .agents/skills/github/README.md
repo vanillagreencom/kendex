@@ -68,23 +68,9 @@ It is also policy, not mechanism — the gate binds only merges routed through
 
 ## Exit 75 recovery
 
-`pr-merge --auto` exits 75 when the PR is queued or auto-merge is armed. That
-state is volatile — an ejection or a failed protection check disarms it
-silently — so the caller prepares the orch lifecycle with the repository, PR,
-and exact head before arming. Its one-shot waiter publishes a durable verdict
-and exits. The helpers live in sibling skills (install orch and review-gate
-beside this one):
-
-- `.agents/skills/orch/scripts/merge-queue-watch` runs queue-wait, preserves
-  its cross-poll memory through a bounded budget, validates the prepared head,
-  and atomically claims recovery or post-merge work at the next lane boundary.
-- `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
-  pass that prints `disarmed … (re-arm)` lines.
-
-`queue-wait --help` § Verdicts owns the growing producer set. The durable
-lifecycle maps each accepted verdict to the action table in
-`.agents/skills/orch/workflows/merge-pr.md` § 5 step 1. An unrecognized verdict
-fails closed and is never re-armed. Repair what the `cause` names first.
+`pr-merge --auto` recovery belongs to [orch](../orch/SKILL.md) § Detached merge boundary.
+Branch rebasing and publication belong to [worktree](../worktree/SKILL.md) § Commands.
+Use those workflows after an exit 75.
 
 Where branch protection *is* enabled, the opposite problem appears: after a
 rebase or force-push an outdated thread can become unreachable in the UI —

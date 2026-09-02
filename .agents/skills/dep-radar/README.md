@@ -1,11 +1,8 @@
 # Dep Radar
 
-Pinned-version sweep, safe auto-update, and capability reporting for repos that
-pin dependencies deliberately — SDKs, runtime binaries with SHA constants, npm
-and cargo deps, vendored forks, model weights, GitHub Actions. Pinning buys
-reproducibility and supply-chain safety; the cost is drift. Dep Radar is the
-refresh loop that keeps the pins current without giving up the control that made
-them pins in the first place.
+Dep Radar inventories pinned SDKs, binaries, packages, forks, model weights, and
+GitHub Actions. It checks upstream releases, updates eligible pins with their
+required fixes in one PR per surface, and writes a dated report for every run.
 
 ## How it works
 
@@ -18,13 +15,6 @@ changelog, classifies the change, and for the automatic tier opens one PR per
 surface carrying the bump plus the fixes its fallout needs (API migrations,
 re-vendored bridges, tests, CI), verified locally before the PR opens. Every run
 ends with a dated report.
-
-The bias is to upgrade: majors are applied with their fallout fixed rather than
-deferred, and an uncertain finding is attempted rather than punted — the run
-reports only what actually failed, with the error output. Exactly three things
-are never automatic: model-weight swaps, changes to durable or recorded data
-scope, and anything your inventory's owner rules demote. Those rules can make a
-run more conservative, never less.
 
 Nothing in the skill is project-specific. Everything about *your* repo — which
 packages are pinned where, how to refresh and verify each one, extra owner

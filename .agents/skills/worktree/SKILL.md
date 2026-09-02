@@ -60,7 +60,7 @@ Consumers wanting this locally get a pointer, never a copy. One line resolves th
 
 ## JS Dependencies
 
-No worktree command runs a package-manager install: installs run only in the main checkout, and only when the lockfile changed. Link the main checkout's install into each worktree with a `WORKTREE_SYMLINKS` entry for the `node_modules` path; a worktree whose root `package.json` has no `node_modules` gets a warning naming the main checkout instead, as does a configured `node_modules` entry, root or nested, that sits beside a worktree `package.json` and has no source in the main checkout. The entry warning fires on every path; the root-`package.json` fallback comes from link setup, so `repair-links`, which re-asserts configured symlinks only, never emits it. Limitation: linked `node_modules` resolves pnpm workspace dependencies (`workspace:`/`link:`) to the main checkout's source, so a worktree's type checks and tests see main's copy of sibling workspace packages, not the branch's.
+`worktree --help` § Dependencies owns install and linked-`node_modules` behavior.
 
 ## System Dependencies
 

@@ -147,13 +147,23 @@ kendex apply --plan                                     # preview the full recon
 | Verb | Does |
 |---|---|
 | `add` (or bare `kendex <source>`) | declare and install agents/skills from a source |
+| `diff` | What changed between two versions of a package |
+| `show` | A package's files, one file, its readme, or its provenance |
+| `fork` | Keep an edited install as your own local package |
+| `pin` | Hold an item at a version, or let it follow its source again |
+| `versions` | The versions a package's source offers |
+| `updates` | Which packages have newer versions, and per-package notification |
 | `remove`, `adopt`, `apply` | undeclare (`--keep-declaration` uninstalls only), take ownership, reconcile |
 | `refresh` | re-resolve sources, regenerate every installation |
 | `verify` | drift check; exit 1 on any failing row |
 | `list` (`ls`), `check` | observe everything; sanity report |
+| `drift-hook` | Install the session-start drift report hook for a scope |
+| `guard` | Commit-time quality guards and the git hooks that run them |
 | `source add/remove/enable/disable/refresh` | manage catalogs per scope |
 | `project add/remove/list/discover` | the app's project registry |
 | `report` | file an issue, routed to the asset's owner |
+| `index` | Emit the summary of a marketplace directory the community directory consumes (default: the current directory) |
+| `version-compare` | Where the first version stands against the second under SemVer precedence: newer, same, or older |
 | `update`, `update-pi`, `init` | self-update, Pi packages, catalog scaffolding |
 
 Scopes: `--scope project|global|all`, `-g` as a shortcut for global.
