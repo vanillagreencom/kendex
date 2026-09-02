@@ -95,14 +95,20 @@ const heldByOwner = (row: UpdateRow): boolean => row.pinned && row.derived;
 
 /** Why the Follow source switch is not this row's to flip, if it is not:
  *  a derived package has no declaration of its own to set a hold on, and a
- *  hold that belongs to the source or to a parent is released there. */
+ *  hold that belongs to the source or to a parent is released there. A
+ *  parent is named where the row knows it — a package required by another
+ *  one — and unnamed for a bundle member, whose set is named where sets
+ *  are. */
 export const switchLockedBy = (
   row: UpdateRow,
-): { kind: "source"; name: string } | { kind: "parent" } | null => {
+):
+  | { kind: "source"; name: string }
+  | { kind: "parent"; name: string | null }
+  | null => {
   if (row.holdOwner?.kind === "source")
     return { kind: "source", name: row.holdOwner.name };
   if (row.derived || row.holdOwner?.kind === "parent")
-    return { kind: "parent" };
+    return { kind: "parent", name: row.requiredBy };
   return null;
 };
 

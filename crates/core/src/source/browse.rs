@@ -22,12 +22,14 @@ use crate::names;
 use crate::tags::Tag;
 
 mod catalog;
+mod deps;
 mod opened;
 mod preview;
 mod safety;
 mod summary;
 pub use catalog::Catalog;
 use catalog::browsable;
+pub use deps::{PackageDependencies, PackageDependency};
 pub(crate) use opened::{Browsed, open, open_repo};
 pub use preview::{PackagePreview, package_file, package_preview};
 pub use safety::{PackageSafety, package_safety};
@@ -64,6 +66,8 @@ pub struct AvailablePackage {
     pub tags: Vec<Tag>,
     /// The curated sets of this catalog that carry it.
     pub bundles: Vec<String>,
+    /// What installing it takes along, and what it offers to take.
+    pub dependencies: PackageDependencies,
     pub state: InstallState,
     /// The source this name is already taken by, when that is a different
     /// one. Invariant 4's refusal stays in the engine — this only shows the
@@ -123,6 +127,7 @@ pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
                 summary: header.summary_or_description().map(names::shown),
                 tags: header.tags,
                 bundles,
+                dependencies: deps::dependencies(&browsed, kind, &name),
                 kind,
                 name,
             });

@@ -52,6 +52,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   const [choice, setChoice] = useState<Choice>({
     harnesses: null,
     method: null,
+    optional: [],
   });
 
   useEffect(() => {
@@ -186,7 +187,11 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                         // Which tools can take this is a fact about the
                         // destination, so a choice made against another one
                         // is not an answer here.
-                        setChoice({ harnesses: null, method: null });
+                        setChoice({
+                          harnesses: null,
+                          method: null,
+                          optional: [],
+                        });
                         setDestination(next);
                       }}
                     />

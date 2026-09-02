@@ -1,9 +1,10 @@
 import type { Catalog, PackageView } from "@/bindings";
+import { DependencyFacts } from "@/components/marketplaces/package-dependencies";
 import { FileList } from "@/components/package/file-list";
 import { catalogLabel } from "@/stores/marketplaces";
 
 /** The available-package page's facts column: where it comes from, the sets
- * that carry it, its files, and a name clash. The safety reading is not
+ * that carry it, what it needs, its files, and a name clash. The safety reading is not
  * here — score and findings are one block, and it sits in the main column
  * where there is room for the findings under the number. */
 export function AvailableAside({
@@ -43,6 +44,9 @@ export function AvailableAside({
           </h3>
           <p>{view.preview.bundles.join(", ")}</p>
         </section>
+      ) : null}
+      {view ? (
+        <DependencyFacts dependencies={view.preview.dependencies} />
       ) : null}
       {view && view.preview.files.length > 0 ? (
         <section>

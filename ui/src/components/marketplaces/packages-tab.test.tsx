@@ -32,6 +32,7 @@ const skill = (
   summary,
   tags: [],
   bundles: [],
+  dependencies: { required: [], optional: [] },
   state: "available",
   collision: null,
 });

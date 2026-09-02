@@ -259,8 +259,11 @@ export const commands = {
 	 *  there — every write lands in exactly one scope. `harnesses` and `method`
 	 *  carry the picker's answer; absent, the scope's own install defaults
 	 *  decide, brought up to date against this machine by the add itself.
+	 *  `optional` carries the optional dependencies the picker ticked, by the
+	 *  name their parent declares them under; the engine records the choice and
+	 *  refuses a name nothing being installed offers one by.
 	 */
-	marketplaceInstall: (scope: Scope, source: string, items: InstallItem[], bundle: string | null, destination: { scope: "global" } | { scope: "project"; root: string } | null, hold: boolean, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<Installed_Serialize, string>(__TAURI_INVOKE("marketplace_install", { scope, source, items, bundle, destination, hold, harnesses, method })),
+	marketplaceInstall: (scope: Scope, source: string, items: InstallItem[], bundle: string | null, destination: { scope: "global" } | { scope: "project"; root: string } | null, hold: boolean, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null, optional: string[]) => typedError<Installed_Serialize, string>(__TAURI_INVOKE("marketplace_install", { scope, source, items, bundle, destination, hold, harnesses, method, optional })),
 	/**
 	 *  Where an install of these kinds could land, for the picker the install
 	 *  flow draws. Two filters, both read from core: which tools can take the
@@ -666,6 +669,8 @@ export type AvailablePackage = {
 	tags: Tag[],
 	/**  The curated sets of this catalog that carry it. */
 	bundles: string[],
+	/**  What installing it takes along, and what it offers to take. */
+	dependencies: PackageDependencies,
 	state: InstallState,
 	/**
 	 *  The source this name is already taken by, when that is a different
@@ -2058,6 +2063,29 @@ export type Origin =
 /**  On disk and observed, managed by nothing. */
 { origin: "unmanaged" };
 
+/**
+ *  A package's declared dependencies: what installs with it, and what it
+ *  offers to take along.
+ */
+export type PackageDependencies = {
+	/**  Installed with this package, whether or not anyone asks. */
+	required: PackageDependency[],
+	/**  Offered; taken only where the install says so. */
+	optional: PackageDependency[],
+};
+
+/**  One declared dependency, with where it stands in this scope. */
+export type PackageDependency = {
+	/**
+	 *  The bare name its parent declares, which is also the name an
+	 *  install's optional choice is spelled with — [`crate::engine::ops`]
+	 *  matches a choice against the declared list, not against what the
+	 *  name resolves to.
+	 */
+	name: string,
+	state: InstallState,
+};
+
 export type PackageDiff = {
 	files: FileDiff[],
 	totalAdditions: number,
@@ -2163,6 +2191,8 @@ export type PackagePreview = {
 	files: PackageFile[],
 	/**  The curated sets of this catalog that carry it. */
 	bundles: string[],
+	/**  What installing it takes along, and what it offers to take. */
+	dependencies: PackageDependencies,
 	collision: string | null,
 };
 
@@ -2969,6 +2999,14 @@ export type UpdateRow = {
 	 *  needs a declaration to turn local.
 	 */
 	derived: boolean,
+	/**
+	 *  The installed package that requires this one, when that is why it
+	 *  is here — the name behind `derived`, so the Library can say who
+	 *  brought it rather than that something did. `None` for a package
+	 *  declared outright and for a bundle member, whose set is named
+	 *  where sets are.
+	 */
+	requiredBy: string | null,
 	/**  This package is a local fork of a catalog item. */
 	forked: boolean,
 	/**  Installations of this package disagree on their source commit. */

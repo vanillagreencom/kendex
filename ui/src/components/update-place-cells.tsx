@@ -23,6 +23,7 @@ import {
   EDITED_CANT_UPDATE_NOTE,
   followSourceLabel,
   HELD_BY_OWNER_NOTE,
+  heldByParentNote,
   heldBySourceNote,
   OPEN_PACKAGE_LABEL,
   UPDATE_NEEDS_CHECK_NOTE,
@@ -124,11 +125,13 @@ export function PlaceCells({
               title={
                 locked?.kind === "source"
                   ? heldBySourceNote(locked.name)
-                  : locked
-                    ? HELD_BY_OWNER_NOTE
-                    : held
-                      ? UPDATE_NEEDS_CHECK_NOTE
-                      : undefined
+                  : locked?.name
+                    ? heldByParentNote(locked.name)
+                    : locked
+                      ? HELD_BY_OWNER_NOTE
+                      : held
+                        ? UPDATE_NEEDS_CHECK_NOTE
+                        : undefined
               }
               onCheckedChange={(follow) => void setAutoUpdate(row, follow)}
             />

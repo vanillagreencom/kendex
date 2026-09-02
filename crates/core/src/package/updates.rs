@@ -90,6 +90,12 @@ pub struct UpdateRow {
     /// of its own: whatever pulled it in owns its revision, and a fork
     /// needs a declaration to turn local.
     pub derived: bool,
+    /// The installed package that requires this one, when that is why it
+    /// is here — the name behind `derived`, so the Library can say who
+    /// brought it rather than that something did. `None` for a package
+    /// declared outright and for a bundle member, whose set is named
+    /// where sets are.
+    pub required_by: Option<String>,
     /// This package is a local fork of a catalog item.
     pub forked: bool,
     /// Installations of this package disagree on their source commit.
@@ -298,6 +304,7 @@ fn fork_row(
         can_discard: false,
         can_take_latest: false,
         derived: false,
+        required_by: None,
         forked: true,
         mixed: false,
         removed_upstream: false,

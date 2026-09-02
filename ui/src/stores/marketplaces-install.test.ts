@@ -87,6 +87,30 @@ beforeEach(() => {
   useProblemsStore.getState().closeError();
 });
 
+/** The optional dependencies the picker ticked go to the command as its
+ *  own argument, and an untouched picker sends an empty list rather than
+ *  nothing: an extra nobody ticked is not installed. */
+describe("the optional dependencies an install takes", () => {
+  it("sends what the picker ticked", async () => {
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed([]));
+    await useMarketplacesStore.getState().install({
+      scope: { scope: "global" },
+      source: "cat",
+      items: [{ kind: "skill", name: "dev" }],
+      optional: ["linear"],
+    });
+    expect(vi.mocked(commands.marketplaceInstall).mock.calls[0][8]).toEqual([
+      "linear",
+    ]);
+  });
+
+  it("sends none when nothing was ticked", async () => {
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed([]));
+    await install();
+    expect(vi.mocked(commands.marketplaceInstall).mock.calls[0][8]).toEqual([]);
+  });
+});
+
 describe("what an install leaves waiting", () => {
   it("queues the effects against the scope the files landed in", async () => {
     vi.mocked(commands.marketplaceInstall).mockResolvedValue(

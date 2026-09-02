@@ -9,6 +9,7 @@ import {
   packageCount,
   placeName,
   skippedPlaces,
+  switchLockedBy,
   updatablePlaces,
   updateWithheld,
 } from "./update-groups";
@@ -35,6 +36,7 @@ const row = (
   canTakeLatest: true,
   holdOwner: null,
   derived: false,
+  requiredBy: null,
   removedUpstream: false,
   noPerPackageUpdate: null,
   mixed: false,
@@ -237,5 +239,39 @@ describe("updateWithheld", () => {
         }),
       ),
     ).toBe(refusal);
+  });
+});
+
+/** The Follow switch's own lock, and the parent it names when it can: the
+ *  Library says which package requires this one rather than that something
+ *  does. A bundle member has no single package to name, and a row nothing
+ *  holds is not locked at all. */
+describe("switchLockedBy", () => {
+  it("names the package that requires a derived row", () => {
+    expect(
+      switchLockedBy(row("gh", null, { derived: true, requiredBy: "dev" })),
+    ).toEqual({ kind: "parent", name: "dev" });
+  });
+
+  it("names no parent for a bundle member", () => {
+    expect(
+      switchLockedBy(row("gh", null, { derived: true, requiredBy: null })),
+    ).toEqual({ kind: "parent", name: null });
+  });
+
+  it("leaves a source hold to the source, parent or not", () => {
+    expect(
+      switchLockedBy(
+        row("gh", null, {
+          derived: true,
+          requiredBy: "dev",
+          holdOwner: { kind: "source", name: "kendex" },
+        }),
+      ),
+    ).toEqual({ kind: "source", name: "kendex" });
+  });
+
+  it("locks nothing on a row that is nobody else's to hold", () => {
+    expect(switchLockedBy(row("gh", null))).toBeNull();
   });
 });

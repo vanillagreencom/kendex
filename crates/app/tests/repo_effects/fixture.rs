@@ -182,6 +182,7 @@ pub fn install_skills(f: &Fixture, names: &[&str], bundle: Option<&str>) -> Inst
         false,
         None,
         None,
+        Vec::new(),
     )
     .unwrap_or_else(|error| panic!("install {names:?} {bundle:?}: {error}"))
 }

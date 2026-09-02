@@ -46,6 +46,7 @@ const row: AvailablePackage = {
   summary: null,
   tags: [],
   bundles: [],
+  dependencies: { required: [], optional: [] },
   state: "available",
   collision: null,
 };

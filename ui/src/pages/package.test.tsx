@@ -165,6 +165,7 @@ const updateRow = (scope: Project): UpdateRow => ({
   canDiscard: false,
   canTakeLatest: false,
   derived: false,
+  requiredBy: null,
   forked: false,
   mixed: false,
   removedUpstream: false,

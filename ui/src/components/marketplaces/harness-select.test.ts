@@ -9,6 +9,7 @@ describe("isInstallable", () => {
   const choice = (harnesses: Choice["harnesses"]): Choice => ({
     harnesses,
     method: null,
+    optional: [],
   });
 
   it("lets an untouched picker through — the scope decides", () => {

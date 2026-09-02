@@ -100,3 +100,21 @@ export const packageUpdateNote = (
   if (row) return updateWithheld(row);
   return unsettled(state) ? UPDATES_CHECKING : NO_UPDATE_STANDING_NOTE;
 };
+
+/** The installed package that requires the one this place names, when that
+ *  is why it is here — the fact behind `derived`, so the page says who
+ *  brought it rather than that something did. Null while no row speaks for
+ *  the place: a package nothing requires, a bundle member, and a read that
+ *  has not answered yet all read the same, and the header simply says
+ *  nothing rather than guessing at a parent. */
+export const packageRequiredBy = (
+  state: { rows: UpdateRow[] },
+  place: { kind: ItemKind; name: string; scope: Scope } | null,
+): string | null =>
+  state.rows.find(
+    (one) =>
+      place != null &&
+      one.kind === place.kind &&
+      one.name === place.name &&
+      sameScope(one.scope, place.scope),
+  )?.requiredBy ?? null;

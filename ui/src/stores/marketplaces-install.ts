@@ -42,6 +42,10 @@ interface InstallRequest {
     harnesses: HarnessId[] | null;
     method: "symlink" | "copy" | null;
   };
+  /** The optional dependencies the picker ticked, by the name their
+   * parent declares them under. Empty is the answer, not the absence of
+   * one: an extra nobody ticked is not installed. */
+  optional?: string[];
 }
 
 /** The repository effects an install brought, waiting on their own yes:
@@ -99,6 +103,7 @@ export function installActions(set: Set, get: Get): InstallActions {
       bundle = null,
       destination,
       delivery,
+      optional = [],
     }: InstallRequest) => {
       set({ busy: true });
       let response: Awaited<ReturnType<typeof commands.marketplaceInstall>>;
@@ -112,6 +117,7 @@ export function installActions(set: Set, get: Get): InstallActions {
           false,
           delivery?.harnesses ?? null,
           delivery?.method ?? null,
+          optional,
         );
       } finally {
         set({ busy: false });

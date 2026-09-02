@@ -26,6 +26,7 @@ const offered = (name: string) => [
     summary: null,
     tags: [],
     bundles: [],
+    dependencies: { required: [], optional: [] },
     state: "available" as const,
     collision: null,
   },

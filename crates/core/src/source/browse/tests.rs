@@ -10,6 +10,7 @@ use crate::lock::{Lock, LockEntry};
 use crate::model::{HarnessId, Scope};
 use test_util::source_path;
 
+mod deps;
 mod repo;
 mod root_skill;
 mod safety_budget;

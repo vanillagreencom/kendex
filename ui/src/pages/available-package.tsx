@@ -49,6 +49,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   const [choice, setChoice] = useState<Choice>({
     harnesses: null,
     method: null,
+    optional: [],
   });
 
   // Null until the catalog is ready: a repository's first fetch holds the
@@ -99,6 +100,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
       items: [{ kind, name }],
       destination: target !== scope ? target : null,
       delivery: choice,
+      optional: choice.optional,
     }).then((ok) => {
       // Installed, the same page carries on in its installed mode — the
       // address gains the scope it landed in.
@@ -143,13 +145,14 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                   // Which tools can take this is a fact about the
                   // destination, so a choice made against another one is
                   // not an answer here.
-                  setChoice({ harnesses: null, method: null });
+                  setChoice({ harnesses: null, method: null, optional: [] });
                   setDestination(next);
                 }}
               />
               <HarnessSelect
                 scope={target}
                 kinds={[kind]}
+                dependencies={view?.preview.dependencies}
                 value={choice}
                 onChange={setChoice}
               />

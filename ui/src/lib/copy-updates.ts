@@ -41,6 +41,10 @@ export const heldBySourceNote = (source: string): string =>
   `Held by the source "${source}" as a whole — release it where that source is declared`;
 export const HELD_BY_OWNER_NOTE =
   "Held by the bundle or package it came with — update or release it from there";
+/** The same hold with its owner named, wherever the Library knows which
+ *  package requires this one. */
+export const heldByParentNote = (parent: string): string =>
+  `Held by ${parent}, which requires it — update or release it from there`;
 // The update read covers declared packages with a repository source. A
 // package page opened on anything else has news from its own timeline and
 // no standing to act on it, and saying so beats a page with no button and

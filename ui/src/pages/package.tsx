@@ -18,7 +18,7 @@ import { groupItems, groupScopes, installationAt } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
-import { packageUpdateNote } from "@/lib/updates-read-state";
+import { packageRequiredBy, packageUpdateNote } from "@/lib/updates-read-state";
 import {
   canUpdatePackage,
   installedRow,
@@ -89,6 +89,10 @@ export function PackagePage() {
   // string, so this selector answers the same value on every render that
   // changes nothing.
   const withheld = useUpdatesStore((s) => packageUpdateNote(s, ref));
+  // Why this package is installed when nobody asked for it: the package
+  // that requires it, named. A string, so this selector answers the same
+  // value on every render that changes nothing.
+  const requiredBy = useUpdatesStore((s) => packageRequiredBy(s, ref));
 
   const mark = usePackageMark(group);
   // The package can still be installed elsewhere while this place has no
@@ -189,6 +193,7 @@ export function PackagePage() {
         description={group.description}
         forked={meta?.fork != null}
         mark={mark}
+        requiredBy={requiredBy}
         action={
           <PackageActions
             scope={primary.scope}

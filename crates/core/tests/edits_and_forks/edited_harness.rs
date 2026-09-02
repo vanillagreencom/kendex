@@ -413,3 +413,71 @@ fn a_pinned_package_gone_at_tip_keeps_its_timeline_under_a_symlinked_home() {
     assert!(row.current.is_some(), "{row:?}");
     assert!(row.latest.is_some(), "{row:?}");
 }
+
+/// A dependency has no declaration of its own either, and the row carries
+/// the name of the package that requires it — what the Library says instead
+/// of "something brought this". The parent's own row names nobody: it is
+/// here because it was asked for.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edited_dependency_names_the_package_that_requires_it() {
+    let w = world();
+    let dev = w.upstream.join("skills/dev");
+    fs::create_dir_all(&dev).unwrap();
+    fs::write(
+        dev.join("SKILL.md"),
+        "---\nname: dev\ndescription: about dev\ndependencies:\n  required: [gh]\n---\nDev.\n",
+    )
+    .unwrap();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.dev]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    assert!(skill_file(&w).is_file(), "the dependency installed");
+
+    fs::write(skill_file(&w), "my edited version").unwrap();
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = |name: &str| {
+        report
+            .rows
+            .iter()
+            .find(|row| row.kind == ItemKind::Skill && row.name == name)
+            .unwrap_or_else(|| panic!("a row for {name}"))
+    };
+    let gh = row("gh");
+    assert!(gh.derived);
+    assert_eq!(gh.required_by.as_deref(), Some("dev"));
+    assert_eq!(gh.forkable_harness, None);
+    assert_eq!(
+        row("dev").required_by,
+        None,
+        "a package the manifest declares is here because it was asked for"
+    );
+}
+
+/// The must-fail control on the name above: a bundle member is derived too,
+/// and no single package requires it — the set is named where sets are, so
+/// the row names nobody rather than the first thing it finds.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_bundle_member_names_no_requiring_package() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Upstream.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.starter]\ndescription = \"the set\"\nskills = [\"gh\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    declare(&w, "[bundles.starter]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+
+    let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .unwrap();
+    assert!(row.derived);
+    assert_eq!(row.required_by, None);
+}

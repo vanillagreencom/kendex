@@ -3,19 +3,21 @@ import type { ItemKind } from "@/bindings";
 import { InlineMarkdown } from "@/components/inline-markdown";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { FORKED_BADGE_LABEL } from "@/lib/copy";
+import { FORKED_BADGE_LABEL, requiredByNote } from "@/lib/copy";
 import { kindIcon } from "@/lib/kind-icon";
 import type { PlaceMark } from "@/lib/place-marks";
 import { cn } from "@/lib/utils";
 
-/** The package page's title block: what this is, what it says about itself,
- *  and the things you can do to it. */
+/** The package page's title block: what this is, why it is here when
+ *  nobody asked for it, what it says about itself, and the things you can
+ *  do to it. */
 export function PackageHeader({
   kind,
   displayName,
   description,
   forked,
   mark,
+  requiredBy,
   action,
 }: {
   kind: ItemKind;
@@ -23,6 +25,9 @@ export function PackageHeader({
   description: string | null;
   forked: boolean;
   mark: PlaceMark | null;
+  /** The installed package that requires this one, when that is why it is
+   *  here rather than anybody asking for it by name. */
+  requiredBy: string | null;
   action: ReactNode;
 }) {
   const Icon = kindIcon(kind);
@@ -49,13 +54,16 @@ export function PackageHeader({
         </span>
       }
       subtitle={
-        mark || description ? (
+        mark || requiredBy || description ? (
           <>
             {/* Under the title and above the description, in words, the
                 way the Library row carries it — not a pill beside the
                 name. A badge there read as a property of the title; this
                 is a sentence about the package. */}
             {mark ? <p className="mb-1 text-customized">{mark.label}</p> : null}
+            {requiredBy ? (
+              <p className="mb-1">{requiredByNote(requiredBy)}</p>
+            ) : null}
             {description ? <InlineMarkdown source={description} /> : null}
           </>
         ) : undefined

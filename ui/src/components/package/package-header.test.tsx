@@ -14,6 +14,7 @@ describe("PackageHeader", () => {
         description="about gh"
         forked={false}
         mark={mark}
+        requiredBy={null}
         action={null}
       />,
     );

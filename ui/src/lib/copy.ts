@@ -163,6 +163,14 @@ export const MULTI_TOOL_FORK_NOTE =
   "Keeping one tool's copy would drop the other edits, so the choice here is to discard them all.";
 export const DERIVED_FORK_NOTE =
   "It came with a bundle or another package, so it can't become your own copy.";
+/** The same fact with the package that requires it named — what the
+ *  Library says wherever it knows the parent. */
+export const derivedForkNote = (parent: string): string =>
+  `${parent} requires it, so it can't become your own copy.`;
+/** Why this package is installed at all: another package requires it, and
+ *  nothing asked for it by name. */
+export const requiredByNote = (parent: string): string =>
+  `Installed because ${parent} requires it.`;
 export const DISCARD_EDITS_CONFIRM_TITLE = "Discard your edits?";
 export const DISCARD_EDITS_CONFIRM_BODY =
   "The catalog's version replaces your edits to this package, and your changes are gone. Keep them as your own copy instead if you're unsure.";

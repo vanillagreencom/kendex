@@ -4,8 +4,10 @@ import {
   type HarnessId,
   type InstallTarget,
   type ItemKind,
+  type PackageDependencies,
   type Scope,
 } from "@/bindings";
+import { DependencyChoice } from "@/components/marketplaces/package-dependencies";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -18,12 +20,15 @@ import { harnessName } from "@/lib/labels";
 
 export type Delivery = "symlink" | "copy";
 
-/** What the picker settled. Both halves start `null`, meaning "leave it to
- * the scope's own defaults" — the state before anyone touched the picker,
- * and the only state in which the install sends neither. */
+/** What the picker settled. `harnesses` and `method` start `null`, meaning
+ * "leave it to the scope's own defaults" — the state before anyone touched
+ * the picker, and the only state in which the install sends neither. The
+ * optional dependencies start empty, which is a settled answer rather than
+ * an absent one: an extra nobody ticked is not installed. */
 export type Choice = {
   harnesses: HarnessId[] | null;
   method: Delivery | null;
+  optional: string[];
 };
 
 /** Whether this choice can be installed. An empty tool list is a choice to
@@ -36,10 +41,13 @@ export function isInstallable(choice: Choice): boolean {
 /** Where an install lands: the shared `.agents` home is always part of it,
  * the tools on this machine come pre-checked, every tool kendex can install
  * to is offerable, and the delivery is picked alongside. The same choice
- * the CLI's picker puts at a terminal. */
+ * the CLI's picker puts at a terminal. A package that declares
+ * dependencies says so here too, beside the button that acts on it: what
+ * comes with it whatever anyone does, and a box per optional extra. */
 export function HarnessSelect({
   scope,
   kinds,
+  dependencies,
   value,
   onChange,
 }: {
@@ -47,6 +55,10 @@ export function HarnessSelect({
   /** The kinds this install would declare. Only tools that can take one of
    * them are offered — the same filter the install itself refuses by. */
   kinds: ItemKind[];
+  /** What the package being installed declares it needs, when the caller
+   * is installing one package. A whole set carries its members' own
+   * declarations and names none of them here. */
+  dependencies?: PackageDependencies | null;
   value: Choice;
   onChange: (choice: Choice) => void;
 }) {
@@ -173,6 +185,14 @@ export function HarnessSelect({
             </Label>
           </div>
         </div>
+        {dependencies &&
+        dependencies.required.length + dependencies.optional.length > 0 ? (
+          <DependencyChoice
+            dependencies={dependencies}
+            chosen={value.optional}
+            onChange={(optional) => onChange({ ...value, optional })}
+          />
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

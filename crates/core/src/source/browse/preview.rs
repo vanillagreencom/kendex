@@ -30,6 +30,8 @@ pub struct PackagePreview {
     pub files: Vec<PackageFile>,
     /// The curated sets of this catalog that carry it.
     pub bundles: Vec<String>,
+    /// What installing it takes along, and what it offers to take.
+    pub dependencies: super::PackageDependencies,
     pub collision: Option<String>,
 }
 
@@ -84,6 +86,7 @@ pub fn package_preview(
         readme: readme.map(|text| shown_text(&capped(text))),
         files,
         bundles,
+        dependencies: super::deps::dependencies(&browsed, kind, name),
         collision: browsed.collision(kind, name),
     })
 }
