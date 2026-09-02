@@ -111,10 +111,11 @@ check_pr_watch() {
     [[ "$rc" -le "$rc_max" ]] || rc_max="$rc"
     [[ -z "$out" ]] || out_all+="$(pw_prefix "$repo" "$out")"$'\n'
     [[ -z "$err" ]] || err_all+="$(pw_prefix "$repo" "$err")"$'\n'
-    # Rows this pass does not own: triage verdict keys and lane-asking
-    # fingerprints share the file, and a rewrite that dropped them would make
-    # every acknowledged item and every standing prompt news again.
-    carried="$(awk -F'\t' '($1 == "triage" && NF == 2) || ($1 == "lane-asking" && NF == 3) { print }' <<<"${PW_SEEN[$i]}")"
+    # Rows this pass does not own: triage verdict keys and the per-lane rows
+    # share the file, and a rewrite that dropped them would make every
+    # acknowledged item and every standing prompt news again, and would
+    # unstamp the pass each walled lane's limit banner was first seen on.
+    carried="$(awk -F'\t' '($1 == "triage" && NF == 2) || ($1 == "lane-asking" && NF == 3) || ($1 == "usage-limit" && NF == 3) { print }' <<<"${PW_SEEN[$i]}")"
     pass_keys[$i]="$carried"
     [[ "$rc" -ne 0 ]] || continue
     # Non-zero with no per-PR lines is pr-watch's GLOBAL failure shape

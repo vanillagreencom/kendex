@@ -32,18 +32,22 @@ Events, checked in this order every pass:
                              two passes; pane tail follows. An unusable probe
                              is not an answer and keeps the lane watched
   EVENT usage-limit <lane> [<config-dir>] [resets=<utc>]
-                             a live harness shows its limit banner below the
-                             last user turn on its screen; pane tail follows.
+                             a live harness with no turn in flight shows a
+                             limit banner below the last user turn on its screen;
+                             pane tail follows.
                              `resets=` carries the reset time the banner
-                             states, when it states one in a shape the
-                             harnesses draw; the wall is still standing. A
-                             clause naming a clock and no day is read as the
-                             occurrence within the last session window, and
-                             forward past that
+                             states; the wall is still standing. It is absent
+                             when the banner states no reset in a shape the
+                             harnesses draw OR names a time zone this host
+                             cannot resolve. A clause naming a clock and no
+                             day is pinned to the first occurrence after the
+                             pass this watch first saw the banner on
   EVENT usage-limit-passed <lane> [<config-dir>] resets=<utc>
-                             the same banner, naming a reset already behind
-                             us: the screen is remembering a spent window that
-                             has since reopened. Bump the lane, never park it
+                             the same banner, naming a reset this watch has
+                             itself seen standing and which has since gone by:
+                             the screen is remembering a spent window that has
+                             reopened. Bump the lane, never park it. A wall it
+                             has not seen standing is never this
   EVENT lane-asking <lane>   a question or selection prompt differs from the
                              last one emitted for this lane; pane tail follows
   EVENT idle-after-return <lane>
@@ -92,7 +96,8 @@ Environment:
   OVERSEE_WATCH_WORKFLOW_STATE path to workflow-state
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
-                              triage and lane-asking rows — plus claims/
+                              triage, lane-asking and usage-limit rows — plus
+                              claims/
 USAGE
 }
 die() { echo "oversee-watch: $*" >&2; exit 2; }
@@ -184,24 +189,28 @@ watch_state_init() {
 #   lane-asking<TAB><lane><TAB><fingerprint>
 # Each helper takes the whole baseline blob and returns the answer or the
 # rewritten blob, so a pass mutates a local and commits once.
-lane_asking_fingerprint() {
-  awk -F'\t' -v lane="$2" '$1 == "lane-asking" && NF == 3 && $2 == lane { print $3 }' <<<"$1"
+# One per-lane row per KIND in the watch state: `lane-asking` holds the prompt
+# fingerprint a lane was last reported on, `usage-limit` the pass clock this
+# watch first saw a lane's limit banner on and the wall it named. Same three
+# columns, same file, one set of readers.
+lane_row_get() {
+  awk -F'\t' -v kind="$1" -v lane="$3" '$1 == kind && NF == 3 && $2 == lane { print $3 }' <<<"$2"
 }
 
-lane_asking_clear() {
-  awk -F'\t' -v lane="$2" 'NF && !($1 == "lane-asking" && NF == 3 && $2 == lane)' <<<"$1"
+lane_row_clear() {
+  awk -F'\t' -v kind="$1" -v lane="$3" 'NF && !($1 == kind && NF == 3 && $2 == lane)' <<<"$2"
 }
 
-lane_asking_set() {
+lane_row_set() {
   local rest
-  rest="$(lane_asking_clear "$1" "$2")"
+  rest="$(lane_row_clear "$1" "$2" "$3")"
   [[ -z "$rest" ]] || printf '%s\n' "$rest"
-  printf 'lane-asking\t%s\t%s\n' "$2" "$3"
+  printf '%s\t%s\t%s\n' "$1" "$3" "$4"
 }
 
 # The same two-phase flush triage uses, on the same file: nothing is written
 # when the pass changed nothing, and the event has already printed.
-lane_asking_commit() {
+lane_row_commit() {
   [[ "$1" != "${PW_SEEN[0]}" ]] || return 0
   pw_stage_state "$(pw_state_file "${REPOS[0]}")" "$1"
   pw_commit_state "$(pw_state_file "${REPOS[0]}")"
@@ -218,33 +227,39 @@ LANE_ASKING_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel
 # prints "Usage limit reached" and its out-of-credits wording. `.` stands in
 # for the apostrophe: ASCII in the binaries, typographic once rendered.
 USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
-# The reset clause the same banner line states. Grammar and wording follow the
-# sibling parser this repository already has for the question,
-# pi-extensions/pi-agents-tmux/extensions/subagent/rate-limit-reset.ts: the
-# trigger is `reset` or `resets` with an optional `at`, and a clock with no
-# meridiem is a 24-hour one. Codex's own `Try again at`, the one literal its
-# stripped binary yields, opens the same tails. Three tails, tried in this order, each named for
-# the shape it reads:
-#   dated    `resets Sep 6, 4pm`, `resets Oct 7, 2027, 11:32am` — Claude Code
-#            past 24 hours out, from `Intl` in en-US with the meridiem
-#            lowercased and the space before it dropped. The year is printed
-#            only when it is not the current one.
+# The reset clause the same banner line states. Two triggers, both measured:
+# Claude Code's `resets` and Codex's ` Try again at `. A clock with no meridiem
+# reads as a 24-hour one, following the sibling parser this repository already
+# has for the question,
+# pi-extensions/pi-agents-tmux/extensions/subagent/rate-limit-reset.ts. Three
+# tails, tried in this order. Each names where its shape comes from, and a
+# shape with no provenance here has no arm in the grammar:
+#   dated    `resets Sep 6, 4pm`, `resets Oct 7, 2027, 11:32am` — measured in
+#            Claude Code 2.1.258, whose `Td()` formats through `Intl` in en-US
+#            past 24 hours out, lowercases the meridiem and drops the space
+#            before it, and prints the year only when it is not the current
+#            one. Codex 0.152.1 draws the same tail with an ordinal day and no
+#            comma before the clock (`Try again at Sep 6th, 2026 4:30 PM`): its
+#            binary carries ` Try again at `, `%b %-d`, the `stndrdth` ordinal
+#            table and `, %Y %-I:%M %p` at adjacent offsets. Both are covered.
 #   weekday  `resets Thursday 4am` — the weekly-limit copy this repository
 #            records as the CLI's own at
 #            pi-extensions/pi-claude-bridge/tests/unit-usage-limit.mjs.
-#   clock    `resets 9:50am (America/Los_Angeles)`, `resets 21:00` — Claude
-#            Code inside 24 hours, with the IANA zone in parentheses when the
-#            banner asks for one, and in 24-hour form under the harness's own
-#            `timeFormat` setting (`24-hour`, `24-hour-utc`, or a strftime
-#            pattern). Codex formats through chrono's `%-I:%M %p`, so the
-#            meridiem matches in either case and the space before it is
-#            optional.
+#   clock    `resets 9:50am (America/Los_Angeles)` — Claude Code inside 24
+#            hours, same formatter, with the IANA zone in parentheses when the
+#            banner asks for one. The meridiem is optional so `resets 21:00`
+#            reads too: NO harness is measured to draw a 24-hour clock here
+#            (`Td()` hardcodes `hour12` in both branches and the `timeFormat`
+#            setting reaches only the message-timestamp and UI-clock
+#            formatters), and the shape is accepted on the sibling parser's
+#            grammar alone.
 # Deliberately outside: a duration (Claude's `resets in 5m` for a fast-mode
-# cooldown) and a weekday with no clock. Each leaves the event without a time
-# rather than with a guessed one.
-USAGE_RESET_LEAD='([Rr]esets?|[Tt]ry again)[[:space:]]+(at[[:space:]]+)?'
+# cooldown), a weekday with no clock, and a bare number carrying neither
+# minutes nor a meridiem. Each leaves the event without a time rather than
+# with a guessed one.
+USAGE_RESET_LEAD='([Rr]esets|[Tt]ry again at)[[:space:]]+'
 USAGE_RESET_CLOCK='([0-9]{1,2})(:([0-9]{2}))?(:[0-9]{2})?[[:space:]]?([AaPp][Mm])?'
-USAGE_RESET_DATED_RE="${USAGE_RESET_LEAD}([A-Z][a-z][a-z])[a-z]*[[:space:]]+([0-9]{1,2}),[[:space:]]+(([0-9]{4}),[[:space:]]+)?${USAGE_RESET_CLOCK}"
+USAGE_RESET_DATED_RE="${USAGE_RESET_LEAD}([A-Z][a-z][a-z])[a-z]*[[:space:]]+([0-9]{1,2})[a-z]*,[[:space:]]+(([0-9]{4}),?[[:space:]]+)?${USAGE_RESET_CLOCK}"
 USAGE_RESET_WEEKDAY_RE="${USAGE_RESET_LEAD}([A-Z][a-z]+day)[[:space:]]+${USAGE_RESET_CLOCK}"
 USAGE_RESET_CLOCK_RE="${USAGE_RESET_LEAD}${USAGE_RESET_CLOCK}"
 USAGE_RESET_ANY_RE="${USAGE_RESET_DATED_RE}|${USAGE_RESET_WEEKDAY_RE}|${USAGE_RESET_CLOCK_RE}"
@@ -260,12 +275,6 @@ ZONEINFO_DIR="${TZDIR:-/usr/share/zoneinfo}"
 # this file hands `date` is numeric for the same reason.
 USAGE_RESET_MONTHS='Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'
 USAGE_RESET_WEEKDAYS='Monday Tuesday Wednesday Thursday Friday Saturday Sunday'
-# How far back a clock that names no day may be read. Claude Code's short
-# window is five hours (`five_hour`, `windowSeconds:18000` in the binary), so a
-# bare clock is overwhelmingly a session wall whose reset is at most a window
-# behind the screen showing it; past that the clause is read forward, as the
-# next occurrence still to come.
-USAGE_RESET_PAST_TOLERANCE=18000
 # A turn in flight: the interrupt hint (both harnesses), the hint shown while
 # a foreground shell runs, or the streaming token counter of the status line.
 WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
@@ -599,84 +608,110 @@ word_index() {
   awk -v want="$2" '{ for (i = 1; i <= NF; i++) if ($i == want) { print i; exit } }' <<<"$1"
 }
 
-# The reset time a limit banner in SLICE states, as an epoch — empty when it
-# states none in a shape the three tails above read, or names a zone this host
-# cannot resolve. Read only off a line that carries the banner itself: both
-# harnesses put the clause on that line, and a transcript line elsewhere in the
-# slice is not the account speaking.
-usage_reset_epoch() {
-  local slice="$1" now="$2" line hour min meridiem mon day year weekday zone
-  local anchor stamp cand want_dow last d floor
-  line="$(grep -E -- "$USAGE_LIMIT_RE" <<<"$slice" | grep -Em1 -- "$USAGE_RESET_ANY_RE" || true)"
+# The wall the banner LINES name, as a key: the tail that matched, the clock,
+# the date or weekday it carries, and the zone. Empty when no line states a
+# reset in a shape the grammar reads, or when it names a zone this host cannot
+# resolve. Nothing here reads a clock, so a pass can compare the key it sees
+# now against the one it stored without the answer moving under it.
+usage_reset_key() {
+  local line rc=0 hour min meridiem mon day year weekday zone
+  line="$(grep -Em1 -- "$USAGE_RESET_ANY_RE" <<<"$1")" || rc=$?
+  [[ "$rc" -le 1 ]] \
+    || die "could not search a limit banner for its reset clause (grep exited $rc)"
   [[ -n "$line" ]] || return 0
   mon=""; day=""; year=""; weekday=""
-  # Tried longest tail first: a dated clause also matches the bare-clock one
-  # from its clock onwards, and a weekday one would lose its day.
+  # Longest tail first: a dated clause also matches the bare-clock tail from
+  # its own clock onwards, and a weekday one would lose its day.
   if [[ "$line" =~ $USAGE_RESET_DATED_RE ]]; then
-    mon="${BASH_REMATCH[3]}"; day="${BASH_REMATCH[4]}"; year="${BASH_REMATCH[6]}"
-    hour="${BASH_REMATCH[7]}"; min="${BASH_REMATCH[9]}"; meridiem="${BASH_REMATCH[11]}"
+    mon="${BASH_REMATCH[2]}"; day="${BASH_REMATCH[3]}"; year="${BASH_REMATCH[5]}"
+    hour="${BASH_REMATCH[6]}"; min="${BASH_REMATCH[8]}"; meridiem="${BASH_REMATCH[10]}"
   elif [[ "$line" =~ $USAGE_RESET_WEEKDAY_RE ]]; then
-    weekday="${BASH_REMATCH[3]}"
-    hour="${BASH_REMATCH[4]}"; min="${BASH_REMATCH[6]}"; meridiem="${BASH_REMATCH[8]}"
-  elif [[ "$line" =~ $USAGE_RESET_CLOCK_RE ]]; then
+    weekday="${BASH_REMATCH[2]}"
     hour="${BASH_REMATCH[3]}"; min="${BASH_REMATCH[5]}"; meridiem="${BASH_REMATCH[7]}"
+  elif [[ "$line" =~ $USAGE_RESET_CLOCK_RE ]]; then
+    hour="${BASH_REMATCH[2]}"; min="${BASH_REMATCH[4]}"; meridiem="${BASH_REMATCH[6]}"
   else
     return 0
   fi
+  # A run of digits carrying neither minutes nor a meridiem is a number that
+  # follows the word, not a clock: `resets 2026-09-03` would otherwise put the
+  # `20` of the year on the event as an hour. Every shape above carries one or
+  # the other, so nothing attested is lost.
+  [[ -n "$min" || -n "$meridiem" ]] || return 0
   # 12-hour to 24-hour; a clock with no meridiem is already a 24-hour one, as
   # it is for the sibling parser. Nothing range-checks the result: every clock
-  # is handed to `date` below, which rejects an impossible one, and a rejected
-  # candidate leaves the event without a time — the same answer a range check
-  # would give, from the one implementation that has to agree with itself.
+  # is handed to `date` on resolution, which rejects an impossible one, and a
+  # rejected candidate leaves the event without a time — the same answer a
+  # range check would give, from the one implementation that has to agree with
+  # itself.
   hour=$((10#$hour)); min=$((10#${min:-0}))
   case "$meridiem" in
     [Pp]*) [[ "$hour" -eq 12 ]] || hour=$((hour + 12)) ;;
     [Aa]*) [[ "$hour" -ne 12 ]] || hour=0 ;;
   esac
   # Read AFTER every field above: the match overwrites BASH_REMATCH. A zone the
-  # host cannot resolve is dropped whole rather than silently read as UTC.
+  # host cannot resolve leaves no key at all, so no wall is stamped and no time
+  # is computed in the UTC that TZ would silently fall back to.
   zone=""
   if [[ "$line" =~ $USAGE_RESET_ZONE_RE ]]; then
     zone="${BASH_REMATCH[1]}"
     [[ -r "$ZONEINFO_DIR/$zone" ]] || return 0
   fi
-  stamp="$(printf '%02d:%02d' "$hour" "$min")"
-  # A dated clause names its day outright, and carries its year only when that
-  # year is not the current one.
+  # One field layout for every tail — kind, month, day, year, clock, zone —
+  # so one `read` splits any key and an unused column is simply empty.
   if [[ -n "$mon" ]]; then
     mon="$(word_index "$USAGE_RESET_MONTHS" "$mon")"
     [[ -n "$mon" ]] || return 0
-    [[ -n "$year" ]] || year="$(from_epoch "$now" '%Y' "$zone")" || return 0
-    to_epoch "$(printf '%s-%02d-%02d %s' "$year" "$mon" "$((10#$day))" "$stamp")" \
+    printf 'dated|%s|%s|%s|%02d:%02d|%s\n' "$mon" "$((10#$day))" "$year" "$hour" "$min" "$zone"
+  elif [[ -n "$weekday" ]]; then
+    weekday="$(word_index "$USAGE_RESET_WEEKDAYS" "$weekday")"
+    [[ -n "$weekday" ]] || return 0
+    printf 'dow|%s|||%02d:%02d|%s\n' "$weekday" "$hour" "$min" "$zone"
+  else
+    printf 'clock||||%02d:%02d|%s\n' "$hour" "$min" "$zone"
+  fi
+}
+
+# KEY resolved to an epoch, empty when `date` rejects the clock it carries.
+#
+# A dated clause names its own day and resolves outright; SINCE supplies only
+# the year a banner omits, which it omits only when that year is the current
+# one. Every other clause names a time of day and no day, and is pinned to its
+# first occurrence STRICTLY AFTER SINCE — the pass on which this watch first
+# saw the banner. The day is then OBSERVED rather than inferred, which is what
+# makes a reset behind us a fact rather than the likelier of two readings: a
+# banner first seen at 16:00 saying `resets 21:00` is tonight's, and the same
+# banner still there tomorrow is still tonight's, spent.
+#
+# Days are enumerated calendrically off local NOON, never by adding 86400 to an
+# epoch: a DST shift moves local midnight, so a day added that way can skip the
+# next calendar day altogether or repeat the current one.
+usage_reset_epoch() {
+  local key="$1" since="$2" kind mon day year stamp zone dow anchor cand d last
+  IFS='|' read -r kind mon day year stamp zone <<<"$key"
+  if [[ "$kind" == dated ]]; then
+    [[ -n "$year" ]] || year="$(from_epoch "$since" '%Y' "$zone")" || return 0
+    to_epoch "$(printf '%s-%02d-%02d %s' "$year" "$mon" "$day" "$stamp")" \
       '%Y-%m-%d %H:%M' "$zone" || return 0
     return 0
   fi
-  # Every other clause names a time of day and leaves the day to be found. The
-  # walk starts one day back so a reset that has just passed is still read as
-  # the one the banner named, and runs forward to the first candidate later
-  # than the tolerance floor. Beyond that floor the clause reads forward, which
-  # is what keeps a wall still standing from being reported as a spent one.
-  #
-  # Days are enumerated calendrically off local NOON, never by adding 86400 to
-  # `now`: a DST shift moves local midnight, so `now` plus a day can skip the
-  # next calendar day altogether or repeat the current one.
-  want_dow=""
+  # A weekday clause may sit a whole week out; a bare clock is today or
+  # tomorrow, measured from the pass that first saw it.
+  dow=""
   last=1
-  if [[ -n "$weekday" ]]; then
-    want_dow="$(word_index "$USAGE_RESET_WEEKDAYS" "$weekday")"
-    [[ -n "$want_dow" ]] || return 0
+  if [[ "$kind" == dow ]]; then
+    dow="$mon"
     last=7
   fi
-  anchor="$(to_epoch "$(from_epoch "$now" '%Y-%m-%d' "$zone") 12:00" '%Y-%m-%d %H:%M' "$zone")" \
+  anchor="$(to_epoch "$(from_epoch "$since" '%Y-%m-%d' "$zone") 12:00" '%Y-%m-%d %H:%M' "$zone")" \
     || return 0
-  floor=$((now - USAGE_RESET_PAST_TOLERANCE))
-  for ((d = -1; d <= last; d++)); do
-    if [[ -n "$want_dow" && "$(from_epoch "$((anchor + d * 86400))" '%u' "$zone")" != "$want_dow" ]]; then
+  for ((d = 0; d <= last; d++)); do
+    if [[ -n "$dow" && "$(from_epoch "$((anchor + d * 86400))" '%u' "$zone")" != "$dow" ]]; then
       continue
     fi
     cand="$(to_epoch "$(from_epoch "$((anchor + d * 86400))" '%Y-%m-%d' "$zone") $stamp" \
       '%Y-%m-%d %H:%M' "$zone")" || continue
-    [[ "$cand" -gt "$floor" ]] || continue
+    [[ "$cand" -gt "$since" ]] || continue
     printf '%s\n' "$cand"
     return 0
   done
@@ -702,6 +737,7 @@ observe_lanes() {
   LANE_OBS=""
   [[ ${#LANES[@]} -gt 0 ]] || return 0
   local existing lane pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
+  local reset_key banner banner_rc
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
@@ -709,7 +745,7 @@ observe_lanes() {
     rm -f "$capture" "$capture.$$.tmp"
     if ! grep -qxF -- "$lane" <<<"$existing"; then
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
-      state="$(lane_asking_clear "$state" "$lane")"
+      state="$(lane_row_clear lane-asking "$state" "$lane")"
       continue
     fi
     errf="$WORK_DIR/lane-probe.$i.err"
@@ -731,20 +767,39 @@ observe_lanes() {
     LANE_OBS+="$i"$'\t'"ready"$'\t'"$pid"$'\t'"$cmd"$'\t'"$key"$'\n'
     pane="$(cat -- "$capture")"
     below="$(pane_below_last_turn "$pane")"
-    prior="$(lane_asking_fingerprint "$state" "$lane")"
+    prior="$(lane_row_get lane-asking "$state" "$lane")"
     prefix="${key}|$(pane_turn_identity "$pane")|"
     if ! grep -Eq -- "$LANE_ASKING_RE" <<<"$below" \
        || [[ -n "$prior" && "$prior" != "$prefix"* ]]; then
-      state="$(lane_asking_clear "$state" "$lane")"
+      state="$(lane_row_clear lane-asking "$state" "$lane")"
+    fi
+    # When this pass first sees a wall, stamp it: the row is what later lets a
+    # dayless clause name a day. Stamped HERE, on every lane, rather than
+    # where the event is emitted, because that path leaves on the first walled
+    # lane and a second one would never be observed at all. The row is the
+    # sighting and nothing more; whether the banner is the account speaking is
+    # the emit path's one question, asked there once for both events. A stamp
+    # belongs to ONE wall, so it goes when the banner goes and when the banner
+    # starts naming a different reset.
+    banner=""
+    banner_rc=0
+    banner="$(grep -E -- "$USAGE_LIMIT_RE" <<<"$below")" || banner_rc=$?
+    [[ "$banner_rc" -le 1 ]] \
+      || die "could not search the pane behind '$lane' for a limit banner (grep exited $banner_rc)"
+    reset_key="$(usage_reset_key "$banner")"
+    if [[ -n "$reset_key" && "$(lane_row_get usage-limit "$state" "$lane")" != *" $reset_key" ]]; then
+      state="$(lane_row_set usage-limit "$state" "$lane" "$PASS_NOW $reset_key")"
+    elif [[ -z "$reset_key" ]]; then
+      state="$(lane_row_clear usage-limit "$state" "$lane")"
     fi
   done
-  lane_asking_commit "$state"
+  lane_row_commit "$state"
 }
 
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
   local lane pane below cmd pid state probe i states="" shell_now="" idle_now="" asking_now="" claims="" claimed pane_key
-  local now reset_at reset_utc reset_note event
+  local seen reset_at reset_utc reset_note event
   local asking_state="${PW_SEEN[0]}" next_state fingerprint prior turn_identity
   i=0
   for lane in "${LANES[@]}"; do
@@ -793,8 +848,8 @@ check_lanes() {
         echo "EVENT lane-exited $lane"
         pane="$(cat -- "$(lane_pane_file "$i")")"
         [[ -z "$pane" ]] || pane_tail "$pane"
-        next_state="$(lane_asking_clear "$asking_state" "$lane")"
-        lane_asking_commit "$next_state"
+        next_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
+        lane_row_commit "$next_state"
         pr_watch_context
         exit 0
       fi
@@ -814,7 +869,12 @@ check_lanes() {
     if [[ "$(lane_state "$states" "$i")" == exited ]]; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
     below="$(pane_below_last_turn "$pane")"
-    if grep -Eq -- "$USAGE_LIMIT_RE" <<<"$below"; then
+    # ONE predicate for both usage-limit events, on the path they share: a
+    # turn in flight is not the account speaking, and limit-shaped text a lane
+    # prints while working would otherwise be nudged or moved. Their
+    # false-positive class is identical, so the check cannot live on one of
+    # them.
+    if grep -Eq -- "$USAGE_LIMIT_RE" <<<"$below" && ! grep -Eq -- "$WORKING_RE" <<<"$below"; then
       # The detail is a nicety; a claim store this process cannot read must
       # not take down the event that carries the pane tail.
       claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
@@ -830,20 +890,21 @@ check_lanes() {
       # The banner states when the wall lifts, and that decides which event
       # this is. A reset already behind us means the lane is parked against a
       # window that has since reopened — the harness will not notice on its
-      # own — so it is bumped, not waited on. An unreadable reset keeps the
-      # plain event with no time on it: the overseer falls back on the pane
-      # tail, which is where it stood before. `resets=` is keyed rather than
+      # own — so it is bumped, not waited on. The wall's day comes from the
+      # row observe_lanes stamped, never from the banner: with no row, or with
+      # a reset `date` would not resolve, the plain event goes out with no
+      # time on it and the lane is parked. `resets=` is keyed rather than
       # positional because the config dir before it is optional.
-      now="$(date -u +%s || true)"
+      seen="$(lane_row_get usage-limit "$asking_state" "$lane")"
       reset_at=""
-      [[ -z "$now" ]] || reset_at="$(usage_reset_epoch "$below" "$now")"
+      [[ -z "$PASS_NOW" || -z "$seen" ]] || reset_at="$(usage_reset_epoch "${seen#* }" "${seen%% *}")"
       event=usage-limit
       reset_note=""
       reset_utc=""
       [[ -z "$reset_at" ]] || reset_utc="$(from_epoch "$reset_at" '%Y-%m-%dT%H:%M:%SZ' || true)"
       if [[ -n "$reset_utc" ]]; then
         reset_note=" resets=$reset_utc"
-        [[ "$reset_at" -gt "$now" ]] || event=usage-limit-passed
+        [[ "$reset_at" -gt "$PASS_NOW" ]] || event=usage-limit-passed
       fi
       echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
       [[ -z "$pane" ]] || pane_tail "$pane"
@@ -866,19 +927,19 @@ check_lanes() {
       pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
       turn_identity="$(pane_turn_identity "$pane")"
       fingerprint="${pane_key}|${turn_identity}|$(printf '%s' "$below" | cksum)"
-      prior="$(lane_asking_fingerprint "$asking_state" "$lane")"
-      asking_state="$(lane_asking_set "$asking_state" "$lane" "$fingerprint")"
+      prior="$(lane_row_get lane-asking "$asking_state" "$lane")"
+      asking_state="$(lane_row_set lane-asking "$asking_state" "$lane" "$fingerprint")"
       if [[ "$fingerprint" == "$prior" ]]; then continue; fi
       echo "EVENT lane-asking $lane"
       pane_tail "$pane"
-      lane_asking_commit "$asking_state"
+      lane_row_commit "$asking_state"
       pr_watch_context
       exit 0
     else
-      asking_state="$(lane_asking_clear "$asking_state" "$lane")"
+      asking_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
     fi
   done
-  lane_asking_commit "$asking_state"
+  lane_row_commit "$asking_state"
   # The round is over and nobody is driving: the harness is up, at its input
   # prompt, with nothing in flight. Two consecutive passes, because the screen
   # between a finished tool call and the next one reads the same.
@@ -913,8 +974,13 @@ heartbeat() {
 }
 
 loop=0
+# One clock per pass. The stamp a lane's wall is observed on and the comparison
+# that decides whether it has lifted are the same reading, so a slow pass
+# cannot put them on either side of the reset.
+PASS_NOW=""
 while :; do
   loop=$((loop + 1))
+  PASS_NOW="$(date -u +%s || true)"
   observe_lanes
   check_pr_watch
   check_merged
