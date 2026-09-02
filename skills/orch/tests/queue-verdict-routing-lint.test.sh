@@ -106,15 +106,16 @@ table_is_read() { # doc — an empty harvest passes both set comparisons
 # The lane waits in the FOREGROUND. A handoff lane sitting at its prompt has no
 # next boundary, so a verdict published behind it waits for a human.
 #
-# One predicate over the whole family, not a rule about the `&` character:
-# harvest every fenced command naming the waiter, require exactly one, and
-# require that one to BE the blocking call. Anything else the family can spell
-# — a `setsid` or `nohup` or `disown` prefix, a subshell, a redirection of
-# stdout, a trailing `&`, a second arm beside the blocking one, or the call
-# buried in a longer command line — fails the same shape test, because the
-# shape is anchored at both ends of the line rather than searched for inside
-# it. Two halves searched separately is what let a `setsid … > FILE` arm pass:
-# it carries no trailing `&`.
+# The unit judged is the fenced BLOCK, not the line. A line predicate can only
+# ever close the spellings that fit on one line: a launcher can sit above the
+# call behind a backslash, and a subshell can close below it with `) > F &`,
+# and neither of those lines carries the waiter's name for a line harvest to
+# find. Judging the block makes that family unrepresentable rather than
+# enumerated — the block holding the waiter must hold ONE executable line, and
+# that line must BE the blocking call — so there is nowhere for a launcher, a
+# redirection, a backgrounding or a wrapper to sit that the check does not
+# read. Comment-only and blank lines are not executable and `fenced` already
+# drops them.
 #
 # The poll and budget positionals are admitted and required. Their VALUES are
 # not pinned — the ceiling that sizes them belongs to the harness and the floor
@@ -124,21 +125,35 @@ table_is_read() { # doc — an empty harvest passes both set comparisons
 # on stdout.
 BLOCKING_CALL='^[[:space:]]*(\[MAIN_REPO_ROOT\]/)?\.agents/skills/orch/scripts/queue-wait \[PR_NUMBER\] [0-9]+ [0-9]+ --json[[:space:]]*$'
 
-waiter_invocations() { # doc — every fenced command line naming the waiter
-  fenced "$1" | cut -f3- | grep -F '/queue-wait' || true
+# waiter_blocks DOC — every executable line of every fenced block naming the
+# waiter, as "blockid<TAB>lineno<TAB>text". A block is named by its opening
+# fence's line number, so lines of one block share a first field.
+waiter_blocks() { # doc
+  local rows ids
+  rows="$(fenced "$1")"
+  ids="$(grep -F '/queue-wait' <<<"$rows" | cut -f1 | sort -u || true)"
+  [ -n "$ids" ] || return 0
+  awk -F'\t' -v ids="$ids" '
+    BEGIN { n = split(ids, a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") keep[a[i]] = 1 }
+    ($1 in keep)' <<<"$rows"
 }
 lane_wait_is_foreground() { # doc
-  local calls count
-  calls="$(waiter_invocations "$1")"
-  count="$(grep -c . <<<"$calls" || true)"
-  [ -n "$calls" ] || count=0
-  if [ "$count" -ne 1 ]; then
-    printf '        %s fenced command(s) name the waiter; the lane runs exactly one:\n' "$count"
-    sed 's/^/          /' <<<"$calls"
+  local rows blocks lines
+  rows="$(waiter_blocks "$1")"
+  blocks="$(awk -F'\t' '{ print $1 }' <<<"$rows" | sort -u | awk 'NF' | wc -l)"
+  if [ "$blocks" -ne 1 ]; then
+    printf '        %s fenced block(s) name the waiter; the lane runs exactly one:\n' "$blocks"
+    cut -f3- <<<"$rows" | sed 's/^/          /'
     return 1
   fi
-  grep -qE "$BLOCKING_CALL" <<<"$calls" && return 0
-  printf '        the waiter call is not the bare blocking form: %s\n' "$calls"
+  lines="$(awk 'NF' <<<"$rows" | wc -l)"
+  if [ "$lines" -ne 1 ]; then
+    printf '        the waiter block holds %s executable lines; the call stands alone:\n' "$lines"
+    cut -f3- <<<"$rows" | sed 's/^/          /'
+    return 1
+  fi
+  grep -qE "$BLOCKING_CALL" <<<"$(cut -f3- <<<"$rows")" && return 0
+  printf '        the waiter call is not the bare blocking form: %s\n' "$(cut -f3- <<<"$rows")"
   return 1
 }
 
@@ -252,7 +267,7 @@ check "control: that same duplicate leaves the coverage direction green" \
 
 # The blocking call's own line, harvested rather than written down, so a
 # retuned budget does not have to be edited into this suite.
-CALL_LINE="$(waiter_invocations "$CTL_DOC")"
+CALL_LINE="$(waiter_blocks "$CTL_DOC" | cut -f3-)"
 
 # A plant that matched nothing would leave an identical file, and every `reds`
 # assertion below it would report a mutation that never happened.
@@ -294,6 +309,27 @@ for arm in \
       reds lane_wait_is_foreground "$f"
   done
 done
+
+# The two multiline shapes a line harvest cannot see: neither planted line
+# carries the waiter's name, so both are evidence for judging the block rather
+# than the line. They are controls, not the mechanism — the mechanism is that
+# the block holds one executable line.
+plant_around() { # NAME BEFORE AFTER
+  local f="$MD_TMP/merge-pr-around-$1.md"
+  awk -v before="$2" -v after="$3" -v want="$CALL_LINE" '
+    $0 == want { if (before != "") print before; print; if (after != "") print after; next }
+    { print }' "$CTL_DOC" > "$f"
+  printf '%s' "$f"
+}
+CONT="$(plant_around continuation '   nohup \\' '')"
+check "control: the continued launcher was really planted" planted "$CONT"
+check "control: a backslash-continued launcher above the call reds" \
+  reds lane_wait_is_foreground "$CONT"
+
+WRAP="$(plant_around subshell '   (' '   ) > [VERDICT_FILE] &')"
+check "control: the wrapping subshell was really planted" planted "$WRAP"
+check "control: a subshell closing below the call reds" \
+  reds lane_wait_is_foreground "$WRAP"
 
 NO_WAIT="$MD_TMP/merge-pr-no-wait.md"
 awk -v want="$CALL_LINE" '$0 != want' "$CTL_DOC" > "$NO_WAIT"
