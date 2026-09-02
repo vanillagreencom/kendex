@@ -110,9 +110,8 @@ describe("updates store: edited places", () => {
 
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
-    // The failure is reported, and the machine is read anyway: a rejection
-    // is the answer that accounts for least, and the uninstallers the write
-    // runs before its plan may already have moved what these two read.
+    // The machine is read anyway: a rejection is the answer that accounts
+    // for least, on `rescan.ts`'s rule.
     expect(commands.auditAll).toHaveBeenCalled();
   });
 
@@ -334,12 +333,7 @@ describe("updates store: installing beside an edited place", () => {
     expect(useProblemsStore.getState().dialog.open).toBe(false);
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
-    // Read anyway, on `rescan.ts`'s rule. Not because this phase disarmed
-    // anything: `package_fork_beside` answers Refused for a failed `env()`,
-    // a plan it could not build, or an `apply::execute` that rolled back —
-    // none of which is proof the rollback itself landed. Its sibling phase,
-    // Recorded, is the one that runs uninstallers, and no predicate here
-    // tells the two apart before the read.
+    // Read anyway, on `rescan.ts`'s rule.
     expect(commands.auditAll).toHaveBeenCalled();
   });
 
@@ -349,40 +343,33 @@ describe("updates store: installing beside an edited place", () => {
   // dialog for that whole span before being told to retype. The scan is
   // left hanging here so nothing but the answer can have resolved.
   it("hands back the refusal before the reads behind it finish", async () => {
+    // Recorded rather than raced: a clock-based wait cannot tell the answer
+    // beating the standing read from the answer trailing it by one
+    // round-trip, and that round-trip is the whole cost.
+    const order: string[] = [];
     vi.mocked(commands.packageForkBeside).mockResolvedValue({
       status: "error",
       error: { phase: "refused", message: "'docs' already installed" },
     });
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    vi.mocked(commands.updatesOverview).mockImplementation(async () => {
+      order.push("overview");
+      return {
+        status: "ok",
+        data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+      };
     });
-    // Held open until this case says so, then released so the chain — and
-    // the store's busy with it — finishes before the next case.
-    let releaseScan: (answer: never) => void = () => {};
-    vi.mocked(commands.scanMachine).mockReturnValue(
-      new Promise((resolve) => {
-        releaseScan = resolve as (answer: never) => void;
-      }),
-    );
-    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
 
     let refusal: string | null | undefined;
-    const reads = installAsNew(row(edited), "claude", "docs", (failure) => {
+    await installAsNew(row(edited), "claude", "docs", (failure) => {
+      order.push("answered");
       refusal = failure;
     });
 
-    await vi.waitFor(() => expect(refusal).toBeDefined());
     expect(refusal).toBe("'docs' already installed");
-    // The reads are still out — this is the wait the person no longer sits
-    // through, and `busy` is what proves they are inside the window.
-    expect(useUpdatesStore.getState().busy).toBe(true);
-
-    releaseScan({
-      status: "ok",
-      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
-    } as never);
-    await reads;
+    // Ahead of the standing read — the one a reload-first regression would
+    // put in front of it — and the busy window closed only after both reads.
+    expect(order).toEqual(["answered", "overview"]);
+    expect(commands.auditAll).toHaveBeenCalled();
     expect(useUpdatesStore.getState().busy).toBe(false);
   });
 

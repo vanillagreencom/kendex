@@ -329,16 +329,12 @@ describe("the package page after an update started from its Projects tab", () =>
     expect(header(host)).not.toContain(UPDATE_LABEL);
   });
 
-  // An apply that answers an error is not proof that nothing changed: the
-  // uninstallers run before the plan and their effects stand, and a write
-  // that committed can still fail in the read that enriches its answer
-  // (`lib/rescan.ts`'s header is the account). Reading the error as
-  // "nothing moved" is what leaves a page on screen the machine no longer
-  // matches.
+  // An error is no account of what is on disk — `lib/rescan.ts`'s header
+  // is the reasoning. Reading it as "nothing moved" is what leaves a page
+  // on screen the machine no longer matches.
   it("re-reads them when the write answers an error", async () => {
     const write = engineWrites();
-    // The write landed and the command answered an error over it — the
-    // shape an enrichment read failing after the commit makes reachable.
+    // The write landed and the command answered an error over it.
     vi.mocked(commands.packageUpdate).mockImplementation(() => {
       write.landed = true;
       return Promise.resolve({ status: "error", error: "the apply stopped" });

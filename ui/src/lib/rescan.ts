@@ -30,23 +30,22 @@
 // rather than at each of them.
 //
 // A refusal is no account of what is on disk. `repo_effects::execute` runs
-// the leaving packages' uninstallers before the plan, and an `Undo` error
-// comes back with what they did to the repository standing; a command that
-// applies a bare plan instead can still fail in its enrichment read, after
-// the write committed. What does NOT survive is the manifest: its save is
-// part of the same journaled plan, so `run_journaled` rolls it back with
-// everything else the plan touched.
+// the leaving packages' uninstallers before the plan, so an `Undo` error
+// comes back with what they did standing and the plan — manifest save
+// included — never run; a plan that does run and then fails rolls back
+// whole, `run_journaled` restoring every path it touched; and an error can
+// come back over a write that committed in full. The answer does not say
+// which happened.
 //
-// Neither is an answer that landed a complete account — `moved` covers the
-// two states `moving` counts, `removed` the other destructive one, and a
-// dropped rendering can answer with all three fields empty, so no predicate
-// over the response decides this. A write that turns out to have moved
-// nothing costs one machine-wide scan and one forced audit, which is
-// cheaper than the dated page the alternative leaves.
+// Nor is a success a complete account: `moved` covers the two states
+// `moving` counts, `removed` the other destructive one, and a dropped
+// rendering can answer with all three fields empty. So no predicate over
+// the response decides this, and a write that moved nothing pays one scan
+// and one forced audit rather than leaving a dated page.
 //
 // This speaks only for those five. The marketplace, source-toggle and
 // settings callers still return on the error before reaching here; whether
-// that is right is their own question, not one this paragraph answers.
+// that is right is their own question.
 //
 // Adding a project, dropping one, or moving a harness's folder changes
 // which scopes the audit reads, and a scope with no view of its own counts

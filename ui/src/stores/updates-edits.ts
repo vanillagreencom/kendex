@@ -18,22 +18,17 @@ import { holdingBusy, useUpdatesStore } from "./updates";
 /** The ways out of an edited place, run under the updates store's busy
  *  flag so every control on the page waits on the same one — a fork, a
  *  discard, or an install beside rewrites the scope's manifest like any
- *  update does. Each returns the failure, or what the work answered once
- *  the follow-up refreshes have landed. */
+ *  update does. Each hands its outcome to a callback at the engine's
+ *  answer and returns a promise covering the reads behind it. */
 
 type Outcome<T> = { error: string } | { ok: T };
 
-/** Run one way out of an edited place under the updates store's busy, and
- *  hand `say` the outcome the moment the engine answers — ahead of the two
- *  reads behind it. The returned promise covers those reads, which run on
- *  inside the same busy window so no other control acts over them.
- *
- *  Answering first is the point. The engine's word is final by then, and
- *  the reads take seconds: a forced audit deliberately skips its freshness
- *  window. `installAsNew`'s refusal is the dialog's own inline "that name
- *  will not go through" — reported after a machine-wide scan, it is
- *  seconds of a silent dialog over an answer that was already in hand. The
- *  siblings on this path all report first and read after. */
+/** `say` takes the outcome the moment the engine answers, ahead of the two
+ *  reads the returned promise covers — those stay inside the busy window,
+ *  so no other control acts over them. Answering first is the point: the
+ *  reads take seconds, a forced audit skipping its freshness window on
+ *  purpose, and `installAsNew`'s refusal is the dialog's own inline "pick
+ *  another name". */
 const run = <T>(
   work: () => Promise<Outcome<T>>,
   say: (outcome: Outcome<T>) => void,
@@ -125,18 +120,14 @@ export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
 
 /** Keep an edited place's files as the user's own package under `own`,
  *  and let the source's newest version back in under the original name.
- *  `harness` is the edited rendering the row named as forkable.
- *
- *  `answered` is handed the refusal — nothing written, another name may go
- *  through — for the dialog to show at the point of action, or null when
- *  the dialog should close. It fires at the engine's answer, ahead of the
- *  reads the returned promise covers, because the person's next move is to
- *  retype the name over it. A fork the scope recorded but could not render
- *  is not a refusal: the dialog closes, the toast says what landed, and the
- *  refreshed rows carry the rest. An error in neither phase — a transport
- *  rejection, a binary older than this UI — must never read as a recorded
- *  fork: it is presented as a refusal, the shape that claims nothing
- *  happened. */
+ *  `harness` is the edited rendering the row named as forkable. `answered`
+ *  takes the refusal — nothing written, another name may go through — for
+ *  the dialog to show at the point of action, or null. A fork the scope
+ *  recorded but could not render is not a refusal: the dialog closes, the
+ *  toast says what landed, and the refreshed rows carry the rest. An
+ *  error in neither phase — a transport rejection, a binary older than
+ *  this UI — must never read as a recorded fork: it is presented as a
+ *  refusal, the shape that claims nothing happened. */
 export const installAsNew = async (
   row: UpdateRow,
   harness: HarnessId,
@@ -146,42 +137,32 @@ export const installAsNew = async (
   if (running()) return answered(UPDATES_ONE_AT_A_TIME_NOTE);
   if (stale(row)) return answered(UPDATE_NEEDS_CHECK_NOTE);
   const name = packageDisplayName(row);
-  await run<string | null>(
-    async () => {
-      const response = saying(
-        await commands.packageForkBeside(
-          row.scope,
-          row.kind,
-          row.name,
-          harness,
-          own,
-          // The same rule as discarding: a held place moves to the newest when
-          // that hold is its own to move.
-          row.pinned && row.canTakeLatest ? (row.latest?.commit ?? null) : null,
-        ),
-      );
-      if (response.status === "ok") return { ok: null };
-      const failure: unknown = response.error;
-      if (
-        typeof failure === "object" &&
-        failure !== null &&
-        "phase" in failure
-      ) {
-        const { phase, message } = failure as {
-          phase: string;
-          message: string;
-        };
-        if (phase === "recorded") return { ok: message };
-        if (phase === "refused") return { error: message };
-      }
-      return { error: String(failure) };
-    },
-    (outcome) => {
-      if ("error" in outcome) return answered(outcome.error);
-      if (outcome.ok === null)
-        toast.success(installedAsNewToastLabel(name, own));
-      else toast.info(installedBesideUnfinishedToast(name, own, outcome.ok));
-      answered(null);
-    },
-  );
+  const fork = async (): Promise<Outcome<string | null>> => {
+    const response = saying(
+      await commands.packageForkBeside(
+        row.scope,
+        row.kind,
+        row.name,
+        harness,
+        own,
+        // The same rule as discarding: a held place moves to the newest when
+        // that hold is its own to move.
+        row.pinned && row.canTakeLatest ? (row.latest?.commit ?? null) : null,
+      ),
+    );
+    if (response.status === "ok") return { ok: null };
+    const failure: unknown = response.error;
+    if (typeof failure === "object" && failure !== null && "phase" in failure) {
+      const { phase, message } = failure as { phase: string; message: string };
+      if (phase === "recorded") return { ok: message };
+      if (phase === "refused") return { error: message };
+    }
+    return { error: String(failure) };
+  };
+  await run(fork, (outcome) => {
+    if ("error" in outcome) return answered(outcome.error);
+    if (outcome.ok === null) toast.success(installedAsNewToastLabel(name, own));
+    else toast.info(installedBesideUnfinishedToast(name, own, outcome.ok));
+    answered(null);
+  });
 };
