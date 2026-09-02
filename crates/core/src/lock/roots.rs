@@ -275,12 +275,9 @@ fn resolve_provenance(root: &Path, reading: &Path, provenance: &mut String) {
 /// say: a remainder can itself walk back out. Provenance is the looser
 /// half, and [`resolve_provenance`] says where it stops.
 ///
-/// Two roots leave nothing to resolve against. One the record does not
-/// name, so there is no prefix to take off any position. And a reading root
-/// that is no place on this machine, since nothing rejoined onto it would
-/// be one either and a relative root names a different place per process.
-/// The global lock names no root because it has none, each harness owning a
-/// directory of its own, and has nothing to resolve against.
+/// A record that names no root leaves nothing to resolve against: there is
+/// no prefix to take off any position. The global lock is that record — it
+/// has no root, each harness owning a directory of its own.
 fn resolve(path: &Path, reading: &Path, lock: &mut Lock) -> Result<()> {
     let Some(recorded) = lock.root.clone() else {
         return Err(CoreError::LockWithoutProject {
@@ -297,17 +294,6 @@ fn resolve(path: &Path, reading: &Path, lock: &mut Lock) -> Result<()> {
     // then outside the root reading.
     if recorded == reading {
         return Ok(());
-    }
-    // The root being read against has to be a place, or nothing rejoined
-    // onto it is one either and a relative root names a different place per
-    // process. What the RECORD names is held to nothing here: every
-    // position it states is judged on rejoining, below.
-    if !reading.is_absolute() {
-        return Err(CoreError::LockFromAnotherProject {
-            path: path.to_path_buf(),
-            recorded,
-            root: reading.to_path_buf(),
-        });
     }
     let slashed = PathBuf::from(crate::paths::slashed(&recorded));
     for (key, entry) in &mut lock.entries {

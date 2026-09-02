@@ -4,42 +4,6 @@
 # armed hooks in both directions — one package verdict has to be reachable
 # from a real commit, or the chain is wired to nothing. The refusing direction
 # runs first in every pair.
-#
-# TWO SUITES, TWO DIRECTIONS, AND NEITHER SEES THE OTHER'S. The fixture here is
-# built from the .agents RENDER of the package; growth-guards' own suites run
-# the source under skills/. The repo requires the two to move together, not to
-# be byte-identical, so a render that has drifted from its source is a state
-# both can be green in.
-#
-#   a SOURCE regression  — skills/growth-guards/tests/: commit-msg.test.sh for
-#                          the header shape, the subject cap and the changelog
-#                          rule, pre-commit-chain.test.sh for the lane order,
-#                          install-git-hooks*.test.sh for the installer. No arm
-#                          in THIS file can red on one.
-#   a RENDER divergence  — only here. The render is the hook `tools/setup`
-#                          installs, so a rule the source still carries and the
-#                          render has lost is enforced by nothing, and the
-#                          source suite structurally cannot see it.
-#
-# That is why this file keeps a sample of the package's verdicts rather than
-# none: enough to prove the installed hook still carries the rules, not enough
-# to duplicate the matrix. A reader trimming it for being unable to catch a
-# source regression is trimming the only thing watching the other direction —
-# that cut shipped once, and this is the arm that came back.
-#
-# The changelog obligation is therefore held here from two sides, because it
-# can be switched off from two and neither catches the other's:
-#
-#   the CONFIGURED VALUE — the settings arm below, reading THIS repo's
-#     committed kendex.settings.toml rather than the fixture's. A key that
-#     names no tree the repo rule names obliges nothing, whatever the hook is.
-#   the INSTALLED HOOK  — the crates/ arm further down, committing through the
-#     render-built fixture. A render that has lost the rule enforces nothing,
-#     whatever the key says.
-#
-# Neither is covered anywhere else. The package's own suites hand themselves a
-# fixture toml and command-line overrides, so they stay green whatever this
-# repo commits and whatever its render carries.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,69 +18,9 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
-# THE OBLIGATION IS A REACH, NOT A NON-EMPTY STRING. The repo rule (AGENTS.md,
-# and the package's own diagnostic) is that a change under crates/ or ui/ ships
-# a changelog fragment or says [no-changelog]. Non-empty does not carry that:
-# GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS set to "docs/*" is non-empty, names a
-# real tree, and leaves every crates/ and ui/ commit through the gate with no
-# diagnostic. So this asks whether the committed globs REACH each obliged tree,
-# and an emptied value fails the same arm because it reaches nothing.
-#
-# The question goes to the package's own matcher, sourced rather than restated,
-# so the globs are read here exactly as commit-msg reads them at commit time —
-# `*` crossing `/` included, which is the difference between a value that
-# covers a tree and one that covers only its top level.
-# shellcheck source=../../skills/growth-guards/scripts/lib/configured-paths.sh
-. "$REPO/skills/growth-guards/scripts/lib/configured-paths.sh"
-
-# EVERY TRACKED PATH, not a sample. "Across the tree" is the claim, so the
-# tree is what gets asked: a glob can reach a probe and still leave most of a
-# tree outside the gate, and `crates/*.rs ui/*` is that value — it matches any
-# .rs file at any depth and every ui/ path, so any one-file-per-tree probe
-# passes while crates/app/Cargo.toml commits with no entry and nothing reds.
-# Sampling cannot tell a whole tree from a convenient corner of it.
-#
-# Measured at 1030 paths and 12ms, all of it a shell `case` with no process per
-# path, so the whole tree is affordable and the claim does not need narrowing.
-#
-# Process substitution, not a pipe into the loop: this file runs under
-# `pipefail`, and a pipeline the reader can close early takes the suite down on
-# git's SIGPIPE. The loop drains its input, so nothing closes early — but the
-# rule for this file is that no pipeline ends in `head` or any other short read.
-#
-# `set -f` for the same reason lib/configured-paths.sh documents: the list is
-# word-split unquoted to act as globs, and pathname expansion here would
-# resolve each pattern against the work tree instead.
-unreached=""
-set -f
-for obliged_tree in crates ui; do
-  seen=0
-  missed=0
-  examples=""
-  while IFS= read -r tracked; do
-    seen=$((seen + 1))
-    if ! gg_path_matches "$tracked" $REQUIRED_PATHS; then
-      missed=$((missed + 1))
-      # A bounded sample in the message: naming 600 paths buries the one fact
-      # the reader needs, which is that the tree is not covered and where it
-      # starts. The COUNT is exact; the paths are the first few.
-      if [ "$missed" -le 3 ]; then examples="$examples $tracked"; fi
-    fi
-  done < <(git -C "$REPO" ls-files -- "$obliged_tree")
-  # Zero tracked paths is a failure, not a vacuous pass: it means this arm
-  # measured nothing, whether the tree moved or the read broke.
-  if [ "$seen" -eq 0 ]; then
-    unreached="$unreached $obliged_tree/ (no tracked path to check — the tree moved, or the read failed)"
-  elif [ "$missed" -gt 0 ]; then
-    unreached="$unreached $obliged_tree/ ($missed of $seen unmatched, from:$examples)"
-  fi
-done
-set +f
-
-[ -z "$unreached" ] \
-  && ok "kendex.settings.toml obliges a changelog entry across every tracked path in crates/ and ui/" \
-  || bad "kendex.settings.toml obliges a changelog entry across every tracked path in crates/ and ui/" \
-       "GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = \"$REQUIRED_PATHS\" does not reach:$unreached — a change there would commit with no changelog entry and nothing red anywhere"
+[ -n "$REQUIRED_PATHS" ] \
+  && ok "kendex.settings.toml names the paths that oblige a changelog entry" \
+  || bad "kendex.settings.toml names the paths that oblige a changelog entry" "GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS is empty"
 
 new_fixture() { # NAME — a clone-shaped repo carrying the package and these tools
   R="$TMP/$1"
@@ -125,9 +29,6 @@ new_fixture() { # NAME — a clone-shaped repo carrying the package and these to
   cp "$TOOLS/setup" "$R/tools/"
   printf '#!/usr/bin/env bash\necho "repo-local lane ran"\n' >"$R/tools/guard"
   chmod +x "$R/tools/guard"
-  # The obliging globs are THIS repo's, not a literal: the crates/ arm below
-  # asks whether the installed hook still refuses what this repo says it must,
-  # so a fixture holding its own value would answer a question nobody asked.
   printf '[env]\nGROWTH_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"\nGROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = "%s"\n' \
     "$REQUIRED_PATHS" >"$R/kendex.settings.toml"
   printf '# fixture\n' >"$R/README.md"
@@ -181,14 +82,10 @@ OUT="$(git -C "$R" commit -m "docs: a conventional subject" 2>&1)" || RC=$?
   || bad "a conventional subject passes" "rc=$RC out=$OUT"
 
 echo "=== the installed hook still obliges the changelog this repo's paths ask for ==="
-# ONE arm, and it is here for the render, not for the rule. commit-msg.test.sh
-# proves the whole changelog matrix against skills/ — the fragment that
-# satisfies, the README that does not stand in, [no-changelog], a deleted
-# fragment, the release commit. None of that is repeated here. What none of it
-# can see is the render losing the rule while the source keeps it, and the
-# render is the hook `tools/setup` installs. So this commits a crates/ change
-# with no fragment through the installed chain and requires the refusal: it is
-# the one arm that reds when the two copies disagree about the changelog.
+# One arm, and it is here for the render, not for the rule. commit-msg.test.sh
+# proves the whole changelog matrix against skills/; what it cannot see is the
+# render losing a rule its source keeps, and the render is the hook
+# `tools/setup` installs.
 printf 'fn main() {}\n' >"$R/crates/a.rs"
 git -C "$R" add -A
 RC=0

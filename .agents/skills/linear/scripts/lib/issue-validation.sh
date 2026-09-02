@@ -174,47 +174,8 @@ blocking_level_violation_message() {
 # keeps the guard off. The bar itself is project-management SKILL.md,
 # § Disposition.
 
-# The rule both refusals that judge a `Reached by:` value quote, so message
-# and rule cannot drift apart. The symptom refusal below states its own rule.
-REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). A value naming only the thread a finding came from, a shape, or something true in theory is not a reach, and an unsubstituted placeholder or a null token is no value at all.'
-
-# A value that IS the artifact a finding came from, rather than one that names
-# a producer and mentions the artifact along the way. Anchored end to end with
-# its parts bounded, the same whole-value discipline the shapes list below
-# uses: a phrase appearing somewhere in the value says nothing about the
-# value, and matching on that refused `running the PR review gate on a stale
-# head`, which names a shipped check. What refuses is a determiner, any run of
-# qualifier words, an artifact head noun, and at most a prepositional tail —
-# so `the PR review suggestion` refuses and `the PR review gate on a stale
-# head` creates, the head noun being what decides.
-#
-# The two lists stay separate because the vocabularies sit in different
-# positions: a shape needs its word after a head noun (`a name containing a
-# quote`), an artifact needs its words at the head (`the pull request
-# comment`). One pattern cannot hold a vocabulary in both places.
-#
-# This project ships a `codex` harness id, a `reviewer` skill and reviewer-*
-# agents, so a bare product noun would refuse honest reaches like `kendex
-# install --harness codex` or `a reviewer running tools/guard`, which the
-# guard has no escape flag to recover. `could` and `might` are absent for the
-# same reason: they mark a speculative impact, which the filing bar judges on
-# its own line, and as words they refuse `could not` in a report of what a
-# user actually hit.
-REACH_ARTIFACT_QUALIFIER='(copilot|codex|reviewer|bot|pr|pull request|pull-request|code|review)'
-REACH_ARTIFACT_HEAD='(review|comment|thread|suggestion|round|finding)'
-REACH_DETERMINER='(the |this |that |a |an )?'
-REACH_ARTIFACT_TAIL='( (on|of|in|from|at|for|about) .{0,40})?'
-REACH_REFUSED_WORDS="^$REACH_DETERMINER($REACH_ARTIFACT_QUALIFIER )*$REACH_ARTIFACT_HEAD$REACH_ARTIFACT_TAIL\$|^prrt_[a-z0-9_-]*\$|^${REACH_DETERMINER}hypothetical( .{0,40})?\$|^in theory( .{0,40})?\$"
-
-# A value that IS an input form is a shape, not a producer: no run emits it and
-# no user performs it. Both patterns are anchored end to end and their parts
-# bounded, the same whole-value discipline the words list above needed: a shape
-# word appearing somewhere after a leading article says nothing about the
-# value, and matching on that refused `a user entering a filename containing
-# spaces` and `an invalid cache entry emitted by kendex sync`, each of which
-# names the user action or shipped producer this guard asks for. A value that
-# goes on past the form to name where it comes from is no longer only a form.
-REACH_REFUSED_SHAPES='^(a|an) [a-z]+ (containing|starting with|ending with|matching) [a-z]+( [a-z]+){0,2}$|^(a|an) (empty|missing|malformed|invalid|unset|blank|null) [a-z_]+( [a-z_]+)?$'
+# The rule the refusal quotes, so message and rule cannot drift apart.
+REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). An unsubstituted placeholder or a null token is no value at all.'
 
 # An unsubstituted template placeholder, and a token whose whole meaning is
 # "nothing here", name no more than a blank line does. Both resolve to the
@@ -250,18 +211,11 @@ require_issue_reach() {
 	local description="$1" priority="$2" review_born="${3:-}"
 	[ -n "${LINEAR_REQUIRE_REACH:-}" ] || return 0
 
-	local reach lower
+	local reach
 	reach=$(issue_marked_value "$description" '[Rr]eached[[:space:]][Bb]y')
 	if [ -z "$reach" ]; then
 		jq -cn --arg rule "$REACH_RULE" \
 			'{error: ("Refusing to create an issue with no \"Reached by:\" line. " + $rule + " Add the line to the description (project-management issue-description-template.md carries it) and retry - an item with nothing to name is a decline, not an issue.")}' >&2
-		return 1
-	fi
-
-	lower=$(printf '%s' "$reach" | tr '[:upper:]' '[:lower:]')
-	if [[ "$lower" =~ $REACH_REFUSED_WORDS ]] || [[ "$lower" =~ $REACH_REFUSED_SHAPES ]]; then
-		jq -cn --arg reach "$reach" --arg rule "$REACH_RULE" \
-			'{error: ("Refusing to create an issue whose \"Reached by:\" value names no producer: " + $reach + ". " + $rule + " Name the command, run, check, file, or user action that gets there; where none exists the item is a decline, not an issue.")}' >&2
 		return 1
 	fi
 

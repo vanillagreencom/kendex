@@ -188,3 +188,56 @@ fn source_catalog_routes_install_state_to_a_sibling() {
         "kendex.toml",
     );
 }
+
+/// A fold with `held` derived the way [`super::file::save`] derives it: the
+/// manifest this very document reads back as, spelled by the serializer
+/// that spelled the target.
+#[allow(clippy::unwrap_used)]
+fn fold(current: &str, desired: &str) -> String {
+    let held: Manifest = toml::from_str(current).unwrap();
+    let held = toml::to_string_pretty(&held).unwrap();
+    super::fold::folded(current, &held, desired).unwrap()
+}
+
+/// The layout round trip, over one document holding every shape a write can
+/// reach. Untouched: a header comment, hand spacing, a key order no
+/// serializer would choose, an inline table, a trailing comment, a list, a
+/// `[[custom-hooks]]` array whose entry carries a flag and a note the
+/// serializer omits at its default, and `note`, a key the model does not
+/// hold at all. Touched: one changed value, which keeps the writing around it; one
+/// key the manifest dropped, which goes with its own line; one table it
+/// gained, which lands under the tables already there.
+#[test]
+fn a_write_edits_the_keys_it_names_and_leaves_the_document_alone() {
+    let current = "# my setup\nschema  =  6\n\n# where it comes from\nsources.cat = { path = 'x', enabled = true }\n\n[install]\nharnesses = [\"claude\"]\nmethod   =   \"copy\"   # for now\n\n[skills.gh]\nsource = \"cat\"\nnote = \"why I keep this\"\nenabled = false\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nenabled = true   # still on\n";
+    let desired = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n\n[skills.fmt]\nsource = \"cat\"\n\n[sources.cat]\npath = \"x\"\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n";
+    assert_eq!(
+        fold(current, desired),
+        "# my setup\nschema  =  6\n\n# where it comes from\nsources.cat = { path = 'x', enabled = true }\n\n[install]\nharnesses = [\"claude\"]\nmethod   =   \"symlink\"   # for now\n\n[skills.gh]\nsource = \"cat\"\nnote = \"why I keep this\"\n\n[skills.fmt]\nsource = \"cat\"\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nenabled = true   # still on\n"
+    );
+}
+
+/// A document that already says what kendex holds comes back byte for byte,
+/// which is what lets `save` skip the write entirely.
+#[test]
+fn a_document_that_already_agrees_is_returned_unchanged() {
+    let current = "# my setup\nschema  =  6\n\n# where it comes from\n[sources.cat]\npath = 'x'   # local\nenabled = true\n\n[install]\nharnesses = [\n  \"claude\",\n]\n\n[skills.gh]\nsource = \"cat\"\n";
+    let desired = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[skills.gh]\nsource = \"cat\"\n\n[sources.cat]\npath = \"x\"\n";
+    assert_eq!(fold(current, desired), current);
+}
+
+/// What a file ends in is its own: the blank line somebody left at the
+/// bottom is not a key any write names.
+#[test]
+fn the_files_own_terminator_survives() {
+    let current = "schema = 6\n\n[skills.gh]\nsource = \"cat\"\n\n";
+    let desired = "schema = 6\n\n[skills.gh]\nsource = \"cat\"\n";
+    assert_eq!(fold(current, desired), current);
+}
+
+/// A document that does not parse is refused, so a write never replaces a
+/// file kendex could not read.
+#[test]
+fn an_unparsable_document_is_refused() {
+    assert!(super::fold::folded("schema = ", "schema = 6\n", "schema = 6\n").is_err());
+}

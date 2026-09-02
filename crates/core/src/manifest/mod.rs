@@ -5,8 +5,8 @@ use specta::Type;
 
 use crate::model::HarnessId;
 
-mod edit;
 mod file;
+mod fold;
 mod validate;
 pub use file::{
     ManifestFile, is_source_catalog, load, load_current, load_for_mutation, manifest_path,

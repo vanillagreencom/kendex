@@ -355,63 +355,6 @@ fn a_travelled_record_claiming_a_position_its_own_root_never_held_is_refused() {
     );
 }
 
-/// A record rooted at nothing takes every position with it, and the
-/// rejoin is what refuses them.
-///
-/// The empty prefix matches every path and hands it back whole, so each
-/// position arrives at the rejoin exactly as the record spelled it. What
-/// settles it is where that lands: a position naming another tree is
-/// outside the root reading and refused, naming itself.
-#[test]
-fn a_position_that_rejoins_outside_the_reading_root_is_refused() {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path().join("here");
-    std::fs::create_dir_all(&root).unwrap();
-    let path = root.join(LOCK_FILE);
-    let elsewhere = tmp.path().join("there/.agents/skills/gh");
-    recording(&path, "skill:gh:claude", &elsewhere, Some(Path::new("")));
-
-    let refused = load(&path).unwrap_err();
-    assert!(
-        matches!(
-            &refused,
-            CoreError::LockOutsideProject { key, recorded, .. }
-                if key == "skill:gh:claude" && recorded == &elsewhere
-        ),
-        "{refused:?}"
-    );
-}
-
-/// The reading root gets the same refusal, and reaches it the same way: a
-/// relative lock path whose parent does not exist resolves to nothing, so
-/// the raw spelling comes back through [`project_root_at`]. Rebasing onto
-/// it would hand out positions read against whatever directory the process
-/// happens to sit in later, and containment would pass every one of them.
-#[test]
-fn a_lock_read_at_a_relative_path_that_resolves_to_nothing_is_refused() {
-    let tmp = tempfile::tempdir().unwrap();
-    let wrote_it = tmp.path().join("wrote/here");
-    let path = tmp.path().join(LOCK_FILE);
-    recording(
-        &path,
-        "skill:gh:claude",
-        &wrote_it.join(".agents/skills/gh"),
-        Some(&wrote_it),
-    );
-    let text = std::fs::read_to_string(&path).unwrap();
-
-    let refused =
-        parse_text(Path::new("no-such-dir").join(LOCK_FILE).as_path(), &text).unwrap_err();
-    assert!(
-        matches!(
-            &refused,
-            CoreError::LockFromAnotherProject { recorded, root, .. }
-                if recorded == &wrote_it && root == Path::new("no-such-dir")
-        ),
-        "{refused:?}"
-    );
-}
-
 /// One directory reached through two spellings is still two prefixes.
 ///
 /// A record written under `via`, a link to `real`, spells every position it

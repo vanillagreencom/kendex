@@ -140,9 +140,9 @@ pub(super) fn is_true(value: &bool) -> bool {
 
 /// Persist a manifest, in place. The file is written by hand, so the
 /// serialization below is not what lands: it is folded into the document
-/// already there ([`super::edit::merged`]), which touches only the keys
-/// that changed and the keys the manifest gained or dropped. A write that
-/// changes nothing writes nothing, the way a structured config edit does.
+/// already there ([`super::fold::folded`]), which touches only the keys that
+/// changed and the keys the manifest gained or dropped. A write that changes
+/// nothing writes nothing, the way a structured config edit does.
 pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
     // Stamped at the write, the way the lock stamps its version: the
     // schema is a fact about the build doing the writing, and two places
@@ -164,7 +164,7 @@ pub fn save(path: &Path, manifest: &Manifest) -> Result<()> {
             // inside a declaration — is not kendex's to drop, and the fold
             // needs that to tell it from a key kendex really did drop.
             let held = held_by_model(path, current)?;
-            super::edit::merged(current, &held, &desired).map_err(|e| CoreError::TomlParse {
+            super::fold::folded(current, &held, &desired).map_err(|e| CoreError::TomlParse {
                 path: path.to_path_buf(),
                 message: e.to_string(),
             })?

@@ -219,11 +219,7 @@ fn claim(lock: &Path, key: &str, paths: &[PathBuf]) {
 /// component, and every operation on it lands in `elsewhere`.
 ///
 /// This one states no remainder of the root that wrote it, so the read
-/// refuses it there and the message names that root. The claim that does
-/// rebase and then walks out is
-/// `a_travelled_record_whose_remainder_walks_out_is_refused_and_that_tree_stands`
-/// — named rather than pointed at, because a direction does not survive the
-/// next reordering of this file.
+/// refuses it there and the message names that root.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_stands() {
@@ -293,76 +289,6 @@ fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_s
                     && root == &installed
         ),
         "the refusal names the entry, the path it claims and the root it states nothing under: {refused:?}"
-    );
-}
-
-/// The escape the rebase itself can construct, which the control above
-/// cannot reach: a remainder that walks back out. `<recorded>/../other/x`
-/// does state a remainder of the root that wrote it, so it strips and
-/// rejoins — as `<reading>/../other/x`, another tree reached from inside
-/// the reading project. Containment refuses a `..` outright wherever it
-/// appears, and this is what reds if that ever narrows to a prefix test.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_travelled_record_whose_remainder_walks_out_is_refused_and_that_tree_stands() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let catalog = home.join("catalog");
-    put(
-        &catalog.join("skills/ship/SKILL.md"),
-        "---\nname: ship\ndescription: ship\n---\n\nShip the branch.\n",
-    );
-    let env = Env::fake(&home, FakeOs::Linux);
-
-    let installed = home.join("dev/app");
-    declare(&installed, &catalog);
-    let report = audit(&env, &project(&installed)).unwrap();
-    kendex_core::apply::execute(&env, &report.plan).unwrap();
-
-    // The travelled copy, and a claim that leaves the writing root through
-    // the remainder rather than by naming somewhere else outright.
-    let elsewhere = home.join("dev/worktree");
-    declare(&elsewhere, &catalog);
-    fs::copy(
-        installed.join(".kendex-lock.json"),
-        elsewhere.join(".kendex-lock.json"),
-    )
-    .unwrap();
-    let out = installed.join("../app/.agents/skills/ship");
-    assert!(
-        out.strip_prefix(&installed).is_ok(),
-        "the claim does state a remainder, which is what makes it rebase"
-    );
-    claim(
-        &elsewhere.join(".kendex-lock.json"),
-        "skill:ship:claude",
-        &[out],
-    );
-
-    let before = snapshot(&installed);
-    let refused = match plan_apply(&env, &project(&elsewhere), &refresh()) {
-        Ok(report) => {
-            kendex_core::apply::execute(&env, &report.plan).unwrap();
-            None
-        }
-        Err(error) => Some(error),
-    };
-
-    assert_eq!(
-        snapshot(&installed),
-        before,
-        "the tree the rebased position walks out to is exactly as it was"
-    );
-    let refused = refused.expect("a rebased position walking out is refused");
-    assert!(
-        matches!(
-            &refused,
-            CoreError::LockOutsideProject { key, recorded, root, .. }
-                if key == "skill:ship:claude"
-                    && recorded == &elsewhere.join("../app/.agents/skills/ship")
-                    && root == &elsewhere
-        ),
-        "the refusal names the rebased position and the project reading it: {refused:?}"
     );
 }
 

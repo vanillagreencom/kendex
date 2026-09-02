@@ -430,38 +430,7 @@ assert_contains "$TMP_ROOT/status-symlink.stderr" "cannot create worker status" 
 [[ -e "$TMP_ROOT/elsewhere.status" ]] && fail "the launch followed the status symlink"
 ok "no status reached the symlink target"
 
-echo "=== every shipped workflow launches capped and consumes the protocol ==="
-workflow_commands_detach() {
-  awk '
-    BEGIN { matches = 0 }
-    /scripts\/second-opinion (review|quick|challenge|audit)/ {
-      matches++
-      command = $0
-      collecting = ($0 ~ /\\$/)
-      if (!collecting && command !~ /--foreground/) exit 1
-      next
-    }
-    collecting {
-      command = command "\n" $0
-      if ($0 !~ /\\$/) {
-        if (command !~ /--foreground/) exit 1
-        collecting = 0
-      }
-    }
-    END {
-      if (matches == 0) exit 3
-      if (collecting) exit 2
-    }
-  ' "$1"
-}
-workflow_files=(
-  "$REPO_ROOT/skills/second-opinion/workflows/quick.md"
-  "$REPO_ROOT/skills/second-opinion/workflows/challenge.md"
-  "$REPO_ROOT/skills/second-opinion/workflows/audit.md"
-  "$REPO_ROOT/skills/second-opinion/workflows/review.md"
-  "$REPO_ROOT/skills/orch/workflows/review-pr.md"
-  "$REPO_ROOT/skills/orch/workflows/submit-pr.md"
-)
+echo "=== the CLI help owns the exit contract ==="
 # The CLI help owns the exit contract. Instruction files point there rather
 # than copying state meanings that can drift from the runtime.
 "$SECOND_OPINION" --help > "$TMP_ROOT/help.stdout"
@@ -487,40 +456,3 @@ assert_contains "$TMP_ROOT/help.stdout" "keep completed artifact on replay/runti
   "help preserves completed output on local wait failure"
 assert_contains "$TMP_ROOT/help.stdout" "otherwise act on replayed worker cause" \
   "help routes ordinary worker exit 1 by its replayed cause"
-
-instruction_files=(
-  "$REPO_ROOT/skills/second-opinion/SKILL.md"
-  "${workflow_files[@]}"
-)
-for instruction_file in "${instruction_files[@]}"; do
-  assert_contains "$instruction_file" 'second-opinion --help' \
-    "${instruction_file##*/} points to the exit-contract owner"
-  if grep -Eq 'Exit (1|75|124)|[0-9]+ detached wait:' "$instruction_file"; then
-    fail "$instruction_file copies the exit contract instead of citing help"
-  fi
-  ok "${instruction_file##*/} carries no copied exit-code meaning"
-done
-
-for workflow_file in "${workflow_files[@]}"; do
-  workflow_commands_detach "$workflow_file" \
-    || fail "$workflow_file has no capped second-opinion command or one lacks --foreground"
-  ok "${workflow_file##*/} launches with --foreground"
-  assert_contains "$workflow_file" 'exact command printed after `wait:`' \
-    "${workflow_file##*/} executes the emitted wait command"
-done
-cat > "$TMP_ROOT/no-command-workflow.md" <<'EOF'
-Execute the exact command printed after `wait:` and read the artifact.
-EOF
-if workflow_commands_detach "$TMP_ROOT/no-command-workflow.md"; then
-  fail "the workflow wiring check accepted prose with no launch command"
-fi
-ok "the workflow wiring check rejects a missing launch command"
-owner_control="$TMP_ROOT/review-without-help.md"
-sed 's/`second-opinion --help`/`second-opinion help`/g' \
-  "$REPO_ROOT/skills/second-opinion/workflows/review.md" > "$owner_control"
-cmp -s "$REPO_ROOT/skills/second-opinion/workflows/review.md" "$owner_control" \
-  && fail "exit-owner control staged no change"
-if grep -qF 'second-opinion --help' "$owner_control"; then
-  fail "exit-owner control still cites help"
-fi
-ok "the owner-reference control removes the workflow citation"

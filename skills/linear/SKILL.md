@@ -82,7 +82,7 @@ Never create a tracked issue directly from an orchestration or review session �
 
 Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses — before any API call — a create carrying no agent label from that set, including a typoed `agent:*` name. `--no-agent-label` permits a deliberate bare create.
 
-Where `LINEAR_REQUIRE_REACH` is set, `issues create` refuses — before any API call — a description whose `Reached by:` line is missing or names no producer, and, with `--review-born`, a `--priority 2` description with no `Symptom:` line. Each refusal states the rule it enforces; the rule itself is the project-management skill's SKILL.md § Disposition, **Name what reaches it**, which is also where a create decides whether it is review-born.
+Where `LINEAR_REQUIRE_REACH` is set, `issues create` refuses — before any API call — a description with no `Reached by:` line and, with `--review-born`, a `--priority 2` description with no `Symptom:` line. What those lines say is the author's to judge; the guard checks that they are there. Each refusal states the rule it enforces; the rule itself is the project-management skill's SKILL.md § Disposition, **Name what reaches it**, which is also where a create decides whether it is review-born.
 
 ## Attachments
 
