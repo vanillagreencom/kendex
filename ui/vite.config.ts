@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import svgr from "vite-plugin-svgr";
@@ -11,6 +12,12 @@ export default defineConfig({
     },
   },
   clearScreen: false,
+  test: {
+    // Every test file gets the unhandled-rejection guard; the environment
+    // stays a per-file choice, on the `// @vitest-environment jsdom` line
+    // the files that need a DOM carry.
+    setupFiles: ["./src/test/unhandled-rejections.ts"],
+  },
   server: {
     // A port of kendex's own. 5173 is Vite's default, so every other project
     // on the machine is already sitting on it — and Tauri points its window
