@@ -45,7 +45,16 @@ describe("a marketplace's Projects section", () => {
     });
     const host = mount(<MarketplacePlaces identity="github.com/acme/kit" />);
 
-    expect(host.textContent).toContain(SOURCE_ENABLED_LABEL);
+    // Each switch names its own place, so a reader moving control to
+    // control is not offered three identical names over three different
+    // subscriptions. The path, not the basename: two projects can end in
+    // the same folder name.
+    const named = [...host.querySelectorAll("label")].map(
+      (label) => label.textContent ?? "",
+    );
+    expect(named[0]).toBe(`${SOURCE_ENABLED_LABEL} in Personal`);
+    expect(named[1]).toBe(`${SOURCE_ENABLED_LABEL} in /w/beta`);
+
     const switches = [
       ...host.querySelectorAll('[role="switch"]'),
     ] as HTMLElement[];

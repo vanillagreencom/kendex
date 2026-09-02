@@ -79,12 +79,22 @@ function PlaceRow({ row }: { row: MarketplaceRow }) {
       </div>
       {/* The label is the switch's name, not a caption beside it: what the
           switch does has to be readable without pressing it, and a lone
-          switch in a row of places names nothing. */}
+          switch in a row of places names nothing.
+
+          The place is in the label too, for a reader moving control to
+          control who never meets the sibling text — every switch here would
+          otherwise announce the same three words over a control that
+          deactivates every install this marketplace put in one place. It is
+          the full path rather than the basename, because two projects can
+          end in the same folder name and would announce identically; the
+          visible column keeps the short name, which is KEN-1142's to
+          settle. */}
       <label
         htmlFor={switchId}
         className="shrink-0 cursor-pointer text-xs text-muted-foreground"
       >
         {SOURCE_ENABLED_LABEL}
+        <span className="sr-only"> in {path ?? scopeName(row.scope)}</span>
       </label>
       <Switch
         id={switchId}

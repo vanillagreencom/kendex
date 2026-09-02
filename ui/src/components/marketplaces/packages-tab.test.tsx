@@ -103,6 +103,26 @@ describe("ordering the packages list", () => {
     expect(rows[1]).toContain("worktree");
   });
 
+  // The column shows a hook's trailing name, so the order has to be
+  // decided on that. Sorting the raw identifier put "PreToolUse:*:alpha"
+  // among the Ps while the reader saw "alpha" at the top.
+  it("orders a hook by the name the column shows, not its identifier", async () => {
+    useMarketplacesStore.setState({
+      packages: {
+        [marketKey(kit.scope, kit.name)]: [
+          skill("middle", "", "A plain package."),
+          {
+            ...skill("PreToolUse:*:alpha", "", "A hook."),
+            kind: "hook",
+          },
+        ],
+      },
+    });
+    const rows = await listed("");
+    expect(rows[0]).toContain("alpha");
+    expect(rows[1]).toContain("middle");
+  });
+
   it("interleaves two marketplaces rather than listing one after the other", async () => {
     const tools: MarketplaceRow = {
       ...kit,
@@ -243,6 +263,18 @@ describe("the marketplace column's revision line", () => {
     const [cell] = marketplaceCells([{ ...kit, rev: null, commit: COMMIT }]);
     expect(cell).toContain("kit");
     expect(cell).toContain("@ 0123456");
+  });
+
+  // A manifest may pin an uppercase id, and rev keeps the spelling it was
+  // declared with. Core reads forty ASCII hex digits either way, so the
+  // column must too — otherwise all forty land where the helper promises a
+  // short revision.
+  it("shortens an uppercase pin, the way core reads one", () => {
+    const [cell] = marketplaceCells([
+      { ...kit, rev: COMMIT.toUpperCase(), commit: null },
+    ]);
+    expect(cell).toContain("@ 0123456");
+    expect(cell).not.toContain(COMMIT.toUpperCase());
   });
 
   // A tracked ref outranks the commit the cache happens to hold, and

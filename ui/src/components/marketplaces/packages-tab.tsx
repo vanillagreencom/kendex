@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ItemKind, Tag } from "@/bindings";
+import { Filter } from "@/components/marketplaces/packages-filter";
 import {
   type PackageEntry,
   PackagesTable,
@@ -10,15 +11,14 @@ import {
   troubledScopes,
 } from "@/components/marketplaces/packages-trouble";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SelectItem } from "@/components/ui/select";
 import { scopeLabel } from "@/lib/derive";
-import { kindLabel, scopeName, TAG_LABELS } from "@/lib/labels";
+import {
+  kindLabel,
+  packageDisplayName,
+  scopeName,
+  TAG_LABELS,
+} from "@/lib/labels";
 import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import {
@@ -101,7 +101,14 @@ export function PackagesTab() {
     // or a per-package timestamp, so any "most installed" order here would
     // be invented. Name is the order that is true today; the moment the
     // registry publishes a count, it belongs in front of this comparison.
-    return out.sort((a, b) => a.row.name.localeCompare(b.row.name));
+    //
+    // Compared through the same formatter the cell renders. A hook's
+    // identifier is "<event>:<matcher>:<name>" and the column shows only
+    // the trailing name, so sorting the raw identifier put a hook spelled
+    // "PreToolUse:*:alpha" among the Ps while the reader saw "alpha".
+    return out.sort((a, b) =>
+      packageDisplayName(a.row).localeCompare(packageDisplayName(b.row)),
+    );
   }, [rows, packages, search, kind, tag, marketplace, where]);
 
   // Named above the table so an empty offer is never mistaken for an empty
@@ -212,36 +219,5 @@ export function PackagesTab() {
         </div>
       </div>
     </>
-  );
-}
-
-/** One narrow dropdown in the filter row: "any" leads, the label names it. */
-function Filter({
-  value,
-  onChange,
-  label,
-  display,
-  children,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  label: string;
-  /** How a chosen raw value reads to a person. */
-  display: (value: string) => string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Select value={value} onValueChange={(next) => onChange(next ?? "any")}>
-      <SelectTrigger size="sm" className="w-auto gap-1.5">
-        <span className="text-muted-foreground">{label}</span>
-        <SelectValue>
-          {(current: string) => (current === "any" ? "Any" : display(current))}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="any">Any</SelectItem>
-        {children}
-      </SelectContent>
-    </Select>
   );
 }

@@ -172,9 +172,13 @@ export function breadcrumbLabel(nav: {
  * or a branch, which `source_ref::check_rev` allows to contain slashes and
  * dots, and cutting it to seven characters would spell a different ref —
  * `release/2026` as "release", `v2.1.0-beta` as "v2.1.0", a tag that may
- * itself exist. A name is shown whole or not at all. */
+ * itself exist. A name is shown whole or not at all.
+ *
+ * A commit id is the same question core's `remote::store::is_pin` asks —
+ * forty ASCII hex digits — so the class matches its case-insensitivity: a
+ * manifest may pin an uppercase id, and `rev` keeps the spelling declared. */
 export function shortRevision(revision: string): string {
-  return /^[0-9a-f]{40}$/.test(revision) ? revision.slice(0, 7) : revision;
+  return /^[0-9a-f]{40}$/i.test(revision) ? revision.slice(0, 7) : revision;
 }
 
 /** How a package's name reads to a person — hooks carry display names. */
