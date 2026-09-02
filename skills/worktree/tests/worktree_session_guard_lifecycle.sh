@@ -18,7 +18,8 @@
 # The `worktree` script's own per-issue claim lock requires flock(1) (`create`
 # refuses to run without it), so this integration suite can only run where
 # flock exists. The guard itself does not: its mutation mutex falls back to a
-# mkdir mutex on hosts with no flock, which this suite therefore cannot reach.
+# mkdir mutex on hosts with no flock, reached here by running the guard on a
+# PATH built without flock.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -517,6 +518,64 @@ assert_eq "$(guard_status_code "$NL_WT" "$NL_ROOT/main" --owner NL-OWNER)" "0" \
 assert_contains "$("$GUARD_SCRIPT" list --repo "$NL_ROOT/main")" \
   "\"path\":\"${NL_WT//$'\n'/\\n}\"" \
   "list reports the newline path as one escaped JSON object"
+
+echo "=== the mkdir mutex serializes claims on a flock-less host ==="
+
+# Stock macOS ships no flock(1), so there the mkdir mutex is not a fallback:
+# it is the only thing serializing a claim, and a regression makes concurrent
+# claims fail open unnoticed. The probe PATH is derived from the real one
+# minus flock rather than naming the tools the guard uses, so it stays true as
+# the guard changes.
+NOFLOCK_BIN="$TMP_ROOT/noflock-bin"
+mkdir -p "$NOFLOCK_BIN"
+saved_ifs="$IFS"
+IFS=:
+for path_dir in $PATH; do
+  IFS="$saved_ifs"
+  if [[ -d "$path_dir" ]]; then
+    for path_exe in "$path_dir"/*; do
+      exe_name="${path_exe##*/}"
+      if [[ "$exe_name" != flock && ! -e "$NOFLOCK_BIN/$exe_name" ]]; then
+        ln -s "$path_exe" "$NOFLOCK_BIN/$exe_name" 2>/dev/null || true
+      fi
+    done
+  fi
+  IFS=:
+done
+IFS="$saved_ifs"
+# Without this the whole control passes vacuously through the flock branch.
+if PATH="$NOFLOCK_BIN" bash -c 'command -v flock' >/dev/null 2>&1; then
+  fail "the probe PATH resolves no flock"
+else
+  pass "the probe PATH resolves no flock"
+fi
+
+RACE_ROOT="$TMP_ROOT/mkdir-race"
+make_repo "$RACE_ROOT"
+add_merged_tree "$RACE_ROOT" "issue-race"
+RACE_WT="$RACE_ROOT/trees/issue-race"
+RACE_GO="$RACE_ROOT/go"
+RACE_OUT="$RACE_ROOT/out"
+mkdir -p "$RACE_OUT"
+# Both claimants spin on one file so they enter the guard together; starting
+# them in sequence would let the first finish before the second reads.
+for racer in 1 2; do
+  (
+    until [[ -e "$RACE_GO" ]]; do :; done
+    race_rc=0
+    PATH="$NOFLOCK_BIN" "$GUARD_SCRIPT" claim "$RACE_WT" --owner "RACER-$racer" \
+      >/dev/null 2>&1 || race_rc=$?
+    printf '%s\n' "$race_rc" >"$RACE_OUT/$racer"
+  ) &
+done
+sleep 0.4
+: >"$RACE_GO"
+wait
+race_codes="$(cat "$RACE_OUT/1" "$RACE_OUT/2")"
+assert_eq "$(printf '%s\n' "$race_codes" | grep -cx 0 || true)" "1" \
+  "exactly one of two racing claimants takes the lease"
+assert_eq "$(printf '%s\n' "$race_codes" | grep -cx 75 || true)" "1" \
+  "the loser is refused rather than overwriting the winner"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
