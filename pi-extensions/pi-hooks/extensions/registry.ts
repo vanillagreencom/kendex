@@ -105,9 +105,9 @@ function matches(matcher: unknown, toolName: string): boolean {
 export function renderedName(root: string, command: string): string {
 	const name = command.slice(command.lastIndexOf("/") + 1, -4);
 	if (name === "") return "";
-	const rendered = command === `bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/${name}.sh"`
-		|| command === `bash "${resolve(root, "hooks", `${name}.sh`).replaceAll("\\", "/")}"`;
-	return rendered ? name : "";
+	if (command === `bash "$(git rev-parse --show-toplevel)/.pi/kendex/hooks/${name}.sh"`) return name;
+	const quoted = command.startsWith('bash "') && command.endsWith('"') ? command.slice(6, -1) : "";
+	return quoted !== "" && resolve(quoted) === resolve(root, "hooks", `${name}.sh`) ? name : "";
 }
 
 /** A `readFileSync` failure that means the file is simply not there. */

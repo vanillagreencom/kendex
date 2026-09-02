@@ -157,8 +157,7 @@ describe("pi-hooks registry dispatch", () => {
 		expect(templates.length, `no command templates in fn pi_hook: ${body![1]}`).toBe(2);
 		const root = "/x/.pi/kendex";
 		for (const template of templates) {
-			// The global template's `{}` is the whole path; the project's is the
-			// tail under `.pi/`, which is where the renderer splits them.
+			// The global template's `{}` is the whole path, the project's the tail.
 			const filled = template.replace("{}", template.includes("$(git") ? "kendex/hooks/guard.sh" : `${root}/hooks/guard.sh`);
 			expect(renderedName(root, filled), template).toBe("guard");
 		}
@@ -166,6 +165,7 @@ describe("pi-hooks registry dispatch", () => {
 		// And a command of the person's that names one is not one of ours.
 		expect(renderedName(root, 'grep kendex/hooks/guard.sh .')).toBe("");
 		expect(renderedName(root, 'bash "/opt/kendex/hooks/guard.sh"')).toBe("");
+		expect(renderedName("/srv/pi-agent/kendex", 'bash "/srv/old/../pi-agent/kendex/hooks/guard.sh"')).toBe("guard");
 	});
 });
 
