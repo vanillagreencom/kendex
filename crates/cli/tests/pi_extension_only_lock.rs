@@ -156,11 +156,43 @@ fn refresh_writes_the_record_for_a_pi_extension_only_scope() {
     assert_record_landed(&project);
 }
 
+/// A record that is present and holds nothing is a judged scope, and this
+/// run passes it. It says nothing is installed, `verify` agrees, and the
+/// declaration `apply` has yet to record is named rather than counted.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_empty_record_names_what_apply_has_not_written() {
+    let (_tmp, home) = fixture();
+    let project = home.join("dev/app");
+    assert!(
+        kendex(&home, &project, &["apply", "--yes"])
+            .status
+            .success()
+    );
+
+    write(
+        &project.join("catalog/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship it\n---\nUpstream.\n",
+    );
+    let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
+    write(
+        &project.join("kendex.toml"),
+        &format!("{manifest}\n[skills.deploy]\nsource = \"cat\"\n"),
+    );
+
+    let checked = kendex(&home, &project, &["verify"]);
+    assert!(checked.status.success(), "{checked:?}");
+    let printed = said(&checked);
+    assert!(
+        printed.contains("1 item declared and none in the install record — kendex apply writes it"),
+        "{printed}"
+    );
+    assert!(printed.contains("  - skill deploy"), "{printed}");
+}
+
 /// A declaration switched off is still a declaration. `enabled` rides on
 /// the lock entry rather than deciding whether one exists, so the flag
-/// decides nothing here — and the engine and `verify` have to agree about
-/// that, which before the predicate was unified they did not: the record
-/// was written and the verb reported the scope had nothing installed.
+/// decides nothing here, and the engine and `verify` agree about that.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_disabled_pi_extension_is_still_a_declaration() {
@@ -198,9 +230,17 @@ fn verify_refuses_a_scope_with_no_install_record() {
     let output = kendex(&home, &project, &["verify"]);
 
     assert!(!output.status.success(), "{output:?}");
-    let printed = said(&output);
-    assert!(printed.contains("no install record"), "{printed}");
-    assert!(!printed.contains("nothing installed"), "{printed}");
+    assert_eq!(
+        said(&output).lines().next(),
+        Some(
+            format!(
+                "! {}: no install record at {} — this scope was not checked",
+                kendex_core::paths::slashed(&project),
+                project.join(".kendex-lock.json").display()
+            )
+            .as_str()
+        )
+    );
 }
 
 /// The global scope is the shape the bug was found on: Pi extensions

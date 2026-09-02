@@ -77,38 +77,6 @@ fn held_by_requirer(
 /// derives from this graph: a pin that reaches an install through a bundle
 /// or a dependency parent is a hold on the member, and reading only the
 /// item's own `rev` would report a held package as unpinned drift.
-/// Whether a scope plan derives a lock entry for this kind, and so whether
-/// the record can ever hold one.
-///
-/// The same list as [`expansion::plans_per_package`], asked about the
-/// record rather than about updating one package on its own, and stated
-/// once for the reason that one is: the list never leaves this crate, and
-/// a surface holding its own copy is a second account of the same rule.
-/// It sits here because [`planned_declarations`] below is where the
-/// divergence shows — the walk covers `PLANNED_KINDS`, and Pi extensions
-/// are added after it by hand.
-///
-/// A Pi extension is the kind that answers no: `kendex update-pi` compares
-/// installed bytes against the source and writes the package itself, so no
-/// pass derives an entry for one however many the manifest declares. A
-/// plugin carries no content of its own, but the toggle that turns it on
-/// is derived and recorded like any other install.
-///
-/// Exhaustive on purpose: a kind added to the enum has to be classified
-/// here before this compiles, and a kind whose plan participation moves is
-/// one whose scope would otherwise lose its record.
-pub fn recorded_by_the_plan(kind: ItemKind) -> bool {
-    match kind {
-        ItemKind::PiExtension => false,
-        ItemKind::Skill
-        | ItemKind::Agent
-        | ItemKind::Hook
-        | ItemKind::Command
-        | ItemKind::McpServer
-        | ItemKind::Plugin => true,
-    }
-}
-
 pub fn planned_declarations(
     env: &Env,
     scope: &Scope,
@@ -149,4 +117,30 @@ pub fn planned_declarations(
         });
     }
     out
+}
+
+/// Whether a scope plan derives a lock entry for this kind, and so whether
+/// the record can ever hold one.
+///
+/// [`expansion::plans_per_package`] plus `Plugin`: a plugin toggle is
+/// derived and recorded like any other install, and is still not something
+/// one package of can be brought current on its own. A Pi extension is the
+/// kind that answers no here — `kendex update-pi` compares installed bytes
+/// against the source and writes the package itself, so no pass derives an
+/// entry for one however many the manifest declares.
+///
+/// Exhaustive on purpose. `PLANNED_KINDS` is an array, so a match is the
+/// only thing that makes a kind added to the enum fail to compile until it
+/// is classified, and a kind whose plan participation moves is one whose
+/// scope would otherwise lose its record.
+pub fn recorded_by_the_plan(kind: ItemKind) -> bool {
+    match kind {
+        ItemKind::PiExtension => false,
+        ItemKind::Skill
+        | ItemKind::Agent
+        | ItemKind::Hook
+        | ItemKind::Command
+        | ItemKind::McpServer
+        | ItemKind::Plugin => true,
+    }
 }

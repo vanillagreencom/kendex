@@ -167,15 +167,15 @@ pub(super) fn source_revisions(
 }
 
 /// Whether the scope declares packages this pass derives no lock entry
-/// for, by the one account of that rule, [`recorded_by_the_plan`].
+/// for, asked through [`recorded_by_the_plan`].
 ///
-/// Their scope still needs the file. `verify`, edit detection and the
-/// sweep all read an absent record as an empty one and cannot tell the
-/// two apart, so none of them is the reason; what the file changes is
-/// that the verb stops reporting the scope up to date, that
-/// `discover::project_root_from` finds the marker it prefers when it
-/// resolves a project root, and that something on disk states which build
-/// wrote the record.
+/// Their scope still needs the file. Edit detection and the sweep read an
+/// absent record as an empty one and cannot tell the two apart, so neither
+/// of them is the reason. What the file changes is that the verb stops
+/// reporting the scope up to date, that `verify` stops refusing a scope it
+/// has no record of, that `discover::project_root_from` finds the marker
+/// it prefers when it resolves a project root, and that something on disk
+/// states which build wrote the record.
 ///
 /// A declaration switched off is still a declaration here. `enabled` is
 /// carried on the lock entry rather than deciding whether one exists —

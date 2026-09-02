@@ -5,7 +5,7 @@ use kendex_core::engine::{
 };
 use kendex_core::env::Env;
 use kendex_core::lock::{Lock, LockFile, load_file as load_lock_file, lock_path};
-use kendex_core::manifest::{ManifestFile, load as load_manifest, manifest_path};
+use kendex_core::manifest::{Manifest, ManifestFile, load as load_manifest, manifest_path};
 use kendex_core::model::{ItemKind, Scope};
 
 use super::engine_common::print_unmanaged;
@@ -21,10 +21,13 @@ use crate::ui;
 /// and packages of a kind the plan derives no entry for, which `kendex
 /// update-pi` checks and this verb never can.
 ///
-/// A scope asking for packages with no record at all is the third case and
-/// it does close the run, non-zero. There is nothing there to weigh a
-/// declaration against, and a count that leaves such a scope out reads as
-/// a pass to the pipeline that composed it.
+/// One state closes the run non-zero on its own: a scope whose manifest
+/// asks for items and whose install record is not there. That is the
+/// state the lock version floor's move-it-aside remedy leaves, there is
+/// nothing on disk to weigh a declaration against, and a count that leaves
+/// such a scope out reads as a pass to the pipeline that composed it. A
+/// record that is present and empty is a judged scope: it says nothing is
+/// installed, and this verb agrees with it.
 pub fn run(
     env: &Env,
     names: Vec<String>,
@@ -46,21 +49,32 @@ pub fn run(
     // the plan does derive entries for. An apply resolves this; the lines
     // above cannot be resolved and are not meant to be.
     let mut unrecorded: Vec<(Scope, Vec<(ItemKind, String)>)> = Vec::new();
-    // Whether any scope's record was gone. Set once, read at the end: the
-    // run says which scope it was where it found it, and the exit code
-    // carries it out.
-    let mut unjudged = false;
+    // Whether any scope's record was gone. Read at the end for the exit
+    // code alone — the run already said which scope it was, where it found
+    // it.
+    let mut recordless = false;
 
     for scope in resolve_scopes(env, filter)? {
         let path = lock_path(env, &scope);
-        // Absent and empty read alike through `load`, and this is the one
-        // place the difference decides something.
+        // Absent and empty read alike through `load`, and here the
+        // difference decides the verdict.
         let record = load_lock_file(&path)?;
         let absent = matches!(record, LockFile::Absent);
         let lock = match record {
             LockFile::Current(lock) => lock,
             LockFile::Absent => Lock::default(),
         };
+        // The one state this run refuses, read off the manifest itself so
+        // no source, catalog or expansion can change the answer.
+        if absent && manifest_declares_items(env, &scope) {
+            fail(&format!(
+                "! {}: no install record at {} — this scope was not checked",
+                scope_label(&scope),
+                path.display()
+            ));
+            recordless = true;
+            continue;
+        }
         // A scope with nothing installed has nothing to verify, and this
         // run reaches it only to name content nothing manages. That errand
         // never costs the run: a manifest this build cannot plan against
@@ -87,20 +101,6 @@ pub fn run(
         // Read after the door above, so a manifest this build refuses still
         // leaves by that door rather than by this function's error.
         let declared = declared_packages(env, &scope)?;
-        // Nothing on disk says what this scope should be holding, so every
-        // count below would be a count of a scope this run never looked at.
-        // A scope asking for nothing is not that — there is no record
-        // because none was ever owed.
-        if absent && !declared.is_empty() {
-            fail(&format!(
-                "! {}: no install record at {} — nothing in this scope was checked",
-                scope_label(&scope),
-                path.display()
-            ));
-            say("  to write one: kendex apply");
-            unjudged = true;
-            continue;
-        }
         unmanaged.extend(
             report
                 .drift
@@ -142,10 +142,10 @@ pub fn run(
     );
     ui::ledger(
         &match checked {
-            // A scope that asked for something is not a machine with
-            // nothing installed on it, and saying so would close the run on
-            // the one reading the reader came for.
-            0 => match unjudged || !unrecorded.is_empty() || !outside.is_empty() {
+            // A scope whose declarations were named above is not a machine
+            // with nothing installed on it, and saying so would close the
+            // run on the one reading the reader came for.
+            0 => match !unrecorded.is_empty() || !outside.is_empty() {
                 true => "nothing checked".to_owned(),
                 false => "nothing installed".to_owned(),
             },
@@ -156,7 +156,7 @@ pub fn run(
         },
         &[],
     );
-    Ok(match failed > 0 || unjudged {
+    Ok(match failed > 0 || recordless {
         true => ExitCode::FAILURE,
         false => ExitCode::SUCCESS,
     })
@@ -182,22 +182,37 @@ fn declared_packages(
     let ManifestFile::Current(manifest) = load_manifest(&manifest_path(env, scope))? else {
         return Ok(Vec::new());
     };
-    let mut declared: Vec<(ItemKind, String)> = planned_declarations(env, scope, &manifest)
+    Ok(planned_declarations(env, scope, &manifest)
         .into_iter()
         .map(|declared| (declared.kind, declared.name))
-        .collect();
-    // Plugins declare through `[plugins.<key>]` with only an enabled flag,
-    // so `Manifest::declared` has no map to hand back for them and
-    // `planned_declarations` has no closure to walk. The plan still derives
-    // the toggle and records it, which makes a scope declaring only plugins
-    // a scope asking for something.
-    declared.extend(
-        manifest
-            .plugins
-            .keys()
-            .map(|name| (ItemKind::Plugin, name.clone())),
-    );
-    Ok(declared)
+        .collect())
+}
+
+/// Whether the scope's manifest asks for anything at all — every
+/// declaration table, read as it sits.
+///
+/// The refusal above binds to this rather than to the expanded plan. An
+/// expansion asks a catalog what a bundle holds and what a skill requires,
+/// and every way that read can come back short is a way the refusal would
+/// stop firing on a scope that is still missing its record. A manifest
+/// this build cannot read answers no here and leaves by the audit door
+/// instead, which names the break; this gate never speaks for a file it
+/// could not open.
+fn manifest_declares_items(env: &Env, scope: &Scope) -> bool {
+    matches!(
+        load_manifest(&manifest_path(env, scope)),
+        Ok(ManifestFile::Current(manifest)) if declares_items(&manifest)
+    )
+}
+
+/// `Manifest::declared` covers six kinds; bundles and plugins each declare
+/// through a table of their own and are asked for here.
+fn declares_items(manifest: &Manifest) -> bool {
+    ItemKind::ALL
+        .iter()
+        .any(|kind| !manifest.declared(*kind).is_empty())
+        || !manifest.bundles.is_empty()
+        || !manifest.plugins.is_empty()
 }
 
 /// A scope's declarations said once at the end beside the unmanaged rows,
@@ -205,10 +220,12 @@ fn declared_packages(
 /// count above is of lock entries, and neither of these lines has one to
 /// contribute.
 ///
-/// Every name, uncapped. What a person wrote in a manifest is bounded by
-/// what they were willing to type, unlike the unmanaged content
-/// `print_unmanaged` caps, and the cap rule stays stated in that one
-/// place.
+/// Every name, uncapped, and the cap rule stays stated in the one place
+/// `print_unmanaged` states it. The Pi-extension line is one name per
+/// typed declaration. The unrecorded line is the expanded closure, so one
+/// `[bundles.x]` prints every member and everything those members
+/// require, and a large set makes a long list; the names are what a reader
+/// looking at an empty record came for.
 fn print_declared(scopes: &[(Scope, Vec<(ItemKind, String)>)], tail: &str) {
     for (scope, items) in scopes {
         note(&format!(

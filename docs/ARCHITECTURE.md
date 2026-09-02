@@ -497,8 +497,8 @@ lives in one capability table read by core and UI.
   A file from an older kendex is refused as unreadable, left byte-for-byte
   as written, with the move-it-aside-and-install-fresh remedy in the
   message; one from a newer kendex refuses to load for the same reason in
-  the other direction. Both verbs error out while the refused file is still
-  at the path. Once an older one is moved aside, the next `refresh` or
+  the other direction. Both `refresh` and `apply` error out while the
+  refused file is still at the path. Once an older one is moved aside, the next `refresh` or
   `apply` writes the record back, a scope whose declarations the plan
   derives no entry for — Pi extensions — included; `verify` meanwhile
   refuses a scope that asks for packages and has no record, rather than
