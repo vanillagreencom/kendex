@@ -1,11 +1,8 @@
 // @vitest-environment jsdom
-// The page mounts, and that is the assertion. Its tree once re-rendered
-// without settling — React's "Maximum update depth exceeded", beside the
-// warning that a `getSnapshot` result should be cached — because the
-// destination picker read the no-settings answer as a fresh array per
-// snapshot, which is the state the app is in on every first render of this
-// page. No page-level test could mount it while that stood, so the ordering
-// rule this page reads through was proved on `useOrderedRead` alone.
+// The page mounts and settles with the settings read unlanded, which is the
+// state the app first draws it in. Its tree reads the store through the
+// destination picker, and a store read that answers with a fresh value each
+// time re-renders the tree until React throws.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type PackageView } from "@/bindings";
 import { useMarketplacesStore } from "@/stores/marketplaces";

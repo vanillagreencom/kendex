@@ -341,9 +341,9 @@ describe("settings store", () => {
 });
 
 // A React store selector is read on every render, and a value it mints
-// fresh each time is a store that never stops changing — the tree holding
-// it re-renders until React gives up. Every reader of the projects list
-// takes this selector, so the empty answer is proved once here.
+// fresh each time is a store that never stops changing. What that does to a
+// mounted tree is settings-projects.dom.test.tsx; this is the identity the
+// selector owes its readers.
 describe("the projects selector", () => {
   it("answers with one and the same empty list until the read lands", () => {
     expect(projectsOf({ settings: null })).toBe(projectsOf({ settings: null }));

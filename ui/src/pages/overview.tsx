@@ -28,6 +28,7 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
+import { projectsOf } from "@/stores/settings-projects";
 import { useUpdatesStore } from "@/stores/updates";
 
 const RECENT_ACTIVITY_LIMIT = 6;
@@ -42,9 +43,7 @@ export function OverviewPage() {
   // failed audit.
   const auditError = useAuditStore((s) => s.read.error);
   const auditRefresh = useAuditStore((s) => s.refresh);
-  const projectCount = useSettingsStore(
-    (s) => s.settings?.projects?.length ?? 0,
-  );
+  const projectCount = useSettingsStore((s) => projectsOf(s).length);
   const setPage = useNavStore((s) => s.setPage);
   const goToPackage = useNavStore((s) => s.goToPackage);
   const updateRows = useUpdatesStore((s) => s.rows);
