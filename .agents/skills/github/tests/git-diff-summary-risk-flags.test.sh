@@ -87,6 +87,24 @@ rust_json="$($SUMMARY -C "$rust_repo" --staged)"
 assert_eq "Rust source still emits Rust risk flags" '["unsafe_code_added","repr_c_struct_changed","extern_c_changed","atomics_modified"]' "$(jq -c '.risk_flags' <<<"$rust_json")"
 assert_eq "Rust source is production scope" "production" "$(jq -r '.scope' <<<"$rust_json")"
 
+# An early match must survive an input large enough for grep -q to close its
+# pipe while the producer is still writing.
+large_repo="$SANDBOX/large-early-match"
+init_repo "$large_repo"
+mkdir -p "$large_repo/tests"
+{
+    printf 'pub unsafe fn first() { panic!("boom"); }\n'
+    awk 'BEGIN { line = "// "; for (i = 0; i < 500; i++) line = line "x"; for (i = 0; i < 800; i++) print line }'
+} > "$large_repo/tests/large.rs"
+large_bytes=$(wc -c < "$large_repo/tests/large.rs")
+if [ "$large_bytes" -le 300000 ]; then
+    printf '  FAIL: large early-match fixture is only %s bytes\n' "$large_bytes" >&2
+    exit 1
+fi
+git -C "$large_repo" add tests/large.rs
+large_json="$($SUMMARY -C "$large_repo" --staged)"
+assert_eq "large diff keeps first-line Rust and test-panic flags" '["unsafe_code_added","test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$large_json")"
+
 # kendex#944: panic patterns in #[cfg(test)] modules inside production files
 cfg_test_repo="$SANDBOX/cfg-test"
 init_repo "$cfg_test_repo"

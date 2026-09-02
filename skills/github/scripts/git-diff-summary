@@ -221,7 +221,7 @@ DECL_CACHE=""
 SCANNED_DIRS=""
 
 set_contains() {
-    printf '%s' "$2" | grep -Fxq -- "$1"
+    grep -Fxq -- "$1" <<<"$2"
 }
 
 # Scan one declaring module, appending its records to DECL_CACHE. Called
@@ -399,10 +399,10 @@ main() {
     scan_diff rust_diff_added "risk flags" "$diff_ref" -- '*.rs'
     rust_diff_added=$(printf '%s\n' "$rust_diff_added" | grep -E '^\+' || true)
 
-    if echo "$rust_diff_added" | grep -qE '^\+.*unsafe '; then flags+=("unsafe_code_added"); fi
-    if echo "$rust_diff_added" | grep -qE '^\+.*#\[repr\(C\)\]'; then flags+=("repr_c_struct_changed"); fi
-    if echo "$rust_diff_added" | grep -qE '^\+.*extern "C"'; then flags+=("extern_c_changed"); fi
-    if echo "$rust_diff_added" | grep -qE '^\+.*(Atomic|atomic::)'; then flags+=("atomics_modified"); fi
+    if grep -qE '^\+.*unsafe ' <<<"$rust_diff_added"; then flags+=("unsafe_code_added"); fi
+    if grep -qE '^\+.*#\[repr\(C\)\]' <<<"$rust_diff_added"; then flags+=("repr_c_struct_changed"); fi
+    if grep -qE '^\+.*extern "C"' <<<"$rust_diff_added"; then flags+=("extern_c_changed"); fi
+    if grep -qE '^\+.*(Atomic|atomic::)' <<<"$rust_diff_added"; then flags+=("atomics_modified"); fi
 
     # panic/unwrap in production source is the `panic_path_added` risk flag.
     # The same patterns whose enclosing context is a test surface — tests/
@@ -518,7 +518,7 @@ main() {
         local test_diff=""
         scan_diff test_diff "test panic paths" "$diff_ref" -- "${test_path_args[@]}"
         test_diff=$(printf '%s\n' "$test_diff" | grep -E '^\+' || true)
-        if echo "$test_diff" | grep -qE '^\+.*(panic!|unwrap\(\))'; then test_panic=1; fi
+        if grep -qE '^\+.*(panic!|unwrap\(\))' <<<"$test_diff"; then test_panic=1; fi
     fi
     if [ "$test_panic" -eq 1 ]; then flags+=("test_panic_path_added"); fi
 
