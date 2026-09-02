@@ -1,7 +1,7 @@
-// The shape the unhandled-rejection guard exists for: a case starts a
-// promise, returns, and the promise rejects afterwards with nothing
-// awaiting it. Not named `*.test.*`, so only the two configs beside it
-// pick it up — never the suite.
+// The shape the closing window exists for: a case starts a promise, the file
+// ends, and the promise rejects after the worker that held its timer is
+// gone. Not named `*.test.*`, so only the two configs beside it pick these
+// up — never the suite.
 import { expect, test } from "vitest";
 
 test("returns before the promise it started rejects", () => {
