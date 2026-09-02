@@ -63,17 +63,19 @@ These are known, deliberate trade-offs. Raising them again is noise:
   surface.
 - **Windows-only resolution paths (PATHEXT, `.cmd` shims) are out of
   scope until a Windows report exists.**
-- **No compatibility branch for an upgrade window.** A record, lock or
-  state file written by the previous version of a script is not an input the
-  new version guards against: the repository ships breaking changes as a
-  changelog entry and a fresh state, never a version arm carried in code. A
-  finding that asks the new reader to accept or reject the old shape asks
-  for machinery the repository does not write.
+- **No compatibility branch for an upgrade window.** For this project's own
+  formats (its records, locks, state files, round artifacts), a file written
+  by the previous version of a script is not an input the new version guards
+  against: breaking changes ship as a changelog entry and a fresh state, never
+  a version arm carried in code. A reader of another tool's on-disk state
+  keeps its compatibility (`skills/dev/SKILL.md` § Engineering Rules); the
+  class covers project-owned formats only.
 - **A refusal list is not a grammar.** Where a script gates a value with a
   short list of refused shapes (a token that may sit anywhere, a handful of
   whole values), a finding about which characters the list matches, anchors,
-  or misses is the lexical-shape class `skills/orch/references/finding-disposition.md`
-  Step 0 excludes. A refused value is reworded; the list is not extended.
+  or misses is declined unless it shows a fail-open, a data loss, or a
+  security hole on an input a shipped producer emits. A refused value is
+  reworded; the list is not extended.
 
 ## Trust model (context, not a finding surface)
 
