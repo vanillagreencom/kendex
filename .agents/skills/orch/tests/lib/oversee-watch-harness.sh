@@ -73,11 +73,11 @@ assert_not_contains() {
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/cases"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
-# `-C` does not neutralize the caller's git environment, so a suite run from
-# inside a git hook would init into the real repository and resolve a root
-# outside the sandbox. Both calls clear the four variables together.
-env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$TMP_ROOT/repo" init -q
-CASE_REPO_ROOT="$(env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
+# Load-bearing on the caller: these `git -C` calls, and `run_watch`'s child
+# below, are only sandboxed because the suite sourcing this harness sourced
+# lib/git-env.sh first. `-C` does not neutralize an inherited git environment.
+git -C "$TMP_ROOT/repo" init -q
+CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
   || { echo "oversee-watch harness: case repository root not found" >&2; exit 1; }
 
 # gh stub, driven by files in $STUB_DIR:
@@ -369,7 +369,6 @@ run_watch() {
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
-           -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
            -u LINEAR_TEAM \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
            ${team_args[@]+"${team_args[@]}"} \

@@ -4,6 +4,7 @@
 # whatever exported before the bad line — a successful-looking answer from
 # partial configuration.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LANES="$(cd "$TEST_DIR/.." && pwd)/scripts/lanes"

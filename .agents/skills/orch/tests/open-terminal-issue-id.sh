@@ -10,6 +10,7 @@
 # `git rev-parse --show-toplevel` resolves to a hermetic PROJECT_ROOT, and stubs
 # the worktree CLI, GUI terminal, and gh so nothing external is launched.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"

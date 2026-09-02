@@ -54,7 +54,7 @@
 # exit 2 before any gh call — never a `set -u` unbound-variable abort or a jq
 # crash on a flag consumed as the PR number (cases 32-35).
 set -euo pipefail
-
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # The invoking shell's real auth env must not reach the cases below — the
 # sanitizer cases assert on exactly the tokens each case injects.
 unset GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN

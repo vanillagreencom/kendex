@@ -5,6 +5,7 @@
 # what an agent relays, so every line of the orch docs is scanned — prose,
 # inline code and fences alike.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
 echo "=== orch decider issue-lookup lint ==="

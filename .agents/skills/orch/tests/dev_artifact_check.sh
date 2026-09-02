@@ -13,6 +13,7 @@
 # accepted on the return message plus the pushed fix commit rather than on a
 # stale artifact.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"

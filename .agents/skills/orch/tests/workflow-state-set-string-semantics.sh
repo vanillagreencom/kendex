@@ -14,6 +14,7 @@
 #   3. Docs lint (with injected-offender teeth): no `workflow-state set` line
 #      in skills/**/*.md may wrap its value in the `'"…"'` idiom.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"

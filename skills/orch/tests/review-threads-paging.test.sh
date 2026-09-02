@@ -9,6 +9,7 @@
 # exact failure both callers exist to prevent, so every rule of the strict
 # read gets its own must-fail case here.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"

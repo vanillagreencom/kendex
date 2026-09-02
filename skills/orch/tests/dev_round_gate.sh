@@ -11,11 +11,7 @@
 # input that must refuse, so a refusal cannot be credited to the wrong arm.
 
 set -euo pipefail
-
-# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
-# GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C` and
-# would stage fixture blobs into the real repository.
-unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"

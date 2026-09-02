@@ -44,6 +44,7 @@
 #   7.  --help exits 0, names the probe it runs, and states both liveness
 #       rules including the unusable-probe path
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"

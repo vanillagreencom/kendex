@@ -13,6 +13,7 @@
 # values must now win over every project file, while the settings < .env.local
 # order is preserved for keys the parent did not set.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="$(cd "$TEST_DIR/.." && pwd)/scripts/lib/kendex-env.sh"

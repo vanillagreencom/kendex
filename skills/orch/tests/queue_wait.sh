@@ -43,7 +43,7 @@
 #       no headCommit → progressing null, never still_progressing;
 #       a failed check-run read is unknown (null), never zero, and warns
 set -euo pipefail
-
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"

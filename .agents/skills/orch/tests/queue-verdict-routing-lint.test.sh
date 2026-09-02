@@ -29,6 +29,7 @@
 # .agents/skills/, which is the copy a lane reads. `tools/guard` enforces render
 # presence, not byte equality, so the render is read rather than assumed.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
 case "$SKILLS_ROOT" in

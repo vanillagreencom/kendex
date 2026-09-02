@@ -8,6 +8,7 @@
 # usage limits and claims; live versus answered prompts for both harnesses;
 # idle-return debounce; scrollback boundaries; and one-capture classification.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"

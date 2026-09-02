@@ -16,6 +16,7 @@
 # worktree CLI and gh, and stubs ghostty to capture the composed command it
 # would launch.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 # The brief ends at the start command; start.md owns completion.
 TC=""

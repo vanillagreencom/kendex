@@ -3,6 +3,7 @@
 # ci-wait's none-configured route: each acceptance answer must be a single
 # deterministic word the orchestrator can act on without combining checks.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS="$TEST_DIR/../scripts"

@@ -12,6 +12,7 @@
 #   bash skills/orch/tests/run-all.sh session_init      # subset by name
 
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FILTER="${1:-}"

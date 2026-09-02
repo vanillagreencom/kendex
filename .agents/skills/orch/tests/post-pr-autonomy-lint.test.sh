@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Automatic post-PR choices continue to their budget, then record one stop.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
 SETTINGS="$SKILL_DIR/kendex.settings.toml.example" COMMENTS="$SKILL_DIR/workflows/review-pr-comments.md" SUBMIT="$SKILL_DIR/workflows/submit-pr.md" START="$SKILL_DIR/workflows/start-worktree.md" MERGE="$SKILL_DIR/workflows/merge-pr.md" CI="$SKILL_DIR/workflows/ci-fix.md"

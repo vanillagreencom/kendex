@@ -3,6 +3,7 @@
 # reports the three write-without-read-back shapes and stays quiet on their
 # healthy twins. Fully offline: fixture cache + stubbed PR probe.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"

@@ -7,7 +7,7 @@
 # would assert whatever today's usage happens to be, which is the "measurement
 # quoted for something it was not taken relative to" failure.
 set -uo pipefail
-
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Resolve siblings from the TEST directory, never from a repo root: the CLI
 # integration check runs this same suite from an INSTALLED layout
 # (.agents/skills/orch/tests/...), where a `<root>/skills/orch/...` path does not

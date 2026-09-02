@@ -12,6 +12,7 @@
 # treats as a prefix is flagged whatever the value looks like: `LC_ALL= cmd`,
 # `LC_ALL="C" cmd` and `LC_ALL=C"UTF-8" cmd` are each one.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
 # NAME=, then a value that may be empty, unquoted, quoted, or a mix of those,

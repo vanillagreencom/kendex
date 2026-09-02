@@ -6,6 +6,7 @@
 # `set -u`, and --help was taken as the PR number and crashed in jq. The
 # recording gh stub proves gh was never reached.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"

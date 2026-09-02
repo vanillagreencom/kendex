@@ -7,6 +7,7 @@
 # wrong wrapper. dev and github are required orch dependencies, so both trees
 # are present wherever orch is installed and both are scanned.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
 echo "=== orch/dev/github ci-wait routing lint ==="

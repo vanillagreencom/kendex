@@ -7,6 +7,7 @@
 # exercise: a rule a tool applies cannot be re-fumbled, and a rule a test pins
 # cannot silently drift.
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADAPTER="$(cd "$TEST_DIR/.." && pwd)/scripts/spawn-adapter"

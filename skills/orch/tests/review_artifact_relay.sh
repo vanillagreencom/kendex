@@ -29,6 +29,7 @@
 # on a file with no mentions at all it evaluates to zero and passes. The count
 # half is what makes it mean something. Drop one and the pair goes vacuous.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"

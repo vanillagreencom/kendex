@@ -9,6 +9,7 @@
 # backticks are untouched: Markdown is full of them, and only a fenced command
 # line is an agent-runnable shape.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
 echo "=== orch/dev literal-backtick command lint ==="

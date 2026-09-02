@@ -11,6 +11,14 @@ bash skills/orch/tests/run-all.sh workflow_helpers   # subset by name fragment
 
 Each `tests/*.sh` is self-contained: it builds its own sandbox with parametrized CLI stubs on `PATH`, prints `pass: N fail: M`, and exits 0 only when every assertion passed. `run-all.sh` discovers them at execution time, so a new suite needs no registration.
 
+Every `tests/*.sh` carries one line directly under its `set -...o pipefail`:
+
+```bash
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+```
+
+That lib is where the four git environment variables are cleared, so a new suite adds the line rather than its own `unset`. The position is the rule, not the presence: `git-env-isolation.test.sh` names any file whose line is absent or sits anywhere but directly under the `set`.
+
 Every test the runner discovers ships with the installed skill and must pass in a downstream project with no access to the kendex source checkout. Byte identity and idempotence of what an apply writes are covered upstream of the installed tree, in `crates/core/tests/byte_faithful.rs`.
 
 ## Invariants the tests pin
@@ -19,6 +27,8 @@ Every test the runner discovers ships with the installed skill and must pass in 
 - **Command shapes.** Lints scan the orch and dev docs for the shapes strict harness classifiers reject inside a fenced `bash`/`sh` block: a literal backtick, and an env-assignment prefix. Each carries planted-control cases proving it still has teeth.
 - **Reference hygiene.** Lints pin that no doc across orch, dev and github routes CI waiting through `github.sh` (the waiter is `.agents/skills/orch/scripts/ci-wait`), and that no orch doc uses an unsupported `decisions issue` lookup shape. Each names a command an agent would otherwise run against a CLI that rejects it.
 - **Help is inert.** Every orch CLI that loads project configuration answers a help form before the load. A parser reached by a dry run runs twice, so an arm that RETURNS may only assign; an arm that prints must then exit. Held by `tools/tests/help-inert.test.sh`.
+- **Inherited git environment.** `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` outrank `git -C <path>`, so a suite that inherits them builds its fixtures inside the caller's repository and still reports a clean pass. `lib/git-env.sh` clears all four at load and every suite sources it directly under its `set` line. `git-env-isolation.test.sh` holds both halves: it runs `dev_round_gate.sh` with all four exported at a sandbox repository and pins that repository's log and index unchanged, repeating the run against a copied tree whose lib is neutralized to prove the clearing is what holds it; and its lint pins the source line's position, with probe files placing the line after the fixture, inside a dead branch, and inside a heredoc body, since each of those runs late or not at all while reading as present.
+- **Sourced libs inherit that clearing.** Every lib under `tests/lib/` that shells out to git does so with a bare `git -C` and is sandboxed only because the suite that sourced it sourced `lib/git-env.sh` first. The lint reaches `tests/*.sh` and not `tests/lib/*.sh`, so a lib added here rests on that precondition rather than on a check.
 - **Controls.** `help-inert.test.sh` plants its own must-fail controls. `workflow-state-state-dir-flag.sh` and `lanes-settings-refusal.sh` do not, so re-run them against the pre-fix file when changing what they cover.
 - **Waiter contracts.** `approval_wait.sh`, `ci_wait.sh`, and `queue_wait.sh` exercise the state machines and the shared auth ladder against stubbed `gh`, including the check-run and commit-status evidence surfaces, run correlation across reruns and cancelled siblings, and the queue's cross-poll `WAS_QUEUED` memory. They and the two `queue_wait_*` suites run on `lib/virtual-clock.sh`, whose `date`/`sleep` stubs make a poll budget arithmetic over a file rather than real seconds, so no poll budget is spent in real time and a deadline case cannot race a loaded runner. Process cost the clock does not touch stays real. A case that needs a real wait sets `STUB_CLOCK=` and both stubs fall through — `ci_wait.sh`'s hanging-auth preflight is the only one; a `STUB_CLOCK` naming no file is a broken clock rather than a waiver and both stubs refuse it. `lib/waiter-assertions.sh` holds the suites' shared assertion vocabulary.
 
