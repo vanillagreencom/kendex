@@ -243,6 +243,61 @@ fn verify_refuses_a_scope_with_no_install_record() {
     );
 }
 
+/// A plugin is recorded when the plan derives its toggle, and skipped when
+/// the harness cannot take one — here an older machine keeping Copilot's
+/// settings in `config.json`. The Pi declaration beside it still writes the
+/// record, so the file lands holding nothing while the scope is still
+/// asking for the plugin `apply` will record once that machine migrates.
+/// Naming it is the whole of this verb's second job.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn verify_names_a_plugin_the_record_does_not_hold() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = kendex_core::env::Env::host_rooted(&home);
+    let manifest = env.global_manifest_file();
+    let global = manifest.parent().unwrap().to_path_buf();
+    write(
+        &manifest,
+        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n\n[plugins.\"fmt@main\"]\nenabled = true\nharness = \"copilot\"\n",
+    );
+    write(
+        &global.join("catalog/pi-extensions/pi-widgets/package.json"),
+        "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n",
+    );
+    write(
+        &global.join("catalog/pi-extensions/pi-widgets/index.js"),
+        "export const version = 1;\n",
+    );
+    write(&home.join(".copilot/config.json"), "{}\n");
+
+    assert!(
+        kendex(&home, &home, &["apply", "-g", "--yes"])
+            .status
+            .success()
+    );
+    let text = fs::read_to_string(env.global_lock_file()).unwrap();
+    let record: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        record
+            .get("entries")
+            .and_then(serde_json::Value::as_object)
+            .map(serde_json::Map::len),
+        Some(0),
+        "the record has to be there and hold nothing: {text}"
+    );
+
+    let checked = kendex(&home, &home, &["verify", "-g"]);
+
+    assert!(checked.status.success(), "{checked:?}");
+    let printed = said(&checked);
+    assert!(
+        printed.contains("1 item declared and none in the install record — kendex apply writes it"),
+        "{printed}"
+    );
+    assert!(printed.contains("  - plugin fmt@main"), "{printed}");
+}
+
 /// A bundle declares through a table of its own and is not an `ItemKind`,
 /// so it reaches the gate through neither `Manifest::declared` nor, once
 /// the record is gone, anything else. Its catalog here is readable and

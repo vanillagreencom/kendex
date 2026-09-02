@@ -199,6 +199,17 @@ fn head(checked: usize, failed: usize, named: bool) -> String {
 /// bundle is not read as asking for nothing. It costs one expansion pass,
 /// which is less than the `audit` this verb already runs on every scope.
 ///
+/// It does not answer for plugins, and the plugin table is added here
+/// rather than there. A `PlannedDeclaration` carries an `ItemDecl`, which
+/// names the source a package is read from; a plugin declares through
+/// `[plugins.<key>]` with an enabled flag and a harness, and has no source
+/// at all. Emitting one would mean inventing that field, and
+/// `package::updates` feeds every planned declaration through an
+/// evaluation built on it — the source's pin, the declaration's rev, the
+/// package reference — so an invented source would put a row on the
+/// Updates surface for a package that is not updated one at a time. The
+/// engine's set stays what it is; this one is what `verify` asks about.
+///
 /// A declaration switched off is still a declaration. `enabled` rides on
 /// the lock entry rather than deciding whether one exists — a disabled
 /// agent installs and stays tracked — so the flag is not this function's
@@ -208,6 +219,12 @@ fn declared_packages(env: &Env, scope: &Scope, manifest: &Manifest) -> Vec<(Item
     planned_declarations(env, scope, manifest)
         .into_iter()
         .map(|declared| (declared.kind, declared.name))
+        .chain(
+            manifest
+                .plugins
+                .keys()
+                .map(|name| (ItemKind::Plugin, name.clone())),
+        )
         .collect()
 }
 
