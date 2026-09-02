@@ -39,8 +39,12 @@ export const placesKey = (kind: string, name: string): string =>
 export function installedPlaces(
   rows: ProvenanceRow[],
   catalog: Catalog,
-  /** The repository this catalog's subscription declares, as the lock spells
-   *  it — `MarketplaceRow.repo`, or the summary's provenance. */
+  /** What the subscription resolved to, as the lock records it in an
+   *  installation's `source_repo`: `owner/repo` for a remote, the canonical
+   *  slashed path for a path source. `MarketplaceRow.provenance`, or the
+   *  summary's. Not the declaration's `repo`, which a path subscription
+   *  does not have, nor its `path`, which may be relative where the record
+   *  is canonical. */
   repo: string | null,
 ): Map<string, string> {
   const places = new Map<string, string>();

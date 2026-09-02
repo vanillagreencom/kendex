@@ -19,6 +19,7 @@ const kept: MarketplaceRow = {
   repo: "Acme/Kit",
   repoKey: "acme/kit",
   repoIdentity: "github.com/acme/kit",
+  provenance: null,
   path: null,
   rev: null,
   commit: null,

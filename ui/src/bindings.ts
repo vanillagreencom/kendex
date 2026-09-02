@@ -2035,6 +2035,16 @@ export type MarketplaceRow = {
 	 *  fetched and can be read.
 	 */
 	counts: { [key in string]: number } | null,
+	/**
+	 *  What this subscription resolved to, durably: `owner/repo` for a
+	 *  remote, the canonical slashed path for a path source, `local` for the
+	 *  reserved one. The same string the lock records as an installation's
+	 *  `source_repo`, so it is what a provenance join matches on — the
+	 *  declaration's own `repo` and `path` are what the person typed, and a
+	 *  relative path never matches a canonical one. Absent where the
+	 *  catalog could not be read.
+	 */
+	provenance: string | null,
 	/**  `[marketplace]` from the catalog's kendex.toml, where readable. */
 	meta: MarketplaceMeta | null,
 	/**  How the catalog's items were decided, where readable. */

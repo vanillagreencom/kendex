@@ -36,7 +36,7 @@ fn open_catalog(
     env: &Env,
     scope: &Scope,
     source: &str,
-) -> Result<(SealedSource, SourceConfig), String> {
+) -> Result<(SealedSource, SourceConfig, String), String> {
     let manifest = manifest_for_reading(env, scope)?;
     let ready = kendex_core::source::require_ready(env, scope, source, &manifest)
         .map_err(|e| e.to_string())?;
@@ -46,7 +46,7 @@ fn open_catalog(
         kendex_core::source::repo_leaf(&ready.provenance),
     )
     .map_err(|e| e.to_string())?;
-    Ok((sealed, config))
+    Ok((sealed, config, ready.provenance))
 }
 
 /// One subscription as the Marketplaces page lists it: what it points at,
@@ -76,6 +76,14 @@ pub struct MarketplaceRow {
     /// Packages offered, by kind name — absent until the catalog has been
     /// fetched and can be read.
     pub counts: Option<std::collections::BTreeMap<String, u32>>,
+    /// What this subscription resolved to, durably: `owner/repo` for a
+    /// remote, the canonical slashed path for a path source, `local` for the
+    /// reserved one. The same string the lock records as an installation's
+    /// `source_repo`, so it is what a provenance join matches on — the
+    /// declaration's own `repo` and `path` are what the person typed, and a
+    /// relative path never matches a canonical one. Absent where the
+    /// catalog could not be read.
+    pub provenance: Option<String>,
     /// `[marketplace]` from the catalog's kendex.toml, where readable.
     pub meta: Option<MarketplaceMeta>,
     /// How the catalog's items were decided, where readable.
@@ -106,7 +114,9 @@ pub fn rows(env: &Env, scopes: &[Scope]) -> Result<Vec<MarketplaceRow>, String> 
     for scope in scopes {
         let records_unreadable = browse::records_unreadable(env, scope);
         for row in source_ops::list_subscriptions(env, scope).map_err(|e| e.to_string())? {
-            let config = open_catalog(env, scope, &row.name).ok().map(|(_, c)| c);
+            let opened = open_catalog(env, scope, &row.name).ok();
+            let provenance = opened.as_ref().map(|(_, _, p)| p.clone());
+            let config = opened.map(|(_, c, _)| c);
             rows.push(MarketplaceRow {
                 scope: row.scope,
                 name: row.name,
@@ -129,6 +139,7 @@ pub fn rows(env: &Env, scopes: &[Scope]) -> Result<Vec<MarketplaceRow>, String> 
                         .map(|(kind, count)| (kind, count.min(u32::MAX as usize) as u32))
                         .collect()
                 }),
+                provenance,
                 meta: config.as_ref().and_then(|c| c.marketplace.clone()),
                 mode: config.as_ref().map(|c| c.mode),
                 records_unreadable,

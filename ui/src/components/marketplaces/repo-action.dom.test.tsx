@@ -131,6 +131,7 @@ describe("turning a declared repository back on", () => {
     repo: "acme/kit",
     repoKey: "acme/kit",
     repoIdentity: "github.com/acme/kit",
+    provenance: "acme/kit",
     path: null,
     rev: null,
     commit: null,

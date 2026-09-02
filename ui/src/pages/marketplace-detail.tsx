@@ -144,7 +144,11 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
       })),
     [offered, catalog, row?.recordsUnreadable],
   );
-  const repo = row?.repo ?? summary?.provenance ?? null;
+  // What the subscription resolved to, which is what the lock recorded and
+  // so what the places join matches on. Never the declaration's own `repo`
+  // or `path`: a path source has no repo at all, and a manifest path may be
+  // relative where the record is canonical.
+  const repo = row?.provenance ?? summary?.provenance ?? null;
   const pageSubscription = useMemo(() => ({ catalog, repo }), [catalog, repo]);
 
   return (

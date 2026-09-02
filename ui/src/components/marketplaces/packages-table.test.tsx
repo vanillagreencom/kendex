@@ -314,6 +314,7 @@ describe("the row action on a repository nobody subscribes to", () => {
     repo,
     repoKey: "acme/kit",
     repoIdentity: "github.com/acme/kit",
+    provenance: repo,
     path: null,
     rev: null,
     commit: null,
@@ -466,6 +467,38 @@ describe("a marketplace's own packages table", () => {
     expect(text).not.toContain("User level");
     expect(text).not.toContain("vg");
     expect(text.match(/hyprtrade/g)).toHaveLength(1);
+  });
+
+  // A path-backed subscription has no repository at all, so a join keyed on
+  // the declaration's own `repo` left this column empty for every row of
+  // one, always. Both sides carry what the subscription resolved to — a
+  // canonical path here — which is what the lock recorded.
+  it("names places for a subscription backed by a path", () => {
+    stub.scores = {};
+    useProvenanceStore.setState({
+      loaded: true,
+      rows: [
+        {
+          scope: { scope: "project", root: "/home/me/hyprtrade" },
+          kind: "skill",
+          name: "gh",
+          harness: "claude",
+          origin: {
+            origin: "marketplace",
+            source: "kendex",
+            repo: "/home/me/catalogs/kit",
+          },
+        },
+      ],
+    });
+    const host = mountTree(
+      <PackagesTable
+        entries={[dated("gh", null)]}
+        showMarketplace={false}
+        subscription={{ catalog, repo: "/home/me/catalogs/kit" }}
+      />,
+    );
+    expect(host.textContent ?? "").toContain("hyprtrade");
   });
 });
 
