@@ -18,8 +18,7 @@ use crate::ui;
 ///
 /// Two things are named beside the rows without changing the count, which
 /// is a count of lock entries and nothing else: content nothing manages,
-/// and packages of a kind the plan derives no entry for, which `kendex
-/// update-pi` checks and this verb never can.
+/// and what a scope declares that its record does not hold.
 ///
 /// One state closes the run non-zero on its own: a scope whose manifest
 /// asks for items and whose install record is not there. That is the
@@ -40,15 +39,10 @@ pub fn run(
     // the end: a count of installations is only honest beside the content
     // that was never one.
     let mut unmanaged: Vec<DriftRow> = Vec::new();
-    // Packages of a kind the plan derives no lock entry for, gathered on
-    // every scope whatever its record holds. No run of this verb checks
-    // one, so a scope's count covers less than the scope does, and only
-    // saying so makes the count readable.
-    let mut outside: Vec<(Scope, Vec<(ItemKind, String)>)> = Vec::new();
-    // Scopes holding a record with nothing in it while asking for packages
-    // the plan does derive entries for. An apply resolves this; the lines
-    // above cannot be resolved and are not meant to be.
-    let mut unrecorded: Vec<(Scope, Vec<(ItemKind, String)>)> = Vec::new();
+    // What each scope declares that its record does not hold. The count is
+    // of lock entries, so none of this reaches it, and a count printed
+    // without them covers less than the scope does.
+    let mut gaps: Vec<(Scope, Vec<(ItemKind, String)>)> = Vec::new();
     // Whether any scope's record was gone. Read at the end for the exit
     // code alone — the run already said which scope it was, where it found
     // it.
@@ -130,17 +124,18 @@ pub fn run(
                 .filter(|row| names.is_empty() || names.contains(&row.name))
                 .cloned(),
         );
-        let (recordable, unrecordable): (Vec<_>, Vec<_>) = declared
+        // A kind the plan derives no entry for is missing from the record
+        // whatever else it holds; one the plan does derive is missing only
+        // while the record holds nothing at all.
+        let gap: Vec<(ItemKind, String)> = declared
             .into_iter()
             .filter(|(_, name)| names.is_empty() || names.contains(name))
-            .partition(|(kind, _)| recorded_by_the_plan(*kind));
-        if !unrecordable.is_empty() {
-            outside.push((scope.clone(), unrecordable));
+            .filter(|(kind, _)| !recorded_by_the_plan(*kind) || lock.entries.is_empty())
+            .collect();
+        if !gap.is_empty() {
+            gaps.push((scope.clone(), gap));
         }
         if lock.entries.is_empty() {
-            if !recordable.is_empty() {
-                unrecorded.push((scope.clone(), recordable));
-            }
             continue;
         }
         for entry in lock.entries.values() {
@@ -153,22 +148,8 @@ pub fn run(
     }
 
     print_unmanaged(&unmanaged);
-    print_declared(
-        &outside,
-        "the install record never holds — kendex update-pi checks those",
-    );
-    print_declared(
-        &unrecorded,
-        "declared and none in the install record — kendex apply writes it",
-    );
-    ui::ledger(
-        &head(
-            checked,
-            failed,
-            !unrecorded.is_empty() || !outside.is_empty(),
-        ),
-        &[],
-    );
+    print_gaps(&gaps);
+    ui::ledger(&head(checked, failed, !gaps.is_empty()), &[]);
     Ok(match failed > 0 || recordless {
         true => ExitCode::FAILURE,
         false => ExitCode::SUCCESS,
@@ -246,27 +227,39 @@ fn declares_items(manifest: &Manifest) -> bool {
         || !manifest.plugins.is_empty()
 }
 
-/// A scope's declarations said once at the end beside the unmanaged rows,
-/// under a headline that names what is true of them. Not a verdict: the
-/// count above is of lock entries, and neither of these lines has one to
-/// contribute.
+/// What each scope declares that its record does not hold, said once at
+/// the end beside the unmanaged rows. Not a verdict: the count above is of
+/// lock entries and none of this is one.
+///
+/// One headline, because both kinds of gap are the same fact — a
+/// declaration with no entry behind it — and what to do about each is not.
+/// A Pi extension has no entry by design and no `apply` gives it one;
+/// anything else is waiting on an `apply` that has not run. Each name
+/// carries which it is, so the headline stays true of the whole list and
+/// the reader still knows what to do with a row.
 ///
 /// Every name, uncapped, and the cap rule stays stated in the one place
-/// `print_unmanaged` states it. The Pi-extension line is one name per
-/// typed declaration. The unrecorded line is the expanded closure, so one
-/// `[bundles.x]` prints every member and everything those members
-/// require, and a large set makes a long list; the names are what a reader
-/// looking at an empty record came for.
-fn print_declared(scopes: &[(Scope, Vec<(ItemKind, String)>)], tail: &str) {
+/// `print_unmanaged` states it. The list is the expanded closure, so one
+/// `[bundles.x]` prints every member and everything those members require,
+/// and a large set makes a long list; the names are what a reader looking
+/// at an empty record came for.
+fn print_gaps(scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
     for (scope, items) in scopes {
         note(&format!(
-            "{}: {} item{} {tail}",
+            "{}: {} item{} declared and not in the install record",
             scope_label(scope),
             items.len(),
             if items.len() == 1 { "" } else { "s" }
         ));
         for (kind, name) in items {
-            say(&format!("  - {} {name}", kind.name()));
+            say(&format!(
+                "  - {} {name} — {}",
+                kind.name(),
+                match recorded_by_the_plan(*kind) {
+                    true => "kendex apply records it",
+                    false => "no record ever holds one; kendex update-pi checks it",
+                }
+            ));
         }
     }
 }
