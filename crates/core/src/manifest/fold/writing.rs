@@ -142,6 +142,13 @@ impl Span {
     /// is the separator that led to the neighbour after it, and that neighbour
     /// may be the one that went, so the bracket takes what the entry that WAS
     /// last held instead and the separator goes with the entry it separated.
+    /// Whether the brackets hold writing of their own: a comment after the `[`
+    /// or before the `]`. The rest of what sits there is the whitespace an
+    /// entry's line was made of, which is the entry's.
+    fn bracketed(&self) -> bool {
+        !self.opener.trim().is_empty() || !self.closer.trim().is_empty()
+    }
+
     fn closing(&self, ends: &Written) -> String {
         match ends.tail.contains('\n') {
             true => ends.tail.clone(),
@@ -300,11 +307,16 @@ fn as_array(destination: &Array, rebuilt: &[(Option<usize>, Item)]) -> Array {
         lead.clone_from(&written.tail);
         ends = written;
     }
-    // A list nothing is left in closes on the bracket it opened on: the lines
-    // its entries stood on are the entries', and they went with them.
-    built.set_trailing(match rebuilt.is_empty() {
-        true => String::new(),
-        false => format!("{}{}", span.closing(&ends), span.closer),
+    built.set_trailing(match (rebuilt.is_empty(), span.bracketed()) {
+        // A list nothing is left in closes on the bracket it opened on: the
+        // lines its entries stood on were the entries', and they went with
+        // them.
+        (true, false) => String::new(),
+        // Unless something is written on them. A comment after the `[` or
+        // before the `]` is about the list, not about any entry in it, so it
+        // stays whether the list still holds anything or not.
+        (true, true) => format!("{}{}", span.opener, span.closer),
+        (false, _) => format!("{}{}", span.closing(&ends), span.closer),
     });
     built
 }

@@ -439,3 +439,36 @@ fn the_keys_in_a_slot_go_only_where_the_slot_was_not_the_entrys_own() {
         "schema = 6\n\n# about A\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./g2.sh\"\nnote = \"a note\"\n\n# about B\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n"
     );
 }
+
+/// A comment after the `[` or before the `]` is about the list, not about any
+/// entry in it, so emptying the list keeps it. The lines the entries stood on
+/// are theirs and go with them, which is why a list carrying nothing but
+/// whitespace between its brackets closes as `[]`.
+///
+/// Both halves in both spellings of the closing run, since which slot holds
+/// the bytes before `]` turns on a trailing comma.
+#[test]
+fn emptying_a_list_keeps_what_was_written_about_the_list() {
+    let empty = |list: &str| {
+        folding(&deny(list), |manifest| {
+            denied(manifest).clear();
+        })
+    };
+    assert_eq!(
+        empty("[   # what we deny\n  \"Bash\",\n]"),
+        deny("[   # what we deny\n]")
+    );
+    assert_eq!(
+        empty("[   # what we deny\n  \"Bash\"\n]"),
+        deny("[   # what we deny\n]")
+    );
+    assert_eq!(
+        empty("[\n  \"Bash\",\n  # keep this\n]"),
+        deny("[\n  # keep this\n]")
+    );
+    assert_eq!(
+        empty("[\n  \"Bash\"\n  # keep this\n]"),
+        deny("[\n  # keep this\n]")
+    );
+    assert_eq!(empty("[\n  \"Bash\",\n]"), deny("[]"));
+}
