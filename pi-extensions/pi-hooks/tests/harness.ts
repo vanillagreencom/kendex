@@ -6,10 +6,7 @@ import { spawnSync } from "node:child_process";
 
 import piHooks from "../extensions/hooks.ts";
 
-/* Fixtures shared by the pi-hooks suites: hooks.test.ts judges what the
- * carrier does with a hook it found, and hook-resolution.test.ts judges which
- * hook it is allowed to find. The two ask different questions of the same
- * fixture repositories, so the repositories live here rather than in either. */
+/* Fixtures shared by the pi-hooks suites. */
 
 export const CONFIG_ID = "@vanillagreen/pi-hooks";
 
@@ -108,27 +105,6 @@ export function renderStub(project: string, name: string, opts: { exitCode: numb
 
 export function readLog(log: string): string {
 	return readFileSync(log, { encoding: "utf8", flag: "a+" });
-}
-
-/** A pre-commit-check script where the GLOBAL branch looks for one, under
- * `<root>/kendex/hooks/`. Used to plant both the person's own script and, in
- * the round 5 cases, a checkout's. */
-export function plantGlobalScript(root: string, log: string, stderr: string): void {
-	mkdirSync(join(root, "kendex", "hooks"), { recursive: true });
-	const script = join(root, "kendex", "hooks", "pre-commit-check.sh");
-	writeFileSync(script, [
-		"#!/usr/bin/env bash",
-		"set -euo pipefail",
-		`cat >> ${JSON.stringify(log)}`,
-		`echo ${JSON.stringify(stderr)} >&2`,
-		"exit 2",
-	].join("\n") + "\n");
-	chmodSync(script, 0o755);
-}
-
-export function restoreAgentDir(saved: string | undefined): void {
-	if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
-	else process.env.PI_CODING_AGENT_DIR = saved;
 }
 
 /** A trusted workspace. Pi gates the project's own scripts on this, so every

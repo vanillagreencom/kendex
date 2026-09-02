@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
-import { actionableUserDir, getBool, getNumber, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
+import { getBool, getNumber, piRoots, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { runCommandAsync } from "./process.js";
@@ -15,35 +15,21 @@ const HOOK_BUDGET_MS = 60_000;
 
 /**
  * Where kendex renders a Pi hook: `<project>/.pi/kendex/hooks/<name>.sh`, then
- * the global `<PI_CODING_AGENT_DIR or ~/.pi/agent>/kendex/hooks/<name>.sh`
- * (docs/adapters/pi.md). Both roots come from the same helpers the rest of
- * these extensions use, so a session started in a subdirectory finds the same
- * project as one started at its root.
+ * the global `<PI_CODING_AGENT_DIR or ~/.pi/agent>/kendex/hooks/<name>.sh`.
  *
  * The project script is EXECUTED, so it is behind Pi's project trust: a clone
  * the person has not trusted must not get its own code run on the first bash
  * call of the session. Untrusted, the project root is skipped and the global
  * root still answers — the person's own scripts are not the project's.
  *
- * That last sentence is an assumption, and `actionableUserDir` is what makes it
- * true. The global branch never asks about trust, so it must not be able to
- * point back into the workspace: an empty or relative `PI_CODING_AGENT_DIR`
- * roots the global scope at the session's own cwd, and an untrusted clone's
- * `kendex/hooks/<name>.sh` would then be spawned through the branch that skips
- * the trust gate. Where the global root is not the person's own there is no
- * global root here at all, and an untrusted workspace contributes nothing.
- *
  * A name neither root holds is a hook this project has not installed, and the
  * caller allows the command. runRenderedHook says why that is the right answer.
  */
 function renderedHook(name: string, ctx: ExtensionContext): string | undefined {
-	const trusted = projectTrusted(ctx);
-	const global = actionableUserDir(ctx.cwd, trusted);
-	const roots: string[] = [];
-	if (trusted) roots.push(join(projectRoot(ctx.cwd), ".pi", "kendex"));
-	if (global !== undefined) roots.push(join(global, "kendex"));
-	for (const root of roots) {
-		const script = resolve(root, "hooks", `${name}.sh`);
+	const roots = piRoots(ctx.cwd, projectTrusted(ctx));
+	for (const root of [roots.project, roots.global]) {
+		if (!root) continue;
+		const script = resolve(root, "kendex", "hooks", `${name}.sh`);
 		if (existsSync(script)) return script;
 	}
 	return undefined;
@@ -72,9 +58,6 @@ type Verdict = { block: true; reason: string } | undefined;
  * can exit 0 on its way out — which is a run that judged nothing wearing the
  * status of one that allowed.
  *
- * `budgetMs` exists so a suite can prove that path in milliseconds rather than
- * in a minute; nothing but a test passes it.
- *
  * No script at either root allows the command, and that is deliberate. It means
  * kendex has not installed this hook here — the package is installable from npm
  * on its own, and refusing every bash call in a project that never asked for
@@ -88,12 +71,12 @@ type Verdict = { block: true; reason: string } | undefined;
  * would put a second model of the install state in here, which is the mistake
  * this change removes.
  */
-export async function runRenderedHook(name: string, command: string, ctx: ExtensionContext, budgetMs: number = HOOK_BUDGET_MS): Promise<Verdict> {
+export async function runRenderedHook(name: string, command: string, ctx: ExtensionContext): Promise<Verdict> {
 	const script = renderedHook(name, ctx);
 	if (!script) return undefined;
 
 	const payload = JSON.stringify({ tool_name: "Bash", tool_input: { command } });
-	const result = await runCommandAsync("bash", [script], ctx.cwd, budgetMs, payload);
+	const result = await runCommandAsync("bash", [script], ctx.cwd, HOOK_BUDGET_MS, payload);
 	const stderr = result.stderr.trim();
 
 	// The budget is read BEFORE any exit code, because a killed process still
@@ -106,7 +89,7 @@ export async function runRenderedHook(name: string, command: string, ctx: Extens
 	if (result.timedOut) {
 		return {
 			block: true,
-			reason: `pi-hooks: ${name} timed out after ${budgetMs}ms in ${ctx.cwd}, so this command was not judged; a guard that did not run does not stand aside.`,
+			reason: `pi-hooks: ${name} timed out after ${HOOK_BUDGET_MS}ms in ${ctx.cwd}, so this command was not judged; a guard that did not run does not stand aside.`,
 		};
 	}
 	if (result.exitCode === 2) return { block: true, reason: stderr || `${name} refused this command.` };

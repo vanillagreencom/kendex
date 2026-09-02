@@ -72,10 +72,20 @@ impl HarnessAdapter for Pi {
     }
 
     fn default_global_root(&self, env: &Env) -> PathBuf {
-        match env.var("PI_CODING_AGENT_DIR") {
-            Some(dir) => PathBuf::from(dir),
-            None => env.home.join(".pi/agent"),
+        let Some(dir) = env
+            .var("PI_CODING_AGENT_DIR")
+            .map(str::trim)
+            .filter(|dir| !dir.is_empty())
+        else {
+            return env.home.join(".pi/agent");
+        };
+        if dir == "~" {
+            return env.home.clone();
         }
+        if let Some(rest) = dir.strip_prefix("~/") {
+            return env.home.join(rest);
+        }
+        PathBuf::from(dir)
     }
 
     fn project_markers(&self) -> &'static [ProjectMarker] {
@@ -145,8 +155,24 @@ mod tests {
         let env = Env::fake("/h", FakeOs::Linux);
         assert_eq!(Pi.default_global_root(&env), PathBuf::from("/h/.pi/agent"));
 
-        let env = env.with_var("PI_CODING_AGENT_DIR", "/pi-root");
-        assert_eq!(Pi.default_global_root(&env), PathBuf::from("/pi-root"));
+        assert_eq!(
+            Pi.default_global_root(&env.clone().with_var("PI_CODING_AGENT_DIR", "/pi-root")),
+            PathBuf::from("/pi-root")
+        );
+        for empty in ["", "   "] {
+            assert_eq!(
+                Pi.default_global_root(&env.clone().with_var("PI_CODING_AGENT_DIR", empty)),
+                PathBuf::from("/h/.pi/agent")
+            );
+        }
+        assert_eq!(
+            Pi.default_global_root(&env.clone().with_var("PI_CODING_AGENT_DIR", "~")),
+            PathBuf::from("/h")
+        );
+        assert_eq!(
+            Pi.default_global_root(&env.with_var("PI_CODING_AGENT_DIR", "~/elsewhere")),
+            PathBuf::from("/h/elsewhere")
+        );
     }
 
     #[test]

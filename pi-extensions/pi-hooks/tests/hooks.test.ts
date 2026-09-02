@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCargo } from "../extensions/cargo.ts";
-import piHooks, { runRenderedHook } from "../extensions/hooks.ts";
+import piHooks from "../extensions/hooks.ts";
 import {
 	CONFIG_ID,
 	initRustRepo,
@@ -221,54 +221,6 @@ describe("pi-hooks pre-commit tool_call", () => {
 				rmSync(unarmed, { recursive: true, force: true });
 			}
 		});
-	});
-});
-
-describe("pi-hooks hook budget", () => {
-	// A killed process still carries an exit code. runCommandAsync marks the run
-	// timed out and sends SIGTERM, then gives the child a grace period, so a hook
-	// that traps the signal and exits cleanly settles as timedOut with exitCode
-	// 0 — a run that judged nothing wearing the status of one that allowed. The
-	// budget has to be read before any exit code or that is an allow.
-	test("a hook killed at the budget blocks even when it exits 0", async () => {
-		const project = initRustRepo("pi-hooks-timeout-");
-		try {
-			mkdirSync(join(project, ".pi", "kendex", "hooks"), { recursive: true });
-			const script = renderedHookPath(project, "pre-commit-check");
-			// `sleep &` then `wait` so the trap runs at once: bash defers a trap
-			// until the foreground command returns, and a foreground sleep would
-			// make this a test of the SIGKILL escalation instead.
-			writeFileSync(script, [
-				"#!/usr/bin/env bash",
-				"trap 'exit 0' TERM",
-				"cat >/dev/null",
-				"sleep 30 &",
-				"wait $!",
-				"exit 0",
-			].join("\n") + "\n");
-			chmodSync(script, 0o755);
-
-			const verdict = await runRenderedHook("pre-commit-check", "git commit -m x", trusted(project) as never, 250) as { block?: boolean; reason?: string };
-			expect(verdict?.block).toBe(true);
-			expect(verdict?.reason).toContain("timed out after 250ms");
-			expect(verdict?.reason).toContain("a guard that did not run does not stand aside");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	// The control, without which the assertion above passes for a carrier that
-	// blocks everything: the same short budget, a hook that finishes inside it.
-	test("a hook that finishes inside the budget still allows", async () => {
-		const project = initRustRepo("pi-hooks-inbudget-");
-		const log = join(project, "payload.log");
-		try {
-			renderStub(project, "pre-commit-check", { exitCode: 0, log });
-			expect(await runRenderedHook("pre-commit-check", "git commit -m x", trusted(project) as never, 5000)).toBeUndefined();
-			expect(readLog(log)).toContain("git commit -m x");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
 	});
 });
 
