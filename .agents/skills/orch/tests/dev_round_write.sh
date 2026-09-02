@@ -437,10 +437,52 @@ assert_exit2 "a leading newline in --adds exits 2 (never a silently empty list)"
   --worktree "$worktree" --issue i --round-id a11-11 --item 1 t "$OK_REACH" --adds "$(printf '\ntools/a.sh')"
 assert_exit2 "a carriage return in --adds exits 2" \
   --worktree "$worktree" --issue i --round-id a12-12 --item 1 t "$OK_REACH" --adds "$(printf 'tools/a.sh\rtools/b.sh')"
-assert_exit2 "a shell metacharacter in an --adds path exits 2" \
-  --worktree "$worktree" --issue i --round-id a13-13 --item 1 t "$OK_REACH" --adds 'tools/check;safe'
-assert_exit2 "a quote in an --adds path exits 2" \
-  --worktree "$worktree" --issue i --round-id a14-14 --item 1 t "$OK_REACH" --adds 'tools/say"hi"'
+# jq's --args reads a leading-'-' word as its own option and drops it at exit
+# 0, so the grammar refuses the whole value rather than record a shorter list.
+assert_exit2 "an --adds path beginning with '-' exits 2 (first word)" \
+  --worktree "$worktree" --issue i --round-id a13-13 --item 1 t "$OK_REACH" --adds '-c tools/a'
+assert_exit2 "an --adds path beginning with '-' exits 2 (later word)" \
+  --worktree "$worktree" --issue i --round-id a14-14 --item 1 t "$OK_REACH" --adds 'tools/a -S tools/b'
+dash_adds="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id a16-16 --item 1 t "$OK_REACH" \
+  --adds '-c tools/a' 2>/dev/null || true)"
+assert_eq "$([[ -z "$dash_adds" ]] && echo none || jq -c '.adds' "$dash_adds")" "none" \
+  "the refused leading-dash value records nothing, not a shorter list"
+# The grammar's reach is a claim about THIS repository's tracked files, so it
+# is measured rather than asserted in prose: every tracked path the additions
+# classifier calls protected must be expressible in an Adds: line, or a fix
+# round adding a sibling of it could never be authorized. The classifier is
+# lifted out of the real script so the fixture cannot drift from it.
+classifier="$TMP_ROOT/is-protected-addition.sh"
+awk '/^is_protected_addition\(\) \{$/,/^\}$/' "$CHECK" > "$classifier"
+assert_eq "$([[ -s "$classifier" ]] && echo found || echo missing)" "found" \
+  "control: the additions classifier was lifted from dev-artifact-check"
+# shellcheck source=/dev/null
+source "$classifier"
+grammar_source="$(awk -F\' '/^ADDS_GRAMMAR=/ { print $2; exit }' "$WRITE_BIN")"
+assert_eq "$([[ -n "$grammar_source" ]] && echo found || echo missing)" "found" \
+  "control: ADDS_GRAMMAR was lifted from dev-round-write"
+unexpressible=""
+while IFS= read -r tracked_path; do
+  is_protected_addition "$tracked_path" || continue
+  [[ "$tracked_path" =~ $grammar_source ]] && continue
+  unexpressible="$unexpressible$tracked_path "
+done < <(git -C "$REPO_ROOT" ls-files)
+assert_eq "$unexpressible" "" \
+  "every tracked protected path can be named in an Adds: line"
+protected_seen=0
+while IFS= read -r tracked_path; do
+  is_protected_addition "$tracked_path" && protected_seen=$((protected_seen + 1))
+done < <(git -C "$REPO_ROOT" ls-files)
+assert_eq "$([[ "$protected_seen" -gt 100 ]] && echo many || echo "$protected_seen")" "many" \
+  "control: the sweep actually classified protected paths"
+
+# The set is constrained by POSITION, not by character class: a metacharacter
+# inside a path is only a character here — the value never reaches a shell —
+# and narrowing to a class refuses tracked paths this repository has.
+meta_out="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id a17-17 --item 1 t "$OK_REACH" \
+  --adds 'tools/check;safe tools/say"hi" tools/-c')"
+assert_eq "$(jq -c '.adds' "$meta_out")" '["tools/check;safe","tools/say\"hi\"","tools/-c"]' \
+  "a metacharacter, a quote and a non-initial dash are ordinary path characters"
 newline_adds="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id a15-15 --item 1 t "$OK_REACH" \
   --adds "$(printf 'tools/a.sh\ntools/b.sh')" 2>/dev/null || true)"
 assert_eq "$([[ -z "$newline_adds" ]] && echo none || jq -c '.adds' "$newline_adds")" "none" \
@@ -449,6 +491,14 @@ split_out="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 17-17
   --adds "  tools/a   skills/x/scripts/b  ")"
 assert_eq "$(jq -c '.adds' "$split_out")" '["tools/a","skills/x/scripts/b"]' \
   "--adds splits on runs of whitespace and keeps the delegated order"
+
+# A blank IS the separator, so the writer cannot tell one path containing a
+# space from two paths. That is the documented behaviour, not a defect to
+# patch: this pins it so the docs red if the split ever changes.
+space_out="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 18-18 --item 1 space "$OK_REACH" \
+  --adds 'tools/one path.sh')"
+assert_eq "$(jq -c '.adds' "$space_out")" '["tools/one","path.sh"]' \
+  "a space-carrying value is two paths, exactly as the docs state"
 
 # A real linked worktree keeps its record in its own tmp/, and the public
 # checker catches suffix, substring, and dotfile helper names.
@@ -545,24 +595,14 @@ product_out="$("$CHECK" --worktree "$linked_wt" --issue issue-826 --round-id 32-
 assert_eq "$(jq -r '.reason' <<<"$product_out")" "valid" \
   "product and documentation helper basenames remain outside the protected scope"
 
-# Only the symlink changes between the two halves: the record's bytes, its
-# token, its schema and the missing receipt are identical, so a refusal here
-# can come from nothing but the symlink itself. The control half must NOT
-# refuse at exit 2 — it stops at the absent receipt, verdict wait.
+# The writer half only: dev_round_gate.sh owns the reader's symlink refusal,
+# and this is the writer's suite.
 "$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --item 1 symlink "$OK_REACH" >/dev/null
 symlink_record="$linked_wt/tmp/dev-round-issue-826-31-31.json"
-set +e
-"$CHECK" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --expect-items-from-round >/dev/null 2>&1
-symlink_control_rc=$?
-set -e
-assert_eq "$([[ "$symlink_control_rc" == "2" ]] && echo refused || echo "read")" "read" \
-  "control: the same record as a regular file passes the record gates"
 cp "$symlink_record" "$TMP_ROOT/symlink-target.json"
 rm -f "$symlink_record"
 ln -s "$TMP_ROOT/symlink-target.json" "$symlink_record"
 set +e
-"$CHECK" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --expect-items-from-round >/dev/null 2>&1
-assert_eq "$?" "2" "a symlinked round record fails closed"
 "$WRITE" --worktree "$linked_wt" --issue issue-826 --round-id 31-31 --item 1 symlink "$OK_REACH" >/dev/null 2>&1
 assert_eq "$?" "2" "the writer refuses to place a record over a symlink"
 set -e

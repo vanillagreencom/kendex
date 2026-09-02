@@ -436,14 +436,14 @@ assert_eq "$(jq -c '.files' <<<"$adds_out")" \
   "the refusal names every unlisted addition"
 
 "$ROUND_WRITE" --worktree "$adds_wt" --issue issue-826 --round-id 2-2 --item 1 "fix finding" "tools/guard on a staged render" \
-  --adds "crates/allowed/lib.rs skills/orch/scripts/allowed-check tools/allowed-tool ui/src/test/allowed-helper.ts" >/dev/null
+  --adds "crates/allowed/lib.rs skills/orch/scripts/allowed-check tools/allowed;still-data ui/src/test/allowed-helper.ts" >/dev/null
 mkdir -p "$adds_wt/crates/allowed"
 printf 'crate\n' > "$adds_wt/crates/allowed/lib.rs"
 printf 'script\n' > "$adds_wt/skills/orch/scripts/allowed-check"
-printf 'tool\n' > "$adds_wt/tools/allowed-tool"
+printf 'tool\n' > "$adds_wt/tools/allowed;still-data"
 printf 'helper\n' > "$adds_wt/ui/src/test/allowed-helper.ts"
 git -C "$adds_wt" add crates/allowed/lib.rs skills/orch/scripts/allowed-check \
-  "tools/allowed-tool" ui/src/test/allowed-helper.ts
+  "tools/allowed;still-data" ui/src/test/allowed-helper.ts
 git -C "$adds_wt" commit -q -m allowed-additions
 allowed_head="$(git -C "$adds_wt" rev-parse HEAD)"
 "$WRITE" --worktree "$adds_wt" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$allowed_head" \

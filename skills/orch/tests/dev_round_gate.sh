@@ -99,7 +99,9 @@ assert_eq "$(reason --worktree "$wt" --issue issue-826 --round-id 3-3)" "valid" 
 # It reaches `git diff` as an argument. A value git parses as an OPTION never
 # reaches revision parsing: git exits 0 over an empty probe, the additions list
 # comes back empty, and the gate reports valid over a round that added anything
-# it liked. A `--` separator does not close that; the grammar does.
+# it liked. A `--` separator cannot stand in for the grammar: git does stop
+# option parsing there, but everything after it is a pathspec, so the revision
+# pair could not be passed at all.
 record="$wt/tmp/dev-round-issue-826-1-1.json"
 cp "$record" "$TMP_ROOT/record-honest.json"
 for bad_base in "--output=$TMP_ROOT/sink" "HEAD" "0123456789abcdef0123456789abcdef0123456Z" ""; do
@@ -116,6 +118,30 @@ assert_eq "$([[ -e "$TMP_ROOT/sink" ]] && echo wrote || echo no)" "no" \
 cp "$TMP_ROOT/record-honest.json" "$record"
 assert_eq "$(reason --worktree "$wt" --issue issue-826 --round-id 1-1 --expect-items-from-round)" \
   "unapproved_additions" "restoring the honest base_sha restores the refusal"
+
+# --- adds[] entries the writer could not have produced ----------------------
+# Same asymmetry the base_sha arm closes: a record dev-round-write refuses is
+# no authorization. The reader's per-path rule is the writer's — any run of
+# non-space characters not beginning with '-' — so the pair below moves only
+# the adds entry between a value the writer can produce and one it cannot.
+for adds_case in 'tools/a;b:writer-possible' 'crates/app/icons/128x128@2x.png:writer-possible' \
+  'tools/one path.sh:writer-impossible' '-c:writer-impossible'; do
+  adds_value="${adds_case%:*}"
+  adds_kind="${adds_case##*:}"
+  jq --arg add "$adds_value" '.adds = [$add]' "$TMP_ROOT/record-honest.json" > "$TMP_ROOT/adds.json"
+  cp "$TMP_ROOT/adds.json" "$record"
+  set +e
+  "$CHECK" --worktree "$wt" --issue issue-826 --round-id 1-1 --expect-items-from-round >/dev/null 2>&1
+  adds_rc=$?
+  set -e
+  if [[ "$adds_kind" == "writer-impossible" ]]; then
+    assert_eq "$adds_rc" "2" "a record carrying an adds path the writer refuses ('$adds_value') fails closed"
+  else
+    assert_eq "$([[ "$adds_rc" == "2" ]] && echo refused || echo read)" "read" \
+      "control: a record carrying a writer-possible adds path ('$adds_value') is read"
+  fi
+done
+cp "$TMP_ROOT/record-honest.json" "$record"
 
 # --- the record must be a regular file at its own path ----------------------
 # Only the symlink changes between the two halves: same bytes, same token, same
