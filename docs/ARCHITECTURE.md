@@ -258,7 +258,10 @@ lives in one capability table read by core and UI.
   and repository, because an alias alone is not an identity: the same name
   in two manifests can point at two repositories. Scope is deliberately
   spanned — a personal subscription's package installed into a project is
-  exactly what the column exists to name.
+  exactly what the column exists to name. The join is one of the three
+  standing reads `lib/rescan.ts` refreshes, beside the scan and the audit;
+  no reader of it decides for itself when an install might have happened,
+  because every such guess is a proxy and each one missed a route.
 - **A marketplace is one thing however many places subscribe to it.**
   Subscribed lists one card per marketplace, keyed by `MarketplaceRow`'s
   `repoIdentity` — core's `source_ref::repo_identity`, one string per

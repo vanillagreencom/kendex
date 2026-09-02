@@ -19,10 +19,10 @@ import { useScanStore } from "@/stores/scan";
 /** Every marketplace a deleted package can be had from again.
  *
  *  The read is taken on every open rather than once. `loaded` says only
- *  that some snapshot landed, never that it covers this installation:
- *  installing refreshes the scan and the audit and leaves this join
- *  alone, so a Library visit before an install would answer for a package
- *  that did not exist yet.
+ *  that some snapshot landed, never that it covers this installation: a
+ *  rescan refreshes the join behind every write, but a refresh that failed
+ *  leaves the previous rows standing and says so only in its return, which
+ *  nothing on a standing read looks at.
  *
  *  Until this open's own read lands there is no note. The rows standing
  *  from an earlier one may answer for a different installation, and a

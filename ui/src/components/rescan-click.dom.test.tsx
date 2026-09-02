@@ -21,6 +21,10 @@ vi.mock("@/bindings", async (importOriginal) => ({
   commands: {
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
+    // The third read a rescan makes. Stubbed rather than left off: absent,
+    // it throws into the store's catch on every rescan and these tests run
+    // a rescan that is quietly two thirds of one.
+    libraryProvenance: vi.fn(async () => ({ status: "ok", data: [] })),
   },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));

@@ -3,10 +3,15 @@ import { commands } from "@/bindings";
 import { READ_LANDED } from "@/lib/read-state";
 import { rescanEverything } from "@/lib/rescan";
 import { useAuditStore } from "@/stores/audit";
+import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 
 vi.mock("@/bindings", () => ({
-  commands: { scanMachine: vi.fn(), auditAll: vi.fn() },
+  commands: {
+    scanMachine: vi.fn(),
+    auditAll: vi.fn(),
+    libraryProvenance: vi.fn(),
+  },
 }));
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -25,6 +30,11 @@ beforeEach(() => {
     data: emptyScan as never,
   });
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+  vi.mocked(commands.libraryProvenance).mockResolvedValue({
+    status: "ok",
+    data: [],
+  });
+  useProvenanceStore.setState({ rows: [], loaded: false });
   useScanStore.setState({
     scanning: false,
     result: null,
@@ -46,6 +56,31 @@ describe("Scan again", () => {
 
     expect(commands.scanMachine).toHaveBeenCalledTimes(1);
     expect(commands.auditAll).toHaveBeenCalledTimes(1);
+  });
+
+  // The third standing read. Every reader of the join used to guess when
+  // something might have installed, and each guess missed a route — an
+  // install redirected into another project being the one that got through
+  // twice. Reading it here is what makes the guesses unnecessary: a write
+  // that already asks for a rescan refreshes where things came from too.
+  it("reads where every installation came from, alongside the other two", async () => {
+    vi.mocked(commands.libraryProvenance).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          scope: { scope: "project", root: "/home/me/hyprtrade" },
+          kind: "skill",
+          name: "gh",
+          harness: "claude",
+          origin: { origin: "marketplace", source: "kendex", repo: "a/b" },
+        },
+      ] as never,
+    });
+
+    await rescanEverything();
+
+    expect(commands.libraryProvenance).toHaveBeenCalledTimes(1);
+    expect(useProvenanceStore.getState().rows).toHaveLength(1);
   });
 
   // Somebody clicking this has a reason to think something changed. The

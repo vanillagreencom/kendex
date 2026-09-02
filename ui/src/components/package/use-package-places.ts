@@ -51,9 +51,9 @@ export function usePackagePlaces(
   const reading = useUpdatesStore((s) => s.reading);
   const pendingFollows = useUpdatesStore((s) => s.pendingFollows);
   // Who owns each copy. Read beside the records rather than trusted from
-  // an earlier visit: installing refreshes the scan and the audit and
-  // leaves this join alone, so a stale snapshot would hide Remove on a
-  // package that was just installed.
+  // an earlier visit: a rescan refreshes the join behind every write, but a
+  // refresh that failed leaves the previous rows standing, and a stale
+  // snapshot would hide Remove on a package that was just installed.
   const provenance = useProvenanceStore((s) => s.rows);
   const reloadProvenance = useProvenanceStore((s) => s.reload);
   // What is actually installed in each place, harness by harness. The join

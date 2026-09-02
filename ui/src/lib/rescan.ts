@@ -1,11 +1,20 @@
 // What "everything on the machine, read again" means, in one place.
 //
-// Two reads stand behind every page: the scan says what is on the machine,
-// the audit says what it scored. A refresh of only the first left every
-// score on screen answering for content the same call had just re-read — so
-// both go together, and neither waits on the other.
+// Three reads stand behind every page: the scan says what is on the machine,
+// the audit says what it scored, and the provenance join says where each
+// installation came from. A refresh of only the first left every score on
+// screen answering for content the same call had just re-read — so they go
+// together, and none waits on another.
 //
-// Call it after a write whose effect neither read has seen: an install, a
+// The join was left out of this for a long time, and every reader of it grew
+// its own guess at when to re-read. Those guesses are proxies for "something
+// installed" and each one has been wrong about a route somebody later found:
+// an install redirected into another project writes its rows under the
+// destination's key, so a page watching its own rows sees nothing happen.
+// The join belongs here instead, where every write that already says "read
+// the machine again" refreshes it, including routes nobody has thought of.
+//
+// Call it after a write none of those reads has seen: an install, a
 // package coming current, a registry change. The buttons offering to look
 // again call it because nothing else knows what changed.
 //
@@ -21,6 +30,7 @@
 // zero unmanaged items — which is how a project card ends up hiding the
 // only way to the ones it holds.
 import { useAuditStore } from "@/stores/audit";
+import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 
 export async function rescanEverything(opts?: {
@@ -35,5 +45,9 @@ export async function rescanEverything(opts?: {
     // Forced: a write moved the very bytes a score answers for, and the
     // audit's freshness window would otherwise answer from before it.
     useAuditStore.getState().refresh({ force: true }),
+    // Answers false rather than throwing, and nothing here acts on the
+    // answer: a join that could not be read is the previous rows staying
+    // put, which is what every reader already handles.
+    useProvenanceStore.getState().reload(),
   ]);
 }

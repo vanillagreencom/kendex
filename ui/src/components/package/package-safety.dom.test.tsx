@@ -29,7 +29,13 @@ import {
 } from "./package-safety";
 
 vi.mock("@/bindings", () => ({
-  commands: { auditAll: vi.fn(), scanMachine: vi.fn() },
+  commands: {
+    auditAll: vi.fn(),
+    scanMachine: vi.fn(),
+    // The third read a rescan makes; absent, it throws into the store's
+    // catch and this file's rescans are quietly two thirds of one.
+    libraryProvenance: vi.fn(async () => ({ status: "ok", data: [] })),
+  },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 

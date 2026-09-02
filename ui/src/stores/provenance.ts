@@ -10,20 +10,27 @@ import { scopeKey } from "@/lib/scope";
 
 interface ProvenanceState {
   rows: ProvenanceRow[];
-  /** Whether a read has ever landed. Never whether the rows cover a given
-   * installation: nothing that installs refreshes this join, so a snapshot
-   * taken before an install stays `loaded` and stays stale. */
+  /** Whether a read has ever landed. Never whether the rows are current:
+   * `rescanEverything` refreshes them behind every write that calls it, but
+   * a read that failed leaves the previous rows in place and `loaded` true,
+   * which is the right answer for a column and the wrong one for a decision.
+   */
   loaded: boolean;
   load: () => Promise<void>;
-  /** Read the join again and say whether it landed. Anything that must not
-   * act on a stale answer asks for its own read rather than trusting
-   * `loaded` — an install refreshes the scan and the audit and leaves this
-   * join where it was. */
+  /** Read the join again and say whether it landed. `rescanEverything` calls
+   * this, which is how a write anywhere reaches every reader of the join
+   * without any of them guessing at when something installed. Anything about
+   * to act irreversibly on the answer — a delete naming the places it will
+   * remove — still asks for its own read and waits on this boolean, because
+   * a refresh that failed is indistinguishable from one that changed
+   * nothing. */
   reload: () => Promise<boolean>;
 }
 
-/** Where every installation came from — the Library's From column reads
- * this join once and matches rows into its groups. */
+/** Where every installation came from — the Library's From column and a
+ * marketplace's Installed in column read this join and match rows into their
+ * groups. One standing answer, refreshed by `lib/rescan.ts` rather than by
+ * each reader deciding for itself when an install might have happened. */
 export const useProvenanceStore = create<ProvenanceState>((set, get) => ({
   rows: [],
   loaded: false,
