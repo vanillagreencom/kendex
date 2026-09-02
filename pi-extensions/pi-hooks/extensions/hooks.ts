@@ -45,42 +45,18 @@ const WITHHELD_TOLD = new Set<string>();
 type Verdict = { block: true; reason: string } | undefined;
 
 /**
- * Run one registered kendex hook and map its exit status.
- *
- * The hook is the one kendex rendered into `kendex/hooks.json`, handed the
- * payload Claude Code sends a PreToolUse hook. A hook of kendex's own is the
- * script under `kendex/hooks/` — the same bytes Claude Code and Codex run,
- * which is why these guards carry no second implementation in TypeScript — and
- * `RegisteredHook.script` says why it is spawned by path rather than through
- * the command that names it. Anything else is the person's own command, which
- * exists nowhere but the registry, and is run through a shell as written.
- *
- * Exit 2 is the refusal, and its stderr is the reason. A hook writes an
- * advisory to stderr and still exits 0 (`pre-commit-check` does this for a
- * commit aimed at another repository); that reaches the person through the UI,
- * never the agent. Any other non-zero status means the guard did not reach a
- * verdict, and a guard that did not run does not stand aside: the command is
- * refused, as the scripts themselves do when they cannot read their input. A
- * run past the budget is refused ahead of all of that, because a killed process
- * still carries an exit code and a hook that traps the signal can exit 0 on its
- * way out — which is a run that judged nothing wearing the status of one that
- * allowed.
- *
- * A registry naming no hook for this call allows it, and that is deliberate: it
- * means kendex has not installed one here. The package is installable from npm
- * on its own, and refusing every bash call in a project that never asked for a
- * guard would make it unusable.
- *
- * The budget is the registration's own `timeout`, capped by `ceilingMs` —
- * `hookTimeoutMs` from settings, the same route the clippy and drift budgets
- * take. Of the three rendered guards only `pre-commit-check` declares a
- * `timeout` in its frontmatter, 60 seconds, which is what DEFAULTS holds; the
- * other two ask for nothing and take the ceiling. So a rendered guard runs to
- * the budget it asks for and nothing runs past the person's own.
- *
- * The refusals name `hook.label`, never the command: a command-bodied hook is
- * text the person wrote in kendex.toml, it can hold a credential inline, and a
- * reason is read by the model.
+ * Run one registered kendex hook and map its exit status. Exit 2 is the
+ * refusal, and its stderr is the reason. A hook writes an advisory to stderr
+ * and still exits 0 (`pre-commit-check` does this for a commit aimed at
+ * another repository); that reaches the person through the UI, never the
+ * agent. Any other non-zero status means the guard did not reach a verdict,
+ * and a guard that did not run does not stand aside: the command is refused.
+ * A run past the budget is refused ahead of all of that, because a killed
+ * process still carries an exit code and a hook that traps the signal can exit
+ * 0 on its way out. The budget is the registration's own `timeout`, capped by
+ * `ceilingMs` (`hookTimeoutMs` from settings). Refusals name `hook.label`,
+ * never the command: a command-bodied hook is text the person wrote, it can
+ * hold a credential inline, and a reason is read by the model.
  */
 export async function runRegisteredHook(hook: RegisteredHook, payload: string, ctx: ExtensionContext, ceilingMs: number): Promise<Verdict> {
 	const name = hook.label;

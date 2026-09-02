@@ -542,7 +542,6 @@ describe("pi-hooks registry dispatch: the counts and the vocabulary", () => {
 		}
 	});
 
-	// Derived from the map, this list could not see a row leave it.
 	test("the vocabulary table covers exactly the tools Pi ships", () => {
 		expect(PI_BUILTIN_TOOLS).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
 		for (const [tool, claude] of [["bash", "Bash"], ["edit", "Edit"], ["find", "Glob"], ["grep", "Grep"], ["ls", "LS"], ["powershell", "powershell"], ["read", "Read"], ["write", "Write"]] as const) {

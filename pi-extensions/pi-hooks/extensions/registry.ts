@@ -26,9 +26,7 @@ export interface RegisteredHook {
 	/**
 	 * How a refusal names this hook. A command-bodied hook is named by where it
 	 * is registered, never by its own text: that text is the person's, it can
-	 * hold a credential written inline, and a reason reaches the model. The
-	 * ordinal counts registrations in the file, not the ones this call matched,
-	 * so the person can find the entry the reason names.
+	 * hold a credential written inline, and a reason reaches the model.
 	 */
 	label: string;
 	/**
@@ -68,9 +66,8 @@ export interface RegistryRead {
 	unreadable?: string;
 	/**
 	 * How many registrations the project's registry holds under this listener,
-	 * where trust withheld them. Counted before the matcher, so the number is
-	 * what the project has installed rather than what this one call happened
-	 * to match — a notice given once has to be right the first time.
+	 * where trust withheld them. Counted before the matcher, so it does not
+	 * depend on which tool this one call names.
 	 */
 	withheld: number;
 }
@@ -122,12 +119,7 @@ function absent(error: unknown): boolean {
 	return code === "ENOENT" || code === "ENOTDIR";
 }
 
-/**
- * The registrations one scope root holds for a listener, in file order.
- * Position is counted before the matcher and the shape check, so both numbers
- * describe the file rather than this one call: the label points at an entry a
- * person can go and read, and `withheld` says what the project installed.
- */
+/** The registrations one scope root holds for a listener, in file order. */
 function readRegistry(root: string, listener: string, toolName: string): RegistryRead {
 	const path = resolve(root, "hooks.json");
 	let parsed: unknown;
