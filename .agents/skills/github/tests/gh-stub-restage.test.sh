@@ -91,6 +91,18 @@ else
   ok "must-fail: the claim refuses in both directions"
 fi
 
+echo "=== a foreign claim falls through to the broad key ==="
+
+# Unstaged for this call is not the same as refused. A stem another verb
+# claimed is not KNOWN to this call either, so the one-word `api` staging
+# still answers a path the suite never named one at a time — the fallback
+# is what makes a claim narrow the answer rather than block the call.
+gh_stub_reset
+gh_stub_answer 'api-a/b' 'slashed'
+gh_stub_answer api 'broad'
+eq "$(gh api 'a%b')" "broad" "the foreign spelling falls through to the one-word key"
+eq "$(gh api 'a/b')" "slashed" "the claimant still gets its own answer"
+
 echo "=== @ is reserved for selector slots ==="
 
 # The stub mints `<stem>@<id>` for a selector's slot. A verb or a call
