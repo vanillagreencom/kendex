@@ -99,8 +99,8 @@ skills/orch/scripts/open-terminal	703
 skills/orch/scripts/oversee-watch	737
 skills/orch/scripts/queue-wait	1067
 skills/orch/scripts/review-artifact-check	413
-skills/orch/scripts/workflow-state	672
-skills/orch/tests/approval_wait.sh	1359
+skills/orch/scripts/workflow-state	798
+skills/orch/tests/approval_wait.sh	1356
 skills/orch/tests/lanes.sh	888
 skills/orch/tests/queue_wait.sh	896
 skills/preflight/scripts/preflight	1065

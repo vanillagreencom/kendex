@@ -15,10 +15,10 @@ Post the session summary to the git host and issue tracker, plus selective hando
 ## 1. Post The Summary
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), audit_issues: (.audit_issues_created | length), pr_issues: (.pr_comment_review.issues_created | length), cycles: .cycles}'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), audit_issues: (.audit_issues_created | length), pr_issues: (.pr_comment_review.issues_created | length), cycles: .cycles, post_pr_stop: .post_pr_stop}'
 ```
 
-**Skip if** every count is zero → § 2.
+**Skip if** every count is zero and `post_pr_stop` is null → § 2.
 
 Write the summary to a file first with the harness file-write tool at `[WORKTREE_PATH]/tmp/post-summary-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`), then post it:
 
@@ -43,6 +43,11 @@ Write the summary to a file first with the harness file-write tool at `[WORKTREE
 ## QA Metrics
 [Results from the QA agents that ran — project-configurable.]
 
+## Orchestration stopped
+- Stop: `[POST_PR_STOP.name]`
+- Gate: `[POST_PR_STOP.gate]`
+- Remaining: [POST_PR_STOP.remaining]
+
 ## Recommendations Processed
 
 ### Fixed in PR
@@ -54,7 +59,10 @@ Write the summary to a file first with the harness file-write tool at `[WORKTREE
 **Fix rounds**: [N] | [STATUS_SUMMARY]
 ```
 
-Omit empty sections. Created Issues comes from `audit_issues_created` plus `pr_comment_review.issues_created`, with project names. Deduplicate Recommendations Processed by description across cycles.
+Omit empty sections. Render Orchestration stopped only when `post_pr_stop` is
+non-null. Created Issues comes from `audit_issues_created` plus
+`pr_comment_review.issues_created`, with project names. Deduplicate
+Recommendations Processed by description across cycles.
 
 **Commit SHAs.** When workflow state carries a `.rebase_map`, resolve every published SHA through it before posting — follow the chain until no key matches; publishing an unreconciled pre-rebase SHA is forbidden. Artifact-sourced references such as a perf QA `benchmark_commit` are the ones still unreconciled (`submit-pr.md` § 2). A stored fix commit reading `dropped:<sha>` names a commit that vanished in a rebase — report that item without a SHA (or cite the upstream commit that carries the patch), never print the dead hash.
 

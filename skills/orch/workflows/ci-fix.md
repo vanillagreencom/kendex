@@ -7,6 +7,9 @@ Analyze CI failures and route them to the right agent.
 | `ci-fix` \| `ci-fix [PR_NUMBER]` | § 1 → § 2 → § 3 → § 5 |
 | `ci-fix queue` | § 1 → § 2 → § 4 → § 5 |
 
+**Caller context** (via `⤵`): `lifecycle` is `"managed"`; standalone is the
+default. Managed runs use the caller's `issue_id`.
+
 ## 1. Identify Failures
 
 ```bash
@@ -24,6 +27,24 @@ Analyze CI failures and route them to the right agent.
 | 1 | #42 | Add user auth | build | lint |
 
 </output_format>
+
+Standalone only, after selecting `[PR_NUMBER]`: resolve a stable state key,
+initialize it without overwriting live state, and clear the stored stop before
+this continuing action. Use the extracted issue key when
+present and `pr-[PR_NUMBER]` otherwise:
+
+```bash
+.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
+```
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
+```
+```bash
+.agents/skills/orch/scripts/workflow-state ensure [STATE_KEY] --branch [PR_BRANCH]
+```
+```bash
+.agents/skills/orch/scripts/workflow-state post-pr-stop clear [STATE_KEY]
+```
 
 ## 2. Fetch Error Details
 
@@ -147,6 +168,12 @@ Re-confirm the review gate at the new head **before** waiting on CI, on every re
 .agents/skills/orch/scripts/ci-wait [PR_NUMBER]
 ```
 
+A passing or unconfigured CI result clears the head-bound standalone budget:
+
+```bash
+.agents/skills/orch/scripts/workflow-state head-budget clear [STATE_KEY] ci-fix
+```
+
 **Linear only** — post the short status to the tracker:
 
 ```bash
@@ -179,7 +206,31 @@ Still failing:
 
 </output_format>
 
-Managed runs return the failure to the caller, which owns `CI_FIX_MAX_CYCLES`. Standalone `auto-recommended` increments `ci_fix_cycles`, compares it with `workflow-state cap CI_FIX_MAX_CYCLES --count [CI_FIX_CYCLES]`, and reruns § 1 while below the cap. At the cap, record `ci-fix-cap` with the remaining checks and the attempts made. Under `ask`, present `Run ci-fix again` | `Stop`, with another run recommended.
+Managed runs return the failure to the caller, which owns
+`CI_FIX_MAX_CYCLES`. Standalone `auto-recommended` resolves the authoritative
+head and atomically spends that head's retry budget:
+
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
+```
+```bash
+.agents/skills/orch/scripts/workflow-state head-budget take [STATE_KEY] ci-fix [CI_HEAD]
+```
+
+`continue` reruns § 1. `at-cap` records `ci-fix-cap`, posts the rendered
+comment, and returns the stored stop:
+
+```bash
+.agents/skills/orch/scripts/workflow-state post-pr-stop record [STATE_KEY] ci-fix-cap ci "[REMAINING_CHECKS_AND_ATTEMPTS]" [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
+```
+```bash
+.agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
+```
+
+Under `ask`, present `Run ci-fix again` | `Stop`, with another run
+recommended. A user continuation clears the stop before re-entering § 1.
+
+Decision route: `auto-recommended` + `retry-budget` -> `restart-ci-fix`; `auto-recommended` + `retry-cap` -> `record-ci-fix-cap`; `ask` -> `present-ci-fix-choice`.
 
 ## 6. Return
 

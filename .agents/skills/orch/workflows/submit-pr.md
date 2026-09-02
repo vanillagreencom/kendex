@@ -130,6 +130,13 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
    `[ISSUE_TITLE]` comes from `linear.sh cache issues get [ISSUE_ID]` or `gh issue view [N] --json title --jq '.title'`.
 
+Once the PR exists, this run is a continuing action. Clear any stop left by an
+earlier capped run before entering another post-PR gate:
+
+```bash
+.agents/skills/orch/scripts/workflow-state post-pr-stop clear [ISSUE_ID]
+```
+
 ### 2.1 Consumer Admin-Merge Offer
 
 Read the repository and the complete branch diff:
@@ -214,10 +221,10 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
 
    | `status` | Action |
    |----------|--------|
-   | `approved`, `unresolved_count == 0` | → step 2 |
+   | `approved`, `unresolved_count == 0` | Clear the review-wait budget, then → step 2 |
    | `approved`, `unresolved_count > 0` | Run the triage pass below. Pushed no commits → the approval stands, → step 2. Pushed commits → the Restart check |
-   | `reviewed` | → step 2 |
-   | `proceeded` | Reviewer-down degrade under `PR_REVIEW_ON_TIMEOUT=proceed`. Record `pr_approval.reviewer_down` (below), then → step 2. CI and gate 3 still apply in full. Orch posts no status and manufactures no review evidence |
+   | `reviewed` | Clear the review-wait budget, then → step 2 |
+   | `proceeded` | Reviewer-down degrade under `PR_REVIEW_ON_TIMEOUT=proceed`. Clear the review-wait budget, record `pr_approval.reviewer_down` (below), then → step 2. CI and gate 3 still apply in full. Orch posts no status and manufactures no review evidence |
    | `changes_requested` or `comments` | Run the triage pass, then the Restart check |
    | `timeout` | `auto-recommended` logs `Keep waiting` and enters the Restart check; `ask` presents `Force merge` \| `Keep waiting` \| `Stop here`, with `Keep waiting` recommended |
    | `error` | Re-run step 1 once. If it repeats, `auto-recommended` records `review-gate-read-failed`; `ask` presents `Keep waiting` \| `Stop here`, with `Keep waiting` recommended |
@@ -226,15 +233,46 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.reviewer_down true
    ```
 
-   **Triage pass**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context. It applies the external cap to its own fix pushes; what bounds this step is the Restart check.
-
-   **Restart check.** Every path that would restart the wait passes through here first — both restart arms above, `Keep waiting` on `timeout`, and § 6.1 gate 3's re-confirmation. Nothing restarts step 1 without it:
+   A met gate clears its head-bound budget:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]
+   .agents/skills/orch/scripts/workflow-state head-budget clear [ISSUE_ID] review-wait
    ```
 
-   A `below` verdict on `REVIEW_MAX_EXTERNAL_ROUNDS` → restart step 1. On `at-cap`, `auto-recommended` records `review-round-cap` with the remaining feedback; `ask` presents `Triage again` | `Force merge` | `Stop here`, with `Triage again` recommended. A standing `changes_requested` verdict on the current head outlives a disposition — only a dismissal or a newer review clears it, and triage dismisses only what it classifies as noise — so a restart returns that same verdict at once and triages past the cap. Under `ask`, `Triage again` is the user's override for one more pass, `Force merge` records the override and continues to step 2 with the § 6.1 gates applying, and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
+   **Triage pass**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context. It applies the external cap to its own fix pushes; what bounds this step is the Restart check.
+
+   **Restart check.** Every automatic path that would restart the wait passes
+   through the one atomic budget owner first. Resolve the authoritative head
+   immediately before each take so a triage push resets the counter:
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
+   ```
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state head-budget take [ISSUE_ID] review-wait [REVIEW_HEAD]
+   ```
+
+   `continue` restarts step 1. `at-cap` records `review-round-cap` through
+   `post-pr-stop`, posts the rendered comment, returns `MERGE_READY = false`,
+   and skips § 5:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state post-pr-stop record [ISSUE_ID] review-round-cap review "[REMAINING_FEEDBACK]" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
+   ```
+   ```bash
+   .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
+   ```
+
+   `ask` presents `Triage again` | `Force merge` | `Stop here`, with
+   `Triage again` recommended, before an automatic budget transition. A
+   standing `changes_requested` verdict on the current head outlives a
+   disposition. Only a dismissal or a newer review clears it. Under `ask`,
+   `Triage again` is the user's override for one more pass, `Force merge`
+   records the override and continues to step 2 with the § 6.1 gates applying,
+   and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
+
+   Decision route: `auto-recommended` + `retry-budget` -> `restart-review-wait`; `auto-recommended` + `retry-cap` -> `record-review-round-cap`; `ask` -> `present-review-choice`.
 
    **On `timeout` under `ask`**: `Keep waiting` goes to the Restart check; `Force merge` records the override and continues to step 2 with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 

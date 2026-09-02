@@ -40,6 +40,13 @@ assert_file_contains() {
   fi
 }
 
+review_restart_orders_head() {
+  local block="$1" head_line take_line
+  head_line="$(grep -n -m1 -F 'gh pr view [PR_NUMBER] --json headRefOid' <<<"$block" | cut -d: -f1)"
+  take_line="$(grep -n -m1 -F 'head-budget take [ISSUE_ID] review-wait [REVIEW_HEAD]' <<<"$block" | cut -d: -f1)"
+  [[ -n "$head_line" && -n "$take_line" && "$head_line" -lt "$take_line" ]]
+}
+
 orch_docs() {
   printf '%s\n' "$SKILL_DIR/SKILL.md" "$SKILL_DIR/README.md" "$SKILL_DIR/DEVELOPMENT.md"
   find "$SKILL_DIR/workflows" "$SKILL_DIR/references" "$SKILL_DIR/schemas" -type f -name '*.md'
@@ -56,6 +63,52 @@ assert_eq "$(jq -r '.exists' <<<"$exists_json")" "true" "workflow-state exists -
 assert_eq "$(jq -r '.issue_id' <<<"$exists_json")" "issue-353" "workflow-state exists --json includes issue id"
 missing_json="$(ORCH_STATE_DIR="$state_dir" "$WS" exists --json issue-404)"
 assert_eq "$(jq -r '.exists' <<<"$missing_json")" "false" "workflow-state exists --json reports missing state"
+
+# Standalone post-PR workflows may start without orchestration state. `ensure`
+# creates the same initialized shape once and never overwrites live state.
+ORCH_STATE_DIR="$state_dir" "$WS" ensure issue-404 --branch issue-404 >/dev/null
+ORCH_STATE_DIR="$state_dir" "$WS" set issue-404 cycles 3
+ORCH_STATE_DIR="$state_dir" "$WS" ensure issue-404 --branch replaced >/dev/null
+assert_eq "$(ORCH_STATE_DIR="$state_dir" "$WS" get issue-404 '.cycles')" "3" \
+  "workflow-state ensure preserves existing state"
+assert_eq "$(ORCH_STATE_DIR="$state_dir" "$WS" get issue-404 '.post_pr_stop')" "null" \
+  "workflow-state ensure initializes the post-PR stop key"
+
+stop_comment="$TMP_ROOT/post-pr-stop.md"
+stop_result="$(ORCH_STATE_DIR="$state_dir" "$WS" post-pr-stop record issue-404 review-round-cap review 'one unresolved review thread' "$stop_comment")"
+assert_eq "$stop_result" "recorded" "post-pr-stop records a new named stop"
+assert_eq "$(ORCH_STATE_DIR="$state_dir" "$WS" get issue-404 '.post_pr_stop.name')" "review-round-cap" \
+  "post-pr-stop persists the stop name"
+assert_eq "$(ORCH_STATE_DIR="$state_dir" "$WS" get issue-404 '.post_pr_stop.remaining[0]')" "one unresolved review thread" \
+  "post-pr-stop persists remaining work"
+assert_file_contains "$stop_comment" 'review-round-cap' "post-pr-stop renders the stored name"
+assert_file_contains "$stop_comment" 'one unresolved review thread' "post-pr-stop renders the stored remainder"
+kept_result="$(ORCH_STATE_DIR="$state_dir" "$WS" post-pr-stop record-if-empty issue-404 merge-gates-unmet merge 'CI pending' "$stop_comment")"
+assert_eq "$kept_result" "kept" "record-if-empty preserves a precise upstream stop"
+assert_eq "$(ORCH_STATE_DIR="$state_dir" "$WS" get issue-404 '.post_pr_stop.name')" "review-round-cap" \
+  "record-if-empty does not overwrite the precise stop"
+ORCH_STATE_DIR="$state_dir" "$WS" post-pr-stop clear issue-404
+assert_eq "$(ORCH_STATE_DIR="$state_dir" "$WS" get issue-404 '.post_pr_stop')" "null" \
+  "post-pr-stop clear removes a stop on continuation"
+
+review_take_1="$(ORCH_STATE_DIR="$state_dir" REVIEW_MAX_EXTERNAL_ROUNDS=2 "$WS" head-budget take issue-404 review-wait head-a)"
+review_take_2="$(ORCH_STATE_DIR="$state_dir" REVIEW_MAX_EXTERNAL_ROUNDS=2 "$WS" head-budget take issue-404 review-wait head-a)"
+review_take_3="$(ORCH_STATE_DIR="$state_dir" REVIEW_MAX_EXTERNAL_ROUNDS=2 "$WS" head-budget take issue-404 review-wait head-a)"
+assert_eq "$review_take_1" "continue 1/2" "review-wait budget atomically takes its first attempt"
+assert_eq "$review_take_2" "continue 2/2" "review-wait budget admits its final configured attempt"
+assert_eq "$review_take_3" "at-cap 2/2" "review-wait budget refuses an attempt past the cap"
+assert_eq "$(ORCH_STATE_DIR="$state_dir" REVIEW_MAX_EXTERNAL_ROUNDS=2 "$WS" head-budget take issue-404 review-wait head-b)" "continue 1/2" \
+  "review-wait budget resets on a changed head"
+ORCH_STATE_DIR="$state_dir" "$WS" head-budget clear issue-404 review-wait
+assert_eq "$(ORCH_STATE_DIR="$state_dir" "$WS" get issue-404 '.post_pr_budgets.review_wait')" "null" \
+  "accepted review evidence clears the review-wait budget"
+
+assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=1 "$WS" head-budget take issue-404 ci-fix ci-head-a)" "continue 1/1" \
+  "ci-fix budget records the authoritative head and attempt"
+assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=1 "$WS" head-budget take issue-404 ci-fix ci-head-a)" "at-cap 1/1" \
+  "ci-fix budget refuses a retry after its cap"
+assert_eq "$(ORCH_STATE_DIR="$state_dir" CI_FIX_MAX_CYCLES=1 "$WS" head-budget take issue-404 ci-fix ci-head-b)" "continue 1/1" \
+  "ci-fix budget resets for a new authoritative head"
 
 # Round-id identity: the token is the ONLY thing binding an artifact to its
 # delegation, so rapid consecutive mints must all differ. A regression to a
@@ -146,6 +199,31 @@ assert_file_contains "$merge_workflow" '| Base sync |' \
 # PR body cites commits that no longer exist; worktree-push owns that remap.
 assert_file_contains "$submit_workflow" 'scripts/worktree-push --worktree' \
   "submit-pr pushes through the SHA-reconciling worktree-push wrapper"
+submit_restart="$(awk '/\*\*Restart check\.\*\*/,/\*\*On `timeout` under `ask`\*\*/' "$submit_workflow")"
+if review_restart_orders_head "$submit_restart"; then
+  pass "submit-pr refreshes the authoritative head before spending a review restart"
+else
+  fail "submit-pr must refresh the authoritative head before spending each review restart"
+fi
+inverse_restart=$'.agents/skills/orch/scripts/workflow-state head-budget take [ISSUE_ID] review-wait [REVIEW_HEAD]\nenv -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid'
+if review_restart_orders_head "$inverse_restart"; then
+  fail "control: reversed review-head binding passed the restart-order guard"
+else
+  pass "control: reversed review-head binding fails the restart-order guard"
+fi
+start_workflow="$SKILL_DIR/workflows/start-worktree.md"
+start_summary="$(awk '/### 5.3 Session Summary/,/### 5.4 Retire Agents/' "$start_workflow")"
+if grep -qF 'post_pr_stop: .post_pr_stop' <<<"$start_summary"; then
+  pass "start-worktree reads the final stop into the session summary"
+else
+  fail "start-worktree must read the final stop into the session summary"
+fi
+inverse_start_summary="${start_summary/post_pr_stop: .post_pr_stop/post_pr_stop: null}"
+if grep -qF 'post_pr_stop: .post_pr_stop' <<<"$inverse_start_summary"; then
+  fail "control: a summary detached from the stored stop passed the final-stop guard"
+else
+  pass "control: a summary detached from the stored stop fails the final-stop guard"
+fi
 # No check that submit-pr states the unreconciled pre-rebase SHA publication
 # ban. That rule lives only in prose and the wrapper pin above carries the
 # mechanism instead.

@@ -73,6 +73,31 @@ The full session from inside a worktree: implement → review → submit → fin
 
 ## 5. Finalize
 
+Before posting either summary, finalize the returned gate state. When a PR
+exists and `MERGE_READY = false`, preserve a more precise stop already written
+by `submit-pr` and create `merge-gates-unmet` only when none exists:
+
+```bash
+.agents/skills/orch/scripts/workflow-state post-pr-stop record-if-empty [ISSUE_ID] merge-gates-unmet merge "[UNMET_GATE_AND_REMAINING_WORK]" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
+```
+
+On `recorded`, post that rendered file. On `kept`, post nothing and retain the
+upstream name:
+
+```bash
+.agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
+```
+
+Read the final stored stop before § 5.1 so both summaries render the same name,
+gate, and remaining work. When `MERGE_READY = true`, clear a stale stop before
+summarizing and merging.
+
+```bash
+.agents/skills/orch/scripts/workflow-state post-pr-stop clear [ISSUE_ID]
+```
+
+Stop route: `upstream-stop` -> `preserve`; `no-upstream-stop` -> `record-merge-gates-unmet`; `final-stop` -> `render-summaries`.
+
 ### 5.1 Post Summary
 
 **Run Workflow**: `⤵ workflows/post-summary.md § 1-3 → § 5.2` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `pr_number` from § 4.
@@ -88,7 +113,7 @@ The full session from inside a worktree: implement → review → submit → fin
 ### 5.3 Session Summary
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: .cycles, fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), pr_iterations: .pr_comment_review.iterations, pr_fixes: (.pr_comment_review.fixes | length), pr_issues: (.pr_comment_review.issues_created | length), audit_issues: (.audit_issues_created | length)}'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: .cycles, fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), pr_iterations: .pr_comment_review.iterations, pr_fixes: (.pr_comment_review.fixes | length), pr_issues: (.pr_comment_review.issues_created | length), audit_issues: (.audit_issues_created | length), post_pr_stop: .post_pr_stop}'
 ```
 
 <output_format>
@@ -136,7 +161,9 @@ Terminate every still-active agent in `child_sessions`, then retire the records:
 
 ### 5.5 Merge
 
-**Skip if** no PR was created. When CI is not passing or `submit-pr.md` § 6.1 reported `MERGE_READY = false`, record `merge-gates-unmet` per [SKILL.md § The Cycle](../SKILL.md#the-cycle), include the unmet gate and remaining work in the session status, then stop.
+**Skip if** no PR was created. When CI is not passing or `submit-pr.md` § 6.1
+reported `MERGE_READY = false`, return the final stop already rendered in
+§ 5 before the summaries, then stop.
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto

@@ -39,7 +39,7 @@ bad() {
 # Read the committed file the way the gate does: from the repository root,
 # with the process env silent on every key that could override it. A lane
 # exporting one of these would otherwise mask a committed value.
-silent_env=(env -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u PR_REVIEW_ON_TIMEOUT)
+silent_env=(env -u PR_REVIEW_GATE -u PR_APPROVAL_GATE -u REVIEW_GATE_MODE -u PR_REVIEW_ON_TIMEOUT -u ORCH_DECISION_MODE)
 
 gate=$(cd "$REPO_ROOT" && "${silent_env[@]}" "$SCRIPTS/approval-wait" --resolve-mode 2>"$TMP/gate.err")
 if [[ "$gate" == "review" ]]; then
@@ -53,6 +53,13 @@ if [[ "$policy" == "proceed" ]]; then
   ok "committed PR_REVIEW_ON_TIMEOUT resolves to proceed"
 else
   bad "committed PR_REVIEW_ON_TIMEOUT resolves to proceed (got '$policy')" "$TMP/policy.err"
+fi
+
+decision_mode=$(cd "$REPO_ROOT" && "${silent_env[@]}" "$SCRIPTS/orch-env" ORCH_DECISION_MODE ask 2>"$TMP/decision-mode.err")
+if [[ "$decision_mode" == "auto-recommended" ]]; then
+  ok "committed ORCH_DECISION_MODE resolves to auto-recommended"
+else
+  bad "committed ORCH_DECISION_MODE resolves to auto-recommended (got '$decision_mode')" "$TMP/decision-mode.err"
 fi
 
 echo

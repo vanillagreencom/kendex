@@ -41,6 +41,17 @@ assert_eq() {
   fi
 }
 
+assert_ends_with() {
+  local got="$1" want="$2" name="$3"
+  if [[ "$got" == *"$want" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected suffix: %s\n        got:             %s\n' "$name" "$want" "$got"
+  fi
+}
+
 assert_contains() {
   local haystack="$1" needle="$2" name="$3"
   if grep -qF -- "$needle" <<<"$haystack"; then
@@ -159,6 +170,44 @@ if wait_capture "$CAP2"; then
 else
   FAIL=$((FAIL + 1))
   printf '  FAIL  github:codex never invoked the terminal stub\n'
+fi
+
+# OpenCode and Pi have distinct prompt syntax. Pin each Linear and GitHub
+# launcher through the final quote so no brief-level suffix can return.
+CAP3="$TMP_ROOT/cap3"
+OT_CAPTURE="$CAP3" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness opencode cc-738 >/dev/null
+if wait_capture "$CAP3"; then
+  assert_ends_with "$(cat "$CAP3")" " && opencode --prompt '/orch start CC-738'" \
+    "linear:opencode prompt is the exact command suffix"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  linear:opencode never invoked the terminal stub\n'
+fi
+
+CAP4="$TMP_ROOT/cap4"
+OT_CAPTURE="$CAP4" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness pi cc-739 >/dev/null
+if wait_capture "$CAP4"; then
+  assert_ends_with "$(cat "$CAP4")" " && pi '/skill:orch start CC-739'" \
+    "linear:pi prompt is the exact command suffix"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  linear:pi never invoked the terminal stub\n'
+fi
+
+CAP5="$TMP_ROOT/cap5"
+OT_CAPTURE="$CAP5" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness opencode 43 >/dev/null
+if wait_capture "$CAP5"; then
+  assert_ends_with "$(cat "$CAP5")" " && opencode --prompt '/orch start github acme/widgets#43'" \
+    "github:opencode prompt is the exact command suffix"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  github:opencode never invoked the terminal stub\n'
+fi
+
+CAP6="$TMP_ROOT/cap6"
+OT_CAPTURE="$CAP6" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness pi 44 >/dev/null
+if wait_capture "$CAP6"; then
+  assert_ends_with "$(cat "$CAP6")" " && pi '/skill:orch start github acme/widgets#44'" \
+    "github:pi prompt is the exact command suffix"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  github:pi never invoked the terminal stub\n'
 fi
 
 echo

@@ -19,6 +19,12 @@ Resolve `ORCH_DECISION_MODE` once for this post-PR workflow:
 
 **Standalone init** (`lifecycle: "self"`): `git-context issue-from-branch .` and `gh pr view --json number -q .number` give `ISSUE_ID` and `PR_NUMBER`; when `workflow-state exists --json [ISSUE_ID]` reports false, resolve `WT_PATH`, read the branch with `git-context branch`, and run `workflow-state init`.
 
+Except under `--dry-run`, this triage pass is a continuing action:
+
+```bash
+.agents/skills/orch/scripts/workflow-state post-pr-stop clear [ISSUE_ID]
+```
+
 On any `gh` or `github.sh` failure, report the error. `auto-recommended` retries once and logs `Retry`; a repeated failure records the named stop `github-read-failed` per [SKILL.md § The Cycle](../SKILL.md#the-cycle). `ask` presents `Retry` | `Skip step` | `Abort`, with `Retry` recommended.
 
 ## 1. Fetch And Parse
@@ -374,7 +380,13 @@ Under `ask` only: awaiting your response to ask questions, override skipped item
 
 </output_format>
 
-**Managed or `auto-recommended`:** log `Continue`, then go to § 8 without a question. Under `ask`, stop here; a request to fix a skipped item delegates that single item via § 6.1, pushes, and returns here, while confirmation goes to § 8.
+`auto-recommended` logs `Continue`, clears any stop, and goes to § 8 without a
+question. Under `ask`, stop here. A managed run returns the pending choice to
+its caller; it does not continue merely because its lifecycle is managed. A
+request to fix a skipped item delegates that single item via § 6.1, pushes,
+and returns here. Confirmation clears any stop and goes to § 8.
+
+Decision route: `auto-recommended` -> `continue-to-§8`; `ask` -> `return-pending-choice`.
 
 **Standalone only**: post the cumulative summary as a PR comment when there were fixes or created issues, written to a file first, and on the Linear issue too when `TRACKER` is `linear`.
 

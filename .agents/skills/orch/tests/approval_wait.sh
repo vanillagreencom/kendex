@@ -1142,9 +1142,6 @@ assert_contains "$output" "creator: review-bot[bot]" "status8: text mode records
 
 echo "=== approval-wait transient GitHub API errors (kendex#748) ==="
 
-# Transient 1: the reviews listing 503s twice, then recovers — the waiter
-# absorbs both failures with backoff inside the budget, still reaches the
-# reviewed verdict, and reports the absorbed count.
 stderr="$TMP_ROOT/transient1.err"
 count_file="$TMP_ROOT/transient1-count"
 set +e

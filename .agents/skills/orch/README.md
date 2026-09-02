@@ -41,9 +41,9 @@ Invoke through your AI coding harness (`/orch <command>`, `/skill:orch <command>
 |----------|---------|---------|
 | `ORCH_STATE_DIR` | State-file directory (the `--state-dir` flag wins when both are set). `oversee-watch` joins relative values to the project root and preserves absolute values | `tmp` |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names (matched case-insensitively, then canonicalized: `issue-N` lowercase, Linear-style uppercase) | `([A-Z]+-[0-9]+\|issue-[0-9]+)` |
-| `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission or merge recovery | `6` |
+| `CI_FIX_MAX_CYCLES` | Max automatic standalone ci-fix retries for one PR head; `workflow-state head-budget` resets the count on a changed head or successful CI. Managed submission and merge recovery keep their own cycle caps | `6` |
 | `REVIEW_MAX_CYCLES` | Max internal re-review cycles per issue in review-pr § 4; the `rereview_panel` write raises `rereview_cycles` and refuses at it, so the number configured is the number of re-entries allowed | `4` |
-| `REVIEW_MAX_EXTERNAL_ROUNDS` | Max external review rounds on an open PR. At or past it a finding gets a disposition and no fix push, except a defect the diff introduces or arms | `4` |
+| `REVIEW_MAX_EXTERNAL_ROUNDS` | Max external comment-triage passes and automatic review-wait restarts on one PR head. Comment triage owns `pr_comment_review.iterations`; `workflow-state head-budget` separately spends every automatic wait restart and resets it on a changed head or accepted gate result | `4` |
 | `REVIEWER_SLOT_BUDGET` | Total concurrent agent-session budget, counting the primary; `0` = unlimited. Reviews run in waves when the reviewer set exceeds the free slots. On Codex, set it to the cap `spawn-adapter slots` reports | `0` |
 | `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` executes the recommended option without asking. Review findings disposition is by rule in EVERY mode — no mode presents a selection menu over findings. The always-ask set in [SKILL.md § The Cycle](SKILL.md#the-cycle) applies in every mode | `auto-recommended` |
 | `ORCH_MERGE_AUTONOMY` | `auto` merges without asking once every merge gate is green; `ask` presents the merge decision. A `MERGE_READY = false` state never auto-merges | `auto` |
