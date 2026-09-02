@@ -15,7 +15,7 @@ import {
   UPDATES_CHECKING,
   UPDATES_UNCONFIRMED_TITLE,
   UPDATES_UNREADABLE_TITLE,
-  unreadableProjectsLabel,
+  unreadableProjectLine,
 } from "@/lib/copy-updates";
 import { UpdatesPage } from "./updates";
 
@@ -214,11 +214,18 @@ describe("the Updates page with a project kendex cannot read", () => {
     message: "it is a version 5 record",
   };
 
-  it("names the project and sends the reader to Problems", () => {
+  const named = esc(
+    unreadableProjectLine("hyprtrade", "it is a version 5 record"),
+  );
+
+  // The reason travels on the wire with the scope, so the note says it
+  // where it has room; a reader who only sees the name has to reach
+  // Problems before learning what is wrong.
+  it("names the project with the reason, and sends the reader to Problems", () => {
     stub.unreadable = [hyprtrade];
     const html = renderToStaticMarkup(<UpdatesPage />);
     expect(html).toContain(esc(UPDATES_UNREADABLE_TITLE));
-    expect(html).toContain(esc(unreadableProjectsLabel(["hyprtrade"])));
+    expect(html).toContain(named);
     expect(html).toContain(SEE_PROBLEMS_LABEL);
   });
 
@@ -232,6 +239,6 @@ describe("the Updates page with a project kendex cannot read", () => {
     stub.unreadable = [hyprtrade];
     const html = renderToStaticMarkup(<UpdatesPage />);
     expect(html).toContain("gh");
-    expect(html).toContain(esc(unreadableProjectsLabel(["hyprtrade"])));
+    expect(html).toContain(named);
   });
 });

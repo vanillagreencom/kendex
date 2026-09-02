@@ -18,7 +18,7 @@ use std::fs;
 use std::path::Path;
 
 use kendex_core::env::{Env, FakeOs};
-use kendex_core::model::Scope;
+use kendex_core::model::{ItemKind, Scope};
 use kendex_core::source::browse::{self, Catalog, InstallState};
 
 struct Fixture {
@@ -26,6 +26,12 @@ struct Fixture {
     env: Env,
     scope: Scope,
     lock_path: std::path::PathBuf,
+}
+
+impl Fixture {
+    fn manifest_path(&self) -> std::path::PathBuf {
+        kendex_core::manifest::manifest_path(&self.env, &self.scope)
+    }
 }
 
 #[allow(clippy::unwrap_used)]
@@ -159,4 +165,45 @@ fn a_curated_sets_members_are_unknown_rather_than_available() {
 
     fs::write(&f.lock_path, "{not json").unwrap();
     assert_eq!(members(&f), [("gh".to_owned(), InstallState::Unknown)]);
+}
+
+/// The manifest can say a member was removed on purpose without the lock,
+/// but the row it draws offers Restore, and a restore lands on the record
+/// this read could not open. So the unreadable lock answers first for every
+/// member the catalog still offers: no standing claimed, no button offered.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_suppressed_member_under_an_unreadable_lock_offers_no_restore() {
+    let f = fixture();
+    let manifest = fs::read_to_string(f.manifest_path()).unwrap();
+    put(
+        &f.manifest_path(),
+        &format!("{manifest}\n[suppressed]\nskill = [\"gh\"]\n"),
+    );
+    assert_eq!(
+        members(&f),
+        [("gh".to_owned(), InstallState::RemovedByYou)],
+        "the control: with a readable record, their choice is theirs to see"
+    );
+
+    fs::write(&f.lock_path, "{not json").unwrap();
+    assert_eq!(members(&f), [("gh".to_owned(), InstallState::Unknown)]);
+}
+
+/// The page a Packages row opens reads the same standing the row showed,
+/// so it can withhold its Install for the same reason the row withheld
+/// one — rather than offering a button the engine refuses on that record.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_package_page_carries_the_same_unknown_the_row_showed() {
+    let f = fixture();
+    let preview = |f: &Fixture| {
+        browse::package_preview(&f.env, &catalog(&f.scope), ItemKind::Skill, "gh")
+            .unwrap()
+            .state
+    };
+    assert_eq!(preview(&f), InstallState::Available);
+
+    fs::write(&f.lock_path, "{not json").unwrap();
+    assert_eq!(preview(&f), InstallState::Unknown);
 }

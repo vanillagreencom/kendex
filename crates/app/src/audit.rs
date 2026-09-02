@@ -160,15 +160,11 @@ pub(crate) fn settle_report(
 #[specta::specta]
 pub fn audit_all() -> Result<Vec<AuditView>, String> {
     let env = env()?;
-    let settings = kendex_core::settings::load(&env).map_err(|e| e.to_string())?;
-    let mut scopes = vec![Scope::Global];
-    scopes.extend(
-        settings
-            .projects
-            .iter()
-            .cloned()
-            .map(|root| Scope::Project { root }),
-    );
+    // The same enumeration every other surface names a project from: a
+    // list assembled here could disagree with the one behind a "See
+    // Problems" link, and the link would land on a page reporting nothing
+    // wrong.
+    let scopes = crate::scopes::all(&env)?;
     // One scope's unreadable lock or manifest must not blank the rest of the
     // audit — each scope's failure is carried as data on its own view.
     Ok(scopes.iter().map(|scope| view(&env, scope)).collect())

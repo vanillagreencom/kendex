@@ -462,6 +462,33 @@ fn a_name_taken_by_another_source_is_shown_before_the_click() {
     assert_eq!(detail.collision.as_deref(), Some("two"));
 }
 
+/// A name another source installed and only its lock entry records: no
+/// manifest declaration, so the manifest arm has nothing to say and the
+/// lock arm is the only thing between the reader and a click the engine
+/// refuses (invariant 4).
+#[test]
+fn a_name_only_another_sources_lock_records_is_shown_before_the_click() {
+    let tmp = tempfile::tempdir().unwrap();
+    let catalog = tmp.path().join("catalog");
+    skill(&catalog, "skills", "gh", "body");
+    let (env, scope) = project(tmp.path(), &sources_decl(&catalog));
+    let mut lock = Lock {
+        version: crate::lock::LOCK_VERSION,
+        ..Lock::default()
+    };
+    lock.entries.insert(
+        crate::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Claude),
+        lock_entry(ItemKind::Skill, "gh", "two"),
+    );
+    crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
+
+    let rows = packages(&env, &cat(&scope)).unwrap();
+    let gh = rows.iter().find(|row| row.name == "gh").unwrap();
+    assert_eq!(gh.collision.as_deref(), Some("two"));
+    // Installed from somewhere else is not installed from here.
+    assert_eq!(gh.state, InstallState::Available);
+}
+
 #[test]
 fn preview_carries_readme_files_tags_and_sets() {
     let tmp = tempfile::tempdir().unwrap();

@@ -25,8 +25,12 @@ pub fn updates_overview() -> Result<updates::UpdatesReport, String> {
 ///
 /// A lock or manifest this build refuses belongs to one project. Bubbling
 /// it up left the page with no rows at all and the sidebar with a bare "?"
-/// while every other project's standing was known — the same reason
-/// [`crate::audit::AuditView`] carries its scope error as data.
+/// while every other project's standing was known, so the scope is carried
+/// as data instead, the way [`crate::audit::AuditView`] carries its own.
+/// Only as far as the message, though: an `AuditView` also carries a typed
+/// [`crate::audit::ScopeErrorKind`], and a surface wanting to word a
+/// corrupt lock differently from a too-new one reads that on the Problems
+/// page rather than parsing the prose here.
 pub fn overview(env: &Env, scopes: &[Scope]) -> updates::UpdatesReport {
     let mut reports = Vec::new();
     let mut unreadable = Vec::new();

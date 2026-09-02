@@ -16,6 +16,7 @@ const checked: PackageView = {
     readme: null,
     files: [],
     bundles: [],
+    state: "available",
     collision: null,
   },
   safety: {

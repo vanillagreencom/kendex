@@ -13,7 +13,7 @@ use crate::names;
 use crate::package::detail::PackageFile;
 use crate::tags::Tag;
 
-use super::{Catalog, item_header};
+use super::{Catalog, InstallState, item_header};
 
 /// What the available-package page shows before anything installs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -30,6 +30,12 @@ pub struct PackagePreview {
     pub files: Vec<PackageFile>,
     /// The curated sets of this catalog that carry it.
     pub bundles: Vec<String>,
+    /// Where this package stands in the browsed scope, by the same join the
+    /// Packages row shows. The page installs, so it needs the answer the
+    /// row has: [`InstallState::Unknown`] where the scope's lock could not
+    /// be read, and the page offers the reason rather than a button the
+    /// engine would refuse for that same record.
+    pub state: InstallState,
     pub collision: Option<String>,
 }
 
@@ -84,6 +90,7 @@ pub fn package_preview(
         readme: readme.map(|text| shown_text(&capped(text))),
         files,
         bundles,
+        state: browsed.state(kind, name),
         collision: browsed.collision(kind, name),
     })
 }

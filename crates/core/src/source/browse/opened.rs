@@ -11,7 +11,7 @@ use crate::manifest::Manifest;
 use crate::model::{ItemKind, Scope};
 use crate::source_read::SealedSource;
 
-use super::super::{ResolvedSource, SourceConfig, require_ready, source_config_for};
+use super::super::{ResolvedSource, SourceConfig, find_item, require_ready, source_config_for};
 use super::catalog::browsable;
 use super::{Catalog, InstallState};
 
@@ -125,6 +125,13 @@ impl Browsed {
 
     /// The lock+manifest join behind every state column: an installation
     /// recorded from here, or the package on offer.
+    ///
+    /// This and [`Browsed::member_state`] are the only two answers to
+    /// "where does this stand here", and both open with the same refusal:
+    /// where the lock could not be read, every standing it alone could
+    /// have given is [`InstallState::Unknown`]. Every surface offering an
+    /// install reads that state rather than deciding for itself, so a new
+    /// one inherits the rule instead of needing its own arm.
     pub(super) fn state(&self, kind: ItemKind, name: &str) -> InstallState {
         if self.lock_unreadable() {
             return InstallState::Unknown;
@@ -135,13 +142,48 @@ impl Browsed {
         }
     }
 
+    /// One curated-set member's standing. A member the catalog names but no
+    /// longer carries is a row, not a hard error: one bad entry must not
+    /// sink the whole page.
+    ///
+    /// Where the lock could not be read the whole join goes first, ahead of
+    /// suppression: "you removed this" is the manifest's word, but the row
+    /// it draws offers Restore, and a restore lands on the same record this
+    /// read could not open. A member the catalog no longer carries needs no
+    /// lock to say so and offers nothing, so it answers NotOffered either
+    /// way; with a readable lock, suppression still outranks it — that a
+    /// removal was the user's own choice is worth saying about a member the
+    /// catalog has since dropped.
+    pub(super) fn member_state(&self, kind: ItemKind, name: &str) -> InstallState {
+        let offered = find_item(&self.sealed, &self.config, kind, name).is_some();
+        if self.lock_unreadable() {
+            return match offered {
+                true => InstallState::Unknown,
+                false => InstallState::NotOffered,
+            };
+        }
+        if self.locked_here(kind, name) {
+            return InstallState::Installed;
+        }
+        // Removed by the user, and recorded so the bundle cannot derive it
+        // back — their choice, shown as such with a way to reverse it.
+        if self.manifest.is_suppressed(kind, name) {
+            return InstallState::RemovedByYou;
+        }
+        match offered {
+            true => InstallState::Available,
+            false => InstallState::NotOffered,
+        }
+    }
+
     /// The source a name is already taken by, when it is not this one. A
     /// fork counts too — `local` is a source like any other here.
     ///
     /// A collision only the lock records goes unseen where the lock could
-    /// not be read; nothing acts on that, because every row in such a scope
-    /// is [`InstallState::Unknown`] and offers no install for the engine to
-    /// refuse.
+    /// not be read; nothing acts on that, because no row in such a scope
+    /// offers an install for the engine to refuse — every standing the
+    /// lock could have answered is [`InstallState::Unknown`], and the
+    /// install surfaces gate on it.
     pub(super) fn collision(&self, kind: ItemKind, name: &str) -> Option<String> {
         if let Some(decl) = self.manifest.declared(kind).get(name)
             && !self.owned_here(&decl.source)

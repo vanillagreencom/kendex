@@ -114,7 +114,9 @@ fn no_per_package_update(kind: ItemKind) -> Option<String> {
 }
 
 /// A scope whose standing could not be read at all, and why. The reason
-/// travels with it so a surface naming the project never has to invent one.
+/// travels with it so the Updates note naming the project says the cause
+/// without a second read. Only the message travels — no typed kind — and
+/// the Problems page is where a cause is told apart from its neighbour.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UnreadableScope {

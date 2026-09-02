@@ -10,10 +10,12 @@ import {
   HarnessSelect,
   isInstallable,
 } from "@/components/marketplaces/harness-select";
+import { RecordsUnreadableNote } from "@/components/marketplaces/packages-trouble";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { recordsUnreadable } from "@/lib/install-state";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import {
@@ -102,6 +104,13 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
     );
     if (items.length > 0) installItems(items);
   };
+  // This scope's lock could not be read, so no member's standing is known
+  // and every per-member box is already off. "Install all" asks about the
+  // set rather than a member, so it needs the same answer said once here —
+  // it would otherwise reach the engine, which refuses on the same record.
+  const recordsUnknown = (detail?.members ?? []).some((member) =>
+    recordsUnreadable(member.state),
+  );
   // Which tools the picker may offer follows what is actually ticked; with
   // nothing ticked the set is every kind, which is what the whole bundle
   // would carry.
@@ -134,7 +143,10 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
         }
         action={
           subscribed ? (
-            <Button disabled={busy || !detail} onClick={() => installItems([])}>
+            <Button
+              disabled={busy || !detail || recordsUnknown}
+              onClick={() => installItems([])}
+            >
               Install all
             </Button>
           ) : catalog.by === "repo" ? (
@@ -162,6 +174,11 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
               </p>
             ) : (
               <>
+                {recordsUnknown && scope ? (
+                  <div className="mb-3">
+                    <RecordsUnreadableNote scope={scope} />
+                  </div>
+                ) : null}
                 <div className="divide-y rounded-lg border">
                   {detail.members.map((member) => (
                     <BundleMemberLine

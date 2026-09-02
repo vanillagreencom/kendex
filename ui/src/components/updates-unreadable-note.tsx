@@ -4,15 +4,16 @@ import { Button } from "@/components/ui/button";
 import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
 import {
   UPDATES_UNREADABLE_TITLE,
-  unreadableProjectsLabel,
+  unreadableProjectLine,
 } from "@/lib/copy-updates";
+import { scopeLabel } from "@/lib/derive";
 import { scopeName } from "@/lib/labels";
 import { useNavStore } from "@/stores/nav";
 
 /** One project kendex cannot read is not a machine-wide failure: every
- * other project's rows stand. The note names the projects with no standing
- * and sends the reader to Problems, which carries the reason and the way
- * out. */
+ * other project's rows stand. The note names each project with no standing
+ * beside the reason the read gave, and sends the reader to Problems, which
+ * carries the typed cause and the way out. */
 export function UnreadableProjectsNote({
   places,
 }: {
@@ -31,7 +32,13 @@ export function UnreadableProjectsNote({
         </Button>
       }
     >
-      {unreadableProjectsLabel(places.map((place) => scopeName(place.scope)))}
+      <ul className="space-y-0.5">
+        {places.map((place) => (
+          <li key={scopeLabel(place.scope)}>
+            {unreadableProjectLine(scopeName(place.scope), place.message)}
+          </li>
+        ))}
+      </ul>
     </StatusNote>
   );
 }

@@ -1572,9 +1572,14 @@ export type InstallState =
 /**
  *  This scope's lock could not be read, so whether the package is
  *  installed here is unknown. The catalog is still listed — what a
- *  source offers is a fact about the source — but no row claims a
- *  standing the record cannot confirm, and none offers an install the
- *  engine would refuse for the same unreadable record.
+ *  source offers is a fact about the source — but every standing the
+ *  lock alone could have given becomes this one, decided in
+ *  `Browsed::state` and `Browsed::member_state` and nowhere else. Each
+ *  surface that would offer an install reads the state: the Packages
+ *  row, a set's member row, the set page's Install all, and the
+ *  available-package page (through [`PackagePreview::state`]) all say
+ *  why instead, so none offers an install the engine would refuse for
+ *  the same unreadable record.
  */
 "unknown";
 
@@ -2171,6 +2176,14 @@ export type PackagePreview = {
 	files: PackageFile[],
 	/**  The curated sets of this catalog that carry it. */
 	bundles: string[],
+	/**
+	 *  Where this package stands in the browsed scope, by the same join the
+	 *  Packages row shows. The page installs, so it needs the answer the
+	 *  row has: [`InstallState::Unknown`] where the scope's lock could not
+	 *  be read, and the page offers the reason rather than a button the
+	 *  engine would refuse for that same record.
+	 */
+	state: InstallState,
 	collision: string | null,
 };
 
@@ -2859,7 +2872,9 @@ export type TemplateFinding = {
 
 /**
  *  A scope whose standing could not be read at all, and why. The reason
- *  travels with it so a surface naming the project never has to invent one.
+ *  travels with it so the Updates note naming the project says the cause
+ *  without a second read. Only the message travels — no typed kind — and
+ *  the Problems page is where a cause is told apart from its neighbour.
  */
 export type UnreadableScope = {
 	scope: Scope,

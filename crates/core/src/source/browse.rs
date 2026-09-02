@@ -51,9 +51,14 @@ pub enum InstallState {
     RemovedByYou,
     /// This scope's lock could not be read, so whether the package is
     /// installed here is unknown. The catalog is still listed — what a
-    /// source offers is a fact about the source — but no row claims a
-    /// standing the record cannot confirm, and none offers an install the
-    /// engine would refuse for the same unreadable record.
+    /// source offers is a fact about the source — but every standing the
+    /// lock alone could have given becomes this one, decided in
+    /// `Browsed::state` and `Browsed::member_state` and nowhere else. Each
+    /// surface that would offer an install reads the state: the Packages
+    /// row, a set's member row, the set page's Install all, and the
+    /// available-package page (through [`PackagePreview::state`]) all say
+    /// why instead, so none offers an install the engine would refuse for
+    /// the same unreadable record.
     Unknown,
 }
 
@@ -172,23 +177,7 @@ pub fn bundle(env: &Env, catalog: &Catalog, bundle_name: &str) -> Result<BundleD
 fn detail(browsed: &Browsed, found: &super::bundles::CatalogBundle) -> BundleDetail {
     let mut members = Vec::new();
     for member in &found.members {
-        // A member the catalog names but no longer carries is a row, not a
-        // hard error: one bad entry must not sink the whole page.
-        let state = if browsed.locked_here(member.kind, &member.name) {
-            InstallState::Installed
-        } else if browsed.manifest.is_suppressed(member.kind, &member.name) {
-            // Removed by the user, and recorded so the bundle cannot derive
-            // it back — their choice, shown as such with a way to reverse it.
-            InstallState::RemovedByYou
-        } else if super::find_item(&browsed.sealed, &browsed.config, member.kind, &member.name)
-            .is_none()
-        {
-            InstallState::NotOffered
-        } else if browsed.lock_unreadable() {
-            InstallState::Unknown
-        } else {
-            InstallState::Available
-        };
+        let state = browsed.member_state(member.kind, &member.name);
         members.push(BundleMemberRow {
             kind: member.kind,
             // Catalog-authored, so shown with any control or deceptive

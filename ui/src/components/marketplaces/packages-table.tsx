@@ -19,6 +19,7 @@ import {
   safetyDotWords,
   severityTone,
 } from "@/lib/copy-safety";
+import { offersInstall } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import {
@@ -159,7 +160,7 @@ function PackageRow({
           // Installing needs a subscription; the page's Subscribe button
           // is the one action, so the row only says the package is here.
           <span className="text-xs text-muted-foreground">Available</span>
-        ) : (
+        ) : offersInstall(row.state) ? (
           // Scores arrive one at a time, and a read that fails leaves a
           // row without one until it mounts again, so a row is offered
           // before its dot resolves. The score is advisory and never holds
@@ -179,7 +180,7 @@ function PackageRow({
           >
             Install
           </Button>
-        )}
+        ) : null}
       </TableCell>
     </TableRow>
   );
