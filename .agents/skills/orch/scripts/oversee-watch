@@ -16,7 +16,7 @@ export SCRIPT_DIR
 usage() {
   cat <<'USAGE'
 Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
-                     [--no-triage] [--item ISSUE_ID]... [--repo OWNER/REPO]...
+                     [--item ISSUE_ID]... [--repo OWNER/REPO]...
                      [LANE_WINDOW...]
 
 Blocks until the fleet needs the overseer, then prints one event or one line per
@@ -50,12 +50,13 @@ Options:
   --interval SECS     seconds between passes (default 240)
   --max-loops N       passes before a heartbeat (default 25)
   --since ISO8601     UTC created/merged-at floor, with a Z suffix. Pass the
-                      fleet's fixed start time on every run, never "now"
-  --no-triage         run without the team triage check. Without it, --since
-                      REQUIRES the tracker CLI, workflow-state and LINEAR_TEAM,
-                      and a missing one exits 2 rather than dropping triage —
-                      a fleet with no tracker team passes this flag to keep
-                      --since for the merged check
+                      fleet's fixed start time on every run, never "now". It
+                      arms the team triage check when LINEAR_TEAM is set; an
+                      unset team is a fleet with no tracker team, which keeps
+                      --since for the merged check and is told once on stderr
+                      that triage is off. With a team set, triage REQUIRES the
+                      tracker CLI and workflow-state, and a missing one exits 2
+                      rather than dropping triage
   --item ISSUE_ID     live item; repeatable. No values skips merged with a note
   --repo OWNER/REPO   repository; repeatable and case-normalized. The reducer
                       covers all; merged and heartbeat read the first
@@ -100,7 +101,6 @@ parse_argv() {
   INTERVAL=240
   MAX_LOOPS=25
   SINCE=""
-  NO_TRIAGE=0
   REPOS=()
   ITEMS=()
   LANES=()
@@ -113,7 +113,6 @@ parse_argv() {
       --max-loops=*) MAX_LOOPS="${1#--max-loops=}"; need_val --max-loops "$MAX_LOOPS"; shift ;;
       --since) need_val "$@"; SINCE="$2"; shift 2 ;;
       --since=*) SINCE="${1#--since=}"; need_val --since "$SINCE"; shift ;;
-      --no-triage) NO_TRIAGE=1; shift ;;
       --item) need_val "$@"; ITEMS+=("$2"); shift 2 ;;
       --item=*) need_val --item "${1#--item=}"; ITEMS+=("${1#--item=}"); shift ;;
       --repo) need_val "$@"; REPOS+=("$2"); shift 2 ;;
@@ -260,21 +259,22 @@ if [[ -n "$SINCE" ]]; then
 fi
 
 TRIAGE_ENABLED=0
-# Triage fails CLOSED: oversee.md § 4 owes a verdict to every emitted team
-# item, so a broken install that silently dropped triage would drop every new
-# item with it. Each missing dependency is a usage error naming its remedy;
-# --no-triage is the one deliberate opt-out, for a fleet with no tracker team
-# that still wants --since for the merged check.
-if [[ -n "$SINCE" && "$NO_TRIAGE" -eq 0 ]]; then
-  [[ -x "$TRACKER" ]] \
-    || die "tracker CLI not found at $TRACKER; triage needs it (set OVERSEE_WATCH_TRACKER, or pass --no-triage to watch without triage)"
-  [[ -x "$WORKFLOW_STATE" ]] \
-    || die "workflow-state CLI not found at $WORKFLOW_STATE; triage needs it (set OVERSEE_WATCH_WORKFLOW_STATE, or pass --no-triage to watch without triage)"
-  [[ -n "${LINEAR_TEAM:-}" ]] \
-    || die "LINEAR_TEAM is unset; triage needs it (set LINEAR_TEAM, or pass --no-triage to watch without triage)"
-  TRIAGE_ENABLED=1
-elif [[ -n "$SINCE" ]]; then
-  echo "oversee-watch: --no-triage given; skipping the team triage check (pr-watch/merged/window/lane-asking checks still run)" >&2
+# LINEAR_TEAM decides whether this fleet has a team to triage at all: unset is
+# a repo that tracks work elsewhere, so triage is skipped, named once, and the
+# watch runs on --since for the merged check. With a team set, triage fails
+# CLOSED — oversee.md § 4 owes a verdict to every emitted team item, so a
+# broken install that silently dropped triage would drop every new item with
+# it, and each missing dependency is a usage error naming its remedy.
+if [[ -n "$SINCE" ]]; then
+  if [[ -z "${LINEAR_TEAM:-}" ]]; then
+    echo "oversee-watch: LINEAR_TEAM is unset; skipping the team triage check (pr-watch/merged/window/lane-asking checks still run)" >&2
+  else
+    [[ -x "$TRACKER" ]] \
+      || die "tracker CLI not found at $TRACKER; triage needs it (set OVERSEE_WATCH_TRACKER, or unset LINEAR_TEAM to watch without triage)"
+    [[ -x "$WORKFLOW_STATE" ]] \
+      || die "workflow-state CLI not found at $WORKFLOW_STATE; triage needs it (set OVERSEE_WATCH_WORKFLOW_STATE, or unset LINEAR_TEAM to watch without triage)"
+    TRIAGE_ENABLED=1
+  fi
 fi
 
 # The item's head branch is its id lowercased (worktree create's branch name);
