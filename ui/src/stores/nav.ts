@@ -70,6 +70,13 @@ interface NavState {
   goTo: (page: Page) => void;
   goToPackage: (ref: PackageRef, view?: PackageView) => void;
   goToMarketplaces: (tab?: MarketplacesTab) => void;
+  /** Leave a marketplace page that has stopped existing, without recording
+   * the departure. Every other `goTo*` pushes the page it leaves, which is
+   * right for a page a reader chose to leave and wrong for one deleted
+   * under them: Back would remount a subscription that is gone, on a dead
+   * alias over a failing read. The entry that came before this page stays,
+   * so Back still goes where the reader actually was. */
+  leaveMarketplace: (tab?: MarketplacesTab) => void;
   goToMarketplace: (ref: MarketplaceRef) => void;
   goToBundle: (ref: BundleRef) => void;
   goToAvailablePackage: (ref: AvailableRef) => void;
@@ -155,6 +162,16 @@ export const useNavStore = create<NavState>((set) => ({
       ...(tab ? { marketplacesTab: tab } : {}),
       history: pushHistory(state, "marketplaces"),
       future: [],
+    })),
+  // Not `pushHistory`: the page being left no longer exists, so it must
+  // not become somewhere Back can return to. History and future are left
+  // exactly as they are.
+  leaveMarketplace: (tab) =>
+    set((state) => ({
+      page: "marketplaces",
+      ...(tab ? { marketplacesTab: tab } : {}),
+      history: state.history,
+      future: state.future,
     })),
   goToMarketplace: (ref) =>
     set((state) => ({

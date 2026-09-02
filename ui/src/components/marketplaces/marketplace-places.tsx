@@ -1,6 +1,6 @@
 import { MoreHorizontal } from "lucide-react";
 import { useState } from "react";
-import type { MarketplaceRow, Scope } from "@/bindings";
+import type { MarketplaceRow } from "@/bindings";
 import {
   marketplaceIdentity,
   personalFirst,
@@ -21,7 +21,7 @@ import {
   SOURCE_ENABLED_LABEL,
 } from "@/lib/copy-marketplaces";
 import { scopeLabel } from "@/lib/derive";
-import { scopeName, scopePath } from "@/lib/labels";
+import { scopeName, scopeNames, scopePath } from "@/lib/labels";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 
 /** Every place that subscribes to this marketplace, and the one switch
@@ -41,6 +41,12 @@ export function MarketplacePlaces({ identity }: { identity: string }) {
     .sort(personalFirst);
 
   if (places.length === 0) return null;
+  // Named against each other, not one at a time: two registered projects
+  // can end in the same folder, and a row labelled "kendex" beside another
+  // labelled "kendex" names neither — over a switch that deactivates every
+  // install this marketplace put in one of them. Where a basename is
+  // shared, [scopeNames] substitutes the full path.
+  const named = scopeNames(places.map((row) => row.scope));
 
   return (
     <section>
@@ -48,8 +54,8 @@ export function MarketplacePlaces({ identity }: { identity: string }) {
         {MARKETPLACE_PLACES_HELP}
       </p>
       <div className="mt-4 divide-y rounded-lg border">
-        {places.map((row) => (
-          <PlaceRow key={placeKey(row)} row={row} />
+        {places.map((row, index) => (
+          <PlaceRow key={placeKey(row)} row={row} place={named[index]} />
         ))}
       </div>
       <p className="mt-2 max-w-prose text-xs text-muted-foreground">
@@ -59,7 +65,14 @@ export function MarketplacePlaces({ identity }: { identity: string }) {
   );
 }
 
-function PlaceRow({ row }: { row: MarketplaceRow }) {
+function PlaceRow({
+  row,
+  place,
+}: {
+  row: MarketplaceRow;
+  /** What this place is called among the places drawn beside it. */
+  place: string;
+}) {
   const toggle = useMarketplacesStore((s) => s.toggle);
   const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
   const path = scopePath(row.scope);
@@ -69,7 +82,7 @@ function PlaceRow({ row }: { row: MarketplaceRow }) {
     <div className="flex items-center gap-4 px-4 py-3">
       <div className="min-w-0 flex-1">
         <p data-testid="place-name" className="truncate text-sm font-medium">
-          {scopeName(row.scope)}
+          {place}
         </p>
         {path ? (
           <p className="truncate font-mono text-xs text-muted-foreground">
@@ -102,7 +115,7 @@ function PlaceRow({ row }: { row: MarketplaceRow }) {
         onCheckedChange={(enabled) => void toggle(row.scope, row.name, enabled)}
       />
       <PlaceActions
-        scope={row.scope}
+        place={place}
         source={row.name}
         onUnsubscribe={() => setUnsubscribeOpen(true)}
       />
@@ -117,11 +130,11 @@ function PlaceRow({ row }: { row: MarketplaceRow }) {
 }
 
 function PlaceActions({
-  scope,
+  place,
   source,
   onUnsubscribe,
 }: {
-  scope: Scope;
+  place: string;
   source: string;
   onUnsubscribe: () => void;
 }) {
@@ -132,7 +145,7 @@ function PlaceActions({
           <Button
             size="icon-xs"
             variant="quiet"
-            aria-label={`More actions for ${scopeName(scope)}`}
+            aria-label={`More actions for ${place}`}
           >
             <MoreHorizontal className="size-4" />
           </Button>
@@ -140,7 +153,7 @@ function PlaceActions({
       />
       <DropdownMenuContent align="end">
         <DropdownMenuItem className="text-critical" onClick={onUnsubscribe}>
-          Unsubscribe {source} from {scopeName(scope)}…
+          Unsubscribe {source} from {place}…
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

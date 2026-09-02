@@ -1,10 +1,11 @@
 import { RefreshCw } from "lucide-react";
-import type { CatalogSummary } from "@/bindings";
+import type { CatalogSummary, MarketplaceRow, Scope } from "@/bindings";
 import { SubscribeFromRepo } from "@/components/marketplaces/subscribe-from-repo";
 import { Button } from "@/components/ui/button";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import { MARKETPLACES_CHECK_FAILED_TITLE } from "@/lib/copy-marketplaces";
-import { scopeName } from "@/lib/labels";
+import { scopeLabel } from "@/lib/derive";
+import { scopeName, scopeNames } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
 import { repoAction, useMarketplacesStore } from "@/stores/marketplaces";
@@ -22,6 +23,17 @@ export function useRepoKey(
     (s) => s.directory?.rows.find((r) => r.repo === repo)?.repoKey ?? null,
   );
   return summary?.repoKey ?? listedKey;
+}
+
+/** What one place is called among every place the overview knows. The
+ * holder can be any of them, so a basename two of them share would name
+ * neither; [scopeNames] substitutes the full path exactly there. */
+function placeAmong(rows: MarketplaceRow[], scope: Scope): string {
+  const places = [
+    ...new Map(rows.map((row) => [scopeLabel(row.scope), row.scope])).values(),
+  ];
+  const at = places.findIndex((one) => scopeLabel(one) === scopeLabel(scope));
+  return scopeNames(places)[at] ?? scopeName(scope);
 }
 
 /** What a page browsing a bare repository offers. Subscribe only when no
@@ -75,13 +87,15 @@ export function RepoAction({
     case "turn-on":
       // The place is in the label, not left to be guessed: the holder comes
       // from declaredHolder, which can pick a project subscription while
-      // the page names only the repository.
+      // the page names only the repository — and named against every place
+      // the overview knows, so a basename two projects share does not name
+      // both on a button that turns one of them on.
       return (
         <Button
           size="sm"
           onClick={() => holder && void toggle(holder.scope, holder.name, true)}
         >
-          {holder ? `Turn on in ${scopeName(holder.scope)}` : "Turn on"}
+          {holder ? `Turn on in ${placeAmong(rows, holder.scope)}` : "Turn on"}
         </Button>
       );
     case "refresh":

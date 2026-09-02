@@ -63,4 +63,25 @@ describe("a marketplace's Projects section", () => {
     expect(toggle).toHaveBeenCalledTimes(1);
     expect(toggle).toHaveBeenCalledWith(project("/w/beta"), "beta-kit", false);
   });
+
+  // Two registered projects can end in the same folder. A row labelled
+  // "kendex" beside another labelled "kendex" names neither, over a switch
+  // that deactivates every install this marketplace put in one of them —
+  // the branch's own rule that a list never carries a control whose target
+  // it does not name, failing on the name itself.
+  it("tells apart two projects whose folders share a name", () => {
+    useMarketplacesStore.setState({
+      rows: [
+        row({ scope: project("/w/dev/kendex"), name: "dev-kit" }),
+        row({ scope: project("/w/work/kendex"), name: "work-kit" }),
+      ],
+    });
+    const host = mount(<MarketplacePlaces identity="github.com/acme/kit" />);
+    const named = [...host.querySelectorAll('[data-testid="place-name"]')].map(
+      (el) => el.textContent ?? "",
+    );
+
+    expect(new Set(named).size).toBe(2);
+    expect(named).toEqual(["/w/dev/kendex", "/w/work/kendex"]);
+  });
 });

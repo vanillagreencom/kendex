@@ -46,7 +46,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
   const load = useMarketplacesStore((s) => s.load);
   const read = useMarketplacesStore((s) => s.read);
   const goToMarketplace = useNavStore((s) => s.goToMarketplace);
-  const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
+  const leaveMarketplace = useNavStore((s) => s.leaveMarketplace);
   const loadPackages = useMarketplacesStore((s) => s.loadPackages);
   const loadCatalogBundles = useMarketplacesStore((s) => s.loadCatalogBundles);
 
@@ -112,9 +112,11 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
     if (elsewhere) {
       goToMarketplace(subscription(elsewhere.scope, elsewhere.name));
     } else {
-      goToMarketplaces("subscribed");
+      // Left, not navigated away from: this page is a subscription that no
+      // longer exists, so it must not be somewhere Back can return to.
+      leaveMarketplace("subscribed");
     }
-  }, [catalog, row, read.status, rows, goToMarketplace, goToMarketplaces]);
+  }, [catalog, row, read.status, rows, goToMarketplace, leaveMarketplace]);
 
   // The tab is controlled so a section that stops existing cannot leave the
   // page with nothing selected: Projects is gone the moment the opened

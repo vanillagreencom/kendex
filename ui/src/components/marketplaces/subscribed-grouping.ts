@@ -5,7 +5,7 @@
 // marketplace, and the places it is subscribed in are a fact about it.
 import type { MarketplaceRow } from "@/bindings";
 import { scopeLabel } from "@/lib/derive";
-import { scopeName } from "@/lib/labels";
+import { scopeNames } from "@/lib/labels";
 
 export interface SubscribedMarketplace {
   /** What [marketplaceIdentity] returned for every place in this group. */
@@ -129,9 +129,13 @@ export function groupByMarketplace(
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** The places a marketplace is subscribed in, named. */
+/** The places a marketplace is subscribed in, named — and told apart. Two
+ * registered projects can end in the same folder, and a card listing
+ * "kendex, kendex" names neither; where a basename is shared, the places
+ * holding it carry their full path instead. The collision set is this
+ * card's own places, which is what the line is drawing. */
 export const placeNames = (group: SubscribedMarketplace): string[] =>
-  group.places.map((row) => scopeName(row.scope));
+  scopeNames(group.places.map((row) => row.scope));
 
 /** Whether two rows describe the same place, for the Projects section's
  * keys — the same spelling `scopeLabel` gives everywhere else. */

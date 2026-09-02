@@ -86,4 +86,27 @@ describe("nav store — marketplaces", () => {
 
     expect(useNavStore.getState().history).toHaveLength(1);
   });
+
+  // A marketplace page whose last subscription was just removed does not
+  // exist any more. Departing through a pushing helper recorded it, so
+  // Back remounted a deleted subscription — a dead alias in the header over
+  // a failing read. It is left, not navigated away from: what came before
+  // it is still where Back goes.
+  it("does not send Back to a marketplace that was just removed", () => {
+    useNavStore.getState().goTo("harnesses");
+    useNavStore.getState().goToMarketplace({
+      by: "subscription",
+      scope: { scope: "global" },
+      source: "kit",
+    });
+
+    useNavStore.getState().leaveMarketplace("subscribed");
+    expect(useNavStore.getState().page).toBe("marketplaces");
+
+    useNavStore.getState().back();
+
+    const state = useNavStore.getState();
+    expect(state.page).not.toBe("marketplaceDetail");
+    expect(state.page).toBe("harnesses");
+  });
 });

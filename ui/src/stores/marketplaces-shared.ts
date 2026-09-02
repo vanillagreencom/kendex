@@ -212,8 +212,8 @@ export function repoAction(
   read: ReadState,
   repoKey: string | null,
 ): { kind: RepoActionKind; holder: MarketplaceRow | null } {
-  // Genuinely pending: a key a read still out may yet bring, or rows no
-  // read has produced.
+  // Unanswered: a key a read still out may yet bring, or rows no read has
+  // produced.
   if (repoKey === null && read.status === "pending") {
     return { kind: "checking", holder: null };
   }
