@@ -448,6 +448,20 @@ export async function refreshTranscriptUsage(
 	}
 }
 
+// Module scope, not a closure, so this rendered line is reachable from a test.
+export function taskRecordDashboardMessage(record: PaneTaskRecord): string | undefined {
+	const summary = normalizeSummaryText(record.summary);
+	if (summary) return summary;
+	if (record.status === "needs_completion") {
+		const base = record.diagnostics?.at(-1) ?? COMPLETION_SUMMARY_UNAVAILABLE;
+		const snapshot = sanitizeCwdSnapshot(record.cwdSnapshot);
+		if (!snapshot) return base;
+		return `${base} · HEAD ${snapshot.head.slice(0, 12)} (${dirtyLabel(snapshot)}) ${snapshot.lastCommit.subject}`;
+	}
+	if (isTerminalTaskStatus(record.status)) return COMPLETION_SUMMARY_UNAVAILABLE;
+	return record.diagnostics?.at(-1) ?? record.task;
+}
+
 export default function (pi: ExtensionAPI) {
 	const guard = pi as unknown as Record<PropertyKey, unknown>;
 	if (guard[INSTALL_SYMBOL]) return;
@@ -937,18 +951,6 @@ export default function (pi: ExtensionAPI) {
 		syncDashboard();
 	};
 
-	const taskRecordDashboardMessage = (record: PaneTaskRecord): string | undefined => {
-		const summary = normalizeSummaryText(record.summary);
-		if (summary) return summary;
-		if (record.status === "needs_completion") {
-			const base = record.diagnostics?.at(-1) ?? COMPLETION_SUMMARY_UNAVAILABLE;
-			const snapshot = sanitizeCwdSnapshot(record.cwdSnapshot);
-			if (!snapshot) return base;
-			return `${base} · HEAD ${snapshot.head.slice(0, 12)} (${dirtyLabel(snapshot)}) ${snapshot.lastCommit.subject}`;
-		}
-		if (isTerminalTaskStatus(record.status)) return COMPLETION_SUMMARY_UNAVAILABLE;
-		return record.diagnostics?.at(-1) ?? record.task;
-	};
 	const taskRecordDashboardMessageProvenance = (record: PaneTaskRecord): SubagentDashboardItem["messageProvenance"] => {
 		if (normalizeSummaryText(record.summary)) return "persisted";
 		if (record.status === "needs_completion") return record.diagnostics?.length ? "diagnostic" : "placeholder";

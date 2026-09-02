@@ -25,7 +25,7 @@ export function dirtyStateOf(snapshot: Pick<CwdSnapshot, "dirty" | "status"> | u
 	return snapshot.dirty ? "dirty" : "clean";
 }
 
-/** The word every surface prints, so the three of them cannot drift apart. */
+/** The word every surface prints, so they cannot drift apart. */
 export function dirtyLabel(snapshot: Pick<CwdSnapshot, "dirty" | "status"> | undefined): string {
 	const state = dirtyStateOf(snapshot);
 	return state === "unknown" ? "dirty state unknown" : state;
@@ -206,8 +206,8 @@ export async function snapshotCwdGitState(cwd: string | undefined, addDiagnostic
 	// A dirty read that failed (the 5s timeout on a large or cold worktree is the
 	// likely one) degrades the snapshot rather than discarding it: head and the
 	// last commit are what triage needs most. readGit already emitted the cause;
-	// the status field carries it too, because `dirty` has no unknown state and
-	// every renderer prints a false `dirty` as "clean".
+	// the sentinel in `status` is what dirtyStateOf reads to tell a failed read
+	// from a clean tree, so a degraded snapshot prints as unknown, not clean.
 	if (dirtyStatus == null) addDiagnostic(`cwdSnapshot dirty state unavailable for ${resolvedCwd}; reporting head and last commit only`);
 	const status = dirtyStatus ?? DIRTY_STATE_UNAVAILABLE;
 	return sanitizeCwdSnapshot({

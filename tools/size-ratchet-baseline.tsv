@@ -8,13 +8,13 @@ pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
 pi-extensions/pi-agents-tmux/extensions/subagent/dashboard.ts	431
 pi-extensions/pi-agents-tmux/extensions/subagent/dispatch.ts	580
 pi-extensions/pi-agents-tmux/extensions/subagent/format.ts	774
-pi-extensions/pi-agents-tmux/extensions/subagent/index.ts	2139
+pi-extensions/pi-agents-tmux/extensions/subagent/index.ts	2141
 pi-extensions/pi-agents-tmux/extensions/subagent/pane.ts	1195
 pi-extensions/pi-agents-tmux/extensions/subagent/rate-limit-quota-normalize.ts	401
 pi-extensions/pi-agents-tmux/extensions/subagent/runner.ts	1326
 pi-extensions/pi-agents-tmux/extensions/subagent/subagent-render.ts	473
 pi-extensions/pi-agents-tmux/extensions/subagent/tasks.ts	1010
-pi-extensions/pi-agents-tmux/extensions/subagent/types.ts	487
+pi-extensions/pi-agents-tmux/extensions/subagent/types.ts	488
 pi-extensions/pi-agents-tmux/tests/dashboard-ux.test.ts	1169
 pi-extensions/pi-agents-tmux/tests/session-lanes.test.ts	2439
 pi-extensions/pi-background-tasks/extensions/background-tasks.ts	976

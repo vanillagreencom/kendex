@@ -7,7 +7,7 @@ import {
 	completionBodyWithoutPromptEcho,
 	wrappedText,
 } from "./format.js";
-import { sanitizeCwdSnapshot } from "./cwd-snapshot.js";
+import { dirtyStateOf, sanitizeCwdSnapshot } from "./cwd-snapshot.js";
 import {
 	GetSubagentResultParams,
 	SteerSubagentParams,
@@ -28,6 +28,12 @@ interface PaneSupportToolDeps {
 	[key: string]: any;
 	ensurePaneBridgeMetadata: (runtimeRoot: string, entry: PaneRegistryEntry) => Promise<BridgeMetadata | undefined>;
 	pi: ExtensionAPI;
+}
+
+// The other structured payload, activity.ts, publishes dirtyState beside the
+// raw boolean; this one describes the same state the same way.
+function withDirtyState(snapshot: ReturnType<typeof sanitizeCwdSnapshot>) {
+	return snapshot ? { ...snapshot, dirtyState: dirtyStateOf(snapshot) } : undefined;
 }
 
 export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
@@ -133,7 +139,7 @@ export function registerPaneSupportTools(deps: PaneSupportToolDeps): void {
 			const diagnosticBlock = params.verbose && diagnostics.length > 0 ? `\n\n### Artifact diagnostics\n${diagnostics.map((line) => `- ${line}`).join("\n")}` : "";
 			return {
 				content: [{ type: "text", text: `${formatTaskRecordResult(finalRecord, params.verbose ?? false)}${diagnosticBlock}` }],
-				details: { agent: finalRecord.agent, paneId: finalRecord.paneId, summary: finalRecord.summary, status: finalRecord.status, taskId: finalRecord.taskId, notes: finalRecord.notes, cwdSnapshot: sanitizeCwdSnapshot(finalRecord.cwdSnapshot), diagnostics: finalRecord.diagnostics, completionMessageEmitted } satisfies GetSubagentResultDetails,
+				details: { agent: finalRecord.agent, paneId: finalRecord.paneId, summary: finalRecord.summary, status: finalRecord.status, taskId: finalRecord.taskId, notes: finalRecord.notes, cwdSnapshot: withDirtyState(sanitizeCwdSnapshot(finalRecord.cwdSnapshot)), diagnostics: finalRecord.diagnostics, completionMessageEmitted } satisfies GetSubagentResultDetails,
 			};
 		},
 		renderCall(_args, _theme, _context) {

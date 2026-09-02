@@ -1,3 +1,4 @@
+import type { DirtyState } from "./cwd-snapshot.js";
 import type { Message } from "@earendil-works/pi-ai";
 import type { TruncationResult } from "@earendil-works/pi-coding-agent";
 import type { AgentScope } from "./agents.js";
@@ -432,7 +433,7 @@ export interface GetSubagentResultDetails {
 	status?: PaneTaskStatus;
 	taskId?: string;
 	notes?: string;
-	cwdSnapshot?: CwdSnapshot;
+	cwdSnapshot?: CwdSnapshot & { dirtyState?: DirtyState };
 	diagnostics?: string[];
 	completionMessageEmitted?: boolean;
 	waitFor?: "completion" | "idle";

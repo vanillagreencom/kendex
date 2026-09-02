@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { spawnSync as realSpawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const rootTmp = join(import.meta.dir, "..", "tmp", "actions-test");
@@ -391,5 +391,59 @@ test("a restore that itself fails is named in the uninstall message", async () =
 
 	expect(outcome.ok).toBe(false);
 	expect(outcome.message).toContain("could not be restored");
+});
+
+// The one write-failure the script has a handler for. Its six other
+// diagnostics are pre-flight refusals where nothing was going to be written;
+// this is the branch that fires when the write itself fails, and it is the
+// only one whose message does not use the colon form.
+test("a failed APPEND_SYSTEM.md write is reported as failed", async () => {
+	const { buildInventory } = await import("../extensions/manager/inventory.ts");
+	const { syncAppendSystemForPackage } = await import("../extensions/manager/append-system.ts");
+	const project = join(rootTmp, "project");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const packageDir = join(userPi, "npm", "node_modules", "@scope", "readonlypkg");
+	mkdirSync(join(project, ".pi"), { recursive: true });
+	writeJson(join(userPi, "settings.json"), { packages: ["npm:@scope/readonlypkg"] });
+	writeAppendSystemPackage(packageDir, "@scope/readonlypkg");
+	await useSandboxedSpawn();
+
+	const inv = buildInventory({} as never, { cwd: project } as never);
+	const item = inv.packages.find((pkg) => pkg.packageName === "@scope/readonlypkg")!;
+	chmodSync(userPi, 0o555);
+	try {
+		expect(syncAppendSystemForPackage(item, false)).toBe(false);
+		expect(existsSync(join(userPi, "APPEND_SYSTEM.md"))).toBe(false);
+	} finally {
+		chmodSync(userPi, 0o755);
+	}
+});
+
+// spawnSync sets error ETIMEDOUT and a signal when it kills on the deadline,
+// so the two failure causes have to be told apart by more than result.error.
+test("a killed script is reported as the deadline, a missing one as a launch failure", async () => {
+	const { syncAppendSystemForPackage } = await import("../extensions/manager/append-system.ts");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const packageDir = join(userPi, "npm", "node_modules", "@scope", "slowpkg");
+	writeAppendSystemPackage(packageDir, "@scope/slowpkg");
+	const item = { kind: "package", packageName: "@scope/slowpkg", packageDir } as never;
+
+	const warnings: string[] = [];
+	const warn = console.warn;
+	console.warn = (text: string) => warnings.push(text);
+	try {
+		const processModule = await import("../extensions/manager/process.ts");
+		const timedOut = Object.assign(new Error("spawnSync node ETIMEDOUT"), { code: "ETIMEDOUT" });
+		processModule.__setSpawnSyncForTests((() => ({ status: null, stdout: "", stderr: "", error: timedOut, signal: "SIGKILL", output: [], pid: 0 })) as never);
+		expect(syncAppendSystemForPackage(item, false)).toBe(false);
+		expect(warnings.at(-1)).toContain("exceeded");
+
+		const missing = Object.assign(new Error("spawnSync node ENOENT"), { code: "ENOENT" });
+		processModule.__setSpawnSyncForTests((() => ({ status: null, stdout: "", stderr: "", error: missing, signal: null, output: [], pid: 0 })) as never);
+		expect(syncAppendSystemForPackage(item, false)).toBe(false);
+		expect(warnings.at(-1)).toContain("failed to launch");
+	} finally {
+		console.warn = warn;
+	}
 });
 

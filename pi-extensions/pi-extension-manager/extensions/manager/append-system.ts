@@ -34,22 +34,28 @@ function runAppendSystemScript(packageDir: string | undefined, action: "install"
 		return true;
 	}
 	const result = runCommand("node", [script, action], { cwd: packageDir, killSignal: "SIGKILL", timeout: APPEND_SYSTEM_TIMEOUT_MS });
-	if (result.error) {
-		console.warn(`pi-extension-manager: append-system ${action} failed to launch for ${packageDir}: ${String(result.error)}`);
-		return false;
-	}
 	const stderr = (result.stderr ?? "").trim();
 	const status = result.status ?? 0;
-	// A killed child reports a signal and a null status.
-	if (result.signal) {
-		console.warn(`pi-extension-manager: append-system ${action} for ${packageDir} exceeded ${APPEND_SYSTEM_TIMEOUT_MS}ms and was killed (${result.signal})${stderr ? `: ${stderr}` : ""}`);
+	// The deadline is tested first: spawnSync sets error ETIMEDOUT *and* a
+	// signal when it kills a child on timeout, so `result.error` alone would
+	// report the cap as "never started".
+	const timedOut = Boolean(result.signal) || (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+	if (timedOut) {
+		console.warn(`pi-extension-manager: append-system ${action} for ${packageDir} exceeded ${APPEND_SYSTEM_TIMEOUT_MS}ms and was killed (${result.signal ?? "no signal"})${stderr ? `: ${stderr}` : ""}`);
+		return false;
+	}
+	if (result.error) {
+		console.warn(`pi-extension-manager: append-system ${action} failed to launch for ${packageDir}: ${String(result.error)}`);
 		return false;
 	}
 	// Only the script's own lines are a verdict. Everything else on stderr is
 	// the node process talking, an ExperimentalWarning from the user's
 	// NODE_OPTIONS being the common one, and must not turn a written block into
-	// a reported failure.
-	const reported = stderr.split("\n").filter((line) => line.trimStart().startsWith(`${SCRIPT_NAME}:`));
+	// a reported failure. The bare name, not `${SCRIPT_NAME}:`, because the one
+	// handler for a failed write reads `append-system.mjs (install) for ...`.
+	// Node's own stderr never starts with it: a warning starts "(node:", a
+	// stack frame trims to "at ", a syntax error to an absolute path.
+	const reported = stderr.split("\n").filter((line) => line.trimStart().startsWith(SCRIPT_NAME));
 	if (reported.length > 0 || status !== 0) {
 		const detail = reported.length > 0 ? reported.join("; ") : stderr || "no output";
 		console.warn(`pi-extension-manager: append-system ${action} reported a problem for ${packageDir} (exit ${status}): ${detail}`);

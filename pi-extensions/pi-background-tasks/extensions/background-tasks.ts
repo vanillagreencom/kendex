@@ -692,8 +692,8 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		if (spawnedPid > 0 && procIdent === undefined) {
 			const message = `background task ${id} (pid ${spawnedPid}) has no process identity: the spawn-time probe failed, so liveness is PID-only and a recycled pid could keep this task alive after it exits`;
 			logBackgroundDiagnostic(message);
-			if (!identityProbeWarned) activeCtx?.ui.notify?.(message, "warning");
-			identityProbeWarned = true;
+			// Latch only once the notify ran; activeCtx is null after shutdown.
+			if (!identityProbeWarned && activeCtx?.ui?.notify) { activeCtx.ui.notify(message, "warning"); identityProbeWarned = true; }
 		}
 		const task: ManagedTask = {
 			child,

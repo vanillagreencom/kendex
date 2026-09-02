@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { DIRTY_STATE_UNAVAILABLE, dirtyLabel, dirtyStateOf, setGitExecFileForTests, snapshotCwdGitState } from "../extensions/subagent/cwd-snapshot.js";
 import { compactThenEmptySummary } from "../extensions/subagent/runner.js";
+import { taskRecordDashboardMessage } from "../extensions/subagent/index.js";
+import { formatTaskRecordResult } from "../extensions/subagent/renderers.js";
 
 function tempDir(prefix: string): string {
 	return mkdtempSync(join(tmpdir(), prefix));
@@ -154,5 +156,28 @@ describe("cwd snapshot dirty status", () => {
 		expect(dirtyLabel({ ...base, dirty: true, status: " M a.txt" })).toBe("dirty");
 		expect(dirtyLabel({ ...base, dirty: false, status: DIRTY_STATE_UNAVAILABLE })).toBe("dirty state unknown");
 		expect(dirtyLabel(undefined)).toBe("dirty state unknown");
+	});
+
+	// A correct helper cannot stop a call site bypassing it, so each surface
+	// that prints the state is pinned on its rendered output, not on the helper.
+	test("no rendering surface prints a degraded snapshot as clean", () => {
+		const degraded = {
+			cwd: "/w",
+			dirty: false,
+			dirtyStatus: DIRTY_STATE_UNAVAILABLE,
+			head: "c".repeat(40),
+			lastCommit: { subject: "last change" },
+			lastCommitSubject: "last change",
+			status: DIRTY_STATE_UNAVAILABLE,
+		};
+		const rendered = [
+			compactThenEmptySummary(degraded),
+			taskRecordDashboardMessage({ agent: "rust", cwdSnapshot: degraded, diagnostics: ["turn ended"], status: "needs_completion", taskId: "t1" } as never) ?? "",
+			formatTaskRecordResult({ agent: "rust", cwdSnapshot: degraded, status: "needs_completion", taskId: "t1" } as never),
+		];
+		for (const text of rendered) {
+			expect(text).toContain("dirty state unknown");
+			expect(text).not.toContain("(clean)");
+		}
 	});
 });
