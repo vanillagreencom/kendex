@@ -94,9 +94,9 @@ skills/linear/scripts/lib/common.sh	780
 skills/linear/scripts/lib/formatters.sh	631
 skills/orch/scripts/approval-wait	1156
 skills/orch/scripts/ci-wait	669
-skills/orch/scripts/dev-artifact-check	736
+skills/orch/scripts/dev-artifact-check	730
 skills/orch/scripts/dev-return-write	444
-skills/orch/scripts/dev-round-write	465
+skills/orch/scripts/dev-round-write	423
 skills/orch/scripts/lanes	622
 skills/orch/scripts/merge-queue-watch	556
 skills/orch/scripts/open-terminal	703

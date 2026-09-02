@@ -86,7 +86,7 @@ Write the artifact first, per [dev SKILL.md § Round Contract](../SKILL.md#round
 
 One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `dev-return-write --help`; keep `REASONING` free of backticks). `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed.
 
-**Respawned mid-round without the `Review items:` list?** Do not reconstruct it from the raw review JSONs and do not guess. Read `[WORKTREE_PATH]/tmp/dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`, whose `items[]` entries each carry the delegated number `n`, full text, `reach`, and `introduced` marker the orchestrator recorded, and write one `--item` per entry. If that file is missing too, report the gap and write no artifact.
+**Respawned mid-round without the `Review items:` list?** Do not reconstruct it from the raw review JSONs and do not guess. Read `[WORKTREE_PATH]/tmp/dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`, whose `items[]` entries each carry the delegated number `n`, the item's full text, and the `reach` the orchestrator recorded, and write one `--item` per entry. If that file is missing too, report the gap and write no artifact.
 
 **A read-only analysis round** has no items to apply: use `--kind analysis` with `--summary '[TEXT]'` (single-quoted plain text, no backticks, an embedded apostrophe spelled `'\''`) or `--summary-file [FILE]`, and return the recommendation in place of the table below.
 

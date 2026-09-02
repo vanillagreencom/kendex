@@ -594,7 +594,7 @@ elif [[ "${1:-}" == --* ]]; then
     # not have written (wrong issue, missing schema_version, ill-typed or
     # empty items/text) is no source of truth for the expected set.
     jq -e --arg issue "$issue" '
-      (.schema_version? == 3)
+      (.schema_version? == 2)
       and ((.issue? | type) == "string") and (.issue == $issue)
       and ((.base_sha? | type) == "string") and (.base_sha != "")
       and ((.adds? | type) == "array")
@@ -608,13 +608,10 @@ elif [[ "${1:-}" == --* ]]; then
             (type == "object")
             and ((.n? | type) == "number") and (.n == (.n | floor)) and (.n >= 0)
             and ((.text? | type) == "string")
-            and ((.text | gsub("[[:space:]]"; "")) != "")
-            and ((.reach? | type) == "string")
-            and ((.reach | gsub("[[:space:]]"; "")) != "")
-            and (.introduced == "base" or .introduced == "round-1"))
+            and ((.text | gsub("[[:space:]]"; "")) != ""))
       and (([.items[].n] | length) == ([.items[].n] | unique | length))
     ' "$round_record" >/dev/null 2>&1 \
-      || die "round record $round_record fails the dev-round schema (schema_version 3, issue '$issue', base_sha, unique repository-relative adds[], items[] with n, text, reach, and introduced) — see skills/orch/schemas/dev-round.md"
+      || die "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', base_sha, unique repository-relative adds[], non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
     worktree_root="$(git -C "$worktree" rev-parse --show-toplevel 2>/dev/null)" \
       || die "worktree '$worktree' has no repository root"
     git_common_dir="$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
@@ -623,7 +620,7 @@ elif [[ "${1:-}" == --* ]]; then
     [[ -f "$authorization" && ! -L "$authorization" ]] \
       || die "external authorization $authorization is missing or not a regular file — mint a NEW round; authorization is never recreated after delegation"
     jq -e --arg issue "$issue" --arg round "$round_id" --arg worktree "$worktree_root" '
-      (.schema_version? == 2)
+      (.schema_version? == 1)
       and (.issue? == $issue) and (.round_id? == $round) and (.worktree? == $worktree)
       and ((.base_sha? | type) == "string") and (.base_sha != "")
       and ((has("live") | not) or ((.live? | type) == "boolean"))
@@ -638,10 +635,7 @@ elif [[ "${1:-}" == --* ]]; then
             (type == "object")
             and ((.n? | type) == "number") and (.n == (.n | floor)) and (.n >= 0)
             and ((.text? | type) == "string")
-            and ((.text | gsub("[[:space:]]"; "")) != "")
-            and ((.reach? | type) == "string")
-            and ((.reach | gsub("[[:space:]]"; "")) != "")
-            and (.introduced == "base" or .introduced == "round-1"))
+            and ((.text | gsub("[[:space:]]"; "")) != ""))
       and (([.items[].n] | length) == ([.items[].n] | unique | length))
     ' "$authorization" >/dev/null 2>&1 \
       || die "external authorization $authorization fails its schema — mint a NEW round"
