@@ -122,9 +122,12 @@ assert_file_contains "the failing control is counted, not just printed" \
     "$TMP/green.log" "1 controls, 1 failing, 0 orphaned"
 
 # --- a junk job width is refused ------------------------------------------
-# Not clamped and not defaulted: a width the runner cannot read would either
-# launch every control at once or launch none, and a run that launched none
-# reports "0 failing" like a clean one.
+# Not clamped and not defaulted. Left to reach the batching predicate, a width
+# outside the grammar decides two ways and neither is the one the caller asked
+# for: on Bash 4.4 and newer arithmetic honours set -u, so the unbound name
+# aborts the run with controls already launched, and on 4.0 through 4.2 the
+# same name reads as 0, the batch collapses to one, and the whole roster runs
+# serially.
 jobs_log="$TMP/jobs.log"
 CONTROL_JOBS=some bash "$matched/tests/must-fail-controls.sh" >"$jobs_log" 2>&1
 rc=$?

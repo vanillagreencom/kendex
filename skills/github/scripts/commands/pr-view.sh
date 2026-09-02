@@ -75,10 +75,11 @@ Errors:
   Emits structured JSON on stdout ({"status":..., "error":..., "detail":...,
   "exit_code":..., "number":...}) and exits nonzero. status is one of no_pr,
   auth_error, token_resolution_failed, token_resolution_timeout,
-  token_resolution_unavailable, auth_timeout, gh_timeout, bad_timeout, or
-  gh_error. bad_timeout exits 2 and names the KENDEX_GITHUB_*_TIMEOUT setting
-  whose value is not a number of seconds to one decimal place; nothing ran.
-  Raw gh/op detail is preserved in stderr and the JSON detail field.
+  token_resolution_unavailable, auth_timeout, gh_timeout, bad_timeout,
+  unsupported_flag, or gh_error. bad_timeout exits 2 and names the
+  KENDEX_GITHUB_*_TIMEOUT setting whose value is not a number of seconds to
+  one decimal place; nothing ran. Raw gh/op detail is preserved in stderr and
+  the JSON detail field.
 
 Examples:
   github.sh pr-view              # View PR for current branch

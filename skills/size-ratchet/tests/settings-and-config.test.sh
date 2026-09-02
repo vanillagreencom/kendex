@@ -294,6 +294,23 @@ run_raw SIZE_RATCHET_SETTINGS_FILE=absent.settings.toml || true
   && ok "an ABSENT plain file still falls back to the built-in default (control)" \
   || bad "an ABSENT plain file still falls back to the built-in default (control)" "rc=$RC out=$OUT"
 
+echo "=== a resolved source carrying a newline is never memoized ==="
+# Under --staged the library resolves against a snapshot and records each
+# answer in a one-line memo. A resolution with a newline in it cannot come
+# back out of one: the read returns its first line, which names no file, so
+# every key after the first falls to its default with nothing said. The memo
+# is what makes this reachable, and a settings path is the resolution, so an
+# untracked file whose name carries a newline is the whole condition.
+new_repo memo
+mkfile notes.md 40
+git -C "$R" add -A
+NL_SETTINGS="$(printf 'two\nlines.settings.toml')"
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "12"\nSIZE_RATCHET_CLASSES = "*.md=5"\n' >"$R/$NL_SETTINGS"
+run_raw SIZE_RATCHET_SETTINGS_FILE="$NL_SETTINGS" -- --staged || true
+case "$OUT" in *"threshold 12"*"*.md=5"*) true ;; *) false ;; esac \
+  && ok "the configured threshold and classes still decide a --staged run" \
+  || bad "a newline in the resolved source falls back to the defaults" "rc=$RC out=$OUT"
+
 echo "=== the /dev/null sentinel selects NO settings source, the dotenv layer included ==="
 # It named only the settings file, so .env.local (read before it) kept
 # deciding: a caller asking for built-in defaults got whatever the

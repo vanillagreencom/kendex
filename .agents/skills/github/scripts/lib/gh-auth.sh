@@ -87,6 +87,15 @@ kendex_github_resolve_op_reference_to_var() {
       export KENDEX_GITHUB_TOKEN_ERROR_TYPE="token_resolution_timeout"
       export KENDEX_GITHUB_TOKEN_ERROR="Timed out resolving ${label} 1Password reference after ${op_timeout}s"
       ;;
+    125)
+      # op never ran, so this is a resolution that was never attempted, not
+      # one that failed. The capture above folded the runner's own line into
+      # op_output, and both callers take the failure as || true: the token is
+      # dropped and the command runs unauthenticated with nothing said.
+      echo "Warning: KENDEX_GITHUB_OP_TIMEOUT is '${op_timeout}', not a number of seconds to one decimal place; ${label} was never resolved." >&2
+      export KENDEX_GITHUB_TOKEN_ERROR_TYPE="token_resolution_unavailable"
+      export KENDEX_GITHUB_TOKEN_ERROR="KENDEX_GITHUB_OP_TIMEOUT is '${op_timeout}', not a number of seconds to one decimal place, so ${label} was never resolved"
+      ;;
     *)
       export KENDEX_GITHUB_TOKEN_ERROR_TYPE="token_resolution_failed"
       export KENDEX_GITHUB_TOKEN_ERROR="Failed to resolve ${label} 1Password reference"
@@ -106,6 +115,16 @@ kendex_github_sanitize_gh_env() {
     return 0
   else
     auth_status=$?
+  fi
+  # 124 is the bound expiring, 125 a bound the runner could not read: neither
+  # check reached gh, and the keyring probe below runs under the same bound,
+  # so falling through spends that probe and then returns 0 as if the token
+  # had been judged sound. The runner names an unreadable bound on its own
+  # stderr, but these checks discard that with gh's chatter, and this prologue
+  # runs ahead of every subcommand — so the 125 arm says it again here.
+  if [[ "$auth_status" -eq 125 ]]; then
+    echo "Warning: KENDEX_GITHUB_AUTH_TIMEOUT is '${KENDEX_GITHUB_AUTH_TIMEOUT:-10}', not a number of seconds to one decimal place; GH_TOKEN/GITHUB_TOKEN went unchecked." >&2
+    return 0
   fi
   [[ "$auth_status" -eq 124 ]] && return 0
   if [[ "${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-}" == "GH_BOT_TOKEN" ]]; then

@@ -24,11 +24,13 @@ CONTROL_JOBS="${CONTROL_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 
 WORK="$(mktemp -d)"
 trap 'rm -rf -- "${WORK:?}"' EXIT
-# An interrupted run takes its controls with it. Only the pids this script
-# recorded when it launched them: every lane on this machine runs these same
-# suites out of its own worktree, so an argv match would reach theirs too.
-# Bash ignores INT in the async children of a shell without job control, so
-# Ctrl-C never reaches them on its own; TERM does.
+# An interrupted run signals the control jobs it launched, and only the pids
+# it recorded when it launched them: every lane on this machine runs these
+# same suites out of its own worktree, so an argv match would reach theirs
+# too. Bash ignores INT in the async children of a shell without job control,
+# so Ctrl-C never reaches them on its own; TERM does. The `timeout` child each
+# control spawned is a grandchild this does not reach; it retires itself
+# within SUITE_TIMEOUT.
 trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 130' INT TERM
 
 # --- control vocabulary -----------------------------------------------------
@@ -42,7 +44,9 @@ die() {
 	exit 2
 }
 
-# A junk width would otherwise launch every control at once, or none.
+# A junk width otherwise reaches the batching predicate, where Bash 4.4 and
+# newer abort on the unbound name mid-roster and 4.0 through 4.2 read it as 0
+# and run every control one at a time.
 [[ "$CONTROL_JOBS" =~ ^[1-9][0-9]*$ ]] ||
 	die "CONTROL_JOBS must be a positive integer, got: $CONTROL_JOBS"
 

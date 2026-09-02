@@ -88,7 +88,16 @@ kendex_github_run_bounded() {
   shift
 
   local restore_monitor=0 pid="" ticks=0 max_ticks status=0 target=""
-  max_ticks="$(kendex_github_bound_ticks "$seconds")" || return 125
+  if ! max_ticks="$(kendex_github_bound_ticks "$seconds")"; then
+    # 125 arrives having run nothing, so there is no output to explain it and
+    # most callers can only pass it upward — an auth check that never ran, a
+    # token that never resolved, and no name for the setting behind either.
+    # Said once, here, where the grammar is read: no call site can go quiet
+    # again by forgetting to say it.
+    printf "bounded: '%s' is not a number of seconds to one decimal place; nothing ran\n" \
+      "$seconds" >&2
+    return 125
+  fi
   if [ "$max_ticks" -eq 0 ]; then
     "$@"
     return

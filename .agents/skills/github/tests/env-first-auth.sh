@@ -25,6 +25,17 @@ assert_eq() {
   fi
 }
 
+assert_contains() {
+  local haystack="$1" needle="$2" name="$3"
+  if [[ "$haystack" == *"$needle"* ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        wanted: %s\n        got:    %s\n' "$name" "$needle" "$haystack"
+  fi
+}
+
 assert_file_missing() {
   local path="$1" name="$2"
   if [[ ! -e "$path" ]]; then
@@ -54,6 +65,8 @@ chmod +x "$TMP_ROOT/bin/op"
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+[[ -z "${STUB_GH_CALLS:-}" ]] || printf '%s\n' "$*" >>"$STUB_GH_CALLS"
 
 _token_ok() {
   local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
@@ -323,6 +336,34 @@ else
   printf '  FAIL  the refusal names the identity fallback it is preventing\n        stderr: %s\n' "$(cat "$TMP_ROOT/partial-bot.err")"
 fi
 rm -f "$TMP_ROOT/repo/kendex.settings.toml" "$TMP_ROOT/repo/.env.local"
+
+# The prologue sanitizer runs ahead of every subcommand, and its checks are
+# bounded. A bound the runner cannot read answers 125 having invoked nothing —
+# not the 124 the timeout arm reads — and the keyring probe under the same
+# bound answers 125 too, so the function used to reach its unconditional
+# `return 0` with gh never called: an auth guard reporting a token sound
+# having looked at nothing, and a bad token surviving into every later call.
+sanitize_run() { # env-assignment... — writes sanitize.calls and sanitize.err
+  : >"$TMP_ROOT/sanitize.calls"
+  (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+    env STUB_GH_CALLS="$TMP_ROOT/sanitize.calls" STUB_KEYRING_OK=1 \
+      GH_TOKEN=ghp_BADENV "$@" bash -c '
+        source "'"$REPO_ROOT"'/skills/github/scripts/lib/gh-auth.sh"
+        kendex_github_sanitize_gh_env
+      ') 2>"$TMP_ROOT/sanitize.err"
+}
+gh_reached() { [[ -s "$TMP_ROOT/sanitize.calls" ]] && echo invoked || echo silent; }
+
+sanitize_run
+assert_eq "$(gh_reached)" "invoked" "a readable bound puts the token in front of gh"
+assert_contains "$(cat "$TMP_ROOT/sanitize.err")" \
+  "unsetting them and using gh keyring auth" \
+  "and a token gh rejects is dropped for the keyring, out loud"
+
+sanitize_run KENDEX_GITHUB_AUTH_TIMEOUT=2.55
+assert_eq "$(gh_reached)" "silent" "an unreadable bound reaches no gh call at all"
+assert_contains "$(cat "$TMP_ROOT/sanitize.err")" "'2.55'" \
+  "and the run names the bound it could not read rather than passing silently"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
