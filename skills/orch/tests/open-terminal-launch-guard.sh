@@ -11,8 +11,9 @@
 # lane whose worktree was removed while it ran. Refusing here closes it
 # whatever produced the launch, without asking who did.
 #
-# Everything external is stubbed: the GUI terminal (invocations logged, so a
-# refusal that still launched is visible), gh, and the worktree CLI.
+# Everything external is stubbed: the GUI terminal and tmux (invocations
+# logged, so a refusal that still launched is visible), gh, and the worktree
+# CLI.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,11 +44,16 @@ cat > "$BIN/term" <<'EOF'
 printf 'term %s\n' "$*" >> "$OT_TERM_LOG"
 exit 0
 EOF
+cat > "$BIN/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf 'tmux %s\n' "$*" >> "$OT_TMUX_LOG"
+exit 1
+EOF
 cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 exit 1
 EOF
-chmod +x "$BIN/term" "$BIN/gh"
+chmod +x "$BIN/term" "$BIN/tmux" "$BIN/gh"
 
 # Stub worktree CLI, one shape per $STUB_MODE:
 #   empty    exits 0 printing nothing (a stub that escaped its fixture)
@@ -78,15 +84,17 @@ stage() {
 REPO="$TMP_ROOT/repo"
 stage "$REPO" "$SRC_OT"
 
-# run NAME OT MODE ARGS... — sets RC, ERR and TERM_LOG_TEXT.
+# run NAME OT MODE ARGS... — sets RC, ERR, TERM_LOG_TEXT and TMUX_LOG_TEXT.
 run() {
   local name="$1" ot="$2" mode="$3"
   shift 3
-  local term_log="$TMP_ROOT/$name.term"
+  local term_log="$TMP_ROOT/$name.term" tmux_log="$TMP_ROOT/$name.tmux"
   : > "$term_log"
+  : > "$tmux_log"
   set +e
   PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" STUB_MODE="$mode" \
-    OT_TERM_LOG="$term_log" TMUX="" TERMINAL=term \
+    OT_TERM_LOG="$term_log" OT_TMUX_LOG="$tmux_log" \
+    TMUX="${OT_TMUX_VALUE:-}" TERMINAL=term \
     "$ot" --cmd 'echo {item}' "$@" >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"
   RC=$?
   set -e
@@ -107,6 +115,7 @@ run() {
     sleep 1
   fi
   TERM_LOG_TEXT="$(cat "$term_log")"
+  TMUX_LOG_TEXT="$(cat "$tmux_log")"
 }
 
 echo "=== open-terminal: a launch at a working directory that is gone is refused ==="
@@ -122,6 +131,19 @@ assert_eq "$RC" "1" "a GUI launch at a deleted worktree fails the item"
 assert_contains "$ERR" "Error: refusing to launch 'CC-1': working directory '$TMP_ROOT/gone/CC-1' does not exist" \
   "the refusal names the directory that is gone"
 assert_eq "$TERM_LOG_TEXT" "" "no terminal was launched at the deleted directory"
+
+# The tmux path refuses at the same layer, before the first tmux call: a window
+# created with `-c` at a missing directory is the same broken lane. TMUX travels
+# through the run helper, never as an assignment prefixed onto a function call:
+# bash keeps such an assignment in the shell after the call, and it would then
+# decide the mode of every case below.
+OT_TMUX_VALUE=stub,1,0
+run tmux_missing "$REPO/scripts/open-terminal" missing --tmux CC-1
+OT_TMUX_VALUE=""
+assert_eq "$RC" "1" "a tmux launch at a deleted worktree fails the item"
+assert_contains "$ERR" "Error: refusing to launch 'CC-1': working directory '$TMP_ROOT/gone/CC-1' does not exist" \
+  "the tmux path refuses in the same words"
+assert_eq "$TMUX_LOG_TEXT" "" "tmux was never called for the deleted directory"
 
 echo
 echo "=== the refusal can fail: with the guard gone the window opens ==="
@@ -153,6 +175,17 @@ run mutant_empty "$MUTANT_REPO/scripts/open-terminal" empty --ghostty CC-1
 assert_eq "$RC" "0" "control: without the guard the empty-path launch is reported as successful"
 assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" \
   "control: and a terminal really is opened for the empty working directory"
+
+# The tmux path carries the same control. The stub tmux exits 1, so the item
+# fails either way and the LOG is what separates the two: refused means tmux was
+# never reached, and this case proves the tmux row above reds the moment its
+# `launchable_dir` call goes, rather than passing on a harness that could not
+# reach tmux at all.
+OT_TMUX_VALUE=stub,1,0
+run mutant_tmux "$MUTANT_REPO/scripts/open-terminal" missing --tmux CC-1
+OT_TMUX_VALUE=""
+assert_contains "$TMUX_LOG_TEXT" "tmux list-windows" \
+  "control: without the guard the tmux path really does place a window at the deleted directory"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
