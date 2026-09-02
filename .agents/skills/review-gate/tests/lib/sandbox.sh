@@ -29,12 +29,17 @@ bad() {
 VALIDATE_REL=".agents/skills/review-gate/scripts/validate.sh"
 WORKFLOW_REL=".agents/skills/review-gate/scripts/validate-workflow.sh"
 # Built once — the `git init` is paid here, not per case — and copied per
-# case. The copies are NOT shareable at any price: cases chmod and overwrite
-# the vendored scripts inside their own sandbox, so a reflinked or symlinked
-# tree would let one case corrupt the next. What a suite can change is the
-# entry point each case runs, which is DRIVER_REL below; the two entry points
-# differ by an order of magnitude, and the copy's share of a case varies with
-# the driver and with whether TMPDIR is tmpfs, so measure before assuming.
+# case. A symlinked tree would not do: cases chmod and overwrite the vendored
+# scripts inside their own sandbox, and through a symlink those writes land on
+# the original. A reflink is isolated, since copy-on-write gives each case its
+# own inode, but it is unavailable where this suite runs. `cp --reflink=always`
+# fails with "Operation not supported" on tmpfs, a common TMPDIR, and the shard
+# runs on ubuntu-latest, whose ext4 disk has no reflink either; `--reflink=auto`
+# then falls back to a full copy without saying so. It would also buy little,
+# since the copies are not the bulk of this suite's runtime. What a suite can
+# change is the entry point each case runs, which is DRIVER_REL below; the two
+# entry points differ by an order of magnitude, and the copy's share of a case
+# varies with the driver and with whether TMPDIR is tmpfs, so measure first.
 PRISTINE="$TMP/pristine"
 mkdir -p "$PRISTINE/.agents/skills" "$PRISTINE/.github/workflows" "$PRISTINE/docs"
 cp -R "$SKILL_DIR" "$PRISTINE/.agents/skills/review-gate"
