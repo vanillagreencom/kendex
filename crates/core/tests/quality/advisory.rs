@@ -93,33 +93,23 @@ fn installed_rows_name_the_harness_and_location_the_scanner_found() {
         2 * kendex_core::model::HarnessId::ALL.len(),
         "the scanner should return each harness that reads the installs"
     );
-    assert!(rows.iter().all(|row| row.targets.len() == 1));
-    let installed: std::collections::BTreeSet<_> = rows
-        .iter()
-        .map(|row| (row.name.as_str(), row.targets[0].harness))
-        .collect();
-    assert_eq!(
-        installed,
-        ["clean", "hostile"]
-            .into_iter()
-            .flat_map(|name| {
-                kendex_core::model::HarnessId::ALL
-                    .into_iter()
-                    .map(move |harness| (name, harness))
-            })
-            .collect()
-    );
-    for row in rows {
-        let target = &row.targets[0];
-        let harness_dir = match target.harness {
+    for harness in kendex_core::model::HarnessId::ALL {
+        let harness_dir = match harness {
             kendex_core::model::HarnessId::Claude => ".claude",
-            kendex_core::model::HarnessId::Codex => ".agents",
-            kendex_core::model::HarnessId::Opencode
+            kendex_core::model::HarnessId::Codex
+            | kendex_core::model::HarnessId::Opencode
             | kendex_core::model::HarnessId::Cursor
             | kendex_core::model::HarnessId::Pi
             | kendex_core::model::HarnessId::Gemini
             | kendex_core::model::HarnessId::Copilot => ".agents",
         };
-        assert!(target.location.contains(harness_dir), "{target:?}");
+        for name in ["clean", "hostile"] {
+            let row = rows
+                .iter()
+                .find(|row| row.name == name && row.targets[0].harness == harness)
+                .unwrap();
+            assert_eq!(row.targets.len(), 1);
+            assert!(row.targets[0].location.contains(harness_dir), "{row:?}");
+        }
     }
 }
