@@ -138,7 +138,12 @@ lives in one capability table read by core and UI.
 10. Writes are byte-faithful where kendex edits in place: an edit changes
     the keys it names and nothing else, newline included, and a file it
     cannot read is refused, not rewritten. kendex.toml is edited that way
-    too, minus its line endings. Change detection compares exact bytes.
+    too, minus its line endings and minus one shape: an entry of a list
+    the write changed, standing in a slot the entries around it do not fix
+    as its own, also loses the keys the model does not carry — dropping
+    them is visible where letting them ride into a declaration a person
+    never put them in is not (`manifest::fold`). Change detection compares
+    exact bytes.
 11. Validation precedes mutation. Every input check for an operation runs
     before its first durable write, and a rejected operation leaves
     manifest, lock, and install tree byte-identical. Every rendering is

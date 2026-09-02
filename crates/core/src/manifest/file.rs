@@ -144,8 +144,9 @@ pub(super) fn is_true(value: &bool) -> bool {
 /// and the keys the manifest gained or dropped. A write that changes nothing
 /// writes nothing, the way a structured config edit does.
 ///
-/// One shape reaches further than the keys it names, and the fold's own module
-/// doc states it: an entry of a list the write CHANGED can only be placed by
+/// One shape reaches further than the keys it names, which is why ARCHITECTURE
+/// invariant 10 states it as an exception and the fold's own module doc
+/// explains it: an entry of a list the write CHANGED can only be placed by
 /// position, and what it finds there depends on whether the entries around it
 /// forced that position. Forced, it keeps the comment written about that
 /// position and the keys the model does not spell — which is what an edit
