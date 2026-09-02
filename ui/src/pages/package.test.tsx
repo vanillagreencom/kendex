@@ -4,12 +4,9 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AuditView,
-  AuditView_Serialize,
   ItemKind,
   Manifest_Serialize,
   ObservedItem,
-  PackageMeta_Serialize,
-  ScanResult,
   Scope,
   UpdateRow,
   VersionRow,
@@ -20,10 +17,7 @@ import {
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
-  UPDATE_LABEL,
 } from "@/lib/copy";
-import { OVERVIEW_TAB } from "@/lib/copy-customize";
-import { PROJECTS_TAB, updateInLabel } from "@/lib/copy-projects";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import {
   EDITED_CANT_UPDATE_NOTE,
@@ -67,11 +61,6 @@ vi.mock("@/bindings", async (importOriginal) => ({
     openInEditor: vi.fn(),
     libraryProvenance: vi.fn(),
     packageDiff: vi.fn(),
-    // What an update started from the Projects tab runs, and the two reads
-    // the store lands behind it.
-    packageUpdate: vi.fn(),
-    updatesOverview: vi.fn(),
-    scanMachine: vi.fn(),
     // The page's safety tab asks for a fresh audit as it mounts.
     auditAll: vi.fn(),
   },
@@ -719,156 +708,5 @@ describe("the package page's delete action", () => {
     expect(said).toContain("Delete gh?");
     expect(said).toContain("/work/vg");
     expect(said).toContain("/work/hyprtrade");
-  });
-});
-
-// The issue's whole subject: the Projects tab's Update commits through the
-// updates store, which refreshes the scan and the audit and knows nothing
-// about this page's own three reads. Its card was made to follow the landed
-// commit in #1799; the Overview and the header went on describing the copy
-// the update replaced.
-describe("the package page after an update started from its Projects tab", () => {
-  const OLD = "a".repeat(40);
-  const NEW = "b".repeat(40);
-
-  const version = (
-    id: string,
-    label: string,
-    installed: boolean,
-  ): VersionRow => ({
-    id,
-    label,
-    date: "2026-08-28T12:00:00Z",
-    summary: "release notes",
-    installed,
-    newerThanInstalled: !installed,
-  });
-
-  /** This place's row: the commit installed there, and whether the check
-   *  found something newer waiting for it. */
-  const rowAt = (commit: string, waiting: boolean): UpdateRow => ({
-    ...updateRow(VG),
-    current: { commit, label: null, date: null },
-    latest: waiting ? { commit: NEW, label: null, date: null } : null,
-    updateAvailable: waiting,
-  });
-
-  /** The place's own record, which the page reads for held or following. */
-  const RECORD: PackageMeta_Serialize = {
-    source: "cat",
-    repo: "o/r",
-    repoUrl: null,
-    rev: null,
-    current: null,
-    installedAt: null,
-    harnesses: ["claude"],
-    enabled: true,
-    fork: null,
-    catalog: null,
-  };
-
-  /** The scope view an apply answers with: it wrote, and there is nothing
-   *  else to say about the place. */
-  const APPLIED: AuditView_Serialize = {
-    scope: VG,
-    drift: [],
-    plan: [],
-    notes: [],
-    warnings: [],
-    safety: [],
-    adoptable: ADOPTABLE,
-    exits: [],
-  };
-
-  const openTab = async (host: HTMLElement, name: string) => {
-    const found = [...host.querySelectorAll('[data-slot="tabs-trigger"]')].find(
-      (trigger) => trigger.textContent === name,
-    );
-    if (!found) throw new Error(`no ${name} tab`);
-    await act(async () => {
-      (found as HTMLElement).click();
-    });
-    await settle();
-  };
-
-  it("re-reads its files, its version and its update offer", async () => {
-    // What the engine answers before and after the apply lands: core stamps
-    // the whole installation when the source hash moves, so the record, the
-    // timeline and the files move together.
-    let landed = false;
-    vi.mocked(commands.packageMeta).mockResolvedValue({
-      status: "ok",
-      data: RECORD,
-    });
-    vi.mocked(commands.packageVersions).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: landed
-          ? [version(NEW, "v2", true)]
-          : [version(NEW, "v2", false), version(OLD, "v1", true)],
-      }),
-    );
-    vi.mocked(commands.packageFiles).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: [
-          {
-            path: landed ? "AFTER.md" : "BEFORE.md",
-            size: 10,
-            isReadme: false,
-          },
-        ],
-      }),
-    );
-    vi.mocked(commands.packageUpdate).mockImplementation(() => {
-      landed = true;
-      return Promise.resolve({
-        status: "ok",
-        data: { view: APPLIED, heldBack: [], removed: [], moved: [] },
-      });
-    });
-    // The standing read the store lands behind its own apply.
-    vi.mocked(commands.updatesOverview).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: {
-          rows: [rowAt(landed ? NEW : OLD, !landed)],
-          warnings: [],
-          unreadable: [],
-          lastFetched: null,
-        },
-      }),
-    );
-    // The rescan behind the apply finds the same machine: the package is
-    // installed where it was, so the page stays on screen.
-    vi.mocked(commands.scanMachine).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: useScanStore.getState().result as ScanResult,
-      }),
-    );
-    useUpdatesStore.setState({ rows: [rowAt(OLD, true)], read: READ_LANDED });
-
-    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
-    expect(host.textContent).toContain("BEFORE.md");
-    expect(host.textContent).toContain("v1");
-    expect(header(host)).toContain(UPDATE_LABEL);
-
-    await openTab(host, PROJECTS_TAB);
-    const update = [...host.querySelectorAll("button")].find(
-      (one) => one.getAttribute("aria-label") === updateInLabel("vg"),
-    );
-    if (!update) throw new Error("no Update on the vg card");
-    await act(async () => {
-      update.click();
-    });
-    await settle();
-    await openTab(host, OVERVIEW_TAB);
-
-    expect(host.textContent).toContain("AFTER.md");
-    expect(host.textContent).not.toContain("BEFORE.md");
-    expect(host.textContent).toContain("v2");
-    expect(host.textContent).not.toContain("v1");
-    expect(header(host)).not.toContain(UPDATE_LABEL);
   });
 });

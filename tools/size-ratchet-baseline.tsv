@@ -118,5 +118,4 @@ skills/size-ratchet/scripts/lib/settings.sh	485
 skills/size-ratchet/scripts/size-ratchet	981
 skills/worktree/scripts/worktree	4530
 skills/worktree/scripts/worktree-session-guard	442
-ui/src/pages/package.test.tsx	874
 ui/src/stores/settings.ts	311
