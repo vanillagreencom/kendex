@@ -1758,12 +1758,11 @@ baseline_repointed() { # CANDIDATE-BASELINE — violations on stdout
 }
 
 # Whether the change touches a file that can name the baseline. The list is
-# the one lib/settings.sh resolves through, derived here rather than exported
-# from it: that library is vendored byte-identical into three skills and
-# pinned by tools/tests/vendored-settings-libs.test.sh, so a helper added
-# there is a helper added to all three. An explicit SIZE_RATCHET_SETTINGS_FILE
-# consults only itself, /dev/null selects no source at all, and the dotenv
-# layer applies wherever a TOML layer does.
+# the one this skill's own lib/settings.sh resolves through, restated here
+# because that library exports no list to read. Keep the two in step: a
+# source added there is a source to add below. An explicit
+# SIZE_RATCHET_SETTINGS_FILE consults only itself, /dev/null selects no
+# source at all, and the dotenv layer applies wherever a TOML layer does.
 diff_touches_settings() { # — 0 when a settings source is in the change
   local p src explicit
   case "${SIZE_RATCHET_SETTINGS_FILE:-}" in
