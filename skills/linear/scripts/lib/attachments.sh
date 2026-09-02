@@ -20,35 +20,34 @@ linear_attach_canonical_existing_dir() {
     (cd "$path" && pwd -P)
 }
 
-# Same precedence as cache.sh's resolver, for when this library is sourced
-# without it; alongside cache.sh the first branch already carries the answer.
+# The attachment store sits inside the cache, so it takes the root cache.sh
+# already resolved rather than resolving one of its own. Every command script
+# sources lib/cache.sh immediately before this file, and cache.sh's top-level
+# assignment either aborts the process or leaves a non-empty root, so a second
+# copy of that resolution could only ever diverge from it. An unset value means
+# a command script sourced this library without cache.sh, which is a wiring
+# mistake to name rather than to paper over with a fallback.
 linear_attach_project_root() {
-    if [[ -n "${CACHE_PROJECT_ROOT:-}" ]]; then
-        linear_attach_canonical_existing_dir "$CACHE_PROJECT_ROOT"
-        return
+    if [[ -z "${CACHE_PROJECT_ROOT:-}" ]]; then
+        echo '{"error": "attachments.sh requires lib/cache.sh to be sourced first: CACHE_PROJECT_ROOT is unset"}' >&2
+        return 1
     fi
-    if [[ -n "${LINEAR_CACHE_ROOT:-}" ]]; then
-        if ! linear_attach_canonical_existing_dir "$LINEAR_CACHE_ROOT"; then
-            jq -cn --arg root "$LINEAR_CACHE_ROOT" \
-                '{error: ("LINEAR_CACHE_ROOT is not an existing directory: " + $root)}' >&2
-            return 1
-        fi
-        return 0
-    fi
-    if [[ -n "${PROJECT_ROOT:-}" ]]; then
-        linear_attach_canonical_existing_dir "$PROJECT_ROOT"
-        return
-    fi
-
-    local root
-    root="$(git rev-parse --show-toplevel 2>/dev/null)"
-    linear_attach_canonical_existing_dir "$root"
+    linear_attach_canonical_existing_dir "$CACHE_PROJECT_ROOT"
 }
 
 ATTACH_CACHE_PROJECT_ROOT="$(linear_attach_project_root)"
 ATTACH_DIR="$ATTACH_CACHE_PROJECT_ROOT/.cache/linear/attachments"
 ATTACH_FILES_DIR="$ATTACH_DIR/files"
 ATTACH_MANIFEST="$ATTACH_DIR/manifest.json"
+
+# Where the project files carrying LINEAR_API_KEY are read from. That is the
+# repository this invocation runs in, never the cache root: LINEAR_CACHE_ROOT
+# redirects where attachments are stored, and letting it also decide which
+# .env.local is read would turn a caller who redirected the cache into a caller
+# with no API key, whose bundle then silently downloads nothing. common.sh
+# resolves that repository once and aborts if it cannot, so this takes its
+# answer rather than asking git a second time.
+ATTACH_PROJECT_ENV_ROOT="${PROJECT_ROOT:-}"
 
 # Viewable file types (agents can read these directly)
 ATTACH_VIEWABLE_EXTENSIONS="png|jpg|jpeg|gif|webp|svg|pdf|md|txt|rs|ts|js|py|sh|json|toml|yaml|yml|csv|log|html|css|ron"
@@ -137,7 +136,7 @@ attach_download_url() {
         lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         # shellcheck source=kendex-env.sh
         source "$lib_dir/kendex-env.sh"
-        kendex_load_project_env "$ATTACH_CACHE_PROJECT_ROOT"
+        kendex_load_project_env "$ATTACH_PROJECT_ENV_ROOT"
     fi
 
     if ! resolve_linear_api_key; then

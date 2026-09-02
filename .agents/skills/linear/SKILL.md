@@ -62,7 +62,7 @@ linear.sh sync --reconcile
 
 Both `issues list` and `cache issues list` return the first 75 rows by default and warn on stderr when that truncated the result; `--max` fetches everything. `--limit N` caps a CACHE listing's total; on the live path it is the per-page size (`--max --limit N` pages at N under a 200-page cap that warns when it truncates). An audit that must see the whole backlog passes `--max`.
 
-The cache lives at `.cache/linear` under the physical worktree root from `git rev-parse --show-toplevel`, or under `LINEAR_CACHE_ROOT` when the caller sets it — a value naming no directory is refused rather than falling back. A missing-cache error names the `cache_dir` and `meta_path` it checked. A cache file that exists but does not parse is reported as corrupt, never as an empty result.
+The cache lives at `.cache/linear` under the physical worktree root from `git rev-parse --show-toplevel`, or under `LINEAR_CACHE_ROOT` when the caller sets it, and a value naming no directory is refused rather than falling back. That redirect moves the cache and the attachment store only; the API key and other project settings still come from the repository the command runs in. A missing-cache error names the `cache_dir` and `meta_path` it checked. A cache file that exists but does not parse is reported as corrupt, never as an empty result.
 
 In a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed symlink but is a real directory, `sync` refuses before touching the API and names the repair (`worktree fix-links <PATH>` from the main checkout). Repos whose `WORKTREE_SYMLINKS` deliberately excludes `.cache` are exempt.
 

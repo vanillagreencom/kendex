@@ -16,18 +16,19 @@ linear_cache_canonical_existing_dir() {
 # LINEAR_CACHE_ROOT is the caller's redirect — the cache, and the attachment
 # store beside it, live under the directory it names. It is read before
 # anything derived from where the process is standing, so a caller that sets it
-# cannot be overruled by the repository it happens to be in. PROJECT_ROOT used
-# to be documented as that channel and could not work, because common.sh
-# recomputes it from `git rev-parse` on every source, so a test suite could not
-# isolate its cache and wrote fixture ids into the real one (kendex#799).
-# It is a distinct name rather than a revived PROJECT_ROOT because several orch
-# scripts export PROJECT_ROOT as "the repository the orchestrator is driving",
-# and reading that as a cache location would move a real cache underneath them.
+# cannot be overruled by the repository it happens to be in.
 #
-# A value naming no directory is refused, not ignored: falling back to the git
-# root is exactly the failure the redirect exists to prevent.
+# PROJECT_ROOT is not that channel and cannot become one: common.sh assigns it
+# from `git rev-parse` on every source, so a caller's value never survives to
+# be read here. It also means something else — several orch scripts export it
+# as "the repository the orchestrator is driving" — and reading that as a cache
+# location would move a real cache underneath them (kendex#799).
+#
+# A set value naming no directory is refused, not ignored, and an empty string
+# names no directory: falling back to the git root is exactly the failure the
+# redirect exists to prevent.
 linear_cache_project_root() {
-    if [[ -n "${LINEAR_CACHE_ROOT:-}" ]]; then
+    if [[ -n "${LINEAR_CACHE_ROOT+x}" ]]; then
         if ! linear_cache_canonical_existing_dir "$LINEAR_CACHE_ROOT"; then
             jq -cn --arg root "$LINEAR_CACHE_ROOT" \
                 '{error: ("LINEAR_CACHE_ROOT is not an existing directory: " + $root)}' >&2
@@ -49,13 +50,18 @@ linear_cache_project_root() {
 CACHE_PROJECT_ROOT="$(linear_cache_project_root)"
 CACHE_DIR="$CACHE_PROJECT_ROOT/.cache/linear"
 
-# One lock guards every comment-file mutation, rather than one per issue. A
-# lock file cannot be removed once used — unlinking it while another process
-# holds it open lets a third lock a fresh inode, so two writers each hold "the"
-# lock — so a per-issue lock left a permanent .lock beside every issue whose
-# comments were ever written, hundreds of them (kendex#799). One lock file
-# cannot accumulate, and comment writes are far too rare for serializing them
-# across issues to cost anything.
+# The three single-comment helpers below — cache_append_comment,
+# cache_update_comment, cache_delete_comment — share this one lock instead of
+# one named after each issue. A lock file cannot be removed once used, since
+# unlinking it while another process holds it open lets a third lock a fresh
+# inode and two writers then each hold "the" lock. So a per-issue lock left a
+# permanent .lock beside every issue whose comments were ever written, hundreds
+# of them (kendex#799). One lock file cannot accumulate, and comment writes are
+# far too rare for serializing them across issues to cost anything.
+#
+# The bulk writers do NOT take it and never did: cache_store_comments and
+# sync.sh's write_comments replace and delete these same files unlocked. A
+# comment write is serialized against another comment write, not against a sync.
 CACHE_COMMENTS_LOCK="$CACHE_DIR/.comments.lock"
 
 # =============================================================================
@@ -213,6 +219,22 @@ cache_lock() {
 
 cache_unlock() {
     exec 200>&- || true
+}
+
+# Take the shared comment lock on fd 202, which the caller's redirection has
+# already opened. One lock across issues means two `linear.sh comments` runs on
+# different issues now contend where per-issue locks never did, so the wait is
+# bounded the way cache_lock bounds the sync lock. Hold time is one jq and one
+# mv, so 30s means a stuck holder, not a slow one.
+cache_comments_flock() {
+    if flock -n 202; then
+        return 0
+    fi
+    echo "Comment cache lock held, waiting..." >&2
+    if ! flock -w 30 202; then
+        echo "Comment cache lock timeout after 30s: $CACHE_COMMENTS_LOCK" >&2
+        return 1
+    fi
 }
 
 # =============================================================================
@@ -480,7 +502,7 @@ cache_append_comment() {
     local comment_file="$CACHE_DIR/comments/$issue_id.json"
     cache_ensure_dir
     (
-        flock 202
+        cache_comments_flock
         if [[ -f "$comment_file" ]]; then
             jq --argjson new "$comment_json" '. + [$new]' \
                 "$comment_file" > "$comment_file.tmp"
@@ -499,7 +521,7 @@ cache_update_comment() {
     comment_id=$(echo "$comment_json" | jq -r '.id')
     [[ -n "$comment_id" && "$comment_id" != "null" ]] || return 0
     (
-        flock 202
+        cache_comments_flock
         # Merge: existing comment fields preserved, updated fields overwritten
         jq --argjson upd "$comment_json" \
             '[.[] | if .id == $upd.id then (. + $upd) else . end]' \
@@ -515,7 +537,7 @@ cache_delete_comment() {
         [[ -f "$f" ]] || continue
         if jq -e --arg id "$comment_id" 'any(.[]; .id == $id)' "$f" >/dev/null 2>&1; then
             (
-                flock 202
+                cache_comments_flock
                 jq --arg id "$comment_id" '[.[] | select(.id != $id)]' "$f" > "$f.tmp"
                 mv "$f.tmp" "$f"
             ) 202>"$CACHE_COMMENTS_LOCK"

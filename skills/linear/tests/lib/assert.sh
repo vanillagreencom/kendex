@@ -92,11 +92,16 @@ assert_at_exit() {
 # success, on a failed assertion, and on an abort alike, taking any lock file
 # written under it.
 #
-# A suite that needs the cache somewhere else — one standing up its own project
-# root, or one testing root resolution itself — points LINEAR_CACHE_ROOT at that
-# root instead, which must still be scratch it registered. The verdict refuses
+# A suite that stands up its own project root re-points LINEAR_CACHE_ROOT at
+# that root, which must still be scratch it registered. The verdict refuses
 # anything else: a suite that unsets the variable, or aims it at a directory it
 # does not own, is a suite writing to the real cache again.
+#
+# A suite whose subject IS the root resolution cannot do that — the redirect
+# outranks the git root, so pointing it anywhere answers the question under
+# test. Such a suite keeps this default and drops the variable per invocation
+# with `env -u LINEAR_CACHE_ROOT`, standing in scratch of its own so nothing
+# reaches the real cache. cache-root-git-worktree.test.sh is the example.
 assert_tmpdir ASSERT_CACHE_ROOT
 mkdir -p "$ASSERT_CACHE_ROOT/.cache/linear/comments"
 export LINEAR_CACHE_ROOT="$ASSERT_CACHE_ROOT"

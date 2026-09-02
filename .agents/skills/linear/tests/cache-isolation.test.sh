@@ -2,12 +2,10 @@
 # Regression for kendex#799: a test suite could not point the scripts at a
 # cache of its own, so every suite that created a comment or completed an issue
 # wrote its fixture identifiers into the developer's real .cache/linear.
-#
-# cache.sh documented PROJECT_ROOT as the redirect, and common.sh recomputed
-# PROJECT_ROOT from `git rev-parse` on every source — so the documented channel
-# was dead and entering a throwaway repo was the only thing that worked. The
-# redirect is now LINEAR_CACHE_ROOT, checked before anything derived from where
-# the process is standing.
+# Entering a throwaway repo was the only isolation that worked, and PROJECT_ROOT
+# cannot substitute for one — common.sh assigns it from `git rev-parse` on every
+# source, so a caller's value never survives. LINEAR_CACHE_ROOT is the redirect,
+# read before anything derived from where the process is standing.
 #
 # Locks in:
 #   A. LINEAR_CACHE_ROOT outranks the repository the process is standing in;
@@ -98,36 +96,76 @@ assert_eq "a refused read serves nothing from the standing repository's cache" "
 
 # --- D. a comment write leaves no lock file beside the issue ----------------
 
+# All three single-comment write-through helpers take the shared lock, so all
+# three are driven: cache_append_comment, cache_update_comment and
+# cache_delete_comment. Reverting any one of them to a per-issue lock file has
+# to redden here, or the accumulating .lock files come back through whichever
+# path was left uncovered. Each create is answered with a comment id naming its
+# issue, so the update and the delete below address a known one.
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
-cat >/dev/null
-printf '{"data":{"commentCreate":{"success":true,"comment":{"id":"comment-1","body":"ok","createdAt":"2026-08-29T00:00:00Z","updatedAt":"2026-08-29T00:00:00Z","user":{"name":"Test"},"issue":{"identifier":"CC-1","updatedAt":"2026-08-29T00:00:00Z"}}}}}___HTTP_CODE___200'
+payload="$(sed -n 's/^data = //p' <(cat) | jq -r)"
+query="$(jq -r '.query' <<<"$payload")"
+emit() { printf '%s___HTTP_CODE___200' "$1"; }
+comment() { # comment <id> <issue-identifier> <body>
+  printf '{"id":"%s","body":"%s","createdAt":"2026-08-29T00:00:00Z","updatedAt":"2026-08-29T00:00:00Z","user":{"name":"Test"},"issue":{"identifier":"%s","updatedAt":"2026-08-29T00:00:00Z"}}' \
+    "$1" "$3" "$2"
+}
+case "$query" in
+*CreateComment*)
+  issue="$(jq -r '.variables.input.issueId' <<<"$payload")"
+  emit "{\"data\":{\"commentCreate\":{\"success\":true,\"comment\":$(comment "c-$issue" "$issue" written)}}}" ;;
+*UpdateComment*)
+  id="$(jq -r '.variables.id' <<<"$payload")"
+  emit "{\"data\":{\"commentUpdate\":{\"success\":true,\"comment\":$(comment "$id" "${id#c-}" edited)}}}" ;;
+*DeleteComment*)
+  emit '{"data":{"commentDelete":{"success":true}}}' ;;
+*)
+  emit '{"errors":[{"message":"unexpected query"}]}' ;;
+esac
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-post_comment() { # post_comment <identifier>
+run_comments() { # run_comments <args...>
   (cd "$PROJ" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_CACHE_ROOT="$PROJ" \
     LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
-    bash "$LINEAR" comments create "$1" --body "written by the isolation suite")
+    bash "$LINEAR" comments "$@")
 }
 
-run_output OUT rc post_comment CC-1
-assert_eq "a mocked comment create exits zero" "$rc" 0
-run_output OUT rc post_comment CC-2
-assert_eq "a second comment create, on another issue, exits zero" "$rc" 0
-
 COMMENTS_DIR="$PROJ/.cache/linear/comments"
+assert_no_issue_locks() { # assert_no_issue_locks <what-just-ran>
+  assert_eq "no lock file is left beside an issue's comment file after $1" \
+    "$(find "$COMMENTS_DIR" -name '*.lock' | LC_ALL=C sort | tr '\n' ' ')" ""
+}
+
+run_output OUT rc run_comments create CC-1 --body "written by the isolation suite"
+assert_eq "a mocked comment create exits zero" "$rc" 0
+run_output OUT rc run_comments create CC-2 --body "written by the isolation suite"
+assert_eq "a second comment create, on another issue, exits zero" "$rc" 0
 assert "the comment reached the redirected cache" test -f "$COMMENTS_DIR/CC-1.json"
-assert_eq "no lock file is left beside any issue's comment file" \
-  "$(find "$COMMENTS_DIR" -name '*.lock' | LC_ALL=C sort | tr '\n' ' ')" ""
+assert_no_issue_locks "comments create"
+
+run_output OUT rc run_comments update c-CC-1 --body edited
+assert_eq "a mocked comment update exits zero" "$rc" 0
+assert_eq "the update reached the cached comment" \
+  "$(jq -r '.[0].body' "$COMMENTS_DIR/CC-1.json")" "edited"
+assert_no_issue_locks "comments update"
+
+run_output OUT rc run_comments delete c-CC-2
+assert_eq "a mocked comment delete exits zero" "$rc" 0
+assert_eq "the delete reached the cached comment" \
+  "$(jq -r 'length' "$COMMENTS_DIR/CC-2.json")" "0"
+assert_no_issue_locks "comments delete"
+
 assert "the one shared comment lock lives above the per-issue files" \
   test -f "$PROJ/.cache/linear/.comments.lock"
 
 # --- E. the assert lib redirects every suite, and refuses one that leaves ---
 
-# Two child suites, each a suite in its own right: one that does nothing but
-# assert, and one that throws the redirect away. The first must land in scratch
-# it did not have to ask for; the second must fail the verdict.
+# Three child suites, each a suite in its own right. One does nothing but
+# assert and must land in scratch it did not have to ask for; one throws the
+# redirect away and one aims it at a root it does not own, and both must fail
+# the verdict.
 write_child() { # write_child <path> <body>
   cat >"$1" <<CHILD
 #!/usr/bin/env bash

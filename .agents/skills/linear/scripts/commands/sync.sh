@@ -187,6 +187,13 @@ write_comments() {
     local comments_file="$1" scope_issues_file="$2"
     cache_ensure_dir
 
+    # One-time sweep of the per-issue lock files a pre-kendex#799 cache
+    # accumulated. Nothing opens those paths any more, comment writes share
+    # $CACHE_DIR/.comments.lock, so this cannot disturb a live lock; without it
+    # a cache that already carries them keeps them forever. Every cache reaches
+    # a sync and no read does, which is what makes this the place for it.
+    rm -f "$CACHE_DIR"/comments/*.json.lock
+
     # The scope both halves below answer to, derived once. Stating it twice is
     # what lets them disagree: a write side that ignores the scope the sweep
     # respects recreates an archived issue's file in the same run that deleted
