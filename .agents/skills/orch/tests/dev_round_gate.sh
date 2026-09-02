@@ -3,8 +3,9 @@
 # record dev-round-write stamps at delegation time. dev-artifact-check reads it
 # for both the delegated item set and the protected additions the round may
 # make, so anything that lets a check run WITHOUT that record, or lets a record
-# reach the additions probe in a shape dev-round-write could not have written,
-# is a bypass of the whole gate rather than one weak assertion.
+# reach the additions probe carrying a base_sha or an adds path the reader's
+# own rules forbid, is a bypass of the whole gate rather than one weak
+# assertion.
 #
 # Each case here pairs a control that must pass with a mutation of exactly one
 # input that must refuse, so a refusal cannot be credited to the wrong arm.
@@ -119,14 +120,15 @@ cp "$TMP_ROOT/record-honest.json" "$record"
 assert_eq "$(reason --worktree "$wt" --issue issue-826 --round-id 1-1 --expect-items-from-round)" \
   "unapproved_additions" "restoring the honest base_sha restores the refusal"
 
-# --- adds[] entries the writer could not have produced ----------------------
-# Same asymmetry the base_sha arm closes: a record dev-round-write refuses is
-# no authorization. The reader's per-path rule is the writer's — any run of
-# non-space characters not beginning with '-' — so the pair below moves only
-# the adds entry between a value the writer can produce and one it cannot.
-# U+00A0 is the case the regex form got wrong: glibc calls it a non-space so
-# the writer stamps it, while Oniguruma calls it a space so the reader killed
-# the round at exit 2 after the agent had done the work.
+# --- adds[] entries the reader's own rule forbids ---------------------------
+# The reader accepts a recorded path only when it begins with something other
+# than '-' and carries no ASCII whitespace, so the pair below moves only the
+# adds entry across that line. The rule is stated in the reader's terms, not
+# as an equality with the writer's: the writer additionally splits or refuses
+# on whatever the running locale calls space, which is not a fixed set.
+# U+00A0 is the case the regex form got wrong: the writer records it, while
+# Oniguruma called it a space and the reader killed the round at exit 2 after
+# the agent had done the work.
 adds_nbsp="$(printf 'tools/a\u00a0b')"
 for adds_case in 'tools/a;b:writer-possible' 'crates/app/icons/128x128@2x.png:writer-possible' \
   "$adds_nbsp:writer-possible" \

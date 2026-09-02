@@ -107,9 +107,9 @@ time. Missing, symlinked, mismatched, or malformed records refuse with exit 2 �
 including a base_sha outside 40 lowercase hex, which reaches `git diff` as a
 revision argument and would otherwise let an option-shaped value empty the
 additions probe, and an adds[] path beginning with '-' or carrying a space,
-tab, newline, carriage return, form feed or vertical tab — a path
-dev-round-write could not have written. Never recreate the record after
-delegation and never downgrade to --expect-items; mint a fresh round.
+tab, newline, carriage return, form feed or vertical tab. Never recreate the
+record after delegation and never downgrade to --expect-items; mint a fresh
+round.
 Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
