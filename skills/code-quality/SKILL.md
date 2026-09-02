@@ -27,6 +27,7 @@ A loud failure beats a silent wrong answer. Handle every error, check invariants
 
 - No workarounds or quick hacks. If the correct fix is larger than expected, say so.
 - **Never fail open.** A dependency failure (command, file, network, parse) must not leave the caller in a passing or default state: no validator degrading to "no findings", no probe failure read as "not applicable", no unchecked `$(mktemp)`.
+- Gate, guard, and scanner code fails closed and carries no enumerated exemption list.
 - A branch that "shouldn't happen" is never an empty or silently-ignored `else`: assert it, return an explicit internal error, or mark it unreachable — with a message naming the violated invariant. Use plain conditionals only when both branches are expected paths.
 - An error path must name the actual cause, not a neighbouring dependency.
 - Handle edge cases: empty input, boundary values, junk prefixes/suffixes, interrupted-then-retried flows.
@@ -48,6 +49,8 @@ A new or modified check, guard, assertion, or test ships with a must-fail contro
 
 - **Rust**: make illegal states unrepresentable; exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning. A test that hands a temporary path to code that may resolve symlinks binds its canonical root at creation and passes that binding, never the raw path; platform-only test APIs carry a `cfg` and, when the property is portable, a portable twin.
 - **Bash**: `set -euo pipefail` in every new script; check the result of every effectful substitution; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales.
+- In a `pipefail` suite, never end a pipeline with `head` or `grep -q`; the producer takes SIGPIPE and the suite exits 141.
+- Measure a commit header with `awk 'NR==1{print length}'`, never `wc -c`.
 - **TypeScript/JS**: distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries.
 
 ## Comments and Prose
