@@ -20,14 +20,15 @@ use specta::Type;
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WriteRefused {
     /// The file is no longer the one this copy was read from, and the
-    /// write ran nothing. Something else wrote it — a fork, a hold, an
-    /// install, another window — and writing this copy would put that
-    /// back, so reading the file again is the whole of the way out.
+    /// refusal carries no account with it. Something else wrote the file
+    /// — a fork, a hold, an install, another window — and writing this
+    /// copy would put that back, so reading the file again is the whole
+    /// of the way out.
     Stale,
     /// Anything else that stopped the write, in the words the person
-    /// gets — including a stale file the write reached only after running
-    /// a leaving package's uninstaller, where the reload alone would say
-    /// nothing happened.
+    /// gets — a stale file among them, where the write had something to
+    /// say about the packages leaving before it refused and a bare reload
+    /// would drop it.
     Failed { message: String },
 }
 

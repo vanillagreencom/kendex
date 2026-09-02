@@ -147,9 +147,9 @@ export const useEditorStore = create<EditorState>((set, get) => {
       // Stale is a refusal, not a failure: the file changed outside this
       // draft, and writing the draft would put the older file back. The
       // draft cannot be merged, so the page offers the reload as a choice
-      // rather than taking the person's edits on its own. A write that got
-      // as far as running something before it refused answers `failed`
-      // instead, so the reload is only ever offered where nothing ran.
+      // rather than taking the person's edits on its own. A refusal with
+      // something to say about the packages leaving answers `failed`
+      // instead, so nothing it said is dropped for the reload.
       if (response.error.kind === "stale") {
         set({ stale: true, error: null });
       } else {

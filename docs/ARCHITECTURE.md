@@ -343,11 +343,11 @@ lives in one capability table read by core and UI.
   `settings.toml` are read as content plus a `Base` (`kendex_core::base`,
   the hash of the bytes read) and written back with it; different bytes on
   disk refuse the write (`WriteRefused`): `stale`, the page's reload, where
-  nothing ran, else a failure naming what ran; never a silent overwrite.
-  The manifest write binds the base into its plan op's precondition
-  (`PlanOptions::manifest_base`); every settings write, whole-file or
-  targeted, runs under one OS file lock shared by the app's threads and the
-  CLI, so the check and the write cannot be split.
+  the refusal carries no account, else a failure carrying it; never a
+  silent overwrite. The manifest write binds the base into its plan op's
+  precondition (`PlanOptions::manifest_base`); every settings write,
+  whole-file or targeted, runs under one OS file lock shared by the app's
+  threads and the CLI, so the check and the write cannot be split.
 - **Every atomic write gets its own temp file.** `write_then_rename` names
   its temp file per write, not per process.
 - GUI + CLI are equal thin shells over `crates/core`; most core ops are

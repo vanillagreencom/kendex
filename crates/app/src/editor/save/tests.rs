@@ -140,8 +140,18 @@ fn a_writer_landing_after_the_editor_read_is_refused_mid_apply() {
             refused_write(refused, std::slice::from_ref(&path)),
             WriteRefused::Stale
         ),
-        "a copy that moved under a write that ran nothing is the reload choice"
+        "a copy that moved under a refusal with nothing to report is the reload"
     );
+
+    // And the other half of the guard: an empty account alone does not earn
+    // the reload. A precondition on a file this write did not bind is a
+    // failure to say out loud — the same refusal, read against no targets.
+    let elsewhere = crate::repo_effects::execute(&env, &report).unwrap_err();
+    assert!(
+        matches!(refused_write(elsewhere, &[]), WriteRefused::Failed { .. }),
+        "a rollback on a file this write never bound offered the reload"
+    );
+
     let kept = std::fs::read_to_string(&path).unwrap();
     assert!(kept.contains("all = \"kept\""), "{kept}");
 }
