@@ -171,14 +171,6 @@ fn a_package_past_the_walks_bound_has_no_date_rather_than_an_older_one() {
 
     let whole = history::last_changed(&mirror, &resolution.commit, &paths, 5_000).unwrap();
     assert_eq!(whole.dates.len(), 2, "both are reachable without a bound");
-    assert!(
-        whole
-            .newest
-            .as_deref()
-            .is_some_and(|date| date.starts_with("2025-08-09")),
-        "the newest comes from the walk's order: {:?}",
-        whole.newest
-    );
 
     let bounded = history::last_changed(&mirror, &resolution.commit, &paths, 1).unwrap();
     assert_eq!(
@@ -265,14 +257,13 @@ fn a_root_skill_takes_the_repository_tip_and_its_neighbour_keeps_its_own() {
 /// adds one whenever the file is there, with no guard requiring the rest of
 /// the discovery to be empty — and then be a codebase as well.
 ///
-/// The catalog's date is the newest change to a package with a path of its
-/// own. The root item has no such path: the only date anyone could ask for
-/// on its behalf is the repository's tip, and letting that speak for the
-/// catalog is what would move the About tab's Last updated for a commit
-/// under `crates/`. So neither the tip NOR the commit that added the root
-/// skill moves this catalog's date — only `skills/helper` does.
+/// A root skill's tree IS the repository bar the folders `collect_skill_tree`
+/// skips, so `crates/` is content it publishes and a commit there really did
+/// change an offered package. The catalog's date says so, and can never read
+/// older than a package on the Packages tab beside it. A commit under one of
+/// the skipped folders is the one that changes nothing, and dates nothing.
 #[test]
-fn a_mixed_catalog_is_not_dated_by_a_commit_that_touched_no_package() {
+fn a_mixed_catalog_is_dated_by_the_root_items_own_tree() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let upstream = home.join("base/owner/mixed");
@@ -286,10 +277,14 @@ fn a_mixed_catalog_is_not_dated_by_a_commit_that_touched_no_package() {
     )
     .unwrap();
     commit_at(&upstream, "root skill", "2025-05-05T00:00:00+00:00");
-    // Neither package's path; the newest commit in the repository.
+    // Not either package's path, but inside the root skill's tree.
     fs::create_dir_all(upstream.join("crates/app")).unwrap();
     fs::write(upstream.join("crates/app/main.rs"), "fn main() {}\n").unwrap();
-    commit_at(&upstream, "codebase only", "2026-07-07T07:07:07+00:00");
+    commit_at(&upstream, "codebase", "2026-07-07T07:07:07+00:00");
+    // Build output: in no package's tree, so it dates nothing at all.
+    fs::create_dir_all(upstream.join("target")).unwrap();
+    fs::write(upstream.join("target/out.txt"), "built\n").unwrap();
+    commit_at(&upstream, "build output", "2027-08-08T08:08:08+00:00");
     let base = format!("file://{}", home.join("base").display());
     let env = Env::fake(&home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
     let catalog = Catalog::Repo {
@@ -300,15 +295,11 @@ fn a_mixed_catalog_is_not_dated_by_a_commit_that_touched_no_package() {
     assert!(
         read.updated_at
             .as_deref()
-            .is_some_and(|date| date.starts_with("2024-01-01")),
-        "the catalog is dated by its newest pathed package, not the tip \
-         and not the root item that has no path: {:?}",
+            .is_some_and(|date| date.starts_with("2026-07-07")),
+        "the catalog is as new as its newest package, and no newer: {:?}",
         read.updated_at
     );
 
-    // The root item itself still takes the tip: its own tree IS the
-    // repository, so the codebase commit really did change it. What the
-    // fix stops is that date speaking for the whole catalog.
     let rows = packages(&env, &catalog).unwrap();
     let dated = |name: &str| {
         rows.iter()
@@ -323,6 +314,11 @@ fn a_mixed_catalog_is_not_dated_by_a_commit_that_touched_no_package() {
         dated("helper").starts_with("2024-01-01"),
         "{}",
         dated("helper")
+    );
+    // The whole point of asking over the tree rather than the tip.
+    assert!(
+        !read.updated_at.unwrap().starts_with("2027"),
+        "a build-output commit changed nothing the catalog offers"
     );
 }
 

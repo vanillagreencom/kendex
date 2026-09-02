@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { Catalog } from "@/bindings";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AvailablePackage, Catalog } from "@/bindings";
 import { AboutSection } from "@/components/marketplaces/about-section";
 import { BundleCards } from "@/components/marketplaces/bundle-cards";
 import { DetailHeader } from "@/components/marketplaces/detail-header";
@@ -39,6 +39,9 @@ export function MarketplaceDetailPage() {
   return <MarketplaceDetail requested={marketplaceRef} />;
 }
 
+/** The stand-in for packages not read yet, stable across renders. */
+const NONE: AvailablePackage[] = [];
+
 function MarketplaceDetail({ requested }: { requested: Catalog }) {
   const { catalog, summary, error, ready, retry } = useCatalog(requested);
   const rows = useMarketplacesStore((s) => s.rows);
@@ -62,7 +65,8 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
   // Projects section lists them all, not just the one this page opened as.
   const identity = row ? marketplaceIdentity(row) : null;
   const cached = packages[catalogKey(catalog)];
-  const offered = cached ?? [];
+  // A shared empty rather than a fresh one: `entries` memoizes on this.
+  const offered = cached ?? NONE;
   const packagesError = useMarketplacesStore(
     (s) => s.readErrors[readErrorKey(catalogKey(catalog), "packages")],
   );
@@ -123,6 +127,25 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
   // place is, and an uncontrolled Tabs would keep pointing at it.
   const [tab, setTab] = useState("bundles");
   const shownTab = tab === "places" && !identity ? "bundles" : tab;
+
+  // Stable identities: the table memoizes its ordering and its places join
+  // on these, and this page re-renders as its packages, bundles, about and
+  // error slices settle — a fresh object each time defeats both memos and
+  // re-sorts and re-joins for nothing.
+  const entries = useMemo(
+    () =>
+      offered.map((pkg) => ({
+        catalog,
+        row: pkg,
+        // The subscription row this page was opened from carries the
+        // scope's current record standing; a bare repository has no scope
+        // of its own to ask.
+        recordsUnreadable: row?.recordsUnreadable ?? false,
+      })),
+    [offered, catalog, row?.recordsUnreadable],
+  );
+  const repo = row?.repo ?? summary?.provenance ?? null;
+  const pageSubscription = useMemo(() => ({ catalog, repo }), [catalog, repo]);
 
   return (
     <div className="flex h-full flex-col">
@@ -202,19 +225,9 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                     </p>
                   ) : (
                     <PackagesTable
-                      entries={offered.map((pkg) => ({
-                        catalog,
-                        row: pkg,
-                        // The subscription row this page was opened from
-                        // carries the scope's current record standing; a
-                        // bare repository has no scope of its own to ask.
-                        recordsUnreadable: row?.recordsUnreadable ?? false,
-                      }))}
+                      entries={entries}
                       showMarketplace={false}
-                      subscription={{
-                        catalog,
-                        repo: row?.repo ?? summary?.provenance ?? null,
-                      }}
+                      subscription={pageSubscription}
                     />
                   )}
                 </TabsContent>

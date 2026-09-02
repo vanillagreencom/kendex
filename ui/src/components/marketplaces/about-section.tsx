@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback } from "react";
 import type { Catalog, MarketplaceMeta } from "@/bindings";
+import { Ago } from "@/components/ago";
 import { ExternalLink } from "@/components/external-link";
 import { useCachedRead } from "@/components/marketplaces/use-catalog";
 import {
@@ -13,7 +14,6 @@ import {
   catalogContents,
 } from "@/lib/copy-marketplaces";
 import { KINDS, kindLabel } from "@/lib/labels";
-import { relativeTime } from "@/lib/relative-time";
 import {
   catalogKey,
   readErrorKey,
@@ -44,7 +44,7 @@ function updatedLine(updatedAt: string | null): ReactNode {
   if (!updatedAt) return null;
   const at = Date.parse(updatedAt);
   if (Number.isNaN(at)) return null;
-  return <span title={updatedAt}>{relativeTime(at, Date.now())}</span>;
+  return <Ago at={at} exact={updatedAt} />;
 }
 
 /** The marketplace's profile: what the catalog says about itself, when its

@@ -1,6 +1,11 @@
 //! When a catalog's content last moved: when each package it offers last
 //! changed, and the newest of those, which is the catalog's own date.
 //!
+//! Every offered item is dated over what it contains, so the two readings
+//! cannot disagree — an item with a path is dated over that path, and one
+//! that is the repository root over its whole tree. No item is dated by
+//! the bare tip, which moves for commits inside no package at all.
+//!
 //! The dates come from the mirror's history, so only a catalog kendex
 //! fetched from a repository has any. A path or `local` source is a
 //! directory somebody keeps by hand, and a date invented from a file's
@@ -27,20 +32,53 @@ use super::Browsed;
 /// as a catalog with no history at all.
 ///
 /// Chosen against the byte cap rather than against a catalog's age, so the
-/// two bounds cannot contradict each other. `--name-only` output runs
-/// around 600 to 750 bytes per matching commit for a catalog of a few
-/// dozen packages — 621 B/commit measured over kendex's own mirror, which
-/// puts 1 MB at about 1,600 commits — and [`history`]'s cap refuses a read
-/// over 1 MB outright, every package losing its date at once, which is the
-/// opposite of the per-package degradation this bound exists to give. At
-/// 1,000 the walk fits with room at that density. A bound of 5,000 could
-/// never be reached: the cap would always fire first.
+/// two bounds cannot contradict each other. [`history`]'s cap refuses a
+/// read over 1 MB outright — every package losing its date at once, the
+/// opposite of the per-package degradation this bound exists to give — so
+/// the commit bound has to be the one that fires.
+///
+/// The density that decides where it fires is the catalog's, and it turns
+/// on how many pathspecs [`offered`] resolves, which turns on the
+/// catalog's mode and declared kinds — so a bare figure here is not
+/// reproducible from the sentence holding it. The command that produces
+/// one, over whatever set that catalog really uses:
+///
+/// ```text
+/// git --git-dir <mirror> log --first-parent --max-count 1000 \
+///     --name-only -z --format=%x00%cI <tip> -- <one :(literal) per item>
+/// ```
+///
+/// Over kendex's own mirror that is 601 B per matching commit across the
+/// 43 specs an Explicit catalog resolves there (20 skills, 16 agents, 7
+/// hooks), putting 1 MB past 1,600 commits; independent derivations
+/// counting different kinds have run to 790 B, which still puts it past
+/// 1,200. The bound fits under the cap at all of them, and 5,000 could not
+/// be reached at any: the cap would always fire first.
 ///
 /// Density is the catalog's to choose, so one changing enough files per
 /// commit can still cross the cap and blank the column. The Packages table
 /// is the only surface left in that blast radius: [`catalog_date`] asks a
 /// question whose answer is one record.
 const MAX_DATED_COMMITS: usize = 1_000;
+
+/// What a repository-root skill's tree leaves out, as pathspecs.
+///
+/// The list is [`SealedSource::collect_skill_tree`]'s own, spelled the way
+/// git takes it: a root skill IS the repository, so everything but these
+/// folders is content the skill publishes and an install copies —
+/// `crates/`, `ui/` and `docs/` included. Asking history for that set is
+/// the only way to date such an item honestly. The bare tip would count a
+/// `target/`-only commit, which changed nothing the skill contains.
+///
+/// [`SealedSource::collect_skill_tree`]: crate::source_read::SealedSource::collect_skill_tree
+const ROOT_TREE_SKIPS: [&str; 6] = [".git", "node_modules", "target", "dist", "build", ".venv"];
+
+fn root_tree_specs() -> Vec<String> {
+    ROOT_TREE_SKIPS
+        .iter()
+        .map(|s| history::excluding(s))
+        .collect()
+}
 
 /// One item the catalog offers, with where its bytes are.
 pub(crate) struct Offered {
@@ -119,13 +157,13 @@ fn split(browsed: &Browsed, items: &[Offered]) -> Split {
 /// bound, or a package whose files live outside the catalog's roots — has
 /// no entry rather than a borrowed date.
 ///
-/// An item that IS the catalog root takes the repository's tip, in a mixed
-/// catalog as much as in a one-skill one, because its own tree is the
-/// repository: `package_preview` lists a root skill's files from the root
-/// down, so a commit anywhere but the excluded build and vendor folders
-/// really did change it. That is this item's honest date and no borrowing
-/// — [`catalog_date`] is where the tip must not speak for packages that
-/// have paths of their own.
+/// An item that IS the catalog root is dated over its own tree — the
+/// repository minus [`ROOT_TREE_SKIPS`] — in a mixed catalog as much as in
+/// a one-skill one, because that tree is what the item contains:
+/// `package_preview` lists a root skill's files from the root down, so a
+/// commit anywhere but those folders really did change it. Not the bare
+/// tip, which would date it from a `target/`-only commit that changed
+/// nothing it publishes.
 pub(crate) fn package_dates(
     env: &Env,
     browsed: &Browsed,
@@ -143,10 +181,12 @@ pub(crate) fn package_dates(
         .filter_map(|(item, path)| changed.dates.get(&path).map(|date| (item, date.clone())))
         .collect();
     if !roots.is_empty()
-        && let Some(tip) = history::commit_date(&mirror, &commit).ok().flatten()
+        && let Some(date) = history::newest_touching(&mirror, &commit, &root_tree_specs())
+            .ok()
+            .flatten()
     {
         for item in roots {
-            out.insert(item, tip.clone());
+            out.insert(item, date.clone());
         }
     }
     out
@@ -168,25 +208,25 @@ pub(crate) fn package_dates(
 /// mirror. It also keeps the About tab clear of the byte cap that bounds
 /// the walk.
 ///
-/// An item that IS the catalog root makes the repository's tip a candidate,
-/// never an override. The tip wins only where that item is the whole offer:
-/// then the repository is the catalog, and every commit in it changed the
-/// catalog. A repository carrying a root `SKILL.md` beside `skills/` offers
-/// both — `discover` adds the root skill whenever the file is there, with
-/// no guard requiring the rest of the discovery to be empty — and there the
-/// packages have paths of their own, so a commit that touched none of them
-/// did not change what the marketplace offers, whatever else it touched.
+/// Every offered item counts, with no special case for the root one. An
+/// item that IS the catalog root has no narrower path, but it does have a
+/// tree — the repository minus [`ROOT_TREE_SKIPS`] — and that tree
+/// subsumes the other packages' paths, so where such an item is offered
+/// one query over it answers for the whole catalog. The About tab can
+/// therefore never read older than a package on the Packages tab beside
+/// it, and a commit that adds a root skill moves the date, because it
+/// added something the marketplace offers.
 pub(crate) fn catalog_date(env: &Env, browsed: &Browsed, items: &[Offered]) -> Option<String> {
     let (mirror, commit) = mirror_at(env, browsed)?;
     let (asked, roots) = split(browsed, items);
-    if asked.is_empty() {
-        return match roots.is_empty() {
-            true => None,
-            false => history::commit_date(&mirror, &commit).ok().flatten(),
-        };
-    }
-    let paths: Vec<PathBuf> = asked.into_iter().map(|(_, path)| path).collect();
-    history::newest_touching(&mirror, &commit, &paths)
+    let specs = match roots.is_empty() {
+        true => asked
+            .iter()
+            .map(|(_, path)| history::literal(path))
+            .collect(),
+        false => root_tree_specs(),
+    };
+    history::newest_touching(&mirror, &commit, &specs)
         .ok()
         .flatten()
 }

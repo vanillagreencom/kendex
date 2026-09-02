@@ -33,6 +33,7 @@ import {
   updatesSubtitle,
 } from "@/lib/copy-updates";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { exactTime } from "@/lib/relative-time";
 import {
   hiddenUpdates,
   packageCount,
@@ -110,7 +111,12 @@ export function UpdatesPage() {
             {visible.length > 0 ? (
               <p>{updatesSubtitle(packageCount(visible), visible.length)}</p>
             ) : null}
-            <p className="text-xs">{lastChecked}</p>
+            <p
+              className="text-xs"
+              title={lastFetched ? exactTime(lastFetched * 1000) : undefined}
+            >
+              {lastChecked}
+            </p>
           </>
         }
         action={

@@ -11,6 +11,7 @@ import {
   staleSafetyNote,
 } from "@/lib/copy-safety";
 import { findingKey } from "@/lib/installed-safety";
+import { exactTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 
 /**
@@ -64,7 +65,10 @@ export function SafetyPanel({
           </h3>
           <p className="text-sm">{safetyHeadline(findings, skipped.length)}</p>
           {stale ? (
-            <div className="flex flex-wrap items-center gap-2 text-sm text-warning">
+            <div
+              className="flex flex-wrap items-center gap-2 text-sm text-warning"
+              title={checkedAt ? exactTime(checkedAt) : undefined}
+            >
               {staleSafetyNote(checkedAt)}
               {onRetry ? (
                 <Button size="sm" variant="outline" onClick={onRetry}>

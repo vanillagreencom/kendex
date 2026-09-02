@@ -4,10 +4,24 @@
 // surfaces show, which are routinely years old and read as a day count
 // without them ("731d ago" is not a date anybody parses).
 //
-// Coarse is only safe where the exact date is still reachable, so every
-// surface that shows a year or a month puts it on the element's `title`:
-// "2y ago" alone loses the year entirely. A surface holding the original
-// string passes that; one holding a timestamp uses `exactTime` below.
+// Coarse is only safe where the exact date is still reachable: "2y ago"
+// alone loses the year entirely. Two shapes, and which one a site is
+// decides how it keeps the date, because a sentence has no element of its
+// own to carry it:
+//
+//   - A site RENDERING the reading uses `<Ago at={ms} />`
+//     (components/ago.tsx), which is the reading and the title together and
+//     cannot be had apart. Every such site goes through it; none adds the
+//     attribute by hand, which is how two rounds of sweeps still left sites
+//     without one.
+//   - A site COMPOSING the reading into a sentence — the helpers below in
+//     copy-projects, copy-updates and copy-safety — returns a string, so
+//     the element that renders that sentence carries the title, built with
+//     `exactTime` from the timestamp it already holds. project-card,
+//     updates, safety-panel and status-footer are those four.
+//
+// `grep -rn 'relativeTime(' ui/src` is the list. It has been restated from
+// memory twice and been wrong both times.
 export function relativeTime(fromMs: number, toMs: number): string {
   const deltaSec = Math.max(0, Math.round((toMs - fromMs) / 1000));
   if (deltaSec < 60) return "just now";

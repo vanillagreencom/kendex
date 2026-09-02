@@ -1,5 +1,6 @@
 import { type ComponentProps, type MouseEvent, useEffect } from "react";
 import type { AvailablePackage, Catalog } from "@/bindings";
+import { Ago } from "@/components/ago";
 import { ScoreTooltip } from "@/components/score-tooltip";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
@@ -18,7 +19,6 @@ import {
 import { offersInstall } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName, shortRevision } from "@/lib/labels";
-import { relativeTime } from "@/lib/relative-time";
 import { catalogLabel, useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey, usePreinstallSafety } from "@/stores/preinstall-safety";
@@ -132,9 +132,7 @@ export function PackageRow({
           // a guess would be this machine's clock rather than the package's.
           <span aria-hidden>—</span>
         ) : (
-          <span title={row.updatedAt ?? undefined}>
-            {relativeTime(updated, Date.now())}
-          </span>
+          <Ago at={updated} exact={row.updatedAt} />
         )}
       </TableCell>
       <TableCell>

@@ -285,6 +285,8 @@ pub struct AboutView {
     pub findings: Vec<CatalogFinding>,
     /// ISO-8601 committer date of the newest commit that touched anything
     /// the catalog offers, where kendex holds the history to read it from.
+    /// Never older than the newest date on the Packages tab beside it: the
+    /// two answer over the same items.
     pub updated_at: Option<String>,
 }
 

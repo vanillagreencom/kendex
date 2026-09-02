@@ -658,13 +658,14 @@ lives in one capability table read by core and UI.
   in one walk, bounded by its own commit count; the catalog's own date is a
   separate one-record query, so the About tab neither repeats the walk nor
   meets its byte cap. Each package's date is the newest commit that touched
-  it, and the catalog's is the newest that touched a package with a path of
-  its own — not the repository tip, which moves for a codebase commit in a
-  repo that is a catalog too. An item that IS the catalog root has no
-  narrower path (an empty pathspec matches everything), so that item takes
-  the tip, and so does the catalog where such an item is the whole offer —
-  then the repository really is the catalog. Only a fetched repository has a
-  history; one that will not read costs the dates and nothing else. `library.rs` is the same join for the Library
+  it, and the catalog's is the newest that touched anything it offers, so
+  the About tab can never read older than a package on the Packages tab
+  beside it. Every item is dated over what it contains, never by the bare
+  tip: one with a path over that path, and a repository-root skill over its
+  whole tree, which is the repository minus the folders `collect_skill_tree`
+  skips — so a `crates/` commit dates such an item and a `target/` commit
+  dates nothing. Only a fetched repository has a history; one that will not
+  read costs the dates and nothing else. `library.rs` is the same join for the Library
   table: subscription, local content (with what a fork replaced), or
   observed-and-unmanaged.
 - **A subscription's closure is derived by re-expansion; unsubscribing

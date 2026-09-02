@@ -4,6 +4,7 @@ import type {
   ObservedItem,
   PackageMeta_Serialize,
 } from "@/bindings";
+import { Ago } from "@/components/ago";
 import { HarnessBadge } from "@/components/harness-badge";
 import { SectionHeading } from "@/components/section";
 import { StatusLine } from "@/components/status-note";
@@ -12,7 +13,6 @@ import { Badge } from "@/components/ui/badge";
 import { TAGS_ROW_LABEL } from "@/lib/copy";
 import { groupScopes, type ItemGroup } from "@/lib/derive";
 import { kindLabel, scopeName } from "@/lib/labels";
-import { exactTime, relativeTime } from "@/lib/relative-time";
 import { versionLabel } from "@/lib/versions";
 import { subscription } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
@@ -118,9 +118,7 @@ export function PackageMetaBlock({
         </Row>
         {group.modifiedAt != null ? (
           <Row label="Updated">
-            <span title={exactTime(group.modifiedAt * 1000)}>
-              {relativeTime(group.modifiedAt * 1000, Date.now())}
-            </span>
+            <Ago at={group.modifiedAt * 1000} />
           </Row>
         ) : null}
       </dl>

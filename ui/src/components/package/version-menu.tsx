@@ -1,6 +1,7 @@
 import { Check, ChevronDown, Pin } from "lucide-react";
 import { useState } from "react";
 import type { VersionRow } from "@/bindings";
+import { Ago } from "@/components/ago";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -17,7 +18,6 @@ import {
   SWITCH_VERSION_LABEL,
 } from "@/lib/copy";
 import { UPDATES_ONE_AT_A_TIME_NOTE } from "@/lib/copy-updates";
-import { relativeTime } from "@/lib/relative-time";
 import { installedRow, versionRowLabel } from "@/lib/versions";
 import { useUpdatesStore } from "@/stores/updates";
 import { useVersionsBusy } from "./use-package-data";
@@ -87,15 +87,16 @@ export function VersionMenu({
                 <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                   {row.summary}
                 </span>
-                <span
-                  className="shrink-0 text-xs text-muted-foreground"
-                  title={row.date}
-                >
-                  {row.installed
-                    ? held
-                      ? HELD_VERSION_TAG
-                      : INSTALLED_VERSION_TAG
-                    : relativeTime(Date.parse(row.date), Date.now())}
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {row.installed ? (
+                    held ? (
+                      HELD_VERSION_TAG
+                    ) : (
+                      INSTALLED_VERSION_TAG
+                    )
+                  ) : (
+                    <Ago at={Date.parse(row.date)} exact={row.date} />
+                  )}
                 </span>
               </span>
             </DropdownMenuItem>

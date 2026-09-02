@@ -122,10 +122,11 @@ fn open_held(env: &Env, held: &SubscriptionRef) -> Result<super::Browsed> {
 pub struct CatalogAbout {
     pub report: AboutReport,
     /// ISO-8601 committer date of the newest commit that touched anything
-    /// the catalog offers — not the commit it is read at, which for a
-    /// repository that is a catalog and a codebase together moves for work
-    /// on neither. A catalog that is itself one skill takes the repository
-    /// tip, since every commit in it changed the catalog.
+    /// the catalog offers — never the commit it is read at, which moves for
+    /// work on nothing it offers. Where the catalog offers a repository-root
+    /// item, "anything it offers" is that item's whole tree: the repository
+    /// bar the folders a root skill leaves out, so a build-output commit
+    /// still moves nothing.
     pub updated_at: Option<String>,
 }
 

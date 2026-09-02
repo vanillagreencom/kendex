@@ -83,7 +83,6 @@ fn a_walk_whose_output_runs_past_the_cap_is_refused_not_truncated() {
     let one = [big_file(0)];
     let under = history::last_changed(&mirror, &tip, &one, MANY).unwrap();
     assert_eq!(under.dates.len(), 1, "{:?}", under.dates);
-    assert!(under.newest.is_some());
 }
 
 /// A record boundary a catalog can write is a date a catalog can forge.
@@ -127,5 +126,4 @@ fn a_filename_cannot_open_a_record_and_date_its_neighbour() {
         changed.dates.get(std::path::Path::new("skills/alpha")),
         Some(victim),
     );
-    assert!(changed.newest.is_some_and(|date| !date.starts_with("2099")));
 }

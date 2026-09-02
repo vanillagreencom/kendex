@@ -9,6 +9,7 @@ import {
 } from "@/lib/copy-projects";
 import { scopePath } from "@/lib/labels";
 import type { PackagePlace } from "@/lib/package-places";
+import { exactTime } from "@/lib/relative-time";
 import { useNowTick } from "@/lib/use-now-tick";
 
 /** One place this package is installed in: what the place is called, when
@@ -41,7 +42,14 @@ export function ProjectCard({
       <div className="min-w-0">
         <p className="truncate text-sm font-medium">{place.name}</p>
         {detail ? (
-          <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
+          <p
+            className="mt-0.5 truncate text-[13px] text-muted-foreground"
+            title={
+              place.installedAt
+                ? exactTime(Date.parse(place.installedAt))
+                : undefined
+            }
+          >
             {detail}
           </p>
         ) : null}

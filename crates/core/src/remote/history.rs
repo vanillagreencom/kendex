@@ -56,12 +56,22 @@ fn stdout_capped(git: Hardened) -> Result<String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// A subtree path as a pathspec git will not interpret.
-fn literal(rel: &Path) -> String {
+/// A subtree path as a pathspec git will not interpret. Public because a
+/// caller composing a set with [`excluding`] has to build every member of
+/// it the same way.
+pub fn literal(rel: &Path) -> String {
     // Slashed: git matches a pathspec against index paths, and those are
     // `/`-spelled on every platform. A `\` here matches no path at all,
     // and an empty log reads as "nothing changed".
     format!(":(literal){}", crate::paths::slashed(rel))
+}
+
+/// A folder left out of a pathspec set. On its own, with no positive
+/// pathspec beside it, git reads a set of these as "everything but" — which
+/// is how a caller asks for a whole tree minus the folders that are not
+/// part of it.
+pub fn excluding(folder: &str) -> String {
+    format!(":(exclude){folder}")
 }
 
 /// A commit subject as something safe to show: control characters become
@@ -183,11 +193,6 @@ pub fn commit_date(mirror: &Path, commit: &str) -> Result<Option<String>> {
 pub struct Changed {
     /// When each path the walk reached last changed, ISO-8601.
     pub dates: BTreeMap<PathBuf, String>,
-    /// The newest date in the walk that touched any of them. Taken from
-    /// the walk's own order — git logs newest first — never by comparing
-    /// the dates as text, which two commits written in different time
-    /// zones would order wrongly.
-    pub newest: Option<String>,
 }
 
 /// When each of `paths` last changed at-or-before `tip`, walking
@@ -278,7 +283,6 @@ pub fn last_changed(
                         .dates
                         .entry(candidate.to_path_buf())
                         .or_insert_with(|| date.to_owned());
-                    found.newest.get_or_insert_with(|| date.to_owned());
                 }
             }
         }
@@ -289,19 +293,23 @@ pub fn last_changed(
     Ok(found)
 }
 
-/// The newest first-parent commit at-or-before `tip` that touched any of
-/// `paths`, ISO-8601. One record of output whatever the history's size, so
-/// it cannot approach the byte cap and cannot be forged: `--name-only` is
-/// what makes a filename part of the stream, and this asks for none.
+/// The newest first-parent commit at-or-before `tip` matching `specs`,
+/// ISO-8601. One record of output whatever the history's size, so it
+/// cannot approach the byte cap and cannot be forged: `--name-only` is what
+/// makes a filename part of the stream, and this asks for none.
 ///
-/// [`last_changed`] answers this too, in its `newest`, but only as part of
-/// dating every path — this is for the caller that wants the one date.
-pub fn newest_touching(mirror: &Path, tip: &str, paths: &[PathBuf]) -> Result<Option<String>> {
+/// `specs` are git pathspecs, built with [`literal`] and [`excluding`] —
+/// not bare paths, because the callers that want a whole tree minus a few
+/// folders cannot say that with a path.
+///
+/// The newest-first ordering is git's, asked for with `--max-count 1`
+/// rather than derived here: comparing ISO dates as text would order two
+/// commits written in different time zones wrongly.
+pub fn newest_touching(mirror: &Path, tip: &str, specs: &[String]) -> Result<Option<String>> {
     require_commit(tip)?;
-    if paths.is_empty() {
+    if specs.is_empty() {
         return Ok(None);
     }
-    let specs: Vec<String> = paths.iter().map(|rel| literal(rel)).collect();
     let mut args = vec![
         "log",
         "--first-parent",

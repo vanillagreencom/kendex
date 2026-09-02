@@ -1,4 +1,5 @@
 import type { HarnessId, Origin, Scope } from "@/bindings";
+import { Ago } from "@/components/ago";
 import { HarnessBadge } from "@/components/harness-badge";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
@@ -27,7 +28,6 @@ import {
   scopeName,
 } from "@/lib/labels";
 import type { PlaceMark } from "@/lib/place-marks";
-import { exactTime, relativeTime } from "@/lib/relative-time";
 import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
@@ -195,17 +195,8 @@ export function InstalledRow({
       <TableCell title={originTitle(origin)} className="text-muted-foreground">
         {originLabel(origin) || "—"}
       </TableCell>
-      <TableCell
-        className="text-right text-xs text-muted-foreground"
-        title={
-          group.modifiedAt != null
-            ? exactTime(group.modifiedAt * 1000)
-            : undefined
-        }
-      >
-        {group.modifiedAt != null
-          ? relativeTime(group.modifiedAt * 1000, Date.now())
-          : "—"}
+      <TableCell className="text-right text-xs text-muted-foreground">
+        {group.modifiedAt != null ? <Ago at={group.modifiedAt * 1000} /> : "—"}
       </TableCell>
       {/* A dot, not a word: seven rows of "Active" say nothing the colour
           doesn't, and the words are back on hover for anyone who wants them. */}
