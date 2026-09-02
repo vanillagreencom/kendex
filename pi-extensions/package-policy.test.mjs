@@ -181,13 +181,16 @@ function suiteCounts() {
 	return packages().map(({ dir }) => [dir, suiteFiles(join(root, dir)).length]);
 }
 
-// A package carrying no file under tests/ used to drop out of the wiring gate
-// before any of its assertions ran: no suite means no entry point to demand and
-// nothing for a CI step to invoke, so shipping a package untested looked
-// exactly like shipping one covered. Naming them here is what turns that state
-// into a declaration a reviewer reads rather than an absence nothing reports.
-// What is counted is files under tests/, not cases in them — a package whose
-// tests/ holds only fixtures reads as covered.
+// A package carrying no file `suiteFiles` matches used to drop out of the
+// wiring gate before any of its assertions ran: no suite means no entry point
+// to demand and nothing for a CI step to invoke, so shipping a package untested
+// looked exactly like shipping one covered. Naming them here is what turns that
+// state into a declaration a reviewer reads rather than an absence nothing
+// reports. That reader takes a `tests/`, `test/` or `__tests__/` directory at
+// any depth, so pi-extension-manager's `test/` and pi-questions' and
+// pi-tool-renderer's `extensions/__tests__/` all count. What is counted is
+// those files, not cases in them: a package whose test directory holds only
+// fixtures reads as covered.
 //
 // pi-prompt-stash: the stash behaviour — filterItems, previewText, loadItems,
 // saveItems, stashPrompt, safeFileName — sits unexported inside
@@ -205,7 +208,7 @@ function suiteCounts() {
 const NO_SUITE = ["pi-prompt-stash"];
 
 // Every direction the declaration can drift from the tree, kept separate
-// because the remedies differ: write cases, drop a stale entry, or correct a
+// because the remedies differ: add a suite, drop a stale entry, or correct a
 // name the tree no longer has. Collapsing the last two — as this reader first
 // did — makes a renamed or deleted package report as one that gained tests, a
 // claim about a directory that is not there; `crates/core/src/pi_ext/renames.rs`
@@ -290,7 +293,6 @@ test("a step conditioned on a shard the matrix does not run is reported, not acc
 	assert.notEqual(typo, workflow, "the mutation matched nothing — this control no longer mutates the step it names");
 	assert.deepEqual(unrunPackages(typo), ["pi-claude-bridge: no step on a shard the matrix runs invokes `npm run test:ci`"]);
 });
-
 
 // Must-fail control for the declaration above: with every package in the tree
 // either covered or declared, the drift reader returns the same empty list a
