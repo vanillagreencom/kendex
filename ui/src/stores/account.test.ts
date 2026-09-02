@@ -183,6 +183,23 @@ describe("a read that could not be made", () => {
     );
   });
 
+  // A transport failure folds to the message alone, so the command never ran
+  // and kendex.ai was never asked. That is a failure on this machine, not
+  // evidence the directory is away: the name already in hand must stay as it
+  // is rather than ageing into offline, which is what `unreachable` would do.
+  it("leaves a signed-in name standing when the transport folded", async () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA },
+    });
+    vi.mocked(commands.accountStatus).mockResolvedValue({
+      status: "error",
+      error: "the bridge is gone",
+    } as Awaited<ReturnType<typeof commands.accountStatus>>);
+    await load();
+    expect(account()).toEqual({ kind: "signed-in", identity: ADA });
+    expect(useAccountStore.getState().readError).toBe("the bridge is gone");
+  });
+
   // The seam every reader passes through is what holds them to the answer
   // their type promises. A reader that throws instead would otherwise leave
   // the read with nothing recorded, nothing to retry from, and a rejection

@@ -8,6 +8,7 @@ import {
   type AccountStatus,
   commands,
 } from "@/bindings";
+import { isShapedRefusal } from "@/lib/refusal";
 import type { SettledAccount } from "./account";
 
 /** What a read of the account answers: the state it settled on, or why it
@@ -42,8 +43,15 @@ const settled = (wire: AccountStatus["state"]): SettledAccount => {
  * and with the rejection when the credential is dead. */
 const fromBridge: ReadAccount = async () => {
   const status = await commands.accountStatus();
-  if (status.status === "error")
+  if (status.status === "error") {
+    // A transport failure folds to the message alone, so the command never
+    // ran and kendex.ai was never asked — nothing was learned about whether
+    // it is reachable. That is `local`, a read that failed, rather than the
+    // `unreachable` that would age the last good name into offline.
+    if (!isShapedRefusal(status.error))
+      return { error: status.error, kind: "local" };
     return { error: status.error.message, kind: status.error.kind };
+  }
   return { ok: settled(status.data.state) };
 };
 

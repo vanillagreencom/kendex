@@ -468,8 +468,8 @@ describe("editor store", () => {
   /// transport failure that escaped here left the busy flag falling with
   /// nothing shown. It folds into the refusal's place as the message alone
   /// (`bindings.test.ts`), which is neither arm of `WriteRefused`: read by
-  /// `kind` it would answer as the stale arm and offer a reload for a
-  /// broken pipe.
+  /// `kind` it misses the stale arm this reader tests first and falls to the
+  /// else, showing a blank error — the same silence by another route.
   it("shows the message when the transport failed rather than the engine refusing", async () => {
     useEditorStore.setState({ draft: emptyDraft(), base: "b1" });
     vi.mocked(commands.saveCustomize).mockResolvedValue({

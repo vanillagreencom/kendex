@@ -44,21 +44,31 @@ fn constants(builder: Builder<tauri::Wry>) -> Builder<tauri::Wry> {
     builder.constant("MANIFEST_SCHEMA", kendex_core::manifest::MANIFEST_SCHEMA)
 }
 
-/// The runtime the generated bindings call every command through, replacing
-/// the one tauri-specta ships. That one rethrows an `Error`, which is what
-/// `__TAURI_INVOKE` rejects with when the transport fails rather than when
-/// the command refuses — so a caller that fires its write and forgets it
-/// dropped the rejection: the busy flag fell, nothing was said, and the
-/// click read as having done nothing. Folded here, a transport failure
-/// lands in the shape every caller already reads a refusal in.
+/// The runtime the generated bindings call every `Result`-returning command
+/// through, replacing the one tauri-specta ships. That one rethrows an
+/// `Error`, which is what `__TAURI_INVOKE` rejects with when the transport
+/// fails rather than when the command refuses — so a caller that fires its
+/// write and forgets it dropped the rejection: the busy flag fell, nothing
+/// was said, and the click read as having done nothing. Folded here, a
+/// transport failure lands in the shape every caller already reads a
+/// refusal in.
 ///
-/// The message alone is not either arm of a shaped refusal such as
-/// `WriteRefused`, so a reader of one goes through `refusalWords` in
-/// `ui/src/lib/refusal.ts` rather than testing `kind`. The words a
+/// A command returning a plain value gets no wrapper, tauri-specta emitting
+/// one only where there is a refusal type to name: `app_version`,
+/// `capability_table`, `mine_authoring_doc` and `window_zoom_state` reject
+/// to their callers as before, so a fire-and-forget read of one still drops
+/// its rejection. Nothing in `specta_builder` can reach them.
+///
+/// `E | string` in the signature is what holds a reader honest: the fold
+/// puts a bare message in the `E` slot, and declaring that widening is what
+/// makes `tsc` name every reader branching on a discriminant the runtime no
+/// longer guarantees. Read the refusal through `ui/src/lib/refusal.ts`
+/// rather than off its fields — `refusalKind` still branches on the kind,
+/// it just answers `null` where a shape never arrived. The words a
 /// rejection with nothing to say falls back to are `NO_REASON_GIVEN` in
 /// `ui/src/lib/settled.ts`, which folds the same failure for work that is
 /// not a command; `ui/src/bindings.test.ts` holds this copy to those words.
-const TYPED_ERROR_IMPL: &str = r#"async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {
+const TYPED_ERROR_IMPL: &str = r#"async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E | string }> {
     try {
         return { status: "ok", data: await result };
     } catch (e) {

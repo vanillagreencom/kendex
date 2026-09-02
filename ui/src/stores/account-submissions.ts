@@ -7,7 +7,7 @@ import {
   type SubmissionRow,
 } from "@/bindings";
 import { readOrder } from "@/lib/read-state";
-import { caught } from "@/lib/settled";
+import { isShapedRefusal } from "@/lib/refusal";
 
 /** The submissions half of the account store. */
 export interface Submissions {
@@ -50,10 +50,10 @@ export const readSubmissions = async (
 ): Promise<void> => {
   const ticket = order.begin();
   const before = handovers();
-  // A transport rejection is a read that failed, not an exception for a
+  // A transport failure is a read that failed, not an exception for a
   // `void` caller to drop: it lands as the same refusal shape the server
   // returns, under the same guards.
-  const answer = asRefusal(await caught(commands.mineSubmissions()));
+  const answer = asRefusal(await commands.mineSubmissions());
   if (!order.lands(ticket) || before !== handovers()) return;
   if (answer.status === "error") refused(answer.error, before);
   write(fromSubmissionsRead(answer));
@@ -64,17 +64,27 @@ type SubmissionsRead =
   | { status: "ok"; data: SubmissionRow[] }
   | { status: "error"; error: AccountCallRefused };
 
-/** A rejected call in the shape the guards and the writer already read. It
- *  says nothing about the credential, only that this read did not happen,
- *  so it takes the `failed` kind rather than `expired`. */
+/** A transport failure in the shape the guards and the writer already read.
+ *  The bindings fold one into the message alone, so it arrives where an
+ *  `AccountCallRefused` is declared and answers no `kind` at all. It says
+ *  nothing about the credential, only that this read did not happen, so it
+ *  takes the `failed` kind rather than `expired`. Every reader downstream
+ *  branches on that kind, so the shape is restored here rather than at each
+ *  of them. */
 const asRefusal = (
   answer:
-    | { status: "ok"; data: SubmissionsRead }
-    | { status: "error"; error: string },
-): SubmissionsRead =>
-  answer.status === "ok"
-    ? answer.data
-    : { status: "error", error: { kind: "failed", message: answer.error } };
+    | { status: "ok"; data: SubmissionRow[] }
+    | { status: "error"; error: AccountCallRefused | string },
+): SubmissionsRead => {
+  if (answer.status === "ok") return answer;
+  if (isShapedRefusal(answer.error)) {
+    return { status: "error", error: answer.error };
+  }
+  return {
+    status: "error",
+    error: { kind: "failed", message: answer.error },
+  };
+};
 
 /** What a read's answer writes.
  *

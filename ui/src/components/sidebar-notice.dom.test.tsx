@@ -23,6 +23,7 @@ import {
   appUpdateCommandDownloadNote,
   appUpdateCommandManagedNote,
   appUpdateCommandPrivilegeNote,
+  SETTINGS_MOVED_MESSAGE,
 } from "@/lib/copy";
 import { useNoticeStore } from "@/stores/notice";
 import { mount, settle } from "@/test/dom";
@@ -511,6 +512,22 @@ describe("hiding this version", () => {
     const container = await show();
     await press(container, APP_UPDATE_DISMISS_LABEL);
     expect(container.textContent).toContain("the settings file is read-only");
+    expect(container.textContent).toContain(APP_UPDATE_TITLE);
+  });
+
+  // A transport failure folds into the refusal's place as the message
+  // alone. Read by `kind` it misses `failed`, and the moved-file wording
+  // that stands in for the stale arm would report a dead channel as the
+  // settings file having changed underneath.
+  it("shows the transport's own words, not the moved-file wording", async () => {
+    vi.mocked(commands.updateSettings).mockResolvedValue({
+      status: "error",
+      error: "the channel is gone",
+    } as Awaited<ReturnType<typeof commands.updateSettings>>);
+    const container = await show();
+    await press(container, APP_UPDATE_DISMISS_LABEL);
+    expect(container.textContent).toContain("the channel is gone");
+    expect(container.textContent).not.toContain(SETTINGS_MOVED_MESSAGE);
     expect(container.textContent).toContain(APP_UPDATE_TITLE);
   });
 });

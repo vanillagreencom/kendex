@@ -191,6 +191,38 @@ describe("a submit that meets an expired sign-in", () => {
   });
 });
 
+// A transport failure folds into the refusal's place as the message alone,
+// which is neither arm of `AccountCallRefused`. Read for a `message` field
+// it answers `undefined`, the alert renders nothing, and the click reads as
+// having done nothing at all — the silence this seam exists to end. It is
+// also news about the channel rather than the credential, so it must not
+// take the account down with it.
+describe("a submit whose transport failed", () => {
+  const GONE = "the channel is gone";
+
+  beforeEach(() => {
+    readyToSubmit();
+    vi.mocked(commands.mineSubmit).mockResolvedValue({
+      status: "error",
+      error: GONE,
+    } as never);
+  });
+
+  it("shows the transport's own words and leaves the account signed in", async () => {
+    showDialog();
+    await settle();
+    await userEvent.click(button("Submit") as HTMLButtonElement);
+    await settle();
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+      GONE,
+    );
+    expect(useAccountStore.getState().account).not.toEqual({
+      kind: "expired",
+    });
+  });
+});
+
 // The refusal offers a sign-in, and the sign-in can fail in its own
 // right. Two sentences then want the one alert, and the expiry is the
 // wrong one: it has been acted on, its remedy is the button just

@@ -3,13 +3,19 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { commands } from "@/bindings";
 import { NO_REASON_GIVEN } from "@/lib/settled";
 
-// The seam every command answers through. The transport rejects with an
-// `Error` when it fails rather than when the command refuses, and the runtime
-// tauri-specta ships rethrows that — so the write paths that fire their
-// command and forget it dropped the rejection: the busy flag fell and nothing
-// was said. `typedError` is replaced at generation time (`specta_builder` in
-// `crates/app/src/lib.rs`) to fold the rejection into the refusal shape
-// instead, and this is what holds the replacement in place. Regenerate with
+// The seam every `Result`-returning command answers through — tauri-specta
+// emits the runtime only where there is a refusal type to name, so the four
+// commands returning a plain value reject to their callers as before. The
+// transport rejects with an `Error` when it fails rather than when the
+// command refuses, and the runtime tauri-specta ships rethrows that — so the
+// write paths that fire their command and forget it dropped the rejection:
+// the busy flag fell and nothing was said. `typedError` is replaced at
+// generation time (`specta_builder` in `crates/app/src/lib.rs`) to fold the
+// rejection into the refusal shape instead, and this is what holds the
+// replacement in place. The fold puts a bare message where a shaped refusal
+// is declared, which the signature admits as `E | string`: that is what makes
+// `tsc` name a reader branching on a discriminant the runtime no longer
+// guarantees. Regenerate with
 // `cargo test -p kendex-app -- --ignored regenerate_bindings`.
 //
 // Driven through the transport the app really has — the bridge Tauri reads
@@ -59,5 +65,26 @@ describe("a command whose transport rejected", () => {
     await expect(
       commands.saveCustomize({ scope: "global" }, null, null),
     ).resolves.toEqual({ status: "error", error: { kind: "stale" } });
+  });
+});
+
+// The other half of the same runtime: folding a failure is only right if a
+// command that works still answers what it returned. Without this a runtime
+// that broke the `ok` arm would pass the file that exists to hold it honest.
+describe("a command whose transport answered", () => {
+  beforeEach(() => {
+    delete bridged.__TAURI_INTERNALS__;
+  });
+
+  it("answers with the value the command returned", async () => {
+    const returned = { harnesses: ["claude"] };
+    bridged.__TAURI_INTERNALS__ = {
+      invoke: () => Promise.resolve(returned),
+    };
+
+    await expect(commands.scanMachine()).resolves.toEqual({
+      status: "ok",
+      data: returned,
+    });
   });
 });

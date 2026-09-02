@@ -77,6 +77,27 @@ describe("settings store", () => {
     expect(useSettingsStore.getState().settings).toBe(settings);
   });
 
+  /// A transport failure folds into the refusal's place as the message
+  /// alone, which is neither arm of `WriteRefused`. Read by `kind` it misses
+  /// `failed`, falls to the stale-recovery arm, and reports a broken pipe as
+  /// the settings having changed in another window — while spending a
+  /// `getSettings` read to say it.
+  it("shows the message when the transport failed rather than the engine refusing", async () => {
+    useSettingsStore.setState({ settings });
+    vi.mocked(commands.updateSettings).mockResolvedValue({
+      status: "error",
+      error: "the channel is gone",
+    } as Awaited<ReturnType<typeof commands.updateSettings>>);
+
+    await useSettingsStore.getState().setAppearance("dark");
+
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toBe("the channel is gone");
+    expect(commands.getSettings).not.toHaveBeenCalled();
+    expect(useSettingsStore.getState().settings).toBe(settings);
+  });
+
   it("saves settings silently on success — no toast, no modal for an instant, visible change", async () => {
     const updated = { ...settings, appearance: "dark" as const };
     useSettingsStore.setState({ settings });

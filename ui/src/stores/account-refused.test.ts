@@ -309,15 +309,22 @@ describe("a submissions read the server could not answer", () => {
     expect(useAccountStore.getState().submissionsError).toBeNull();
   });
 
-  // A rejected call is a read that failed, not an exception for the poll's
+  // A failed call is a read that failed, not an exception for the poll's
   // `void` caller to drop on the floor. It says nothing about the
   // credential, so the account stays where it is and the rows say why they
   // are not current.
-  it("lands a rejected poll as a failed read, not a thrown one", async () => {
+  //
+  // The transport folds its own failure into the error arm as the message
+  // alone, so that — not a rejection — is what the poll now meets. Left
+  // read by `kind` the message answers `undefined`, the write falls to the
+  // arm that writes nothing, and an empty tab offers a first submit over
+  // work already in review.
+  it("lands a failed poll as a failed read, with the words it came with", async () => {
     useAccountStore.setState({ account: signedIn, submissions: [ROW] });
-    vi.mocked(commands.mineSubmissions).mockRejectedValue(
-      new Error("the bridge is gone"),
-    );
+    vi.mocked(commands.mineSubmissions).mockResolvedValue({
+      status: "error",
+      error: "the bridge is gone",
+    } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
 
     await expect(
       useAccountStore.getState().loadSubmissions(),

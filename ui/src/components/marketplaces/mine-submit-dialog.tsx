@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { refusalWords } from "@/lib/refusal";
+import { isShapedRefusal, refusalWords } from "@/lib/refusal";
 import { hasCredential, useAccountStore } from "@/stores/account";
 
 /** The preflight checklist and the submit itself. The server has the last
@@ -76,8 +76,10 @@ export function MineSubmitDialog({
         setError(refusalWords(answer.error));
         // An expired sign-in takes the offer away with it: the footer
         // reads the account, so this dialog stops offering a submit
-        // nothing can carry and offers the sign-in that fixes it.
-        refused(answer.error, since);
+        // nothing can carry and offers the sign-in that fixes it. A
+        // transport failure is news about the channel, not the credential,
+        // so it never reaches that decision.
+        if (isShapedRefusal(answer.error)) refused(answer.error, since);
         return;
       }
       setSubmitted(answer.data.status);

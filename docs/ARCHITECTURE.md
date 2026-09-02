@@ -48,11 +48,15 @@ commands, one module per page domain.
 shadcn/ui + zustand over generated bindings (tauri-specta). Those bindings
 are exported and byte-checked by `crates/app/tests/bindings.rs`, so anything
 about them — the command surface, the constants the UI reads instead of
-copying, the runtime every command answers through — is changed in
-`specta_builder` and regenerated, never edited in `ui/src/bindings.ts`. That
-runtime folds a rejected invoke into the same `{ status: "error" }` a refusal
-answers with, so a caller that fires a write and forgets it cannot drop a
-transport failure in silence. Adapters in `core/harness/` own paths and
+copying, the runtime every `Result`-returning command answers through — is
+changed in `specta_builder` and regenerated, never edited in
+`ui/src/bindings.ts`. That runtime folds a rejected invoke into the same
+`{ status: "error" }` a refusal answers with, declared as `E | string`, so a
+caller that fires such a write and forgets it cannot drop a transport failure
+in silence and a reader that goes off the refusal's fields rather than
+through `ui/src/lib/refusal.ts` is a type error. A command returning a plain
+value gets no wrapper and still rejects to its caller. Adapters in
+`core/harness/` own paths and
 rendering only; what each harness supports lives in one capability table read
 by core and UI.
 
