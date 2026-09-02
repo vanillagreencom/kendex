@@ -1001,7 +1001,7 @@ cache_list_cycles() {
 
     # Apply type filter (date-based: "current" = most recent started + incomplete)
     local today_iso
-    today_iso=$(date -Iseconds)
+    today_iso=$(date -u +%Y-%m-%dT%H:%M:%S.000Z) # the compares are lexicographic: UTC Z, as the cache stores
     case "$cycle_type" in
     current)
         cycles=$(echo "$cycles" | jq --arg today "$today_iso" \

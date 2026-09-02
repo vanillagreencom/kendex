@@ -1,4 +1,15 @@
-# Four mutations, one per claim the suite makes.
+# One mutation per claim the suite makes, each checked to redden the suite
+# applied on its own: 2 reddens the D upcoming assertion, 3 the D past
+# assertion, and 4 the two E assertions. Claim C, that no --team is unfiltered,
+# carries none, because neutralizing the filter leaves it passing.
+#
+# Under the combined run the harness applies all four at once and mutation 1
+# subsumes the rest: with the filter neutralized `--team SETTLED` gets the whole
+# cache, which always holds a started-and-incomplete cycle, so the working ==
+# null arms 2 and 3 target never execute, and 4's effect is already produced by
+# the unfiltered pass-through. The all-four and mutation-1-alone FAIL sets are
+# identical. So the combined run demonstrates mutation 1; what proves 2, 3 and 4
+# is the one-at-a-time check above.
 #
 # 1. Neutralize the team filter, restoring the discarded `--team`: the flag is
 #    still accepted at rc 0, and every team's cycles come back — including
