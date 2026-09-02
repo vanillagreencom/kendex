@@ -32,8 +32,8 @@ impl fmt::Write for HashWriter {
 }
 
 impl AuditInput {
-    /// The identity of the content rules read. Name and harness stay out;
-    /// location enters only when a hook uses its path as its command.
+    /// Name, harness and the top-level location field stay out. Values derived
+    /// from location remain in the identity when content carries them.
     pub(crate) fn content_hash(&self) -> String {
         let AuditInput {
             kind,
