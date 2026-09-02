@@ -89,8 +89,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
     setChosen(address === null ? null : { at: address, file });
 
   const Icon = kindIcon(kind);
-  // The place named on screen, as against `redirected`, which is whether a
-  // place was chosen at all.
+  // The place named on screen.
   const target = destination ?? scope;
   // Matched by scope and name both — two scopes can subscribe the same
   // alias to different repositories.

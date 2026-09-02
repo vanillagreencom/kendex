@@ -37,8 +37,7 @@ pub(crate) struct Browsed {
 /// surface reading anything else offers a button the engine refuses on a
 /// record the reader was never shown.
 ///
-/// `Clone` is [`Cow`]'s bound in [`landing`] and nothing else: the borrowed
-/// arm is what every unredirected read takes, and nothing calls `to_mut`.
+/// `Clone` is [`Cow`]'s bound in [`landing`].
 #[derive(Clone)]
 pub(crate) struct Records {
     pub(crate) manifest: Manifest,

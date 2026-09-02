@@ -214,10 +214,10 @@ pub fn bundles(env: &Env, catalog: &Catalog) -> Result<Vec<BundleDetail>> {
 }
 
 /// One curated set with per-member installed state. `destination` redirects
-/// the install into a project, exactly as it does for a package's preview:
-/// the members come from the catalog, and every answer about records — each
-/// member's state and the set's own [`BundleDetail::records_unreadable`] —
-/// is about the scope the install would land in.
+/// the install into a project: the members come from the catalog, and every
+/// answer about records — each member's state and the set's own
+/// [`BundleDetail::records_unreadable`] — is about the scope the install
+/// would land in.
 pub fn bundle(
     env: &Env,
     catalog: &Catalog,

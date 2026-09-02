@@ -115,8 +115,7 @@ describe("the place a subscription is chosen for", () => {
     expect(document.body.textContent).toContain(
       unreadableRecordsWriteLine("Personal"),
     );
-    // The write line, not the read one: the consequence here is that
-    // nothing is written, never that a row is stale.
+    // Both halves: the line this surface draws, and the one it must not.
     expect(document.body.textContent).not.toContain(
       unreadableRecordsLine("Personal"),
     );
@@ -151,9 +150,8 @@ describe("the place a subscription is chosen for", () => {
     );
   });
 
-  // Withheld while the read is still out, the way the two install pages
-  // withhold on a payload they have not got yet: pressing into the gap
-  // would be pressing before the place had answered.
+  // Withheld while the read is still out: pressing into the gap would be
+  // pressing before the place had answered.
   it("offers nothing while the read is still out", async () => {
     vi.mocked(commands.scopeRecordsUnreadable).mockReturnValue(
       new Promise(() => {}),

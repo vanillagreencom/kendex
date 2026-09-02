@@ -85,11 +85,11 @@ export function SubscribeDialog({
     () => commands.scopeRecordsUnreadable(target),
   );
   // The answer, and the button's own question. Subscribe is withheld while
-  // the read is still out too, the way the two install pages withhold on a
-  // payload they do not have yet; only an answered read draws the reason,
-  // since a sub-millisecond wait has nothing to say. A failed read is left
-  // open: the engine refuses the write itself, and failing closed here
-  // would disable Subscribe for good whenever the local read errors.
+  // the read is still out too, since a press then lands before the place
+  // has answered; only an answered read draws the reason, because a
+  // sub-millisecond wait has nothing to say. A failed read is left open:
+  // the engine refuses the write itself, and failing closed here would
+  // disable Subscribe for good whenever the local read errors.
   const unreadable = records.status === "ok" && records.data;
   const withheld = unreadable || records.status === "loading";
 

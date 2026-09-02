@@ -69,8 +69,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   // The destination is part of the read, not a filter over it: every
   // member's state and the set's own record standing are facts about the
   // scope the install lands in, so each place has a slot of its own and
-  // choosing one already read is served from it, the way every other
-  // catalog read on this page's siblings is.
+  // choosing one already read is served from it.
   const key = bundleKey(catalog, bundle, redirected);
   const detail = bundles[key];
   const readError = reachError ?? readErrors[key];
