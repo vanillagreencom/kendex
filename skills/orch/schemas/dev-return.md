@@ -1,6 +1,6 @@
 # Dev Return (Completion Artifact) Schema
 
-The on-disk record a dev or QA agent writes at the end of an implement, fix, or analysis delegation. Orch accepts a completion from it **independently of the live return message**.
+The on-disk record a dev or QA agent writes at the end of an implement or fix delegation. Orch accepts a completion from it **independently of the live return message**.
 
 Written **only** by `dev-return-write` — never hand-authored, never composed with a file-write tool. The writer builds the JSON with `jq` and writes it atomically; its `--help` is the flag reference. Validation gates live in `dev-artifact-check --help`; round-closure routing in [`../references/artifact-checks.md`](../references/artifact-checks.md).
 
@@ -41,16 +41,16 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 |-------|----------|-------------|-------------|
 | `schema_version` | Yes | (constant `1`) | Artifact schema version (number) |
 | `round_id` | Yes | `--round-id` | Per-delegation token; equals the filename token and the expected `dev_round_id` |
-| `kind` | Yes | `--kind` | `implement`, `fix`, or `analysis` |
+| `kind` | Yes | `--kind` | `implement` or `fix` |
 | `issue` | Yes | `--issue` | Normalized workflow-state key (Parent ID when bundled) |
 | `branch` | Yes | `--branch` | Git branch (non-empty string) |
-| `commit` | implement/fix | `--commit` | HEAD SHA after the commit, or the prior HEAD when no commit was needed. **Absent for `analysis`** |
-| `baseline_lines` | implement | measured by writer | Additions plus deletions against the base branch at `commit`, omitting binary rows and floored at 1. Round-mode acceptance writes the first value to workflow state. **Absent for `fix` and `analysis`** |
-| `validate` | implement/fix | `--validate` | `pass` or `FAILING: check1,check2` — a closed enumeration. **Absent for `analysis`** |
-| `validate_note` | Optional | `--validate-note` | A free-text qualifier the enumeration cannot express, or `null`. **Absent for `analysis`** |
+| `commit` | Yes | `--commit` | HEAD SHA after the commit, or the prior HEAD when no commit was needed |
+| `baseline_lines` | implement | measured by writer | Additions plus deletions against the base branch at `commit`, omitting binary rows and floored at 1. Round-mode acceptance writes the first value to workflow state. **Absent for `fix`** |
+| `validate` | Yes | `--validate` | `pass` or `FAILING: check1,check2` — a closed enumeration |
+| `validate_note` | Optional | `--validate-note` | A free-text qualifier the enumeration cannot express, or `null` |
 | `qa_labels` | Optional | `--qa-label` (repeatable) | Applied QA labels; `[]` when none |
 | `summary_posted` | Optional | `--no-summary` sets `false` | `true` only when the summary was posted to a tracker; GitHub and ad-hoc rounds set `false` |
-| `summary` | Required for `analysis` | `--summary` or `--summary-file` | The summary content, or `null`. Carries the summary for rounds that post nowhere; for `analysis` it is the recommendation and its evidence, and must be non-empty |
+| `summary` | Optional | `--summary` or `--summary-file` | The summary content, or `null`. Carries the summary for rounds that post nowhere |
 | `bundled` | Optional | `--bundled` sets `true` | `true` for a bundled implement |
 | `items` | Conditional | `--item N DECISION REASONING` | Per kind rules below |
 
@@ -63,7 +63,6 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 | `implement`, single | May be empty → `items: []` |
 | `implement`, `--bundled` | Non-empty — one entry per sub-issue result |
 | `fix` | Non-empty — one entry per delegated review item, and `--expect-items`/`--expect-items-from-round` requires the set to match EXACTLY |
-| `analysis` | Always `[]` — `--item` and `--bundled` are rejected |
 
 ## `validate` and its note
 
@@ -74,11 +73,3 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 ```
 
 `dev-artifact-check` echoes both. An empty or whitespace-only note is rejected.
-
-## Analysis rounds
-
-`--kind analysis` is the spelling for a **read-only round**: the agent was delegated to investigate and recommend, not to implement. `--commit`, `--validate`, `--validate-note`, `--item`, and `--bundled` are all rejected and the artifact omits those keys entirely; `dev-artifact-check` treats their presence as `invalid`.
-
-Exactly one of `--summary TEXT` or `--summary-file PATH` is required. Use the inline form when the harness refuses the file write; a blocked write must not leave a false `fix` receipt as the only exit.
-
-Never force `implement` or `fix` onto an analysis round, and never skip the artifact.

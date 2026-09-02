@@ -184,7 +184,7 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
    .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode [GATE_MODE]
    ```
 
-   No `max_wait` positional: the budget resolves through `PR_REVIEW_WAIT_SECS`. approval-wait always emits a JSON result and nudges a silent reviewer itself after `PR_REVIEW_NUDGE_SECS`, once per head SHA, with the clock restarting on every push.
+   No `max_wait` positional: the budget resolves through `PR_REVIEW_WAIT_SECS`. approval-wait always emits a JSON result.
 
    | `status` | Action |
    |----------|--------|

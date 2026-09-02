@@ -44,11 +44,7 @@ Then resolve the decision mode:
 .agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
 ```
 
-`auto-recommended` takes the recommended option (`Fix all`) without asking and logs it; anything else asks `Fix all` | multi-select `#N: [TITLE]` | `Cancel`. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) applies in every mode.
-
-```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] auto_decisions '"auto-selected: Fix all — [REASON]"'
-```
+`auto-recommended` takes the recommended option (`Fix all`) without asking; anything else asks `Fix all` | multi-select `#N: [TITLE]` | `Cancel`. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) applies in every mode.
 
 Cancel ends the workflow; a selection goes to § 2.
 
@@ -79,16 +75,11 @@ Cancel ends the workflow; a selection goes to § 2.
 4. **Stamp the round**, as separate tool calls immediately before delegating, then arm the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
 
    ```bash
-   .agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
-   ```
-   ```bash
    .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
    ```
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
    ```
-
-   `worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed owner is the delegation's `Worktree Lease:` line.
 
    Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`, one per delegated item. `[ITEM_TEXT]` is that item's formatted block verbatim. `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
 
@@ -104,8 +95,6 @@ Cancel ends the workflow; a selection goes to § 2.
 
    `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]' '[REACH]'` groups inline in one command instead.
 
-   **An analysis (read-only) round has no delegated item set** — skip `dev-round-write` entirely and run step 5's Check A without an expected-set flag.
-
    ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` is the technical fix, never procedure steps — the agent owns validate, commit, and return.
 
    <delegation_format>
@@ -114,7 +103,6 @@ Cancel ends the workflow; a selection goes to § 2.
    Source: [SOURCE]
    Issue: [ISSUE_ID]
    Worktree: [WORKTREE_PATH]
-   Worktree Lease: [WORKTREE_LEASE]
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
    QA: [QA_AGENT]
@@ -158,8 +146,6 @@ Cancel ends the workflow; a selection goes to § 2.
    | `wait` | pass | Do NOT re-run the fix and do NOT accept on git alone. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if the delegation is gone from your context, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* Accept only when a valid artifact for THIS round appears. |
    | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
 | `retry` | any | An artifact for THIS round exists but fails a gate. The check's `reason` names it. `unapproved_additions` also returns every refused path in `files`; start a fresh round that names each deliberate path in `Adds:`, or order the files cut. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. `comparison_failed` means git cannot compare the round's recorded base commit against HEAD, so the dev agent has nothing to repair; mint a fresh round. Never accept, and never treat it as absent. |
-
-   **Analysis rounds** run Check A without an expected-set flag, and B expects no new commit and a clean worktree. On accept, read the `summary` recommendation and decide the next step: delegate the actual fixes as a fresh round, or close and re-scope with reasoning.
 
 6. **Record the outcome** — one write per item, and the item's own text never enters a shell word:
 

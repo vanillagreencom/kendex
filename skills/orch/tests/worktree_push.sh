@@ -445,46 +445,34 @@ else
 fi
 
 echo
-echo "=== the bare-numeric alias binds, not refuses ==="
+echo "=== a bare-numeric key resolves to its exact file, never to issue-N ==="
 
-# Issue N stored under issue-N is the one accepted spelling difference: the
-# aliased state is this issue's record, and the push must reconcile it through
-# the resolved key.
-work="$TMP_ROOT/work-alias"
-rm -rf "$work" && mkdir -p "$work"
+# workflow-state resolves every key to its exact file, so `--issue 7` reaches
+# workflow-state-7.json and nothing else. worktree-push must resolve it the
+# same way: with no state under that key the rebase map has nowhere to land,
+# which is a loud failure — never a silent bind to the issue-7 record.
+work="$TMP_ROOT/work-numeric"
+mkdir -p "$work"
 git -C "$wt" config user.email test@example.com
 git -C "$wt" config user.name Test
-git -C "$wt" commit -q --allow-empty -m alias-base
-alias_old="$(git -C "$wt" rev-parse HEAD)"
-git -C "$wt" commit -q --allow-empty -m alias-restack
-alias_new="$(git -C "$wt" rev-parse HEAD)"
+git -C "$wt" commit -q --allow-empty -m numeric-base
+numeric_old="$(git -C "$wt" rev-parse HEAD)"
+git -C "$wt" commit -q --allow-empty -m numeric-restack
+numeric_new="$(git -C "$wt" rev-parse HEAD)"
 (cd "$work" \
   && "$STATE" init issue-7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null \
-  && "$STATE" append issue-7 fixed_items "{\"description\":\"fix\",\"commit\":\"${alias_old:0:7}\",\"source\":\"pr-review\"}")
-STUB_PUSH_STDOUT="rebase-map: $alias_old $alias_new" run_push "$work" --worktree "$wt" --issue 7
-assert_eq "$RUN_RC" "0" "a bare-numeric issue binds to its issue-N state instead of refusing"
-assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${alias_new:0:7}" "the aliased record's fix SHA is rewritten"
-
-
-echo
-echo "=== an ambiguous state key refuses before pushing ==="
-
-# Files under BOTH the bare-numeric and the issue-N key make the
-# reconciliation target ambiguous (workflow-state exists exits 2). Proceeding
-# would land a rebase whose map has no definite record to land in — the push
-# must not run at all.
-work="$TMP_ROOT/work-ambiguous"
-rm -rf "$work" && mkdir -p "$work"
-(cd "$work" \
-  && "$STATE" init issue-7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null \
-  && "$STATE" init 7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null)
-ambig_args_log="$TMP_ROOT/ambig-args.log"
-: >"$ambig_args_log"
-STUB_ARGS_LOG="$ambig_args_log" STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" \
+  && "$STATE" append issue-7 fixed_items "{\"description\":\"fix\",\"commit\":\"${numeric_old:0:7}\",\"source\":\"pr-review\"}")
+numeric_args_log="$TMP_ROOT/numeric-args.log"
+: >"$numeric_args_log"
+STUB_ARGS_LOG="$numeric_args_log" STUB_PUSH_STDOUT="rebase-map: $numeric_old $numeric_new" \
   run_push "$work" --worktree "$wt" --issue 7
-assert_eq "$RUN_RC" "1" "an ambiguous state key fails the call"
-assert_contains "$(cat "$run_err")" "ambiguous" "the refusal names the ambiguity"
-assert_eq "$(wc -l <"$ambig_args_log")" "0" "the push never runs against an ambiguous state"
+assert_eq "$RUN_RC" "1" "a bare-numeric issue whose state does not exist fails the landed push"
+assert_eq "$(wc -l <"$numeric_args_log")" "1" \
+  "the push itself ran — the failure is reconciliation, not a pre-push refusal"
+assert_contains "$(cat "$run_err")" "State file not found: tmp/workflow-state-7.json" \
+  "the failure names the exact key it resolved, not the issue-7 file"
+assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${numeric_old:0:7}" \
+  "the issue-7 record is left alone by a bare-numeric call"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

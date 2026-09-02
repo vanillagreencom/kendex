@@ -51,7 +51,7 @@ Execute workflow sections in order; a "**Skip if**" condition is the workflow's 
 **The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 
 - `--issue` is the delegation's `Artifact Key:` line — the normalized workflow-state key (`issue-N` for GitHub, `PROJ-123` for Linear), never the tracker-native `OWNER/REPO#N` or a bare number — and `--round-id` its `Round ID:` line.
-- `--kind` always matches what was delegated: an investigate-and-recommend round is `--kind analysis`. `--validate` matches your commit message and return; a pass that needed a re-run is still `pass`, with the caveat in `--validate-note`. Flag constraints and value shapes: `dev-return-write --help`.
+- `--kind` always matches what was delegated. `--validate` matches your commit message and return; a pass that needed a re-run is still `pass`, with the caveat in `--validate-note`. Flag constraints and value shapes: `dev-return-write --help`.
 
 **Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel — Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message. A disk write is not a return. Send the `**Return exactly**` body once and go idle: in a Pi persistent pane follow it with `complete_subagent` (background agents must not call it); on Codex the `send_input` MESSAGE is the durable return and the runtime's `FINAL_ANSWER` echo of it is expected, not a separate return to author or expand.
 

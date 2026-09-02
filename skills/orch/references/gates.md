@@ -12,7 +12,7 @@ Read the effective reviewer-gate mode ONLY through `approval-wait --resolve-mode
 | `review` | a non-author review of the current head plus zero unresolved threads | `approval-wait --mode review` |
 | `off` | reviewer-less repo, or the engine's `REVIEW_GATE_MODE=off` disable (resolved first) | skip the wait; record the gate not-applicable |
 
-The reviewer-gate settings — `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_QUORUM`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE_SECS` / `PR_REVIEW_NUDGE`, `PR_REVIEW_WAIT_SECS` — live in `kendex.settings.toml` `[env]`; semantics and defaults are in `approval-wait --help`. The gate predicate, writer, and engine-side `REVIEW_GATE_*` keys belong to the review-gate skill (its SKILL.md and `.agents/skills/review-gate/references/settings.md`).
+The reviewer-gate settings — `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_WAIT_SECS` — live in `kendex.settings.toml` `[env]`; semantics and defaults are in `approval-wait --help`. The gate predicate, writer, and engine-side `REVIEW_GATE_*` keys belong to the review-gate skill (its SKILL.md and `.agents/skills/review-gate/references/settings.md`).
 
 ## Which waiter answers which state
 

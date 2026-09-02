@@ -41,26 +41,12 @@ REVIEW_GATE_MODE = "enforce"
 # an explicit max_wait argument always wins.
 PR_REVIEW_WAIT_SECS = "900"
 
-# Seconds of reviewer silence on a head before the one nudge; a push resets
-# the clock. "0" disables.
-PR_REVIEW_NUDGE_SECS = "600"
-
-# Comment posted as the nudge — whatever summons this repo's review bot.
-# Empty = GitHub's native re-review request.
-PR_REVIEW_NUDGE = ""
-
 # Check-run or commit-status name a trusted review bot publishes on
 # analyzed heads; a
 # success counts as review-received. SECURITY: matched by NAME and anyone
 # can publish under any name — name only the trusted bot's check. Empty =
 # review objects only.
 PR_REVIEW_CHECK = ""
-
-# Reviewer logins (comma/space separated, ONE line — the loader reads a
-# value per line) that must EACH review the current head with zero open
-# threads before the gate opens. Empty = off. On timeout, "proceed" needs
-# EVERY listed reviewer silent — a partial quorum is engagement.
-PR_REVIEW_QUORUM = ""
 
 # When the review signal never arrives: "block" reports a timeout;
 # "proceed" records a reviewer-down override and moves on, but only with

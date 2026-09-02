@@ -22,9 +22,6 @@
 #     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
 #     [--qa-label LABEL]... [--bundled] [--no-summary] \
 #     [--summary TEXT | --summary-file PATH] [--item N DECISION REASONING]...
-#   dev-return-write --worktree PATH --kind analysis --issue ID --round-id RID \
-#     --branch BRANCH (--summary TEXT | --summary-file PATH) \
-#     [--qa-label LABEL]... [--no-summary]
 #
 # --validate stays strictly enumerated ("pass" or "FAILING:…") so it remains
 # machine-checkable. --validate-note is the additive channel for a QUALIFIED
@@ -33,36 +30,22 @@
 # Without it the caveat is lost from the record orch treats as authoritative,
 # surviving only if the agent happens to mention it conversationally.
 #
-# --kind analysis (kendex#952) is the truthful spelling for a READ-ONLY round —
-# investigate and recommend, explicitly no implementation. It REJECTS --commit,
-# --validate, and --validate-note (an analysis round produces no commit and runs
-# no validation, so supplying one would assert an outcome that did not occur),
-# and it rejects --item/--bundled (nothing was applied). The recommendation and
-# evidence travel in the existing free-form summary field: exactly one of
-# --summary TEXT (inline) or --summary-file PATH is REQUIRED, so the round's
-# outcome is durably recorded, not just conversational. The inline form exists
-# because a harness can refuse the file write --summary-file depends on
-# (kendex#1236) — without it, a blocked write leaves no honest route to close
-# an analysis round, and the tempting workaround is a false fix receipt.
-# The artifact OMITS the commit/validate/validate_note keys entirely;
-# dev-artifact-check treats their presence on an analysis artifact as invalid.
-#
 # Writes PATH/tmp/dev-return-ID-RID.json and prints its absolute path (one line).
 #
 # Artifact schema — canonical source of truth: skills/orch/schemas/dev-return.md
 #   {
 #     "schema_version": 1,                    // required, number
 #     "round_id": "[ROUND_ID]",               // required, matches the filename token
-#     "kind": "implement" | "fix" | "analysis", // required
+#     "kind": "implement" | "fix",             // required
 #     "issue": "[ISSUE_ID]",                  // required, normalized state key
 #     "branch": "[BRANCH]",                   // required
-#     "commit": "[HEAD_SHA_AFTER_COMMIT]",    // implement/fix only; OMITTED for analysis
+#     "commit": "[HEAD_SHA_AFTER_COMMIT]",    // required
 #     "baseline_lines": 138,                  // implement only; additions + deletions, floor 1
-#     "validate": "pass" | "FAILING: c1,c2",  // implement/fix only; OMITTED for analysis
-#     "validate_note": "…" | null,            // --validate-note; OMITTED for analysis
+#     "validate": "pass" | "FAILING: c1,c2",  // required
+#     "validate_note": "…" | null,            // --validate-note
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
 #     "summary_posted": true,                 // false with --no-summary
-#     "summary": "…" | null,                  // --summary text or --summary-file content (required content for analysis)
+#     "summary": "…" | null,                  // --summary text or --summary-file content
 #     "bundled": false,                       // true with --bundled
 #     "items": [{"n": 1, "decision": "Applied", "reasoning": "…"}]
 #   }
@@ -71,9 +54,6 @@
 #   --kind fix OR --bundled  → REQUIRES >=1 --item (a fix/bundled artifact with no
 #                              items is incomplete).
 #   --kind implement (single, no --bundled) → zero items allowed → writes "items": [].
-#   --kind analysis → REQUIRES exactly one of --summary / --summary-file;
-#                     REJECTS --commit/--validate/--validate-note/--item/
-#                     --bundled; writes "items": [].
 #   --summary and --summary-file are mutually exclusive for every kind (one
 #   summary source, no silent precedence).
 #   DECISION ∈ {Applied, Skipped, Blocked}; N is a non-negative integer; REASONING
@@ -106,9 +86,6 @@ Usage:
     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
     [--qa-label LABEL]... [--bundled] [--no-summary] \
     [--summary TEXT | --summary-file PATH] [--item N DECISION REASONING]...
-  dev-return-write --worktree PATH --kind analysis --issue ID --round-id RID \
-    --branch BRANCH (--summary TEXT | --summary-file PATH) \
-    [--qa-label LABEL]... [--no-summary]
 
 Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
 An implement receipt carries additions plus deletions against the base branch,
@@ -121,12 +98,6 @@ that passed only on re-run, a flake worth recording); it never relaxes --validat
 content. They are mutually exclusive (one summary source, no silent precedence).
 Every single-valued flag may be supplied at most once (no silent last-wins);
 only --qa-label and --item repeat.
---kind analysis is a read-only round (investigate + recommend, no implementation):
-it requires exactly one of --summary / --summary-file (the recommendation/
-evidence — inline exists so a harness-refused file write is not a dead end,
-kendex#1236) and rejects --commit, --validate, --validate-note, --item, and
---bundled — an analysis round has no commit and runs no validation, so those
-keys are omitted from the artifact.
 --issue / --round-id must match ^[A-Za-z0-9._-]+$. Canonical schema:
 skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
 Exit 0 on success; every usage/validation error exits 2.
@@ -193,9 +164,8 @@ qa_labels=()
 item_n=()
 item_decision=()
 item_reasoning=()
-# Presence tracking: --kind analysis rejects a supplied flag even when its
-# value is empty ("--commit ''" is still a commit claim), and every
-# single-valued flag uses its boolean to refuse a duplicate (silent last-wins).
+# Presence tracking: every single-valued flag uses its boolean to refuse a
+# duplicate (silent last-wins).
 worktree_given=false
 kind_given=false
 issue_given=false
@@ -257,44 +227,22 @@ done
 [[ -n "$worktree" ]] || die "--worktree is required"
 [[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
 case "$kind" in
-  implement|fix|analysis) ;;
-  "") die "--kind is required (implement|fix|analysis)" ;;
-  *)  die "--kind must be implement, fix, or analysis, got '$kind'" ;;
+  implement|fix) ;;
+  "") die "--kind is required (implement|fix)" ;;
+  *)  die "--kind must be implement or fix, got '$kind'" ;;
 esac
 check_id_token --issue "$issue"
 check_id_token --round-id "$round_id"
 [[ -n "$branch" ]]   || die "--branch is required (non-empty)"
-if [[ "$kind" == "analysis" ]]; then
-  # A read-only analysis round has no commit and runs no validation — accepting
-  # either flag would let the artifact assert an outcome that did not occur
-  # (kendex#952). Reject loudly instead of silently ignoring.
-  [[ "$commit_given" == "false" ]] \
-    || die "--commit is not allowed with --kind analysis: an analysis round produces no commit"
-  [[ "$validate_given" == "false" ]] \
-    || die "--validate is not allowed with --kind analysis: an analysis round runs no validation"
-  [[ "$validate_note_given" == "false" ]] \
-    || die "--validate-note is not allowed with --kind analysis: there is no validation outcome to qualify"
-  [[ "$bundled" == "false" ]] \
-    || die "--bundled is not allowed with --kind analysis: a bundle is an implementation shape"
-  (( ${#item_n[@]} == 0 )) \
-    || die "--item is not allowed with --kind analysis: an analysis round applies no review items"
-  # The recommendation/evidence IS the round's deliverable — without it the
-  # artifact proves only that the round ended, not what it concluded. Inline
-  # --summary is a first-class source: a harness may refuse the file write
-  # --summary-file depends on (kendex#1236).
-  [[ "$summary_given" == "true" || "$summary_file_given" == "true" ]] \
-    || die "--kind analysis requires --summary TEXT or --summary-file PATH: the artifact must carry the recommendation/evidence"
-else
-  [[ -n "$commit" ]]   || die "--commit is required (non-empty)"
-  [[ -n "$validate" ]] || die "--validate is required (non-empty)"
-  [[ "$validate" == "pass" || "$validate" == FAILING:* ]] \
-    || die "--validate must be 'pass' or begin with 'FAILING:', got '$validate'"
-  # An empty or whitespace-only note is worse than none: it looks like a recorded
-  # caveat while carrying nothing. Reject it rather than storing "".
-  if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then
-    [[ -n "${validate_note//[[:space:]]/}" ]] \
-      || die "--validate-note must contain non-whitespace text"
-  fi
+[[ -n "$commit" ]]   || die "--commit is required (non-empty)"
+[[ -n "$validate" ]] || die "--validate is required (non-empty)"
+[[ "$validate" == "pass" || "$validate" == FAILING:* ]] \
+  || die "--validate must be 'pass' or begin with 'FAILING:', got '$validate'"
+# An empty or whitespace-only note is worse than none: it looks like a recorded
+# caveat while carrying nothing. Reject it rather than storing "".
+if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then
+  [[ -n "${validate_note//[[:space:]]/}" ]] \
+    || die "--validate-note must contain non-whitespace text"
 fi
 # One summary source only — accepting both would need a precedence rule, and a
 # silently ignored flag is exactly the class of quiet misrecording this writer
@@ -315,11 +263,6 @@ if [[ "$summary_file_given" == "true" ]]; then
   # unset path variable) — never a no-op.
   [[ -n "$summary_file" ]] || die "--summary-file requires a non-empty path"
   [[ -f "$summary_file" ]] || die "--summary-file path '$summary_file' does not exist"
-  # Same rule as inline: a file of pure whitespace is an empty deliverable,
-  # and for analysis the summary IS the artifact's payload.
-  if [[ "$kind" == "analysis" ]] && ! grep -q '[^[:space:]]' -- "$summary_file"; then
-    die "--summary-file '$summary_file' contains no non-whitespace text"
-  fi
 fi
 
 # A fix or bundled artifact without items is incomplete — reject before writing.
@@ -378,65 +321,36 @@ else
   summary_arg=(--argjson summary null)
 fi
 
-# An analysis artifact OMITS commit/validate/validate_note entirely — the keys'
-# absence is what dev-artifact-check verifies (their presence would be a
-# validation claim on a round that ran none, kendex#952).
-if [[ "$kind" == "analysis" ]]; then
-  jq -n \
-    --argjson schema_version 1 \
-    --arg round_id "$round_id" \
-    --arg kind "$kind" \
-    --arg issue "$issue" \
-    --arg branch "$branch" \
-    --argjson qa_labels "$qa_json" \
-    --argjson summary_posted "$summary_posted" \
-    "${summary_arg[@]}" \
-    --argjson bundled "$bundled" \
-    --argjson items "$items_json" \
-    '{
-       schema_version: $schema_version,
-       round_id: $round_id,
-       kind: $kind,
-       issue: $issue,
-       branch: $branch,
-       qa_labels: $qa_labels,
-       summary_posted: $summary_posted,
-       summary: $summary,
-       bundled: $bundled,
-       items: $items
-     }' > "$tmp"
-else
-  jq -n \
-    --argjson schema_version 1 \
-    --arg round_id "$round_id" \
-    --arg kind "$kind" \
-    --arg issue "$issue" \
-    --arg branch "$branch" \
-    --arg commit "$commit" \
-    --argjson baseline_lines "$baseline_lines" \
-    --arg validate "$validate" \
-    --arg validate_note "$validate_note" \
-    --argjson qa_labels "$qa_json" \
-    --argjson summary_posted "$summary_posted" \
-    "${summary_arg[@]}" \
-    --argjson bundled "$bundled" \
-    --argjson items "$items_json" \
-    '({
-       schema_version: $schema_version,
-       round_id: $round_id,
-       kind: $kind,
-       issue: $issue,
-       branch: $branch,
-       commit: $commit,
-       validate: $validate,
-       validate_note: (if $validate_note == "" then null else $validate_note end),
-       qa_labels: $qa_labels,
-       summary_posted: $summary_posted,
-       summary: $summary,
-       bundled: $bundled,
-       items: $items
-     } + if $kind == "implement" then {baseline_lines: $baseline_lines} else {} end)' > "$tmp"
-fi
+jq -n \
+  --argjson schema_version 1 \
+  --arg round_id "$round_id" \
+  --arg kind "$kind" \
+  --arg issue "$issue" \
+  --arg branch "$branch" \
+  --arg commit "$commit" \
+  --argjson baseline_lines "$baseline_lines" \
+  --arg validate "$validate" \
+  --arg validate_note "$validate_note" \
+  --argjson qa_labels "$qa_json" \
+  --argjson summary_posted "$summary_posted" \
+  "${summary_arg[@]}" \
+  --argjson bundled "$bundled" \
+  --argjson items "$items_json" \
+  '({
+     schema_version: $schema_version,
+     round_id: $round_id,
+     kind: $kind,
+     issue: $issue,
+     branch: $branch,
+     commit: $commit,
+     validate: $validate,
+     validate_note: (if $validate_note == "" then null else $validate_note end),
+     qa_labels: $qa_labels,
+     summary_posted: $summary_posted,
+     summary: $summary,
+     bundled: $bundled,
+     items: $items
+   } + if $kind == "implement" then {baseline_lines: $baseline_lines} else {} end)' > "$tmp"
 
 mv "$tmp" "$out"
 trap - EXIT

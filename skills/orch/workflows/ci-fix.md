@@ -53,16 +53,11 @@ Infer the agent from the component paths or issue labels. A test failure in conc
 Stamp the round as separate tool calls immediately before delegating, and arm the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
 
 ```bash
-.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
-```
-```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
-
-`worktree-claim` exit 75 aborts the delegation (another session holds this worktree; stderr names the holder); exit 1 stops the workflow and is reported. Its printed owner is the delegation's `Worktree Lease:` line.
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
@@ -78,15 +73,13 @@ Error output:
 [truncated error logs]
 
 Worktree: [WORKTREE_PATH]
-Worktree Lease: [WORKTREE_LEASE]
 
-1. Refresh possession before changing anything: `[WORKTREE_PATH]/.agents/skills/worktree/scripts/worktree-session-guard refresh [WORKTREE_PATH] --owner [ISSUE_ID]`. Any non-zero exit ends the round here — change nothing and report its stderr verbatim.
-2. Analyze the error; if it is a test failure in concurrent code, check for flaky-test patterns first.
-3. Fix the issue, editing files under `[WORKTREE_PATH]` by absolute path.
-4. Run the project's validation command from `[WORKTREE_PATH]`.
-5. If the target failure is fixed but OTHER failures remain: still commit, and note them in the message.
-6. Stage and commit: `git -C [WORKTREE_PATH] add -A`, then `git -C [WORKTREE_PATH] commit -m "fix([ISSUE_ID]): [DESCRIPTION]"`, appending `[validate: FAILING_CHECK]` to the message when other failures remain.
-7. Push: `git -C [WORKTREE_PATH] push`.
+1. Analyze the error; if it is a test failure in concurrent code, check for flaky-test patterns first.
+2. Fix the issue, editing files under `[WORKTREE_PATH]` by absolute path.
+3. Run the project's validation command from `[WORKTREE_PATH]`.
+4. If the target failure is fixed but OTHER failures remain: still commit, and note them in the message.
+5. Stage and commit: `git -C [WORKTREE_PATH] add -A`, then `git -C [WORKTREE_PATH] commit -m "fix([ISSUE_ID]): [DESCRIPTION]"`, appending `[validate: FAILING_CHECK]` to the message when other failures remain.
+6. Push: `git -C [WORKTREE_PATH] push`.
 
 Report: what was fixed, the validate status, and any unrelated failures.
 </delegation_format>

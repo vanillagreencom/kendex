@@ -167,49 +167,6 @@ for wf in dev-start dev-fix review-pr-comments ci-fix; do
   assert_file_contains "$doc" 'new-round-id [ISSUE_ID] dev_round_id' "$wf mints a fresh round id before delegating"
 done
 
-# Every path that delegates a writer into the worktree takes possession first.
-# The round token alone binds an artifact to its delegation; it does not stop a
-# second session editing the same tree underneath the round.
-for wf in dev-start dev-fix review-pr-comments ci-fix; do
-  doc="$SKILL_DIR/workflows/$wf.md"
-  assert_file_contains "$doc" 'worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]' \
-    "$wf claims the worktree before delegating"
-done
-
-# The issue-keyed lease cannot separate two orchestrators on the same issue,
-# so the always-loaded docs must not promise that it refuses any second writer.
-for phrase in 'exit 75 refuses a second writer' 'rather than adding a second writer'; do
-  if grep -Fq -- "$phrase" "$SKILL_DIR/SKILL.md"; then
-    fail "SKILL.md promises more exclusion than worktree-claim delivers: $phrase"
-  else
-    pass "SKILL.md does not over-claim the possession gate: $phrase"
-  fi
-done
-# No check that either site states what actually exits 75 — the scripts table
-# row and the Round Closure step both say it in prose, and a sentence denying
-# the behaviour carries the number just as well as one asserting it. Deleting
-# the rows outright would satisfy the absence checks above, and this pin did
-# not close that: it covers nothing a negation does not also satisfy. Both
-# rules are uncovered.
-
-# The delegated agent refreshes the issue-keyed lease before touching the tree.
-for wf in dev-start dev-fix review-pr-comments ci-fix; do
-  doc="$SKILL_DIR/workflows/$wf.md"
-  assert_file_contains "$doc" 'Worktree Lease: [WORKTREE_LEASE]' \
-    "$wf carries the lease owner into the delegation"
-done
-for wf in dev-implement dev-fix; do
-  doc="$REPO_ROOT/skills/dev/workflows/$wf.md"
-  assert_file_contains "$doc" \
-    'worktree-session-guard refresh [WORKTREE_PATH] --owner [ARTIFACT_KEY]' \
-    "dev $wf refreshes the lease before touching the worktree"
-done
-# ci-fix delegates a free-form prompt rather than a dev workflow, so the
-# verification has to be a step of that prompt or its agent never runs one.
-assert_file_contains "$SKILL_DIR/workflows/ci-fix.md" \
-  'worktree-session-guard refresh [WORKTREE_PATH] --owner [ISSUE_ID]' \
-  "ci-fix makes lease refresh a step of its delegation"
-
 # The three artifact-accepting paths must actually run the round-scoped check;
 # accepting on git state alone would take an unfinished round as complete.
 for wf in dev-start dev-fix review-pr-comments; do
@@ -255,7 +212,7 @@ else
   # moment the file is renamed or moved — exactly when it needs asserting.
   fail "reviewer skill not found at $reviewer_skill — the frozen review-artifact-check pin cannot be checked"
 fi
-for script in review-artifact-check dev-return-write resolve-base-branch ci-wait worktree-claim; do
+for script in review-artifact-check dev-return-write resolve-base-branch ci-wait; do
   if [[ -x "$SKILL_DIR/scripts/$script" ]]; then
     pass "cross-skill dependency scripts/$script exists and is executable"
   else

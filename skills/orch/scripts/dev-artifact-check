@@ -17,19 +17,13 @@
 #
 # Artifact schema (written by `dev-return-write`; canonical:
 # skills/orch/schemas/dev-return.md):
-#   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix"|"analysis",
+#   { "schema_version": 1, "round_id": "…", "kind": "implement"|"fix",
 #     "issue": "…", "branch": "…", "commit": "…", "validate": "pass"|"FAILING: …",
 #     "baseline_lines": 138 (implement only),
 #     "validate_note": "…"|null (optional free-text qualifier — kendex#884),
 #     "qa_labels": […], "summary_posted": bool, "summary": "…"|null,
 #     "bundled": bool, "items": [{"n": <number>, "decision": "Applied"|"Skipped"|"Blocked", "reasoning": "…"}] }
-#
-# kind "analysis" (kendex#952) is a read-only round — investigate + recommend,
-# no implementation — recognized as complete-without-code. Its gates INVERT the
-# commit/validate rule: the artifact must carry NO commit, validate, or
-# validate_note key at all (their presence is a validation claim on a round that
-# ran none → invalid), and its summary must be a non-empty string (the
-# recommendation/evidence is the round's deliverable → else incomplete).
+
 #
 # The scalars prove the agent finished its tail; the items gates prove a fix or
 # bundled artifact carries its per-item results. In round mode, when the
@@ -85,8 +79,8 @@ requires it exists, its internal .round_id == RID, then the scalar/kind, commit
 object (against WT's git repo, kendex#994), and items gates. A kind fix receipt
 additionally REQUIRES --expect-items-from-round and exits 2 without it: its
 delegated set and authorized additions live in the round record, and omitting
-the flag would check neither. Implement and analysis write no round record and
-stay flagless.
+the flag would check neither. Implement rounds write no round record and stay
+flagless.
 An accepted round-mode implement receipt sets workflow state pr.baseline_lines
 only when that field is null. File mode: validates one explicit JSON file (round_id checked only when --round-id
 is supplied). It is a test/parity affordance — round-trip checks and known-path
@@ -131,14 +125,10 @@ verdict field, never the exit code.
 reason meanings when ok=false:
   missing     artifact file does not exist at the resolved path
   invalid     round_id != expected, OR not parseable JSON, OR a required field is
-              wrong-typed/empty: .kind ∈ {implement,fix,analysis}; .issue/.branch
+              wrong-typed/empty: .kind ∈ {implement,fix}; .issue/.branch
               non-empty strings; .round_id non-empty string; .schema_version a
-              number. implement/fix additionally require .commit/.validate
-              non-empty strings; implement requires integer .baseline_lines >= 1;
-              fix forbids that field. kind analysis requires the INVERSE — no .commit,
-              .validate, .validate_note, or .baseline_lines key present at all (an analysis round
-              produces no commit and runs no validation, so their presence is a
-              fabricated claim — kendex#952)
+              number; .commit/.validate non-empty strings; implement requires
+              integer .baseline_lines >= 1, and fix forbids that field
   commit_unresolvable
               the artifact's .commit names no object in the worktree's repo
               (kendex#994) — e.g. a hand-reconstructed SHA with a fabricated
@@ -155,9 +145,7 @@ reason meanings when ok=false:
               the protected-addition classifier produced no valid JSON array.
   incomplete  items[] fails the applicable rule — exact-set (with --expect-items)
               or non-empty-well-formed (kind fix OR bundled==true). kind implement
-              without bundled keeps allowing items: []. kind analysis is
-              incomplete when .summary is not a non-empty string (the
-              recommendation is the round's deliverable).
+              without bundled keeps allowing items: [].
 
 warning=commit_unreachable (NON-FATAL, ok stays true): the .commit resolves as a
 commit object but is not an ancestor of the current HEAD — the signature of a
@@ -231,34 +219,27 @@ round_id_matches() {
   ' "$1" >/dev/null 2>&1
 }
 
-# Type-strict required scalars: .kind ∈ {implement,fix,analysis}; .issue/.branch
+# Type-strict required scalars: .kind ∈ {implement,fix}; .issue/.branch
 # non-empty STRINGS (arrays/objects/bools/numbers fail, not just ""); .round_id a
-# non-empty string; .schema_version a number. implement/fix additionally require
-# .commit/.validate non-empty strings; analysis requires the INVERSE — no
-# .commit/.validate/.validate_note key present (a validation claim on a round
-# that ran none is a fabrication, kendex#952). A truncated or half-written
-# receipt fails this gate → reason=invalid.
+# non-empty string; .schema_version a number; .commit/.validate non-empty
+# strings. A truncated or half-written receipt fails this gate → reason=invalid.
 has_required_fields() {
   jq -e '
     (.kind? // "") as $k
-    | ($k == "implement" or $k == "fix" or $k == "analysis")
+    | ($k == "implement" or $k == "fix")
       and ((.issue? | type) == "string") and (.issue != "")
       and ((.branch? | type) == "string") and (.branch != "")
       and ((.round_id? | type) == "string") and (.round_id != "")
       and ((.schema_version? | type) == "number")
-      and (if $k == "analysis"
-           then ((has("commit") | not) and (has("validate") | not)
-                 and (has("validate_note") | not) and (has("baseline_lines") | not))
-           else ((.commit? | type) == "string") and (.commit != "")
-             and ((.validate? | type) == "string") and (.validate != "")
-             and ((.validate_note? | type) as $t | $t == "null" or $t == null
-                  or ($t == "string" and (.validate_note != "")))
-             and (if $k == "implement"
-                  then ((.baseline_lines? | type) == "number")
-                    and (.baseline_lines == (.baseline_lines | floor))
-                    and (.baseline_lines >= 1)
-                  else (has("baseline_lines") | not)
-                  end)
+      and ((.commit? | type) == "string") and (.commit != "")
+      and ((.validate? | type) == "string") and (.validate != "")
+      and ((.validate_note? | type) as $t | $t == "null" or $t == null
+           or ($t == "string" and (.validate_note != "")))
+      and (if $k == "implement"
+           then ((.baseline_lines? | type) == "number")
+             and (.baseline_lines == (.baseline_lines | floor))
+             and (.baseline_lines >= 1)
+           else (has("baseline_lines") | not)
            end)
   ' "$1" >/dev/null 2>&1
 }
@@ -299,17 +280,6 @@ items_exact_ok() {
             and ((.decision as $d | ["Applied","Skipped","Blocked"] | index($d)) != null)
             and ((.reasoning | type) == "string") and (.reasoning != "")))
       and (([ .items[].n ] | sort) == ($want | sort))
-  ' "$1" >/dev/null 2>&1
-}
-
-# kind "analysis" completeness (kendex#952): the recommendation/evidence rides in
-# .summary and IS the round's deliverable, so an analysis artifact whose summary
-# is missing, wrong-typed, or empty proves only that the round ended — not what
-# it concluded. Returns 0 (true) when analysis-shaped but summary is unusable.
-analysis_incomplete() {
-  jq -e '
-    ((.kind? // "") == "analysis")
-      and (((.summary? | type) != "string") or (.summary == ""))
   ' "$1" >/dev/null 2>&1
 }
 
@@ -504,10 +474,6 @@ validate_artifact() {
     emit false "$file" "incomplete"
     return 1
   fi
-  if analysis_incomplete "$file"; then
-    emit false "$file" "incomplete"
-    return 1
-  fi
   emit true "$file" "valid" "$warning"
   return 0
 }
@@ -627,8 +593,8 @@ fi
 # Without --expect-items-from-round there is no delegated set and no authorized
 # additions list, so validate_artifact would fall back to the weak
 # non-empty-items rule and skip the protected-additions gate entirely — a
-# bypass reachable by omitting a flag. Implement and analysis rounds write no
-# round record and stay flagless. This replaces the re-exec that used to
+# bypass reachable by omitting a flag. Implement rounds write no round record
+# and stay flagless. This replaces the re-exec that used to
 # silently upgrade the invocation: refusing keeps the caller's command honest.
 require_round_record_flag() {
   [[ "$round_mode" == "true" && "$expect_from_round" != "true" && -f "$file" ]] || return 0

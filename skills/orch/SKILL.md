@@ -76,7 +76,6 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `base-freshness` | Gate the review cycle on a current base; unverifiable = stale. `--help` |
 | `review-artifact-check` | Validate a reviewer's JSON artifact — the sole reviewer completion condition. `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
 | `dev-return-write` | Write a dev agent's round-scoped completion artifact; never hand-author the JSON. `--help`; schema `schemas/dev-return.md` |
-| `worktree-claim` | Claim or refresh an issue worktree lease; exits 75 when a foreign owner or lock holds it. `--help` |
 | `worktree-push` | Push an issue worktree via `worktree push` and reconcile rebased SHAs in workflow state (`.rebase_map`, `fixed_items`, `pr_comment_review.fixes`) in the same call. `--help` |
 | `dev-round-write` | Persist a fix round's delegated item set at stamp time. `--help`; schema `schemas/dev-round.md` |
 | `dev-artifact-check` | Validate a dev round's completion artifact by round id. `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
@@ -190,7 +189,7 @@ QA agents spawn and shut down per agent.
 
 The orchestrator owns round closure. Every dev/QA delegation carries three mechanics:
 
-1. **Possession and round token** — immediately before delegating: `worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]` → the delegation's `Worktree Lease:` line; exit 75 aborts when a foreign holder has the worktree. Then `workflow-state new-round-id [ISSUE_ID] dev_round_id` → the `Round ID:` line, re-stamp `dev_delegated_at`; a fix round also runs `dev-round-write`, which records HEAD, items, and optional `Adds:` paths in an immutable round record under the worktree's `tmp/`. A missing or mismatched record requires a fresh round; never recreate it after delegation.
+1. **Round token** — immediately before delegating: `workflow-state new-round-id [ISSUE_ID] dev_round_id` → the `Round ID:` line, re-stamp `dev_delegated_at`; a fix round also runs `dev-round-write`, which records HEAD, items, and optional `Adds:` paths in an immutable round record under the worktree's `tmp/`. A missing or mismatched record requires a fresh round; never recreate it after delegation.
 2. **Arm a single-shot wall-clock watchdog** at the same moment — one backgrounded `dev-artifact-check --wait 600 --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id]` (fix rounds add `--expect-items-from-round`): returns when the artifact lands (`accept`/`retry`) or at the deadline (`wait`). Run A/B on its return; re-arm only on a new escalation step — never poll. [references/artifact-checks.md](references/artifact-checks.md).
 3. **Run the check on every wake and at the deadline** — never classify from wording or elapsed time. `dev-artifact-check --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id]` (fix rounds add `--expect-items-from-round`) prints `verdict`; act on it.
 

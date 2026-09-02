@@ -54,9 +54,6 @@
 #  22+ --resolve-mode precedence: PR_REVIEW_GATE beats legacy PR_APPROVAL_GATE
 #      (on -> approval, off -> off), default approval, settings-file source,
 #      invalid value falls back to approval
-#  nudge1-5: PR_REVIEW_NUDGE/PR_REVIEW_NUDGE_SECS — once per head, clock reset
-#      on head change, empty-body fallback to reviewer re-request (or silence
-#      with nobody to re-request), approval-mode parity
 #  transient1-4: transient GitHub API failures (kendex#748) — an HTTP 503
 #      from the reviews listing (or approval-mode pr view) is absorbed with
 #      backoff inside the wait budget and reported as transient_api_errors
@@ -110,9 +107,6 @@ git -C "$TMP_ROOT/repo" config user.name Test
 #   two calls via STUB_HEAD_COUNT_FILE); STUB_REVIEWS_MODE selects the canned
 #   REST pulls/reviews payload, with STUB_REVIEWS_COUNT_FILE driving the
 #   reviewed_later poll sequence.
-#   Nudges: `pr comment` bodies and requested_reviewers POSTs append to
-#   STUB_NUDGE_LOG so tests can count them; STUB_REVIEW_REQUESTS=some makes
-#   `pr view --json reviewRequests` report one requested reviewer.
 #   Check-runs: `api repos/*/commits/<sha>/check-runs` answers per the sha in
 #   the URL — STUB_CHECKS_MODE=success_at_head/failure_at_head publishes a
 #   "Review Bot" run (older failure + newer terminal run, plus an unrelated
@@ -161,13 +155,6 @@ case "${1:-}" in
     fi
     ;;
   api)
-    if [[ "$*" == *requested_reviewers* ]]; then
-      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-      payload="$(cat)"
-      echo "rerequest:$payload" >> "${STUB_NUDGE_LOG:?}"
-      echo '{}'
-      exit 0
-    fi
     # Commit-status POST tripwire: repos/<repo>/statuses/<sha> (plural —
     # distinct from the singular commits/<sha>/status read). approval-wait must
     # never post a commit status; tests opt in via STUB_MARKER_LOG and assert
@@ -332,21 +319,8 @@ case "${1:-}" in
     fi
     ;;
   pr)
-    if [[ "${2:-}" == "comment" ]]; then
-      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-      echo "comment:$*" >> "${STUB_NUDGE_LOG:?}"
-      exit 0
-    fi
     if [[ "${2:-}" == "view" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-      if [[ "$*" == *reviewRequests* ]]; then
-        if [[ "${STUB_REVIEW_REQUESTS:-none}" == "some" ]]; then
-          echo '{"reviewRequests":[{"login":"reviewer1"}]}'
-        else
-          echo '{"reviewRequests":[]}'
-        fi
-        exit 0
-      fi
       # Head-only confirm query (`--json headRefOid -q .headRefOid`), distinct
       # from the poll snapshots: return the raw sha. STUB_CONFIRM_HEAD overrides
       # it to simulate a push in the last-poll -> emit window; default matches
@@ -1166,85 +1140,6 @@ assert_contains "$output" "Review: reviewed" "status8: text mode still prints th
 assert_contains "$output" "via status 'Review Bot'" "status8: text mode names the status context" "$stderr"
 assert_contains "$output" "creator: review-bot[bot]" "status8: text mode records the publishing creator" "$stderr"
 
-echo "=== approval-wait nudge behavior ==="
-
-nudge_log_lines() {
-  if [[ -f "$1" ]]; then
-    wc -l < "$1" | tr -d ' '
-  else
-    echo 0
-  fi
-}
-
-# Nudge 1: with PR_REVIEW_NUDGE set and the review silent past
-# PR_REVIEW_NUDGE_SECS, the configured comment is posted exactly ONCE for the
-# unchanged head, no matter how many further nudge windows elapse before the
-# overall timeout.
-stderr="$TMP_ROOT/nudge1.err"
-nudge_log="$TMP_ROOT/nudge1.log"
-set +e
-output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_NUDGE_LOG="$nudge_log" \
-  PR_REVIEW_NUDGE_SECS=1 PR_REVIEW_NUDGE="please review" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "nudge1: silent review still times out" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "timeout" "nudge1: status timeout after nudging" "$stderr"
-assert_eq "$(nudge_log_lines "$nudge_log")" "1" "nudge1: nudge posted once per head, never re-posted" "$stderr"
-assert_contains "$(cat "$nudge_log" 2>/dev/null)" "please review" "nudge1: nudge posts the configured body" "$stderr"
-
-# Nudge 2: a head change (push/force-push) restarts the nudge clock and
-# re-arms the once-per-head nudge — one nudge for each head, two total.
-stderr="$TMP_ROOT/nudge2.err"
-nudge_log="$TMP_ROOT/nudge2.log"
-head_count="$TMP_ROOT/nudge2-head-count"
-set +e
-output=$(cd "$TMP_ROOT/repo" \
-  && PATH="$TMP_ROOT/bin:$PATH" \
-     env STUB_REVIEWS_MODE=none STUB_NUDGE_LOG="$nudge_log" \
-         STUB_HEAD_MODE=changes STUB_HEAD_COUNT_FILE="$head_count" \
-         PR_REVIEW_NUDGE_SECS=1 PR_REVIEW_NUDGE="please review" \
-         .agents/skills/orch/scripts/approval-wait 1 1 5 --json --mode review 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "nudge2: still times out across the head change" "$stderr"
-assert_eq "$(nudge_log_lines "$nudge_log")" "2" "nudge2: head change re-arms the nudge (one per head)" "$stderr"
-
-# Nudge 3: empty PR_REVIEW_NUDGE falls back to a GitHub-native re-review
-# request of the PR's requested reviewers — no comment is posted.
-stderr="$TMP_ROOT/nudge3.err"
-nudge_log="$TMP_ROOT/nudge3.log"
-set +e
-output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_NUDGE_LOG="$nudge_log" \
-  STUB_REVIEW_REQUESTS=some PR_REVIEW_NUDGE_SECS=1 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$(nudge_log_lines "$nudge_log")" "1" "nudge3: empty nudge body re-requests reviewers once" "$stderr"
-assert_contains "$(cat "$nudge_log" 2>/dev/null)" "rerequest:" "nudge3: fallback uses the re-review request path" "$stderr"
-assert_contains "$(cat "$nudge_log" 2>/dev/null)" "reviewer1" "nudge3: requested reviewer is re-requested" "$stderr"
-
-# Nudge 4: empty nudge body with nobody to re-request (no requested reviewers,
-# no past reviews) nudges nothing and just keeps waiting.
-stderr="$TMP_ROOT/nudge4.err"
-nudge_log="$TMP_ROOT/nudge4.log"
-set +e
-output=$(run_review_json_short STUB_REVIEWS_MODE=none STUB_NUDGE_LOG="$nudge_log" \
-  PR_REVIEW_NUDGE_SECS=1 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "nudge4: silent wait still times out with no nudge target" "$stderr"
-assert_eq "$(nudge_log_lines "$nudge_log")" "0" "nudge4: nobody to re-request posts nothing" "$stderr"
-
-# Nudge 5: approval mode nudges too — same window, same once-per-head rule.
-stderr="$TMP_ROOT/nudge5.err"
-nudge_log="$TMP_ROOT/nudge5.log"
-set +e
-output=$(run_wait_json_short STUB_APPROVAL_MODE=none STUB_NUDGE_LOG="$nudge_log" \
-  PR_REVIEW_NUDGE_SECS=1 PR_REVIEW_NUDGE="please review" 2>"$stderr")
-rc=$?
-set -e
-assert_eq "$rc" "1" "nudge5: approval-mode silent wait still times out" "$stderr"
-assert_eq "$(nudge_log_lines "$nudge_log")" "1" "nudge5: approval mode nudges once per head" "$stderr"
-
 echo "=== approval-wait transient GitHub API errors (kendex#748) ==="
 
 # Transient 1: the reviews listing 503s twice, then recovers — the waiter
@@ -1375,98 +1270,6 @@ guard_out="$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
   env PR_REVIEW_WAIT_SECS=soon .agents/skills/orch/scripts/orch-env PR_REVIEW_WAIT_SECS 900) )"
 assert_eq "$guard_out" "900" "waitsecs: non-numeric value falls back to the numeric default"
 
-echo "=== PR_REVIEW_QUORUM: multi-bot enqueue gate ==="
-
-# Quorum unmet (neither listed bot has a head-pinned review): no success even
-# with a reviewer1 review at head; deadline reports the missing logins.
-stderr="$TMP_ROOT/q1.err"
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_REVIEWS_MODE=commented_at_head \
-    .agents/skills/orch/scripts/approval-wait 1 1 3 --json --mode review) 2>"$stderr" || true)
-assert_eq "$(json_field "$output" '.status')" "timeout" "quorum: unmet quorum holds review mode to the deadline" "$stderr"
-assert_eq "$(json_field "$output" '.quorum_missing | length')" "2" "quorum: both missing logins reported" "$stderr"
-
-# Quorum met, zero threads: review mode succeeds; missing list is empty.
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_REVIEWS_MODE=two_bots_at_head \
-    .agents/skills/orch/scripts/approval-wait 1 1 30 --json --mode review) 2>"$stderr" || true)
-assert_eq "$(json_field "$output" '.status')" "reviewed" "quorum: both bots at head satisfies review mode" "$stderr"
-assert_eq "$(json_field "$output" '.quorum_missing | length')" "0" "quorum: met quorum reports no missing logins" "$stderr"
-
-# Case-insensitive login compare.
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="BOT-A, Bot-B" STUB_REVIEWS_MODE=two_bots_at_head \
-    .agents/skills/orch/scripts/approval-wait 1 1 30 --json --mode review) 2>"$stderr" || true)
-assert_eq "$(json_field "$output" '.status')" "reviewed" "quorum: login compare is case-insensitive" "$stderr"
-
-# Approval mode: an APPROVED verdict alone no longer opens a quorum'd gate
-# when threads are unresolved — the new comments route.
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_APPROVAL_MODE=approved_decision \
-    STUB_REVIEWS_MODE=two_bots_at_head STUB_THREADS_UNRESOLVED=1 \
-    .agents/skills/orch/scripts/approval-wait 1 1 3 --json) 2>"$stderr" || true)
-assert_eq "$(json_field "$output" '.status')" "comments" "quorum: approval mode with open threads routes to comments" "$stderr"
-
-# Approval mode: quorum met + zero threads + APPROVED verdict → approved.
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_APPROVAL_MODE=approved_decision \
-    STUB_REVIEWS_MODE=two_bots_at_head \
-    .agents/skills/orch/scripts/approval-wait 1 1 30 --json) 2>"$stderr" || true)
-assert_eq "$(json_field "$output" '.status')" "approved" "quorum: met quorum + clean threads approves" "$stderr"
-
-# Approval mode: quorum configured but a listed bot is absent at head →
-# APPROVED verdict alone must NOT succeed; deadline timeout.
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_APPROVAL_MODE=approved_decision \
-    STUB_REVIEWS_MODE=commented_at_head \
-    .agents/skills/orch/scripts/approval-wait 1 1 3 --json) 2>"$stderr" || true)
-assert_eq "$(json_field "$output" '.status')" "timeout" "quorum: approval verdict alone cannot open an unmet quorum" "$stderr"
-
-# Quorum unset: JSON carries no quorum_missing key (legacy shape).
-output=$(run_wait_json STUB_APPROVAL_MODE=approved_decision 2>"$stderr")
-assert_eq "$(json_field "$output" 'has("quorum_missing")')" "false" "quorum: unset leaves the legacy JSON shape" "$stderr"
-
-# Carriage returns from a CRLF-sourced setting are delimiters, not part of the
-# last login — otherwise "bot-b\r" matches no GitHub user and holds the gate
-# open forever. Newline and tab separators are accepted for the same reason.
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="$(printf 'bot-a,bot-b\r')" STUB_REVIEWS_MODE=two_bots_at_head \
-    .agents/skills/orch/scripts/approval-wait 1 1 30 --json --mode review) 2>"$stderr" || true)
-assert_eq "$(json_field "$output" '.status')" "reviewed" "quorum: a trailing carriage return is stripped, not matched" "$stderr"
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="$(printf 'bot-a\n\tbot-b\n')" STUB_REVIEWS_MODE=two_bots_at_head \
-    .agents/skills/orch/scripts/approval-wait 1 1 30 --json --mode review) 2>"$stderr" || true)
-assert_eq "$(json_field "$output" '.status')" "reviewed" "quorum: newline and tab separate logins too" "$stderr"
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="$(printf 'bot-a\fbot-b\v')" STUB_REVIEWS_MODE=two_bots_at_head \
-    .agents/skills/orch/scripts/approval-wait 1 1 30 --json --mode review) 2>"$stderr" || true)
-assert_eq "$(json_field "$output" '.status')" "reviewed" "quorum: form feed and vertical tab separate logins too" "$stderr"
-
-# A PARTIAL quorum is reviewer ENGAGEMENT: the bot that reviewed this head is
-# demonstrably alive, so the reviewer-down degrade must not fire past it.
-# Without this, PR_REVIEW_ON_TIMEOUT=proceed reports a met gate on one bot's
-# review while the configured quorum was never satisfied.
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_REVIEWS_MODE=one_bot_at_head \
-    PR_REVIEW_ON_TIMEOUT=proceed \
-    .agents/skills/orch/scripts/approval-wait 1 1 3 --json --mode review) 2>"$stderr" || true)
-assert_eq "$(json_field "$output" '.status')" "timeout" "quorum: a partial quorum times out rather than proceeding" "$stderr"
-assert_eq "$(json_field "$output" '.quorum_missing | join(",")')" "bot-b" "quorum: the partial-quorum timeout names the silent login" "$stderr"
-
-# Control for the line above: with NO reviewer at head at all, proceed still
-# degrades — the guard must bound the reviewer-down case, not abolish it.
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_REVIEWS_MODE=none \
-    PR_REVIEW_ON_TIMEOUT=proceed \
-    .agents/skills/orch/scripts/approval-wait 1 1 3 --json --mode review) 2>"$stderr" || true)
-assert_eq "$(json_field "$output" '.status')" "proceeded" "quorum: total reviewer silence still proceeds on timeout" "$stderr"
-
-# Without --json the missing logins are the whole diagnosis of a held gate.
-output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_REVIEWS_MODE=one_bot_at_head \
-    .agents/skills/orch/scripts/approval-wait 1 1 3 --mode review) 2>"$stderr" || true)
-assert_contains "$output" "quorum missing: bot-b" "quorum: the text timeout names the missing logins" "$stderr"
-
 echo "=== a failed emit_result never reports a successful gate ==="
 
 # The waiter must never exit 0 having written no result. emit_result builds the
@@ -1485,8 +1288,8 @@ exec "$REAL_JQ" "\$@"
 EOF
 chmod +x "$TMP_ROOT/bin/jq"
 
-# The quorum-less branch: an APPROVED verdict routes straight to
-# emit_result "approved" + exit 0, which is the exact fall-through path.
+# An APPROVED verdict routes straight to emit_result "approved" + exit 0,
+# which is the exact fall-through path.
 stderr="$TMP_ROOT/emitfail.err"
 set +e
 output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
@@ -1509,26 +1312,25 @@ else
   printf '  FAIL  %s\n        stdout: %s\n' "a failed emit_result writes no result to stdout" "$output"
 fi
 
-# Same through the quorum gate, whose call site reads the helper's status and
+# Same through run_approved_gate, whose call site reads the helper's status and
 # so runs its body with errexit disabled — the propagation must be explicit.
-stderr="$TMP_ROOT/emitfail-quorum.err"
+stderr="$TMP_ROOT/emitfail-gate.err"
 set +e
 output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_APPROVAL_MODE=approved_decision \
-    STUB_REVIEWS_MODE=two_bots_at_head \
+  env STUB_APPROVAL_MODE=approved_latest \
     .agents/skills/orch/scripts/approval-wait 1 1 3 --json) 2>"$stderr")
-quorum_emitfail_code=$?
+gate_emitfail_code=$?
 set -e
-if [ "$quorum_emitfail_code" -ne 0 ]; then
-  pass "a failed emit_result through the quorum gate does not exit 0 (exit $quorum_emitfail_code)"
+if [ "$gate_emitfail_code" -ne 0 ]; then
+  pass "a failed emit_result through the approved gate does not exit 0 (exit $gate_emitfail_code)"
 else
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n        exit was 0 with stdout: %s\n' \
-    "a failed emit_result through the quorum gate does not exit 0" "$output"
+    "a failed emit_result through the approved gate does not exit 0" "$output"
   dump_stderr "$stderr"
 fi
 assert_contains "$(cat "$stderr")" "could not emit the gate result" \
-  "the quorum gate names the emission failure on stderr"
+  "the approved gate names the emission failure on stderr"
 
 # The deadline's `emit_result "timeout"` is a BARE call followed by `exit 1`,
 # so nothing but errexit stands between a failed emission and that exit 1.

@@ -211,16 +211,11 @@ It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `pr_comment_
 **Delegate the fix set.** Ensure the worktree exists (`worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing), group the `fix set` by `agent`, then stamp the round per group as separate tool calls immediately before delegating, arming the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
 
 ```bash
-.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
-```
-```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
-
-`worktree-claim` exit 75 aborts the delegation — another session holds this worktree, and its stderr names the holder; exit 1 is an unverifiable guard, which stops the workflow and is reported. Its printed owner is the delegation's `Worktree Lease:` line.
 
 Persist this group's slice of the `fix set`: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`. `[ITEM_TEXT]` is that item's formatted block from the delegation verbatim. `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
 
@@ -245,7 +240,6 @@ Source: pr-comments
 Issue: [ISSUE_ID]
 PR: #[PR_NUMBER]
 Worktree: [WORKTREE_PATH]
-Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
@@ -299,7 +293,7 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 | Already fixed | The finding's `draft_response` |
 | Question | The finding's `draft_response` |
 
-The word "tracked" (any form) without a tracker id turns the gate red (`untracked-claim`) unless the reply opens with `Fixed in <sha>` or `Declined:`; only a later reply of one of the three forms clears it, and resolving the thread does not. A decline is a decline — say so.
+A `Tracked:` reply names the issue it filed, and a decline is a decline — say so. Resolving a thread is not a reply.
 
 `[REASON]` takes one of the forms [../references/finding-disposition.md](../references/finding-disposition.md) § Decision flow sets out, which also states how far the gate's `unreasoned-decline` verdict reaches and where the rule binds past it.
 

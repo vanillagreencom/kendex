@@ -167,7 +167,7 @@ grep -q -F 'finding-disposition.md#recurrence' <<<"$S7" \
   || bad "§ 7 has no exit for a loop where every round finds something new"
 
 # Other set fields are untouched by the cap.
-"$WS" --state-dir "$sd" set KEN-1 rereview_skipped "no files changed" >/dev/null && rc=0 || rc=$?
+"$WS" --state-dir "$sd" set KEN-1 skip_qa true >/dev/null && rc=0 || rc=$?
 [[ "$rc" -eq 0 ]] && ok "set of another field passes with the counter at the cap" \
   || bad "set of another field passes with the counter at the cap" "rc=$rc"
 

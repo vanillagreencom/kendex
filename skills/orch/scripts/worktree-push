@@ -47,8 +47,7 @@
 # a flag it does not know. The push flag vocabulary lives there alone; see
 # `worktree push --help`, which is where a mistyped flag is caught. The state
 # resolution above the push is what stands between a wrong argument and a wrong
-# write, refusing a state that records another issue, another worktree, or that
-# resolves ambiguously.
+# write, refusing a state that records another issue or another worktree.
 # The state file resolves exactly like any other workflow-state call:
 # --state-dir, then $ORCH_STATE_DIR, then tmp/ under the caller's working
 # directory.
@@ -201,18 +200,15 @@ reconcile_map() {
 # A state resolved from the wrong arguments would rewrite another record's
 # commits and report success while the intended state stayed stale, so the
 # selected state must agree with the arguments before anything runs. Nothing
-# below stands in: `worktree-claim`'s lease only refuses a DIFFERENT claimer,
-# not one session calling twice with a swapped --issue,
-# --worktree or --state-dir. The bare-numeric alias (issue N stored under
-# issue-N) is the one accepted spelling difference, and an empty recorded
-# worktree cannot be verified and is taken as-is. `exists --json` answers
-# {path, exists} and errors (exit 2) when both the bare-numeric and issue-N
-# files exist. Only a definite yes or no may reach the push: the rebase it is
-# about to run has no reconciliation target otherwise.
+# below stands in: nothing refuses one session calling twice with a swapped
+# --issue, --worktree or --state-dir. An empty recorded worktree cannot be
+# verified and is taken as-is. `exists --json` answers {path, exists}. Only a
+# definite yes or no may reach the push: the rebase it is about to run has no
+# reconciliation target otherwise.
 state_exists_rc=0
 state_info="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} exists --json "$issue")" || state_exists_rc=$?
 if [[ "$state_exists_rc" -ne 0 ]]; then
-	fail "could not resolve the workflow state for '$issue' (exists exit $state_exists_rc; the error above names the conflicting files); refusing to push a rebase whose reconciliation target is ambiguous"
+	fail "could not resolve the workflow state for '$issue' (exists exit $state_exists_rc; the error above says why); refusing to push a rebase with no definite reconciliation target"
 fi
 state_file="$(jq -r '.path // ""' <<<"$state_info")"
 state_present="$(jq -r '.exists' <<<"$state_info")"
@@ -221,8 +217,7 @@ state_present="$(jq -r '.exists' <<<"$state_info")"
 if [[ "$state_present" == "true" ]]; then
 	state_issue="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.issue_id // ""')" \
 		|| fail "could not read the workflow state for $issue"
-	if [[ "$state_issue" != "$issue" ]] \
-		&& ! [[ "$issue" =~ ^[0-9]+$ && "$state_issue" == "issue-$issue" ]]; then
+	if [[ "$state_issue" != "$issue" ]]; then
 		fail "workflow state for '$issue' records issue_id '$state_issue'; refusing to rewrite another issue's record"
 	fi
 	state_wt="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.worktree // ""')" \
@@ -234,13 +229,6 @@ if [[ "$state_present" == "true" ]]; then
 			|| fail "workflow state for $issue records worktree '$state_wt_abs', not '$worktree_abs'; refusing to rewrite another worktree's record"
 	fi
 fi
-state_key="$(basename -- "$state_file")"
-state_key="${state_key#workflow-state-}"
-state_key="${state_key%.json}"
-if [[ "$state_present" != "true" && "$issue" =~ ^[0-9]+$ ]]; then
-	state_key="issue-$issue"
-fi
-
 # A live fix round pins the snapshot dev-artifact-check compares against, and
 # the rebase below would move the branch out from under it. Refuse before the
 # push: nothing is rebased, so nothing needs repair. The ACTIVE round is live
@@ -251,8 +239,8 @@ if [[ "$state_present" == "true" ]]; then
 	active_round="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.dev_round_id // ""')" \
 		|| fail "could not read the active dev round for $issue"
 	if [[ -n "$active_round" ]] \
-		&& [[ -e "$worktree_abs/tmp/dev-round-$state_key-$active_round.json" ]] \
-		&& [[ ! -e "$worktree_abs/tmp/dev-return-$state_key-$active_round.json" ]]; then
+		&& [[ -e "$worktree_abs/tmp/dev-round-$issue-$active_round.json" ]] \
+		&& [[ ! -e "$worktree_abs/tmp/dev-return-$issue-$active_round.json" ]]; then
 		fail "fix round $active_round is live in $worktree_abs (its round record has no dev-return receipt); a rebase would invalidate the base it pins — land that round's dev-return receipt, or stamp a fresh dev_round_id, then push"
 	fi
 fi

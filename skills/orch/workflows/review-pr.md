@@ -29,11 +29,7 @@ git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD 
 
 A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: re-delegate to commit or revert the leftovers, then re-enter § 1. Standalone: report the dirty files and ask the user to commit, revert, or run `orch review all` for an ad-hoc uncommitted review. No committed diff after that check → report "No committed changes to review" and **END**.
 
-**Trivial diffs skip review by rule, not by asking.** A diff that is docs- or comments-only, or under ten changed lines with no logic change, records the skip and goes to § 9 with verdict `pass`:
-
-```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_skipped "tiny-docs"
-```
+**Trivial diffs skip review by rule, not by asking.** A diff that is docs- or comments-only, or under ten changed lines with no logic change goes straight to § 9 with verdict `pass`.
 
 ### 1.1 Decision Context
 
@@ -313,17 +309,13 @@ Re-review is scoped to what the fix round actually changed. Read the round's dif
 | Round | Next |
 |-------|------|
 | No files changed | → § 5 |
-| Only minor suggestions applied, no blocker cleared, and the diff stays inside already-reviewed domains | Record the skip below → § 5 |
+| Only minor suggestions applied, no blocker cleared, and the diff stays inside already-reviewed domains | → § 5 |
 | Anything else | → § 2 with caller context `agents` = the scoped panel below |
 
 The scoped panel is the union of the reviewers whose domains the round's diff touched, the reviewers who found the blockers it cleared, and external review when available. Record the scoping:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[DOMAINS_TOUCHED] + blocker finders + external"}'
-```
-
-```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_skipped '[REASON]'
 ```
 
 **The loop ends** when two consecutive cycles surface no new blocker, or when the At The Cap check above ends it (the `rereview_panel` write raises `rereview_cycles` and refuses once that count reaches the cap). The cap bounds NEW cycles, never verification: a fix diff no reviewer has seen gets one focused verification pass — the `rereview_panel` rule above, scoped to exactly that diff — and this loop's last fix round has budget for it. A pass over a diff no reviewer has seen once the budget is spent takes `verification_panel` instead, which the cap does not gate. That pass's items re-enter § 4, where the `fix set` decides what still delegates. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.

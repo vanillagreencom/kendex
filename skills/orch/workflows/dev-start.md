@@ -58,11 +58,8 @@ gh issue view [N] --json labels --jq '.labels[].name'
 
 Dev agents persist for the whole session — never shut one down here; only the caller's finalization step does.
 
-Before EVERY implementation delegation, including each group's delegation in bundled mode, run these four as separate tool calls:
+Before EVERY implementation delegation, including each group's delegation in bundled mode, run these three as separate tool calls:
 
-```bash
-.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
-```
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
 ```
@@ -73,7 +70,7 @@ Before EVERY implementation delegation, including each group's delegation in bun
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
-`worktree-claim` exit 75 aborts the delegation: another session holds this worktree (stderr names the holder) — coordinate with that owner, never re-run to take the tree. Exit 1: stop and report it. Embed its printed owner as `[WORKTREE_LEASE]` in the delegation's `Worktree Lease:` line, the round token as `[DEV_ROUND_ID]` in the `Round ID:` line, and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [SKILL.md § Round Closure](../SKILL.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
+Embed the round token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [SKILL.md § Round Closure](../SKILL.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
 
 After each spawn, persist the session:
 
@@ -88,7 +85,6 @@ Follow workflow: .agents/skills/dev/workflows/dev-implement.md
 
 Issue: [ISSUE_ID]
 Worktree: [WORKTREE_PATH]
-Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [LABELS]
@@ -114,7 +110,6 @@ Sub-Issues:
 ↳ [SUB_ISSUE_3]: [TITLE] | blocked by: [SUB_ISSUE_2]
 
 Worktree: [WORKTREE_PATH]
-Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [parent labels]

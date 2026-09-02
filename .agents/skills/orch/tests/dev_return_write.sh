@@ -148,36 +148,9 @@ out="$("$WRITE" --worktree "$worktree" --kind fix --issue issue-b --round-id 9-9
   --branch b --commit c --validate pass --item 3 Blocked "needs API design")"
 assert_eq "$(jq -r '.items[0].decision' "$out")" "Blocked" "fix item Blocked decision accepted"
 
-# --- kendex#952: analysis kind — a read-only round has a truthful spelling ---
-# The artifact must be UNABLE to assert a validation outcome that did not occur:
-# the commit/validate/validate_note keys are omitted entirely, and the
-# recommendation (the round's deliverable) is required via --summary-file.
-printf '## Recommendation\nClose with reasoning: premise invalidated by merge X.\n' > "$worktree/analysis.md"
-out="$("$WRITE" --worktree "$worktree" --kind analysis --issue issue-952 --round-id 10-10 \
-  --branch issue-952 --summary-file "$worktree/analysis.md" --no-summary)"
-assert_eq "$out" "$worktree/tmp/dev-return-issue-952-10-10.json" "analysis prints the round-scoped artifact path"
-assert_eq "$(jq -r '.kind' "$out")" "analysis" "analysis .kind"
-assert_eq "$(jq -r '.round_id' "$out")" "10-10" "analysis .round_id matches --round-id"
-assert_eq "$(jq -r 'has("commit")' "$out")" "false" "analysis artifact carries NO commit key"
-assert_eq "$(jq -r 'has("validate")' "$out")" "false" "analysis artifact carries NO validate key"
-assert_eq "$(jq -r 'has("validate_note")' "$out")" "false" "analysis artifact carries NO validate_note key"
-assert_eq "$(jq -r '.summary' "$out" | head -1)" "## Recommendation" "analysis embeds the recommendation content"
-assert_eq "$(jq -c '.items' "$out")" "[]" "analysis .items is []"
-assert_eq "$(jq -r '.bundled' "$out")" "false" "analysis .bundled false"
-assert_eq "$("$CHECK" --worktree "$worktree" --issue issue-952 --round-id 10-10 | jq -r '.reason')" "valid" \
-  "analysis round-trips through dev-artifact-check round mode as valid"
-
-# --- kendex#1236: inline --summary — an analysis round must not depend on a
-# file write the harness can refuse. Exactly one of --summary/--summary-file.
-out="$("$WRITE" --worktree "$worktree" --kind analysis --issue issue-1236 --round-id 11-11 \
-  --branch issue-1236 --summary "Recommend: close with reasoning — premise invalidated by merge X." --no-summary)"
-assert_eq "$(jq -r '.summary' "$out")" "Recommend: close with reasoning — premise invalidated by merge X." \
-  "analysis inline --summary embeds the recommendation text"
-assert_eq "$(jq -r 'has("commit")' "$out")" "false" "inline-summary analysis still carries NO commit key"
-assert_eq "$("$CHECK" --worktree "$worktree" --issue issue-1236 --round-id 11-11 | jq -r '.reason')" "valid" \
-  "inline-summary analysis round-trips through dev-artifact-check round mode as valid"
-
-# Inline --summary is a general alternative summary source, not analysis-only.
+# --- kendex#1236: inline --summary — a round must not depend on a file write
+# the harness can refuse. Exactly one of --summary/--summary-file.
+printf '## Summary\nOne paragraph of completion detail.\n' > "$worktree/summary-file.md"
 out="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-1236i --round-id 12-12 \
   --branch b --commit "$current_head" --validate pass --no-summary --summary "inline completion summary")"
 assert_eq "$(jq -r '.summary' "$out")" "inline completion summary" "implement inline --summary embeds the summary text"
@@ -227,47 +200,22 @@ assert_exit2 "bundled implement with no --item exits 2" \
 assert_exit2 "unknown argument exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --frobnicate
 
-# kendex#952: an analysis round has no commit and runs no validation — supplying
-# either (or an item/bundle claim) must be a loud error, never silently ignored.
-assert_exit2 "analysis with --commit exits 2" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --commit abc
-assert_exit2 "analysis with --validate exits 2" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --validate pass
-assert_exit2 "analysis with --validate-note exits 2" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --validate-note "caveat"
-assert_exit2 "analysis with --item exits 2" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --item 1 Applied "x"
-assert_exit2 "analysis with --bundled exits 2" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --bundled
-assert_exit2 "analysis without --summary or --summary-file exits 2 (the recommendation is the deliverable)" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b
-
 # kendex#1236: one summary source only — both flags at once must be a loud
 # error (a silent precedence rule would quietly misrecord the deliverable).
-assert_exit2 "analysis with both --summary and --summary-file exits 2" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b \
-  --summary "inline" --summary-file "$worktree/analysis.md"
 assert_exit2 "implement with both --summary and --summary-file exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
-  --summary "inline" --summary-file "$worktree/summary.md"
+  --summary "inline" --summary-file "$worktree/summary-file.md"
 # Exclusion and validation key on flag PRESENCE, not value: an explicitly
 # empty --summary-file (an unset path variable) is a supplied second source /
 # a config error, never a silent no-op.
 assert_exit2 "--summary plus empty --summary-file value still exits 2 (presence, not content)" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
   --summary "inline" --summary-file ""
-assert_exit2 "explicitly empty --summary-file alone exits 2 for analysis" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file ""
 assert_exit2 "explicitly empty --summary-file alone exits 2 for implement" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
   --summary-file ""
-assert_exit2 "whitespace-only --summary exits 2 (an empty deliverable is not a record)" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary "   "
-printf '  \n\t\n' > "$worktree/blank.md"
-assert_exit2 "whitespace-only --summary-file content exits 2 for analysis" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/blank.md"
 assert_exit2 "--summary with no value exits 2" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --summary
 
 # Option-token swallow: with an argc-only check, a value flag whose value was
 # omitted mid-line consumes the NEXT FLAG as its value — "--summary
@@ -275,9 +223,9 @@ assert_exit2 "--summary with no value exits 2" \
 # deliverable in a well-formed, accepted artifact. Every value-taking flag
 # shares the guard.
 assert_exit2 "--summary followed by another flag exits 2 (option token is not a value)" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary --no-summary
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --summary --no-summary
 assert_exit2 "--summary-file followed by another flag exits 2" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file --no-summary
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --summary-file --no-summary
 assert_exit2 "--branch followed by another flag exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch --commit c --validate pass
 assert_exit2 "--validate-note followed by another flag exits 2" \
@@ -287,14 +235,14 @@ assert_exit2 "--item REASONING as option token exits 2" \
   --worktree "$worktree" --kind fix --issue i --round-id "$RID" --branch b --commit c --validate pass \
   --item 1 Applied --bundled
 # Control: ordinary leading-dash prose (a Markdown bullet) is still a value.
-out="$("$WRITE" --worktree "$worktree" --kind analysis --issue issue-dash --round-id 13-13 \
-  --branch b --summary "- close as duplicate of the merged fix" --no-summary)"
+out="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-dash --round-id 13-13 \
+  --branch b --commit "$current_head" --validate pass --summary "- close as duplicate of the merged fix" --no-summary)"
 assert_eq "$(jq -r '.summary' "$out")" "- close as duplicate of the merged fix" \
   "a leading single-dash summary value is accepted"
 # The guard matches this script's OWN flag vocabulary exactly: free-form prose
 # that merely begins with '--' is a legal value, not a forgotten-value error.
-out="$("$WRITE" --worktree "$worktree" --kind analysis --issue issue-ddash --round-id 14-14 \
-  --branch b --summary "--foo is a flag of the consuming tool, not of this script" --no-summary)"
+out="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-ddash --round-id 14-14 \
+  --branch b --commit "$current_head" --validate pass --summary "--foo is a flag of the consuming tool, not of this script" --no-summary)"
 assert_eq "$(jq -r '.summary' "$out" | head -1)" "--foo is a flag of the consuming tool, not of this script" \
   "double-dash-leading prose that is not an own-flag token is accepted as a summary"
 out="$("$WRITE" --worktree "$worktree" --kind fix --issue issue-ddash2 --round-id 14-15 \
@@ -305,27 +253,19 @@ assert_eq "$(jq -r '.items[0].reasoning' "$out")" "--force would be needed; decl
 # Single-valued flags refuse duplicates: a repeated flag would silently
 # last-win — the same quiet-misrecording class as summary-source precedence.
 assert_exit2 "duplicate --summary exits 2" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
   --summary "first" --summary "second"
 assert_exit2 "duplicate --summary-file exits 2" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b \
-  --summary-file "$worktree/analysis.md" --summary-file "$worktree/analysis.md"
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
+  --summary-file "$worktree/summary-file.md" --summary-file "$worktree/summary-file.md"
 assert_exit2 "duplicate --branch exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --branch b2 \
   --commit c --validate pass
 assert_exit2 "duplicate --validate exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b \
   --commit c --validate pass --validate pass
-assert_exit2 "analysis with empty --commit value still exits 2 (presence, not content)" \
-  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --commit ""
-
-# A rejected analysis invocation leaves no artifact behind.
-set +e
-"$WRITE" --worktree "$worktree" --kind analysis --issue issue-anoclaim --round-id "$RID" \
-  --branch b --summary-file "$worktree/analysis.md" --validate pass >/dev/null 2>&1
-set -e
-assert_eq "$([[ -f "$worktree/tmp/dev-return-issue-anoclaim-$RID.json" ]] && echo yes || echo no)" "no" \
-  "rejected analysis (--validate supplied) writes no artifact file"
+assert_exit2 "empty --commit value exits 2 (presence, not content)" \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --validate pass --commit ""
 
 # A rejected invocation must not leave a partial artifact at the target path.
 set +e
