@@ -73,6 +73,23 @@ const WIDE_WINDOW_MS = 1500;
 
 type Run = { status: number | null; output: string };
 
+// CI paints this output and no local environment reproduces it — measured
+// here across CI, FORCE_COLOR, TERM and a TTY-less spawn, all of them plain.
+// The escapes land inside the very summary lines the cases match on, so a
+// `toContain` misses text that renders correctly. Normalising the capture is
+// what lets every assertion below read what a person reads in the log.
+//
+// One shape covers it: CSI, `ESC [` then parameters then a final byte, which
+// is both the colour and the reporter's cursor moves. ESC comes from its code
+// point because a control character typed into a regex reads as nothing.
+const ESC = String.fromCharCode(27);
+const ANSI = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, "g");
+
+/** The captured output as it renders, with any colour taken out. */
+function rendered(output: string): string {
+  return output.replace(ANSI, "");
+}
+
 // The status assertions pass the child's whole output as `expect`'s message
 // argument, because a number would not show it. The output assertions do not:
 // a failing `toContain` already prints the whole subject.
@@ -96,6 +113,11 @@ function runFixture(
   if (closingWindowMs !== undefined) {
     env.KENDEX_CLOSING_WINDOW_MS = String(closingWindowMs);
   }
+  // Belt to `rendered`'s braces: tinyrainbow, which paints vitest's reporter,
+  // turns colour off whenever NO_COLOR is in the environment at all — before
+  // it consults FORCE_COLOR, a TTY, or the CI flag that is the likeliest
+  // trigger here. So the escapes are usually never emitted.
+  env.NO_COLOR = "1";
   const run = spawnSync(
     node.execPath,
     [
@@ -110,7 +132,10 @@ function runFixture(
   // Without this the operator reads a diff against "undefinedundefined"
   // instead of the ENOENT or ETIMEDOUT that says why nothing ran.
   if (run.error) throw run.error;
-  return { status: run.status, output: `${run.stdout}${run.stderr}` };
+  return {
+    status: run.status,
+    output: rendered(`${run.stdout}${run.stderr}`),
+  };
 }
 
 describe("a rejection that settles after the file ended", () => {
@@ -199,6 +224,29 @@ describe("an exported KENDEX_CLOSING_WINDOW_MS", () => {
     },
     CASE_TIMEOUT_MS,
   );
+});
+
+// The one control for `rendered`, because every case above now depends on it
+// and none of them would notice it gone: on this machine the capture carries
+// no colour, so they stay green either way. The sample is the shape CI
+// failed on — the `RUN` banner it printed, and the summary lines the cases
+// match on, painted where vitest paints them. Take the strip out and the
+// escapes sit between the words: each `toContain` here misses exactly as it
+// missed in CI.
+describe("the colour CI puts in the captured output", () => {
+  it("normalises to the text every case above asserts", () => {
+    const coloured =
+      `\n${ESC}[1m${ESC}[30m${ESC}[46m RUN ${ESC}[39m${ESC}[49m${ESC}[22m v4.1.10\n` +
+      ` Test Files  ${ESC}[1m${ESC}[32m1 passed${ESC}[39m${ESC}[22m (1)\n` +
+      ` Tests  ${ESC}[1m${ESC}[32m2 passed${ESC}[39m${ESC}[22m (2)\n` +
+      ` Errors  ${ESC}[1m${ESC}[31m1 error${ESC}[39m${ESC}[22m\n`;
+
+    const text = rendered(coloured);
+    expect(text).toContain("Test Files  1 passed (1)");
+    expect(text).toContain("Tests  2 passed (2)");
+    expect(text).toContain("Errors  1 error");
+    expect(text).not.toContain(ESC);
+  });
 });
 
 // Every control above passes `--config`, so none of them reads the config a
