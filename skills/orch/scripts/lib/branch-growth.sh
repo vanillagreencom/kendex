@@ -33,7 +33,16 @@ branch_baseline_lines() {
   (( measured > 0 )) || measured=1
   printf -v "$out_name" '%s' "$measured"
 }
-enforce_size_tripwire() {
+BRANCH_GROWTH_BASELINE=""
+BRANCH_GROWTH_CURRENT=""
+BRANCH_GROWTH_LIMIT=""
+# Measure the branch against workflow state pr.baseline_lines without judging
+# it: on success BRANCH_GROWTH_BASELINE, BRANCH_GROWTH_CURRENT and
+# BRANCH_GROWTH_LIMIT carry the three numbers and the caller decides what they
+# mean. dev-round-write refuses a round that is over the limit; the same
+# measurement at acceptance time is how dev-artifact-check tells a cut that
+# shrank the branch from one that did not.
+measure_size_tripwire() {
   local worktree="$1" issue="$2" script_dir="$3" baseline current
   baseline="$("$script_dir/workflow-state" get "$issue" '.pr.baseline_lines // "null"')" \
     || branch_growth_fail "workflow state baseline for '$issue' could not be read" || return 1
@@ -42,9 +51,15 @@ enforce_size_tripwire() {
     return 1
   }
   branch_baseline_lines "$worktree" "$script_dir/resolve-base-branch" HEAD current || return 1
-  if (( current > baseline * 2 )); then
+  BRANCH_GROWTH_BASELINE="$baseline"
+  BRANCH_GROWTH_CURRENT="$current"
+  BRANCH_GROWTH_LIMIT=$(( baseline * 2 ))
+}
+enforce_size_tripwire() {
+  measure_size_tripwire "$1" "$2" "$3" || return 1
+  if (( BRANCH_GROWTH_CURRENT > BRANCH_GROWTH_LIMIT )); then
     branch_growth_fail \
-      "fix round refused: branch diffstat is $current lines; baseline is $baseline lines; fix rounds stop past 2x that baseline, so cut the branch to $((baseline * 2)) lines or fewer" \
+      "fix round refused: branch diffstat is $BRANCH_GROWTH_CURRENT lines; baseline is $BRANCH_GROWTH_BASELINE lines; fix rounds stop past 2x that baseline, so cut the branch to $BRANCH_GROWTH_LIMIT lines or fewer" \
       over-limit
     return 1
   fi

@@ -459,19 +459,17 @@ set -e
 assert_eq "$comparison_rc" "1" "a failed direct snapshot probe refuses acceptance"
 assert_eq "$(jq -r '.reason' <<<"$comparison_out")" "comparison_failed" \
   "failed direct snapshot probe keeps the distinct reason"
-routing_mutant="$TMP_ROOT/routing-mutant"
-cp "$CHECK" "$routing_mutant"
+routing_mutant="$(copy_scripts routing-mutant)/dev-artifact-check"
 sed -i.bak 's/emit false "$file" "comparison_failed"/emit false "$file" "unapproved_additions"/' "$routing_mutant"
 chmod +x "$routing_mutant"
 set +e
 routing_mutant_out="$(REAL_GIT="$real_git" PATH="$git_shim_dir:$PATH" "$routing_mutant" \
   --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round 2>/dev/null)"
 set -e
-if [[ "$(jq -r '.reason' <<<"$routing_mutant_out")" == "comparison_failed" ]]; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "routing control detects a comparison-failure misroute"
-else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "routing control detects a comparison-failure misroute"
-fi
+# The misroute must show as the reason the mutation names. Asserting only
+# "not comparison_failed" would also pass for a mutant that never ran.
+assert_eq "$(jq -r '.reason' <<<"$routing_mutant_out")" "unapproved_additions" \
+  "routing control detects a comparison-failure misroute"
 # --- kendex#994: the recorded commit must name a real object in the worktree's repo ---
 gitwt="$TMP_ROOT/gitwt"
 mkdir -p "$gitwt/tmp"

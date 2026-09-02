@@ -25,7 +25,7 @@
 # Usage:
 #   dev-round-write --worktree PATH --issue ID --round-id RID \
 #     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
-#     [--adds "PATH [PATH...]"]
+#     [--adds "PATH [PATH...]"] [--cut]
 #
 # One --item per delegated review item: N is the item's delegated number (the
 # `#[N]` in the formatted items — a set, so duplicates are rejected; canonical
@@ -54,6 +54,14 @@
 # Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
 # The writer records HEAD as the comparison base used at acceptance.
 #
+# --cut declares the round a branch cut (kendex KEN-1165). A cut is the one
+# round that must run while the branch is over its size tripwire — refusing to
+# record it is what left the cut with no record, and so no way to accept its
+# receipt. The declaration skips the size check and NOTHING else: the item set
+# is recorded and checked as on any other round, and the check moves to
+# acceptance, where dev-artifact-check refuses the cut's receipt unless the
+# branch came back under the cap.
+#
 # Record schema — canonical source of truth: skills/orch/schemas/dev-round.md
 #   {
 #     "schema_version": 2,
@@ -61,6 +69,7 @@
 #     "issue": "[ISSUE_ID]",                // required, normalized state key
 #     "base_sha": "[HEAD_AT_DELEGATION]",    // required, full commit id
 #     "adds": ["tools/allowed-file"],        // required, protected additions
+#     "cut": false,                          // required, true for a declared cut
 #     "items": [{"n": 1, "text": "…", "reach": "…"}]
 #   }
 #
@@ -89,7 +98,7 @@ usage() {
 Usage:
   dev-round-write --worktree PATH --issue ID --round-id RID \
     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
-    [--adds "PATH [PATH...]"]
+    [--adds "PATH [PATH...]"] [--cut]
 
 Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
 (atomically) and prints that path. One --item per delegated review
@@ -124,6 +133,10 @@ Before the record is written, the branch's additions plus deletions must be
 at most twice workflow state pr.baseline_lines. Full implementation acceptance
 sets it; a null or invalid value refuses before the record is written.
 An oversized branch exits 3 and must be cut before another fix round.
+--cut declares the round that cut: it skips that size check and nothing else,
+so the cut gets a record like any other round. The check moves to acceptance —
+dev-artifact-check refuses a cut round's receipt unless the branch came back
+to the cap. A round declared a cut that grows the branch cannot be accepted.
 --issue / --round-id must match
 ^[A-Za-z0-9._-]+$ with no '..'. Canonical schema:
 skills/orch/schemas/dev-round.md.
@@ -134,7 +147,7 @@ EOF
 # legitimate prose that merely begins with '--'.
 is_own_flag() {
   case "$1" in
-    --worktree|--issue|--round-id|--item|--items-file|--adds|-h|--help) return 0 ;;
+    --worktree|--issue|--round-id|--item|--items-file|--adds|--cut|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -189,6 +202,13 @@ check_reach() {
 run_size_tripwire() {
   local worktree="$1" issue="$2"
 
+  # A declared cut is the one round that must run while the branch is over the
+  # tripwire — refusing it here is what left a cut with no record and no way to
+  # accept its receipt (KEN-1165). The check is not dropped, it moves:
+  # dev-artifact-check refuses this round's receipt unless the branch came back
+  # under the cap.
+  [[ "$cut" != "true" ]] || return 0
+
   if ! enforce_size_tripwire "$worktree" "$issue" "$SCRIPT_DIR"; then
     printf '%s: %s\n' "$PROG" "$BRANCH_GROWTH_ERROR" >&2
     [[ "$BRANCH_GROWTH_STATUS" == "over-limit" ]] && exit 3
@@ -201,6 +221,7 @@ issue=""
 round_id=""
 items_file=""
 adds=""
+cut=false
 item_n=()
 item_text=()
 item_reach=()
@@ -218,6 +239,7 @@ while (( $# > 0 )); do
     --round-id) need "$1" $# "${2:-}"; no_dup "$1" "$round_id_given"; round_id_given=true; round_id="$2"; shift 2 ;;
     --items-file) need "$1" $# "${2:-}"; no_dup "$1" "$items_file_given"; items_file_given=true; items_file="$2"; shift 2 ;;
     --adds) need "$1" $# "${2:-}"; no_dup "$1" "$adds_given"; adds_given=true; adds="$2"; shift 2 ;;
+    --cut) cut=true; shift ;;
     --item)
       # Consumes exactly 3 args: N TEXT REACH.
       if (( $# < 4 )); then
@@ -350,6 +372,7 @@ jq -n \
   --arg issue "$issue" \
   --arg base_sha "$base_sha" \
   --argjson adds "$adds_json" \
+  --argjson cut "$cut" \
   --argjson items "$items_json" \
   '{
      schema_version: $schema_version,
@@ -357,6 +380,7 @@ jq -n \
      issue: $issue,
      base_sha: $base_sha,
      adds: $adds,
+     cut: $cut,
      items: $items
    }' > "$tmp"
 

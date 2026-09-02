@@ -204,11 +204,9 @@ after_push_rc=$?
 set -e
 assert_eq "$after_push_rc" "3" "the same oversized branch is refused after its first push"
 
-mutant_root="$TMP_ROOT/tripwire-mutant"
-mkdir -p "$mutant_root"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$mutant_root/"
-mutant_write="$mutant_root/scripts/dev-round-write"
-mutant_check="$mutant_root/scripts/dev-artifact-check"
+mutant_scripts="$(copy_scripts tripwire-mutant)"
+mutant_write="$mutant_scripts/dev-round-write"
+mutant_check="$mutant_scripts/dev-artifact-check"
 assert_eq "$(grep -Fc 'run_size_tripwire "$worktree" "$issue"' "$mutant_write")" "1" \
   "tripwire control finds exactly one live gate call"
 assert_eq "$(grep -Fc 'if (.pr.baseline_lines // null) == null' "$mutant_check")" "1" \
@@ -457,8 +455,7 @@ assert_eq "$(jq -c '.files' <<<"$linked_out")" \
   '["__tests__/integration/utils/shared.ts","__tests__/workflow_helpers.sh","adversarial/name_test-helper_more/file.rs","adversarial/name_test-util_more/file.rs","adversarial/name_test_helper_more/file.rs","adversarial/name_test_util_more/file.rs","tests/unit/support/shared.rs","tests/workflow_helpers.sh"]' \
   "public checker reports explicit substrings and test-context helper suffixes"
 
-inert_classifier="$TMP_ROOT/inert-classifier"
-cp "$CHECK" "$inert_classifier"
+inert_classifier="$(copy_scripts inert-classifier)/dev-artifact-check"
 sed -i.bak '/^is_protected_addition()/,/^}/ s/return 0/return 1/' "$inert_classifier"
 chmod +x "$inert_classifier"
 set +e
@@ -474,8 +471,7 @@ else
     "public checker control kills an inert classifier" "$inert_rc" "$inert_out"
 fi
 
-failed_classifier="$TMP_ROOT/failed-classifier"
-cp "$CHECK" "$failed_classifier"
+failed_classifier="$(copy_scripts failed-classifier)/dev-artifact-check"
 sed -i.bak 's/\[\[ -s "\$result" \]\]/[[ ! -s "$result" ]]/' "$failed_classifier"
 chmod +x "$failed_classifier"
 set +e

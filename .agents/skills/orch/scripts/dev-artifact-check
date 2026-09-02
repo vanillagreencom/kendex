@@ -41,6 +41,8 @@ set -euo pipefail
 
 PROG="dev-artifact-check"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/branch-growth.sh
+source "$SCRIPT_DIR/lib/branch-growth.sh"
 # Path-safe token grammar for --issue / --round-id (no '/', '..', whitespace).
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 # --expect-items is a comma-separated list of item numbers.
@@ -104,19 +106,26 @@ additions probe, and an adds[] path beginning with '-' or carrying a space,
 tab, newline, carriage return, form feed or vertical tab. Never recreate the
 record after delegation and never downgrade to --expect-items; mint a fresh
 round.
+A record carrying "cut": true was written by dev-round-write --cut, the round
+that runs while the branch is over its size tripwire. Its receipt is accepted
+only when the branch came back to twice workflow state pr.baseline_lines: over
+that cap is reason=cut_not_shrunk, and a cap that cannot be measured at all is
+reason=cut_unmeasurable. Every other gate applies unchanged.
 Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
                       "comparison_failed"|"classifier_failed"|
-                      "unapproved_additions"|"incomplete",
+                      "unapproved_additions"|"cut_not_shrunk"|
+                      "cut_unmeasurable"|"incomplete",
               warning: "commit_unreachable"|null,
               hint: usage diagnosis (count-vs-set --expect-items misuse)|null,
               files: [repo-relative paths]}
 
 Gates ordered: missing → (round_id mismatch → invalid) → scalars → invalid →
 commit object → commit_unresolvable → additions probe → comparison_failed or
-classifier_failed or unapproved_additions → items → incomplete → valid.
+classifier_failed or unapproved_additions → cut size (declared cuts only) →
+cut_not_shrunk or cut_unmeasurable → items → incomplete → valid.
 
 Exit status reflects artifact validity only: a valid artifact whose recorded
 validation is failing exits 0 with verdict "retry". Acceptance keys on the
@@ -143,6 +152,15 @@ reason meanings when ok=false:
               classification is inferred from a failed comparison.
   classifier_failed
               the protected-addition classifier produced no valid JSON array.
+  cut_not_shrunk
+              the round record declares a cut ("cut": true) but the branch is
+              still above twice workflow state pr.baseline_lines. A cut is the
+              one round allowed to start over that cap, so this is where it is
+              held to bringing the branch back under it (KEN-1165).
+  cut_unmeasurable
+              a declared cut whose cap could not be measured — an unreadable or
+              invalid pr.baseline_lines, or a branch git could not diff against
+              its base. A cut is never accepted on an unmeasured branch.
   incomplete  items[] fails the applicable rule — exact-set (with --expect-items)
               or non-empty-well-formed (kind fix OR bundled==true). kind implement
               without bundled keeps allowing items: [].
@@ -442,6 +460,25 @@ validate_artifact() {
       emit false "$file" "unapproved_additions" "" "" "$refused_additions"
       return 1
     fi
+    # A cut round (dev-round-write --cut) is the one round dev-round-write lets
+    # start over the size tripwire, because the branch being oversized is what
+    # it was delegated to fix. The tripwire moves here rather than being
+    # dropped: the cut's receipt is accepted only if the branch actually came
+    # back to the cap, so declaring a round a cut is a way to run one, never a
+    # way to grow the branch past the limit unchecked (KEN-1165).
+    if jq -e '.cut? == true' "$round_record" >/dev/null 2>&1; then
+      if ! measure_size_tripwire "$repo" "${issue:-}" "$SCRIPT_DIR"; then
+        printf '%s: cut round: %s\n' "$PROG" "$BRANCH_GROWTH_ERROR" >&2
+        emit false "$file" "cut_unmeasurable"
+        return 1
+      fi
+      if (( BRANCH_GROWTH_CURRENT > BRANCH_GROWTH_LIMIT )); then
+        printf '%s: cut round did not shrink the branch: diffstat is %s lines against a cap of %s (baseline %s)\n' \
+          "$PROG" "$BRANCH_GROWTH_CURRENT" "$BRANCH_GROWTH_LIMIT" "$BRANCH_GROWTH_BASELINE" >&2
+        emit false "$file" "cut_not_shrunk"
+        return 1
+      fi
+    fi
   fi
   if [[ -n "$expect_items" ]]; then
     if ! items_exact_ok "$file" "$expect_items"; then
@@ -571,6 +608,7 @@ elif [[ "${1:-}" == --* ]]; then
                                 or . == 13 or . == 32)) | not)
             and (split("/") | all(. != "" and . != "." and . != "..")))
       and ((.adds | length) == (.adds | unique | length))
+      and ((.cut? | type) as $t | $t == "null" or $t == "boolean")
       and ((.items? | type) == "array") and ((.items | length) > 0)
       and all(.items[];
             (type == "object")
@@ -579,7 +617,7 @@ elif [[ "${1:-}" == --* ]]; then
             and ((.text | gsub("[[:space:]]"; "")) != ""))
       and (([.items[].n] | length) == ([.items[].n] | unique | length))
     ' "$round_record" >/dev/null 2>&1 \
-      || die "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', base_sha of exactly 40 lowercase hex, unique repository-relative adds[] whose paths carry no ASCII whitespace and do not begin with '-', non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
+      || die "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', base_sha of exactly 40 lowercase hex, unique repository-relative adds[] whose paths carry no ASCII whitespace and do not begin with '-', a boolean cut when present, non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
     expect_items="$(jq -r '[.items[].n | tostring] | join(",")' "$round_record")"
   fi
 else

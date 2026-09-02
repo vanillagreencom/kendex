@@ -91,7 +91,15 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
    ```
 
-   Exit 3 is the branch-size refusal. Stop before delegation, discard this item set, and report the current and baseline counts with `Cut required`. After the branch is cut back to the Done-when, mint a fresh round. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
+   Exit 3 is the branch-size refusal. Stop before delegation, discard this item set, and report the current and baseline counts with `Cut required`. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
+
+   **The cut is a round of its own**, and the only one that runs while the branch is over the cap. Mint a fresh round id for it, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`, which skips the size check and nothing else:
+
+   ```bash
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --cut
+   ```
+
+   Accept it through step 5 like any other round: its item set is checked the same way, and `--expect-items-from-round` additionally refuses the receipt unless the branch came back to the cap. Declare `--cut` only on the round that does the cutting — a round declared a cut that leaves the branch oversized cannot be accepted at all. Resume the item-by-item fix path with another fresh round once the branch is under the cap.
 
    `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]' '[REACH]'` groups inline in one command instead.
 
@@ -145,7 +153,7 @@ Cancel ends the workflow; a selection goes to § 2.
    | `accept` | fail | The artifact claims done but the worktree is dirty or the commit is missing. Re-read git ONCE after a brief pause, then re-delegate only the missing step: commit, or revert leftover work. |
    | `wait` | pass | Do NOT re-run the fix and do NOT accept on git alone. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if the delegation is gone from your context, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* Accept only when a valid artifact for THIS round appears. |
    | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
-| `retry` | any | An artifact for THIS round exists but fails a gate. The check's `reason` names it. `unapproved_additions` also returns every refused path in `files`; start a fresh round that names each deliberate path in `Adds:`, or order the files cut. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. `comparison_failed` means git cannot compare the round's recorded base commit against HEAD, so the dev agent has nothing to repair; mint a fresh round. Never accept, and never treat it as absent. |
+| `retry` | any | An artifact for THIS round exists but fails a gate. The check's `reason` names it. `unapproved_additions` also returns every refused path in `files`; start a fresh round that names each deliberate path in `Adds:`, or order the files cut. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. `comparison_failed` means git cannot compare the round's recorded base commit against HEAD, so the dev agent has nothing to repair; mint a fresh round. `cut_not_shrunk` means a round declared a cut left the branch above the cap — the cut is unfinished, so delegate the rest of it in a fresh `--cut` round. `cut_unmeasurable` means the cap itself could not be read, which is an environment failure, not the agent's; fix the state or the base ref and re-run the check. Never accept, and never treat it as absent. |
 
 6. **Record the outcome** — one write per item, and the item's own text never enters a shell word:
 
