@@ -115,6 +115,15 @@ out=$(MUTATION_STABILITY_SETTLE=soon "$MS" --worktree "$REPO" --sha "$SHA" \
 is_rc 2 "a settle that is not a number of seconds exits 2"
 has "MUTATION_STABILITY_SETTLE wants a whole number of seconds" "the rejected settle is named"
 
+# Width is part of that grammar: unrefused, this figure is one the shell's
+# tests read as an error and sleep waits out, so the run hangs on its first
+# write to a copy instead of reporting the setting.
+rc=0
+out=$(MUTATION_STABILITY_SETTLE=18446744073709551616 "$MS" --worktree "$REPO" --sha "$SHA" \
+  --test 'true' --build 'true' --mutate 'true' --stability 1 2>&1) || rc=$?
+is_rc 2 "a settle too wide for the arithmetic exits 2"
+has "MUTATION_STABILITY_SETTLE wants a whole number of seconds" "the over-wide settle is named"
+
 # And 0 really skips the wait rather than merely shortening it. What the run
 # asked for is read off a sleep stub: the settle is the only whole-second
 # sleeper in the script, and the sub-second waits are its own polls, which the

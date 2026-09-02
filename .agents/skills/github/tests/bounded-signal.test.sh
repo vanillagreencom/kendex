@@ -137,6 +137,9 @@ check_bound "a two-place bound is refused" 0.25 125
 check_bound "a bare decimal point is refused" . 125
 check_bound "a trailing decimal point is refused" 5. 125
 check_bound "a non-numeric bound is refused" soon 125
+# Width is part of the grammar: this one multiplies out to exactly 0 in signed
+# 64-bit arithmetic, and 0 is the documented way to ask for no bound at all.
+check_bound "a bound too wide for the arithmetic is refused" 1844674407370955161.6 125 true
 # Sub-second bounds must not have become "no bound at all": a zero bound is
 # the documented way to ask for that, and nothing else may reach it.
 check_bound "a zero bound runs the command unbounded" 0.0 0 true

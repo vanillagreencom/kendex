@@ -135,3 +135,13 @@ assert_eq "a non-numeric CONTROL_JOBS exits 2" "$rc" 2
 assert_file_contains "the refusal names the setting and the value" \
     "$jobs_log" "CONTROL_JOBS must be a positive integer, got: some"
 assert_file_lacks "a refused width judges nothing" "$jobs_log" "controls, "
+
+# A width outside signed 64-bit arithmetic is junk of the same kind: the
+# batching predicate compares against the wrap, reads 2^64 as zero, and reaps
+# after every launch, so the roster runs one control at a time.
+wide_log="$TMP/jobs-wide.log"
+CONTROL_JOBS=18446744073709551616 bash "$matched/tests/must-fail-controls.sh" >"$wide_log" 2>&1
+rc=$?
+assert_eq "a CONTROL_JOBS too wide for the arithmetic exits 2" "$rc" 2
+assert_file_contains "the refusal names the setting and the over-wide value" \
+    "$wide_log" "CONTROL_JOBS must be a positive integer, got: 18446744073709551616"

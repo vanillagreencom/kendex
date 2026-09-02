@@ -74,13 +74,13 @@ kendex_load_project_env "$PROJECT_ROOT"
 # kendex_load_project_env snapshots only EXPORTED names, so a default assigned
 # above it is a plain variable the settings files overwrite unvalidated. Base
 # ten at the seed, so a leading zero is decimal and not the octal 08 rejects.
+# Bounded on width too, and 18 digits survives all three doublings: past that
+# the arithmetic wraps and the backoff is a negative sleep, not a refusal.
 LINEAR_RETRY_BASE_DELAY="${LINEAR_RETRY_BASE_DELAY:-1}"
-case "$LINEAR_RETRY_BASE_DELAY" in
-*[!0-9]* | "")
+if ! [[ "$LINEAR_RETRY_BASE_DELAY" =~ ^[0-9]{1,18}$ ]]; then
     echo '{"error": "LINEAR_RETRY_BASE_DELAY must be a whole number of seconds"}' >&2
     exit 1
-    ;;
-esac
+fi
 LINEAR_RETRY_BASE_DELAY=$((10#$LINEAR_RETRY_BASE_DELAY))
 
 # Where each target-selecting value came from: override (LINEAR_API_KEY_OVERRIDE),

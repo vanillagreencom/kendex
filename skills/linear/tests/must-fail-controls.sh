@@ -46,8 +46,11 @@ die() {
 
 # A junk width otherwise reaches the batching predicate, where Bash 4.4 and
 # newer abort on the unbound name mid-roster and 4.0 through 4.2 read it as 0
-# and run every control one at a time.
-[[ "$CONTROL_JOBS" =~ ^[1-9][0-9]*$ ]] ||
+# and run every control one at a time. The digit count is part of the grammar:
+# 19 digits or more is past what signed 64-bit shell arithmetic holds, and the
+# predicate compares against the wrap, which reaps every iteration when it
+# lands at or below zero.
+[[ "$CONTROL_JOBS" =~ ^[1-9][0-9]{0,17}$ ]] ||
 	die "CONTROL_JOBS must be a positive integer, got: $CONTROL_JOBS"
 
 control_die() {

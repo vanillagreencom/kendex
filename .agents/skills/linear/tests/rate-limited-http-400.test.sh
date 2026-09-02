@@ -119,6 +119,18 @@ assert_ne "a non-numeric base delay fails the call" "$junk_rc" 0
 assert_contains "a non-numeric base delay names the setting" \
   "$junk" "LINEAR_RETRY_BASE_DELAY must be a whole number of seconds"
 
+# Width is part of the grammar too: 19 digits is outside signed 64-bit
+# arithmetic, and the wrap is a negative backoff `sleep` refuses once the
+# request has already gone out.
+wide_rc=0
+wide="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" \
+  LINEAR_API_KEY_OVERRIDE="lin_api_test" LINEAR_TEAM="Claude" \
+  LINEAR_RETRY_BASE_DELAY=9999999999999999999 \
+  "$TMP_BASE/rl/.agents/skills/linear/scripts/linear.sh" statuses list 2>&1)" || wide_rc=$?
+assert_ne "a base delay too wide for the arithmetic fails the call" "$wide_rc" 0
+assert_contains "an over-wide base delay names the setting" \
+  "$wide" "LINEAR_RETRY_BASE_DELAY must be a whole number of seconds"
+
 # The process environment is not the only way this value arrives: SKILL.md
 # points non-secret defaults at the project's committed settings, and every
 # other LINEAR_* key resolves from there. A guard the settings file can walk

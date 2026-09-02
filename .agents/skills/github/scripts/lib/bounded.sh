@@ -79,6 +79,11 @@ kendex_github_bound_ticks() { # SECONDS — tenths on stdout; 1 when unreadable
     *) whole="$seconds" frac=0 ;;
   esac
   case "$whole" in '' | *[!0-9]*) return 1 ;; esac
+  # Ten times an 18-digit whole part is past what signed 64-bit shell
+  # arithmetic holds, and the wrap lands on 0 for one such value in ten, which
+  # the runner below reads as "no bound" and then waits on forever. Refused on
+  # width here, before the multiply, so no call site inherits the wrap.
+  [ "${#whole}" -le 17 ] || return 1
   case "$frac" in [0-9]) ;; *) return 1 ;; esac
   printf '%s' "$(((10#$whole) * 10 + frac))"
 }

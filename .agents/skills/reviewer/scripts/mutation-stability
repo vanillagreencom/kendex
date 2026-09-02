@@ -74,13 +74,16 @@ positive_integer --stability "$N"
 positive_integer --threads "$THREADS"
 positive_integer --timeout "$TIMEOUT"
 
+# Bounded on width as well as grammar: 19 digits or more is outside what the
+# shell's arithmetic holds, so every test below it reads the figure as an
+# error rather than a count. The run then prints the skipped-boundary warning
+# it has no business printing and hands the same figure to sleep, which waits
+# out the run on the first write to a copy.
 SETTLE="${MUTATION_STABILITY_SETTLE:-1}"
-case "$SETTLE" in
-  *[!0-9]* | '')
-    echo "MUTATION_STABILITY_SETTLE wants a whole number of seconds" >&2
-    exit 2
-    ;;
-esac
+if ! [[ "$SETTLE" =~ ^[0-9]{1,18}$ ]]; then
+  echo "MUTATION_STABILITY_SETTLE wants a whole number of seconds" >&2
+  exit 2
+fi
 # The precondition for skipping the boundary — that BUILD keeps no cache the
 # copies could share — is the caller's to know and this script cannot check
 # it. When it does not hold the mutant reuses the clean run's binary and reads
