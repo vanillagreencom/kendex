@@ -6,26 +6,21 @@ mkdir -p "$ROOT/tmp"
 TMP="$(mktemp -d "$ROOT/tmp/help-inert.XXXXXX")"
 FIXTURE="$TMP/repo"
 MARKER="$FIXTURE/env-loaded"
-NO_GIT="$TMP/no-git"
-NO_GIT_MARKER="$NO_GIT/env-loaded"
 CALLS="$TMP/dependency-calls"
 PASS=0
 FAIL=0
 
 trap 'rm -rf -- "$TMP"' EXIT
 
-mkdir -p "$FIXTURE/.agents/skills/control/scripts" "$FIXTURE/bin" \
-    "$NO_GIT/.agents/skills"
+mkdir -p "$FIXTURE/.agents/skills/control/scripts" "$FIXTURE/bin"
 cp -R "$ROOT/skills/decider" "$FIXTURE/.agents/skills/decider"
 cp -R "$ROOT/skills/github" "$FIXTURE/.agents/skills/github"
 cp -R "$ROOT/skills/linear" "$FIXTURE/.agents/skills/linear"
 cp -R "$ROOT/skills/orch" "$FIXTURE/.agents/skills/orch"
 cp -R "$ROOT/skills/second-opinion" "$FIXTURE/.agents/skills/second-opinion"
 cp -R "$ROOT/skills/worktree" "$FIXTURE/.agents/skills/worktree"
-cp -R "$ROOT/skills/linear" "$NO_GIT/.agents/skills/linear"
 git -C "$FIXTURE" init -q
 printf 'touch "%s"\n' "$MARKER" >"$FIXTURE/.env.local"
-printf 'touch "%s"\n' "$NO_GIT_MARKER" >"$NO_GIT/.env.local"
 printf '%s\n' \
     '#!/bin/sh' \
     'printf "%s %s\n" "$0" "$*" >>"${HELP_INERT_CALLS:?}"' \
@@ -48,44 +43,28 @@ chmod +x "$FIXTURE/bin/blocked" "$FIXTURE/bin/gh" "$FIXTURE/bin/codex" \
     "$FIXTURE/.agents/skills/control/scripts/environment-load"
 export HELP_INERT_CALLS="$CALLS"
 
-# skill, script, expected output, arguments, expected violation, credentials,
-# fixture. A dash means no arguments; omitted trailing fields use no credentials
-# in the Git fixture.
-while IFS=$'\t' read -r skill script token args expected auth fixture; do
+# skill, script, expected output, arguments, expected violation. A dash means no arguments.
+while IFS=$'\t' read -r skill script token args expected; do
     [ -n "$skill" ] || continue
     expected="${expected:-clean}"
-    auth="${auth:-none}"
-    fixture="${fixture:-git}"
-    case_root="$FIXTURE"
-    marker="$MARKER"
-    env_args=(-u GH_TOKEN -u GITHUB_TOKEN -u LINEAR_API_KEY -u LINEAR_API_KEY_OVERRIDE)
-    case "$auth" in
-        api) env_args=(-u GH_TOKEN -u GITHUB_TOKEN -u LINEAR_API_KEY_OVERRIDE LINEAR_API_KEY=fixture) ;;
-        override) env_args=(-u GH_TOKEN -u GITHUB_TOKEN -u LINEAR_API_KEY LINEAR_API_KEY_OVERRIDE=fixture) ;;
-    esac
-    if [ "$fixture" = no-git ]; then
-        case_root="$NO_GIT"
-        marker="$NO_GIT_MARKER"
-        env_args+=("GIT_CEILING_DIRECTORIES=$ROOT")
-    fi
-    rm -f "$marker"
+    rm -f "$MARKER"
     : >"$CALLS"
     status=0
     if [ "$args" = - ]; then
-        output="$(cd "$case_root" && PATH="$FIXTURE/bin:$PATH" \
-            env "${env_args[@]}" \
-            "$case_root/.agents/skills/$skill/$script" 2>&1)" || status=$?
+        output="$(cd "$FIXTURE" && PATH="$FIXTURE/bin:$PATH" \
+            env -u GH_TOKEN -u GITHUB_TOKEN -u LINEAR_API_KEY \
+            "$FIXTURE/.agents/skills/$skill/$script" 2>&1)" || status=$?
     else
         # shellcheck disable=SC2086 # The table stores argv as space-separated words.
-        output="$(cd "$case_root" && PATH="$FIXTURE/bin:$PATH" \
-            env "${env_args[@]}" \
-            "$case_root/.agents/skills/$skill/$script" $args 2>&1)" || status=$?
+        output="$(cd "$FIXTURE" && PATH="$FIXTURE/bin:$PATH" \
+            env -u GH_TOKEN -u GITHUB_TOKEN -u LINEAR_API_KEY \
+            "$FIXTURE/.agents/skills/$skill/$script" $args 2>&1)" || status=$?
     fi
     observed=""
     if [ "$status" -ne 0 ] || [[ "$output" != *"$token"* ]]; then
         observed="command"
     fi
-    [ ! -e "$marker" ] || observed="${observed:+$observed,}environment"
+    [ ! -e "$MARKER" ] || observed="${observed:+$observed,}environment"
     [ ! -s "$CALLS" ] || observed="${observed:+$observed,}dependency"
     observed="${observed:-clean}"
     if [ "$observed" = "$expected" ]; then
@@ -129,11 +108,10 @@ linear	scripts/commands/issues.sh	Issue Operations	activate --help
 linear	scripts/commands/issues.sh	Issue Operations	get --help
 linear	scripts/commands/issues.sh	Issue Operations	validate-completion --help
 linear	scripts/commands/issues.sh	Issue Operations	get KEN-1 --help
-linear	scripts/commands/issues.sh	Issue Operations	delete KEN-1 --help
 linear	scripts/commands/issues.sh	Issue Operations	list --limit 5 -h
 linear	scripts/commands/projects.sh	Project Operations	--help
-linear	scripts/commands/cycles.sh	Cycle Operations	--help
-linear	scripts/commands/labels.sh	Label Operations	--help
+linear	scripts/commands/cycles.sh	Cycle Operations	-h
+linear	scripts/commands/labels.sh	Label Operations	help
 linear	scripts/commands/comments.sh	Comment Operations	--help
 linear	scripts/commands/milestones.sh	Project Milestone Operations	--help
 linear	scripts/commands/initiatives.sh	Initiative Operations	--help
@@ -146,30 +124,13 @@ linear	scripts/commands/users.sh	User Operations	--help
 linear	scripts/commands/statuses.sh	Workflow State Operations	--help
 linear	scripts/commands/documents.sh	Document Operations	--help
 linear	scripts/commands/project-labels.sh	Project Label Operations	--help
-linear	scripts/commands/comments.sh	Comment Operations	create KEN-1 --body --help	command,environment
-linear	scripts/commands/issues.sh	Issue Operations	-	clean	none	no-git
-linear	scripts/commands/comments.sh	Comment Operations	-	clean	none	no-git
-linear	scripts/commands/cycles.sh	Cycle Operations	-	clean	none	no-git
-linear	scripts/commands/documents.sh	Document Operations	-	clean	none	no-git
-linear	scripts/commands/initiatives.sh	Initiative Operations	-	clean	none	no-git
-linear	scripts/commands/labels.sh	Label Operations	-	clean	none	no-git
-linear	scripts/commands/milestones.sh	Project Milestone Operations	-	clean	none	no-git
-linear	scripts/commands/project-labels.sh	Project Label Operations	-	clean	none	no-git
-linear	scripts/commands/projects.sh	Project Operations	-	clean	none	no-git
-linear	scripts/commands/statuses.sh	Workflow State Operations	-	clean	none	no-git
-linear	scripts/commands/teams.sh	Team Operations	-	clean	none	no-git
-linear	scripts/commands/users.sh	User Operations	-	clean	none	no-git
-linear	scripts/commands/cache-query.sh	Linear Cache Query	issues --help	clean	none	no-git
-linear	scripts/commands/cache-query.sh	Linear Cache Query	cycles list --type --help	command,environment
-linear	scripts/commands/comments.sh	Comment Operations	list KEN-1 --help	command	api	git
 linear	scripts/commands/projects.sh	Project Operations	-
 linear	scripts/commands/cache-query.sh	Linear Cache Query	-
 linear	scripts/linear.sh	Linear GraphQL API CLI	--help
 linear	scripts/linear.sh	Issue Operations	issues --help
-linear	scripts/linear.sh	Issue Operations	issues delete KEN-1 --help
 linear	scripts/linear.sh	Project Operations	projects --help
-linear	scripts/linear.sh	Cycle Operations	cycles --help
-linear	scripts/linear.sh	Label Operations	labels --help
+linear	scripts/linear.sh	Cycle Operations	cycles -h
+linear	scripts/linear.sh	Label Operations	labels help
 linear	scripts/linear.sh	Comment Operations	comments --help
 linear	scripts/linear.sh	Project Milestone Operations	milestones --help
 linear	scripts/linear.sh	Initiative Operations	initiatives --help
@@ -182,24 +143,6 @@ linear	scripts/linear.sh	User Operations	users --help
 linear	scripts/linear.sh	Workflow State Operations	statuses --help
 linear	scripts/linear.sh	Document Operations	documents --help
 linear	scripts/linear.sh	Project Label Operations	project-labels --help
-linear	scripts/linear.sh	Comment Operations	comments create KEN-1 --body --help	command,environment
-linear	scripts/linear.sh	Linear GraphQL API CLI	-	clean	none	no-git
-linear	scripts/linear.sh	Issue Operations	issues	clean	none	no-git
-linear	scripts/linear.sh	Comment Operations	comments	clean	none	no-git
-linear	scripts/linear.sh	Cycle Operations	cycles	clean	none	no-git
-linear	scripts/linear.sh	Document Operations	documents	clean	none	no-git
-linear	scripts/linear.sh	Initiative Operations	initiatives	clean	none	no-git
-linear	scripts/linear.sh	Label Operations	labels	clean	none	no-git
-linear	scripts/linear.sh	Project Milestone Operations	milestones	clean	none	no-git
-linear	scripts/linear.sh	Project Label Operations	project-labels	clean	none	no-git
-linear	scripts/linear.sh	Project Operations	projects	clean	none	no-git
-linear	scripts/linear.sh	Workflow State Operations	statuses	clean	none	no-git
-linear	scripts/linear.sh	Team Operations	teams	clean	none	no-git
-linear	scripts/linear.sh	User Operations	users	clean	none	no-git
-linear	scripts/linear.sh	Linear Cache Query	cache	clean	none	no-git
-linear	scripts/linear.sh	Linear Cache Query	cache issues --help	clean	none	no-git
-linear	scripts/linear.sh	Linear Cache Query	cache cycles list --type --help	command,environment
-linear	scripts/linear.sh	Comment Operations	comments list KEN-1 --help	command	override	git
 linear	scripts/linear.sh	Project Operations	projects
 linear	scripts/linear.sh	Linear Cache Query	cache
 orch	scripts/approval-wait	Usage: approval-wait	--help

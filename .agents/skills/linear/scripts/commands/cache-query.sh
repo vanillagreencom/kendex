@@ -8,11 +8,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Cache queries are local reads. Source common helpers without resolving
 # LINEAR_API_KEY/op:// secrets so cache access works without 1Password auth.
-LINEAR_SKIP_API_KEY_RESOLUTION=1
-source "$SCRIPT_DIR/../lib/common.sh"
-unset LINEAR_SKIP_API_KEY_RESOLUTION
-source "$SCRIPT_DIR/../lib/cache.sh"
-source "$SCRIPT_DIR/../lib/attachments.sh"
 
 show_help() {
     cat <<'EOF'
@@ -71,6 +66,13 @@ Examples:
   cache-query.sh status
 EOF
 }
+case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
+
+LINEAR_SKIP_API_KEY_RESOLUTION=1
+source "$SCRIPT_DIR/../lib/common.sh"
+unset LINEAR_SKIP_API_KEY_RESOLUTION
+source "$SCRIPT_DIR/../lib/cache.sh"
+source "$SCRIPT_DIR/../lib/attachments.sh"
 
 # =============================================================================
 # ISSUES
@@ -1012,10 +1014,42 @@ cache_list_cycles() {
 # =============================================================================
 
 main() {
-    if linear_help_requested "${BASH_SOURCE[0]}" "$@"; then
+    # `--help` anywhere selects usage, but the token after a value-taking flag
+    # is that flag's VALUE, never a request for help: `--search -h` used to
+    # print usage and exit 0, which a caller parsing the output reads as an
+    # empty result set.
+    local arg skip_value="false"
+    for arg in "$@"; do
+        if [[ "$skip_value" == "true" ]]; then
+            skip_value="false"
+            continue
+        fi
+        case "$arg" in
+        --project | --project-id | --state | --status | --label | --labels | --cycle | \
+            --updated-since | --created-since | --search | --limit | --format | --team | \
+            --assignee | --include-children-of)
+            skip_value="true"
+            ;;
+        --help | -h)
+            show_help
+            return 0
+            ;;
+        esac
+    done
+
+    case "${1:-}" in
+    help)
         show_help
         return 0
-    fi
+        ;;
+    esac
+
+    case "${2:-}" in
+    help)
+        show_help
+        return 0
+        ;;
+    esac
 
     if [[ ! -f "$CACHE_DIR/meta.json" ]]; then
         cache_missing_error

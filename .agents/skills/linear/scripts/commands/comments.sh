@@ -5,9 +5,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../lib/common.sh"
-source "$SCRIPT_DIR/../lib/cache.sh"
-source "$SCRIPT_DIR/../lib/attachments.sh"
 
 show_help() {
     cat << 'EOF'
@@ -47,6 +44,11 @@ Examples:
   comments.sh delete <comment-id>
 EOF
 }
+case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
+
+source "$SCRIPT_DIR/../lib/common.sh"
+source "$SCRIPT_DIR/../lib/cache.sh"
+source "$SCRIPT_DIR/../lib/attachments.sh"
 
 read_body_file() {
     local body_file="$1"

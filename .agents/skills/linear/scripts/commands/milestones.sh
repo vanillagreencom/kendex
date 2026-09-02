@@ -5,7 +5,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../lib/common.sh"
 
 show_help() {
     cat << 'EOF'
@@ -42,6 +41,9 @@ Examples:
   milestones.sh delete <id>
 EOF
 }
+case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
+
+source "$SCRIPT_DIR/../lib/common.sh"
 
 resolve_project_id() {
     local project_ref="$1"

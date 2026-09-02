@@ -5,8 +5,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../lib/common.sh"
-source "$SCRIPT_DIR/../lib/cache.sh"
 
 # Shared project fields for mutation responses — matches list query for cache parity
 PROJECT_RETURN_FIELDS='
@@ -111,6 +109,10 @@ Examples:
   projects.sh set-sort-order <id> --after <id>  # Position project after another
 EOF
 }
+case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
+
+source "$SCRIPT_DIR/../lib/common.sh"
+source "$SCRIPT_DIR/../lib/cache.sh"
 
 # Linear's projects connection rejects large `first` values (query complexity),
 # so a single request can return at most this many projects. Higher --limit

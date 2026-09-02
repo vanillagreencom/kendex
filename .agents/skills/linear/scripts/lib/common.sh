@@ -25,9 +25,10 @@ linear_canonical_existing_dir() {
 # shellcheck source=bash-version.sh
 source "$_LIB_DIR/bash-version.sh"
 linear_require_supported_bash || exit $?
-# shellcheck source=help.sh
-source "$_LIB_DIR/help.sh"
-linear_prepare_invocation "${BASH_SOURCE[1]:-}" "$@"
+
+PROJECT_ROOT_RAW="$(git rev-parse --show-toplevel 2>/dev/null)"
+PROJECT_ROOT="$(linear_canonical_existing_dir "$PROJECT_ROOT_RAW")"
+unset PROJECT_ROOT_RAW
 
 # First 12 hex chars of sha256 — enough to tell two keys apart in a diagnostic
 # without exposing key material. macOS ships shasum, not sha256sum.
@@ -62,7 +63,7 @@ _CALLER_LINEAR_TEAM="${LINEAR_TEAM:-}"
 # Load public config and local secrets before deriving defaults.
 # shellcheck source=kendex-env.sh
 source "$_LIB_DIR/kendex-env.sh"
-linear_load_invocation_env
+kendex_load_project_env "$PROJECT_ROOT"
 
 # Where each target-selecting value came from: override (LINEAR_API_KEY_OVERRIDE),
 # project-config (kendex.settings.toml / .env.local), environment (process

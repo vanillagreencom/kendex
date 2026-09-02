@@ -7,10 +7,6 @@ set -euo pipefail
 shopt -s inherit_errexit  # Propagate set -e into command substitutions
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LINEAR_EMPTY_RUNS=1
-source "$SCRIPT_DIR/../lib/common.sh"
-source "$SCRIPT_DIR/../lib/cache.sh"
-source "$SCRIPT_DIR/../lib/attachments.sh"
 
 show_help() {
     cat << 'EOF'
@@ -39,6 +35,11 @@ Examples:
   sync.sh --stats               # Sync and show statistics
 EOF
 }
+case "${1:-}" in help|--help|-h) show_help; exit 0 ;; esac
+
+source "$SCRIPT_DIR/../lib/common.sh"
+source "$SCRIPT_DIR/../lib/cache.sh"
+source "$SCRIPT_DIR/../lib/attachments.sh"
 
 # =============================================================================
 # SYNC FUNCTIONS
