@@ -9,16 +9,12 @@ export PROJECT_ROOT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SCRIPT_DIR
 
+# The state file for a key. Every caller passes the key the state was
+# initialized under — GitHub-issue orchestration normalizes to `issue-N` before
+# it reaches any subcommand — so the key names its file exactly.
 get_state_file() {
     local issue_id="$1"
     echo "${STATE_DIR}/${STATE_PREFIX}-${issue_id}.json"
-}
-
-# Resolve the state file for a key. Every caller passes the key the state was
-# initialized under — GitHub-issue orchestration normalizes to `issue-N` before
-# it reaches any subcommand — so the key resolves to its exact file.
-resolve_state_file() {
-    get_state_file "$1"
 }
 
 ensure_state_exists() {
@@ -130,7 +126,7 @@ cmd_get() {
     local jq_path="${2:-.}"
 
     local state_file
-    state_file=$(resolve_state_file "$issue_id")
+    state_file=$(get_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     jq -r "$jq_path" "$state_file"
@@ -183,7 +179,7 @@ cmd_update() {
     [[ "$have_expr" -eq 1 ]] || { echo "Error: update needs a jq expression" >&2; return 1; }
 
     local state_file
-    state_file=$(resolve_state_file "$issue_id")
+    state_file=$(get_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     atomic_update "$state_file" "$jq_expr" ${jq_args[@]+"${jq_args[@]}"}
@@ -199,7 +195,7 @@ cmd_update_report() {
     local jq_expr="$2"
 
     local state_file
-    state_file=$(resolve_state_file "$issue_id")
+    state_file=$(get_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     local lock_file="${state_file}.lock"
@@ -234,7 +230,7 @@ cmd_append() {
     local value="$3"
 
     local state_file
-    state_file=$(resolve_state_file "$issue_id")
+    state_file=$(get_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     # Handle nested fields (e.g., pr_comment_review.fixes)
@@ -270,7 +266,7 @@ cmd_append_file() {
     fi
 
     local state_file
-    state_file=$(resolve_state_file "$issue_id")
+    state_file=$(get_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     atomic_update "$state_file" ".${field} = ((.${field} // []) + [\$entry[0]])" \
@@ -341,7 +337,7 @@ cmd_cap() {
     if [[ "$have_count" -eq 0 ]]; then
         [[ -n "$field" ]] || { echo "Error: cap: $setting is not measured against workflow state; pass --count" >&2; return 2; }
         local state_file
-        state_file=$(resolve_state_file "$issue_id")
+        state_file=$(get_state_file "$issue_id")
         ensure_state_exists "$state_file"
         count=$(jq -r "(.${field} // 0) | tostring" "$state_file") || return 1
     fi
@@ -359,7 +355,7 @@ cmd_increment() {
     local field="$2"
 
     local state_file
-    state_file=$(resolve_state_file "$issue_id")
+    state_file=$(get_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     atomic_update "$state_file" ".${field} += 1"
@@ -371,7 +367,7 @@ cmd_set() {
     local value="$3"
 
     local state_file
-    state_file=$(resolve_state_file "$issue_id")
+    state_file=$(get_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
     # review-pr § 4 writes `rereview_panel` to re-enter § 2: that write IS the re-review cycle, so it raises `rereview_cycles` under the same lock it is gated on, and refuses once that count reaches REVIEW_MAX_CYCLES, so the setting is the number of entries allowed. The count is entries already taken, so the comparison is >=, not >.
@@ -446,7 +442,7 @@ cmd_new_round_id() {
 
 cmd_path() {
     local issue_id="$1"
-    resolve_state_file "$issue_id"
+    get_state_file "$issue_id"
 }
 
 cmd_exists() {
@@ -464,7 +460,7 @@ cmd_exists() {
     fi
 
     local state_file
-    state_file=$(resolve_state_file "$issue_id")
+    state_file=$(get_state_file "$issue_id")
 
     if [[ "$json" == true ]]; then
         local exists=false

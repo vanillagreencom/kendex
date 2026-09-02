@@ -272,7 +272,7 @@ expect_fail "a key nested in an inline table is read by nothing" "$dir" "a shape
 
 # The cost of judging the line: a name mentioned in a VALUE is flagged too.
 # That is the safe direction, and the verdict says to reword it.
-setting_fails "a name mentioned in a value is flagged, and the verdict says to reword" PR_REVIEW_NUDGE "ask about REVIEW_GATE_MODE" "a shape the loader does not read"
+setting_fails "a name mentioned in a value is flagged, and the verdict says to reword" PR_REVIEW_CHECK "ask about REVIEW_GATE_MODE" "a shape the loader does not read"
 printf '%s' "$OUT" | grep -qF "reword a mention" &&
   ok "the over-flag names its own remedy" ||
   bad "the over-flag names its own remedy" "$OUT"

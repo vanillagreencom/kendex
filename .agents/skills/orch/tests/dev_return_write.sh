@@ -214,6 +214,11 @@ assert_exit2 "--summary plus empty --summary-file value still exits 2 (presence,
 assert_exit2 "explicitly empty --summary-file alone exits 2 for implement" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
   --summary-file ""
+# Every other flag here is valid and the commit resolves, so the whitespace-only
+# summary is the ONLY thing that can fail this call.
+assert_exit2 "whitespace-only --summary exits 2 (an empty deliverable is not a record)" \
+  --worktree "$worktree" --kind implement --issue issue-blanksum --round-id "$RID" --branch b \
+  --commit "$current_head" --validate pass --summary "   "
 assert_exit2 "--summary with no value exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass --summary
 
@@ -264,7 +269,7 @@ assert_exit2 "duplicate --branch exits 2" \
 assert_exit2 "duplicate --validate exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b \
   --commit c --validate pass --validate pass
-assert_exit2 "empty --commit value exits 2 (presence, not content)" \
+assert_exit2 "missing or empty --commit exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --validate pass --commit ""
 
 # A rejected invocation must not leave a partial artifact at the target path.

@@ -1288,8 +1288,8 @@ exec "$REAL_JQ" "\$@"
 EOF
 chmod +x "$TMP_ROOT/bin/jq"
 
-# An APPROVED verdict routes straight to emit_result "approved" + exit 0,
-# which is the exact fall-through path.
+# run_approved_gate has two call sites, each of which must propagate a failed
+# emission. First: the reviewDecision site — GitHub reports the PR APPROVED.
 stderr="$TMP_ROOT/emitfail.err"
 set +e
 output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
@@ -1298,22 +1298,22 @@ output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
 emitfail_code=$?
 set -e
 if [ "$emitfail_code" -ne 0 ]; then
-  pass "a failed emit_result does not exit 0 (exit $emitfail_code)"
+  pass "a failed emit_result at the reviewDecision gate site does not exit 0 (exit $emitfail_code)"
 else
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n        exit was 0 with stdout: %s\n' \
-    "a failed emit_result does not exit 0" "$output"
+    "a failed emit_result at the reviewDecision gate site does not exit 0" "$output"
   dump_stderr "$stderr"
 fi
 if [ -z "$output" ]; then
-  pass "a failed emit_result writes no result to stdout"
+  pass "a failed emit_result at the reviewDecision gate site writes no result to stdout"
 else
   FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n        stdout: %s\n' "a failed emit_result writes no result to stdout" "$output"
+  printf '  FAIL  %s\n        stdout: %s\n' "a failed emit_result at the reviewDecision gate site writes no result to stdout" "$output"
 fi
 
-# Same through run_approved_gate, whose call site reads the helper's status and
-# so runs its body with errexit disabled — the propagation must be explicit.
+# Second: the latestReviews site — no reviewDecision, but a reviewer's latest
+# review is APPROVED. Each site reads the gate's status, disabling errexit.
 stderr="$TMP_ROOT/emitfail-gate.err"
 set +e
 output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
@@ -1322,15 +1322,15 @@ output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
 gate_emitfail_code=$?
 set -e
 if [ "$gate_emitfail_code" -ne 0 ]; then
-  pass "a failed emit_result through the approved gate does not exit 0 (exit $gate_emitfail_code)"
+  pass "a failed emit_result at the latestReviews gate site does not exit 0 (exit $gate_emitfail_code)"
 else
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n        exit was 0 with stdout: %s\n' \
-    "a failed emit_result through the approved gate does not exit 0" "$output"
+    "a failed emit_result at the latestReviews gate site does not exit 0" "$output"
   dump_stderr "$stderr"
 fi
 assert_contains "$(cat "$stderr")" "could not emit the gate result" \
-  "the approved gate names the emission failure on stderr"
+  "the latestReviews gate site names the emission failure on stderr"
 
 # The deadline's `emit_result "timeout"` is a BARE call followed by `exit 1`,
 # so nothing but errexit stands between a failed emission and that exit 1.

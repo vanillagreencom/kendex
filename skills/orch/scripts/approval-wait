@@ -389,31 +389,24 @@ prev_head_sha=""
 # original START_TIME, so this per-head guard is what makes proceed head-fair.
 head_changed_during_wait=false
 
-# Emit the final machine-readable result on stdout. Every exit path routes
-# through here (or emit_error) so the script can never finish silently.
-#   status: approved | reviewed | changes_requested | comments | timeout
-#         | proceeded | error
-# Emit the approved verdict and exit. The emit is propagated EXPLICITLY rather
-# than left to errexit: the call site reads this function's status, which puts
-# the body in a `||` context where errexit is disabled, so
-# `emit_result … || return $?` is the only thing standing between a failed
-# emission and a success exit.
-emit_approved() {
-  emit_result "approved" || return $?
-  exit 0
-}
-
-# Run the gate and route its status by VALUE: reaching here at all means the
-# gate settled but its result was not written, and a 0 would be the
-# fall-through this shape exists to prevent, so it is forced to 1.
+# Emit the approved verdict and exit 0. The emission is propagated EXPLICITLY
+# rather than left to errexit: the `|| rc=$?` below disables errexit for this
+# whole body, so reaching the lines past `emit_result` means the gate settled
+# but its result was never written. A 0 there would be the exact fall-through
+# this shape exists to prevent — an approved gate whose JSON nobody read — so
+# it is forced to 1.
 run_approved_gate() {
   local rc=0
-  emit_approved || rc=$?
+  { emit_result "approved" && exit 0; } || rc=$?
   [ "$rc" -ne 0 ] || rc=1
   echo "approval-wait: could not emit the gate result for PR #$PR_NUM in $REPO (exit $rc)" >&2
   exit "$rc"
 }
 
+# Emit the final machine-readable result on stdout. Every exit path routes
+# through here (or emit_error) so the script can never finish silently.
+#   status: approved | reviewed | changes_requested | comments | timeout
+#         | proceeded | error
 emit_result() {
   local status="$1" error_msg="${2:-}" mode_fields
   update_elapsed
