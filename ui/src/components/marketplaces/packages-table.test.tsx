@@ -3,8 +3,18 @@ import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { AvailablePackage, Finding, PackageSafety } from "@/bindings";
-import { PACKAGE_STATE_UNKNOWN } from "@/lib/copy-marketplaces";
+import type {
+  AvailablePackage,
+  Catalog,
+  DirectoryRow,
+  Finding,
+  MarketplaceRow,
+  PackageSafety,
+} from "@/bindings";
+import {
+  PACKAGE_STATE_UNKNOWN,
+  SUBSCRIBE_TO_INSTALL_LABEL,
+} from "@/lib/copy-marketplaces";
 import {
   SAFETY_CAVEAT,
   SAFETY_DOT_UNCHECKED,
@@ -264,5 +274,93 @@ describe("a cached row under a scope whose record has since broken", () => {
     expect(row.state).toBe("available");
     expect(html).toContain(PACKAGE_STATE_UNKNOWN);
     expect(html).not.toContain(">Install<");
+  });
+});
+
+// A bare repository's table. The row's one action subscribes personally
+// and installs in the same click, so which repository and which package it
+// hands the store is the whole of what the row contributes — the store
+// half is marketplaces-subscribe-install.test.ts.
+describe("the row action on a repository nobody subscribes to", () => {
+  const repo = "Acme/Kit";
+  const repoCatalog: Catalog = { by: "repo", repo };
+
+  const listed: DirectoryRow = {
+    repo,
+    // The canonical key the offer is decided on, from core rather than the
+    // spelling — without it the table cannot tell whether anything already
+    // declares the repository, and offers nothing.
+    repoKey: "acme/kit",
+    name: "kit",
+    description: null,
+    tags: [],
+    featured: false,
+    packageCount: 1,
+    bundleCount: 0,
+    subscribed: false,
+    packages: [],
+    bundles: [],
+  };
+
+  const declared: MarketplaceRow = {
+    scope: { scope: "global" },
+    name: "kit",
+    repo,
+    repoKey: "acme/kit",
+    repoIdentity: "github.com/acme/kit",
+    path: null,
+    rev: null,
+    commit: null,
+    enabled: false,
+    counts: null,
+    meta: null,
+    mode: null,
+  };
+
+  const draw = (rows: MarketplaceRow[]) => {
+    stub.scores = {};
+    const subscribeAndInstall = vi.fn(async () => true);
+    useCommunityStore.setState({
+      directory: { rows: [listed], fetchedAt: "2026-09-02", stale: false },
+    });
+    useMarketplacesStore.setState({
+      rows,
+      read: READ_LANDED,
+      summaries: {},
+      subscribeAndInstall,
+    });
+    const host = mountTree(
+      <PackagesTable
+        entries={[{ catalog: repoCatalog, row }]}
+        showMarketplace={false}
+      />,
+    );
+    return { host, subscribeAndInstall };
+  };
+
+  const action = (host: HTMLElement) =>
+    [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === SUBSCRIBE_TO_INSTALL_LABEL,
+    );
+
+  it("hands the store this repository and this row's package", async () => {
+    const { host, subscribeAndInstall } = draw([]);
+    const button = action(host);
+    if (!button) throw new Error("no subscribe-and-install button rendered");
+
+    await userEvent.click(button);
+
+    expect(subscribeAndInstall).toHaveBeenCalledWith(repo, [
+      { kind: "skill", name: "gh" },
+    ]);
+  });
+
+  // A subscription that is switched off still declares the repository, so
+  // subscribing again is refused as a duplicate. The header carries the one
+  // action in that state; the row says only that the package is here.
+  it("offers nothing when a switched-off subscription already declares it", () => {
+    const { host } = draw([declared]);
+    expect(action(host)).toBeUndefined();
+    expect(host.textContent).toContain("Available");
   });
 });

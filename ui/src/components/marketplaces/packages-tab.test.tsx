@@ -214,3 +214,49 @@ describe("naming what could not be read", () => {
     ]);
   });
 });
+
+// The Packages tab is the one table that shows a Marketplace column, so it
+// is the only place the revision sub-line can be read. What the
+// subscription declares it reads goes on screen as it is, except a commit
+// id, which is shortened the way every git surface shortens one — a tag or
+// a branch cut to seven characters would spell a different ref.
+describe("the marketplace column's revision line", () => {
+  const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+
+  const marketplaceCells = (rows: MarketplaceRow[]): string[] => {
+    useMarketplacesStore.setState({
+      rows,
+      packages: Object.fromEntries(
+        rows.map((row) => [
+          marketKey(row.scope, row.name),
+          offered.slice(0, 1),
+        ]),
+      ),
+    });
+    const host = mount(<PackagesTab />);
+    return [...host.querySelectorAll("tbody tr")].map(
+      (row) => row.querySelectorAll("td")[3]?.textContent ?? "",
+    );
+  };
+
+  it("names the marketplace and shortens the commit it is pinned to", () => {
+    const [cell] = marketplaceCells([{ ...kit, rev: null, commit: COMMIT }]);
+    expect(cell).toContain("kit");
+    expect(cell).toContain("@ 0123456");
+  });
+
+  // A tracked ref outranks the commit the cache happens to hold, and
+  // release/2026 shortened would read as an unrelated tag called release.
+  it("shows a tracked branch whole, over the commit behind it", () => {
+    const [cell] = marketplaceCells([
+      { ...kit, rev: "release/2026", commit: COMMIT },
+    ]);
+    expect(cell).toContain("@ release/2026");
+    expect(cell).not.toContain("0123456");
+  });
+
+  it("carries no revision line for a subscription that declares none", () => {
+    const [cell] = marketplaceCells([{ ...kit, rev: null, commit: null }]);
+    expect(cell).not.toContain("@");
+  });
+});

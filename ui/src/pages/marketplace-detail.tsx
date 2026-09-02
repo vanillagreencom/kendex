@@ -12,6 +12,7 @@ import {
 } from "@/components/marketplaces/use-catalog";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MARKETPLACE_PLACES_TITLE } from "@/lib/copy-marketplaces";
 import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import {
@@ -152,7 +153,9 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                 <TabsTrigger value="bundles">Bundles</TabsTrigger>
                 <TabsTrigger value="packages">Packages</TabsTrigger>
                 {identity ? (
-                  <TabsTrigger value="places">Projects</TabsTrigger>
+                  <TabsTrigger value="places">
+                    {MARKETPLACE_PLACES_TITLE}
+                  </TabsTrigger>
                 ) : null}
                 <TabsTrigger value="about">About</TabsTrigger>
               </TabsList>

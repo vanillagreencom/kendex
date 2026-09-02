@@ -70,6 +70,8 @@ export const SUBSCRIBE_TO_INSTALL_LABEL = "Subscribe and install";
 // marketplace, and the switch that decides whether it offers packages
 // there. The help says what switching it off costs, because the engine
 // deactivates that place's installs rather than leaving them running.
+// The title names the section once, on the tab that opens it — the panel
+// does not repeat it.
 export const MARKETPLACE_PLACES_TITLE = "Projects";
 export const MARKETPLACE_PLACES_HELP =
   "Where this marketplace is subscribed. Personal covers what you install for yourself; every project keeps its own list.";

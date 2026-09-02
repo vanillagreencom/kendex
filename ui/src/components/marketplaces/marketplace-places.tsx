@@ -16,7 +16,6 @@ import {
 import { Switch } from "@/components/ui/switch";
 import {
   MARKETPLACE_PLACES_HELP,
-  MARKETPLACE_PLACES_TITLE,
   SOURCE_ENABLED_HELP,
   SOURCE_ENABLED_LABEL,
 } from "@/lib/copy-marketplaces";
@@ -28,7 +27,12 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
  * each place has over it. The switch used to sit on the Subscribed list,
  * where it changed a place the list never named and said nothing about
  * what switching it off costs; here the place is the row and the sentence
- * under the heading is the answer. */
+ * under the list is the answer.
+ *
+ * Mounted as a tab panel, so it carries no heading of its own: the tab
+ * spells [MARKETPLACE_PLACES_TITLE] already, and repeating it as an h2
+ * would name the section twice on one screen. The sibling About panel
+ * opens the same way. */
 export function MarketplacePlaces({ identity }: { identity: string }) {
   const rows = useMarketplacesStore((s) => s.rows);
   const places = rows
@@ -41,8 +45,7 @@ export function MarketplacePlaces({ identity }: { identity: string }) {
 
   return (
     <section>
-      <h2 className="text-sm font-semibold">{MARKETPLACE_PLACES_TITLE}</h2>
-      <p className="mt-1 max-w-prose text-sm text-muted-foreground">
+      <p className="max-w-prose text-sm text-muted-foreground">
         {MARKETPLACE_PLACES_HELP}
       </p>
       <div className="mt-4 divide-y rounded-lg border">
@@ -66,7 +69,9 @@ function PlaceRow({ row }: { row: MarketplaceRow }) {
   return (
     <div className="flex items-center gap-4 px-4 py-3">
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{scopeName(row.scope)}</p>
+        <p data-testid="place-name" className="truncate text-sm font-medium">
+          {scopeName(row.scope)}
+        </p>
         {path ? (
           <p className="truncate font-mono text-xs text-muted-foreground">
             {path}
