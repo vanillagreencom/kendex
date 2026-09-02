@@ -91,6 +91,31 @@ else
   ok "must-fail: the claim refuses in both directions"
 fi
 
+echo "=== @ is reserved for selector slots ==="
+
+# The stub mints `<stem>@<id>` for a selector's slot. A verb or a call
+# carrying `@` addresses one of those slots without ever having staged it,
+# and the verb claim above cannot see it because the two names have
+# different owners.
+gh_stub_reset
+
+status=0
+gh_stub_answer 'api-x@1' 'LITERAL' 2>"$err" || status=$?
+if [ "$status" -ne 0 ]; then
+  ok "must-fail: a staged verb carrying @ is refused"
+else
+  bad "the reserved verb was staged" "gh_stub_answer exited 0"
+fi
+
+gh_stub_answer 'api-graphql:needle' 'SELECTOR'
+if out="$(gh api 'graphql@1' 2>&1)"; then
+  bad "a call carrying @ reached a selector slot" "got: $out"
+else
+  ok "must-fail: a call carrying @ does not reach a selector slot"
+fi
+# The control: the selector still answers the call it was staged for.
+eq "$(gh api graphql -f q=needle)" "SELECTOR" "must-fail control: the selector still answers"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

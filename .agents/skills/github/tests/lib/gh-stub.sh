@@ -42,6 +42,13 @@
 # hands a staged answer to a call nobody staged, which is the fail-open a
 # fake exists to prevent.
 #
+# `@` IS RESERVED. The stub mints `<stem>@<id>` for a selector's slot, so a
+# verb or a call carrying `@` in its own text would address a slot nobody
+# staged under it — the same fail-open, one layer down, and one the verb
+# claim cannot see because the colliding names have different owners.
+# Staging such a verb is refused, and a call whose stem carries `@` is
+# unstaged. `%` stays legal: it is how a stem spells `/`.
+#
 # A VERB IS NOT ALWAYS ENOUGH. Two `api graphql` calls carrying different
 # queries are one verb, and answering both the same way would let a suite
 # pass with the wrong query on the wire. So a staged verb may carry a
@@ -106,11 +113,17 @@ slug() { printf '%s' "$1" | tr '/' '%'; }
 
 argv="$*"
 
-# ours STEM VERB — false when STEM was claimed by a different staged verb.
-# `/` cannot appear in a file name, so `api a/b` and `api 'a%b'` reach one
-# stem. The staging helpers record which verb claimed it, and a call spelled
-# the other way is UNSTAGED here, never served the claimant's answer.
+# ours STEM VERB — false when STEM is not this call's to read. `/` cannot
+# appear in a file name, so `api a/b` and `api 'a%b'` reach one stem. The
+# staging helpers record which verb claimed it, and a call spelled the other
+# way is UNSTAGED here, never served the claimant's answer. A stem carrying
+# `@` belongs to no verb at all: `@` is minted below for a selector's slot,
+# and the staging helpers refuse it in a verb, so a call that spells one is
+# reaching for a slot rather than for anything staged under its own name.
 ours() {
+  case "$1" in
+  *@*) return 1 ;;
+  esac
   [ ! -f "$STUB_DIR/$1.verb" ] || [ "$(cat "$STUB_DIR/$1.verb")" = "$2" ]
 }
 
@@ -195,6 +208,13 @@ _gh_stub_key() {
   *:*)
     sel="${verb#*:}"
     verb="${verb%%:*}"
+    ;;
+  esac
+  case "$verb" in
+  *@*)
+    printf 'gh-stub: %s cannot be staged; @ is reserved for selector slots\n' \
+      "$verb" >&2
+    return 1
     ;;
   esac
   base="$(printf '%s' "$verb" | tr '/' '%')"
