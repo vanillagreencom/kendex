@@ -1,0 +1,1 @@
+- A tool reference between backticks in two different table cells is now reworded for the reader's harness. The cells are separate blocks, so markdown never quoted it, but it used to pass through.

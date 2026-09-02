@@ -46,17 +46,33 @@ use pulldown_cmark::{Event, Options, Parser, Tag};
 /// So an option goes on only where the tree shows the construct in use and
 /// the reading it buys does not quiet a switch. Strikethrough, task lists
 /// and math each fail the first test and change no boundary anyway.
+///
+/// The prose rewrite reads the same list and has its own stake in it: an
+/// option that turns a block into prose costs the rewrite the block's
+/// bytes, which it would otherwise have left as the author wrote them. It
+/// wants the same options for the opposite reason, and the audit's test is
+/// the stricter one, so this list is settled by the audit alone — an option
+/// the rewrite would want is still refused if it can quiet a switch.
 const EXTENSIONS: Options = Options::ENABLE_TABLES;
 
 /// A document's code, line by line. Both vectors carry one entry per line
 /// `str::lines` yields, in its order, so a caller zips either against the
 /// lines it already has.
+///
+/// `str::split_inclusive('\n')` yields the same count over the same text —
+/// it differs only in keeping each terminator — so a caller holding its
+/// lines that way indexes these by the same position. The prose rewrite
+/// needs the terminators and relies on that.
 pub struct Code {
     /// The code spans of each line, as byte ranges local to its own line.
     pub spans: Vec<Vec<(usize, usize)>>,
-    /// Whether a code block — fenced or indented — covers the line. The
-    /// fence lines themselves count: a block's range opens on its marker
-    /// and closes past its closing run.
+    /// Whether the line is one markdown reads as something other than
+    /// prose: a code block, fenced or indented, or a raw HTML block.
+    ///
+    /// A fenced block's range runs from its opening marker to past its
+    /// closing run, so both fence lines are covered. An indented block has
+    /// neither, and its range opens at the first content byte past the
+    /// indent. [`reached`] is where a range becomes a set of lines.
     pub block: Vec<bool>,
 }
 
@@ -71,6 +87,14 @@ pub struct Code {
 /// match before its block ends quotes nothing — which is what stops one
 /// stray backtick from reaching forward for a partner and quoting
 /// everything in between.
+///
+/// A raw HTML block counts with the code blocks, because inside one
+/// markdown reads nothing: a fence there is three literal backticks and a
+/// span is two, so a reader that took those lines for prose would find no
+/// marks on a sample and rewrite straight through it. Blocks of the shape
+/// that carry prose end at a blank line, and the paragraph after that
+/// blank line is markdown's again — which is how a body says a wrapper
+/// holds prose rather than markup.
 pub fn code_by_line(text: &str) -> Code {
     let lines = line_spans(text);
     let mut code = Code {
@@ -85,7 +109,7 @@ pub fn code_by_line(text: &str) -> Code {
                     code.spans[at].push((span.start.max(start) - start, span.end.min(end) - start));
                 }
             }
-            Event::Start(Tag::CodeBlock(_)) => {
+            Event::Start(Tag::CodeBlock(_) | Tag::HtmlBlock) => {
                 for at in reached(&lines, &span) {
                     code.block[at] = true;
                 }
@@ -209,6 +233,48 @@ mod tests {
                 assert_eq!(got, want, "{range:?}");
             }
         }
+    }
+
+    /// `block` is what the prose rewrite copies without looking, so its
+    /// geometry is pinned directly rather than through a rewrite outcome:
+    /// a fence covers its own two marker lines and the blank line between
+    /// them, and an indented run covers the blank line it holds but not
+    /// the one that ended it.
+    ///
+    /// A raw HTML block is the one that does not end where it looks like
+    /// it does: markdown closes it on a blank line, not on the closing
+    /// tag, so a line tight under `</div>` is still the block's. That is
+    /// the rule the rewrite inherits — a blank line is what hands the text
+    /// below a wrapper back to markdown.
+    #[test]
+    fn a_block_covers_its_own_lines_and_stops() {
+        let text = concat!(
+            "intro\n",        // 0
+            "\n",             // 1
+            "```sh\n",        // 2
+            "\n",             // 3
+            "git commit\n",   // 4
+            "```\n",          // 5
+            "\n",             // 6
+            "    indented\n", // 7
+            "\n",             // 8
+            "    more\n",     // 9
+            "\n",             // 10
+            "after\n",        // 11
+            "<div>\n",        // 12
+            "held\n",         // 13
+            "</div>\n",       // 14
+            "still held\n",   // 15
+            "\n",             // 16
+            "out\n",          // 17
+        );
+        assert_eq!(
+            code_by_line(text).block,
+            vec![
+                false, false, true, true, true, true, false, true, true, true, false, false, true,
+                true, true, true, false, false,
+            ]
+        );
     }
 
     /// A span crossing a newline is quoted on both lines, each range

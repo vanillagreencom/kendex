@@ -7,7 +7,7 @@ pub mod validate;
 pub mod vocab;
 
 /// Where a rendered document keeps its code, line by line.
-pub(crate) use blocks::code_by_line;
+pub(crate) use blocks::{Code, code_by_line};
 
 /// One thing the user should hear about a rendering, with the fix when
 /// there is one — every render lint travels through this shape.

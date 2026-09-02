@@ -3,7 +3,7 @@
 //! left as authored rather than mangled.
 
 use super::super::RenderWarning;
-use super::super::code_by_line;
+use super::super::{Code, code_by_line};
 use super::{CLAUDE_TOOLS, SKILL_POINTER, Word, word};
 use crate::model::HarnessId;
 
@@ -34,17 +34,22 @@ pub fn rewrite_prose(body: &str, harness: HarnessId) -> (String, Vec<RenderWarni
     // One reading of the whole body, not one per line: a code span may
     // close on a later line, and a line scanner that cannot see that
     // rewrites bytes the author fenced off to be copied verbatim.
+    //
+    // `Code` carries one entry per line of the same split, so the index is
+    // the same line either way. A line it does not answer for is treated
+    // as code: if the two ever drift, a body renders untranslated rather
+    // than silently edited inside a sample.
     let code = code_by_line(body);
     for (at, line) in body.split_inclusive('\n').enumerate() {
-        let quoted = code.block.get(at).copied().unwrap_or(false);
+        let quoted = code.block.get(at).copied().unwrap_or(true);
         if quoted || line.contains(SKILL_POINTER) {
             out.push_str(line);
             continue;
         }
-        let spans = code.spans.get(at).map_or(&[][..], Vec::as_slice);
         out.push_str(&rewrite_line(
             line,
-            spans,
+            &code,
+            at,
             harness,
             &mut reworded,
             &mut kept,
@@ -94,21 +99,25 @@ fn with_article(name: &str) -> String {
     }
 }
 
-/// One line, with the code spans [`code_by_line`] found on it — read off
-/// the whole document, so a span that opens here and closes further down
-/// covers this line for its whole length.
+/// Line `at` of the body, rewritten against the code spans `code` found on
+/// it — read off the whole document rather than off the line. A span that
+/// opens on this line covers it from the opening backtick to the line's
+/// end; one that crosses the line whole covers its whole length; one that
+/// closes here covers from byte 0 to its closing run.
 fn rewrite_line(
     line: &str,
-    spans: &[(usize, usize)],
+    code: &Code,
+    at: usize,
     harness: HarnessId,
     reworded: &mut Vec<String>,
     kept: &mut Vec<String>,
 ) -> String {
+    let spans = code.spans.get(at).map_or(&[][..], Vec::as_slice);
     let links = link_ranges(line);
     let mut out = String::with_capacity(line.len());
     let mut copied = 0;
-    for (at, _) in line.match_indices("tool") {
-        let Some(reference) = reference_before(line, at) else {
+    for (mark, _) in line.match_indices("tool") {
+        let Some(reference) = reference_before(line, mark) else {
             continue;
         };
         let (from, to) = reference.name;
@@ -117,13 +126,19 @@ fn rewrite_line(
         // itself is a sample to copy — neither is prose about a tool.
         let quoted_reference =
             |(open, close): &(usize, usize)| line[*open..*close].trim_matches('`').trim() == name;
+        // The start comparison admits the name that begins the span. A span
+        // markdown opens here opens on a backtick, which is no part of a
+        // name, so the two are only ever equal on a span clipped at the
+        // line's start — a continuation line, whose first byte is content.
+        // The end stays strict and needs no such care: a reference is the
+        // name and then ` tool`, so the name never ends where the line does.
         if reference.start < copied
             || links
                 .iter()
                 .any(|(open, close)| from >= *open && from < *close)
             || spans
                 .iter()
-                .any(|span| from > span.0 && to < span.1 && !quoted_reference(span))
+                .any(|span| from >= span.0 && to < span.1 && !quoted_reference(span))
         {
             continue;
         }
@@ -135,8 +150,8 @@ fn rewrite_line(
             // noun's place and the sentence would stop making sense.
             (true, Some(Word::Phrase(said))) => match reference.verb {
                 Some(capital) if !reference.quoted => match capital {
-                    true => (reference.start, at + 4, capitalize(said)),
-                    false => (reference.start, at + 4, said.to_owned()),
+                    true => (reference.start, mark + 4, capitalize(said)),
+                    false => (reference.start, mark + 4, said.to_owned()),
                 },
                 _ => {
                     remember(kept, name);
