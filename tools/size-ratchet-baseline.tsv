@@ -56,7 +56,7 @@ pi-extensions/pi-web-tools/src/tools/web-research.ts	445
 pi-extensions/pi-web-tools/tests/youtube-video.test.ts	844
 skills/decider/scripts/decisions	484
 skills/deep-research/scripts/deep-research	529
-skills/github/scripts/commands/pr-merge.sh	713
+skills/github/scripts/commands/pr-merge.sh	712
 skills/github/scripts/git-diff-summary	599
 skills/github/scripts/lib/gh-auth.sh	475
 skills/github/scripts/lib/github-api.sh	612
@@ -91,7 +91,7 @@ skills/linear/scripts/lib/attachments.sh	490
 skills/linear/scripts/lib/cache.sh	590
 skills/linear/scripts/lib/common.sh	819
 skills/linear/scripts/lib/formatters.sh	631
-skills/orch/scripts/approval-wait	948
+skills/orch/scripts/approval-wait	947
 skills/orch/scripts/ci-wait	669
 skills/orch/scripts/dev-artifact-check	662
 skills/orch/scripts/lanes	622

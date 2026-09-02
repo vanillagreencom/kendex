@@ -24,8 +24,8 @@
 # harness is ever launched.
 set -euo pipefail
 
-# The terminal-condition tail every rendered brief carries (open-terminal start_cmd).
-TC=" — complete means the PR is MERGED and the worktree cleaned up, not merely opened"
+# The brief ends at the start command; start.md owns completion.
+TC=""
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
@@ -335,8 +335,8 @@ assert_contains "$c6_out" "Re-delivered brief to 'CC-737'" "re-delivery is repor
 c6_log="$(cat "$OT_TMUX_LOG")"
 c6_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG")"
 assert_eq "$c6_resends" "1" "brief is re-sent exactly once"
-c6_full_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737${TC}" -- "$OT_TMUX_LOG")"
-assert_eq "$c6_full_resends" "1" "the re-sent brief carries the terminal condition"
+c6_full_resends="$(grep -cFx "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG")"
+assert_eq "$c6_full_resends" "1" "the re-sent brief matches the start command"
 
 # Case 6b: TWO dialog screens before the composer is ready — each
 # wait-composer pass sends one dismissing Enter, and the brief goes in only

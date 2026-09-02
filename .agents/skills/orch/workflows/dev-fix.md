@@ -41,7 +41,7 @@ Recommendation: "[HOW TO FIX]"
 Then resolve the decision mode:
 
 ```bash
-.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
+.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE auto-recommended
 ```
 
 `auto-recommended` takes the recommended option (`Fix all`) without asking; anything else asks `Fix all` | multi-select `#N: [TITLE]` | `Cancel`. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) applies in every mode.

@@ -76,10 +76,8 @@ REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 # On the Codex runtime, set the cap `spawn-adapter slots` reports.
 REVIEWER_SLOT_BUDGET = "0"
 
-# "ask" presents workflow decision points; "auto-recommended" executes the
-# recommended option without asking. Findings disposition is by rule in every
-# mode; some decisions always ask; merge is governed by ORCH_MERGE_AUTONOMY.
-ORCH_DECISION_MODE = "ask"
+# Post-PR choices: "auto-recommended" continues within each budget; "ask" prompts.
+ORCH_DECISION_MODE = "auto-recommended"
 
 # "ask" presents the merge decision; "auto" merges once every gate is green.
 # MERGE_READY = false never auto-merges.

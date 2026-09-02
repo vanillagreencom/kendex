@@ -93,7 +93,7 @@ The full session from inside a worktree: implement → review → submit → fin
 
 <output_format>
 
-### ✅ SESSION COMPLETE — [ISSUE_ID]: [TITLE]
+### SESSION STATUS — [ISSUE_ID]: [TITLE]
 
 Sub-issues (tree):
 ↳ [SUB_ISSUE_1]: [TITLE] | blocks: [SUB_ISSUE_2]
@@ -114,6 +114,7 @@ Sub-issues (tree):
 | CI | ✅ passing |
 | Review gate | ✅ approved / ✅ reviewed / ⏳ pending / forced / off (no reviewer policy) |
 | Unresolved threads | 0 |
+| Stop | [POST_PR_STOP name: gate; remaining] |
 
 ### Issues Created
 
@@ -135,10 +136,10 @@ Terminate every still-active agent in `child_sessions`, then retire the records:
 
 ### 5.5 Merge
 
-**Skip if** no PR was created, CI is not passing, or `submit-pr.md` § 6.1 reported `MERGE_READY = false`.
+**Skip if** no PR was created. When CI is not passing or `submit-pr.md` § 6.1 reported `MERGE_READY = false`, record `merge-gates-unmet` per [SKILL.md § The Cycle](../SKILL.md#the-cycle), include the unmet gate and remaining work in the session status, then stop.
 
 ```bash
-.agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY ask
+.agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto
 ```
 
 `auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask: `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflows. A `MERGE_READY = false` state never auto-merges.

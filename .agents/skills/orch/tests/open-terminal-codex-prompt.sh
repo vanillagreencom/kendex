@@ -17,8 +17,8 @@
 # would launch.
 set -euo pipefail
 
-# The terminal-condition tail every rendered brief carries (open-terminal start_cmd).
-TC=" — complete means the PR is MERGED and the worktree cleaned up, not merely opened"
+# The brief ends at the start command; start.md owns completion.
+TC=""
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"

@@ -38,7 +38,7 @@ Spawn generated agents with `fork_context: false` — a full-history fork inheri
 
 ## Codex Desktop app handoff
 
-`workflows/handoff.md` with `harness=codex-app`, the default for multi-issue handoff when the runtime exposes `codex_app` thread tools. Create exactly one thread per issue with `codex_app.create_thread`, targeting a worktree environment whose `startingState` is `{type: "branch", branchName: "[BASE_BRANCH]"}` from `resolve-base-branch`. Start it with `$orch start [ISSUE_ID]` or `$orch start github [OWNER/REPO]#[N]`, followed by the caller's terminal condition (handoff/oversee: complete means the PR is MERGED and the worktree cleaned up), and record the returned thread ID. If the runtime separates creation from prompting, call `codex_app.send_message_to_thread` once with that same prompt.
+`workflows/handoff.md` with `harness=codex-app`, the default for multi-issue handoff when the runtime exposes `codex_app` thread tools. Create exactly one thread per issue with `codex_app.create_thread`, targeting a worktree environment whose `startingState` is `{type: "branch", branchName: "[BASE_BRANCH]"}` from `resolve-base-branch`. Start it with `$orch start [ISSUE_ID]` or `$orch start github [OWNER/REPO]#[N]`, and record the returned thread ID. If the runtime separates creation from prompting, call `codex_app.send_message_to_thread` once with that same prompt.
 
 Use a `working-tree` starting state only when the user explicitly asks for a dirty local snapshot (it can start the child before generated Codex agents are visible, forcing a `worker` fallback). Generated agents must be tracked under `.codex/agents/*.toml` in the saved project branch to be discoverable: setup hooks and worktree symlinks run too late.
 

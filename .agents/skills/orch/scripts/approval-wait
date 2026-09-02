@@ -108,7 +108,7 @@ Settings (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
                         check evidence. Matched by name alone: name only a
                         trusted publisher (default empty)
   PR_REVIEW_ON_TIMEOUT  block | proceed — see the timeout paragraph below
-                        (default block)
+                        (default proceed)
   PR_REVIEW_WAIT_SECS   total review-wait budget in seconds, read only
                         when no max_wait positional is passed (default
                         900)
@@ -326,7 +326,7 @@ elapsed=0
 # evidence entirely.
 REVIEW_CHECK_NAME="$("$SCRIPT_DIR/orch-env" PR_REVIEW_CHECK "")"
 
-# Reviewer-down flexibility (PR_REVIEW_ON_TIMEOUT, default "block"): controls
+# Reviewer-down flexibility (PR_REVIEW_ON_TIMEOUT, default "proceed"): controls
 # the deadline verdict when the gate signal never arrives. "block" reports
 # "timeout" (exit 1) as before — the caller prompts or keeps waiting.
 # "proceed" reports a distinct "proceeded" (exit 0) INSTEAD, but only when zero
@@ -335,7 +335,7 @@ REVIEW_CHECK_NAME="$("$SCRIPT_DIR/orch-env" PR_REVIEW_CHECK "")"
 # unresolved thread exits the poll loop as "comments" first, so a real comment
 # is never bypassed. The --on-timeout flag overrides the setting for explicit
 # callers and tests; same orch-env settings ladder as MAX_WAIT above.
-ON_TIMEOUT="${ON_TIMEOUT_FLAG:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_ON_TIMEOUT block)}"
+ON_TIMEOUT="${ON_TIMEOUT_FLAG:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_ON_TIMEOUT proceed)}"
 case "$ON_TIMEOUT" in
   block|proceed) ;;
   *)
@@ -918,8 +918,7 @@ while true; do
   update_elapsed
 done
 
-# Deadline reached with no verdict. Default ("block"): report timeout (exit 1),
-# never a silent success. With PR_REVIEW_ON_TIMEOUT=proceed, degrade to
+# Deadline reached with no verdict. Default "proceed" degrades to
 # "proceeded" (exit 0) so a credit-exhausted reviewer that posted nothing does
 # not block the fleet — but ONLY on genuine reviewer silence:
 #   - zero unresolved threads (an open thread already exited as "comments"),

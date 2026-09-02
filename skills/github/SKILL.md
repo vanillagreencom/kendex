@@ -68,7 +68,7 @@ Contract: `git-diff-summary --help`.
 Full contract: `pr-merge --help`.
 Exit `75` is volatile, so keep a watcher running until `MERGED`.
 If `can_merge` is false with no `issues`, read `state`.
-The thread gate is **Policy, not mechanism.** `--force` is its only override.
+The thread gate is **Policy, not mechanism.** `--force` and the explicit-user-only `--admin` are its overrides.
 
 ### PR blocked with no visible conversations
 

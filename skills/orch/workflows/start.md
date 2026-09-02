@@ -83,6 +83,8 @@ Exit 75 means a branch or open PR already owns the issue — inspect it instead 
 
 Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context — no question.
 
+An `orch start` run is complete only when the tracker issue is Done and its worktree is gone. An opened or armed PR is not complete.
+
 <output_format>
 
 ### Milestone: Worktree Ready

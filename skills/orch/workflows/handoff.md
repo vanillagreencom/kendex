@@ -42,8 +42,6 @@ Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)) p
 
 ## 2. Launch
 
-**Every launched brief states the terminal condition**: the item is complete only when its PR is MERGED and its worktree cleaned up — an opened PR is not done. `open-terminal` renders it into every brief; briefs minted by hand (codex-app threads, oversee's non-terminal surfaces) carry it explicitly.
-
 ### Terminal harnesses
 
 **Skip if** `harness == codex-app`.
@@ -68,7 +66,7 @@ Add `--lane auto` (or `auto:<harness>`) to launch under the qualifying account w
 .agents/skills/orch/scripts/resolve-base-branch .
 ```
 
-For each item, create exactly one thread with `codex_app.create_thread`, targeting the current saved project with a separate worktree environment for that issue: never run all issues in the controller thread, never launch several in one child thread, and never pass several issue IDs to one thread. Set the worktree `startingState` to `{type: "branch", branchName: "[BASE_BRANCH]"}`; use `working-tree` only when the user explicitly asks for a dirty local snapshot. The prompt is `$orch start [ISSUE_ID]` (or `$orch start github [OWNER/REPO]#[N]`) followed by the terminal condition above. If the runtime creates the thread before accepting a prompt, call `codex_app.send_message_to_thread` once with that same prompt. Title the thread with the item identifier when `codex_app.set_thread_title` is exposed, and record the returned thread ID.
+For each item, create exactly one thread with `codex_app.create_thread`, targeting the current saved project with a separate worktree environment for that issue: never run all issues in the controller thread, never launch several in one child thread, and never pass several issue IDs to one thread. Set the worktree `startingState` to `{type: "branch", branchName: "[BASE_BRANCH]"}`; use `working-tree` only when the user explicitly asks for a dirty local snapshot. The prompt is `$orch start [ISSUE_ID]` (or `$orch start github [OWNER/REPO]#[N]`). If the runtime creates the thread before accepting a prompt, call `codex_app.send_message_to_thread` once with that same prompt. Title the thread with the item identifier when `codex_app.set_thread_title` is exposed, and record the returned thread ID.
 
 Full contract: [references/codex-runtime.md](../references/codex-runtime.md).
 

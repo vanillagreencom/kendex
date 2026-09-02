@@ -41,6 +41,10 @@ run_merge_force() {
     (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --force --keep-branch)
 }
 
+run_merge_admin() {
+    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --admin --keep-branch)
+}
+
 run_merge_force_auto() {
     (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --force --auto --keep-branch)
 }
@@ -208,6 +212,19 @@ status=$?
 set -e
 assert_eq "$status" "0" "documented --force remains a deliberate override"
 assert_contains "$(cat "$call_log")" "pr merge" "--force deliberately invokes gh pr merge"
+
+: >"$call_log"
+set +e
+out=$(STUB_CHECKS="$checks" \
+    STUB_THREADS_JSON="$actionable_threads" \
+    STUB_CALL_LOG="$call_log" \
+    STUB_POST_STATE=MERGED \
+    STUB_MERGE_COMMIT=admin-merge-oid \
+    run_merge_admin 2>&1)
+status=$?
+set -e
+assert_eq "$status" "0" "explicit --admin bypass merges immediately"
+assert_contains "$(cat "$call_log")" "--admin" "--admin reaches the guarded gh merge mutation"
 
 echo
 echo "=== pr-merge --check superseded-run scoping (kendex#492/#494) ==="
@@ -422,7 +439,7 @@ out=$(STUB_CALL_LOG="$call_log" run_merge_force_auto 2>&1)
 status=$?
 set -e
 assert_eq "$status" "1" "--force and --auto are rejected as conflicting modes"
-assert_contains "$out" "--force and --auto cannot be combined" "conflicting modes report a clear usage error"
+assert_contains "$out" "--force/--admin and --auto cannot be combined" "conflicting modes report a clear usage error"
 assert_eq "$(cat "$call_log")" "" "conflicting modes make no GitHub API or mutation calls"
 
 # The authoritative exact-head postcondition wins over a CLI transport/status

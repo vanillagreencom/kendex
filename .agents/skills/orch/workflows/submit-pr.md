@@ -10,7 +10,13 @@ Run a local pre-PR review, push, create or update the PR, triage review comments
 
 **Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 7) or `"self"` (default); `issue_id` — the workflow-state key, the normalized issue ID, never the bare GitHub issue number.
 
-**With a PR number**: `github.sh pr-issue [PR_NUMBER] --format=text` gives `ISSUE_ID`; `worktree exists`/`worktree path` give `[DIR]`, or ask before creating one when already inside the PR checkout; with no argument `[DIR]` is `.`. `WT_PATH` is `git-context repo-root "[DIR]"`.
+Resolve `ORCH_DECISION_MODE` once for every post-PR choice in this workflow:
+
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE auto-recommended
+```
+
+**With a PR number**: `github.sh pr-issue [PR_NUMBER] --format=text` gives `ISSUE_ID`; `worktree exists`/`worktree path` give `[DIR]`. When none exists from inside the PR checkout, `auto-recommended` creates one and logs the choice; `ask` prompts first. With no argument `[DIR]` is `.`. `WT_PATH` is `git-context repo-root "[DIR]"`.
 
 **Standalone init** (`lifecycle: "self"`): resolve `ISSUE_ID` with `git-context issue-from-branch .`, then `workflow-state exists --json [ISSUE_ID]`; when absent, initialize with `git-context branch [WT_PATH]` and `workflow-state init`.
 
@@ -124,6 +130,26 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
    `[ISSUE_TITLE]` comes from `linear.sh cache issues get [ISSUE_ID]` or `gh issue view [N] --json title --jq '.title'`.
 
+### 2.1 Consumer Admin-Merge Offer
+
+Read the repository and the complete branch diff:
+
+```bash
+gh repo view --json nameWithOwner --jq .nameWithOwner
+```
+
+```bash
+git -C "[WORKTREE_PATH]" diff --name-only "origin/[BASE_BRANCH]"...HEAD
+```
+
+Skip this offer in `vanillagreencom/kendex`. In any other repository, offer `Admin-merge, skipping review and CI` | `Continue through review and CI` only when the whole diff is one of these classes:
+
+- harness renders under `.agents/`, `.claude/`, `.codex/`, `.pi/`, `.opencode/`, or `.cursor/`;
+- values in `kendex.settings.toml` or `.kendex/settings.toml`;
+- Markdown or plain-text prose.
+
+This is always an explicit ask to the user or overseer. `ORCH_DECISION_MODE` never selects admin merge. Append the answer and the matching class to the PR body's `## Merge decision` section, then update the PR with `pr-edit-body`. `Continue through review and CI` goes to § 3. `Admin-merge` invokes `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7` with `admin_merge_authorized: true`, then continues through `workflows/lane-postmerge.md`.
+
 ---
 
 ## 3. Async Comment Triage
@@ -162,7 +188,7 @@ git -C [WT_PATH] commit -m "chore: update golden baselines [skip ci]"
 
 ## 4. Review Gate
 
-The review gate runs **before** CI verification, universally, with no repo detection.
+The review gate runs **before** CI verification, universally, with no repo detection. Named stops below use [SKILL.md § The Cycle](../SKILL.md#the-cycle).
 
 ```bash
 .agents/skills/orch/scripts/approval-wait --resolve-mode
@@ -193,8 +219,8 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
    | `reviewed` | → step 2 |
    | `proceeded` | Reviewer-down degrade under `PR_REVIEW_ON_TIMEOUT=proceed`. Record `pr_approval.reviewer_down` (below), then → step 2. CI and gate 3 still apply in full. Orch posts no status and manufactures no review evidence |
    | `changes_requested` or `comments` | Run the triage pass, then the Restart check |
-   | `timeout` | Ask the user: `Force merge` \| `Keep waiting` \| `Stop here` |
-   | `error` | Re-run step 1 once; if it repeats, report and ask: `Keep waiting` \| `Stop here` |
+   | `timeout` | `auto-recommended` logs `Keep waiting` and enters the Restart check; `ask` presents `Force merge` \| `Keep waiting` \| `Stop here`, with `Keep waiting` recommended |
+   | `error` | Re-run step 1 once. If it repeats, `auto-recommended` records `review-gate-read-failed`; `ask` presents `Keep waiting` \| `Stop here`, with `Keep waiting` recommended |
 
    ```bash
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.reviewer_down true
@@ -208,9 +234,9 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
    .agents/skills/orch/scripts/workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]
    ```
 
-   A `below` verdict on `REVIEW_MAX_EXTERNAL_ROUNDS` → restart step 1. On `at-cap` the wait does not restart on its own: present the remaining feedback and ask `Triage again` | `Force merge` | `Stop here`. A standing `changes_requested` verdict on the current head outlives a disposition — only a dismissal or a newer review clears it, and triage dismisses only what it classifies as noise — so a restart returns that same verdict at once and triages past the cap. `Triage again` is the user's override for one more pass, which returns here; `Force merge` records the override and continues to step 2 with the § 6.1 gates applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
+   A `below` verdict on `REVIEW_MAX_EXTERNAL_ROUNDS` → restart step 1. On `at-cap`, `auto-recommended` records `review-round-cap` with the remaining feedback; `ask` presents `Triage again` | `Force merge` | `Stop here`, with `Triage again` recommended. A standing `changes_requested` verdict on the current head outlives a disposition — only a dismissal or a newer review clears it, and triage dismisses only what it classifies as noise — so a restart returns that same verdict at once and triages past the cap. Under `ask`, `Triage again` is the user's override for one more pass, `Force merge` records the override and continues to step 2 with the § 6.1 gates applying, and `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 
-   **On `timeout`**: `Keep waiting` goes to the Restart check; `Force merge` records the override and continues to step 2 with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
+   **On `timeout` under `ask`**: `Keep waiting` goes to the Restart check; `Force merge` records the override and continues to step 2 with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 
    ```bash
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.forced true
@@ -233,7 +259,7 @@ After any fix-up push: push → the Restart check, and on a restart wait for a N
 | `status=complete`, `verdict=pass` | → § 6 |
 | `status=complete`, `verdict=none` | Repo has no CI configured. Record `ci: none` in workflow state and → § 6 |
 | `status=complete`, `verdict=fail` | → § 5.1 |
-| `status=timeout` or `status=error` | Re-run once; if it repeats, ask: `Skip CI` \| `Retry` \| `Abort` |
+| `status=timeout` or `status=error` | Re-run once. If it repeats, `auto-recommended` records `ci-status-unconfirmed`; `ask` presents `Skip CI` \| `Retry` \| `Abort`, with `Retry` recommended |
 
 ### 5.1 CI Failure Recovery
 
@@ -284,7 +310,7 @@ Empty `json_paths` means no internal review is recorded: report the unmet gate a
 .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
 ```
 
-Re-run the gate-3 command once; if threads remain, present them and ask: `Triage again` | `Force merge` | `Stop here`.
+Re-run the gate-3 command once. If threads remain and the external-round cap is below, `auto-recommended` logs `Triage again` and runs one more pass; at the cap it records `review-threads-open`. Under `ask`, present `Triage again` | `Force merge` | `Stop here`, with `Triage again` recommended.
 
 **Gate 4** — verify the recorded § 4 result. Read the recorded mode:
 
@@ -342,7 +368,7 @@ Linear items also get it on the issue; GitHub items get linkage through `Closes 
 **Merge** — skip unless `MERGE_READY`.
 
 ```bash
-.agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY ask
+.agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto
 ```
 
 `auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflows. `MERGE_READY = false` never auto-merges.
@@ -351,4 +377,4 @@ Linear items also get it on the issue; GitHub items get linkage through `Closes 
 
 ## 7. Return
 
-**Managed**: return to the parent workflow's next section with the § 6.1 gate results (`MERGE_READY`, the § 4 gate mode and status, the unresolved thread count, the § 5 CI verdict). **Standalone**: session complete.
+**Managed**: return to the parent workflow's next section with the § 6.1 gate results (`MERGE_READY`, the § 4 gate mode and status, the unresolved thread count, the § 5 CI verdict). **Standalone**: return `.post_pr_stop` when present; otherwise the session is complete.

@@ -35,6 +35,12 @@ Analyze CI failures and route them to the right agent.
 
 Formatting, obvious lint, and a missing import are fixed directly; a test failure, a build error, or non-obvious lint is delegated.
 
+Resolve the decision mode once for this post-PR workflow. Named stops use [SKILL.md § The Cycle](../SKILL.md#the-cycle).
+
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE auto-recommended
+```
+
 ### 3.1 Direct Fixes
 
 Resolve the worktree (`github.sh pr-issue [PR_NUMBER] --format=text`, then `worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing) as `[DIR]`; `WORKTREE_PATH` is `git-context repo-root "[DIR]"`. Apply the fix, then:
@@ -94,7 +100,7 @@ For `ci-fix queue`, the failure is in a draft merge-group PR that may need deque
 gh pr view [DRAFT_PR] --json commits --jq '.commits[].oid'
 ```
 
-Cross-reference those commits with the original PRs to identify which file failed, which commit introduced it, and which PR that commit belongs to. A single identifiable PR routes to that PR's agent; a genuine cross-PR integration issue routes to the architecture reviewer for analysis; an unclear source goes to the user.
+Cross-reference those commits with the original PRs to identify which file failed, which commit introduced it, and which PR that commit belongs to. A single identifiable PR routes to that PR's agent; a genuine cross-PR integration issue routes to the architecture reviewer for analysis. When the source stays unclear after that analysis, `auto-recommended` records `ci-source-unclear`; `ask` presents the evidence to the user.
 
 For an integration issue, create a worktree from the draft branch (`worktree create [ISSUE_ID] "[DRAFT_BRANCH]" --pr [DRAFT_PR_NUMBER]`) and delegate analysis.
 
@@ -135,7 +141,7 @@ Re-confirm the review gate at the new head **before** waiting on CI, on every re
 
 - `approved` / `reviewed` / `proceeded` → wait for CI. `proceeded` is returned to the caller, not persisted here; it is a LOCAL verdict — orch posts no status.
 - `comments` / `changes_requested` → new feedback on the fix push. Managed: return it to the caller's review-gate handling. Standalone: run that triage pass, then re-run this step.
-- `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Report the unconfirmed gate, then re-run this step once or hand back.
+- `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Re-run this step once. If it repeats, `auto-recommended` records `ci-gate-unconfirmed`; under `ask`, hand back the unconfirmed gate.
 
 ```bash
 .agents/skills/orch/scripts/ci-wait [PR_NUMBER]
@@ -173,6 +179,8 @@ Still failing:
 
 </output_format>
 
+Managed runs return the failure to the caller, which owns `CI_FIX_MAX_CYCLES`. Standalone `auto-recommended` increments `ci_fix_cycles`, compares it with `workflow-state cap CI_FIX_MAX_CYCLES --count [CI_FIX_CYCLES]`, and reruns § 1 while below the cap. At the cap, record `ci-fix-cap` with the remaining checks and the attempts made. Under `ask`, present `Run ci-fix again` | `Stop`, with another run recommended.
+
 ## 6. Return
 
-**Managed**: return to the parent workflow's next section. **Standalone**: session complete.
+**Managed**: return to the parent workflow's next section. **Standalone**: return `.post_pr_stop` when present; otherwise the CI-fix session is complete.

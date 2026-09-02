@@ -71,8 +71,7 @@
 #      pending) in review mode still times out (engagement, not silence), a head
 #      that moved in the final last-poll->emit confirm window falls back to
 #      timeout (no proceed on a superseded head), the
-#      default is "block" (timeout), and an unrecognized value falls back to
-#      block with a warning
+#      default is "proceed"; an unrecognized value falls back to block with a warning
 #   marker1: a proceed posts NO commit status and emits no outage_marker JSON
 #      field — the reviewer-outage attestation was removed (owner decision
 #      2026-08-08: orch never manufactures review evidence); the legacy
@@ -403,6 +402,7 @@ virtual_clock_install "$TMP_ROOT/bin" "$TMP_ROOT/clock"
 
 # Run approval-wait via the .agents symlink, exactly how it's invoked in
 # production. `env "$@"` injects test-controlled env tokens / stub flags.
+export PR_REVIEW_ON_TIMEOUT=block
 run_wait_json() {
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
@@ -789,14 +789,14 @@ set -e
 assert_eq "$rc" "1" "proceed4: changes_requested still blocks under proceed" "$stderr"
 assert_eq "$(json_field "$output" '.status')" "changes_requested" "proceed4: status changes_requested, not proceeded" "$stderr"
 
-# proceed5: the default (setting unset) preserves block — no evidence times out.
+# proceed5: the default advances when no reviewer engaged and no thread is open.
 stderr="$TMP_ROOT/proceed5.err"
 set +e
-output=$(run_review_json_short STUB_REVIEWS_MODE=none 2>"$stderr")
+output=$(run_review_json_short -u PR_REVIEW_ON_TIMEOUT STUB_REVIEWS_MODE=none 2>"$stderr")
 rc=$?
 set -e
-assert_eq "$rc" "1" "proceed5: default is block (timeout)" "$stderr"
-assert_eq "$(json_field "$output" '.status')" "timeout" "proceed5: default status timeout" "$stderr"
+assert_eq "$rc" "0" "proceed5: default proceeds after reviewer silence" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "proceeded" "proceed5: default status proceeded" "$stderr"
 
 # proceed6: approval mode degrades symmetrically — no approval verdict, zero
 # threads, proceed -> proceeded, exit 0.
