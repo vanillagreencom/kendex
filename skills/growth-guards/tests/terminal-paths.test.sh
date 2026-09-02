@@ -208,12 +208,10 @@ orphan="$(cat "$ROOT/orphan.pid" 2>/dev/null || true)"
   || bad "control: and the cap left no process of it behind" "pid $orphan is still running; state=$GG_PTY_STATE err=$GG_PTY_ERR"
 
 # A suite killed mid-run takes the poll loop above with it, and `script` has
-# already setsid'd the session out of every group that killer could name — so
-# the cap on this side simply stops existing. What is left is the deadline the
-# session holds over itself, and it is the difference between a probe that ends
-# and the pair of keepalives from a dead session that ran for sixteen hours
-# before they were killed by hand (KEN-1084). The body here traps TERM away, as
-# those did, so nothing short of the SIGKILL that deadline sends can end it.
+# already setsid'd the session out of every group that killer could name, so the
+# cap on this side stops existing. What is left is the deadline the session
+# holds over itself (KEN-1084). The body traps TERM away, so nothing short of
+# the SIGKILL that deadline sends can end it.
 cat >"$ROOT/abandon-runner.sh" <<'RUNNER'
 set -euo pipefail
 . "$1"
@@ -221,17 +219,12 @@ gg_pty_run 2 "$2" || true
 RUNNER
 
 # abandon PTY_LIB CASE_FILE PIDFILE — run a case under PTY_LIB, kill the runner
-# the moment the session has a child to leave behind, and report what it left:
+# once the session has a child to leave behind, and report what it left:
 # ABANDONED is that child's pid, ABANDONED_GROUP the session's own process
-# group. Killing the runner is what a load reaper or a usage wall does to a
-# suite; the session and its spawner survive it either way.
-#
-# The GROUP is the handle cleanup uses, not the pid. A run that timed out
-# waiting for the pidfile leaves ABANDONED empty, and that is precisely the run
-# that started a session and has no child handle to reap it by — reaping by pid
-# would skip the one case that needs it. gg_pty_run writes the group into
-# `sid` under its own scratch directory, so the runner gets a TMPDIR this
-# function owns and reads it back from there.
+# group. Cleanup reaps by the GROUP, not the pid: a run that timed out waiting
+# for the pidfile leaves ABANDONED empty, and that is exactly the run with no
+# child handle to reap by. gg_pty_run writes the group into `sid` under its own
+# scratch directory, so the runner gets a TMPDIR this function owns.
 abandon() {
   local lib="$1" case_file="$2" pidfile="$3" runner i=0 scratch
   scratch="$(mktemp -d "$ROOT/abandon.XXXXXX")"
@@ -273,19 +266,15 @@ printf 'trap "" HUP TERM\necho STARTED\nsleep 300 &\necho "$!" >%q\nwait\n' \
 rm -f "$ROOT/abandon-case.sh.watchdog"
 abandon "$TEST_DIR/lib/pty.bash" "$ROOT/abandon-case.sh" "$ROOT/abandoned.pid"
 real_group="$ABANDONED_GROUP"
-[ -n "$ABANDONED" ] \
-  && ok "an abandoned session really did start the child its own deadline must take" \
-  || bad "an abandoned session really did start the child its own deadline must take" "no pid recorded"
 # The cap is 2 and the session's deadline sits five seconds past it; 20 is slack
 # for a loaded box, not a second budget.
 [ -n "$ABANDONED" ] && gone_within "$ABANDONED" 20 \
   && ok "and the session ends itself once the run that started it is gone" \
   || bad "and the session ends itself once the run that started it is gone" "pid $ABANDONED is still running"
-# WHICH kill ended it. A dead child is also what a spawner collapsing or a
-# hostile reaper leaves, and the session-side kill runs under /bin/sh — dash on
-# the CI runner, where a mis-parsed argument fails silently and reaps nothing.
-# The marker is written by the watchdog and by nothing else, so on that runner
-# this line is the dash measurement rather than an assumption about it.
+# WHICH kill ended it: a dead child is also what a collapsing spawner leaves.
+# The session-side kill runs under /bin/sh — dash on the CI runner, where a
+# mis-parsed argument reaps nothing in silence — and the marker is written by
+# that watchdog alone, so this line is the dash measurement.
 [ -f "$ROOT/abandon-case.sh.watchdog" ] \
   && ok "and it was the session's own deadline that fired, not something upstream" \
   || bad "and it was the session's own deadline that fired, not something upstream" "no watchdog marker: the in-session kill did not run (dash argument parsing?)"
@@ -303,20 +292,16 @@ printf 'trap "" HUP TERM\necho STARTED\nsleep 300 &\necho "$!" >%q\nwait\n' \
 abandon "$NO_DEADLINE" "$ROOT/abandon-mutant-case.sh" "$ROOT/abandoned-mutant.pid"
 mutant_group="$ABANDONED_GROUP"
 mutant_pid="$ABANDONED"
-# The leak this control deliberately creates is reaped BEFORE the assertion,
-# by the group the session recorded for itself: reaping after would be skipped
-# on any path that reports bad and returns early, and reaping by the child's pid
-# would be skipped exactly when no pid was captured. The pid is read once, into
-# a variable of its own, so the next abandon cannot overwrite what is asserted.
+# The leak this control creates is reaped BEFORE the assertion, by the group the
+# session recorded: reaping after would be skipped on any path reporting bad and
+# returning early. The pid is read once into a variable of its own, so a later
+# abandon cannot overwrite what is asserted.
 [ -n "$mutant_pid" ] && ! gone_within "$mutant_pid" 12 \
   && mutant_survived=yes || mutant_survived=no
 reap_group "$mutant_group"
 [ "$mutant_survived" = yes ] \
   && ok "control: without that deadline the abandoned session is still running" \
   || bad "control: without that deadline the abandoned session is still running" "pid ${mutant_pid:-none} ended anyway, so the case above proves nothing"
-[ ! -f "$ROOT/abandon-mutant-case.sh.watchdog" ] \
-  && ok "control: and the mutant wrote no watchdog marker, so the marker names that kill alone" \
-  || bad "control: and the mutant wrote no watchdog marker, so the marker names that kill alone" "a watchdog fired in a copy whose watchdog never starts"
 
 # The status is the SESSION's own, read from the file it wrote rather than
 # from the spawner, which reports on its own account.

@@ -146,14 +146,6 @@ export SKILLS_DIR
 # Writing where the readers do not look would silently defeat the claims.
 CLAIM_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export CLAIM_ROOT
-# open_gui EXECUTES $TERMINAL, so it belongs with the names above rather than
-# with the settings a project may state: the loader below assigns any name a
-# kendex.settings.toml [env] table carries, and a repo choosing which binary a
-# handoff runs is code execution, not a changed answer. Pinning it to the
-# environment — empty when the operator set nothing — makes the loader skip the
-# key while the operator's own value still decides.
-TERMINAL="${TERMINAL:-}"
-export TERMINAL
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"

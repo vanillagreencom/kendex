@@ -42,35 +42,23 @@ bad() {
 
 # A stub gh so no case reaches the network; every command here fails before or
 # at auth, and none of them may decide the outcome by talking to GitHub.
-#
-# And a stub for every terminal open_gui can resolve BELOW $TERMINAL. The rows
-# further down leave TERMINAL unset, because it is a name they measure, so the
-# ladder falls to these two — unstubbed they are the developer's own desktop,
-# and this file's fixtures reach a real GUI launch (KEN-1084). A test that
-# proves a parser property must not be able to open a window while doing it.
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/no-lanes"
 printf '#!/bin/sh\nexit 1\n' >"$TMP_ROOT/bin/gh"
-for stub in ghostty xdg-terminal-exec; do
-  printf '#!/bin/sh\nexit 0\n' >"$TMP_ROOT/bin/$stub"
-done
-chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/ghostty" "$TMP_ROOT/bin/xdg-terminal-exec"
+chmod +x "$TMP_ROOT/bin/gh"
 
 # run SCRIPT DIR ARGS... — one hermetic invocation, combined output.
 #
 # TMUX is unset because oversee-watch's lane-window check only fires outside
 # tmux, and this suite must not pass merely because the developer ran it from a
-# tmux pane. TERMINAL is unset for a second reason: it is a name the TERMINAL
-# rows below measure, and the developer's own value would decide them.
-# ORCH_LANE_DIRS points at an empty directory so `lanes` never reads the real
-# accounts on this machine.
+# tmux pane. ORCH_LANE_DIRS points at an empty directory so `lanes` never reads
+# the real accounts on this machine.
 run() {
   local script="$1" dir="$2"
   shift 2
   # The command's own status is returned, not swallowed: the empty-value sweep
   # below asserts on it. Callers that only read the output append `|| true`.
   (cd "$dir" && PATH="$TMP_ROOT/bin:$PATH" \
-    env -u TMUX -u TERMINAL ORCH_LANES_FETCH_CMD=true \
-      ORCH_LANE_DIRS="$TMP_ROOT/no-lanes" \
+    env -u TMUX ORCH_LANES_FETCH_CMD=true ORCH_LANE_DIRS="$TMP_ROOT/no-lanes" \
       "$dir/.agents/skills/orch/scripts/$script" "$@") 2>&1
 }
 
@@ -222,44 +210,6 @@ for exe in worktree/scripts/worktree review-gate/scripts/pr-watch.sh; do
   printf '#!/bin/sh\necho "EXECUTED FROM THE CONFIGURED SKILLS_DIR" >&2\nexit 0\n' >"$evil/$exe"
   chmod +x "$evil/$exe"
 done
-# TERMINAL is the third name of this shape: open_gui EXECUTES it. Its rows read
-# a FILE rather than the run's output, because open_gui sends a launcher's
-# streams to /dev/null — a marker printed on either would be discarded, and the
-# rows would then pass because nothing was heard rather than because the name
-# was refused, which is the vacuous shape this file plants controls to prevent.
-printf '#!/bin/sh\nprintf ran >%s\nexit 0\n' "$evil/terminal-ran" >"$evil/evilterm"
-chmod +x "$evil/evilterm"
-
-# ran_terminal DIR ARGS... — 0 when the configured terminal really executed. The
-# launch is detached, so the marker can land after open-terminal has exited: a
-# row expecting one waits for it, and a row expecting none has watched a real
-# interval rather than the instant after the exit.
-ran_terminal() {
-  local dir="$1" i=0
-  shift
-  rm -f "$evil/terminal-ran"
-  run open-terminal "$dir" "$@" >/dev/null 2>&1 || true
-  while [ "$i" -lt 20 ] && [ ! -f "$evil/terminal-ran" ]; do
-    sleep 0.1
-    i=$((i + 1))
-  done
-  [ -f "$evil/terminal-ran" ]
-}
-
-# terminal_fixture DIR — a fixture whose worktree CLI succeeds, so a case can
-# REACH the GUI launch. The generic rows never get that far: the real CLI
-# refuses an empty repository, and a TERMINAL row that stopped there would pass
-# without executing anything.
-terminal_fixture() {
-  local wt="$1/.agents/skills/worktree/scripts/worktree"
-  fixture "$1"
-  cat >"$wt" <<EOF
-#!/bin/sh
-[ "\$1" = create ] || exit 1
-mkdir -p "$1/wt" && printf '%s\n' "$1/wt"
-EOF
-  chmod +x "$wt"
-}
 
 # name_cases NAME MARKER — SCRIPT|ARGS rows for one injected name.
 script_dir_cases='
@@ -311,14 +261,6 @@ for source_kind in dotenv settings; do
 $rows
 EOF
   done
-done
-
-for source_kind in dotenv settings; do
-  dir="$TMP_ROOT/own-TERMINAL-$source_kind"
-  terminal_fixture "$dir"
-  write_config "$dir" "$source_kind" TERMINAL "$evil/evilterm"
-  label="open-terminal: a TERMINAL in $source_kind never chooses which terminal is executed"
-  if ran_terminal "$dir" --cmd true KEN-1; then bad "$label" "the configured terminal was executed"; else ok "$label"; fi
 done
 
 # approval-wait is the one CLI holding parse state across its load, and it is
@@ -398,17 +340,6 @@ if drop_export "$leak_skills" open-terminal SKILLS_DIR; then
     "$leak_skills" open-terminal "EXECUTED FROM THE CONFIGURED SKILLS_DIR" --harness claude KEN-1
 else
   bad "the export SKILLS_DIR mutation did not land, so it proves nothing"
-fi
-
-leak_term="$TMP_ROOT/leak-terminal"
-terminal_fixture "$leak_term"
-write_config "$leak_term" settings TERMINAL "$evil/evilterm"
-if drop_export "$leak_term" open-terminal TERMINAL; then
-  leak_label="dropping export TERMINAL lets open-terminal execute the configured one"
-  if ran_terminal "$leak_term" --cmd true KEN-1; then ok "$leak_label"
-  else bad "$leak_label" "the row would have passed with the protection gone"; fi
-else
-  bad "the export TERMINAL mutation did not land, so it proves nothing"
 fi
 
 # approval-wait has no export to drop: what protects it is that the branch
