@@ -169,6 +169,21 @@ describe("scan store", () => {
     expect(commands.scanMachine).toHaveBeenCalledTimes(4);
   });
 
+  // The press's own `announce` dies with the slot's first queuer.
+  it("speaks for a press that joined a scan queued by something else", async () => {
+    useScanStore.setState({ backgroundFailureAnnounced: true });
+    const parked = park();
+    vi.mocked(commands.scanMachine)
+      .mockReturnValueOnce(parked.promise)
+      .mockResolvedValue({ status: "error", error: "the scan failed" });
+    const out = useScanStore.getState().refresh();
+    const silent = useScanStore.getState().refresh();
+    const press = useScanStore.getState().refresh({ announce: true });
+    parked.land({ status: "error", error: "the focus scan failed" });
+    await Promise.all([out, silent, press]);
+    expect(toast.error).toHaveBeenCalled();
+  });
+
   it("toasts a background failure once, then stays quiet on repeat silent retries", async () => {
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "error",

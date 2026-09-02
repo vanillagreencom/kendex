@@ -14,10 +14,9 @@ import { auditRunner, type ItemActions, itemActions } from "./audit-items";
 interface AuditState extends ItemActions {
   views: AuditView[];
   auditing: boolean;
-  /** How the last audit went — its failure among the rest, and the only
-   *  signal anywhere for a failed audit: every reader that has to say "this
-   *  could not be checked" reads it and nothing else does. An item action's
-   *  own refusal is not an audit's, and goes to the problems dialog. */
+  /** How the last audit went, and the only signal that the audit itself
+   *  failed — `audit-counts.ts` pairs it with a place's own unreadable view,
+   *  the other channel. An item action's refusal is neither of them. */
   read: ReadState;
   busy: boolean;
   /** The startup audit has already toasted its failure — suppresses repeat

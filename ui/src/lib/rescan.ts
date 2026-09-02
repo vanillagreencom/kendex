@@ -99,16 +99,10 @@ const start = (): Promise<void> => {
 
 const readBehindWrites = (): Promise<void> => {
   if (!running) return start();
-  queued ??= running
-    // However the one in front ended. Clearing the slot only on fulfilment
-    // would leave a rejection sitting in it for the session: every later
-    // write arriving under a running read would join that dead promise and
-    // schedule no read of its own, silently.
-    .catch(() => {})
-    .then(() => {
-      queued = null;
-      return start();
-    });
+  queued ??= running.then(() => {
+    queued = null;
+    return start();
+  });
   return queued;
 };
 

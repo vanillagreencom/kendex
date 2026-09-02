@@ -77,16 +77,13 @@ export const useScanStore = create<ScanState>((set, get) => {
     // reads.
     refresh: (opts) => {
       if (!inFlight) return start(opts);
-      queued ??= inFlight
-        // However the one in front ended. A scan that failed is said by
-        // `scan` above and is no reason to leave this request unread, and
-        // clearing the slot only on fulfilment would strand every later
-        // overlapping request for the session.
-        .catch(() => {})
-        .then(() => {
-          queued = null;
-          return start(opts);
-        });
+      // A joining caller gets the slot's opts, not its own, so re-arm the
+      // flag the toast runs on: a press cannot join a read into silence.
+      if (opts?.announce) set({ backgroundFailureAnnounced: false });
+      queued ??= inFlight.then(() => {
+        queued = null;
+        return start(opts);
+      });
       return queued;
     },
   };
