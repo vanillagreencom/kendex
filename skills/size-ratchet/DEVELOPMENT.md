@@ -31,8 +31,10 @@ whose unit no longer matches its class is reported as one to re-measure, and
 `--update` writes the current quantity in the new unit. `rows_raised` checks
 the unit tag before comparing numbers, and where the tag changed on a frozen
 row it measures `HEAD:<path>` in the new unit so there is still a like quantity
-to compare against — one `git show` per crossing row, not per tracked file. The
-policy is [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
+to compare against — `git cat-file --filters`, so the reference carries the same
+smudge and EOL conversion as the worktree copy it is compared with, once per
+crossing row and not per tracked file. The policy is
+[README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
 
 ## Collection
 

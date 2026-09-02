@@ -2,8 +2,8 @@
 # Pins for the policy the package ships and the machinery the units need:
 # the `k` byte suffix on a class and the `b` suffix on a row, the stale-row
 # re-measure, the default class list and the overrides a repo layers over it,
-# the CHANGELOG exclusion, and --staged lowering a shrunk row itself. What the
-# shipped frozen list then does to a row is frozen-rows.test.sh.
+# the CHANGELOG exclusion, --staged lowering a shrunk row itself, and the
+# frozen classes that refuse a raise whatever RATCHET_RAISE says.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -691,6 +691,71 @@ run -- --staged
 [ "$RC" -eq 1 ] && has "new offender: new.rs" \
   && ok "an unstaged row alone freezes nothing — the index copy still governs the verdict" \
   || bad "an unstaged row freezes nothing" "rc=$RC out=$OUT"
+
+echo "=== rows in a frozen class never rise, whatever RATCHET_RAISE says ==="
+new_repo frozen
+mkbytes doc.md 70000
+mklines code.rs 500
+mkdir -p "$R/tools"
+printf 'code.rs\t500\ndoc.md\t70000b\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+mkbytes doc.md 80000
+mklines code.rs 600
+printf 'code.rs\t600\ndoc.md\t80000b\n' >"$R/$BASE"
+git -C "$R" add -A
+run RATCHET_RAISE=1
+[ "$RC" -eq 1 ] && has "frozen baseline row raised: doc.md — row 70000 -> 80000 bytes" \
+  && ok "a markdown row is frozen by default and refuses the declared raise" \
+  || bad "a shipped markdown class is frozen" "rc=$RC out=$OUT"
+has "code.rs" && bad "the declared raise carries the unfrozen row" "$OUT" \
+  || ok "and the declared raise carries the code row in the same commit"
+# The control that the SHIPPED frozen list is what refused it.
+run RATCHET_RAISE=1 SIZE_RATCHET_FROZEN_CLASSES=
+[ "$RC" -eq 0 ] && ok "control: with the frozen list emptied the same declared raise passes" \
+  || bad "control: an empty frozen list allows the declared raise" "rc=$RC out=$OUT"
+
+echo "=== a frozen row crosses a unit change only up to HEAD's own measurement ==="
+# The adoption case: the row was written when the class counted lines, and the
+# class judging it counts bytes now. One --update carries it across.
+new_repo frozen-unit-change
+mkbytes doc.md 70000
+mkdir -p "$R/tools"
+printf 'doc.md\t700\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m lines
+run -- --update
+[ "$RC" -eq 0 ] && [ "$(cat "$R/$BASE")" = "$(printf 'doc.md\t70000b')" ] \
+  && ok "one --update re-measures a frozen line row into bytes and the commit is clean" \
+  || bad "a frozen line-to-byte re-measure passes" "rc=$RC row=$(cat "$R/$BASE") out=$OUT"
+# The bound, on the same fixture: a file grown since HEAD raises the frozen row
+# whatever unit it is written in, so it refuses at the number --update wrote.
+new_repo frozen-unit-change-raised
+mkbytes doc.md 70000
+mkdir -p "$R/tools"
+printf 'doc.md\t700\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m lines
+mkbytes doc.md 210000
+run RATCHET_RAISE=1 -- --update
+[ "$RC" -eq 1 ] && has "frozen baseline row unit changed: doc.md — row 700 -> 210000b, but HEAD's copy measures 70000b in the new unit" \
+  && ok "a hand-raised byte row in a frozen class still refuses, RATCHET_RAISE or not" \
+  || bad "a raised frozen row across a unit change fails closed" "rc=$RC row=$(cat "$R/$BASE") out=$OUT"
+
+new_repo open-unit-change
+mklines big.rs 500
+mkdir -p "$R/tools"
+printf 'big.rs\t500\n' >"$R/$BASE"
+git -C "$R" add -A
+git -C "$R" commit -q -m lines
+run SIZE_RATCHET_FROZEN_CLASSES= 'SIZE_RATCHET_CLASSES=*.rs=1k' -- --update
+[ "$RC" -eq 1 ] && has "baseline row unit changed: big.rs" \
+  && ok "an open unit migration needs RATCHET_RAISE=1" \
+  || bad "an undeclared open unit migration fails closed" "rc=$RC out=$OUT"
+run RATCHET_RAISE=1 SIZE_RATCHET_FROZEN_CLASSES= 'SIZE_RATCHET_CLASSES=*.rs=1k'
+[ "$RC" -eq 0 ] \
+  && ok "RATCHET_RAISE=1 admits an open unit migration" \
+  || bad "a declared open unit migration passes" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

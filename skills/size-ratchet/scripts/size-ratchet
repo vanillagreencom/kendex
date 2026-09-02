@@ -875,7 +875,8 @@ head_blob_size() { # PATH UNIT — HEAD's measurement on stdout, empty when HEAD
     100*) ;;
     *) return 0 ;;
   esac
-  n="$(git show "HEAD:$f" | wc "$wcflag")" || collection_error "cannot read the HEAD blob of '$f' — the row's unit change cannot be judged, refusing to admit it"
+  # --filters, so the reference carries the worktree copy's own conversion.
+  n="$(git cat-file --filters "HEAD:$f" | wc "$wcflag")" || collection_error "cannot read the HEAD blob of '$f' — the row's unit change cannot be judged, refusing to admit it"
   n="${n#"${n%%[![:space:]]*}"}" # strip wc's leading whitespace (BSD wc pads)
   case "$n" in
     "" | *[!0-9]*) collection_error "$(unit_noun "$2") count for the HEAD blob of '$f' came back as '$n', not a number — refusing to judge the row against it" ;;
@@ -891,8 +892,7 @@ rows_raised() { # CURRENT-BASELINE — violations on stdout
     if is_frozen "$p"; then frozen="frozen"; else frozen="open"; fi
     printf '%s\t%s\t%s\n' "$p" "$n" "$frozen" >>"$TMP/baseline.judged" || collection_error "could not record the baseline row for '$p'"
   done <"$1"
-  # A frozen row crossing a unit change is judged against HEAD's own blob, so
-  # the pass below selects exactly those rows and nothing else is measured.
+  # Selects the rows crossing a unit change; nothing else is measured.
   awk -F'\t' -v countsfile="$TMP/counts.tsv" -v headfile="$HEAD_BASELINE" '
     function rowunit(v) { return (v ~ /b$/) ? "b" : "l" }
     FILENAME == countsfile { now[$1] = $2 + 0; thr[$1] = $3 + 0; unit[$1] = $4; next }
@@ -906,7 +906,7 @@ rows_raised() { # CURRENT-BASELINE — violations on stdout
   while IFS= read -r p || [ -n "$p" ]; do
     [ -n "$p" ] || continue
     path_threshold "$p"
-    hn="$(head_blob_size "$p" "$PU")"
+    hn="$(head_blob_size "$p" "$PU")" || exit 2 # its subshell cannot exit the run
     [ -n "$hn" ] || continue
     printf '%s\t%s\n' "$p" "$hn" >>"$TMP/head.sizes" || collection_error "could not record the HEAD measurement for '$p'"
   done <"$TMP/reunit.paths"
