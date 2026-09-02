@@ -75,9 +75,9 @@ pub struct Code {
     ///
     /// The prose rewrite pays for the raw-HTML half in silence: a tool
     /// reference inside such a block keeps Claude's words and no warning
-    /// names it, because the line was never read. That is the safe
-    /// direction — left as authored, never mangled — but it is the one
-    /// place the rewrite does not report what it could not say.
+    /// names it, because the line was never read. Left as authored is the
+    /// safe direction, but not a reported one — as the `SKILL.md` skip in
+    /// `rewrite_prose` is not either.
     pub block: Vec<bool>,
 }
 
@@ -100,9 +100,8 @@ pub struct Code {
 ///
 /// Where such a block starts and stops is markdown's answer too, and one
 /// worth leaving to it: which shapes open one, and what closes each, is
-/// not a rule short enough to restate correctly. The reach is the part a
-/// caller feels — a block left unclosed runs to the end of the document,
-/// and every line under it is the block's.
+/// not a rule short enough to restate. The reach is what a caller feels,
+/// and it can run far past what the author meant, unwarned.
 pub fn code_by_line(text: &str) -> Code {
     let lines = line_spans(text);
     let mut code = Code {
@@ -141,8 +140,9 @@ pub fn code_by_line(text: &str) -> Code {
 /// range starts at or after the first byte of the line it opens on — a
 /// fence's marker or an indented run's first content byte, and a fence
 /// may open partway along a line, as the one after a list marker does —
-/// and every earlier line ends before that line begins. A span's range
-/// starts on a backtick, which is nobody's line ending.
+/// and every earlier line ends before that line begins. A fenced range
+/// ends past its closing run, so both marker lines fall inside it. A
+/// span's range starts on a backtick, which is nobody's line ending.
 ///
 /// `lines` is sorted and disjoint, so the lines reached are one run and
 /// each end of it is a search rather than a scan. A scan costs every line
