@@ -61,7 +61,7 @@ A `[[surface]]` reaches Copilot, CodeRabbit and Macroscope, plus Qodo through `b
 - `check` re-renders and diffs, reading the index under `--staged`.
 - `adopt` takes a hand-written file or `AGENTS.md` region under management once.
 
-The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bots] codex`, runs `adopt`, then `render`. A nested `AGENTS.md` carrying that heading is a `check` finding. Retire a surface with delete, then `render`. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
+The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. Retire a surface with delete, then `render`. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
 
 Every render excludes the render trees. CodeRabbit and Macroscope subtract them; Codex, Copilot and Qodo receive the paths as prose and may still comment. Enforcement: [references/checklist.md](references/checklist.md) § Excluding the render trees.
 
