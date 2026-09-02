@@ -50,11 +50,14 @@ USAGE_RESET_DATED_RE="${USAGE_RESET_LEAD}([A-Z][a-z][a-z])[a-z]*[[:space:]]+([0-
 USAGE_RESET_WEEKDAY_RE="${USAGE_RESET_LEAD}([A-Z][a-z]+day)[[:space:]]+${USAGE_RESET_CLOCK}"
 USAGE_RESET_CLOCK_RE="${USAGE_RESET_LEAD}${USAGE_RESET_CLOCK}"
 USAGE_RESET_ANY_RE="${USAGE_RESET_DATED_RE}|${USAGE_RESET_WEEKDAY_RE}|${USAGE_RESET_CLOCK_RE}"
-# The zone the banner names, always an IANA path. Trusted only once the host
-# resolves it: TZ falls back to UTC for a name it does not know, silently and
-# with a zero status, so an unchecked one turns a standing wall into a lifted
-# one on a seven-hour error.
-USAGE_RESET_ZONE_RE='\(([A-Za-z]+(/[A-Za-z0-9_+-]+)+)\)'
+# The zone the banner names, an IANA name of one or more components: the
+# helper behind the banner is Intl.DateTimeFormat().resolvedOptions().timeZone,
+# which returns `UTC` for a process whose TZ is UTC, so demanding a slash reads
+# a correct zone as none at all. Trusted only once the host resolves it: TZ
+# falls back to UTC for a name it does not know, silently and with a zero
+# status, so an unchecked one turns a standing wall into a lifted one on a
+# whole offset.
+USAGE_RESET_ZONE_RE='\(([A-Za-z]+(/[A-Za-z0-9_+-]+)*)\)'
 ZONEINFO_DIR="${TZDIR:-/usr/share/zoneinfo}"
 # Month and weekday names are matched here rather than through `date`, whose
 # `%b`/`%a` follow LC_TIME while its parser reads English only: a host with a

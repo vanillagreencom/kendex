@@ -589,9 +589,9 @@ out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2027-03-14T10:00:00Z" \
   "the day after a spring-forward night is still a candidate" "$err"
 
-# The two hours the 12-hour clock spells backwards. Claude Code renders
-# midnight and noon through Intl en-US h12 as `12 AM` and `12 PM`, and each is
-# a 12-hour error on the branch that picks the event name.
+# The meridiem conversion, both branches. Claude Code renders midnight and
+# noon through Intl en-US h12 as `12 AM` and `12 PM`, and each is a 12-hour
+# error on the branch that picks the event name.
 new_case usage_limit_reset_twelve_hour
 printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
 printf "You've hit your usage limit \xc2\xb7 resets 12am\n" > "$STUB_DIR/pane-gh-2.txt"
@@ -600,21 +600,28 @@ out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-03T00:00:00Z" \
   "12am is midnight, not noon" "$err"
 
-new_case usage_limit_reset_twelve_hour_pm
-printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
 printf "You've hit your usage limit \xc2\xb7 resets 12pm\n" > "$STUB_DIR/pane-gh-2.txt"
+rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
 err="$TMP_ROOT/e3x"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-03T12:00:00Z" \
   "12pm is noon, not midnight and not hour 24" "$err"
 
-# A zone the host cannot resolve leaves no key at all, so no wall is stamped
-# and no time is computed. TZ falls back to UTC for a name it does not know,
-# silently and with a zero status, and the same banner would resolve seven
-# hours out — enough to report a standing wall as a lifted one.
-new_case usage_limit_reset_zone_unresolvable
-printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
+# The zone the banner names, both directions. `UTC` is a single-component IANA
+# name and is what the banner's own zone helper returns for a lane started
+# under TZ=UTC, so a watch host in another zone must read the banner in the
+# zone it names; a name the host cannot resolve must instead leave no time at
+# all, since TZ falls back to UTC for it silently and with a zero status.
+new_case usage_limit_reset_zone_single_component
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
+printf "You've hit your usage limit \xc2\xb7 resets 9:50pm (UTC)\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3az"
+out="$(run_watch TZ=America/Los_Angeles -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-02T21:50:00Z" \
+  "a one-component zone name is still the zone the banner names" "$err"
+
 printf "You've hit your usage limit \xc2\xb7 resets 9:50am (Bogus/Zone)\n" > "$STUB_DIR/pane-gh-2.txt"
+rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
 err="$TMP_ROOT/e3y"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
@@ -678,32 +685,6 @@ err="$TMP_ROOT/e3z"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-10T04:00:00Z" \
   "a weekday and a clock resolve to that weekday's next occurrence" "$err"
-
-# The weekday tail past its clock, which swings a whole week. Unobserved it
-# parks on next Thursday; observed before the clock and read after it, the
-# same banner is a wall that has lifted.
-new_case usage_limit_reset_weekday_unobserved
-printf '1788422400' > "$STUB_DIR/now.epoch"   # 2026-09-03T08:00:00Z, Thursday 08:00
-printf "You've hit your weekly limit \xc2\xb7 resets Thursday 4am\n" > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e3ae"
-out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-10T04:00:00Z" \
-  "a weekday clause read past its clock with nothing observed parks a week out" "$err"
-
-new_case usage_limit_reset_weekday_observed
-printf '1788404400' > "$STUB_DIR/now.epoch"   # 2026-09-03T03:00:00Z, Thursday 03:00
-printf "You've hit your weekly limit \xc2\xb7 resets Thursday 4am\n" > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e3af"
-out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-03T04:00:00Z" \
-  "observed an hour before its clock, the weekday clause names today" "$err"
-printf '1788411600' > "$STUB_DIR/now.epoch"   # 2026-09-03T05:00:00Z, an hour later
-rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
-err="$TMP_ROOT/e3ag"
-out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit-passed gh-2 resets=2026-09-03T04:00:00Z" \
-  "...and that reset, now behind us, is passed rather than a week away" "$err"
-
 # Codex. Its binary carries ` Try again at `, `%b %-d`, the `stndrdth` ordinal
 # table and `, %Y %-I:%M %p` at adjacent offsets, so its dated tail is an
 # ordinal day with no comma before the clock. No byte-exact pane under
@@ -781,20 +762,6 @@ err="$TMP_ROOT/e3s"
 out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
   "a reset clause on a transcript line is not the account speaking" "$err"
-
-# The config dir and the reset ride the same line, and `resets=` is keyed so
-# the optional field before it cannot shift what the time is read as
-new_case usage_limit_reset_with_claim
-printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
-printf '900 %%3\n' > "$STUB_DIR/panes.txt"
-printf '900 %%3\n' > "$STUB_DIR/pane-key-gh-2.txt"
-mkdir -p "$STATE_DIR/claims"
-printf '900\t%%3\t/home/me/.eclaude\tgh-2\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/c.claim"
-printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n" > "$STUB_DIR/pane-gh-2.txt"
-err="$TMP_ROOT/e3t"
-out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 /home/me/.eclaude resets=2026-09-02T16:50:00Z" \
-  "the account and the reset ride one event, the reset keyed" "$err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

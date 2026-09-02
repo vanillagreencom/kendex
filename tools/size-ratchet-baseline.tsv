@@ -98,7 +98,7 @@ skills/orch/scripts/dev-artifact-check	749
 skills/orch/scripts/dev-round-write	425
 skills/orch/scripts/lanes	622
 skills/orch/scripts/open-terminal	696
-skills/orch/scripts/oversee-watch	842
+skills/orch/scripts/oversee-watch	841
 skills/orch/scripts/queue-wait	1067
 skills/orch/scripts/review-artifact-check	413
 skills/orch/scripts/workflow-state	750
