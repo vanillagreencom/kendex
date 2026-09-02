@@ -68,8 +68,8 @@ run. It answers repo-own questions only — the engine is installed and
 runnable here, the committed `REVIEW_GATE_*` values are legal, the
 carry-forward exclusions still match tracked paths, and the adopted workflow
 still meets this template's contract. It re-runs no engine test suite: the
-selftest and the suites under tests/ are the ENGINE's proofs and run in the
-kendex repo on every change to it.
+selftest and the wrapper suites are the ENGINE's proofs and run in the kendex
+repo on every change to it.
 
 Value rules come from the engine, not from a copy of it: the settings half
 calls `review-predicate.sh --check-config`, which resolves and validates
@@ -156,26 +156,42 @@ Verify after adopting — run both:
    confirm `gh pr checks` shows no cancelled writer entry and
    `gh pr view --json mergeStateStatus` is not `UNSTABLE` on that account.
 
-## Per-repo settings — decision axes
+## Keys a repo decides
 
 Concrete per-consumer values are tracked on the org adoption issue, not
-here. Full key table: [settings.md](settings.md).
+here. Everything else has a working default. Full key table:
+[settings.md](settings.md).
 
-| Key | Decision axis |
+| Key | Decide |
 |---|---|
-| `REVIEW_GATE_CONTEXT` | The repo's protected commit-status name. Renaming means updating rulesets in the same adoption. |
-| `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` | The repo's trusted clean-analysis reviewer context(s). Any context to trust needs an explicit entry here. |
+| `REVIEW_GATE_CONTEXT` | The protected commit-status name. Renaming it means updating the ruleset in the same PR. |
+| `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` | The reviewer contexts whose clean pass counts. Any context to trust needs an explicit entry. |
 | `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` | Default closes the rate-limited-pass gap everywhere; empty is an explicit opt-out. |
-| `REVIEW_GATE_COMMENT_REVIEWERS` | Only for repos with a comment-form reviewer (login + binding prefix); empty otherwise. |
-| `REVIEW_GATE_SHA_PREFIX_FLOOR` | Only where a comment-form reviewer binds by SHA prefix. |
-| `REVIEW_GATE_OVERRIDE_CONTEXT` | The operator override context. Empty disables the source. |
-| `REVIEW_GATE_STATUS_PUBLISHER_REJECT` | Set `github-actions[bot]` wherever PR workflows hold `statuses: write`. Requires the override to be posted by a non-Actions identity (operator PAT). Empty disables. |
-| `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | Empty = any non-author. List trusted reviewer logins to restrict. |
+| `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | Empty = any non-author. List logins to restrict — do that wherever outside collaborators can review. |
 | `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` counts COMMENTED reviews (for bots that never APPROVE); `approved` requires an APPROVED verdict. |
+| `REVIEW_GATE_COMMENT_REVIEWERS` | Only for a comment-form reviewer: `login:binding-prefix`. |
+| `REVIEW_GATE_SHA_PREFIX_FLOOR` | Only where a comment-form reviewer binds by SHA prefix. |
+| `REVIEW_GATE_OVERRIDE_CONTEXT` | The operator override status context. |
+| `REVIEW_GATE_STATUS_PUBLISHER_REJECT` | Set `github-actions[bot]` wherever PR workflows hold `statuses: write`. Requires the override to be posted by a non-Actions identity (operator PAT). Empty disables. |
 | `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` | Default closes the errored-auto-review gap; override where a repo's reviewer words its attestation differently; empty is an explicit opt-out. |
-| `REVIEW_GATE_THREADS` | `enforce` unless the server-side zero-bypass thread ruleset is the enforcement point and CI-side latency is unwanted. |
-| `REVIEW_GATE_CARRY_FORWARD` | Off by default. Enable `docs`/`comments` classes where re-review of provably review-inert deltas is not wanted, and `vendored` where a `kendex refresh` push should carry. |
-| `REVIEW_GATE_VENDORED_PATHS` | With `vendored`: the render trees to trust as kendex output (`.agents/*;.claude/skills/*` and the harness dirs kendex writes). Bytes under them are not reviewed on carry, so hook scripts and instruction markdown stay in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`. |
+| `REVIEW_GATE_THREADS` | `enforce`, unless a server-side zero-bypass thread ruleset is the enforcement point. |
+| `REVIEW_GATE_CARRY_FORWARD` | Off by default. Turn on `docs`/`comments` where re-review of review-inert deltas is unwanted; `vendored` where `kendex refresh` pushes should carry, with the render trees listed in `REVIEW_GATE_VENDORED_PATHS`. |
+| `REVIEW_GATE_VENDORED_PATHS` | The render trees `vendored` trusts as kendex output, e.g. `.agents/*;.claude/skills/*`. A hand-edit under them rides; keep hook scripts and instruction markdown in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, which wins. |
+| `REVIEW_GATE_MODE` | `enforce`. `off` is the one-switch disable, and it attests rather than evaluates. |
+
+## Repair by verdict line
+
+| Verdict line | What to do |
+|---|---|
+| assigns REVIEW_GATE_* key(s) the engine never reads | Fix the spelling against [settings.md](settings.md). The written value is being ignored. |
+| a committed setting is not legal | The indented `::error` under it is the engine's own diagnosis; it names the key and the legal values. |
+| carry-exclude … matches no tracked path | Fix the glob, or declare it in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC` when it guards paths that do not exist yet. |
+| carry-exclude … anchored with a leading '/' | Drop the anchor: compare filenames are repository-relative. |
+| prophylactic declaration … | Reconcile the ledger — every declaration names an active exclusion that still matches nothing. |
+| no tracked workflow … runs review-writer.sh | Adopt (§ What an adoption PR contains), or `git add` the workflow: Actions runs only what is committed. |
+| has diverged from the shipped template | Re-copy `templates/review-gate-writer.yml` over the adopted file. The template carries no per-repo values, so a copy that differs is a copy someone edited; the line named under the verdict says where. Keep only the `check_run` opt-in's two trigger lines if that opt-in is on. |
+| could not be read | A committed value the loader refuses — the indented diagnostic names the key and the shape it rejected. Fix the assignment; an unreadable value is never an empty one. |
+| is not executable / does not parse | Re-run `kendex refresh` and commit the result. |
 
 ## Migrating a v1 consumer (rerun/sweep-era wiring)
 
@@ -210,9 +226,14 @@ triage — queued PRs annotated with the dequeue-first warning — objections,
 a stale gate, a disarmed mergeable PR, reviewer silence past the quiet
 period, or `head-moved` when a push landed mid-reduction — re-run); exit 2
 = a PR could not be read (fail loud, never skipped).
-`--heal` bounds itself to one writer dispatch per invocation. The orch
-skill's waiters are the single-PR *foreground* waits; pr-watch is the
-multi-PR *background* reducer, over OPEN PRs only.
+`--heal` bounds itself to one writer dispatch per invocation and reports it as
+an informational `heal-dispatched` line. The orch skill's waiters are the
+single-PR *foreground* waits; pr-watch is the multi-PR *background* reducer over OPEN PRs only.
+
+`--no-evaluate` skips the predicate but still reads threads, queue state, and
+gate status, so `threads-open`, `disarmed`, and the threads-driven
+`gate-stale` form still fire; verdict-driven forms need the predicate.
+`--awaiting-after SECS` replaces the `PR_REVIEW_WAIT_SECS` threshold.
 
 ## Verification
 

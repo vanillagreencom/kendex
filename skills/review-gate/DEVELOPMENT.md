@@ -130,6 +130,85 @@ The boundary, stated so it is not discovered: comments are compared out. A
 copy whose prose was reworded is still the template — the catalog's own copy
 reworded its header — and a comment gates nothing.
 
+## Decline parsing
+
+A thread's disposition reply fails as `unreasoned-decline` when it declines
+and its reason strips to nothing against the predicate's label vocabulary: an
+empty reason, or only labels such as `frozen`, `out of scope`, `pre-existing`,
+or a bare test count. Two positional name strips ride after that vocabulary
+and the filler words alike. A count takes the non-space run immediately in
+front of it, and a slash-joined token is a path, so `lifecycle 104/104 and the full tools/guard pass`
+strips to nothing too. A name standing anywhere else
+survives. The parser reads the reply by shape, so a decline written without
+the colon counts too; a label beside a real reason is fine. The reach and the
+shapes past it are pinned in `tests/corpus/declines-known-limit.txt`.
+
+## Predicate evidence and trust
+
+Evidence for the current head is any of:
+
+1. **Review object** at the exact head from a non-author, non-dismissed
+   login. `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` restricts accepted
+   logins, and `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "approved"` restricts
+   accepted states. A later COMMENTED review does not supersede an approval;
+   only a later CHANGES_REQUESTED withdraws it. A row whose body's first line,
+   after leading whitespace and markdown quote markers, contains a
+   `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` marker is not evidence, never a
+   failure.
+2. **Trusted clean-analysis check-run or commit status** named by
+   `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS`. A success matching
+   `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` is not evidence because it does not
+   prove analysis ran. On both surfaces the newest row or run per name decides;
+   an older clean success never outlives its reviewer's newer pending, failed,
+   or skip-marked round.
+3. **Comment-form clean pass** from a `REVIEW_GATE_COMMENT_REVIEWERS` bot,
+   never the PR author even if configured, binding the evidence to this head's
+   SHA at or above `REVIEW_GATE_SHA_PREFIX_FLOOR`.
+4. **Operator override** named by `REVIEW_GATE_OVERRIDE_CONTEXT`, posted by a
+   trusted operator with a non-empty reason. It substitutes only for missing
+   evidence; it never overrides changes requested or an unresolved thread.
+   The gate detail surfaces the enforced reason. Fix findings and resolve
+   threads first, then attest.
+
+With `REVIEW_GATE_CARRY_FORWARD`, evidence at an ancestor carries to head only
+when the delta is in a configured class: docs-only, comment-only, a committed
+kendex render tree, or an identical tree. Carry-forward never creates evidence,
+never carries over code changes outside those classes, and never bypasses a
+fail-closed term.
+
+Changes requested and unresolved threads always fail closed. Every evidence
+read fails loud with exit 2 and no verdict.
+
+Trust keys on names only GitHub controls: the author login of a review or
+comment, or the exact check or status context on repos where every publisher is
+trusted. A comment body establishes no trust; it only binds evidence to a
+commit. Where PR workflows hold `statuses:write`,
+`REVIEW_GATE_STATUS_PUBLISHER_REJECT` rejects statuses minted by a forgeable
+creator, typically `github-actions[bot]`, on both trusted-context and override
+reads.
+
+## Writer mechanics (`.agents/skills/review-gate/scripts/review-writer.sh`)
+
+One workflow, defined on the default branch, is the only writer of the gate
+status. It evaluates the predicate and converges the result.
+
+- Every invocation converges every open PR.
+- PR-attached legs (`pull_request_target`, `pull_request_review`, `status`, and
+  an opted-in `check_run`) do not run the engine. They run a group-less relay
+  that dispatches a converge pass. Only `workflow_dispatch` and `schedule`
+  hold the single-writer group. The relay costs one non-evictable run per
+  PR-attached event; size that before adoption on a capacity-limited runner
+  pool ([references/adoption.md](references/adoption.md) § Updating an
+  already-adopted copy).
+- The relay never exits non-zero and holds no `statuses` scope. Every fault
+  warns and exits 0, every wait is bounded, and a sustained dispatch outage
+  surfaces as gate staleness, healed by the cron floor and `pr-watch --heal`.
+- The `pull_request_target` job never executes PR-controlled code. Every
+  checkout pins the default branch with credentials dropped and refuses an
+  empty default-branch resolution rather than falling back.
+- The writer no-ops when the current entry already matches and defers a
+  `success` post to a newer run's entry. See § Write ordering.
+
 ## Evidence reads
 
 Reads retry in-process up to `REVIEW_GATE_API_ATTEMPTS` (default 1) with

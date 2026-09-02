@@ -24,6 +24,14 @@ out. `review-predicate.sh --check-config` is the value-rule half
 alone: it validates every key below and exits without reading evidence or
 needing a PR.
 
+## Reading the pending status
+
+`no review evidence at <sha> yet` is the whole `awaiting` verdict. It names the
+head and nothing else; a GitHub status description has only 140 characters,
+so this file names the sources that can open the gate. Act on those settings,
+not on the pending state. Where the configured sources are bots and one has
+already reviewed this head, dispatch the writer instead of waiting.
+
 Script-consumed keys are read from the `[env]` table only: an assignment
 under any other table (or above the first header) is ignored, and
 `validate.sh` reports it. Values are single-line double-quoted strings with
