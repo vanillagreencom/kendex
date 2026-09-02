@@ -75,6 +75,20 @@ kendex_github_resolve_op_reference_to_var() {
     return 1
   fi
 
+  # Asked of the runner's own reader before anything runs: the runner hands
+  # back the wrapped command's status unchanged, so an op exiting 125 under a
+  # good bound is indistinguishable from a bound it could not read. Nothing is
+  # invoked here, so this is a resolution never attempted, and it carries its
+  # own status because token_resolution_unavailable means op is absent and
+  # github-api.sh branches on that to say install it. Three call sites read it:
+  # two here, both dropping the token silently, and github-api.sh.
+  if ! kendex_github_bound_ticks "$op_timeout" >/dev/null; then
+    echo "Warning: KENDEX_GITHUB_OP_TIMEOUT is '${op_timeout}', not a number of seconds to one decimal place; ${label} was never resolved." >&2
+    export KENDEX_GITHUB_TOKEN_ERROR_TYPE="token_resolution_bad_timeout"
+    export KENDEX_GITHUB_TOKEN_ERROR="KENDEX_GITHUB_OP_TIMEOUT is '${op_timeout}', not a number of seconds to one decimal place, so ${label} was never resolved"
+    return 1
+  fi
+
   op_output=$(kendex_github_run_bounded "$op_timeout" op read "$ref" 2>&1) || op_status=$?
 
   if [[ "$op_status" -eq 0 && -n "$op_output" ]]; then
@@ -86,18 +100,6 @@ kendex_github_resolve_op_reference_to_var() {
     124)
       export KENDEX_GITHUB_TOKEN_ERROR_TYPE="token_resolution_timeout"
       export KENDEX_GITHUB_TOKEN_ERROR="Timed out resolving ${label} 1Password reference after ${op_timeout}s"
-      ;;
-    125)
-      # op never ran, so this is a resolution that was never attempted, not
-      # one that failed and not one 1Password was missing for. Its own status,
-      # because token_resolution_unavailable means the op binary is absent and
-      # github-api.sh branches on that to tell the operator to install it.
-      # Three call sites: two here, both under || true, where the capture above
-      # folded the runner's own line into op_output and the token is dropped
-      # silently; and github-api.sh, which reads the status.
-      echo "Warning: KENDEX_GITHUB_OP_TIMEOUT is '${op_timeout}', not a number of seconds to one decimal place; ${label} was never resolved." >&2
-      export KENDEX_GITHUB_TOKEN_ERROR_TYPE="token_resolution_bad_timeout"
-      export KENDEX_GITHUB_TOKEN_ERROR="KENDEX_GITHUB_OP_TIMEOUT is '${op_timeout}', not a number of seconds to one decimal place, so ${label} was never resolved"
       ;;
     *)
       export KENDEX_GITHUB_TOKEN_ERROR_TYPE="token_resolution_failed"
@@ -114,26 +116,24 @@ kendex_github_sanitize_gh_env() {
   command -v gh >/dev/null 2>&1 || return 0
   [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]] && return 0
   local auth_status=0
+  # A bound the runner cannot read means gh is never asked, and the check then
+  # says nothing about the token. Asked of the reader here, not inferred from
+  # a 125, which is the wrapped command's own status just as often.
+  #
+  # It reports and leaves the trust decision where it was: a diagnostic, not a
+  # fail-closed control. The keyring probe below runs under the same unreadable
+  # bound and could not have succeeded, and refusing outright would break all
+  # 24 subcommands on a typo. What it adds is which setting went unchecked.
+  if ! kendex_github_bound_ticks "${KENDEX_GITHUB_AUTH_TIMEOUT:-10}" >/dev/null; then
+    echo "Warning: KENDEX_GITHUB_AUTH_TIMEOUT is '${KENDEX_GITHUB_AUTH_TIMEOUT:-10}', not a number of seconds to one decimal place; GH_TOKEN/GITHUB_TOKEN went unchecked." >&2
+    return 0
+  fi
   if kendex_github_auth_status; then
     return 0
   else
     auth_status=$?
   fi
-  # 124 and 125 are not the same answer. 124 is gh started and killed at the
-  # deadline, which is the one status here that proves gh was invoked; 125 is
-  # a bound the runner could not read, so gh was never asked and the check
-  # says nothing about the token.
-  #
-  # This arm reports that and leaves the trust decision exactly where it was:
-  # a diagnostic, not a fail-closed control. The keyring probe below runs
-  # under the same unreadable bound and could not have succeeded, and refusing
-  # outright would break all 24 subcommands on a typo. What it adds to the
-  # runner's own line is which setting carried the value and what went
-  # unchecked because of it.
-  if [[ "$auth_status" -eq 125 ]]; then
-    echo "Warning: KENDEX_GITHUB_AUTH_TIMEOUT is '${KENDEX_GITHUB_AUTH_TIMEOUT:-10}', not a number of seconds to one decimal place; GH_TOKEN/GITHUB_TOKEN went unchecked." >&2
-    return 0
-  fi
+  # 124 is gh invoked and killed at the deadline: nothing against the token.
   [[ "$auth_status" -eq 124 ]] && return 0
   if [[ "${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-}" == "GH_BOT_TOKEN" ]]; then
     return 0

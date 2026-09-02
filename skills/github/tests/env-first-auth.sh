@@ -54,6 +54,8 @@ cat > "$TMP_ROOT/bin/op" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'op called: %s\n' "\$*" >>"$TMP_ROOT/op.calls"
+# Lets a case give op an exit status of its own, 125 included.
+[[ -z "\${STUB_OP_EXIT:-}" ]] || exit "\$STUB_OP_EXIT"
 if [[ "\${1:-}" == "read" && "\${2:-}" == "op://vault/github/bot" ]]; then
   printf '%s\n' 'ghs_RESOLVED123'
   exit 0
@@ -67,6 +69,13 @@ cat > "$TMP_ROOT/bin/gh" <<'EOF'
 set -euo pipefail
 
 [[ -z "${STUB_GH_CALLS:-}" ]] || printf '%s\n' "$*" >>"$STUB_GH_CALLS"
+
+# Lets a case give gh an exit status of its own, 125 included, for the calls
+# that carry a token. The keyring probe runs with both names unset and is
+# unaffected, so a case can fail the token check and still reach it.
+if [[ -n "${STUB_GH_TOKEN_EXIT:-}" && -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+  exit "$STUB_GH_TOKEN_EXIT"
+fi
 
 _token_ok() {
   local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
@@ -364,6 +373,31 @@ sanitize_run KENDEX_GITHUB_AUTH_TIMEOUT=2.55
 assert_eq "$(gh_reached)" "silent" "an unreadable bound reaches no gh call at all"
 assert_contains "$(cat "$TMP_ROOT/sanitize.err")" "'2.55'" \
   "and the run names the bound it could not read rather than passing silently"
+
+# 125 is also gh's own to return. The runner hands the wrapped command's
+# status back unchanged, so reading 125 as proof the bound was unreadable
+# tells an operator to fix a setting that is fine and leaves the token
+# unchecked on a failure that was really gh's.
+sanitize_run STUB_GH_TOKEN_EXIT=125
+assert_contains "$(cat "$TMP_ROOT/sanitize.err")" \
+  "unsetting them and using gh keyring auth" \
+  "a gh that exits 125 under a readable bound is an ordinary auth failure"
+
+# The same collision on the op side. The status is what github-api.sh branches
+# on, so calling op's own 125 a bad setting suppresses the "Run: op signin"
+# advice for a resolution that really was attempted and really did fail.
+op_error_type() { # env-assignment... — the resolver's error type on stdout
+  (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env "$@" bash -c '
+      source "'"$REPO_ROOT"'/skills/github/scripts/lib/gh-auth.sh"
+      kendex_github_resolve_op_reference_to_var "op://vault/github/bot" "GitHub token" tok || true
+      printf "%s" "${KENDEX_GITHUB_TOKEN_ERROR_TYPE:-}"
+    ') 2>/dev/null
+}
+
+assert_eq "$(op_error_type STUB_OP_EXIT=125)" "token_resolution_failed" \
+  "an op that exits 125 under a readable bound is an ordinary resolution failure"
+assert_eq "$(op_error_type KENDEX_GITHUB_OP_TIMEOUT=2.55)" "token_resolution_bad_timeout" \
+  "and an unreadable KENDEX_GITHUB_OP_TIMEOUT still names the setting it named before"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
