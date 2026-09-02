@@ -43,8 +43,9 @@ Events, checked in this order every pass:
   EVENT heartbeat            --max-loops passes with no event; open PRs follow
 
 The latest pr-watch attention lines follow every event when any exist. Triage
-rebuilds the first repository's OVERSEE_WATCH_STATE_DIR baseline from live
-tracker items and kept or canceled verdicts. Lane prompts use pane and turn.
+reads the live tracker list and rebuilds only acknowledged triage keys in the
+first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
+verdicts. Lane prompts use pane and turn.
 
 Options:
   --interval SECS     seconds between passes (default 240)
@@ -64,8 +65,7 @@ Exit codes:
      earlier repository baselines may already have advanced when a later
      rename fails. Only baselines that did not advance repeat their events
 
-The pr-watch step writes: `--heal` dispatches PR_WATCH_WRITER_WORKFLOW on a
-gate-stale line. Its credential needs actions:write.
+Pr-watch --heal dispatches PR_WATCH_WRITER_WORKFLOW on gate-stale with actions:write.
 
 Environment:
   ORCH_STATE_DIR              workflow-state directory; relative paths join
