@@ -86,7 +86,7 @@ assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "kept" \
   "the verdict read accepts kept outcomes" "$err"
 assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "canceled" \
   "the verdict read accepts canceled outcomes" "$err"
-assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $TMP_ROOT/repo/tmp get oversee" \
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp get oversee" \
   "the verdict read anchors default state to the project tmp directory" "$err"
 
 cat > "$STUB_DIR/oversee-state.json" <<'EOF'
@@ -121,6 +121,25 @@ out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-08-15T09:00:00Z" \
   "an empty tracker list reaches the heartbeat" "$err"
 assert_not_contains "$out" "EVENT triage" "no new item emits no triage event" "$err"
+
+new_case triage_unsets_inherited_state
+err="$TMP_ROOT/triage-state-inherited"
+out="$(ORCH_STATE_DIR=leaked run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp get oversee" \
+  "the common harness clears an inherited state directory" "$err"
+
+new_case triage_relative_state
+err="$TMP_ROOT/triage-state-relative"
+out="$(run_watch ORCH_STATE_DIR=custom/state -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/custom/state get oversee" \
+  "a relative configured state directory joins the project root" "$err"
+
+new_case triage_absolute_state
+absolute_state="$STUB_DIR/absolute-state"
+err="$TMP_ROOT/triage-state-absolute"
+out="$(run_watch ORCH_STATE_DIR="$absolute_state" -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $absolute_state get oversee" \
+  "an absolute configured state directory is preserved" "$err"
 
 # Read failures and malformed output are unknown fleet state, never empty.
 new_case triage_list_failure

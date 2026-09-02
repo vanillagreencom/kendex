@@ -170,7 +170,7 @@ assert_eq "$out" "" "a non-pid liveness reply emits no window-gone event" "$err"
 assert_contains "$(cat "$err")" "malformed result for 'gh-2': fish fish" \
   "the non-pid liveness result is preserved" "$err"
 
-# an unreadable pane command is window-gone, never a silent skip
+# An unreadable pane command is a fail-closed probe error, never window-gone.
 new_case lane_cmd_unreadable
 rm -f "$STUB_DIR/cmd-gh-2.txt"
 err="$TMP_ROOT/e3d"

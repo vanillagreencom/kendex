@@ -142,10 +142,12 @@ source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
-WORKFLOW_STATE_ARGS=()
-if [[ -z "${ORCH_STATE_DIR:-}" ]]; then
-  WORKFLOW_STATE_ARGS=(--state-dir "$PROJECT_ROOT/tmp")
-fi
+WORKFLOW_STATE_DIR="${ORCH_STATE_DIR:-$PROJECT_ROOT/tmp}"
+case "$WORKFLOW_STATE_DIR" in
+  /*) ;;
+  *) WORKFLOW_STATE_DIR="$PROJECT_ROOT/$WORKFLOW_STATE_DIR" ;;
+esac
+WORKFLOW_STATE_ARGS=(--state-dir "$WORKFLOW_STATE_DIR")
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 
 # Lane-asking shares the review reducer's state directory and keeps only pane

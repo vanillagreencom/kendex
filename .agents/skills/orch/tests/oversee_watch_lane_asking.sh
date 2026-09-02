@@ -94,6 +94,24 @@ assert_contains "$(cat "$err")" "pane capture failed for 'gh-2'" \
 assert_contains "$(cat "$err")" "capture failed: gh-2" \
   "capture failure preserves tmux stderr" "$err"
 
+new_case lane_asking_identity_failure
+printf 'identity unavailable\n' > "$STUB_DIR/pane-key-fail-gh-2"
+err="$TMP_ROOT/asking-identity-fail"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "identity probe failure exits 2" "$err"
+assert_eq "$out" "" "identity probe failure emits no window-gone event" "$err"
+assert_contains "$(cat "$err")" "pane identity probe failed for 'gh-2': identity unavailable" \
+  "identity probe failure preserves tmux stderr" "$err"
+
+new_case lane_asking_identity_malformed
+printf 'not-a-pane-key\n' > "$STUB_DIR/pane-key-gh-2.txt"
+err="$TMP_ROOT/asking-identity-malformed"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "malformed identity exits 2" "$err"
+assert_eq "$out" "" "malformed identity emits no window-gone event" "$err"
+assert_contains "$(cat "$err")" "malformed result for 'gh-2': not-a-pane-key" \
+  "the malformed identity value is preserved" "$err"
+
 # Control: a pane without a prompt emits no lane-asking event.
 new_case lane_asking_no_prompt
 err="$TMP_ROOT/asking-d"

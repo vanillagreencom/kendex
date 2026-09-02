@@ -15,9 +15,9 @@
 # suite that forgot it must not get a sandbox built without it.
 set -euo pipefail
 
-# Resolved from this file, not from the sourcing suite: four levels up from
-# skills/<skill>/tests/lib is the repo root.
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+# Resolved through Git so macOS path aliases use the repository's physical root.
+REPO_ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")/../../../.." rev-parse --show-toplevel)" \
+  || { echo "oversee-watch harness: repository root not found" >&2; exit 1; }
 TMP_ROOT="$(mktemp -d)" || { echo "oversee-watch harness: mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$TMP_ROOT"' EXIT
 OVERSEE_TEST_REAL_DATE="$(command -v date)" \
@@ -74,6 +74,8 @@ assert_not_contains() {
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/cases"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 git -C "$TMP_ROOT/repo" init -q
+CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
+  || { echo "oversee-watch harness: case repository root not found" >&2; exit 1; }
 
 # gh stub, driven by files in $STUB_DIR:
 #   merged.json   body for `pr list --state merged` (default: [])
@@ -161,6 +163,10 @@ case "${1:-}" in
       [[ "$a" == *'#{pane_id}'* ]] || continue
       lane=""
       for x in "$@"; do [[ "$prev" == "-t" ]] && lane="$x"; prev="$x"; done
+      if [[ -f "$STUB_DIR/pane-key-fail-$lane" ]]; then
+        cat "$STUB_DIR/pane-key-fail-$lane" >&2
+        exit 1
+      fi
       key="$STUB_DIR/pane-key-$lane.txt"
       if [[ -f "$key" ]]; then cat "$key"; else printf '7000 %%%s\n' "$lane"; fi
       exit 0
@@ -347,7 +353,7 @@ run_watch() {
   done
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
-       env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
+       env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
            LINEAR_TEAM="kendex" \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
