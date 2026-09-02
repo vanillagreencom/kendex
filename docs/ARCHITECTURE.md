@@ -532,9 +532,11 @@ lives in one capability table read by core and UI.
   the click, pending until every scope's standing is read again — every
   landing wears it, so a read cannot bounce it — over its own scope's rows
   only (`lib/updates-read-state.ts::rowUnsettled`), the apply reaching only
-  what is installed there. A refused write says so at once and puts the
-  switch back where the click moved it from; the next landing carries the
-  engine's own answer. An edited place is never updated over:
+  what is installed there. A refused write says so at once and leaves the
+  switch where the click moved it; the next landing carries the engine's
+  own answer, which is what decides where it sits. Every flip re-reads the
+  machine scan and the audit behind that landing, the way an update does:
+  the apply moves the bytes both of them answer for. An edited place is never updated over:
   its row says so and offers the install beside it where a newer version
   the source still carries can land, and a
   link to the package page otherwise; the fork-or-discard choice lives on

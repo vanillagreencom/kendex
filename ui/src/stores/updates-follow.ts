@@ -171,15 +171,19 @@ export function followSwitch({
         await get().reload();
         // Then the scan and the audit, which the standing does not cover:
         // the flip runs an apply, and an apply moves the installed bytes
-        // the scan lists and the audit scores. Asked whatever the write
-        // answered and whichever way the switch went, for the same reason
-        // the read above is: the apply runs after the revision is
-        // persisted, so an error is not proof that nothing landed, and no
-        // predicate over the answer is complete — `moved` covers the two
-        // states `moving` counts, `removed` the other destructive one, and
-        // a dropped rendering can answer with all three fields empty. A
-        // scan behind a flip that wrote nothing costs a read nobody waits
-        // on.
+        // the scan lists and the audit scores.
+        //
+        // Asked whatever the write answered and whichever way the switch
+        // went. A refusal is no account of what is on disk — the write
+        // runs the leaving packages' uninstallers before the plan
+        // (`repo_effects::execute`), and an error over those leaves what
+        // they did to the repository standing. Nor is an answer that
+        // landed: `moved` covers the two states `moving` counts, `removed`
+        // the other destructive one, and a dropped rendering can answer
+        // with all three fields empty, so no predicate over the response
+        // is complete. A flip that turns out to have written nothing pays
+        // what every other write pays — the page held for a machine-wide
+        // scan and a forced audit — rather than a page left dated.
         await rescanEverything();
       }
     });

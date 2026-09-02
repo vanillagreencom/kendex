@@ -95,6 +95,23 @@ const okMoved: { status: "ok"; data: PackageUpdate_Serialize } = {
   data: { view, heldBack: [], removed: [], moved: [wrote] },
 };
 
+/** What the machine scan answers with. Named so a test can hold one
+ *  unanswered and read the page while the rescan is still out. */
+const SCANNED = {
+  status: "ok" as const,
+  data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+};
+
+/** One place's gh, held at what is installed: `pinned` with a hold this
+ *  declaration owns, which is the only owner whose switch still moves
+ *  (a source's or a parent's locks it). Switching it back on is the
+ *  direction that resolves the package at its source's tip. */
+const heldRows = [
+  row("gh", null, { pinned: true, holdOwner: { kind: "package" } }),
+  rows[1],
+  rows[2],
+];
+
 /** The table drawn from the store, the way the page draws it: a flip that
  *  only reaches `rows` is a flip nobody sees. */
 const Live = () => {
@@ -191,19 +208,21 @@ beforeEach(() => {
     status: "ok",
     data: { rows, warnings: [], unreadable: [], lastFetched: null },
   });
-  // Asked twice over: the page audits on mount, and a landed flip re-reads
-  // the scan and the audit behind its own standing.
+  // The flip is what asks for these: it re-reads the scan and the audit
+  // behind its own standing. `Live` mounts the table, not the page, so
+  // nothing else here calls either.
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
-  vi.mocked(commands.scanMachine).mockResolvedValue({
-    status: "ok",
-    data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
-  });
+  vi.mocked(commands.scanMachine).mockResolvedValue(SCANNED);
 });
 
 describe("the Follow source switch", () => {
   it("moves before the write behind it answers, and holds the page while it does", async () => {
     const write = pending<typeof ok>(ok);
     vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
+    // Held unanswered so the hold can be read while the rescan is still
+    // out: `busy` covers the write, the reload and the rescan alike.
+    const scan = pending<typeof SCANNED>(SCANNED);
+    vi.mocked(commands.scanMachine).mockReturnValue(scan.promise as never);
     mount(<Live />);
     await openPlaces();
     const flipped = followSwitch("gh", USER_LEVEL_PLACE);
@@ -233,9 +252,16 @@ describe("the Follow source switch", () => {
     expect(holding(followSwitch("gh", "app"))).toBe(true);
     expect(holding(followSwitch("orch", "app"))).toBe(true);
 
+    // The write answering does not release the page: the hold covers the
+    // reload and the rescan behind it, and the scan has not answered.
     write.answer(ok);
     await settle();
     expect(commands.updatesOverview).toHaveBeenCalled();
+    expect(commands.scanMachine).toHaveBeenCalled();
+    expect(holding(followSwitch("orch", "app"))).toBe(true);
+
+    scan.answer(SCANNED);
+    await settle();
     expect(holding(followSwitch("orch", "app"))).toBe(false);
   });
 
@@ -319,23 +345,63 @@ describe("the Follow source switch", () => {
     ).toHaveLength(1);
   });
 
-  // What a landed flip refreshes. The apply resolves the package at its
-  // source's tip and moves installed bytes, so the scan that lists them and
-  // the audit that scored them both answer for content that is gone until
-  // they are asked again — the same three reads `updateOne` runs behind the
-  // identical apply.
+  // What a landed flip refreshes, and when. The apply resolves the package
+  // at its source's tip and moves installed bytes, so the scan that lists
+  // them and the audit that scored them both answer for content that is
+  // gone until they are asked again — the same three reads `updateOne` runs
+  // behind the identical apply. Read behind the write, never beside it: a
+  // scan that starts before the apply answers reports the bytes it is about
+  // to replace, which is the staleness itself with an extra call.
   it("reads the standing, the scan and the audit back after a landed flip", async () => {
-    vi.mocked(commands.packageSetRev).mockResolvedValue(okMoved as never);
+    const write = pending<typeof okMoved>(okMoved);
+    vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
     mount(<Live />);
     await openPlaces();
 
     await act(async () => {
       followSwitch("gh", USER_LEVEL_PLACE).click();
     });
-    await settle();
 
     expect(commands.packageSetRev).toHaveBeenCalled();
+    expect(commands.scanMachine).not.toHaveBeenCalled();
+    expect(commands.auditAll).not.toHaveBeenCalled();
+
+    write.answer(okMoved);
+    await settle();
+
     expect(commands.updatesOverview).toHaveBeenCalled();
+    expect(commands.scanMachine).toHaveBeenCalled();
+    expect(commands.auditAll).toHaveBeenCalled();
+  });
+
+  // The direction the flip is for: Follow back ON resolves the package at
+  // its source's tip, which is what moves installed bytes. Every other test
+  // here starts from a following row and switches OFF, so a rescan run only
+  // on the off direction would pass them all.
+  it("reads the scan and the audit back after Follow is switched on", async () => {
+    useUpdatesStore.setState({ rows: heldRows });
+    const write = pending<typeof okMoved>(okMoved);
+    vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
+    mount(<Live />);
+    await openPlaces();
+    expect(following(followSwitch("gh", USER_LEVEL_PLACE))).toBe(false);
+
+    await act(async () => {
+      followSwitch("gh", USER_LEVEL_PLACE).click();
+    });
+
+    // A null revision is the write that lets the package follow again.
+    expect(commands.packageSetRev).toHaveBeenCalledWith(
+      { scope: "global" },
+      "skill",
+      "gh",
+      null,
+    );
+    expect(commands.scanMachine).not.toHaveBeenCalled();
+
+    write.answer(okMoved);
+    await settle();
+
     expect(commands.scanMachine).toHaveBeenCalled();
     expect(commands.auditAll).toHaveBeenCalled();
   });
