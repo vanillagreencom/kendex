@@ -43,7 +43,7 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
 - No migration or compat code for this project's own formats — its manifest, settings, lock and cache shapes, never another tool's on-disk state, which an adapter may have to keep recognising: write no reader for an artifact an older version of this project wrote, and decline a finding that asks you to carry one forward. A layout, schema or cache change is one changelog line and a fresh install.
 - Before adding a function, parser, stub or loop, grep the repo for the verb it performs; before stating a rule, grep for the rule. A second copy of that verb, in any language, is a twin and never delegation, and so is a second statement of a rule another file owns, in prose, config or a table: call or cite the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.
 - Stale docs are bugs: contradicting a committed doc means updating it in the same change.
-- Once a pushed head is shared in a review reply, later rounds add commits and never amend; before any head is shared, the kendex-issues fix cycle may amend only to refresh a required check that cannot be rerun.
+- Once a pushed head has been reviewed, later rounds add commits and never amend; before any review has run on a head, the kendex-issues fix cycle may amend only to refresh a required check that cannot be rerun.
 
 Code standards — correctness, comments, over-engineering, cleanup — are [`../code-quality/SKILL.md`](../code-quality/SKILL.md).
 
