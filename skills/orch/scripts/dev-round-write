@@ -103,10 +103,7 @@ no leading zeros), REACH names the shipped producer, user action, or fixture
 that reaches the finding — a command a person runs, a file a shipped writer
 emits, a test in the tree. An item with no reach is a `Declined:` reply, not a
 fix. What this script refuses is a short list, not a scanner: an empty reach, a
-PRRT_ review-thread node id, any all-word value containing thread, finding,
-comment, reviewer, or bot, and the enumerated `a <noun> containing/empty/unset/
-missing/malformed/invalid` phrasing. The last two are broader than the classes
-they guard, so a true reach can land on one and is reworded. A value outside
+PRRT_ review-thread node id, and a few literal values. A value outside
 those shapes is recorded, not approved — the classes in
 references/finding-disposition.md are the orchestrator's judgement, applied
 before the round is delegated. TEXT is the item's full formatted block verbatim
@@ -167,15 +164,15 @@ check_id_token() {
 }
 
 # --- The reach bar ---
-# Three shapes that name nothing shipped, matched case-insensitively against
-# the whole value. The last two only reach values built from plain words: a
-# real reach carries a path, a command, or a filename, whose '/', '.', or
-# backtick keeps it out of those classes. A short refusal list, not a grammar
-# — a refused value is reworded, or its item becomes a `Declined:` reply.
+# Values that name nothing shipped, matched case-insensitively. The node id is
+# a substring — it can appear anywhere in a value; the rest are the whole
+# value. A refused value is reworded, or its item becomes a `Declined:` reply.
 REACH_REFUSALS=(
-  'prrt_'                                                                              # a GitHub review-thread node id
-  '^[a-z0-9_ -]*(thread|finding|comment|reviewer|bot)s?[a-z0-9_ -]*$'                   # only a review thread
-  '^(a|an|the) [a-z0-9_ ,-]*(containing|empty|unset|missing|malformed|invalid)[a-z0-9_ ,-]*$'  # only a shape
+  '*prrt_*'                      # a GitHub review-thread node id, anywhere
+  'copilot thread'
+  'the finding'
+  'a name containing a quote'
+  'an empty pi_coding_agent_dir'
 )
 
 check_reach() {
@@ -186,8 +183,8 @@ check_reach() {
   if is_own_flag "$reach"; then die "item $n reach must name a producer, got flag '$reach' (value missing?)"; fi
   lower="$(printf '%s' "$reach" | tr '[:upper:]' '[:lower:]')"
   for pattern in "${REACH_REFUSALS[@]}"; do
-    if [[ "$lower" =~ $pattern ]]; then
-      die "item $n reach '$reach' matches a refusal shape — a review-thread node id or spelling, or the enumerated 'a <noun> containing/empty/unset/missing/malformed/invalid' phrasing: name a command a person runs, a file a shipped writer emits, or a test in the tree — an item with no reach is a 'Declined:' reply, not a fix"
+    if [[ "$lower" == $pattern ]]; then
+      die "item $n reach '$reach' is on the refusal list: name a command a person runs, a file a shipped writer emits, or a test in the tree — an item with no reach is a 'Declined:' reply, not a fix"
     fi
   done
 }

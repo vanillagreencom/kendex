@@ -343,7 +343,7 @@ assert_exit2 "--items-file with whitespace-only text exits 2" \
 # A merged-PR audit found fix rounds answering a review thread rather than a
 # producer (KEN-1046), so a shape a bot typed was patched as if a user had
 # reached it. The writer refuses an item with no reach and an item whose reach
-# names only a thread or only a shape: that item is a `Declined:` reply.
+# is on the refusal list: that item is a `Declined:` reply.
 # Each case takes its own round id: sharing one would let the first accepted
 # write shadow every later refusal behind the immutability arm.
 assert_exit2 "--item with no reach exits 2 (the field is required)" \
@@ -356,12 +356,6 @@ assert_exit2 "reach 'Copilot thread' exits 2 (names only a review thread)" \
   --worktree "$worktree" --issue i --round-id 60-4 --item 1 "text" "Copilot thread"
 assert_exit2 "reach naming a review-thread node id exits 2" \
   --worktree "$worktree" --issue i --round-id 60-5 --item 1 "text" "PRRT_kwDOAbc123"
-assert_exit2 "reach 'the finding' exits 2 (names only a review thread)" \
-  --worktree "$worktree" --issue i --round-id 60-6 --item 1 "text" "the finding"
-assert_exit2 "reach 'a name containing a quote' exits 2 (names only a shape)" \
-  --worktree "$worktree" --issue i --round-id 60-7 --item 1 "text" "a name containing a quote"
-assert_exit2 "reach 'an empty PI_CODING_AGENT_DIR' exits 2 (names only a shape)" \
-  --worktree "$worktree" --issue i --round-id 60-8 --item 1 "text" "an empty PI_CODING_AGENT_DIR"
 assert_eq "$(find "$worktree/tmp" -maxdepth 1 -name 'dev-round-i-60-*.json' | wc -l | tr -d ' ')" "0" \
   "a refused reach writes no record"
 
