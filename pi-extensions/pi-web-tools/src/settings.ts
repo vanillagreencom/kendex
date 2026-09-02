@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { isAbsolute, join, resolve } from "node:path";
-import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { piGlobalRoot } from "../scripts/pi-root.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-web-tools";
 export const WEB_PROVIDERS = ["auto", "exa", "perplexity", "gemini", "exa-mcp", "duckduckgo", "openai-native"] as const;
@@ -68,7 +68,15 @@ export function piUserDir(): string {
 }
 
 export function projectSettingsPath(cwd: string): string {
-	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
+	let current = resolve(cwd);
+	while (true) {
+		const candidate = join(current, ".pi", "settings.json");
+		if (existsSync(candidate)) return candidate;
+		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
+		const parent = dirname(current);
+		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
+		current = parent;
+	}
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -229,8 +237,13 @@ function parseEnvFile(path: string): SettingsRecord {
 }
 
 function projectEnvFiles(cwd: string): string[] {
-	const root = piProjectRoot(cwd) ?? resolve(cwd);
-	return [join(root, ".env"), join(root, ".env.local")];
+	let current = resolve(cwd);
+	while (true) {
+		if (existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json")) || existsSync(join(current, ".pi"))) return [join(current, ".env"), join(current, ".env.local")];
+		const parent = dirname(current);
+		if (parent === current) return [join(resolve(cwd), ".env"), join(resolve(cwd), ".env.local")];
+		current = parent;
+	}
 }
 
 function readProjectEnvConfig(cwd: string): SettingsRecord {

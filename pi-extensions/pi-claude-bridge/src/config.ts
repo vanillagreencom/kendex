@@ -8,7 +8,6 @@ import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join, resolve, sep } from "path";
-import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
 import { debug } from "./debug.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
@@ -90,6 +89,10 @@ export interface Config {
 
 type SettingsRecord = Record<string, unknown>;
 
+// pi-root-policy:claude begin
+function piGlobalRoot() { const home=homedir(), raw=process.env.PI_CODING_AGENT_DIR?.trim(), path=raw === "~" ? home : raw?.startsWith("~/") ? join(home, raw.slice(2)) : raw, absolute=process.platform === "win32" ? (/^[A-Za-z]:[\\/]/.test(path ?? "") || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/.test(path ?? "")) : path?.startsWith("/"); return absolute ? resolve(path) : resolve(home, ".pi", "agent"); }
+// pi-root-policy:claude end
+
 /**
  * The Pi agent config dir: an absolute `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
  * Every bridge default that used to hardcode `~/.pi/agent` routes through this
@@ -129,7 +132,15 @@ function mergeDeep<T extends SettingsRecord>(target: T, source: SettingsRecord):
 }
 
 function projectSettingsPath(cwd: string): string {
-	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
+	let current = resolve(cwd);
+	while (true) {
+		const candidate = join(current, ".pi", "settings.json");
+		if (existsSync(candidate)) return candidate;
+		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
+		const parent = dirname(current);
+		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
+		current = parent;
+	}
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");

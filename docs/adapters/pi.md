@@ -15,9 +15,8 @@ kendex trims `PI_CODING_AGENT_DIR`, expands `~` against the configured home,
 and uses an override only when it is absolute. Empty, whitespace-only, and
 relative values use `~/.pi/agent`.
 
-`pi-extensions/pi-root-policy.mjs` owns this parsing and the project-marker
-list. Its `--write` command emits each standalone package helper and the Rust
-blocks; `pi-extensions/package-policy.test.mjs` rejects stale outputs.
+`pi-extensions/pi-root-policy.mjs` generates that global-root parser for Rust
+and every standalone Pi package. Package policy tests reject stale outputs.
 
 Project markers: a `.pi/` or `.agents/` directory. Owner:
 `crates/core/src/harness/pi.rs`.
@@ -48,10 +47,9 @@ writes itself: a script exiting 1, a spawn that failed, and a run past the
 60s budget are all a guard that reached no verdict, and a guard that did not
 run does not stand aside. Only exit 0 reaches the next script, and stderr
 written beside it is an advisory for the person rather than the agent. So
-the three run the same bytes under Claude, Codex and Pi. It resolves the
-project from the nearest ancestor with `.pi/`, `.git/`, or
-`.kendex-lock.json`. A project script runs only where Pi reports the workspace
-trusted, since spawning it executes what the project ships. The global root is
+the three run the same bytes under Claude, Codex and Pi. It uses Pi's current
+project directory only when Pi reports that exact workspace trusted, since
+spawning a project script executes what the project ships. The global root is
 `~/.pi/agent` or an absolute `PI_CODING_AGENT_DIR`; a relative override uses
 the default root.
 A script the carrier finds at neither scope is a hook this project has not

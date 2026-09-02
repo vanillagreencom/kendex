@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
+import { piGlobalRoot } from "./pi-root.js";
 
 /** Package id used as the config namespace key in `.pi/settings.json`. */
 export const CONFIG_ID = "@vanillagreen/pi-hooks";
@@ -27,13 +27,14 @@ export type HookKey = Exclude<keyof typeof DEFAULTS, "clippyTimeoutMs" | "driftC
 /** Pi roots the carrier may read or execute from. Project content requires Pi
  * trust. Global content requires the default root or an absolute override. */
 export function piRoots(cwd: string, trusted: boolean): { global?: string; project?: string } {
-	const root = piProjectRoot(cwd);
-	const project = trusted && root ? join(root, ".pi") : undefined;
-	return { global: piGlobalRoot(), project };
+	return {
+		global: piGlobalRoot(),
+		project: trusted ? join(resolve(cwd), ".pi") : undefined,
+	};
 }
 
 function projectSettingsPath(cwd: string): string {
-	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
+	return join(resolve(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");

@@ -2,7 +2,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join, normalize, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import { piGlobalRoot } from "../pi-root.js";
+import { piGlobalRoot } from "../../scripts/pi-root.js";
 
 const execFileAsync = promisify(execFile);
 

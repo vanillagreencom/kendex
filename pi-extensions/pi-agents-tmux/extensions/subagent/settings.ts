@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
+import { piGlobalRoot } from "../../scripts/pi-root.js";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./agents.js";
 import { safeFileName } from "./names.js";
@@ -51,7 +51,15 @@ export function runtimeDirForContext(ctx: ExtensionContext): string {
 }
 
 export function projectSettingsPath(cwd: string): string {
-	return path.join(piProjectRoot(cwd) ?? path.resolve(cwd), ".pi", "settings.json");
+	let current = path.resolve(cwd);
+	while (true) {
+		const candidate = path.join(current, ".pi", "settings.json");
+		if (fs.existsSync(candidate)) return candidate;
+		if (fs.existsSync(path.join(current, ".pi")) || fs.existsSync(path.join(current, ".git")) || fs.existsSync(path.join(current, ".kendex-lock.json"))) return candidate;
+		const parent = path.dirname(current);
+		if (parent === current) return path.join(path.resolve(cwd), ".pi", "settings.json");
+		current = parent;
+	}
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");

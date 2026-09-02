@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
+import { piGlobalRoot } from "./pi-root.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-output-policy.installed");
 const CONFIG_ID = "@vanillagreen/pi-output-policy";
@@ -222,7 +222,15 @@ function migrateLegacyProjectArtifacts(ctx: ExtensionContext): void {
 }
 
 function projectSettingsPath(cwd: string): string {
-	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
+	let current = resolve(cwd);
+	while (true) {
+		const candidate = join(current, ".pi", "settings.json");
+		if (existsSync(candidate)) return candidate;
+		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
+		const parent = dirname(current);
+		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
+		current = parent;
+	}
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");

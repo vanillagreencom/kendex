@@ -20,7 +20,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { piGlobalRoot } from "./pi-root.js";
+import { piGlobalRoot } from "../scripts/pi-root.js";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 

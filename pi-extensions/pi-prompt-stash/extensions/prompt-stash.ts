@@ -6,7 +6,7 @@ import {
 import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
+import { piGlobalRoot } from "./pi-root.js";
 import { frameGlyphs, glyphs } from "./glyphs.js";
 
 const PACKAGE_ID = "@vanillagreen/pi-prompt-stash";
@@ -87,7 +87,15 @@ function migrateLegacyPackageStore(ctx: ExtensionContext): void {
 }
 
 function projectSettingsPath(cwd: string): string {
-	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
+	let current = resolve(cwd);
+	while (true) {
+		const candidate = join(current, ".pi", "settings.json");
+		if (existsSync(candidate)) return candidate;
+		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
+		const parent = dirname(current);
+		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
+		current = parent;
+	}
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -164,7 +172,20 @@ function settingString(key: string, fallback: string, cwd?: string): string {
 }
 
 function projectRoot(cwd: string): string {
-	return piProjectRoot(cwd) ?? resolve(cwd);
+	let current = resolve(cwd);
+	while (true) {
+		if (
+			existsSync(join(current, ".git")) ||
+			existsSync(join(current, ".kendex-lock.json")) ||
+			existsSync(join(current, ".pi")) ||
+			existsSync(join(current, ".agents"))
+		) {
+			return current;
+		}
+		const parent = dirname(current);
+		if (parent === current) return resolve(cwd);
+		current = parent;
+	}
 }
 
 function configuredStoreFile(ctx: ExtensionContext): string {

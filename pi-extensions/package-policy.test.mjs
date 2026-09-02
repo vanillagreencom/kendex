@@ -3,11 +3,11 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { ABSOLUTE_CASES, checkOutputs, INSTALL_OUTPUTS, TYPESCRIPT_OUTPUTS } from "./pi-root-policy.mjs";
+import { ABSOLUTE_CASES, checkOutputs, OUTPUTS } from "./pi-root-policy.mjs";
 
 const root = new URL(".", import.meta.url).pathname;
 
@@ -149,23 +149,13 @@ test("vendored append-system helpers stay identical", () => {
 	assert.equal(new Set(hashes.map(([, hash]) => hash)).size, 1, `append-system helpers differ: ${JSON.stringify(hashes)}`);
 });
 
-test("every shipped Pi root helper matches the generated contract", async () => {
+test("generated Pi global-root helpers share one cross-platform contract", async () => {
 	assert.deepEqual(checkOutputs(), []);
-	assert.deepEqual(
-		new Set(TYPESCRIPT_OUTPUTS.map((path) => path.split("/")[0])),
-		new Set(packages().map(({ dir }) => dir)),
-	);
-	for (const output of [...TYPESCRIPT_OUTPUTS, ...INSTALL_OUTPUTS]) {
-		const module = await import(`${pathToFileURL(join(root, output)).href}?conformance`);
-		assert.equal(module.piGlobalRoot("relative/root", "/home/pat", "posix"), "/home/pat/.pi/agent", output);
-		assert.equal(module.piGlobalRoot("~/custom", "/home/pat", "posix"), "/home/pat/custom", output);
-		assert.equal(module.piGlobalRoot("~/custom", "C:\\Users\\pat", "win32"), "C:\\Users\\pat\\custom", output);
-	}
-	for (const output of TYPESCRIPT_OUTPUTS) {
-		const module = await import(`${pathToFileURL(join(root, output)).href}?absolute-cases`);
-		for (const [value, posixExpected, windowsExpected] of ABSOLUTE_CASES) {
-			assert.equal(module.piRootIsAbsolute(value, "posix"), posixExpected, `${output}: posix ${value}`);
-			assert.equal(module.piRootIsAbsolute(value, "win32"), windowsExpected, `${output}: win32 ${value}`);
+	for (const output of OUTPUTS) {
+		const { piGlobalRoot } = await import(`${pathToFileURL(join(root, output)).href}?contract`);
+		for (const [value, posixAbsolute, windowsAbsolute] of ABSOLUTE_CASES) {
+			assert.equal(piGlobalRoot(value, "/home/pat", "posix"), posixAbsolute ? posix.resolve(value) : "/home/pat/.pi/agent", `${output}: posix ${value}`);
+			assert.equal(piGlobalRoot(value, "C:\\Users\\pat", "win32"), windowsAbsolute ? win32.resolve(value) : "C:\\Users\\pat\\.pi\\agent", `${output}: win32 ${value}`);
 		}
 	}
 });

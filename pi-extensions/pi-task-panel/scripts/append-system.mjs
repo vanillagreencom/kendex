@@ -25,7 +25,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { piGlobalRoot } from "./pi-root.mjs";
+import { piGlobalRoot } from "./pi-root.js";
 
 const action = process.argv[2];
 if (action !== "install" && action !== "remove") {

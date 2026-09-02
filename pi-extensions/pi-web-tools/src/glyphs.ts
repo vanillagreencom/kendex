@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
+import { dirname, join, resolve } from "node:path";
+import { piGlobalRoot } from "../scripts/pi-root.js";
 
 export type GlyphStyle = "unicode" | "ascii";
 export type GlobalGlyphStyleOverride = "inherit" | GlyphStyle;
@@ -9,7 +9,15 @@ const LOCAL_CONFIG_ID = "@vanillagreen/pi-web-tools";
 const GLOBAL_CONFIG_ID = "@vanillagreen/pi-tool-renderer";
 
 function projectSettingsPath(cwd: string): string {
-	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
+	let current = resolve(cwd);
+	while (true) {
+		const candidate = join(current, ".pi", "settings.json");
+		if (existsSync(candidate)) return candidate;
+		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
+		const parent = dirname(current);
+		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
+		current = parent;
+	}
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");

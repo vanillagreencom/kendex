@@ -7,7 +7,7 @@ var __export = (target, all) => {
 // src/index.ts
 import * as piAi from "@earendil-works/pi-ai";
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
+// node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
 import { createRequire as DW } from "node:module";
 import woe from "url";
 import Toe from "crypto";
@@ -26856,7 +26856,7 @@ function rW(e, t) {
   return null;
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/change-case/dist/index.js
+// node_modules/change-case/dist/index.js
 var SPLIT_LOWER_UPPER_RE = new RegExp("([\\p{Ll}\\d])(\\p{Lu})", "gu");
 var SPLIT_UPPER_UPPER_RE = new RegExp("(\\p{Lu})([\\p{Lu}][\\p{Ll}])", "gu");
 var SPLIT_SEPARATE_NUMBER_RE = new RegExp("(\\d)\\p{Ll}|(\\p{L})\\d", "u");
@@ -26940,85 +26940,25 @@ function splitPrefixSuffix(input, options = {}) {
 
 // src/config.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
-import { homedir as homedir2 } from "os";
-import { dirname as dirname3, join as join4, resolve as resolve3, sep as sep2 } from "path";
-
-// src/pi-root.ts
-import { statSync as statSync2 } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join as join2, posix, resolve as resolve2, win32 } from "node:path";
-var PI_PROJECT_MARKER_DIRS = [
-  ".claude",
-  ".codex",
-  ".opencode",
-  ".cursor",
-  ".pi",
-  ".agents",
-  ".gemini"
-];
-function platformPath(platform) {
-  return platform === "win32" ? win32 : posix;
-}
-function piRootIsAbsolute(value, platform) {
-  if (platform === "posix") return value.startsWith("/");
-  if (/^[A-Za-z]:[\\/]/.test(value)) return true;
-  return /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/.test(value);
-}
-function expandTilde(value, home, platform) {
-  const paths = platformPath(platform);
-  if (value === "~") return home;
-  if (value.startsWith("~/")) return paths.join(home, value.slice(2));
-  return value;
-}
-function piGlobalRoot(value = process.env.PI_CODING_AGENT_DIR, home = homedir(), platform = process.platform === "win32" ? "win32" : "posix") {
-  const paths = platformPath(platform);
-  const configured = value?.trim();
-  if (!configured) return paths.resolve(home, ".pi", "agent");
-  const expanded = expandTilde(configured, home, platform);
-  return piRootIsAbsolute(expanded, platform) ? paths.resolve(expanded) : paths.resolve(home, ".pi", "agent");
-}
-function isDirectory(path) {
-  try {
-    return statSync2(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function isFile(path) {
-  try {
-    return statSync2(path).isFile();
-  } catch {
-    return false;
-  }
-}
-function piProjectRoot(cwd, home = homedir()) {
-  let current = resolve2(cwd);
-  const stop = resolve2(home);
-  while (true) {
-    if (isFile(join2(current, ".kendex-lock.json"))) return current;
-    if (current !== stop && PI_PROJECT_MARKER_DIRS.some((marker) => isDirectory(join2(current, marker)))) return current;
-    const parent = dirname(current);
-    if (parent === current) return void 0;
-    current = parent;
-  }
-}
+import { homedir } from "os";
+import { dirname as dirname2, join as join3, resolve as resolve2, sep as sep2 } from "path";
 
 // src/debug.ts
 import { appendFileSync as appendFileSync2, chmodSync, mkdirSync as mkdirSync2 } from "fs";
-import { dirname as dirname2, join as join3 } from "path";
+import { dirname, join as join2 } from "path";
 var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
-var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join3(piUserDir(), "claude-bridge.log");
+var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join2(piUserDir(), "claude-bridge.log");
 function diagLogPath() {
-  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join3(piUserDir(), "claude-bridge-diag.log");
+  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join2(piUserDir(), "claude-bridge-diag.log");
 }
 function diagGuidance() {
   return DEBUG ? `see ${diagLogPath()}` : "re-run with CLAUDE_BRIDGE_DEBUG=1 to capture a diagnostic dump";
 }
 if (DEBUG) {
   try {
-    mkdirSync2(dirname2(DEBUG_LOG_PATH), { recursive: true, mode: 448 });
-    mkdirSync2(dirname2(diagLogPath()), { recursive: true, mode: 448 });
-    chmodSync(dirname2(DEBUG_LOG_PATH), 448);
+    mkdirSync2(dirname(DEBUG_LOG_PATH), { recursive: true, mode: 448 });
+    mkdirSync2(dirname(diagLogPath()), { recursive: true, mode: 448 });
+    chmodSync(dirname(DEBUG_LOG_PATH), 448);
     chmodSync(DEBUG_LOG_PATH, 384);
   } catch {
   }
@@ -27065,13 +27005,13 @@ function makeCliDebugOptions(tag) {
   if (!DEBUG) return {};
   const seq = nextCliDebugSeq++;
   const ts2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-  const logDir = join3(dirname2(DEBUG_LOG_PATH), "cc-cli-logs");
+  const logDir = join2(dirname(DEBUG_LOG_PATH), "cc-cli-logs");
   try {
     mkdirSync2(logDir, { recursive: true, mode: 448 });
     chmodSync(logDir, 448);
   } catch {
   }
-  const debugFile = join3(logDir, `${ts2}-${tag}-${seq}.log`);
+  const debugFile = join2(logDir, `${ts2}-${tag}-${seq}.log`);
   debug(`cli-debug: ${tag} #${seq} \u2192 ${debugFile}`);
   return {
     debug: true,
@@ -27090,7 +27030,7 @@ function diagDump(label, data) {
     const entry = { ts: ts2, moduleInstanceId, label, ...data };
     const path = diagLogPath();
     try {
-      mkdirSync2(dirname2(path), { recursive: true, mode: 448 });
+      mkdirSync2(dirname(path), { recursive: true, mode: 448 });
     } catch {
     }
     appendFileSync2(path, JSON.stringify(entry) + "\n", { mode: 384 });
@@ -27108,8 +27048,14 @@ function diagDump(label, data) {
 var PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
 var EXTERNAL_CONFIG_RESOLVER_SYMBOL = /* @__PURE__ */ Symbol.for("kendex.pi.extension-config-resolver");
 var VALID_EFFORT_LEVELS = /* @__PURE__ */ new Set(["low", "medium", "high", "xhigh", "max"]);
+function expandHome(input) {
+  if (input === "~") return homedir();
+  if (input.startsWith("~/")) return join3(homedir(), input.slice(2));
+  return input;
+}
 function piUserDir() {
-  return piGlobalRoot();
+  const home = homedir(), raw = process.env.PI_CODING_AGENT_DIR?.trim(), path = raw === "~" ? home : raw?.startsWith("~/") ? join3(home, raw.slice(2)) : raw, absolute = process.platform === "win32" ? /^[A-Za-z]:[\\/]/.test(path ?? "") || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/.test(path ?? "") : path?.startsWith("/");
+  return absolute ? resolve2(path) : resolve2(home, ".pi", "agent");
 }
 function isolatedFromEnv() {
   const v2 = (process.env.CLAUDE_BRIDGE_ISOLATED ?? "").trim().toLowerCase();
@@ -27128,7 +27074,15 @@ function mergeDeep(target, source) {
   return target;
 }
 function projectSettingsPath(cwd) {
-  return join4(piProjectRoot(cwd) ?? resolve3(cwd), ".pi", "settings.json");
+  let current = resolve2(cwd);
+  while (true) {
+    const candidate = join3(current, ".pi", "settings.json");
+    if (existsSync2(candidate)) return candidate;
+    if (existsSync2(join3(current, ".pi")) || existsSync2(join3(current, ".git")) || existsSync2(join3(current, ".kendex-lock.json"))) return candidate;
+    const parent = dirname2(current);
+    if (parent === current) return join3(resolve2(cwd), ".pi", "settings.json");
+    current = parent;
+  }
 }
 var PROJECT_TRUST_SYMBOL = /* @__PURE__ */ Symbol.for("kendex.pi.project-trust");
 function projectTrustRegistry() {
@@ -27156,7 +27110,7 @@ function projectSettingsTrusted(settingsPath) {
   return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 function settingsPaths(cwd) {
-  const user = join4(piUserDir(), "settings.json");
+  const user = join3(piUserDir(), "settings.json");
   if (isolatedFromEnv()) return [];
   const project = projectSettingsPath(cwd);
   return projectSettingsTrusted(project) ? [user, project] : [user];
@@ -27172,7 +27126,7 @@ function tryParseJson(path) {
 }
 function readManagerConfig(cwd) {
   const merged = {};
-  const userPath = join4(piUserDir(), "settings.json");
+  const userPath = join3(piUserDir(), "settings.json");
   for (const path of settingsPaths(cwd)) {
     if (!existsSync2(path)) continue;
     try {
@@ -27303,12 +27257,12 @@ function legacyFileConfig(path) {
   };
 }
 function legacyLayers(cwd) {
-  const globalPath = join4(piUserDir(), "claude-bridge.json");
+  const globalPath = join3(piUserDir(), "claude-bridge.json");
   const layers = [{ path: globalPath, config: legacyFileConfig(globalPath) }];
   if (isolatedFromEnv()) return layers;
   const projectSettings = projectSettingsPath(cwd);
   if (!projectSettingsTrusted(projectSettings)) return layers;
-  const projectPath = join4(dirname3(projectSettings), "claude-bridge.json");
+  const projectPath = join3(dirname2(projectSettings), "claude-bridge.json");
   return [...layers, { path: projectPath, config: stripUserScopeOnlyProviderKeys(legacyFileConfig(projectPath)) }];
 }
 function mergeLayers(layers) {
@@ -27353,7 +27307,7 @@ function configValueForKey(config2, key) {
   return void 0;
 }
 function displayPath(path) {
-  const home = homedir2();
+  const home = homedir();
   return home && path.startsWith(home + sep2) ? `~${path.slice(home.length)}` : path;
 }
 function resolveExternalConfigValue(key, cwd) {
@@ -29082,12 +29036,12 @@ function teardownQuery(queryCtx, sdkQuery, cause, cwd, isReentrant) {
 
 // src/auth-presence.ts
 import { existsSync as existsSync3, readFileSync as readFileSync3 } from "fs";
-import { homedir as homedir3, platform as osPlatform } from "os";
-import { join as join5 } from "path";
+import { homedir as homedir2, platform as osPlatform } from "os";
+import { join as join4 } from "path";
 function resolveClaudeConfigDir(env = process.env) {
   const configured = env.CLAUDE_CONFIG_DIR;
   if (typeof configured === "string" && configured.trim().length > 0) return configured.trim();
-  return join5(homedir3(), ".claude");
+  return join4(homedir2(), ".claude");
 }
 function nonEmptyEnv(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -29098,7 +29052,7 @@ function envTruthy(value) {
 }
 function hasApiKeyHelper(configDir) {
   try {
-    const settingsPath = join5(configDir, "settings.json");
+    const settingsPath = join4(configDir, "settings.json");
     if (!existsSync3(settingsPath)) return false;
     const parsed = JSON.parse(readFileSync3(settingsPath, "utf8"));
     return typeof parsed?.apiKeyHelper === "string" && parsed.apiKeyHelper.trim().length > 0;
@@ -29116,7 +29070,7 @@ function hasClaudeCredentials(env = process.env, platform = osPlatform()) {
   if (envTruthy(env.CLAUDE_CODE_USE_ANTHROPIC_AWS)) return true;
   if (envTruthy(env.CLAUDE_CODE_USE_MANTLE)) return true;
   const configDir = resolveClaudeConfigDir(env);
-  if (existsSync3(join5(configDir, ".credentials.json"))) return true;
+  if (existsSync3(join4(configDir, ".credentials.json"))) return true;
   if (hasApiKeyHelper(configDir)) return true;
   if (platform === "darwin") return true;
   return false;
@@ -29159,7 +29113,7 @@ function buildNativeProvider(piAi2, models, streamSimple, env = process.env, has
   });
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/external.js
+// node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
   $brand: () => $brand,
@@ -29402,7 +29356,7 @@ __export(external_exports, {
   xor: () => xor
 });
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/index.js
+// node_modules/zod/v4/core/index.js
 var core_exports2 = {};
 __export(core_exports2, {
   $ZodAny: () => $ZodAny,
@@ -29681,7 +29635,7 @@ __export(core_exports2, {
   version: () => version
 });
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/core.js
+// node_modules/zod/v4/core/core.js
 var _a2;
 var NEVER = /* @__PURE__ */ Object.freeze({
   status: "aborted"
@@ -29758,7 +29712,7 @@ function config(newConfig) {
   return globalConfig;
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/util.js
+// node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
   BIGINT_FORMAT_RANGES: () => BIGINT_FORMAT_RANGES,
@@ -30454,7 +30408,7 @@ var Class = class {
   }
 };
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/errors.js
+// node_modules/zod/v4/core/errors.js
 var initializer = (inst, def) => {
   inst.name = "$ZodError";
   Object.defineProperty(inst, "_zod", {
@@ -30593,7 +30547,7 @@ function prettifyError(error51) {
   return lines.join("\n");
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/parse.js
+// node_modules/zod/v4/core/parse.js
 var _parse = (_Err) => (schema, value, _ctx, _params) => {
   const ctx2 = _ctx ? { ..._ctx, async: false } : { async: false };
   const result = schema._zod.run({ value, issues: [] }, ctx2);
@@ -30681,7 +30635,7 @@ var _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
 };
 var safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync($ZodRealError);
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/regexes.js
+// node_modules/zod/v4/core/regexes.js
 var regexes_exports = {};
 __export(regexes_exports, {
   base64: () => base64,
@@ -30840,7 +30794,7 @@ var sha512_hex = /^[0-9a-fA-F]{128}$/;
 var sha512_base64 = /* @__PURE__ */ fixedBase64(86, "==");
 var sha512_base64url = /* @__PURE__ */ fixedBase64url(86);
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/checks.js
+// node_modules/zod/v4/core/checks.js
 var $ZodCheck = /* @__PURE__ */ $constructor("$ZodCheck", (inst, def) => {
   var _a4;
   inst._zod ?? (inst._zod = {});
@@ -31388,7 +31342,7 @@ var $ZodCheckOverwrite = /* @__PURE__ */ $constructor("$ZodCheckOverwrite", (ins
   };
 });
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/doc.js
+// node_modules/zod/v4/core/doc.js
 var Doc = class {
   constructor(args = []) {
     this.content = [];
@@ -31424,14 +31378,14 @@ var Doc = class {
   }
 };
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/versions.js
+// node_modules/zod/v4/core/versions.js
 var version = {
   major: 4,
   minor: 4,
   patch: 3
 };
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/schemas.js
+// node_modules/zod/v4/core/schemas.js
 var $ZodType = /* @__PURE__ */ $constructor("$ZodType", (inst, def) => {
   var _a4;
   inst ?? (inst = {});
@@ -33524,7 +33478,7 @@ function handleRefineResult(result, payload, input, inst) {
   }
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/index.js
+// node_modules/zod/v4/locales/index.js
 var locales_exports = {};
 __export(locales_exports, {
   ar: () => ar_default,
@@ -33581,7 +33535,7 @@ __export(locales_exports, {
   zhTW: () => zh_TW_default
 });
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ar.js
+// node_modules/zod/v4/locales/ar.js
 var error = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0641", verb: "\u0623\u0646 \u064A\u062D\u0648\u064A" },
@@ -33688,7 +33642,7 @@ function ar_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/az.js
+// node_modules/zod/v4/locales/az.js
 var error2 = () => {
   const Sizable = {
     string: { unit: "simvol", verb: "olmal\u0131d\u0131r" },
@@ -33794,7 +33748,7 @@ function az_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/be.js
+// node_modules/zod/v4/locales/be.js
 function getBelarusianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -33951,7 +33905,7 @@ function be_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/bg.js
+// node_modules/zod/v4/locales/bg.js
 var error4 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0430", verb: "\u0434\u0430 \u0441\u044A\u0434\u044A\u0440\u0436\u0430" },
@@ -34072,7 +34026,7 @@ function bg_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ca.js
+// node_modules/zod/v4/locales/ca.js
 var error5 = () => {
   const Sizable = {
     string: { unit: "car\xE0cters", verb: "contenir" },
@@ -34181,7 +34135,7 @@ function ca_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/cs.js
+// node_modules/zod/v4/locales/cs.js
 var error6 = () => {
   const Sizable = {
     string: { unit: "znak\u016F", verb: "m\xEDt" },
@@ -34293,7 +34247,7 @@ function cs_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/da.js
+// node_modules/zod/v4/locales/da.js
 var error7 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "havde" },
@@ -34409,7 +34363,7 @@ function da_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/de.js
+// node_modules/zod/v4/locales/de.js
 var error8 = () => {
   const Sizable = {
     string: { unit: "Zeichen", verb: "zu haben" },
@@ -34518,7 +34472,7 @@ function de_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/el.js
+// node_modules/zod/v4/locales/el.js
 var error9 = () => {
   const Sizable = {
     string: { unit: "\u03C7\u03B1\u03C1\u03B1\u03BA\u03C4\u03AE\u03C1\u03B5\u03C2", verb: "\u03BD\u03B1 \u03AD\u03C7\u03B5\u03B9" },
@@ -34628,7 +34582,7 @@ function el_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/en.js
+// node_modules/zod/v4/locales/en.js
 var error10 = () => {
   const Sizable = {
     string: { unit: "characters", verb: "to have" },
@@ -34741,7 +34695,7 @@ function en_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/eo.js
+// node_modules/zod/v4/locales/eo.js
 var error11 = () => {
   const Sizable = {
     string: { unit: "karaktrojn", verb: "havi" },
@@ -34851,7 +34805,7 @@ function eo_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/es.js
+// node_modules/zod/v4/locales/es.js
 var error12 = () => {
   const Sizable = {
     string: { unit: "caracteres", verb: "tener" },
@@ -34984,7 +34938,7 @@ function es_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/fa.js
+// node_modules/zod/v4/locales/fa.js
 var error13 = () => {
   const Sizable = {
     string: { unit: "\u06A9\u0627\u0631\u0627\u06A9\u062A\u0631", verb: "\u062F\u0627\u0634\u062A\u0647 \u0628\u0627\u0634\u062F" },
@@ -35099,7 +35053,7 @@ function fa_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/fi.js
+// node_modules/zod/v4/locales/fi.js
 var error14 = () => {
   const Sizable = {
     string: { unit: "merkki\xE4", subject: "merkkijonon" },
@@ -35212,7 +35166,7 @@ function fi_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/fr.js
+// node_modules/zod/v4/locales/fr.js
 var error15 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -35338,7 +35292,7 @@ function fr_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/fr-CA.js
+// node_modules/zod/v4/locales/fr-CA.js
 var error16 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -35446,7 +35400,7 @@ function fr_CA_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/he.js
+// node_modules/zod/v4/locales/he.js
 var error17 = () => {
   const TypeNames = {
     string: { label: "\u05DE\u05D7\u05E8\u05D5\u05D6\u05EA", gender: "f" },
@@ -35641,7 +35595,7 @@ function he_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/hr.js
+// node_modules/zod/v4/locales/hr.js
 var error18 = () => {
   const Sizable = {
     string: { unit: "znakova", verb: "imati" },
@@ -35764,7 +35718,7 @@ function hr_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/hu.js
+// node_modules/zod/v4/locales/hu.js
 var error19 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "legyen" },
@@ -35873,7 +35827,7 @@ function hu_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/hy.js
+// node_modules/zod/v4/locales/hy.js
 function getArmenianPlural(count, one, many) {
   return Math.abs(count) === 1 ? one : many;
 }
@@ -36021,7 +35975,7 @@ function hy_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/id.js
+// node_modules/zod/v4/locales/id.js
 var error21 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "memiliki" },
@@ -36128,7 +36082,7 @@ function id_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/is.js
+// node_modules/zod/v4/locales/is.js
 var error22 = () => {
   const Sizable = {
     string: { unit: "stafi", verb: "a\xF0 hafa" },
@@ -36238,7 +36192,7 @@ function is_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/it.js
+// node_modules/zod/v4/locales/it.js
 var error23 = () => {
   const Sizable = {
     string: { unit: "caratteri", verb: "avere" },
@@ -36347,7 +36301,7 @@ function it_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ja.js
+// node_modules/zod/v4/locales/ja.js
 var error24 = () => {
   const Sizable = {
     string: { unit: "\u6587\u5B57", verb: "\u3067\u3042\u308B" },
@@ -36455,7 +36409,7 @@ function ja_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ka.js
+// node_modules/zod/v4/locales/ka.js
 var error25 = () => {
   const Sizable = {
     string: { unit: "\u10E1\u10D8\u10DB\u10D1\u10DD\u10DA\u10DD", verb: "\u10E3\u10DC\u10D3\u10D0 \u10E8\u10D4\u10D8\u10EA\u10D0\u10D5\u10D3\u10D4\u10E1" },
@@ -36568,7 +36522,7 @@ function ka_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/km.js
+// node_modules/zod/v4/locales/km.js
 var error26 = () => {
   const Sizable = {
     string: { unit: "\u178F\u17BD\u17A2\u1780\u17D2\u179F\u179A", verb: "\u1782\u17BD\u179A\u1798\u17B6\u1793" },
@@ -36679,12 +36633,12 @@ function km_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/kh.js
+// node_modules/zod/v4/locales/kh.js
 function kh_default() {
   return km_default();
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ko.js
+// node_modules/zod/v4/locales/ko.js
 var error27 = () => {
   const Sizable = {
     string: { unit: "\uBB38\uC790", verb: "to have" },
@@ -36796,7 +36750,7 @@ function ko_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/lt.js
+// node_modules/zod/v4/locales/lt.js
 var capitalizeFirstCharacter = (text) => {
   return text.charAt(0).toUpperCase() + text.slice(1);
 };
@@ -37000,7 +36954,7 @@ function lt_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/mk.js
+// node_modules/zod/v4/locales/mk.js
 var error29 = () => {
   const Sizable = {
     string: { unit: "\u0437\u043D\u0430\u0446\u0438", verb: "\u0434\u0430 \u0438\u043C\u0430\u0430\u0442" },
@@ -37110,7 +37064,7 @@ function mk_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ms.js
+// node_modules/zod/v4/locales/ms.js
 var error30 = () => {
   const Sizable = {
     string: { unit: "aksara", verb: "mempunyai" },
@@ -37218,7 +37172,7 @@ function ms_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/nl.js
+// node_modules/zod/v4/locales/nl.js
 var error31 = () => {
   const Sizable = {
     string: { unit: "tekens", verb: "heeft" },
@@ -37329,7 +37283,7 @@ function nl_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/no.js
+// node_modules/zod/v4/locales/no.js
 var error32 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "\xE5 ha" },
@@ -37438,7 +37392,7 @@ function no_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ota.js
+// node_modules/zod/v4/locales/ota.js
 var error33 = () => {
   const Sizable = {
     string: { unit: "harf", verb: "olmal\u0131d\u0131r" },
@@ -37548,7 +37502,7 @@ function ota_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ps.js
+// node_modules/zod/v4/locales/ps.js
 var error34 = () => {
   const Sizable = {
     string: { unit: "\u062A\u0648\u06A9\u064A", verb: "\u0648\u0644\u0631\u064A" },
@@ -37663,7 +37617,7 @@ function ps_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/pl.js
+// node_modules/zod/v4/locales/pl.js
 var error35 = () => {
   const Sizable = {
     string: { unit: "znak\xF3w", verb: "mie\u0107" },
@@ -37773,7 +37727,7 @@ function pl_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/pt.js
+// node_modules/zod/v4/locales/pt.js
 var error36 = () => {
   const Sizable = {
     string: { unit: "caracteres", verb: "ter" },
@@ -37882,7 +37836,7 @@ function pt_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ro.js
+// node_modules/zod/v4/locales/ro.js
 var error37 = () => {
   const Sizable = {
     string: { unit: "caractere", verb: "s\u0103 aib\u0103" },
@@ -38002,7 +37956,7 @@ function ro_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ru.js
+// node_modules/zod/v4/locales/ru.js
 function getRussianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -38159,7 +38113,7 @@ function ru_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/sl.js
+// node_modules/zod/v4/locales/sl.js
 var error39 = () => {
   const Sizable = {
     string: { unit: "znakov", verb: "imeti" },
@@ -38269,7 +38223,7 @@ function sl_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/sv.js
+// node_modules/zod/v4/locales/sv.js
 var error40 = () => {
   const Sizable = {
     string: { unit: "tecken", verb: "att ha" },
@@ -38380,7 +38334,7 @@ function sv_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ta.js
+// node_modules/zod/v4/locales/ta.js
 var error41 = () => {
   const Sizable = {
     string: { unit: "\u0B8E\u0BB4\u0BC1\u0BA4\u0BCD\u0BA4\u0BC1\u0B95\u0BCD\u0B95\u0BB3\u0BCD", verb: "\u0B95\u0BCA\u0BA3\u0BCD\u0B9F\u0BBF\u0BB0\u0BC1\u0B95\u0BCD\u0B95 \u0BB5\u0BC7\u0BA3\u0BCD\u0B9F\u0BC1\u0BAE\u0BCD" },
@@ -38491,7 +38445,7 @@ function ta_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/th.js
+// node_modules/zod/v4/locales/th.js
 var error42 = () => {
   const Sizable = {
     string: { unit: "\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23", verb: "\u0E04\u0E27\u0E23\u0E21\u0E35" },
@@ -38602,7 +38556,7 @@ function th_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/tr.js
+// node_modules/zod/v4/locales/tr.js
 var error43 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "olmal\u0131" },
@@ -38708,7 +38662,7 @@ function tr_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/uk.js
+// node_modules/zod/v4/locales/uk.js
 var error44 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0456\u0432", verb: "\u043C\u0430\u0442\u0438\u043C\u0435" },
@@ -38817,12 +38771,12 @@ function uk_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ua.js
+// node_modules/zod/v4/locales/ua.js
 function ua_default() {
   return uk_default();
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/ur.js
+// node_modules/zod/v4/locales/ur.js
 var error45 = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0648\u0641", verb: "\u06C1\u0648\u0646\u0627" },
@@ -38933,7 +38887,7 @@ function ur_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/uz.js
+// node_modules/zod/v4/locales/uz.js
 var error46 = () => {
   const Sizable = {
     string: { unit: "belgi", verb: "bo\u2018lishi kerak" },
@@ -39044,7 +38998,7 @@ function uz_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/vi.js
+// node_modules/zod/v4/locales/vi.js
 var error47 = () => {
   const Sizable = {
     string: { unit: "k\xFD t\u1EF1", verb: "c\xF3" },
@@ -39153,7 +39107,7 @@ function vi_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/zh-CN.js
+// node_modules/zod/v4/locales/zh-CN.js
 var error48 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u7B26", verb: "\u5305\u542B" },
@@ -39263,7 +39217,7 @@ function zh_CN_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/zh-TW.js
+// node_modules/zod/v4/locales/zh-TW.js
 var error49 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u5143", verb: "\u64C1\u6709" },
@@ -39371,7 +39325,7 @@ function zh_TW_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/locales/yo.js
+// node_modules/zod/v4/locales/yo.js
 var error50 = () => {
   const Sizable = {
     string: { unit: "\xE0mi", verb: "n\xED" },
@@ -39479,7 +39433,7 @@ function yo_default() {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/registries.js
+// node_modules/zod/v4/core/registries.js
 var _a3;
 var $output = /* @__PURE__ */ Symbol("ZodOutput");
 var $input = /* @__PURE__ */ Symbol("ZodInput");
@@ -39529,7 +39483,7 @@ function registry() {
 (_a3 = globalThis).__zod_globalRegistry ?? (_a3.__zod_globalRegistry = registry());
 var globalRegistry = globalThis.__zod_globalRegistry;
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/api.js
+// node_modules/zod/v4/core/api.js
 // @__NO_SIDE_EFFECTS__
 function _string(Class2, params) {
   return new Class2({
@@ -40568,7 +40522,7 @@ function _stringFormat(Class2, format, fnOrRegex, _params = {}) {
   return inst;
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/to-json-schema.js
+// node_modules/zod/v4/core/to-json-schema.js
 function initializeContext(params) {
   let target = params?.target ?? "draft-2020-12";
   if (target === "draft-4")
@@ -40927,7 +40881,7 @@ var createStandardJSONSchemaMethod = (schema, io2, processors = {}) => (params) 
   return finalize(ctx2, schema);
 };
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/json-schema-processors.js
+// node_modules/zod/v4/core/json-schema-processors.js
 var formatMap = {
   guid: "uuid",
   url: "uri",
@@ -41471,7 +41425,7 @@ function toJSONSchema(input, params) {
   return finalize(ctx2, input);
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/json-schema-generator.js
+// node_modules/zod/v4/core/json-schema-generator.js
 var JSONSchemaGenerator = class {
   /** @deprecated Access via ctx instead */
   get metadataRegistry() {
@@ -41546,10 +41500,10 @@ var JSONSchemaGenerator = class {
   }
 };
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/core/json-schema.js
+// node_modules/zod/v4/core/json-schema.js
 var json_schema_exports = {};
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/schemas.js
+// node_modules/zod/v4/classic/schemas.js
 var schemas_exports2 = {};
 __export(schemas_exports2, {
   ZodAny: () => ZodAny,
@@ -41720,7 +41674,7 @@ __export(schemas_exports2, {
   xor: () => xor
 });
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/checks.js
+// node_modules/zod/v4/classic/checks.js
 var checks_exports2 = {};
 __export(checks_exports2, {
   endsWith: () => _endsWith,
@@ -41754,7 +41708,7 @@ __export(checks_exports2, {
   uppercase: () => _uppercase
 });
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/iso.js
+// node_modules/zod/v4/classic/iso.js
 var iso_exports = {};
 __export(iso_exports, {
   ZodISODate: () => ZodISODate,
@@ -41795,7 +41749,7 @@ function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/errors.js
+// node_modules/zod/v4/classic/errors.js
 var initializer2 = (inst, issues) => {
   $ZodError.init(inst, issues);
   inst.name = "ZodError";
@@ -41835,7 +41789,7 @@ var ZodRealError = /* @__PURE__ */ $constructor("ZodError", initializer2, {
   Parent: Error
 });
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/parse.js
+// node_modules/zod/v4/classic/parse.js
 var parse3 = /* @__PURE__ */ _parse(ZodRealError);
 var parseAsync2 = /* @__PURE__ */ _parseAsync(ZodRealError);
 var safeParse2 = /* @__PURE__ */ _safeParse(ZodRealError);
@@ -41849,7 +41803,7 @@ var safeDecode2 = /* @__PURE__ */ _safeDecode(ZodRealError);
 var safeEncodeAsync2 = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
 var safeDecodeAsync2 = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/schemas.js
+// node_modules/zod/v4/classic/schemas.js
 var _installedGroups = /* @__PURE__ */ new WeakMap();
 function _installLazyMethods(inst, group, methods) {
   const proto = Object.getPrototypeOf(inst);
@@ -43139,7 +43093,7 @@ function preprocess(fn, schema) {
   });
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/compat.js
+// node_modules/zod/v4/classic/compat.js
 var ZodIssueCode = {
   invalid_type: "invalid_type",
   too_big: "too_big",
@@ -43165,7 +43119,7 @@ var ZodFirstPartyTypeKind;
 /* @__PURE__ */ (function(ZodFirstPartyTypeKind2) {
 })(ZodFirstPartyTypeKind || (ZodFirstPartyTypeKind = {}));
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/from-json-schema.js
+// node_modules/zod/v4/classic/from-json-schema.js
 var z2 = {
   ...schemas_exports2,
   ...checks_exports2,
@@ -43645,7 +43599,7 @@ function fromJSONSchema(schema, params) {
   return convertSchema(normalized, ctx2);
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/coerce.js
+// node_modules/zod/v4/classic/coerce.js
 var coerce_exports = {};
 __export(coerce_exports, {
   bigint: () => bigint3,
@@ -43670,7 +43624,7 @@ function date4(params) {
   return _coercedDate(ZodDate, params);
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/zod/v4/classic/external.js
+// node_modules/zod/v4/classic/external.js
 config(en_default());
 
 // src/typebox-to-zod.ts
@@ -43734,7 +43688,7 @@ async function resolveGetModels(root, loadCompat = () => dynamicImport("@earendi
 // src/connector-cache.ts
 import { createHash } from "node:crypto";
 import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, writeFileSync } from "node:fs";
-import { dirname as dirname4, join as join6 } from "node:path";
+import { dirname as dirname3, join as join5 } from "node:path";
 var CACHE_VERSION = 2;
 var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 function scopeKeyFor(claudeConfigDir) {
@@ -43748,7 +43702,7 @@ function connectorCacheScopeDigest(scopeKey) {
 }
 function connectorCachePath(scopeKey = connectorCacheScopeKey()) {
   const digest = connectorCacheScopeDigest(scopeKey).slice(0, 16);
-  return join6(piUserDir(), "connector-cache", `${digest}.json`);
+  return join5(piUserDir(), "connector-cache", `${digest}.json`);
 }
 function readCachedConnectors(scopeKey = connectorCacheScopeKey(), now = Date.now()) {
   let raw;
@@ -43778,7 +43732,7 @@ function writeCachedConnectors(connectors, scopeKey = connectorCacheScopeKey(), 
   if (!Array.isArray(connectors) || connectors.length === 0) return false;
   const path = connectorCachePath(scopeKey);
   try {
-    mkdirSync3(dirname4(path), { recursive: true, mode: 448 });
+    mkdirSync3(dirname3(path), { recursive: true, mode: 448 });
     writeFileSync(
       path,
       JSON.stringify({ version: CACHE_VERSION, scope: connectorCacheScopeDigest(scopeKey), savedAt: now, connectors }),
@@ -43878,12 +43832,12 @@ function connectorServersSnapshot(claudeConfigDir) {
 
 // src/claude-executable.ts
 import { spawn as spawnProcess } from "child_process";
-import { accessSync, constants as fsConstants, readFileSync as readFileSync5, realpathSync as realpathSync2, statSync as statSync3 } from "fs";
-import { delimiter, join as join7 } from "path";
+import { accessSync, constants as fsConstants, readFileSync as readFileSync5, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
+import { delimiter, join as join6 } from "path";
 function executableFromPath(name) {
   const paths = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
   for (const dir of paths) {
-    const candidate = join7(dir, name);
+    const candidate = join6(dir, name);
     try {
       accessSync(candidate, fsConstants.X_OK);
       return candidate;
@@ -43951,7 +43905,7 @@ function classifyClaudeExecutableBytes(bytes) {
 function preflightClaudeExecutable(path, cwd) {
   let realCwd;
   try {
-    const cwdStat = statSync3(cwd);
+    const cwdStat = statSync2(cwd);
     if (!cwdStat.isDirectory()) {
       throw makeClaudePreflightError("Claude Code spawn cwd preflight failed: cwd is not a directory.", {
         code: "ENOTDIR",
@@ -43975,7 +43929,7 @@ function preflightClaudeExecutable(path, cwd) {
   }
   let realPath;
   try {
-    const stat = statSync3(path);
+    const stat = statSync2(path);
     if (!stat.isFile()) {
       throw makeClaudePreflightError("Claude Code executable preflight failed: resolved path is not a file.", {
         code: "EACCES",
@@ -44092,14 +44046,14 @@ function spawnClaudeCodeWithDiagnostics(options) {
   };
 }
 
-// ../../../../../kendex/pi-extensions/pi-claude-bridge/node_modules/cc-session-io/dist/chunk-7RWUSC7F.js
+// node_modules/cc-session-io/dist/chunk-7RWUSC7F.js
 import { randomUUID } from "crypto";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync4, rmSync as rmSync2 } from "fs";
-import { dirname as dirname5 } from "path";
+import { dirname as dirname4 } from "path";
 import { readFileSync as readFileSync6 } from "fs";
 import { realpathSync as realpathSync3 } from "fs";
-import { homedir as homedir4 } from "os";
-import { join as join8 } from "path";
+import { homedir as homedir3 } from "os";
+import { join as join7 } from "path";
 function parseJsonl(content) {
   return content.split("\n").filter((line) => line.trim()).map(parseRecord);
 }
@@ -44117,7 +44071,7 @@ function serializeRecord(record2) {
 }
 var MAX_SANITIZED_LENGTH = 200;
 function getClaudeDir(claudeDir) {
-  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join8(homedir4(), ".claude");
+  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join7(homedir3(), ".claude");
 }
 function normalizeProjectPath(projectPath) {
   try {
@@ -44135,10 +44089,10 @@ function projectPathToHash(projectPath) {
   return `${sanitized.slice(0, MAX_SANITIZED_LENGTH)}-${Math.abs(h).toString(36)}`;
 }
 function getProjectDir(projectPath, claudeDir) {
-  return join8(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
+  return join7(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
 }
 function getSessionPath(sessionId, projectPath, claudeDir) {
-  return join8(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
+  return join7(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
 }
 function repairToolPairing(messages) {
   const result = [];
@@ -44477,7 +44431,7 @@ var Session = class {
   /** Write pending records to disk. Creates the file/directory if needed. */
   save() {
     if (this._pendingRecords.length === 0) return;
-    const dir = dirname5(this.jsonlPath);
+    const dir = dirname4(this.jsonlPath);
     if (!existsSync4(dir)) {
       mkdirSync4(dir, { recursive: true });
     }
@@ -44541,11 +44495,11 @@ function readSession(jsonlPath, projectPath) {
 
 // src/session-persistence.ts
 import { createHash as createHash2 } from "crypto";
-import { realpathSync as realpathSync4, statSync as statSync5 } from "fs";
+import { realpathSync as realpathSync4, statSync as statSync4 } from "fs";
 import { resolve as pathResolve } from "path";
 
 // src/session-verify.ts
-import { closeSync as closeSync2, openSync as openSync2, readSync as readSync2, statSync as statSync4 } from "fs";
+import { closeSync as closeSync2, openSync as openSync2, readSync as readSync2, statSync as statSync3 } from "fs";
 import { StringDecoder } from "node:string_decoder";
 function forEachJsonlLine(path, onLine) {
   const fd = openSync2(path, "r");
@@ -44589,7 +44543,7 @@ function verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount)
   const warnings = [];
   let st2;
   try {
-    st2 = statSync4(jsonlPath);
+    st2 = statSync3(jsonlPath);
   } catch (e) {
     warnings.push(`file missing after save \u2014 path=${jsonlPath} err=${e.message}`);
     return warnings;
@@ -44618,8 +44572,8 @@ function verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount)
 }
 
 // src/account-router.ts
-import { homedir as homedir5 } from "node:os";
-import { join as join9 } from "node:path";
+import { homedir as homedir4 } from "node:os";
+import { join as join8 } from "node:path";
 
 // src/rate-limit.ts
 var RATE_LIMIT_AUTO_RESUME_EVENT = "kendex:rate-limit";
@@ -44730,7 +44684,7 @@ function subscriberProfileEnv(profile, base = process.env) {
   return env;
 }
 function claudeDirForProfile(profile) {
-  return profile.configDir?.trim() || join9(homedir5(), ".claude");
+  return profile.configDir?.trim() || join8(homedir4(), ".claude");
 }
 function accountSessionScope(profile) {
   return profile ? { accountProfileId: profile.profileId, claudeConfigDir: claudeDirForProfile(profile) } : {};
@@ -44913,7 +44867,7 @@ function latestPersistedBridgeSession(sessionManager) {
 function claudeSessionExists(sessionId, cwd, claudeDir) {
   try {
     const session = openSession({ sessionId, projectPath: cwd, claudeDir });
-    statSync5(session.jsonlPath);
+    statSync4(session.jsonlPath);
     return true;
   } catch {
     return false;
@@ -45107,7 +45061,7 @@ function debugSessionPaths(label, cwd, jsonlPath, claudeDir) {
   let fileSize = null;
   let fileExists = false;
   try {
-    const st2 = statSync5(jsonlPath);
+    const st2 = statSync4(jsonlPath);
     fileExists = true;
     fileSize = st2.size;
   } catch {
@@ -46145,7 +46099,7 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
   if (accountProbe) {
     await Promise.race([
       accountProbe,
-      new Promise((resolve6) => setTimeout(resolve6, 1500))
+      new Promise((resolve5) => setTimeout(resolve5, 1500))
     ]);
   }
   debug(`consumeQuery: for-await loop exited, wasAborted=${wasAborted()}, capturedSessionId=${capturedSessionId?.slice(0, 8) ?? "none"}, failure=${failure?.kind ?? "none"}`);
@@ -46153,14 +46107,14 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
 }
 
 // src/agents-md.ts
-import { lstatSync as lstatSync2, readFileSync as readFileSync7, statSync as statSync6 } from "fs";
-import { dirname as dirname6, join as join10, resolve as resolve4 } from "path";
+import { lstatSync as lstatSync2, readFileSync as readFileSync7, statSync as statSync5 } from "fs";
+import { dirname as dirname5, join as join9, resolve as resolve3 } from "path";
 var CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD"];
 function contextFileInDir(dir) {
   for (const filename of CONTEXT_FILE_CANDIDATES) {
-    const candidate = join10(dir, filename);
+    const candidate = join9(dir, filename);
     try {
-      if (statSync6(candidate).isFile()) return candidate;
+      if (statSync5(candidate).isFile()) return candidate;
     } catch (error51) {
       let lstatCode;
       let entryExists = false;
@@ -46186,11 +46140,11 @@ function resolveAgentsMdPath() {
   return contextFileInDir(piUserDir());
 }
 function findAgentsMdInParents(startDir) {
-  let current = resolve4(startDir);
+  let current = resolve3(startDir);
   while (true) {
     const candidate = contextFileInDir(current);
     if (candidate) return candidate;
-    const parent = dirname6(current);
+    const parent = dirname5(current);
     if (parent === current) break;
     current = parent;
   }
@@ -46222,7 +46176,7 @@ function sanitizeAgentsContent(content) {
 
 // src/prompt-context.ts
 import { existsSync as existsSync5, readFileSync as readFileSync8 } from "fs";
-import { dirname as dirname7, join as join11, resolve as resolve5 } from "path";
+import { dirname as dirname6, join as join10, resolve as resolve4 } from "path";
 function readTrimmed(path) {
   try {
     if (!existsSync5(path)) return void 0;
@@ -46234,11 +46188,11 @@ function readTrimmed(path) {
   }
 }
 function findProjectAppendSystem(startDir) {
-  let current = resolve5(startDir);
+  let current = resolve4(startDir);
   while (true) {
-    const candidate = join11(current, ".pi", "APPEND_SYSTEM.md");
+    const candidate = join10(current, ".pi", "APPEND_SYSTEM.md");
     if (existsSync5(candidate)) return candidate;
-    const parent = dirname7(current);
+    const parent = dirname6(current);
     if (parent === current) break;
     current = parent;
   }
@@ -46246,7 +46200,7 @@ function findProjectAppendSystem(startDir) {
 }
 function readAppendSystemPromptFiles(cwd) {
   const files = [
-    { label: "global APPEND_SYSTEM.md", path: join11(piUserDir(), "APPEND_SYSTEM.md") }
+    { label: "global APPEND_SYSTEM.md", path: join10(piUserDir(), "APPEND_SYSTEM.md") }
   ];
   const projectPath = isolatedFromEnv() ? void 0 : findProjectAppendSystem(cwd);
   if (projectPath) files.push({ label: "project .pi/APPEND_SYSTEM.md", path: projectPath });
@@ -46585,14 +46539,14 @@ function buildMcpServers(tools, queryCtx) {
         () => finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs),
         `mcp-invocation:${tool.name}`
       );
-      return new Promise((resolve6) => {
+      return new Promise((resolve5) => {
         queryCtx.pendingToolCalls.set(toolCallId, {
           toolName: tool.name,
           args: mappedArgs,
           generation: queryCtx.callbackGeneration,
           resolve: (result) => {
             queryCtx.markToolResultResolved(toolCallId);
-            resolve6(result);
+            resolve5(result);
           }
         });
       });

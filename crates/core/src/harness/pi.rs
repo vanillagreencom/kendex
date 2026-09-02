@@ -30,7 +30,6 @@ fn pi_root_is_absolute_for(value: &str, windows: bool) -> bool {
     let mut parts = rest.split(['\\', '/']);
     matches!((parts.next(), parts.next()), (Some(server), Some(share)) if !server.is_empty() && !share.is_empty())
 }
-
 fn pi_global_root(env: &Env) -> PathBuf {
     let default = || env.home.join(".pi/agent");
     let Some(dir) = env
@@ -47,7 +46,6 @@ fn pi_global_root(env: &Env) -> PathBuf {
         default()
     }
 }
-
 #[cfg(test)]
 const PI_ROOT_ABSOLUTE_CASES: &[(&str, bool, bool)] = &[
     ("/root", true, false),
@@ -221,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn pi_root_absoluteness_matches_the_generated_contract() {
+    fn global_root_absoluteness_is_testable_for_both_platform_rules() {
         for (value, posix, windows) in PI_ROOT_ABSOLUTE_CASES {
             assert_eq!(pi_root_is_absolute_for(value, false), *posix, "{value}");
             assert_eq!(pi_root_is_absolute_for(value, true), *windows, "{value}");

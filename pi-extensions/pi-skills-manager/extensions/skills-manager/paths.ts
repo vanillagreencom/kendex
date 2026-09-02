@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
-import { piGlobalRoot, piProjectRoot } from "./pi-root.js";
+import { homedir } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
+import { piGlobalRoot } from "./pi-root.js";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionInstallScope } from "./types.js";
@@ -10,7 +11,15 @@ export function userPiDir(): string {
 }
 
 export function findProjectPiDir(cwd: string): string {
-	return join(piProjectRoot(cwd) ?? resolve(cwd), ".pi");
+	let current = resolve(cwd);
+	while (true) {
+		const candidate = join(current, ".pi");
+		if (existsSync(candidate)) return candidate;
+		if (existsSync(join(current, ".git")) || existsSync(join(current, ".kendex-lock.json"))) return candidate;
+		const parent = dirname(current);
+		if (parent === current) return join(resolve(cwd), ".pi");
+		current = parent;
+	}
 }
 
 export function projectSettingsPath(cwd: string): string {

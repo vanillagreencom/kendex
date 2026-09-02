@@ -3,6 +3,10 @@ import { basename, dirname, join, resolve } from "node:path";
 import type { InventoryItem } from "./types.js";
 import { piGlobalRoot } from "./pi-root.js";
 
+function piUserDir(): string {
+	return piGlobalRoot();
+}
+
 export function findAppendSystemScopeRoot(packageDir: string): string | undefined {
 	let dir = resolve(packageDir);
 	while (true) {
@@ -23,7 +27,7 @@ export function findAppendSystemScopeRoot(packageDir: string): string | undefine
 function isPiScopeRoot(scopeRoot: string): boolean {
 	if (existsSync(join(scopeRoot, "settings.json"))) return true;
 	if (basename(scopeRoot) === ".pi") return true;
-	return resolve(scopeRoot) === piGlobalRoot();
+	return resolve(scopeRoot) === piUserDir();
 }
 
 function appendSystemMarkers(name: string): { begin: string; end: string } {
@@ -158,7 +162,7 @@ export function removeAppendSystemBlockForUninstall(item: InventoryItem): void {
 		const scopeRoot = findAppendSystemScopeRoot(item.packageDir);
 		if (scopeRoot) targets.add(join(scopeRoot, "APPEND_SYSTEM.md"));
 	}
-	const piDir = piGlobalRoot();
+	const piDir = piUserDir();
 	if (existsSync(piDir)) targets.add(join(piDir, "APPEND_SYSTEM.md"));
 	for (const target of targets) {
 		try {
