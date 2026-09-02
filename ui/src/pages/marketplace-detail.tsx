@@ -211,8 +211,10 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                         recordsUnreadable: row?.recordsUnreadable ?? false,
                       }))}
                       showMarketplace={false}
-                      showPlaces
-                      repo={row?.repo ?? summary?.provenance ?? null}
+                      subscription={{
+                        catalog,
+                        repo: row?.repo ?? summary?.provenance ?? null,
+                      }}
                     />
                   )}
                 </TabsContent>

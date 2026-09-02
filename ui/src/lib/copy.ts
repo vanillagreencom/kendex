@@ -242,10 +242,15 @@ export const SETTINGS_MOVED_MESSAGE =
  *  read as a chant rather than a list.
  *
  *  One copy of the rule, because every surface that lists things has to
- *  read as the same writer: places a package is customized in, the kinds a
- *  catalog holds. A list with nothing in it is the caller's to handle —
- *  what an empty list should say differs by surface, and this one has no
- *  opinion about it. */
+ *  read as the same writer: the places a package is customized in, the
+ *  kinds a catalog holds, the harnesses a hook runs in. A list with
+ *  nothing in it is the caller's to handle — what an empty list should say
+ *  differs by surface, and this one has no opinion about it.
+ *
+ *  Surfaces that list with `or` rather than `and` are not this rule and
+ *  keep their own joins: `copy-customize.ts`'s place prompt and
+ *  `copy-projects.ts` both offer a choice, where an `and` would read as a
+ *  claim about all of them. */
 export const listed = (names: string[]): string =>
   names.length < 3
     ? names.join(" and ")

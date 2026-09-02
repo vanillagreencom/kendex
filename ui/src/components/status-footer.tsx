@@ -7,7 +7,7 @@ import {
   scanStatusLabel,
 } from "@/lib/copy-footer";
 import { problemsFooterLabel } from "@/lib/error-copy";
-import { relativeTime } from "@/lib/relative-time";
+import { exactTime, relativeTime } from "@/lib/relative-time";
 import { useNowTick } from "@/lib/use-now-tick";
 import { useNavStore } from "@/stores/nav";
 import { useBlockedPlaces, useProblems } from "@/stores/problems";
@@ -45,7 +45,10 @@ export function StatusFooter() {
             {problemsFooterLabel(waiting)}
           </button>
         ) : null}
-        <span className="flex items-center gap-1.5">
+        <span
+          className="flex items-center gap-1.5"
+          title={lastScanAt ? exactTime(lastScanAt) : undefined}
+        >
           {scanning ? (
             <>
               <RefreshCw className="size-3 animate-spin" />

@@ -254,10 +254,11 @@ lives in one capability table read by core and UI.
   is the split's one crossing and is drawn as such: a marketplace's own page
   names where its packages landed, the cross-marketplace list names the
   marketplace instead, and the answer is grouped once per table in
-  `lib/installed-places.ts` rather than scanned per row. It joins on the
-  subscription — scope, alias and repository together — because an alias
-  alone is not one: the same name in two manifests can point at two
-  repositories.
+  `lib/installed-places.ts` rather than scanned per row. It joins on alias
+  and repository, because an alias alone is not an identity: the same name
+  in two manifests can point at two repositories. Scope is deliberately
+  spanned — a personal subscription's package installed into a project is
+  exactly what the column exists to name.
 - **A marketplace is one thing however many places subscribe to it.**
   Subscribed lists one card per marketplace, keyed by `MarketplaceRow`'s
   `repoIdentity` — core's `source_ref::repo_identity`, one string per

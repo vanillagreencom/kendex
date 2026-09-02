@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback } from "react";
-import type { Catalog, ItemKind, MarketplaceMeta } from "@/bindings";
+import type { Catalog, MarketplaceMeta } from "@/bindings";
 import { ExternalLink } from "@/components/external-link";
 import { useCachedRead } from "@/components/marketplaces/use-catalog";
 import {
@@ -12,7 +12,7 @@ import {
   ABOUT_UPDATED_LABEL,
   catalogContents,
 } from "@/lib/copy-marketplaces";
-import { kindLabel } from "@/lib/labels";
+import { KINDS, kindLabel } from "@/lib/labels";
 import { relativeTime } from "@/lib/relative-time";
 import {
   catalogKey,
@@ -27,12 +27,14 @@ import {
  * under two roots would have this line disagree with the Packages tab the
  * reader is looking at. */
 function perKind(counts: { [key in string]: number }): string[] {
-  return Object.entries(counts)
-    .filter(([, count]) => count > 0)
-    .map(
-      ([kind, count]) =>
-        `${count} ${kindLabel(kind as ItemKind, count).toLowerCase()}`,
-    );
+  // The app's own kind order, not the map's. `counts` arrives as a Rust
+  // BTreeMap keyed by the wire name, so iterating it would put MCP servers
+  // before skills — disagreeing with the Packages tab's filter sitting
+  // beside this line, and for a serialization reason rather than a choice.
+  return KINDS.filter((kind) => (counts[kind] ?? 0) > 0).map((kind) => {
+    const count = counts[kind] ?? 0;
+    return `${count} ${kindLabel(kind, count).toLowerCase()}`;
+  });
 }
 
 /** When the catalog last changed, in the app's own coarse wording, with the

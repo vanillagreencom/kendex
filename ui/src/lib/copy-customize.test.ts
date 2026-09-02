@@ -86,3 +86,17 @@ describe("customizedLine", () => {
     );
   });
 });
+
+// The hook line lists harnesses, so it reads as the same writer as every
+// other list in the app: the `and` goes in front of the last one.
+describe("what a hook's delivery line says about three harnesses", () => {
+  it("joins them the way the rest of the app joins a list", () => {
+    const line = hookDeliverySummary([
+      { harness: "claude", mode: "runs" },
+      { harness: "codex", mode: "runs" },
+      { harness: "cursor", mode: "runs" },
+    ] as Parameters<typeof hookDeliverySummary>[0]);
+    expect(line).toContain("Claude Code, Codex and Cursor");
+    expect(line).not.toContain("Codex, Cursor");
+  });
+});

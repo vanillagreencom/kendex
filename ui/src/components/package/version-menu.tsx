@@ -87,7 +87,10 @@ export function VersionMenu({
                 <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                   {row.summary}
                 </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
+                <span
+                  className="shrink-0 text-xs text-muted-foreground"
+                  title={row.date}
+                >
                   {row.installed
                     ? held
                       ? HELD_VERSION_TAG

@@ -199,14 +199,30 @@ pub struct Changed {
 /// counts commits that touched one of `paths`, not commits walked, because
 /// `--max-count` applies after the pathspec filter. A path whose newest
 /// commit lies past it has no entry — absent is the honest reading, never
-/// a date borrowed from a commit that did not touch it. The byte cap on
-/// every read here can end the walk the same way.
+/// a date borrowed from a commit that did not touch it.
+///
+/// The byte cap does NOT end the walk that way. It refuses the whole read,
+/// so every path loses its date at once rather than the oldest losing
+/// theirs; the caller keeps `max_commits` low enough that the commit bound
+/// is the one that fires. Density is the catalog's to choose, so a wide
+/// enough one can still cross the cap — see `browse/updated.rs`.
 ///
 /// Filenames come back NUL-delimited (`-z`), never git's C-quoted default:
 /// under `core.quotePath`, which is on unless the host's gitconfig turns it
 /// off, a non-ASCII path prints as octal escapes inside quotes and matches
 /// nothing this asked for. Pinned in the invocation, so the answer does not
 /// depend on whose machine it ran on.
+///
+/// `-z` also stops git escaping control characters, so the record boundary
+/// has to be one a filename cannot hold. It is an EMPTY field: `%x00`
+/// opens each record, and with every field NUL-terminated the opening
+/// shows up as `\0\0`. No path is empty and none may contain a NUL, so a
+/// catalog cannot write a name that opens a record. A printable or
+/// control-character delimiter can be: a file named
+/// `x<0x1e>2099-01-01T00:00:00+00:00` forged a whole record under the
+/// previous `%x1e` framing, dating a sibling package to 2099 and pinning
+/// it to the top of a newest-first sort — a freshness signal beside the
+/// safety dot in an install decision. The catalog owns its own filenames.
 pub fn last_changed(
     mirror: &Path,
     tip: &str,
@@ -226,7 +242,7 @@ pub fn last_changed(
         &max,
         "--name-only",
         "-z",
-        "--format=%x1e%cI",
+        "--format=%x00%cI",
         tip,
         "--",
     ];
@@ -235,25 +251,25 @@ pub fn last_changed(
     // Newest first, so the first date a path is seen under is its answer.
     let wanted: BTreeSet<&Path> = paths.iter().map(PathBuf::as_path).collect();
     let mut found = Changed::default();
-    for record in text.split('\u{1e}') {
-        // `-z` makes every field NUL-terminated: the date, then each name
-        // that changed. Nothing is line-oriented, so a newline in a
-        // filename stays part of the filename — git writes exactly one
-        // separator newline, between the format output and the first name,
-        // and that is the only one stripped.
-        let Some((date, names)) = record.split_once('\0') else {
-            continue;
-        };
-        let date = date.trim();
-        if date.is_empty() {
-            continue;
-        }
-        for changed in names
-            .strip_prefix('\n')
-            .unwrap_or(names)
-            .split('\0')
-            .filter(|name| !name.is_empty())
-        {
+    // Every field is NUL-terminated. An empty one opens a record: the field
+    // after it is that commit's date, and the fields after that are the
+    // names it changed, until the next empty field. git writes exactly one
+    // separator newline, between the format output and the first name, and
+    // that is the only one stripped — a newline inside a filename is part
+    // of the filename.
+    let mut fields = text.split('\0');
+    // Past anything before the first record's opener.
+    while fields.next().is_some_and(|field| !field.is_empty()) {}
+    while let Some(date) = fields.next().map(str::trim).filter(|d| !d.is_empty()) {
+        // The names run to the empty field that opens the next record;
+        // consuming it here is what leaves the date of that record next.
+        let mut more = false;
+        for changed in fields.by_ref() {
+            if changed.is_empty() {
+                more = true;
+                break;
+            }
+            let changed = changed.strip_prefix('\n').unwrap_or(changed);
             // git names the file that changed; the path asked about may be
             // the directory holding it, so every ancestor is a candidate.
             for candidate in Path::new(changed).ancestors() {
@@ -266,6 +282,37 @@ pub fn last_changed(
                 }
             }
         }
+        if !more {
+            break;
+        }
     }
     Ok(found)
+}
+
+/// The newest first-parent commit at-or-before `tip` that touched any of
+/// `paths`, ISO-8601. One record of output whatever the history's size, so
+/// it cannot approach the byte cap and cannot be forged: `--name-only` is
+/// what makes a filename part of the stream, and this asks for none.
+///
+/// [`last_changed`] answers this too, in its `newest`, but only as part of
+/// dating every path — this is for the caller that wants the one date.
+pub fn newest_touching(mirror: &Path, tip: &str, paths: &[PathBuf]) -> Result<Option<String>> {
+    require_commit(tip)?;
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let specs: Vec<String> = paths.iter().map(|rel| literal(rel)).collect();
+    let mut args = vec![
+        "log",
+        "--first-parent",
+        "--max-count",
+        "1",
+        "--format=%cI",
+        tip,
+        "--",
+    ];
+    args.extend(specs.iter().map(String::as_str));
+    let text = stdout_capped(Hardened::git_bare(mirror, &args))?;
+    let date = text.trim().to_owned();
+    Ok((!date.is_empty()).then_some(date))
 }

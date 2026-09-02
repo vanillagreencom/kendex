@@ -28,6 +28,14 @@ const KIND_LABELS: Record<ItemKind, { one: string; many: string }> = {
 export const kindLabel = (kind: ItemKind, count = 1): string =>
   count === 1 ? KIND_LABELS[kind].one : KIND_LABELS[kind].many;
 
+/** The order the app shows kinds in, wherever it shows more than one:
+ *  filters, and the About tab's line about what a catalog holds. Derived
+ *  from the labels above rather than written out again — a hand-kept
+ *  second list drifts, and the one order a reader must not meet twice is
+ *  a wire order, which sorts `mcp-server` before `skill` because of how it
+ *  is serialized. */
+export const KINDS = Object.keys(KIND_LABELS) as ItemKind[];
+
 // A hook and an MCP server have nowhere to write a description — no
 // frontmatter, just an entry in a config file — so what stands in for one is
 // the command they run. That is the only thing telling two of them apart, so

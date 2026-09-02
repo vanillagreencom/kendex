@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { relativeTime } from "./relative-time";
+import { exactTime, relativeTime } from "./relative-time";
 
 describe("relativeTime", () => {
   it("reads as just now under a minute", () => {
@@ -41,5 +41,16 @@ describe("relativeTime over the ranges a commit date reaches", () => {
   it("floors years, so a year and a half is not aged to two", () => {
     expect(relativeTime(0, 548 * DAY)).toBe("1y ago");
     expect(relativeTime(0, 731 * DAY)).toBe("2y ago");
+  });
+});
+
+// A year or a month reading loses the date it came from, so every surface
+// showing one keeps the exact moment on its element. This is what the
+// surfaces holding a timestamp rather than the original string put there.
+describe("the exact moment behind a reading", () => {
+  it("is ISO-8601 in UTC", () => {
+    expect(exactTime(Date.UTC(2024, 0, 2, 3, 4, 5))).toBe(
+      "2024-01-02T03:04:05.000Z",
+    );
   });
 });

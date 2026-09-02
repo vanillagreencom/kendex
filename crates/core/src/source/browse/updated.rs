@@ -24,10 +24,23 @@ use super::Browsed;
 /// touched one of the catalog's packages — `--max-count` applies after the
 /// pathspec filter, so unrelated work in the same repository does not spend
 /// it. A package whose newest commit lies past it shows no date, the same
-/// as a catalog with no history at all. Set well clear of a mature
-/// catalog: this repository's own skills tree has been touched by under
-/// 200 first-parent commits in two years.
-const MAX_DATED_COMMITS: usize = 5_000;
+/// as a catalog with no history at all.
+///
+/// Chosen against the byte cap rather than against a catalog's age, so the
+/// two bounds cannot contradict each other. `--name-only` output runs
+/// around 600 to 750 bytes per matching commit for a catalog of a few
+/// dozen packages — 621 B/commit measured over kendex's own mirror, which
+/// puts 1 MB at about 1,600 commits — and [`history`]'s cap refuses a read
+/// over 1 MB outright, every package losing its date at once, which is the
+/// opposite of the per-package degradation this bound exists to give. At
+/// 1,000 the walk fits with room at that density. A bound of 5,000 could
+/// never be reached: the cap would always fire first.
+///
+/// Density is the catalog's to choose, so one changing enough files per
+/// commit can still cross the cap and blank the column. The Packages table
+/// is the only surface left in that blast radius: [`catalog_date`] asks a
+/// question whose answer is one record.
+const MAX_DATED_COMMITS: usize = 1_000;
 
 /// One item the catalog offers, with where its bytes are.
 pub(crate) struct Offered {
@@ -80,21 +93,11 @@ fn rel(root: &Path, found: &Path) -> Option<PathBuf> {
     (!rel.as_os_str().is_empty()).then(|| rel.to_path_buf())
 }
 
-/// One walk of the mirror's history, answering for every offered item at
-/// once.
-struct Walked {
-    changed: history::Changed,
-    /// Each asked-about item with the path it was asked about under.
-    asked: Vec<((ItemKind, String), PathBuf)>,
-    /// Items that are the catalog root itself — see [`rel`].
-    roots: Vec<(ItemKind, String)>,
-    /// The repository's own tip date, read only when [`Walked::roots`] has
-    /// something in it to spend it on.
-    tip: Option<String>,
-}
+/// The offered items sorted into the ones the history can be asked about
+/// and the ones that are the catalog root itself — see [`rel`].
+type Split = (Vec<((ItemKind, String), PathBuf)>, Vec<(ItemKind, String)>);
 
-fn walk(env: &Env, browsed: &Browsed, items: &[Offered]) -> Option<Walked> {
-    let (mirror, commit) = mirror_at(env, browsed)?;
+fn split(browsed: &Browsed, items: &[Offered]) -> Split {
     // The checkout root is the repository root, so a package's path inside
     // the catalog is the path git knows it by.
     let root = browsed.sealed.root();
@@ -108,19 +111,7 @@ fn walk(env: &Env, browsed: &Browsed, items: &[Offered]) -> Option<Walked> {
             None => {}
         }
     }
-    let paths: Vec<PathBuf> = asked.iter().map(|(_, path)| path.clone()).collect();
-    let changed =
-        history::last_changed(&mirror, &commit, &paths, MAX_DATED_COMMITS).unwrap_or_default();
-    let tip = match roots.is_empty() {
-        true => None,
-        false => history::commit_date(&mirror, &commit).ok().flatten(),
-    };
-    Some(Walked {
-        changed,
-        asked,
-        roots,
-        tip,
-    })
+    (asked, roots)
 }
 
 /// When each named package last changed, ISO-8601, in one walk of the
@@ -132,22 +123,21 @@ pub(crate) fn package_dates(
     browsed: &Browsed,
     items: &[Offered],
 ) -> BTreeMap<(ItemKind, String), String> {
-    let Some(walked) = walk(env, browsed, items) else {
+    let Some((mirror, commit)) = mirror_at(env, browsed) else {
         return BTreeMap::new();
     };
-    let mut out: BTreeMap<(ItemKind, String), String> = walked
-        .asked
+    let (asked, roots) = split(browsed, items);
+    let paths: Vec<PathBuf> = asked.iter().map(|(_, path)| path.clone()).collect();
+    let changed =
+        history::last_changed(&mirror, &commit, &paths, MAX_DATED_COMMITS).unwrap_or_default();
+    let mut out: BTreeMap<(ItemKind, String), String> = asked
         .into_iter()
-        .filter_map(|(item, path)| {
-            walked
-                .changed
-                .dates
-                .get(&path)
-                .map(|date| (item, date.clone()))
-        })
+        .filter_map(|(item, path)| changed.dates.get(&path).map(|date| (item, date.clone())))
         .collect();
-    if let Some(tip) = walked.tip {
-        for item in walked.roots {
+    if !roots.is_empty()
+        && let Some(tip) = history::commit_date(&mirror, &commit).ok().flatten()
+    {
+        for item in roots {
             out.insert(item, tip.clone());
         }
     }
@@ -162,14 +152,25 @@ pub(crate) fn package_dates(
 /// `crates/` and `ui/` — and a commit that touched only the codebase moves
 /// the tip without changing a single thing the marketplace offers. Where
 /// the catalog is the whole repository the two are the same date anyway.
+///
+/// Asked as its own one-record query rather than taken from the dating
+/// walk. The walk lists every filename in every matching commit to answer
+/// for each package separately; this wants one date, and asking for it
+/// directly is the difference between 134 kB and 21 bytes on a real
+/// mirror. It also keeps the About tab clear of the byte cap that bounds
+/// the walk.
 pub(crate) fn catalog_date(env: &Env, browsed: &Browsed, items: &[Offered]) -> Option<String> {
-    let walked = walk(env, browsed, items)?;
+    let (mirror, commit) = mirror_at(env, browsed)?;
+    let (asked, roots) = split(browsed, items);
     // A catalog that is itself one skill is the repository, so every commit
     // in it changed the catalog.
-    match walked.roots.is_empty() {
-        true => walked.changed.newest,
-        false => walked.tip,
+    if !roots.is_empty() {
+        return history::commit_date(&mirror, &commit).ok().flatten();
     }
+    let paths: Vec<PathBuf> = asked.into_iter().map(|(_, path)| path).collect();
+    history::newest_touching(&mirror, &commit, &paths)
+        .ok()
+        .flatten()
 }
 
 #[cfg(test)]

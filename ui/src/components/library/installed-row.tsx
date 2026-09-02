@@ -27,7 +27,7 @@ import {
   scopeName,
 } from "@/lib/labels";
 import type { PlaceMark } from "@/lib/place-marks";
-import { relativeTime } from "@/lib/relative-time";
+import { exactTime, relativeTime } from "@/lib/relative-time";
 import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
@@ -195,7 +195,14 @@ export function InstalledRow({
       <TableCell title={originTitle(origin)} className="text-muted-foreground">
         {originLabel(origin) || "—"}
       </TableCell>
-      <TableCell className="text-right text-xs text-muted-foreground">
+      <TableCell
+        className="text-right text-xs text-muted-foreground"
+        title={
+          group.modifiedAt != null
+            ? exactTime(group.modifiedAt * 1000)
+            : undefined
+        }
+      >
         {group.modifiedAt != null
           ? relativeTime(group.modifiedAt * 1000, Date.now())
           : "—"}

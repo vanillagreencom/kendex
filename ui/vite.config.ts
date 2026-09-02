@@ -1,7 +1,7 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import svgr from "vite-plugin-svgr";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [react(), svgr(), tailwindcss()],
@@ -9,6 +9,11 @@ export default defineConfig({
     alias: {
       "@": new URL("./src", import.meta.url).pathname,
     },
+  },
+  test: {
+    // Store hygiene for the whole suite, not per file — see the file's
+    // own comment for why a per-file reset does not hold.
+    setupFiles: ["./vitest.setup.ts"],
   },
   clearScreen: false,
   server: {

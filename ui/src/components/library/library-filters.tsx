@@ -1,6 +1,6 @@
 import { Search, X } from "lucide-react";
 import { useEffect, useRef } from "react";
-import type { HarnessId, ItemKind, Tag } from "@/bindings";
+import type { HarnessId, Tag } from "@/bindings";
 import { ScopePills } from "@/components/library/scope-pills";
 import { Input } from "@/components/ui/input";
 import {
@@ -13,20 +13,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { TAGS_ROW_LABEL } from "@/lib/copy";
 import type { ScopeSelection } from "@/lib/derive";
-import { harnessName, kindLabel, TAG_LABELS } from "@/lib/labels";
+import { harnessName, KINDS, kindLabel, TAG_LABELS } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useNavStore } from "@/stores/nav";
 
-const KINDS: ItemKind[] = [
-  "agent",
-  "skill",
-  "hook",
-  "command",
-  "mcp-server",
-  "plugin",
-  "pi-extension",
-];
 // Derived, not written out again: a tag missing from the filter is a tag
 // nobody can find, and nothing would have caught a hand-kept list drifting.
 const TAGS = Object.keys(TAG_LABELS) as Tag[];

@@ -121,7 +121,11 @@ fn open_held(env: &Env, held: &SubscriptionRef) -> Result<super::Browsed> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogAbout {
     pub report: AboutReport,
-    /// ISO-8601 committer date of the commit the catalog is read at.
+    /// ISO-8601 committer date of the newest commit that touched anything
+    /// the catalog offers — not the commit it is read at, which for a
+    /// repository that is a catalog and a codebase together moves for work
+    /// on neither. A catalog that is itself one skill takes the repository
+    /// tip, since every commit in it changed the catalog.
     pub updated_at: Option<String>,
 }
 

@@ -1,5 +1,5 @@
 import type { HookDelivery } from "@/bindings";
-import { EDITED_UPDATE_TAG, FORKED_BADGE_LABEL } from "@/lib/copy";
+import { EDITED_UPDATE_TAG, FORKED_BADGE_LABEL, listed } from "@/lib/copy";
 import type { ItemCustomization } from "@/lib/customization";
 import type { CustomizedHere } from "@/lib/customized-places";
 import type { GroupStatus } from "@/lib/derive";
@@ -137,8 +137,6 @@ export const HOOKS_HELP =
 /** The truth line under each hook, built from what the engine will actually
  *  do — never from prose in the UI. */
 export function hookDeliverySummary(rows: HookDelivery[]): string {
-  const list = (names: string[]) =>
-    names.length === 2 ? names.join(" and ") : names.join(", ");
   const named = (modes: HookDelivery["mode"][]) =>
     rows
       .filter((row) => modes.includes(row.mode))
@@ -147,12 +145,12 @@ export function hookDeliverySummary(rows: HookDelivery[]): string {
   const guidance = named(["instructions"]);
   const nowhere = named(["unavailable"]);
   const parts: string[] = [];
-  if (runs.length > 0) parts.push(`Runs in ${list(runs)}`);
+  if (runs.length > 0) parts.push(`Runs in ${listed(runs)}`);
   if (guidance.length > 0)
     parts.push(
-      `guidance only in ${list(guidance)} — nothing enforces it there`,
+      `guidance only in ${listed(guidance)} — nothing enforces it there`,
     );
-  if (nowhere.length > 0) parts.push(`can't run in ${list(nowhere)}`);
+  if (nowhere.length > 0) parts.push(`can't run in ${listed(nowhere)}`);
   if (parts.length === 0) return "";
   const line = parts.join(" · ");
   return line.charAt(0).toUpperCase() + line.slice(1);

@@ -113,11 +113,12 @@ export const ABOUT_CONTAINS_LABEL = "Contains";
 // with nothing to list: a section that appears only to say it is empty is
 // a line about kendex's reading, not about the marketplace.
 export const ABOUT_FINDINGS_TITLE = "Things the catalog gets wrong";
-// A catalog with nothing in any of the tab's four parts: no description,
-// no profile row (no author, license or homepage declared, no history to
-// date it by, and nothing counted), and nothing wrong with its own
-// configuration — a catalog with findings gets the findings section
-// instead. The tab has read it and has nothing to show.
+// A catalog with nothing in any of the tab's three parts, which is the
+// `empty` guard in about-section.tsx term for term: no description, no
+// profile row at all (no author, no license, no homepage, no history to
+// date it by, nothing counted), and nothing wrong with its own
+// configuration — findings get their own section rather than this line.
+// The tab has read it and has nothing to show.
 export const ABOUT_NOTHING_SAID = "This marketplace says nothing about itself.";
 
 /** What a catalog holds, as one line. The joining is the app's one list

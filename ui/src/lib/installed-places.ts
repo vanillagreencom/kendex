@@ -20,13 +20,17 @@ export const placesKey = (kind: string, name: string): string =>
  *  a flat list of every installation on the machine, and filtering it per
  *  row costs the table one full scan per package.
  *
- *  A subscription is a (scope, source, repository), not a name. The same
- *  alias can be declared in the personal manifest and in a project's,
- *  pointing at different repositories, so matching the alias alone credits
- *  this marketplace with installations that came from somebody else's — and
- *  a package installed under the same name from another source is a
- *  collision, which the Status column already says. `repo` is what tells
- *  the two apart, so the join asks for both.
+ *  An alias is not an identity. The same one can be declared in the
+ *  personal manifest and in a project's, pointing at different
+ *  repositories, so matching the alias alone credits this marketplace with
+ *  installations that came from somebody else's — and a package installed
+ *  under the same name from another source is a collision, which the
+ *  Status column already says. `repo` is what tells the two apart, so the
+ *  join asks for both.
+ *
+ *  Scope is deliberately spanned, not matched: a package installed into a
+ *  project from a personal subscription is exactly what this column exists
+ *  to name, and joining on scope would drop it.
  *
  *  A repository nobody subscribes to owns no installation at all, so it
  *  never names a place. `repo` unknown means the page has not read the

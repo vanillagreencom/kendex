@@ -68,7 +68,9 @@ describe("the About tab as a profile", () => {
   // root, and this line has to agree with the Packages tab beside it.
   it("names what it holds from the counts the engine shipped", () => {
     const html = render({}, null, { skill: 42, agent: 1 });
-    expect(html).toContain("42 skills and 1 agent");
+    // The app's kind order, which puts agents before skills — not the
+    // wire map's alphabetical one, and not the order they were passed in.
+    expect(html).toContain("1 agent and 42 skills");
   });
 
   it("leaves the row out when nothing has counted the catalog yet", () => {

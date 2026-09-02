@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { ProvenanceRow } from "@/bindings";
+import type { Catalog, ProvenanceRow } from "@/bindings";
 import {
   type PackageEntry,
   PackageRow,
@@ -81,21 +81,17 @@ function SortHead({
 export function PackagesTable({
   entries,
   showMarketplace,
-  showPlaces = false,
-  repo = null,
+  subscription,
 }: {
   entries: PackageEntry[];
   /** The cross-marketplace tab names each row's source; a single
    * marketplace's own page already says it once at the top. */
   showMarketplace: boolean;
-  /** Whether rows say where the package is installed from this catalog.
-   * The answer comes from the Library's provenance join, which only a
-   * marketplace's own page asks for. */
-  showPlaces?: boolean;
-  /** The repository this catalog's subscription declares. Half of the
-   * subscription's identity, so the places join can tell it from a
-   * same-named subscription somewhere else. */
-  repo?: string | null;
+  /** The one subscription this table is a page for, when it is a page for
+   * one. Its presence is what draws the Installed in column, and it
+   * carries the whole identity that column joins on — the cross-marketplace
+   * list has no single subscription and so has no column. */
+  subscription?: { catalog: Catalog; repo: string | null };
 }) {
   // A bare repository's table is one catalog's; the cross-marketplace tab
   // only ever carries subscriptions. So what the repository offers is
@@ -121,6 +117,7 @@ export function PackagesTable({
   const offerSubscribe = browsedRepo !== "" && kind === "subscribe";
 
   const [sort, setSort] = useState<PackageSort>(BY_NAME);
+  const showPlaces = subscription !== undefined;
   // Only the page that shows the column reads the join, so the
   // cross-marketplace tab neither loads it nor re-renders on it.
   const provenance = useProvenanceStore((s) => (showPlaces ? s.rows : EMPTY));
@@ -134,10 +131,10 @@ export function PackagesTable({
   // of every installation on the machine, once per render.
   const places = useMemo(
     () =>
-      showPlaces && entries.length > 0
-        ? installedPlaces(provenance, entries[0].catalog, repo)
+      subscription
+        ? installedPlaces(provenance, subscription.catalog, subscription.repo)
         : new Map<string, string>(),
-    [showPlaces, provenance, entries, repo],
+    [provenance, subscription],
   );
 
   return (

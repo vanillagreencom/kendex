@@ -2,7 +2,7 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AvailablePackage,
   Catalog,
@@ -54,17 +54,6 @@ vi.mock("@/stores/preinstall-safety", async (importOriginal) => {
 });
 
 const catalog = subscription({ scope: "global" }, "kendex");
-
-// These tests write both stores — provenance directly, nav through every
-// mount — and neither write belongs to the test after. Captured before any
-// test runs and replaced wholesale, so a reordering or an inserted test
-// cannot read another one's installations.
-const PROVENANCE = useProvenanceStore.getState();
-const NAV = useNavStore.getState();
-afterEach(() => {
-  useProvenanceStore.setState(PROVENANCE, true);
-  useNavStore.setState(NAV, true);
-});
 
 const row: AvailablePackage = {
   kind: "skill",
@@ -400,7 +389,7 @@ describe("a marketplace's own packages table", () => {
       <PackagesTable
         entries={[dated("review", null), dated("apply", null)]}
         showMarketplace={false}
-        showPlaces
+        subscription={{ catalog, repo: null }}
       />,
     );
     expect(html.indexOf(">apply<")).toBeLessThan(html.indexOf(">review<"));
@@ -469,8 +458,7 @@ describe("a marketplace's own packages table", () => {
       <PackagesTable
         entries={[dated("gh", null)]}
         showMarketplace={false}
-        showPlaces
-        repo="a/b"
+        subscription={{ catalog, repo: "a/b" }}
       />,
     );
     const text = host.textContent ?? "";
@@ -500,7 +488,7 @@ describe("a marketplace's own packages table", () => {
       <PackagesTable
         entries={[dated("gh", null)]}
         showMarketplace={false}
-        showPlaces
+        subscription={{ catalog, repo: null }}
       />,
     );
     expect(host.textContent ?? "").not.toContain("hyprtrade");
@@ -531,7 +519,7 @@ describe("re-sorting a marketplace's packages", () => {
           },
         ]}
         showMarketplace={false}
-        showPlaces
+        subscription={{ catalog, repo: null }}
       />,
     );
     const names = () =>
@@ -552,10 +540,10 @@ describe("re-sorting a marketplace's packages", () => {
 });
 
 // Placed after the tests that write the provenance store, and reading it
-// without writing anything: without the reset above, this sees the
-// installations the places test left behind and names a place nobody asked
-// about. The coupling is otherwise invisible — the file simply happens to
-// be ordered so nothing later looks.
+// without writing anything. The reset that puts it back is the suite's,
+// in vitest.setup.ts, not this file's — a per-file one was tried and the
+// same commit that added it opened the same hole in another file. This is
+// what reddens if the shared reset goes.
 describe("what one test's store writes leave for the next", () => {
   it("starts from the store as it was, not as the last test left it", () => {
     // `rows` alone would not catch it: the tests above happen to end on one

@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { TAGS_ROW_LABEL } from "@/lib/copy";
 import { groupScopes, type ItemGroup } from "@/lib/derive";
 import { kindLabel, scopeName } from "@/lib/labels";
-import { relativeTime } from "@/lib/relative-time";
+import { exactTime, relativeTime } from "@/lib/relative-time";
 import { versionLabel } from "@/lib/versions";
 import { subscription } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
@@ -118,7 +118,9 @@ export function PackageMetaBlock({
         </Row>
         {group.modifiedAt != null ? (
           <Row label="Updated">
-            {relativeTime(group.modifiedAt * 1000, Date.now())}
+            <span title={exactTime(group.modifiedAt * 1000)}>
+              {relativeTime(group.modifiedAt * 1000, Date.now())}
+            </span>
           </Row>
         ) : null}
       </dl>
