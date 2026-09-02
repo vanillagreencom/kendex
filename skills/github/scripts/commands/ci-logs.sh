@@ -37,12 +37,11 @@ classify_error_type() {
     local job_name="$1"
     local logs="$2"
 
-    # Check logs for specific patterns. Each grep reads a here-string, never a
-    # pipe: `grep -q` exits on its first match, and against `echo "$logs" |` that
-    # SIGPIPEs the writer once the log passes the 64KB pipe buffer. In condition
-    # position `errexit` does not fire, so the 141 read as a plain no-match and a
-    # matching log fell through to the job-name heuristics (KEN-1143). `--lines
-    # 100` keeps the default under the buffer; `--lines 200` reopened it.
+    # Each grep reads a here-string, never a pipe: `grep -q` exits on its first
+    # match, and past the 64KB pipe buffer that SIGPIPEs the writer, which
+    # `pipefail` reports as a 141 a condition reads as no-match (KEN-1143).
+    # `--lines` caps lines and never bytes, so no default holds the scanned
+    # window under the buffer.
     if grep -qi 'cargo fmt\|Diff in' <<<"$logs"; then
         echo "fmt"
     elif grep -qi 'clippy' <<<"$logs"; then
@@ -194,13 +193,15 @@ main() {
     fi
 
     if [ "$log_status" -ne 0 ]; then
-        # Flattened and clipped in-shell: `| head -c 300` closes after 300 bytes
-        # and SIGPIPEs `tr` on any gh error text past the pipe buffer, and this
-        # assignment has no guard, so `errexit` killed the branch that exists to
-        # report the fetch failure — exit 141, no JSON, no message (KEN-1143).
+        # Clipped in-shell, and clipped BEFORE flattening: `| head -c 300`
+        # SIGPIPEs `tr` past the pipe buffer and this assignment has no guard,
+        # so errexit takes down the branch that reports the failure (KEN-1143);
+        # `${var//…}` over a whole multi-megabyte log is quadratic, so the 300
+        # characters that survive are the ones that get replaced. Newline for
+        # space is one character for one, so the order does not change the text.
         local log_detail
-        log_detail="${logs//$'\n'/ }"
-        log_detail="${log_detail:0:300}"
+        log_detail="${logs:0:300}"
+        log_detail="${log_detail//$'\n'/ }"
         if [ "$format" = "safe" ]; then
             jq -n --arg run_id "$run_id" --arg detail "$log_detail" \
                 '{error: "log_fetch_failed", run_id: $run_id, details: $detail}'
@@ -218,13 +219,18 @@ main() {
 
     case "$format" in
     safe | json)
-        jq -n \
+        # The log reaches jq on stdin, never in argv: a single argument over
+        # MAX_ARG_STRLEN (128KB) is refused by the kernel, and `--arg logs`
+        # dropped the whole result — no error_type, no run_id, nothing on
+        # stdout — for the large logs this command exists to report (KEN-1143).
+        # `-Rs` slurps that raw text into the one string `.`. jq reads to EOF,
+        # so nothing here closes on a writer.
+        printf '%s' "$logs" | jq -Rs \
             --arg run_id "$run_id" \
             --arg job "$job_name" \
             --arg workflow "$workflow_name" \
             --arg error_type "$error_type" \
-            --arg logs "$logs" \
-            '{run_id: $run_id, job: $job, workflow: $workflow, error_type: $error_type, logs: $logs}'
+            '{run_id: $run_id, job: $job, workflow: $workflow, error_type: $error_type, logs: .}'
         ;;
     text)
         echo "Job: $job_name"

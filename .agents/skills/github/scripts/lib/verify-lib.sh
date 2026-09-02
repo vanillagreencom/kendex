@@ -191,12 +191,11 @@ run_stack() {
         else
             end_time=$(date +%s)
             duration=$((end_time - start_time))
-            # `grep -m 5` caps the summary where `| head -5` used to: head closed
-            # the pipe on its fifth line, SIGPIPEd grep, and pipefail made 141
-            # the status of this unguarded assignment, so under a live errexit
-            # the branch died before recording anything (KEN-1143). Only the
-            # `|| true` at verify_prs' call site hid that. grep now reads a
-            # here-string and tr reads to EOF: no stage closes on a writer.
+            # `grep -m 5` caps the summary and `tr` reads to EOF, so no stage
+            # closes on a writer: `| head -5` SIGPIPEs grep, and the 141
+            # pipefail puts on this unguarded assignment kills the branch
+            # wherever errexit is live (KEN-1143). `|| true` covers a no-match,
+            # which is a blank summary and not a failure to record one.
             local error_summary
             error_summary=$(grep -m 5 -E "^error|^Error|FAILED" <<<"$output" | tr '\n' ' ' || true)
             RESULTS_JSON=$(echo "$RESULTS_JSON" | jq \
@@ -301,8 +300,17 @@ verify_prs() {
         fi
 
         if ! git merge FETCH_HEAD --no-edit -m "Merge PR #$pr_num for verification" 2>/dev/null; then
-            local conflict_files
-            conflict_files=$(git diff --name-only --diff-filter=U 2>/dev/null | head -10 | tr '\n' ', ' | sed 's/,$//')
+            # Captured whole, then windowed in-shell, for the reason the two
+            # summary branches above carry (KEN-1143): `| head -10` closing on
+            # git leaves a 141 on an assignment errexit takes the branch down
+            # for, and this branch is the one that reports the conflict.
+            local conflicts conflict_files diff_status=0
+            conflicts=$(git diff --name-only --diff-filter=U 2>/dev/null) || diff_status=$?
+            if [ "$diff_status" -gt 1 ]; then
+                conflict_files="could not list conflicted paths (git diff exited $diff_status)"
+            else
+                conflict_files=$(head -n 10 <<<"$conflicts" | tr '\n' ', ' | sed 's/,$//')
+            fi
             add_issue "high" "merge_conflict" "PR #$pr_num conflicts: $conflict_files" "Merge earlier PRs first, then rebase #$pr_num"
             git merge --abort 2>/dev/null || true
             all_merged=false
@@ -412,6 +420,12 @@ verify_prs() {
 # Entry point. Guarded the way commands/ci-logs.sh guards its own, so a suite can
 # source this file for one function instead of driving verify_prs end to end;
 # pr-cross-check.sh only ever execs it, so dispatch is unchanged.
+#
+# The sourcing contract: this file sets `errexit`, `nounset` and `pipefail` on
+# the sourcing shell, resolves PROJECT_ROOT through git at source time, and
+# owns the unnamespaced globals PROJECT_ROOT, RESULTS_JSON, VERIFY_DIR,
+# TEMP_BRANCH, START_TIME, STEP, TOTAL_STEPS and RED/GREEN/YELLOW/BLUE/NC. A
+# sourcer inherits all of it and must be written for it.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     case "${1:-}" in
         verify_prs)

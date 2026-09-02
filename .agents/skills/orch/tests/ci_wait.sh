@@ -838,8 +838,8 @@ transient_log="$TMP_ROOT/case36-log"
 } > "$transient_log"
 transient_window_bytes=$(head -n 200 "$transient_log" | wc -c)
 transient_tail_bytes=$(($(wc -c <"$transient_log") - transient_window_bytes))
-assert_le 131072 "$transient_window_bytes" "case36: scanned window clears two pipe buffers"
-assert_le 65536 "$transient_tail_bytes" "case36: log past the window clears one pipe buffer"
+assert_le 131072 "$transient_window_bytes" "case36: two pipe buffers fit inside the scanned window"
+assert_le 65536 "$transient_tail_bytes" "case36: one pipe buffer fits inside the log past the window"
 
 stderr="$TMP_ROOT/case36.err"
 rerun_calls="$TMP_ROOT/case36-rerun"

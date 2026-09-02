@@ -95,6 +95,28 @@ assert_eq "$(jq -r '.tests.rust.success' <<<"$results")" "false" "the test failu
 assert_eq "$(jq -r '.tests.rust.error | startswith($l)' --arg l "$expected_line" <<<"$results")" "true" "the test summary carries the first error line"
 assert_eq "$(jq -r '[.issues[] | select(.type == "rust_tests_failed")] | length' <<<"$results")" "1" "the test failure raises its issue"
 
+# A failure whose output matches no summary pattern. grep exits 1, and without
+# the `|| true` on the assignment errexit takes the branch down at the no-match
+# — the same lost record as the SIGPIPE, reached without one. The summary is
+# empty because there was nothing to summarize; the entry and its issue are not.
+cat > "$TMP_ROOT/quiet-fail.sh" <<'CMD'
+#!/usr/bin/env bash
+echo "build stopped: nothing here matches"
+exit 1
+CMD
+chmod +x "$TMP_ROOT/quiet-fail.sh"
+
+echo "=== a failure matching no pattern is still recorded (KEN-1143) ==="
+results="$(drive "rust|bash $TMP_ROOT/quiet-fail.sh||.")"
+assert_eq "$(jq -r '.builds.rust.success' <<<"$results")" "false" "the unmatched build failure is recorded"
+assert_eq "$(jq -r '.builds.rust.error' <<<"$results")" "" "its summary is empty, not missing"
+assert_eq "$(jq -r '[.issues[] | select(.type == "rust_build_failed")] | length' <<<"$results")" "1" "the unmatched build failure raises its issue"
+
+results="$(drive "rust||bash $TMP_ROOT/quiet-fail.sh|.")"
+assert_eq "$(jq -r '.tests.rust.success' <<<"$results")" "false" "the unmatched test failure is recorded"
+assert_eq "$(jq -r '.tests.rust.error' <<<"$results")" "" "its summary is empty, not missing"
+assert_eq "$(jq -r '[.issues[] | select(.type == "rust_tests_failed")] | length' <<<"$results")" "1" "the unmatched test failure raises its issue"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
