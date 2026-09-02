@@ -8,7 +8,7 @@ import {
   type Scope,
   type VersionRow,
 } from "@/bindings";
-import { installedCommits } from "@/lib/package-places";
+import { installedCommits, landedWrites } from "@/lib/package-places";
 import type { PackageReads } from "@/lib/package-read-state";
 import {
   READ_PENDING,
@@ -86,6 +86,12 @@ export function usePackageData(ref: PackageRef | null): {
       ? ""
       : installedCommits(s.rows, ref.kind, ref.name, [ref.scope]),
   );
+  // The commit's other half: a write that committed and could not be read
+  // back leaves the commit where it was, and the files under it are new all
+  // the same.
+  const written = useUpdatesStore((s) =>
+    ref === null ? "" : landedWrites(s.writes, ref.kind, ref.name, [ref.scope]),
+  );
 
   const load = useCallback(() => {
     if (!ref) return;
@@ -128,8 +134,8 @@ export function usePackageData(ref: PackageRef | null): {
     );
   }, [ref]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the commit a landed update moves, not a value `load` closes over
-  useEffect(load, [load, commit]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: what a landed update moves, not values `load` closes over
+  useEffect(load, [load, commit, written]);
   return { meta, files, versions, reads: { record, timeline, reading }, load };
 }
 

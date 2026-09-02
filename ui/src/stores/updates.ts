@@ -7,6 +7,7 @@ import {
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_ONE_AT_A_TIME_NOTE,
 } from "@/lib/copy-updates";
+import { countingWrites } from "@/lib/package-places";
 import { READ_PENDING } from "@/lib/read-state";
 import { rescanEverything } from "@/lib/rescan";
 import { caught, settled } from "@/lib/settled";
@@ -39,6 +40,13 @@ interface UpdatesState extends Standing {
    *  `busy` exclude each other: a fetch builds its report once, so a commit
    *  landing while it is out would be missing from it. */
   checking: boolean;
+  /** How many writes have landed in each place, keyed by
+   *  `package-places.ts` [`placeKey`]. A page about one of them keys its own
+   *  reads on this beside the installed commit: a write that commits and then
+   *  cannot be read back leaves that commit where it was, and the files under
+   *  it are new all the same. Counted per place, so a write to another
+   *  package refetches nothing here. */
+  writes: Record<string, number>;
   /** Follow switches already moved on screen whose write has not answered.
    *  A flip's scope is what decides which rows the landing behind it may
    *  not be acted on from. */
@@ -78,6 +86,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
 
   const { landOwn, reload } = standingReads(set, get);
 
+  const wrote = (rows: UpdateRow[]) =>
+    set({ writes: countingWrites(get().writes, rows) });
+
   /** What an action says when the rows it was handed are not ones to act
    *  on: nothing has confirmed them, or a read is about to replace them. */
   const needsCheck = () =>
@@ -98,6 +109,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     reading: false,
     pendingFollows: [],
     read: READ_PENDING,
+    writes: {},
 
     reload,
 
@@ -144,7 +156,10 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         // Whatever it answered, the standing is read again: the work can
         // commit and then fail, and the rows must be what landed.
         await reload();
-        if (applied) await rescanEverything();
+        if (applied) {
+          wrote([row]);
+          await rescanEverything();
+        }
       });
     },
 
@@ -193,6 +208,10 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           what,
           packageCount(what.lost),
         );
+        // The same record off the same fact, which is why this run and the
+        // single-package one above share it: `wrote` is the rows the applies
+        // answered for either way.
+        wrote(what.wrote);
         await rescanEverything();
       });
     },

@@ -80,6 +80,43 @@ const rowFor = (
       one.kind === kind && one.name === name && sameScope(one.scope, scope),
   ) ?? null;
 
+/** One place's identity for this package, as a string to key by. Scoped as
+ *  well as named: another package in the same project, or this one in another
+ *  project, is a different place. */
+export const placeKey = (kind: ItemKind, name: string, scope: Scope): string =>
+  `${kind}|${name}|${scopeKey(scope)}`;
+
+/** These counts with one more landed write recorded against every place in
+ *  `rows`. Handed the rows the applies answered for, never the rows a click
+ *  covered: a place the plan held back has nothing new to read. */
+export const countingWrites = (
+  writes: Record<string, number>,
+  rows: { kind: ItemKind; name: string; scope: Scope }[],
+): Record<string, number> => {
+  const counted = { ...writes };
+  for (const row of rows) {
+    const key = placeKey(row.kind, row.name, row.scope);
+    counted[key] = (counted[key] ?? 0) + 1;
+  }
+  return counted;
+};
+
+/** How many writes have landed in each place, as one string to watch — the
+ *  same shape as [`installedCommits`] and read beside it.
+ *
+ *  A write that commits and then cannot be read back leaves the rows on the
+ *  commit they had: nothing confirmed a new one, which is the truth about the
+ *  rows and not about the files under them. So a landed write moves this
+ *  whether or not the read behind it moved the commit, and a page about the
+ *  place reads its package again either way. */
+export const landedWrites = (
+  writes: Record<string, number>,
+  kind: ItemKind,
+  name: string,
+  scopes: Scope[],
+): string =>
+  scopes.map((scope) => writes[placeKey(kind, name, scope)] ?? 0).join("|");
+
 /** The commit each place has installed, as one string to watch. Core
  *  stamps a new install date whenever the source hash moves, so a landed
  *  update changes this while an unrelated store touch leaves it alone —

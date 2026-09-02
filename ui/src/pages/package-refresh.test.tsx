@@ -236,85 +236,119 @@ describe("the package page while a check is running", () => {
   });
 });
 
+/** The engine before and after the apply lands: core stamps the whole
+ *  installation when the source hash moves, so the record, the timeline and
+ *  the files move together. The standing read behind the write is the
+ *  caller's, since that is what the two cases differ on. */
+const engineWrites = () => {
+  const write = { landed: false };
+  vi.mocked(commands.packageMeta).mockResolvedValue({
+    status: "ok",
+    data: RECORD,
+  });
+  vi.mocked(commands.packageVersions).mockImplementation(() =>
+    Promise.resolve({
+      status: "ok",
+      data: write.landed
+        ? [version(NEW, "v2", true)]
+        : [version(NEW, "v2", false), version(OLD, "v1", true)],
+    }),
+  );
+  vi.mocked(commands.packageFiles).mockImplementation(() =>
+    Promise.resolve({
+      status: "ok",
+      data: [
+        {
+          path: write.landed ? "AFTER.md" : "BEFORE.md",
+          size: 10,
+          isReadme: false,
+        },
+      ],
+    }),
+  );
+  vi.mocked(commands.packageUpdate).mockImplementation(() => {
+    write.landed = true;
+    return Promise.resolve({
+      status: "ok",
+      data: { view: APPLIED, heldBack: [], removed: [], moved: [] },
+    });
+  });
+  // The rescan behind the apply finds the same machine: the package is
+  // installed where it was, so the page stays on screen.
+  vi.mocked(commands.scanMachine).mockImplementation(() =>
+    Promise.resolve({
+      status: "ok",
+      data: useScanStore.getState().result as ScanResult,
+    }),
+  );
+  useUpdatesStore.setState({ rows: [rowAt(OLD, true)], read: READ_LANDED });
+  return write;
+};
+
+/** The card's Update, pressed, with the Overview back on screen after. */
+const pressUpdate = async (host: HTMLElement) => {
+  await openTab(host, PROJECTS_TAB);
+  const update = [...host.querySelectorAll("button")].find(
+    (one) => one.getAttribute("aria-label") === updateInLabel("vg"),
+  );
+  if (!update) throw new Error("no Update on the vg card");
+  await act(async () => {
+    update.click();
+  });
+  await settle();
+  await openTab(host, OVERVIEW_TAB);
+};
+
 describe("the package page after an update started from its Projects tab", () => {
   it("re-reads its files, its version and its update offer", async () => {
-    // What the engine answers before and after the apply lands: core stamps
-    // the whole installation when the source hash moves, so the record, the
-    // timeline and the files move together.
-    let landed = false;
-    vi.mocked(commands.packageMeta).mockResolvedValue({
-      status: "ok",
-      data: RECORD,
-    });
-    vi.mocked(commands.packageVersions).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: landed
-          ? [version(NEW, "v2", true)]
-          : [version(NEW, "v2", false), version(OLD, "v1", true)],
-      }),
-    );
-    vi.mocked(commands.packageFiles).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: [
-          {
-            path: landed ? "AFTER.md" : "BEFORE.md",
-            size: 10,
-            isReadme: false,
-          },
-        ],
-      }),
-    );
-    vi.mocked(commands.packageUpdate).mockImplementation(() => {
-      landed = true;
-      return Promise.resolve({
-        status: "ok",
-        data: { view: APPLIED, heldBack: [], removed: [], moved: [] },
-      });
-    });
+    const write = engineWrites();
     // The standing read the store lands behind its own apply.
     vi.mocked(commands.updatesOverview).mockImplementation(() =>
       Promise.resolve({
         status: "ok",
         data: {
-          rows: [rowAt(landed ? NEW : OLD, !landed)],
+          rows: [rowAt(write.landed ? NEW : OLD, !write.landed)],
           warnings: [],
           unreadable: [],
           lastFetched: null,
         },
       }),
     );
-    // The rescan behind the apply finds the same machine: the package is
-    // installed where it was, so the page stays on screen.
-    vi.mocked(commands.scanMachine).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: useScanStore.getState().result as ScanResult,
-      }),
-    );
-    useUpdatesStore.setState({ rows: [rowAt(OLD, true)], read: READ_LANDED });
 
     const host = await openPage();
     expect(host.textContent).toContain("BEFORE.md");
     expect(host.textContent).toContain("v1");
     expect(header(host)).toContain(UPDATE_LABEL);
 
-    await openTab(host, PROJECTS_TAB);
-    const update = [...host.querySelectorAll("button")].find(
-      (one) => one.getAttribute("aria-label") === updateInLabel("vg"),
-    );
-    if (!update) throw new Error("no Update on the vg card");
-    await act(async () => {
-      update.click();
-    });
-    await settle();
-    await openTab(host, OVERVIEW_TAB);
+    await pressUpdate(host);
 
     expect(host.textContent).toContain("AFTER.md");
     expect(host.textContent).not.toContain("BEFORE.md");
     expect(host.textContent).toContain("v2");
     expect(host.textContent).not.toContain("v1");
     expect(header(host)).not.toContain(UPDATE_LABEL);
+  });
+
+  // A write that commits and then cannot be read back is still a write: the
+  // store keeps the rows it had, so the commit the page watches never moves,
+  // and the files and version under it would go on describing the copy the
+  // update replaced. The header says the standing needs a check; the Overview
+  // has no such excuse.
+  it("re-reads them when the read behind the write fails", async () => {
+    engineWrites();
+    vi.mocked(commands.updatesOverview).mockRejectedValue(
+      new Error("overview wedged"),
+    );
+
+    const host = await openPage();
+    expect(host.textContent).toContain("BEFORE.md");
+    expect(host.textContent).toContain("v1");
+
+    await pressUpdate(host);
+
+    expect(host.textContent).toContain("AFTER.md");
+    expect(host.textContent).not.toContain("BEFORE.md");
+    expect(host.textContent).toContain("v2");
+    expect(host.textContent).not.toContain("v1");
   });
 });
