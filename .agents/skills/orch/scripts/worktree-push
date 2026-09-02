@@ -223,9 +223,9 @@ reconcile_round_authorizations() {
 		}
 		jq -e --slurpfile recovery "$recovery" --arg issue "$state_key" \
 			--arg round "$round_id" --arg worktree "$worktree_abs" '
-			.schema_version == 1 and .issue == $issue and .round_id == $round
+			.schema_version == 2 and .issue == $issue and .round_id == $round
 			and .worktree == $worktree and ($recovery | length) == 1
-			and $recovery[0].schema_version == 2
+			and $recovery[0].schema_version == 3
 			and $recovery[0].issue == .issue and $recovery[0].round_id == .round_id
 			and $recovery[0].base_sha == .base_sha and $recovery[0].adds == .adds
 			and $recovery[0].items == .items

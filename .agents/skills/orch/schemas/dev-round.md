@@ -14,42 +14,44 @@ The recovery copy is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`.
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "round_id": "1769600000123456789-1837",
   "issue": "issue-1230",
   "base_sha": "0123456789abcdef0123456789abcdef01234567",
   "adds": ["tools/refresh-fixture"],
   "items": [
-    { "n": 1, "text": "#1 | security-review | src/auth.rs\nDescription: \"token refresh races\"\nRecommendation: \"serialize refresh behind the existing lock\"", "reach": "a concurrent refresh from two open sessions on one account" }
+    { "n": 1, "text": "#1 | security-review | src/auth.rs\nDescription: \"token refresh races\"\nRecommendation: \"serialize refresh behind the existing lock\"", "reach": "a concurrent refresh from two open sessions on one account", "introduced": "round-1" }
   ]
 }
 ```
 
 | Field | Required | Writer flag | Description |
 |-------|----------|-------------|-------------|
-| `schema_version` | Yes | constant `2` | Record schema version |
+| `schema_version` | Yes | constant `3` | Record schema version |
 | `round_id` | Yes | `--round-id` | Per-delegation token; equals the filename token and the round's `dev_round_id` |
 | `issue` | Yes | `--issue` | Normalized workflow-state key |
 | `base_sha` | Yes | captured from `HEAD` | Commit at delegation time |
 | `adds` | Yes | `--adds-file JSON_PATH` | Exact protected additions the round may make; an empty array allows none in the protected scope |
-| `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
+| `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH INTRODUCED` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` what reaches the finding, and `introduced` where the defective code entered the branch |
 
-`--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
+`--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH INTRODUCED` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
 
 **`reach` is required per item, on both routes.** It names what reaches the finding: a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix.
 
 What the writer itself refuses is a short list, not a scanner: an empty or whitespace-only reach, a `PRRT_` review-thread node id anywhere in the value, and a few literal values. A value outside those shapes is recorded, not approved. The classes [`../references/finding-disposition.md` § Decision flow](../references/finding-disposition.md#decision-flow) excludes at Step 0 are the orchestrator's judgement at disposition time, before any round is delegated; `skills/orch/tests/dev_round_write.sh` pins the writer's verdict.
 
+**`introduced` is required per item, on both routes.** `base` means the code predates the branch. `round-1` means the implementation round added it. `round-N` with N >= 2 names a prior fix round and is refused: revert that round's addition instead of patching it.
+
 An `Adds:` delegation line maps to a JSON array passed through `--adds-file`; repository paths never enter shell command text. The writer and reader reject absolute paths, leading or trailing empty components, double slashes, `.` and `..` components, newlines, carriage returns, and duplicates. Omit the line and flag when no additions are allowed.
 
-The external authorization adds `"schema_version": 1`, `"worktree": "[CANONICAL_WORKTREE_ROOT]"`, and `"live": true` to the same issue, round, base, additions, and items fields.
+The external authorization adds `"schema_version": 2`, `"worktree": "[CANONICAL_WORKTREE_ROOT]"`, and `"live": true` to the same issue, round, base, additions, and items fields.
 
 **Immutable per round**, and retired on acceptance: `dev-round-write --help` and `dev-artifact-check --help` carry both contracts. Mint a new round and never fall back to an unbound item list. An analysis round has no delegated items and writes no record.
 
 ## Readers
 
 - **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the external authorization; its gates and refusal reasons are that script's `--help`.
-- **A respawned dev agent** reads `items[]` to recover the item numbers, texts, and reaches.
+- **A respawned dev agent** reads `items[]` to recover the item numbers, texts, reaches, and introduction markers.
 - **The tail-reconciliation nudge** points at the record.
 
 The record is input, never receipt: it proves what was delegated, not that anything completed. Completion stays with [`dev-return.md`](dev-return.md) and the A/B acceptance tables.

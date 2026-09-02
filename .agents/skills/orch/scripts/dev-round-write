@@ -25,7 +25,7 @@
 #
 # Usage:
 #   dev-round-write --worktree PATH --issue ID --round-id RID \
-#     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
+#     (--item N TEXT REACH INTRODUCED [--item N TEXT REACH INTRODUCED]... | --items-file JSON_PATH) \
 #     [--adds-file JSON_PATH]
 #
 # One --item per delegated review item: N is the item's delegated number (the
@@ -33,17 +33,20 @@
 # integer, no leading zeros), TEXT is that item's full formatted block verbatim
 # (multi-line is fine; plain text, no backticks, so the command stays
 # classifier-safe under Codex approval=never), and REACH names the shipped
-# producer, user action, or fixture that reaches the finding. When the item
+# producer, user action, or fixture that reaches the finding. INTRODUCED names
+# where the defective code entered the branch: base, round-1, or round-N. When the item
 # text is shell-hostile — real review blocks routinely carry backticks, which
 # strict harness classifiers reject even quoted — the orchestrator instead
-# builds a JSON array of {n, text, reach} with its harness file-write tool and
+# builds a JSON array of {n, text, reach, introduced} with its harness file-write tool and
 # passes it as --items-file (mutually exclusive with --item; same
-# n/text/reach rules, extra element keys are dropped on normalization).
+# n/text/reach/introduced rules, extra element keys are dropped on normalization).
 #
 # REACH is the fix-round bar (kendex KEN-1046): a merged-PR audit found rounds
 # answering a review thread rather than a producer, so a shape a bot typed was
 # patched as if a user had reached it. An item with no reach is a `Declined:`
 # reply, not a fix — skills/orch/references/finding-disposition.md § Filing bar.
+# An item introduced by round-N for N >= 2 repairs a prior fix round. The
+# writer refuses it so the prior round's addition is reverted, not patched.
 #
 # A round's record is IMMUTABLE once written: re-running with identical content
 # is an idempotent retry (success, same path); different content under the same
@@ -57,12 +60,12 @@
 #
 # Record schema — canonical source of truth: skills/orch/schemas/dev-round.md
 #   {
-#     "schema_version": 2,                  // worktree recovery copy
+#     "schema_version": 3,                  // worktree recovery copy
 #     "round_id": "[ROUND_ID]",             // required, matches the filename token
 #     "issue": "[ISSUE_ID]",                // required, normalized state key
 #     "base_sha": "[HEAD_AT_DELEGATION]",    // required, full commit id
 #     "adds": ["tools/allowed-file"],        // required, protected additions
-#     "items": [{"n": 1, "text": "…", "reach": "…"}]
+#     "items": [{"n": 1, "text": "…", "reach": "…", "introduced": "base"}]
 #   }
 #
 # It is a sanctioned single-command invocation. Writes the recovery copy and
@@ -91,7 +94,7 @@ usage() {
   cat <<'EOF'
 Usage:
   dev-round-write --worktree PATH --issue ID --round-id RID \
-    (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
+    (--item N TEXT REACH INTRODUCED [--item N TEXT REACH INTRODUCED]... | --items-file JSON_PATH) \
     [--adds-file JSON_PATH]
 
 Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
@@ -102,13 +105,16 @@ dev-artifact-check --expect-items-from-round checks against; canonical integer,
 no leading zeros), REACH names the shipped producer, user action, or fixture
 that reaches the finding — a command a person runs, a file a shipped writer
 emits, a test in the tree. An item with no reach is a `Declined:` reply, not a
-fix. What this script refuses is a short list, not a scanner: an empty reach, a
+fix. INTRODUCED is required per item: base means the code predates the branch,
+round-1 means the implementation round added it, and round-N names a fix round.
+A round-N value with N >= 2 is refused: revert that round's addition instead of
+patching it. What this script refuses is a short list, not a scanner: an empty reach, a
 PRRT_ review-thread node id, and a few literal values. A value outside
 those shapes is recorded, not approved — the classes in
 references/finding-disposition.md are the orchestrator's judgement, applied
 before the round is delegated. TEXT is the item's full formatted block verbatim
 (non-empty plain text, no backticks); for shell-hostile text pass
---items-file JSON_PATH, a JSON array of {n, text, reach} built with the harness
+--items-file JSON_PATH, a JSON array of {n, text, reach, introduced} built with the harness
 file-write tool (mutually exclusive with --item, same rules, extra element keys
 dropped).
 A round's record is immutable: an identical re-invocation is an idempotent
@@ -189,6 +195,31 @@ check_reach() {
   done
 }
 
+check_introduced() {
+  # $1 = the item's number, $2 = the introduction marker.
+  local n="$1" introduced="$2"
+  if is_own_flag "$introduced"; then
+    die "item $n introduced value is missing before flag '$introduced'"
+  fi
+  [[ "$introduced" == "base" || "$introduced" =~ ^round-([1-9][0-9]*)$ ]] \
+    || die "item $n introduced must be 'base' or 'round-N' with N >= 1, got '$introduced'"
+}
+
+reject_prior_fix_rounds() {
+  # $1 = the normalized items JSON.
+  local items_json="$1" prior_fixes
+  prior_fixes="$(
+    jq -r '
+      [.[]
+       | select(.introduced | test("^round-([2-9]|[1-9][0-9]+)$"))
+       | "item \(.n) (\(.introduced))"]
+      | join(", ")
+    ' <<<"$items_json"
+  )"
+  [[ -z "$prior_fixes" ]] \
+    || die "$prior_fixes repairs code added by a prior fix round: revert that round's addition instead of patching it"
+}
+
 run_size_tripwire() {
   local worktree="$1" issue="$2"
 
@@ -207,6 +238,7 @@ adds_file=""
 item_n=()
 item_text=()
 item_reach=()
+item_introduced=()
 seen_n=" "
 worktree_given=false
 issue_given=false
@@ -222,11 +254,11 @@ while (( $# > 0 )); do
     --items-file) need "$1" $# "${2:-}"; no_dup "$1" "$items_file_given"; items_file_given=true; items_file="$2"; shift 2 ;;
     --adds-file) need "$1" $# "${2:-}"; no_dup "$1" "$adds_file_given"; adds_file_given=true; adds_file="$2"; shift 2 ;;
     --item)
-      # Consumes exactly 3 args: N TEXT REACH.
-      if (( $# < 4 )); then
-        die "--item requires exactly 3 arguments: N TEXT REACH — REACH names the shipped producer, user action, or fixture that reaches the finding, and an item with no reach is a 'Declined:' reply, not a fix"
+      # Consumes exactly 4 args: N TEXT REACH INTRODUCED.
+      if (( $# < 5 )); then
+        die "--item requires exactly 4 arguments: N TEXT REACH INTRODUCED — INTRODUCED is base or round-N"
       fi
-      n="$2"; text="$3"; reach="$4"
+      n="$2"; text="$3"; reach="$4"; introduced="$5"
       # Canonical integer only: '01' would survive a bare digits check but is
       # not a JSON number and would make jq --argjson fail downstream.
       if ! [[ "$n" =~ ^(0|[1-9][0-9]*)$ ]]; then
@@ -243,11 +275,13 @@ while (( $# > 0 )); do
         die "--item TEXT must be the item's formatted block, got flag '$text' (item $n; value missing?)"
       fi
       check_reach "$n" "$reach"
+      check_introduced "$n" "$introduced"
       seen_n="$seen_n$n "
       item_n+=("$n")
       item_text+=("$text")
       item_reach+=("$reach")
-      shift 4
+      item_introduced+=("$introduced")
+      shift 5
       ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1" ;;
@@ -278,7 +312,8 @@ if [[ "$items_file_given" == "true" ]]; then
     || die "--items-file '$items_file' is not parseable JSON"
   # Same rules as inline --item, enforced on the file: a non-empty array whose
   # every element carries an integer n >= 0 (unique — the numbers form a set),
-  # a non-empty, non-whitespace text string, and a non-empty reach string.
+  # a non-empty, non-whitespace text string, a non-empty reach string, and an
+  # introduction marker.
   jq -e '
     (type == "array") and (length > 0)
     and all(.[];
@@ -287,17 +322,21 @@ if [[ "$items_file_given" == "true" ]]; then
           and ((.text? | type) == "string")
           and ((.text | gsub("[[:space:]]"; "")) != "")
           and ((.reach? | type) == "string")
-          and ((.reach | gsub("[[:space:]]"; "")) != ""))
+          and ((.reach | gsub("[[:space:]]"; "")) != "")
+          and ((.introduced? | type) == "string")
+          and (.introduced == "base" or (.introduced | test("^round-[1-9][0-9]*$"))))
     and (([.[].n] | length) == ([.[].n] | unique | length))
   ' "$items_file" >/dev/null 2>&1 \
-    || die "--items-file '$items_file' must be a non-empty JSON array of {n, text, reach} — integer n >= 0, unique, non-empty text, non-empty reach naming the producer that reaches the finding"
+    || die "--items-file '$items_file' must be a non-empty JSON array of {n, text, reach, introduced} — introduced is required and must be base or round-N with N >= 1"
   # The same refusal list the inline route enforces: a file route that skipped
   # it would be the way around the check.
   for (( i = 0, items_count="$(jq 'length' "$items_file")"; i < items_count; i++ )); do
     check_reach "$(jq -r --argjson i "$i" '.[$i].n' "$items_file")" \
       "$(jq -r --argjson i "$i" '.[$i].reach' "$items_file")"
+    check_introduced "$(jq -r --argjson i "$i" '.[$i].n' "$items_file")" \
+      "$(jq -r --argjson i "$i" '.[$i].introduced' "$items_file")"
   done
-  items_json="$(jq 'map({n: .n, text: .text, reach: .reach})' "$items_file")"
+  items_json="$(jq 'map({n: .n, text: .text, reach: .reach, introduced: .introduced})' "$items_file")"
 else
   (( ${#item_n[@]} > 0 )) \
     || die "at least one --item (or --items-file) is required: a fix round with no delegated items has nothing to persist"
@@ -308,10 +347,13 @@ else
         --argjson n "${item_n[$i]}" \
         --arg text "${item_text[$i]}" \
         --arg reach "${item_reach[$i]}" \
-        '{n: $n, text: $text, reach: $reach}'
+        --arg introduced "${item_introduced[$i]}" \
+        '{n: $n, text: $text, reach: $reach, introduced: $introduced}'
     done | jq -s '.'
   )"
 fi
+
+reject_prior_fix_rounds "$items_json"
 
 if [[ "$adds_file_given" == "true" ]]; then
   [[ -n "$adds_file" ]] || die "--adds-file requires a non-empty path"
@@ -354,7 +396,7 @@ auth_tmp="$(mktemp "$auth_dir/.dev-round-auth-$issue.XXXXXX")"
 trap 'rm -f "$tmp" "$auth_tmp"' EXIT
 
 jq -n \
-  --argjson schema_version 2 \
+  --argjson schema_version 3 \
   --arg round_id "$round_id" \
   --arg issue "$issue" \
   --arg base_sha "$base_sha" \
@@ -370,7 +412,7 @@ jq -n \
    }' > "$tmp"
 
 jq -n \
-  --argjson schema_version 1 \
+  --argjson schema_version 2 \
   --arg round_id "$round_id" \
   --arg issue "$issue" \
   --arg worktree "$worktree_root" \
