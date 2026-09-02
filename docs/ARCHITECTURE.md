@@ -255,9 +255,11 @@ lives in one capability table read by core and UI.
   Subscribed lists one card per marketplace, keyed by `MarketplaceRow`'s
   `repoIdentity` — core's `source_ref::repo_identity`, one string per
   repository on any host, the same value subscription dedup and update
-  grouping compare — else the local path a folder source carries, and only
-  where a declaration has neither by its alias, which over-splits and can
-  never merge two repositories. Never `repoKey`: that is the GitHub
+  grouping compare — else a folder source's path when that path is absolute,
+  and its path under the declaring scope when it is relative, since a
+  relative path resolves against each scope's own root and `./catalog` is a
+  different folder in every place — and only where a declaration has neither
+  by its alias. Never `repoKey`: that is the GitHub
   `owner/repo` and is null on every other host, so it silently keys those on
   the alias. `ui/src/components/marketplaces/subscribed-grouping.ts` spells
   it once as `marketplaceIdentity`; the card grid, the Projects section and

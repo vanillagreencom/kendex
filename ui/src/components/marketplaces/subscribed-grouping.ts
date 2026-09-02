@@ -49,9 +49,18 @@ export interface SubscribedMarketplace {
  * stay shared, because two places naming `/srv/catalog` really are looking
  * at one catalog.
  *
- * The alias is the last resort for a declaration carrying neither, where
- * over-splitting is the only failure left. Every branch is one of these
- * three, so no route lets two distinct marketplaces share a key. */
+ * That holds for a path spelled in the running platform's own shape, and
+ * only there: this reads rootedness from the string, accepting both
+ * platforms' shapes, while `path_root` asks `Path::is_absolute`, which
+ * answers for one. On Unix `C:/catalog` is re-rooted per scope and keyed
+ * here as one folder; a POSIX-rooted path on Windows mirrors it. Core
+ * shipping the resolved path closes that, and is filed.
+ *
+ * The alias is the last resort for a declaration carrying neither. It
+ * usually over-splits, which is harmless — but two scopes declaring such a
+ * source under one alias share `row.name`, so it can under-split too;
+ * `list_subscriptions` emits those rows rather than skipping them, though
+ * they resolve to nothing and offer no packages. */
 export const marketplaceIdentity = (row: MarketplaceRow): string => {
   if (row.repoIdentity) return row.repoIdentity;
   if (row.path)
@@ -61,9 +70,11 @@ export const marketplaceIdentity = (row: MarketplaceRow): string => {
   return row.name;
 };
 
-/** A path that names one directory wherever it is read from: POSIX-rooted,
- * a Windows drive, or a UNC share. Everything else — `./x`, `~/x`, `x/y` —
- * is resolved against the reading scope's own root. */
+/** A path spelled as rooted: POSIX-rooted, a Windows drive, or a UNC share.
+ * Everything else — `./x`, `~/x`, `x/y` — is resolved against the reading
+ * scope's own root. Both platforms' shapes are accepted here, so this
+ * answers what a path is spelled as, not what the running platform will
+ * treat it as; the block above says what that costs. */
 const absolutePath = (path: string): boolean =>
   path.startsWith("/") ||
   /^[a-zA-Z]:[\\/]/.test(path) ||
