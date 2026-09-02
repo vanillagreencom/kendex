@@ -87,6 +87,15 @@
           "apply": "live"
         },
         {
+          "key": "hookTimeoutMs",
+          "label": "Rendered guard timeout (ms)",
+          "description": "How long a rendered kendex guard may run on one bash tool call. A run past this budget judged nothing, so the command is refused whatever status the killed process carries.",
+          "type": "number",
+          "default": 60000,
+          "category": "Bash",
+          "apply": "live"
+        },
+        {
           "key": "clippyTimeoutMs",
           "label": "Clippy timeout",
           "description": "Maximum milliseconds the whole end-of-turn check may take: a quarter of it, capped at 5s, goes to the `cargo metadata` workspace lookup and the rest to `cargo clippy`, each abandoned past its share so the turn can continue. Raise for slow workspaces.",

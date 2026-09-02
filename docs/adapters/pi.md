@@ -12,12 +12,13 @@ allowlist is refused.
 | Project | `<project>/.pi`, plus the shared `<project>/.agents` | — |
 
 kendex trims `PI_CODING_AGENT_DIR`, expands `~` against the configured home,
-and uses an override only when it is absolute. Empty, whitespace-only, and
-relative values use `~/.pi/agent`.
-
-The standalone Pi packages apply the same rule in their own `piUserDir()`, so
-a relative override cannot move a package's user scope into the directory the
-session happens to sit in.
+and uses an override only when it is anchored to a named root: a drive or a
+UNC share on Windows, a leading `/` on POSIX. Empty, whitespace-only, relative
+and driveless-rooted values use `~/.pi/agent`. The standalone Pi packages read
+the variable the same way in their own `piUserDir()`, so no value of it can
+move a package's user scope into whichever directory the session sits in.
+`pi_root_is_absolute_for` in `crates/core/src/harness/pi.rs` is the rule, and
+the pi-hooks suite holds the carrier's copy against it case for case.
 
 Project markers: a `.pi/` or `.agents/` directory. Owner:
 `crates/core/src/harness/pi.rs`.
@@ -48,12 +49,14 @@ writes itself: a script exiting 1, a spawn that failed, and a run past the
 60s budget are all a guard that reached no verdict, and a guard that did not
 run does not stand aside. Only exit 0 reaches the next script, and stderr
 written beside it is an advisory for the person rather than the agent. So
-the three run the same bytes under Claude, Codex and Pi. It executes a project
-script only at Pi's current root when Pi reports that exact workspace trusted
-and `.pi/settings.json` exists. An installed ancestor or a project hook without
-that protected companion blocks the command without executing project code. The global root is
-`~/.pi/agent` or an absolute `PI_CODING_AGENT_DIR`; a relative override uses
-the default root.
+the three run the same bytes under Claude, Codex and Pi. It resolves the
+project the way the rest of the adapter does, from the nearest ancestor
+carrying a marker, and a project script runs only where Pi reports the
+workspace trusted, since spawning it executes what the project ships. Pi saves
+a trust decision for the folder or any parent, so that answer covers the tree
+and a session started in a subdirectory gets the same guards as one started at
+the root. Untrusted, the project contributes nothing and the global root still
+answers, because it holds the person's own files.
 A script the carrier finds at neither scope is a hook this project has not
 installed, and nothing runs.
 

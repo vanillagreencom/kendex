@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export const CONFIG_ID = "@vanillagreen/pi-tool-renderer";
 
@@ -56,10 +56,16 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 	return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 
+/** Root-anchored the way `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
+ * means it: a drive or UNC share on Windows, a leading `/` on POSIX. Not
+ * `isAbsolute`, which calls a driveless `\root` absolute where the renderer does
+ * not, putting the two on different roots. Hoisted, not a const: a circular
+ * import can reach this before a module-scope binding is initialized. */
+function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
 
 function piSettingsPaths(cwd = process.cwd()): string[] {
 	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	const userDir = resolve(isAbsolute(override) ? override : expandHome("~/.pi/agent"));
+	const userDir = resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
 	const user = join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];

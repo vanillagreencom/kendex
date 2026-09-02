@@ -19,7 +19,7 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve  } from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -121,9 +121,22 @@ export interface PersistenceDeps {
 	maxEntryBytes?: number;
 }
 
+/** Root-anchored the way `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
+ * means it: a drive or UNC share on Windows, a leading `/` on POSIX. Not
+ * `isAbsolute`, which calls a driveless `\root` absolute where the renderer does
+ * not, putting the two on different roots. Hoisted, not a const: a circular
+ * import can reach this before a module-scope binding is initialized. */
+function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
+
+function expandHome(input: string): string {
+	if (input === "~") return homedir();
+	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
+	return input;
+}
+
 export function piUserDir(): string {
-	const override = process.env.PI_CODING_AGENT_DIR?.trim() ?? "";
-	return resolve(isAbsolute(override) ? override : `${process.env.HOME ?? ""}/.pi/agent`);
+	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+	return resolve(rootAnchored(override, process.platform === "win32") ? override : join(homedir(), ".pi", "agent"));
 }
 
 export function safeFileName(value: string): string {

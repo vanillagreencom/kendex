@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 export function expandHome(input: string): string {
@@ -8,9 +8,16 @@ export function expandHome(input: string): string {
 	return input;
 }
 
+/** Root-anchored the way `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`
+ * means it: a drive or UNC share on Windows, a leading `/` on POSIX. Not
+ * `isAbsolute`, which calls a driveless `\root` absolute where the renderer does
+ * not, putting the two on different roots. Hoisted, not a const: a circular
+ * import can reach this before a module-scope binding is initialized. */
+function rootAnchored(path: string, windows: boolean): boolean { return windows ? /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith("/"); }
+
 export function userPiDir(): string {
 	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	return resolve(isAbsolute(override) ? override : expandHome("~/.pi/agent"));
+	return resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
 }
 
 export function findProjectPiDir(cwd: string): string {

@@ -1,59 +1,36 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
-import { getBool, getNumber, piRoots, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
+import { getBool, getNumber, piUserDir, projectRoot, projectTrusted, readConfig, recordProjectTrust } from "./config.js";
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { runCommandAsync } from "./process.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
 
-/** How long a rendered hook may run before the command counts as unjudged. The
- * bash hooks declare `timeout: 60` in their own frontmatter. */
-const HOOK_BUDGET_MS = 60_000;
-
 /**
  * Where kendex renders a Pi hook: `<project>/.pi/kendex/hooks/<name>.sh`, then
- * the global `<absolute PI_CODING_AGENT_DIR or ~/.pi/agent>/kendex/hooks/<name>.sh`.
+ * the global `<root-anchored PI_CODING_AGENT_DIR or ~/.pi/agent>/kendex/hooks/<name>.sh`.
+ * The project is `projectRoot`, so a session started in a subdirectory finds
+ * the same guards as one started at the repository root.
  *
  * The project script is EXECUTED, so it is behind Pi's project trust: a clone
  * the person has not trusted must not get its own code run on the first bash
- * call of the session. Untrusted, the project root is skipped and the global
- * root still answers — the person's own scripts are not the project's.
+ * call of the session. Pi's answer covers the folder and its ancestors alike —
+ * a saved decision applies to the folder or any parent — so it is the answer
+ * for this tree, not for one directory in it. Untrusted, the project root is
+ * skipped and the global root still answers: the person's own scripts are not
+ * the project's.
  *
- * Pi exposes trust only for the current project. An ancestor render therefore
- * proves a guard exists but cannot prove its code is trusted. Refuse instead of
- * applying the descendant's trust answer to it. A current-project render also
- * needs `.pi/settings.json`, a Pi-protected resource that prevents a hook-only
- * checkout from becoming trusted merely because the hook exists.
+ * A name neither root holds is a hook kendex has not installed here, and the
+ * caller allows the command. runRenderedHook says why that is the right answer.
  */
-function renderedHook(name: string, ctx: ExtensionContext): { script: string } | { refusal: string } | undefined {
-	const exactProject = resolve(ctx.cwd);
-	const home = resolve(homedir());
-	let current = exactProject;
-	while (current !== home) {
-		const script = resolve(current, ".pi", "kendex", "hooks", `${name}.sh`);
-		if (existsSync(script)) {
-			if (current !== exactProject) {
-				return { refusal: `pi-hooks: ${name} is installed for ancestor ${current}, but Pi cannot confirm trust for that exact project while the session is in ${exactProject}.` };
-			}
-			if (!existsSync(resolve(current, ".pi", "settings.json"))) {
-				return { refusal: `pi-hooks: ${name} exists in ${current}, but that project has no .pi/settings.json trust companion.` };
-			}
-			if (!projectTrusted(ctx)) {
-				return { refusal: `pi-hooks: ${name} exists in ${current}, but Pi does not report that exact project as trusted.` };
-			}
-			return { script };
-		}
-		const parent = dirname(current);
-		if (parent === current) break;
-		current = parent;
-	}
-
-	const script = resolve(piRoots(ctx.cwd, false).global, "kendex", "hooks", `${name}.sh`);
-	return existsSync(script) ? { script } : undefined;
+function renderedHook(name: string, ctx: ExtensionContext): string | undefined {
+	const roots: string[] = [];
+	if (projectTrusted(ctx)) roots.push(resolve(projectRoot(ctx.cwd), ".pi", "kendex"));
+	roots.push(resolve(piUserDir(), "kendex"));
+	return roots.map((root) => resolve(root, "hooks", `${name}.sh`)).find(existsSync);
 }
 
 /** A `tool_call` verdict: `undefined` allows, `block` refuses with a reason. */
@@ -79,18 +56,21 @@ type Verdict = { block: true; reason: string } | undefined;
  * can exit 0 on its way out — which is a run that judged nothing wearing the
  * status of one that allowed.
  *
- * No script at either scope means kendex has not installed this hook, so the
- * command passes. A project script found without exact authorization is
- * different: the guard exists, but executing its code is unsafe, so the
- * command is refused before spawn.
+ * No script at either scope allows the command, and that is deliberate: it
+ * means kendex has not installed this hook here. The package is installable
+ * from npm on its own, and refusing every bash call in a project that never
+ * asked for the guard would make it unusable.
+ *
+ * `budgetMs` is `hookTimeoutMs` from settings, the same route the clippy and
+ * drift budgets take; the bash hooks declare `timeout: 60` in their own
+ * frontmatter and DEFAULTS matches it.
  */
-export async function runRenderedHook(name: string, command: string, ctx: ExtensionContext): Promise<Verdict> {
-	const rendered = renderedHook(name, ctx);
-	if (!rendered) return undefined;
-	if ("refusal" in rendered) return { block: true, reason: rendered.refusal };
+export async function runRenderedHook(name: string, command: string, ctx: ExtensionContext, budgetMs: number): Promise<Verdict> {
+	const script = renderedHook(name, ctx);
+	if (!script) return undefined;
 
 	const payload = JSON.stringify({ tool_name: "Bash", tool_input: { command } });
-	const result = await runCommandAsync("bash", [rendered.script], ctx.cwd, HOOK_BUDGET_MS, payload);
+	const result = await runCommandAsync("bash", [script], ctx.cwd, budgetMs, payload);
 	const stderr = result.stderr.trim();
 
 	// The budget is read BEFORE any exit code, because a killed process still
@@ -103,7 +83,7 @@ export async function runRenderedHook(name: string, command: string, ctx: Extens
 	if (result.timedOut) {
 		return {
 			block: true,
-			reason: `pi-hooks: ${name} timed out after ${HOOK_BUDGET_MS}ms in ${ctx.cwd}, so this command was not judged; a guard that did not run does not stand aside.`,
+			reason: `pi-hooks: ${name} timed out after ${budgetMs}ms in ${ctx.cwd}, so this command was not judged; a guard that did not run does not stand aside.`,
 		};
 	}
 	if (result.exitCode === 2) return { block: true, reason: stderr || `${name} refused this command.` };
@@ -176,7 +156,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 			["preCommitCheck", "pre-commit-check"],
 		] as const) {
 			if (!getBool(cfg, setting)) continue;
-			const verdict = await runRenderedHook(name, command, ctx);
+			const verdict = await runRenderedHook(name, command, ctx, getNumber(cfg, "hookTimeoutMs"));
 			if (verdict) return verdict;
 		}
 

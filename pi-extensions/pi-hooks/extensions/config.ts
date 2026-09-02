@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 /** Package id used as the config namespace key in `.pi/settings.json`. */
 export const CONFIG_ID = "@vanillagreen/pi-hooks";
@@ -20,9 +20,10 @@ export const DEFAULTS = {
 	sessionDriftCheck: true,
 	clippyTimeoutMs: 30000,
 	driftCheckTimeoutMs: 30000,
+	hookTimeoutMs: 60000,
 } as const;
 
-export type HookKey = Exclude<keyof typeof DEFAULTS, "clippyTimeoutMs" | "driftCheckTimeoutMs">;
+export type HookKey = Exclude<keyof typeof DEFAULTS, "clippyTimeoutMs" | "driftCheckTimeoutMs" | "hookTimeoutMs">;
 
 function expandHome(input: string): string {
 	if (input === "~") return homedir();
@@ -31,8 +32,25 @@ function expandHome(input: string): string {
 }
 
 /**
- * Pi's global root: `~/.pi/agent`, or `PI_CODING_AGENT_DIR` when it names an
- * absolute path.
+ * Anchored to a named root, the way the renderer means it
+ * (`crates/core/src/harness/pi.rs::pi_root_is_absolute_for`): a drive letter or
+ * a UNC `\\server\share` on Windows, a leading `/` on POSIX.
+ *
+ * `isAbsolute` is the wrong test. Node calls a driveless `\root` absolute on
+ * Windows, and the renderer does not, so the two would render and read the
+ * global guards under different roots for one value of the variable — the
+ * carrier finding no script there, and allowing the command. It is cwd
+ * dependence either way: `\root` resolves against whichever drive the session
+ * sits on, which is the thing this rule refuses.
+ */
+export function rootAnchored(path: string, windows: boolean): boolean {
+	if (!windows) return path.startsWith("/");
+	return /^[A-Za-z]:[\\/]/.test(path) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(path);
+}
+
+/**
+ * Pi's global root: `~/.pi/agent`, or `PI_CODING_AGENT_DIR` when it names a
+ * root-anchored path.
  *
  * The global scope is trusted without asking, because it holds the person's own
  * files rather than a checkout's. A blank or relative override breaks that: the
@@ -40,22 +58,41 @@ function expandHome(input: string): string {
  * untrusted clone's own `kendex/hooks/<name>.sh` would be spawned through the
  * branch that never consults Pi's trust answer. Such a value takes the default.
  */
-function piUserDir(): string {
+export function piUserDir(): string {
 	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
-	return resolve(isAbsolute(override) ? override : expandHome("~/.pi/agent"));
+	return resolve(rootAnchored(override, process.platform === "win32") ? override : expandHome("~/.pi/agent"));
 }
 
-/** Pi roots the carrier may read or execute from. Project content requires Pi
- * trust; the global root is always the person's own. */
-export function piRoots(cwd: string, trusted: boolean): { global: string; project?: string } {
-	return {
-		global: piUserDir(),
-		project: trusted ? join(resolve(cwd), ".pi") : undefined,
-	};
+/** The directories that mark a project root, in the shape the sibling Pi
+ * packages already walk for. */
+const PROJECT_MARKERS = [".pi", ".git", ".kendex-lock.json"] as const;
+
+/**
+ * The project this session is in: the nearest ancestor of `cwd` carrying a
+ * marker, `cwd` itself when none does.
+ *
+ * Home is not a project however it is marked — it carries `.pi/` for nearly
+ * everyone, and Pi's own global root lives inside it. Walking rather than
+ * taking `cwd` is what makes a session started in a subdirectory read the same
+ * settings and run the same guards as one started at the repository root, which
+ * is also how Pi answers trust: a saved decision applies to the folder or any
+ * parent, saved in `~/.pi/agent/trust.json` (Pi's own security documentation).
+ */
+export function projectRoot(cwd: string): string {
+	const start = resolve(cwd);
+	const home = resolve(homedir());
+	let current = start;
+	while (current !== home) {
+		if (PROJECT_MARKERS.some((marker) => existsSync(join(current, marker)))) return current;
+		const parent = dirname(current);
+		if (parent === current) break;
+		current = parent;
+	}
+	return start;
 }
 
 function projectSettingsPath(cwd: string): string {
-	return join(resolve(cwd), ".pi", "settings.json");
+	return join(projectRoot(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");
@@ -114,11 +151,10 @@ function loadJson(path: string): unknown {
  */
 export function readConfig(cwd: string): kendexConfig {
 	const merged: kendexConfig = {};
-	const projectSettings = projectSettingsPath(cwd);
-	const roots = piRoots(cwd, projectSettingsTrusted(projectSettings));
+	const project = projectSettingsPath(cwd);
 	const paths = [
-		join(roots.global, "settings.json"),
-		...(roots.project ? [join(roots.project, "settings.json")] : []),
+		join(piUserDir(), "settings.json"),
+		...(projectSettingsTrusted(project) ? [project] : []),
 	];
 	for (const path of paths) {
 		const parsed = loadJson(path) as
@@ -137,7 +173,7 @@ export function getBool(cfg: kendexConfig, key: HookKey | "enabled"): boolean {
 	return typeof v === "boolean" ? v : (DEFAULTS[key] as boolean);
 }
 
-export function getNumber(cfg: kendexConfig, key: "clippyTimeoutMs" | "driftCheckTimeoutMs"): number {
+export function getNumber(cfg: kendexConfig, key: "clippyTimeoutMs" | "driftCheckTimeoutMs" | "hookTimeoutMs"): number {
 	const v = cfg[key];
 	if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
 	if (typeof v === "string") {

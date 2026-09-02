@@ -131,6 +131,32 @@ test("Pi extension TypeScript stays compatible with Node strip-only parsing", ()
 	assert.deepEqual(violations, []);
 });
 
+// The variable relocates the scope holding the person's own files, and every
+// package treats that scope as trusted without asking. A reader that takes the
+// raw value roots it at whichever directory the session sits in, so a checkout
+// supplies that package's settings — the read-side twin of spawning its script.
+// `crates/core/src/harness/pi.rs` is the rule; the pi-hooks suite proves the
+// carrier's copy of it against that source and exercises it end to end, and
+// this holds every other copy against being reverted to a bare read.
+//
+// The `scripts/append-system.mjs` install helpers are excluded and stay on the
+// raw value: they write APPEND_SYSTEM.md only into a directory that already
+// exists, at install time, and are held byte-identical by the case above.
+test("every Pi extension reads PI_CODING_AGENT_DIR through the root-anchored rule", () => {
+	const readers = [];
+	for (const { dir } of packages()) {
+		for (const file of tsFiles(join(root, dir), /\.(?:ts|mts|mjs|cjs|js)$/)) {
+			const relative = file.slice(root.length);
+			if (/(?:^|\/)(?:tests|test|__tests__)\//.test(relative) || relative.endsWith("scripts/append-system.mjs")) continue;
+			const source = readFileSync(file, "utf8");
+			if (!source.includes("process.env.PI_CODING_AGENT_DIR")) continue;
+			readers.push([relative, /rootAnchored\(/.test(source)]);
+		}
+	}
+	assert.ok(readers.length >= 20, `expected the sweep to reach every reader, found ${readers.length}`);
+	assert.deepEqual(readers.filter(([, anchored]) => !anchored).map(([relative]) => relative), []);
+});
+
 test("every Pi extension carries a consumer-facing CHANGELOG.md", () => {
 	for (const { dir } of packages()) {
 		const changelogPath = join(root, dir, "CHANGELOG.md");

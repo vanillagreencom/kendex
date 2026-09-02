@@ -4,7 +4,7 @@
 
 ### Unreleased
 
-- A relative or blank `PI_CODING_AGENT_DIR` now uses `~/.pi/agent` instead of resolving against the session's directory, so the user scope cannot land inside an untrusted checkout.
+- `PI_CODING_AGENT_DIR` is used only when it names a root-anchored path — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`.
 
 ### 2.0.0
 
