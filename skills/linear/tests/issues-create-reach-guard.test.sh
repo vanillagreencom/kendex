@@ -5,7 +5,6 @@
 # hold the filing bar. With LINEAR_REQUIRE_REACH set in kendex.settings.toml
 # [env], `issues create` refuses, before any API call, a description with no
 # `Reached by:` line and a review-born `--priority 2` body with no `Symptom:`.
-# What the line says is the author's to judge.
 
 set -euo pipefail
 
@@ -62,15 +61,15 @@ REACH_LINE='**Reached by**: running `kendex refresh` in a linked worktree'
 SYMPTOM_LINE='**Symptom**: the refresh printed "skipped" and left the render stale'
 
 echo "=== guard on: a body naming nothing it reaches is refused, one naming it creates ==="
-
 guard 'LINEAR_REQUIRE_REACH = "1"\n'
 run_linear issues create --title "Filed from a thread"
 assert_refused_before_api "a create with no description"
 assert_contains "the refusal names the missing line" "$ERR" "Reached by"
 
-# A value that says "nothing here" is no value, and each half of that is
-# refused by its own alternative: `[REACH]` is the placeholder this repo's own
-# templates ship, whole-line bold leaving its closing `**` on the value.
+# A value that says "nothing here" is no value, and each half is refused by its
+# own alternative: `[REACH]` is the placeholder this repo's templates ship,
+# whole-line bold leaving its closing `**` on the value; TBD is the other half,
+# and the symptom read below goes through the same normalization.
 run_linear issues create --title "Template copied" \
   --description "$(printf '**Reached by: [REACH]**\n')"
 assert_refused_before_api "a whole-line bold [REACH] placeholder body"
@@ -89,7 +88,6 @@ run_linear issues create --title "Guard body" --description-file "$TMP_ROOT/body
 assert_created "a create whose reach is a list item arriving by --description-file"
 
 echo "=== guard on: a review-born priority 2 needs a reported symptom ==="
-
 run_linear issues create --title "High priority" --priority 2 --review-born \
   --description "$(printf '%s\n' "$REACH_LINE")"
 assert_refused_before_api "a review-born priority-2 create with no Symptom line"
@@ -97,17 +95,19 @@ assert_contains "the refusal names the missing line" "$ERR" "Symptom"
 assert_contains "the refusal routes the item to priority 3" "$ERR" "priority 3"
 
 run_linear issues create --title "High priority" --priority 2 --review-born \
+  --description "$(printf '%s\nSymptom: none\n' "$REACH_LINE")"
+assert_refused_before_api "a review-born priority-2 create whose Symptom is a null token"
+
+run_linear issues create --title "High priority" --priority 2 --review-born \
   --description "$(printf '%s\n%s\n' "$REACH_LINE" "$SYMPTOM_LINE")"
 assert_created "a review-born priority-2 create carrying a reported symptom"
 
-# Priority 2 minted structurally reports no symptom by construction, and
-# refusing it would abort a merge on an orphan child.
+# Priority 2 minted structurally reports none by construction; refusing it would abort a merge on an orphan child.
 run_linear issues create --title "Structural priority" --priority 2 \
   --description "$(printf '%s\n' "$REACH_LINE")"
 assert_created "a structural priority-2 create with no Symptom line"
 
 echo "=== no declaration: creates are unaffected, and help never trips ==="
-
 guard ''
 run_linear issues create --title "Unguarded repo"
 assert_created "a bare create with no LINEAR_REQUIRE_REACH key"

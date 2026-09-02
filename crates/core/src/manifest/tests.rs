@@ -235,12 +235,17 @@ fn a_gained_table_lands_after_the_tables_already_there() {
 }
 
 /// A write that names another key entirely leaves a hand-written list alone,
-/// including a value the serializer omits because it is the default. The
-/// omission is not a change: `held` never names `enabled` either, so nothing
-/// reads it as one, and the list is not touched at all.
+/// byte for byte, including a value the serializer omits because it is the
+/// default. The omission is not a change: `held` never names `enabled`
+/// either, so nothing reads it as one.
+///
+/// The list is spelled inline while the serializer spells it
+/// `[[custom-hooks]]`, which is the shape that has to fold across the two
+/// spellings rather than be rewritten into one of them. Two entries, each
+/// with its own writing, so a rewrite shows up as more than a re-indent.
 #[test]
-fn an_unrelated_write_leaves_a_hand_written_default_alone() {
-    let current = "schema = 6\ncustom-hooks = [{ event = \"Stop\", command = \"./done.sh\", enabled = true }]\n\n[install]\nmethod = \"symlink\"\n";
+fn an_unrelated_write_leaves_a_hand_written_list_alone() {
+    let current = "schema = 6\n\n# both of the hooks we run\ncustom-hooks = [\n  { event = \"Stop\", command = \"./done.sh\", enabled = true },   # after every run\n  { event = \"PreToolUse\", command = \"./guard.sh\" },\n]\n\n[install]\nmethod = \"symlink\"\n";
     assert_eq!(
         folding(current, |manifest| {
             manifest.install.method = Method::Copy;
@@ -267,12 +272,16 @@ fn a_gained_key_leaves_the_closing_brace_where_it_was() {
 
 /// A list that loses an entry still folds entry by entry, so the surviving
 /// hook keeps the comment written above it and the `note` the model does not
-/// carry — and stands once, not twice. The list loses its FIRST entry, which
-/// is the shape that pairs wrongly under any positional scheme: the survivor
-/// would be folded into the deleted hook's slot and inherit its comment.
+/// carry — and stands once, not twice. Each entry carries its own comment, so
+/// a survivor seated in the wrong slot reads as the wrong hook rather than as
+/// an unannotated one.
+///
+/// The list loses its FIRST entry, which is the shape that pairs wrongly under
+/// any positional scheme: the survivor would fold into the deleted hook's slot
+/// and come back under `# the guard`.
 #[test]
 fn a_surviving_entry_keeps_what_was_written_about_it() {
-    let current = "schema = 6\n\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n\n# the one that stays\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"keep me\"\n";
+    let current = "schema = 6\n\n# the guard\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\n\n# the one that stays\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\nnote = \"keep me\"\n";
     assert_eq!(
         folding(current, |manifest| {
             manifest.custom_hooks.remove(0);
