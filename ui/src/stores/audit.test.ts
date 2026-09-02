@@ -4,6 +4,7 @@ import type { AuditView } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { READ_LANDED } from "@/lib/read-state";
+import { rescansSettled } from "@/lib/rescan";
 import { useAuditStore } from "./audit";
 import { useProblemsStore } from "./problems";
 
@@ -42,7 +43,6 @@ describe("audit store refresh", () => {
     useAuditStore.setState({
       views: [],
       auditing: false,
-      error: null,
       read: READ_LANDED,
       busy: false,
       auditedAt: null,
@@ -70,7 +70,6 @@ describe("audit store refresh", () => {
 
     await useAuditStore.getState().refresh();
 
-    expect(useAuditStore.getState().error).toBe("ipc down");
     expect(useAuditStore.getState().read.error).toBe("ipc down");
     expect(useAuditStore.getState().auditing).toBe(false);
   });
@@ -227,7 +226,6 @@ describe("audit store run() actions", () => {
     useAuditStore.setState({
       views: [emptyView],
       auditing: false,
-      error: null,
       read: READ_LANDED,
       busy: false,
       auditedAt: null,
@@ -257,9 +255,9 @@ describe("audit store run() actions", () => {
     expect(dialog.open).toBe(true);
     expect(dialog.title).toBe("Couldn't remove lint");
     expect(dialog.message).toBe("disk is full");
-    // A failed item action is not a failed audit: the audit the rescan
-    // behind it forced answered, so nothing writes the signal Home's
-    // couldn't-check row reads.
+    // A failed item action is not a failed audit. `read` is the one signal
+    // left and only an audit writes it, so the refusal reaches the person
+    // through the dialog above and Home's couldn't-check row stays off.
     expect(useAuditStore.getState().read.error).toBeNull();
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -367,7 +365,6 @@ describe("an audit that lands after a command it cannot answer for", () => {
       // already holds.
       views: [emptyView],
       auditing: false,
-      error: null,
       read: READ_LANDED,
       busy: false,
       auditedAt: null,
@@ -522,6 +519,9 @@ describe("an audit that lands after a command it cannot answer for", () => {
     overlapping.land({ status: "ok", data: [stale] });
     await forced;
     await acting;
+    // The read behind the command is on no caller's promise, so it is
+    // waited for here rather than through the action.
+    await rescansSettled();
 
     expect(useAuditStore.getState().auditedAt).toBeNull();
 

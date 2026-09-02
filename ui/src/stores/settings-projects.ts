@@ -2,7 +2,7 @@
 // and the actions that add, drop and find them.
 import { toast } from "sonner";
 import { type AppSettings, commands, type SettingsRead } from "@/bindings";
-import { rescanEverything } from "@/lib/rescan";
+import { rescanEverything, writingRepo } from "@/lib/rescan";
 import { useProblemsStore } from "./problems";
 
 interface ProjectFields {
@@ -45,26 +45,30 @@ export function projectActions(
         toast.success(`Added ${path.split("/").pop()}`, {
           action: {
             label: "Add session drift report",
+            // The hook is applied before the command can answer either way,
+            // so a refusal comes back with it already on disk: the machine
+            // is read again whatever it said, on `lib/rescan.ts`'s rule.
             onClick: () => {
-              void commands
-                .installDriftHook({ scope: "project", root })
-                .then((result) => {
-                  if (result.status === "ok") {
-                    // False: the scope had other pending changes, so only the
-                    // declaration landed — nothing is applied unseen.
-                    toast.success(
-                      result.data
-                        ? "Drift report installed"
-                        : "Drift report added — run kendex apply in that project to install it",
-                    );
-                    void rescanEverything();
-                  } else {
-                    useProblemsStore.getState().showError({
-                      title: "Couldn't install the drift report",
-                      message: result.error,
-                    });
-                  }
+              void writingRepo(async () => {
+                const result = await commands.installDriftHook({
+                  scope: "project",
+                  root,
                 });
+                if (result.status === "ok") {
+                  // False: the scope had other pending changes, so only the
+                  // declaration landed — nothing is applied unseen.
+                  toast.success(
+                    result.data
+                      ? "Drift report installed"
+                      : "Drift report added — run kendex apply in that project to install it",
+                  );
+                } else {
+                  useProblemsStore.getState().showError({
+                    title: "Couldn't install the drift report",
+                    message: result.error,
+                  });
+                }
+              });
             },
           },
         });

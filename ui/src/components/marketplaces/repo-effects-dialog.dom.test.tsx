@@ -23,7 +23,16 @@ import { mount, settle } from "@/test/dom";
 import { RepoEffectsDialog } from "./repo-effects-dialog";
 
 vi.mock("@/bindings", () => ({
-  commands: { repoEffectsApply: vi.fn() },
+  // The three reads a yes runs behind it: applying an effect runs the
+  // package's installer in the repository, so `lib/rescan.ts` reads the
+  // machine again whatever it answered. Nothing here is about what they
+  // find; unmocked they reject out of a promise nobody awaits.
+  commands: {
+    repoEffectsApply: vi.fn(),
+    scanMachine: vi.fn(),
+    auditAll: vi.fn(),
+    libraryProvenance: vi.fn(),
+  },
 }));
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() },

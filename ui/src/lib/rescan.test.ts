@@ -45,7 +45,6 @@ beforeEach(() => {
     views: [],
     auditing: false,
     auditedAt: null,
-    error: null,
     read: READ_LANDED,
   });
 });

@@ -67,7 +67,6 @@ beforeEach(() => {
     views: [view({ scope: "global" }, [])],
     auditing: false,
     auditedAt: Date.now(),
-    error: null,
     read: READ_LANDED,
     backgroundFailureAnnounced: false,
   });

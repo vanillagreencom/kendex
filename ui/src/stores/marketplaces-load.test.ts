@@ -7,6 +7,13 @@ vi.mock("@/bindings", () => ({
   commands: {
     marketplacesOverview: vi.fn(),
     marketplaceSubscribe: vi.fn(),
+    // Subscribing writes its report through `repo_effects`, so
+    // `lib/rescan.ts` reads the machine again behind it whatever it
+    // answered. Nothing here is about what those reads find; unmocked they
+    // reject out of a promise nobody awaits.
+    scanMachine: vi.fn(),
+    auditAll: vi.fn(),
+    libraryProvenance: vi.fn(),
   },
 }));
 vi.mock("sonner", () => ({

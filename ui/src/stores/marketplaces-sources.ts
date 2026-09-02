@@ -18,20 +18,18 @@ type Set = (partial: object) => void;
 export function sourceActions(set: Set, get: () => Sources) {
   return {
     toggle: (scope: Scope, source: string, enabled: boolean) =>
-      writingRepo(
-        () => commands.sourceToggle(scope, source, enabled),
-        async (response) => {
-          if (response.status === "error") {
-            toast.error(response.error);
-            return;
-          }
-          sayUndone(response.data.undone);
-          // Turning a holder on or off changes which subscription a
-          // repository page carries on as, so every derived read goes.
-          dropCatalogCaches(set);
-          await get().load();
-        },
-      ),
+      writingRepo(async () => {
+        const response = await commands.sourceToggle(scope, source, enabled);
+        if (response.status === "error") {
+          toast.error(response.error);
+          return;
+        }
+        sayUndone(response.data.undone);
+        // Turning a holder on or off changes which subscription a repository
+        // page carries on as, so every derived read goes.
+        dropCatalogCaches(set);
+        await get().load();
+      }),
 
     checkForUpdates: async () => {
       set({ busy: true });

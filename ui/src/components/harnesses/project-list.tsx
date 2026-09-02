@@ -23,8 +23,8 @@ export function ProjectList() {
   useAuditOnMount();
   const result = useScanStore((s) => s.result);
   const views = useAuditStore((s) => s.views);
-  // The read's own error, not the store's shared `error`: item actions write the
-  // shared field too, and a failed adopt is not a failed audit.
+  // The audit read's own outcome: a failed adopt is not a failed audit, and
+  // says so through the problems dialog rather than this list.
   const auditFailure = useAuditStore((s) => s.read.error);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
   const goToUnmanaged = useNavStore((s) => s.goToUnmanaged);

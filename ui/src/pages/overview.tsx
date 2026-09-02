@@ -37,9 +37,9 @@ export function OverviewPage() {
   // answer as much as the scan's.
   useAuditOnMount();
   const { result, error, scanning } = useScanStore();
-  // The read's own error, not the store's shared `error`: item actions
-  // write the shared field too, and a failed remove or adopt is not a
-  // failed audit.
+  // The audit read's own outcome, which is the only thing this row may
+  // speak for: a failed remove or adopt is not a failed audit, and reaches
+  // the person through the problems dialog instead.
   const auditError = useAuditStore((s) => s.read.error);
   const auditRefresh = useAuditStore((s) => s.refresh);
   const projectCount = useSettingsStore(

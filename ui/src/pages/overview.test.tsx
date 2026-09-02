@@ -42,7 +42,6 @@ const { stub, wrap } = vi.hoisted(() => {
     audit: {
       auditedAt: null as number | null,
       read: { status: "landed", error: null } as ReadState,
-      error: null as string | null,
     },
   };
   const wrap = <M extends object>(
@@ -113,7 +112,7 @@ beforeEach(() => {
   stub.scan = { result: null, error: null, scanning: false };
   stub.updates = { read: READ_LANDED, unreadable: [] };
   stub.market = { read: READ_LANDED };
-  stub.audit = { auditedAt: null, read: READ_LANDED, error: null };
+  stub.audit = { auditedAt: null, read: READ_LANDED };
 });
 
 // `result` starting null and staying null used to leave every section on
@@ -178,7 +177,7 @@ describe("Home when a later scan fails", () => {
 describe("Home when the update check fails", () => {
   it("says updates couldn't be checked in the attention list", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), read: READ_LANDED, error: null };
+    stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
     stub.updates = { read: readFailed("no network"), unreadable: [] };
     expect(renderToStaticMarkup(<OverviewPage />)).toContain(
       esc(UPDATES_ATTENTION_TITLE),
@@ -187,7 +186,7 @@ describe("Home when the update check fails", () => {
 
   it("claims nothing when the check answered", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), read: READ_LANDED, error: null };
+    stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
     expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
       esc(UPDATES_ATTENTION_TITLE),
     );
@@ -201,7 +200,7 @@ describe("Home when the update check fails", () => {
 describe("Home when a place cannot be read at all", () => {
   it("names the place with no update standing in the attention list", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), read: READ_LANDED, error: null };
+    stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
     stub.updates = {
       read: READ_LANDED,
       unreadable: [
@@ -245,7 +244,6 @@ describe("Home when the audit fails", () => {
     stub.audit = {
       auditedAt: null,
       read: readFailed("audit crashed"),
-      error: "audit crashed",
     };
     const html = renderToStaticMarkup(<OverviewPage />);
     expect(html).toContain(esc(AUDIT_ATTENTION_TITLE));
@@ -258,7 +256,6 @@ describe("Home when the audit fails", () => {
     stub.audit = {
       auditedAt: null,
       read: readFailed("audit crashed"),
-      error: "audit crashed",
     };
     stub.updates = { read: readFailed("no network"), unreadable: [] };
     expect(renderToStaticMarkup(<OverviewPage />)).toContain(
@@ -270,22 +267,7 @@ describe("Home when the audit fails", () => {
   // row's gate could be anything at all and the suite would not notice.
   it("claims nothing when the audit answered clean", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), read: READ_LANDED, error: null };
-    expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
-      esc(AUDIT_ATTENTION_TITLE),
-    );
-  });
-
-  // Item actions write the store's shared `error`; only the read's own
-  // error — written by refresh alone — may put the couldn't-check row on
-  // Home.
-  it("does not blame the audit for a failed item action", () => {
-    stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = {
-      auditedAt: Date.now(),
-      read: READ_LANDED,
-      error: "couldn't remove gh",
-    };
+    stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
     expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
       esc(AUDIT_ATTENTION_TITLE),
     );

@@ -66,8 +66,8 @@ export function useProblems(): Problem[] {
  *  buttons behind these rows write to the filesystem. */
 export function useBlockedPlaces(): BlockedPlace[] | null {
   const views = useAuditStore((s) => s.views);
-  // The shared `error` is written by item actions too, so a failed keep or
-  // take-over must not read as a machine that could not be checked.
+  // The audit read's own outcome. A failed keep or take-over is not a
+  // machine that could not be checked — it opens this store's own dialog.
   const failure = useAuditStore((s) => s.read.error);
   return useMemo(() => blockedPlaces(views, failure), [views, failure]);
 }

@@ -29,8 +29,8 @@ export function UnmanagedPage() {
   useAuditOnMount();
   const scope = useNavStore((s) => s.unmanagedScope);
   const views = useAuditStore((s) => s.views);
-  // The read's own error, not the store's shared `error`: item actions write the
-  // shared field too, and a failed adopt is not a failed audit.
+  // The audit read's own outcome: a failed adopt is not a failed audit, and
+  // says so through the problems dialog rather than this row.
   const auditFailure = useAuditStore((s) => s.read.error);
   const busy = useAuditStore((s) => s.busy);
   const adopt = useAuditStore((s) => s.adopt);
