@@ -33,14 +33,6 @@ const GUARD_SETTINGS = new Map<string, HookKey>([
 /** The guard names that surface has, for the coupling test and nothing else. */
 export const GUARD_SETTING_NAMES = [...GUARD_SETTINGS.keys()];
 
-/**
- * Projects already told about a project registry their trust answer withheld.
- * Once per session per project: the person decides trust once, and repeating
- * it on every tool call would be noise about a state they chose. Cleared at
- * every session start, reload and resume included.
- */
-const WITHHELD_TOLD = new Set<string>();
-
 /** A `tool_call` verdict: `undefined` allows, `block` refuses with a reason. */
 type Verdict = { block: true; reason: string } | undefined;
 
@@ -121,10 +113,6 @@ export default function piHooks(pi: ExtensionAPI): void {
 	// place. Fire-and-forget — an informational check never gates startup.
 	pi.on("session_start", (event, ctx: ExtensionContext) => {
 		recordProjectTrust(ctx);
-		// Ahead of the early return, because this module outlives a session:
-		// otherwise a resumed one is told nothing about hooks installed and
-		// not running, the silence the count exists to break.
-		WITHHELD_TOLD.clear();
 		if (event.reason === "reload" || event.reason === "resume") return;
 		const cfg = readConfig(ctx.cwd);
 		if (!getBool(cfg, "enabled") || !getBool(cfg, "sessionDriftCheck")) return;
@@ -156,11 +144,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		// advance, which is what lets a custom hook run at all. The tool is
 		// named and its input keyed the way a hook was authored to read them.
 		const toolName = claudeToolName(event.toolName);
-		// The count's one consumer is the notice below; where that cannot
-		// fire there is nothing to read an untrusted registry for.
-		const trusted = projectTrusted(ctx);
-		const countWithheld = ctx.hasUI === true && project !== undefined && !trusted && !WITHHELD_TOLD.has(project);
-		const registry = registeredHooks(TOOL_CALL_LISTENER, toolName, project, trusted, countWithheld);
+		const registry = registeredHooks(TOOL_CALL_LISTENER, toolName, project, projectTrusted(ctx));
 
 		// A registry kendex wrote and this could not read is not the person
 		// standing their guards down, and these hooks are labelled enforced.
@@ -169,18 +153,6 @@ export default function piHooks(pi: ExtensionAPI): void {
 				block: true,
 				reason: `pi-hooks: the rendered hook registry could not be read, so this command was not judged; a guard that did not run does not stand aside. ${registry.unreadable}`,
 			};
-		}
-		// Marked told whatever the read returned: the read is what happens once
-		// per project per session, and a registry that would not parse counts
-		// nothing while costing the same work.
-		if (countWithheld && project !== undefined) {
-			WITHHELD_TOLD.add(project);
-			if (registry.withheld > 0) {
-				ctx.ui.notify(
-					`pi-hooks: ${registry.withheld} kendex hook(s) are installed in ${project} and are not running, because Pi does not report this workspace trusted. Trust it to arm them.`,
-					"warning",
-				);
-			}
 		}
 		if (registry.hooks.length === 0) return undefined;
 

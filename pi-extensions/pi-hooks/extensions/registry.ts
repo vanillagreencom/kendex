@@ -64,12 +64,6 @@ export interface RegistryRead {
 	 * down.
 	 */
 	unreadable?: string;
-	/**
-	 * How many registrations the project's registry holds under this listener
-	 * that could run, where trust withheld them. Counted before the matcher,
-	 * so it does not depend on which tool this one call names.
-	 */
-	withheld: number;
 }
 
 /**
@@ -135,15 +129,14 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
 	const path = resolve(root, "hooks.json");
 	const hooks: RegisteredHook[] = [];
 	let position = 0;
-	let installed = 0;
 	try {
 		const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("not a JSON object");
 		const registry = (parsed as { hooks?: unknown }).hooks;
-		if (registry === undefined) return { hooks, withheld: 0 };
+		if (registry === undefined) return { hooks };
 		if (typeof registry !== "object" || registry === null || Array.isArray(registry)) throw new Error("hooks is not an object");
 		const groups = (registry as Record<string, unknown>)[listener];
-		if (groups === undefined) return { hooks, withheld: 0 };
+		if (groups === undefined) return { hooks };
 		if (!Array.isArray(groups)) throw new Error(`hooks.${listener} is not an array`);
 		for (const group of groups) {
 			const entry = group as { matcher?: unknown; hooks?: unknown };
@@ -153,7 +146,6 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
 				position += 1;
 				const hook = registration as { type?: unknown; command?: unknown; timeout?: unknown };
 				if (hook.type !== "command" || typeof hook.command !== "string" || hook.command === "") continue;
-				installed += 1;
 				if (!covers) continue;
 				const timeout = typeof hook.timeout === "number" && Number.isFinite(hook.timeout) && hook.timeout > 0
 					? hook.timeout * 1000
@@ -174,10 +166,10 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
 		// session does not have, a directory in the file's place, a document
 		// that will not parse — is a registry that exists and did not answer,
 		// and a guard that did not run does not stand aside.
-		if (absent(error)) return { hooks: [], withheld: 0 };
-		return { hooks: [], withheld: 0, unreadable: `${path}: ${(error as Error).message}` };
+		if (absent(error)) return { hooks: [] };
+		return { hooks: [], unreadable: `${path}: ${(error as Error).message}` };
 	}
-	return { hooks, withheld: installed };
+	return { hooks };
 }
 
 /**
@@ -195,10 +187,8 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
  * The project registry names commands the project ships, so `trusted` is Pi's
  * answer for this workspace: a clone the person has not trusted must not get
  * its own code run on the first tool call of the session. Untrusted, the
- * project scope contributes nothing but its count, and the global registry
- * still answers: the person's own hooks are not the project's. That count has
- * one consumer, so `countWithheld` false skips the read entirely — work with
- * no consumer, on a file whose size an untrusted party chooses.
+ * project scope contributes nothing and is not even read, and the global
+ * registry still answers: the person's own hooks are not the project's.
  *
  * One installation of a guard runs once. Where both scopes register the same
  * rendered script the project's answers — unless its script is not on disk,
@@ -206,20 +196,14 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
  * answers rather than being shadowed by it. Two command-bodied hooks are two
  * hooks and both run, nothing but the command identifying them.
  */
-export function registeredHooks(listener: string, toolName: string, project: string | undefined, trusted: boolean, countWithheld = true): RegistryRead {
+export function registeredHooks(listener: string, toolName: string, project: string | undefined, trusted: boolean): RegistryRead {
 	const hooks: RegisteredHook[] = [];
 	const byName = new Map<string, number>();
 	let unreadable: string | undefined;
-	let withheld = 0;
 
 	const answering: RegistryRead[] = [];
-	if (project !== undefined && (trusted || countWithheld)) {
-		const read = readRegistry(resolve(project, ".pi", "kendex"), listener, toolName);
-		// Untrusted, this registry says only how many hooks were withheld.
-		// Its failure to parse is not carried: refusing on it would let a
-		// clone nobody has trusted stop every tool call in the session.
-		if (trusted) answering.push(read);
-		else withheld += read.withheld;
+	if (project !== undefined && trusted) {
+		answering.push(readRegistry(resolve(project, ".pi", "kendex"), listener, toolName));
 	}
 	answering.push(readRegistry(resolve(piUserDir(), "kendex"), listener, toolName));
 
@@ -248,5 +232,5 @@ export function registeredHooks(listener: string, toolName: string, project: str
 		const hook = hooks[at]!;
 		if (hook.script !== undefined && scriptGone(hook.script)) hooks[at] = { ...hook, missing: true };
 	}
-	return { hooks, withheld, ...(unreadable === undefined ? {} : { unreadable }) };
+	return { hooks, ...(unreadable === undefined ? {} : { unreadable }) };
 }

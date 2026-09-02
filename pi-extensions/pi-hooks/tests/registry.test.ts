@@ -3,8 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import piHooks, { GUARD_SETTING_NAMES } from "../extensions/hooks.ts";
-import { registeredHooks, renderedName, TOOL_CALL_LISTENER } from "../extensions/registry.ts";
+import { GUARD_SETTING_NAMES } from "../extensions/hooks.ts";
+import { renderedName, TOOL_CALL_LISTENER } from "../extensions/registry.ts";
 import { claudeToolInput, claudeToolName, PI_BUILTIN_TOOLS } from "../extensions/vocab.ts";
 import {
 	CONFIG_ID,
@@ -44,6 +44,8 @@ describe("pi-hooks registry dispatch", () => {
 	test("a custom PreToolUse hook runs, and nothing runs where the registry names it not", async () => {
 		const project = initCleanRustRepo("pi-hooks-custom-");
 		const log = join(project, "custom.log");
+		const agentDir = process.env.PI_CODING_AGENT_DIR!;
+		const globalLog = join(agentDir, "global.log");
 		try {
 			const handler = installToolCallHandler();
 
@@ -59,9 +61,12 @@ describe("pi-hooks registry dispatch", () => {
 			// It is code the project ships, so it is behind Pi's trust answer
 			// exactly as a project script is.
 			writeFileSync(log, "");
-			expect(await handler({ toolName: "bash", input: { command: "git push" } }, { cwd: project, isProjectTrusted: () => false })).toBeUndefined();
+			renderUserStub(agentDir, "audit", { exitCode: 2, stderr: "the global guard refused", log: globalLog });
+			const untrusted = await handler({ toolName: "bash", input: { command: "git push" } }, { cwd: project, isProjectTrusted: () => false });
+			expect(untrusted).toEqual({ block: true, reason: "the global guard refused" });
 			expect(readLog(log)).toBe("");
 		} finally {
+			rmSync(join(agentDir, "kendex"), { recursive: true, force: true });
 			rmSync(project, { recursive: true, force: true });
 		}
 	});
@@ -421,28 +426,6 @@ describe("pi-hooks registry dispatch: names, matchers and budgets at their edges
 	});
 });
 
-// Trust withholds a project's hooks; saying nothing leaves that reading as
-// "kendex installed none here", which is the one thing it is not.
-test("an untrusted project's withheld hooks are named once, not on every call", async () => {
-	const project = initCleanRustRepo("pi-hooks-withheld-");
-	const notices: string[] = [];
-	try {
-		renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "must not run", log: join(project, "withheld.log") });
-		const handler = installToolCallHandler();
-		const ctx = { cwd: project, isProjectTrusted: () => false, hasUI: true, ui: { notify: (message: string) => notices.push(message) } };
-		expect(await handler({ toolName: "bash", input: { command: "ls" } }, ctx)).toBeUndefined();
-		expect(notices).toHaveLength(1);
-		expect(notices[0]).toContain("1 kendex hook(s)");
-		expect(notices[0]).toContain("not running");
-		expect(notices[0]).toContain(project);
-
-		await handler({ toolName: "bash", input: { command: "ls" } }, ctx);
-		expect(notices).toHaveLength(1);
-	} finally {
-		rmSync(project, { recursive: true, force: true });
-	}
-});
-
 describe("pi-hooks registry dispatch: a rendered hook whose script is gone", () => {
 	test("a healthy global guard answers over a broken project registration", async () => {
 		const project = initCleanRustRepo("pi-hooks-broken-project-");
@@ -524,38 +507,7 @@ describe("pi-hooks registry dispatch: a rendered hook whose script is gone", () 
 	});
 });
 
-describe("pi-hooks registry dispatch: the counts and the vocabulary", () => {
-	// The notice fires once and is never corrected, so its number has to be
-	// what the project installed rather than what the first call matched.
-	test("the withheld count is the project's registrations, not this call's", async () => {
-		const project = initCleanRustRepo("pi-hooks-count-");
-		const notices: string[] = [];
-		try {
-			const root = join(project, ".pi");
-			for (const matcher of ["Bash", "Bash", "Bash", "Read", "Read"]) {
-				registerRendered(root, "tool_call", matcher, "exit 0");
-			}
-			// Nor what could never run: the notice says what trusting the
-			// workspace would arm, and these five are all of it.
-			const path = join(root, "kendex", "hooks.json");
-			const registry = JSON.parse(readFileSync(path, "utf8"));
-			registry.hooks.tool_call[0].hooks.push({ type: "prompt", command: "exit 0" }, { type: "command", command: "" }, "junk", 7);
-			writeFileSync(path, JSON.stringify(registry));
-			const handler = installToolCallHandler();
-			// A read call, which two of the five match.
-			await handler({ toolName: "read", input: { path: "/etc/hosts" } }, {
-				cwd: project,
-				isProjectTrusted: () => false,
-				hasUI: true,
-				ui: { notify: (message: string) => notices.push(message) },
-			});
-			expect(notices).toHaveLength(1);
-			expect(notices[0]).toContain("5 kendex hook(s)");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
+describe("pi-hooks registry dispatch: the vocabulary", () => {
 	test("a global registry that cannot be read refuses too", async () => {
 		const agentDir = mkdtempSync(join(tmpdir(), "pi-hooks-global-broken-"));
 		const workspace = mkdtempSync(join(tmpdir(), "pi-hooks-global-broken-cwd-"));
@@ -574,30 +526,6 @@ describe("pi-hooks registry dispatch: the counts and the vocabulary", () => {
 			else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
 			rmSync(agentDir, { recursive: true, force: true });
 			rmSync(workspace, { recursive: true, force: true });
-		}
-	});
-
-	// The read is what happens once per project per session. A registry that
-	// will not parse counts nothing, and re-reading it on every call is the
-	// unbounded work on a file an untrusted party sizes that the skip prevents.
-	test("an untrusted project's unparseable registry is read once a session", async () => {
-		const project = initCleanRustRepo("pi-hooks-unparseable-once-");
-		const notices: string[] = [];
-		try {
-			const path = join(project, ".pi", "kendex", "hooks.json");
-			mkdirSync(join(path, ".."), { recursive: true });
-			writeFileSync(path, "{ not json");
-			const handler = installToolCallHandler();
-			const ctx = { cwd: project, isProjectTrusted: () => false, hasUI: true, ui: { notify: (m: string) => notices.push(m) } };
-			expect(await handler({ toolName: "bash", input: { command: "ls" } }, ctx)).toBeUndefined();
-
-			// A registry a second read would count one hook from, and say so.
-			rmSync(path);
-			registerRendered(join(project, ".pi"), "tool_call", "Bash", "exit 0");
-			expect(await handler({ toolName: "bash", input: { command: "ls" } }, ctx)).toBeUndefined();
-			expect(notices).toEqual([]);
-		} finally {
-			rmSync(project, { recursive: true, force: true });
 		}
 	});
 
@@ -656,44 +584,4 @@ describe("pi-hooks registry dispatch: the counts and the vocabulary", () => {
 		expect(claudeToolInput("Read", undefined)).toEqual({});
 	});
 
-	// The count has one consumer, the notice. With nobody to tell — a headless
-	// session, or a project already told — an untrusted workspace's registry is
-	// not parsed: work with no consumer, on a file whose size that untrusted
-	// party chooses.
-	test("an untrusted project's registry is not counted when nothing can say so", () => {
-		const project = initCleanRustRepo("pi-hooks-nocount-");
-		try {
-			registerRendered(join(project, ".pi"), "tool_call", "Bash", "exit 0");
-			expect(registeredHooks(TOOL_CALL_LISTENER, "Bash", project, false, true).withheld).toBe(1);
-			expect(registeredHooks(TOOL_CALL_LISTENER, "Bash", project, false, false).withheld).toBe(0);
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	// "Once per session" has to survive the session ending: this module outlives
-	// one and can be installed more than once in a process.
-	test("a fresh session is told again about withheld hooks", async () => {
-		const project = initCleanRustRepo("pi-hooks-resession-");
-		const notices: string[] = [];
-		try {
-			writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
-				kendex: { extensionManager: { config: { [CONFIG_ID]: { sessionDriftCheck: false } } } },
-			}));
-			registerRendered(join(project, ".pi"), "tool_call", "Bash", "exit 0");
-			const handlers = new Map<string, (event: Record<string, unknown>, ctx: Record<string, unknown>) => Promise<unknown>>();
-			piHooks({ on: (event: string, cb: never) => handlers.set(event, cb) } as never);
-			const ctx = { cwd: project, isProjectTrusted: () => false, hasUI: true, ui: { notify: (m: string) => notices.push(m) } };
-
-			await handlers.get("tool_call")!({ toolName: "bash", input: { command: "ls" } }, ctx);
-			await handlers.get("tool_call")!({ toolName: "bash", input: { command: "ls" } }, ctx);
-			expect(notices).toHaveLength(1);
-
-			await handlers.get("session_start")!({ reason: "resume" }, ctx);
-			await handlers.get("tool_call")!({ toolName: "bash", input: { command: "ls" } }, ctx);
-			expect(notices).toHaveLength(2);
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
 });
