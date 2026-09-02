@@ -137,7 +137,7 @@ elif [[ "$norepo_status" -eq 128 && "$norepo_probe" == *"not a git repository"* 
     assert_eq "$status" 1 "worktree $cmd exits 1 outside a git repository"
     assert_contains "$err" "could not resolve a git repository from: $NOREPO" \
       "worktree $cmd names the cwd it could not resolve a repository from"
-    assert_contains "$err" "Run it from a checkout instead" \
+    assert_contains "$err" "Run it from a checkout of the repository you mean" \
       "worktree $cmd names what to do instead"
     assert_eq "$out" "" "worktree $cmd prints nothing on stdout outside a git repository"
   done
@@ -145,12 +145,18 @@ elif [[ "$norepo_status" -eq 128 && "$norepo_probe" == *"not a git repository"* 
   # The cause is git's, not the script's guess at it. A repository with no git
   # to read it is the case that separates the two: the cwd IS a checkout, and
   # a message asserting otherwise sends the operator to a second one.
+  # LC_ALL=C like the probe above: the message under test is translated, so an
+  # unpinned locale reddens this on a workstation and nowhere else.
   mkdir -p "$TMP_ROOT/empty-bin"
   status=0
-  out=$(cd "$TEST_DIR" && PATH="$TMP_ROOT/empty-bin" "$WORKTREE_SCRIPT" list 2>"$TMP_ROOT/nogit.err") || status=$?
-  err=$(cat "$TMP_ROOT/nogit.err")
+  out=$(cd "$TEST_DIR" && LC_ALL=C PATH="$TMP_ROOT/empty-bin" "$WORKTREE_SCRIPT" list 2>"$TMP_ROOT/nogit.err") || status=$?
+  # Read the quoted line, not the whole stream: without the anchor the needle
+  # also matches the shell's own unredirected message, which is what stderr
+  # carries when the refusal quotes nothing at all.
+  said=""
+  if ! said=$(grep -F '  git said: ' "$TMP_ROOT/nogit.err"); then said=""; fi
   assert_eq "$status" 1 "worktree list exits 1 when git is not on PATH"
-  assert_contains "$err" "git: command not found" \
+  assert_contains "$said" "git: command not found" \
     "the refusal quotes git's own account rather than asserting a cause"
   assert_eq "$out" "" "worktree list prints nothing on stdout when git is not on PATH"
 else

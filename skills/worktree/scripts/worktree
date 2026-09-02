@@ -223,11 +223,7 @@ Usage: worktree remove [ID|/path]
 
 Remove a worktree and delete its local branch when it is safely merged.
 Accepts an issue ID (resolved under the configured worktree base dir, falling
-back to the worktree registered for the issue branch) or a direct path. The
-current directory names the repository, so run remove from any checkout of it,
-the worktree being removed included: cwd relocates to the main checkout first.
-The one place it cannot run is the directory the worktrees sit in, which is in
-no repository at all.
+back to the worktree registered for the issue branch) or a direct path.
 
 Failure semantics:
   remove deletes the worktree before deleting the local branch. Configured
@@ -542,31 +538,22 @@ same_canonical_dir() {
 }
 
 # Resolve PROJECT_ROOT via git (works at any depth, inside worktrees too).
-# The assignment sits in the condition on purpose (KEN-1166): rev-parse exits
-# 128 with nothing on stdout when there is no repository, and as a bare
-# assignment under `set -e` that status escapes before the test below ever
-# runs, so every subcommand past the help dispatch died at a bare 128 with no
-# output. Any nonzero status refuses, git's own 128 and a missing git alike,
-# and so does an empty toplevel. Those causes differ, and the first call threw
-# git's account of them away, so the failure branch asks again for stderr
-# alone: without it the message names one cause for every failure and sends an
-# operator whose git is broken to a second checkout to watch it break again.
-# The lookup refuses here or not at all: nothing below resolves a repository
-# from a path argument.
+# The assignment sits in the condition on purpose (KEN-1166): under `set -e` a
+# bare assignment's nonzero status escapes before the test below can run, so
+# the refusal never printed. The failure branch re-runs the lookup for the
+# stderr the first call discarded, so the message carries git's cause.
 if ! PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$PROJECT_ROOT" ]]; then
   GIT_LOOKUP_DIAG=""
   if ! GIT_LOOKUP_DIAG="$(git rev-parse --show-toplevel 2>&1 >/dev/null)"; then
-    # One line: git's no-repository message wraps onto two, and "fatal: " is
-    # noise under a line that already says the lookup failed.
+    # Normalize a multi-line fatal to one line; "fatal: " is noise under a line
+    # that already says the lookup failed.
     GIT_LOOKUP_DIAG="${GIT_LOOKUP_DIAG//$'\n'/ }"
     GIT_LOOKUP_DIAG="${GIT_LOOKUP_DIAG#fatal: }"
   fi
   {
     echo "Error: could not resolve a git repository from: $PWD"
     if [[ -n "$GIT_LOOKUP_DIAG" ]]; then echo "  git said: $GIT_LOOKUP_DIAG"; fi
-    echo "  The repository comes from the current directory and never from a path"
-    echo "  argument, so no command runs from here. The directory the worktrees sit"
-    echo "  in is the usual way to land here. Run it from a checkout instead:"
+    echo "  Run it from a checkout of the repository you mean:"
     echo "    cd <main checkout> && .agents/skills/worktree/scripts/worktree remove <ID|PATH>"
   } >&2
   exit 1
