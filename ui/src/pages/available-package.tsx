@@ -21,6 +21,7 @@ import { recordsUnreadable } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { sameScope } from "@/lib/scope";
 import { useOrderedRead } from "@/lib/use-ordered-read";
 import { cn } from "@/lib/utils";
 import { catalogKey, useMarketplacesStore } from "@/stores/marketplaces";
@@ -113,7 +114,9 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
       scope,
       source,
       items: [{ kind, name }],
-      destination: target !== scope ? target : null,
+      // Same place, one answer: the picker builds a fresh Scope, so
+      // identity would call the browsed place a redirect.
+      destination: sameScope(target, scope) ? null : target,
       delivery: choice,
     }).then((ok) => {
       // Installed, the same page carries on in its installed mode — the

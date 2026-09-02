@@ -1,21 +1,21 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import type { ItemKind, Scope } from "@/bindings";
+import { BundleInstallBar } from "@/components/marketplaces/bundle-install-bar";
 import {
   BundleMemberLine,
   memberKey,
 } from "@/components/marketplaces/bundle-member-row";
-import { DestinationSelect } from "@/components/marketplaces/destination-select";
-import {
-  type Choice,
-  HarnessSelect,
-  isInstallable,
-} from "@/components/marketplaces/harness-select";
+import type { Choice } from "@/components/marketplaces/harness-select";
 import { RecordsUnreadableNote } from "@/components/marketplaces/packages-trouble";
 import { RepoAction } from "@/components/marketplaces/repo-action";
-import { useCatalog } from "@/components/marketplaces/use-catalog";
+import {
+  useCachedRead,
+  useCatalog,
+} from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import {
   bundleKey,
@@ -59,18 +59,26 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   const subscribed = catalog.by === "subscription" ? catalog : null;
   const scope = subscribed?.scope ?? null;
   const target = destination ?? scope;
-  const redirected = target && scope && target !== scope ? target : null;
+  // "The same place" has one answer, and it is not object identity: the
+  // picker hands back a freshly built Scope, so picking the place already
+  // being browsed would otherwise read as a redirect and ask again under a
+  // second cache key.
+  const redirected =
+    target && scope && !sameScope(target, scope) ? target : null;
 
   // The destination is part of the read, not a filter over it: every
   // member's state and the set's own record standing are facts about the
-  // scope the install lands in, so choosing another place asks again.
-  useEffect(() => {
-    if (ready) void loadBundle(catalog, bundle, redirected);
-  }, [catalog, ready, bundle, redirected, loadBundle]);
-
+  // scope the install lands in, so each place has a slot of its own and
+  // choosing one already read is served from it, the way every other
+  // catalog read on this page's siblings is.
   const key = bundleKey(catalog, bundle, redirected);
   const detail = bundles[key];
   const readError = reachError ?? readErrors[key];
+  const readBundle = useCallback(
+    () => loadBundle(catalog, bundle, redirected),
+    [loadBundle, catalog, bundle, redirected],
+  );
+  useCachedRead(detail !== undefined, !!readErrors[key], ready, readBundle);
 
   const toggleMember = (kind: string, name: string) => {
     setSelected((prev) => {
@@ -200,38 +208,27 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                   ))}
                 </div>
                 {subscribed && scope && target ? (
-                  <div className="mt-4 flex items-center justify-end gap-2">
-                    <DestinationSelect
-                      browsing={scope}
-                      value={target}
-                      onChange={(next) => {
-                        // Which tools can take this is a fact about the
-                        // destination, so a choice made against another one
-                        // is not an answer here. Nor is a ticked member:
-                        // the box was ticked against the state the place
-                        // before it answered, and the new place may already
-                        // hold that member or refuse to say.
-                        setChoice(NO_CHOICE);
-                        setSelected(new Set());
-                        setDestination(next);
-                      }}
-                    />
-                    <HarnessSelect
-                      scope={target}
-                      kinds={selectedKinds}
-                      value={choice}
-                      onChange={setChoice}
-                    />
-                    <Button
-                      variant="outline"
-                      disabled={
-                        busy || selected.size === 0 || !isInstallable(choice)
-                      }
-                      onClick={installSelected}
-                    >
-                      Install {selected.size} selected
-                    </Button>
-                  </div>
+                  <BundleInstallBar
+                    browsing={scope}
+                    target={target}
+                    kinds={selectedKinds}
+                    choice={choice}
+                    picked={selected.size}
+                    busy={busy}
+                    onPlace={(next) => {
+                      // Which tools can take this is a fact about the
+                      // destination, so a choice made against another one is
+                      // not an answer here. Nor is a ticked member: the box
+                      // was ticked against the state the place before it
+                      // answered, and the new place may already hold that
+                      // member or refuse to say.
+                      setChoice(NO_CHOICE);
+                      setSelected(new Set());
+                      setDestination(next);
+                    }}
+                    onChoice={setChoice}
+                    onInstall={installSelected}
+                  />
                 ) : null}
               </>
             )}

@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Scope } from "@/bindings";
 import { commands } from "@/bindings";
+import {
+  unreadableRecordsLine,
+  unreadableRecordsWriteLine,
+} from "@/lib/copy-marketplaces";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { mount, settle } from "@/test/dom";
 import { SubscribeDialog } from "./subscribe-dialog";
@@ -11,8 +17,13 @@ vi.mock("@/bindings", () => ({
 }));
 vi.mock("@/stores/settings", () => ({
   useSettingsStore: (selector: (state: unknown) => unknown) =>
-    selector({ settings: { projects: [] } }),
+    selector({ settings: { projects: [ACME.root] } }),
 }));
+
+const ACME: Extract<Scope, { scope: "project" }> = {
+  scope: "project",
+  root: "/work/acme",
+};
 
 /** What the chosen place's record read answers. */
 function records(unreadable: boolean) {
@@ -102,8 +113,74 @@ describe("the place a subscription is chosen for", () => {
 
     expect((await filled())?.disabled).toBe(true);
     expect(document.body.textContent).toContain(
-      "can't read Personal's records",
+      unreadableRecordsWriteLine("Personal"),
+    );
+    // The write line, not the read one: the consequence here is that
+    // nothing is written, never that a row is stale.
+    expect(document.body.textContent).not.toContain(
+      unreadableRecordsLine("Personal"),
     );
     expect(document.body.textContent).toContain("See Problems");
+  });
+
+  // The answer belongs to the place, so the question follows the picker.
+  it("asks again for the place the picker moves to", async () => {
+    const submit = await filled();
+    expect(commands.scopeRecordsUnreadable).toHaveBeenLastCalledWith({
+      scope: "global",
+    });
+    expect(submit?.disabled).toBe(false);
+
+    records(true);
+    const trigger = document.querySelector<HTMLElement>(
+      '[data-slot="select-trigger"]',
+    );
+    if (!trigger) throw new Error("no place select rendered");
+    act(() => trigger.focus());
+    await userEvent.keyboard("{Enter}");
+    const option = [...document.querySelectorAll('[role="option"]')].find(
+      (el) => el.textContent === "acme",
+    );
+    if (!(option instanceof HTMLElement)) throw new Error("no acme option");
+    await userEvent.click(option);
+    await settle();
+
+    expect(commands.scopeRecordsUnreadable).toHaveBeenLastCalledWith(ACME);
+    expect(document.body.textContent).toContain(
+      unreadableRecordsWriteLine("acme"),
+    );
+  });
+
+  // Withheld while the read is still out, the way the two install pages
+  // withhold on a payload they have not got yet: pressing into the gap
+  // would be pressing before the place had answered.
+  it("offers nothing while the read is still out", async () => {
+    vi.mocked(commands.scopeRecordsUnreadable).mockReturnValue(
+      new Promise(() => {}),
+    );
+    const host = mount(<SubscribeDialog open onOpenChange={() => {}} />);
+    const input = host.ownerDocument.querySelector<HTMLInputElement>(
+      "#subscribe-reference",
+    );
+    if (!input) throw new Error("no reference input rendered");
+    await userEvent.type(input, "Acme/Kit");
+
+    const submit = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "Subscribe",
+    );
+    expect(submit?.disabled).toBe(true);
+  });
+
+  // A local read that fails leaves Subscribe live on purpose: the engine
+  // refuses the write itself with its own words, and failing closed here
+  // would put the button out of reach for good whenever the read errors.
+  it("still offers the subscription when the read itself fails", async () => {
+    vi.mocked(commands.scopeRecordsUnreadable).mockResolvedValue({
+      status: "error",
+      error: "no such place",
+    });
+
+    expect((await filled())?.disabled).toBe(false);
+    expect(document.body.textContent).not.toContain("See Problems");
   });
 });

@@ -3,9 +3,12 @@
 // against the place the install would land in, and gate Install all on what
 // that place's record says. A prop-driven test of the member rows cannot
 // see either.
+import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { BundleDetail } from "@/bindings";
+import type { AppSettings, BundleDetail, Scope } from "@/bindings";
 import { commands } from "@/bindings";
+import { unreadableRecordsLine } from "@/lib/copy-marketplaces";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
@@ -24,6 +27,27 @@ vi.mock("sonner", () => ({
 }));
 
 const catalog = subscription({ scope: "global" }, "kit");
+const ACME: Extract<Scope, { scope: "project" }> = {
+  scope: "project",
+  root: "/work/acme",
+};
+
+/** Pick a place in the destination select. A pointer click does not open a
+ *  base-ui trigger under jsdom, so the keyboard path opens it. */
+async function chooseDestination(host: HTMLElement, label: string) {
+  const trigger = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("Install to"),
+  );
+  if (!trigger) throw new Error("no destination select rendered");
+  act(() => trigger.focus());
+  await userEvent.keyboard("{Enter}");
+  const option = [...document.querySelectorAll('[role="option"]')].find(
+    (el) => el.textContent === label,
+  );
+  if (!(option instanceof HTMLElement)) throw new Error(`no ${label} option`);
+  await userEvent.click(option);
+  await settle();
+}
 
 const starter: BundleDetail = {
   name: "starter",
@@ -59,7 +83,9 @@ beforeEach(() => {
     data: [{ harness: "claude", detected: true, sharesTheUniversalTree: true }],
   });
   useMarketplacesStore.setState({ bundles: {}, readErrors: {}, busy: false });
-  useSettingsStore.setState({ settings: null });
+  useSettingsStore.setState({
+    settings: { projects: [ACME.root] } as AppSettings,
+  });
   useNavStore.setState({ bundleRef: { bundle: "starter", catalog } });
 });
 
@@ -94,7 +120,51 @@ describe("the curated set page", () => {
     await settle();
 
     expect(installAll(host)?.disabled).toBe(true);
-    expect(host.textContent).toContain("can't read Personal's records");
+    expect(host.textContent).toContain(unreadableRecordsLine("Personal"));
     expect(host.textContent).toContain("See Problems");
+  });
+
+  // Everything the destination decides, in one pass: the read is asked
+  // again for the project, a tick made against the place before it is not
+  // carried into the new one, and the reason names the place the install
+  // would land in rather than the one being browsed.
+  it("re-reads for a chosen project, drops the tick, and names that place", async () => {
+    const host = mount(<BundleDetailPage />);
+    await settle();
+    const box = host.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (!box) throw new Error("no member checkbox rendered");
+    await userEvent.click(box);
+    await settle();
+    expect(host.textContent).toContain("Install 1 selected");
+
+    answer({ ...starter, recordsUnreadable: true, members: [] });
+    await chooseDestination(host, "acme");
+
+    expect(commands.marketplaceBundle).toHaveBeenLastCalledWith(
+      catalog,
+      "starter",
+      ACME,
+    );
+    expect(host.textContent).toContain("Install 0 selected");
+    expect(host.textContent).toContain(unreadableRecordsLine("acme"));
+    expect(host.textContent).not.toContain(unreadableRecordsLine("Personal"));
+  });
+
+  // Two ways the same read gets asked twice for one answer: the picker
+  // hands back a freshly built Scope, so the place already being browsed
+  // reads as a redirect under object identity; and a place already read
+  // has its answer in a slot of its own. Going out to a project and back
+  // asks the engine once, for the project.
+  it("asks once per place, and not at all for one already read", async () => {
+    const host = mount(<BundleDetailPage />);
+    await settle();
+    expect(commands.marketplaceBundle).toHaveBeenCalledTimes(1);
+
+    await chooseDestination(host, "acme");
+    expect(commands.marketplaceBundle).toHaveBeenCalledTimes(2);
+
+    await chooseDestination(host, "Personal");
+    await chooseDestination(host, "acme");
+    expect(commands.marketplaceBundle).toHaveBeenCalledTimes(2);
   });
 });

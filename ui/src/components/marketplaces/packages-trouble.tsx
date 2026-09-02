@@ -2,6 +2,7 @@ import type { MarketplaceRow, Scope } from "@/bindings";
 import {
   SEE_PROBLEMS_LABEL,
   unreadableRecordsLine,
+  unreadableRecordsWriteLine,
   unreadableSourcesLine,
 } from "@/lib/copy-marketplaces";
 import { scopeLabel } from "@/lib/derive";
@@ -80,6 +81,18 @@ export function RecordsUnreadableNote({ scope }: { scope: Scope }) {
   return (
     <p className="text-xs text-warning">
       {unreadableRecordsLine(scopeName(scope))} <SeeProblemsLink />
+    </p>
+  );
+}
+
+/** What the Subscribe dialog says in place of a button that would write
+ * into a place whose records cannot be read. Drawn beside
+ * [RecordsUnreadableNote] rather than in the dialog, so how an unreadable
+ * record is said stays one shape however many surfaces say it. */
+export function RecordsUnreadableWriteNote({ scope }: { scope: Scope }) {
+  return (
+    <p className="text-xs text-warning">
+      {unreadableRecordsWriteLine(scopeName(scope))} <SeeProblemsLink />
     </p>
   );
 }

@@ -11,6 +11,7 @@ import type {
   Scope,
 } from "@/bindings";
 import { invalidations, type ReadState } from "@/lib/read-state";
+import { scopeKey } from "@/lib/scope";
 import { resetPreinstallSafety } from "./preinstall-safety";
 
 /** Every cached catalog read the store holds, declared once here so the
@@ -101,12 +102,7 @@ export const bundleKey = (
 ): string =>
   `${readErrorKey(catalogKey(catalog), "bundle")}::${JSON.stringify([
     name,
-    destination === null
-      ? null
-      : [
-          destination.scope,
-          destination.scope === "global" ? null : destination.root,
-        ],
+    destination === null ? null : scopeKey(destination),
   ])}`;
 
 export const subscription = (scope: Scope, source: string): Catalog => ({
