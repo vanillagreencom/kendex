@@ -13,6 +13,11 @@ use std::path::PathBuf;
 /// plus namespaced skill installation, share this rewrite. Other valid YAML
 /// key spellings and multiline values are not interpreted; target validation
 /// decides whether the result loads.
+///
+/// The name is written through [`crate::render::yaml_scalar`], as every
+/// other generated frontmatter value is. A name the loaders accept can
+/// still be YAML structure — `[copy]` is a sequence, `gh #edited` a value
+/// and a comment — and writing one raw lands a file that does not load.
 pub(crate) fn with_name(text: &str, installed: &str) -> Option<String> {
     let newline = if text.starts_with("---\r\n") {
         "\r\n"
@@ -22,9 +27,10 @@ pub(crate) fn with_name(text: &str, installed: &str) -> Option<String> {
     let rest = text.strip_prefix(&format!("---{newline}"))?;
     let end = rest.find(&format!("{newline}---"))?;
     let mut lines: Vec<String> = rest[..end].split(newline).map(str::to_owned).collect();
+    let declared = crate::render::yaml_scalar(installed);
     match lines.iter_mut().find(|line| line.starts_with("name:")) {
-        Some(line) => *line = format!("name: {installed}"),
-        None => lines.insert(0, format!("name: {installed}")),
+        Some(line) => *line = format!("name: {declared}"),
+        None => lines.insert(0, format!("name: {declared}")),
     }
     Some(format!(
         "---{newline}{}{}",
@@ -98,5 +104,31 @@ mod tests {
             Some("---\nname: mine\ndescription: d\n---\n")
         );
         assert_eq!(with_name("Body.\n", "mine"), None);
+    }
+
+    /// What the rewritten file declares, read the way a harness loader
+    /// reads it: strict YAML over the frontmatter block. Asserting the
+    /// bytes merely hold the name would pass on a raw write, which is the
+    /// bug this covers.
+    fn declared_name(text: &str) -> Option<String> {
+        let (yaml, _) = crate::frontmatter::split(text).expect("a frontmatter block");
+        let map = crate::frontmatter::parse(yaml).expect("frontmatter that parses");
+        map.get("name")
+            .and_then(crate::frontmatter::Value::as_str)
+            .map(str::to_owned)
+    }
+
+    /// Names the loaders accept that this file's own syntax would read as
+    /// something else: a sequence, a value trailed by a comment, a
+    /// boolean, an alias. Each has to come back as the string it is.
+    #[test]
+    fn a_name_yaml_would_misread_is_encoded() {
+        for name in ["[copy]", "gh #edited", "no", "*anchor"] {
+            let replaced =
+                with_name("---\nname: old\ndescription: d\n---\nBody.\n", name).expect("a rewrite");
+            assert_eq!(declared_name(&replaced).as_deref(), Some(name), "{name}");
+            let inserted = with_name("---\ndescription: d\n---\nBody.\n", name).expect("a rewrite");
+            assert_eq!(declared_name(&inserted).as_deref(), Some(name), "{name}");
+        }
     }
 }
