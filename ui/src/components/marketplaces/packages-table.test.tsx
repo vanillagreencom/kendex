@@ -20,6 +20,9 @@ import {
   SAFETY_DOT_UNCHECKED,
   safetyDotWords,
 } from "@/lib/copy-safety";
+import { READ_LANDED } from "@/lib/read-state";
+import { useCommunityStore } from "@/stores/community";
+import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey } from "@/stores/preinstall-safety";
@@ -315,6 +318,7 @@ describe("the row action on a repository nobody subscribes to", () => {
     counts: null,
     meta: null,
     mode: null,
+    recordsUnreadable: false,
   };
 
   const draw = (rows: MarketplaceRow[]) => {
@@ -331,7 +335,7 @@ describe("the row action on a repository nobody subscribes to", () => {
     });
     const host = mountTree(
       <PackagesTable
-        entries={[{ catalog: repoCatalog, row }]}
+        entries={[{ catalog: repoCatalog, row, recordsUnreadable: false }]}
         showMarketplace={false}
       />,
     );

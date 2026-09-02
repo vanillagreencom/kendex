@@ -17,6 +17,7 @@ const row = (over: Partial<MarketplaceRow> = {}): MarketplaceRow => ({
   counts: null,
   meta: null,
   mode: null,
+  recordsUnreadable: false,
   ...over,
 });
 

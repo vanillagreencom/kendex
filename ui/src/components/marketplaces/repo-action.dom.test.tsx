@@ -138,6 +138,7 @@ describe("turning a declared repository back on", () => {
     counts: null,
     meta: null,
     mode: null,
+    recordsUnreadable: false,
   };
 
   const toggle = vi.fn();
