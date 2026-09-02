@@ -151,16 +151,94 @@ section_five() { # doc label
 # waiter's own line cannot see.
 DETACHED_RE='(^|[[:space:]])(setsid|nohup|disown)[[:space:]]|[^&]&[[:space:]]*$|\\[[:space:]]*$|^[[:space:]]*\([[:space:]]*$|/queue-wait[^>]*>'
 
-# Every command in the workflow that reaches GitHub opens with both repository
-# variables cleared: gh honours them over cwd and over `-C`, so an inherited
-# value points a read at another repository and a mutation at that
-# repository's same-numbered PR. Expressed as the complement of the required
-# opener, so a call added later is covered without being listed. The first
-# branch is a first-word mismatch against `env`, four alternatives because the
-# word is three characters; the second catches an `env` that clears only one
-# of the pair.
-GH_CMD='(gh[[:space:]]|[^[:space:]]*github\.sh[[:space:]]|[^[:space:]]*/queue-wait[[:space:]])'
-UNBOUND_RE="^[[:space:]]*([^e[:space:]]|e[^n]|en[^v]|env[^[:space:]]).*$GH_CMD|^[[:space:]]*env[[:space:]]+(-u[[:space:]]+(GH_REPO|GITHUB_REPOSITORY)[[:space:]]+)?$GH_CMD"
+# Every command in § 5 that reaches GitHub opens with both repository variables
+# cleared: gh honours them over cwd and over `-C`, so an inherited value points
+# a read at another repository and a mutation at that repository's
+# same-numbered PR.
+#
+# WHICH COMMANDS REACH IS DERIVED, NOT LISTED. Three enumerations in this file
+# have each been reopened by the next spelling nobody thought of, and a list of
+# GitHub-reaching command names is the same mistake one level up: it goes stale
+# the day a waiter starts calling `gh`. So the check resolves the script each
+# fenced line names and asks that FILE whether it invokes `gh`. A waiter added
+# to the tree next week is covered without this suite being edited, and the
+# control that proves it is the planted unbound call below — a command name
+# that appears nowhere in this file.
+#
+# `forbid_fenced` takes a regex and cannot resolve a path, so this one predicate
+# is local and reports through `pass`/`fail`.
+GH_CALL_RE='(^|[^[:alnum:]_.-])gh[[:space:]]+[a-z]'
+CLEARING='env -u GH_REPO -u GITHUB_REPOSITORY '
+
+# fenced_commands DOC — the executable lines of every ```bash/```sh block,
+# indent stripped. Written here rather than taken from md.sh, whose public
+# surface exposes no reader.
+fenced_commands() { # doc
+  awk '/^[[:space:]]*```/ {
+         if (o) { o = 0 } else {
+           o = 1; l = $0; sub(/^[[:space:]]*```[[:space:]]*/, "", l); sub(/[[:space:]].*$/, "", l)
+         }
+         next
+       }
+       o && (l == "bash" || l == "sh") {
+         t = $0; sub(/^[[:space:]]+/, "", t)
+         if (t == "" || substr(t, 1, 1) == "#") next
+         print t
+       }' "$1"
+}
+
+# command_word LINE — the command the line runs, with any `env` prefix and its
+# `-u NAME` options stripped off first, so a bound line and an unbound one
+# resolve to the same script.
+command_word() { # line
+  local rest="$1"
+  while :; do
+    case "$rest" in
+      "env "*) rest="${rest#env }" ;;
+      "-u "*) rest="${rest#-u }"; rest="${rest#* }" ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "${rest%% *}"
+}
+
+# reaches_github COMMAND ROOT — `gh` itself, or a script in the tree that
+# invokes it. A command that resolves to no file in the tree (git, mkdir) is
+# not a script this repository ships and cannot be read; a path-shaped one
+# that resolves to nothing is reported by the caller as a broken reference
+# rather than passed over.
+reaches_github() { # command root
+  local path="${1#\[MAIN_REPO_ROOT\]/}"
+  [ "$1" = gh ] && return 0
+  [ -r "$2/$path" ] || return 1
+  grep -qE "$GH_CALL_RE" "$2/$path"
+}
+looks_like_a_repo_path() { # command
+  case "$1" in [\[]MAIN_REPO_ROOT[\]]/*|.agents/*) return 0 ;; *) return 1 ;; esac
+}
+
+section_binds_github() { # doc root
+  local line cmd path bad="" missing=""
+  while IFS= read -r line; do
+    cmd="$(command_word "$line")"
+    path="${cmd#\[MAIN_REPO_ROOT\]/}"
+    if looks_like_a_repo_path "$cmd" && [ ! -r "$2/$path" ]; then
+      missing="$missing$line"$'\n'
+      continue
+    fi
+    reaches_github "$cmd" "$2" || continue
+    case "$line" in "$CLEARING"*) ;; *) bad="$bad$line"$'\n' ;; esac
+  done < <(fenced_commands "$1")
+  if [ -n "$missing" ]; then
+    printf '        a command names a path this tree does not carry:\n'
+    printf '%s' "$missing" | sed 's/^/          /'
+    return 1
+  fi
+  [ -z "$bad" ] && return 0
+  printf '        reaches GitHub without clearing both repo variables:\n'
+  printf '%s' "$bad" | sed 's/^/          /'
+  return 1
+}
 
 # The waiter runs exactly as written, which `rule_fenced` cannot say: it asks
 # only that one line CONTAIN its tokens, so a wrapper before the command and a
@@ -211,10 +289,8 @@ for root in "${ROOTS[@]}"; do
     'setsid queue-wait [PR_NUMBER] --json > [VERDICT_FILE] &' \
     "$doc"
   five="$(section_five "$doc" "$label")"
-  forbid_fenced "$label: every § 5 command reaching GitHub clears both repo variables" \
-    "$UNBOUND_RE" \
-    '[MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-threads [PR_NUMBER] --unresolved' \
-    "$five"
+  check "$label: every § 5 command reaching GitHub clears both repo variables" \
+    section_binds_github "$five" "$TREE_ROOT"
   forbid_fenced "$label: the queue wait runs exactly as written" \
     "$WAITER_SHAPE_RE" \
     'env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json' \
@@ -299,6 +375,50 @@ check "control: a verdict routed by two rows reds the one-row direction" \
   reds one_row_per_verdict "$DUPED"
 check "control: that same duplicate leaves the coverage direction green" \
   every_verdict_routed "$CTL_QW" "$DUPED"
+
+# The binding guard's two controls. The first is the call the enumeration
+# missed; the second is what separates a derivation from a list — the planted
+# command's name appears nowhere in this file, so only reading the script it
+# names can classify it.
+CTL_FIVE="$(section_five "$CTL_DOC" ctl)"
+
+UNBOUND_RECOVERY="$MD_TMP/five-unbound-recovery.md"
+sed 's|^\(      \)env -u GH_REPO -u GITHUB_REPOSITORY \(.*/approval-wait \[PR_NUMBER\]\)|\1\2|' \
+  "$CTL_FIVE" > "$UNBOUND_RECOVERY"
+check "control: the recovery call really lost its clearing" \
+  reds cmp -s "$CTL_FIVE" "$UNBOUND_RECOVERY"
+check "control: the recovery call losing its clearing reds the binding guard" \
+  reds section_binds_github "$UNBOUND_RECOVERY" "$TREE_ROOT"
+
+# `container-close` is a repository script that calls `gh` and is named nowhere
+# in this suite. A matcher listing command names cannot classify it; reading
+# the file can.
+NEW_UNBOUND="$MD_TMP/five-new-unbound.md"
+printf '%s\n```bash\n%s\n```\n' "$(cat "$CTL_FIVE")" \
+  '   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' \
+  > "$NEW_UNBOUND"
+check "control: a new gh-reaching call was really added" \
+  reds cmp -s "$CTL_FIVE" "$NEW_UNBOUND"
+check "control: a new unbound gh-reaching call reds the binding guard" \
+  reds section_binds_github "$NEW_UNBOUND" "$TREE_ROOT"
+
+# The same line WITH the clearing must pass, or the check would be reading the
+# addition rather than its binding.
+NEW_BOUND="$MD_TMP/five-new-bound.md"
+printf '%s\n```bash\n%s\n```\n' "$(cat "$CTL_FIVE")" \
+  '   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]' \
+  > "$NEW_BOUND"
+check "control: that same call bound leaves the guard green" \
+  section_binds_github "$NEW_BOUND" "$TREE_ROOT"
+
+# A command that reaches nothing needs no clearing, or the guard would be
+# demanding it of every line.
+NEW_INERT="$MD_TMP/five-new-inert.md"
+printf '%s\n```bash\n%s\n```\n' "$(cat "$CTL_FIVE")" \
+  '   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/sync-base [MAIN_REPO_ROOT]' \
+  > "$NEW_INERT"
+check "control: an unbound call that reaches no gh leaves the guard green" \
+  section_binds_github "$NEW_INERT" "$TREE_ROOT"
 
 # The harvest's own control: a renamed table header takes the whole range with
 # it, and both set comparisons then pass on nothing.

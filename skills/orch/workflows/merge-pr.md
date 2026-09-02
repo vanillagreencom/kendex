@@ -135,8 +135,10 @@ Some harnesses reset cwd per shell call — prefer `-C` and absolute paths over 
 inherited value points a read at another repository and a mutation at that
 repository's same-numbered PR — a `branch -D` authorized by the wrong PR, or
 the queue wait's late-findings guard disarming and dequeuing someone else's.
-The rule covers `gh`, the `github.sh` router and `queue-wait` alike, and a
-command added here later inherits it.
+Reaching GitHub is a property of the script, not of the command's spelling: a
+waiter, the `github.sh` router, `container-close` and `worktree` all call `gh`
+inside, so all of them clear the pair, and a script that starts calling `gh`
+later is covered the day it does.
 
 ```bash
 .agents/skills/orch/scripts/git-context common-root .
@@ -157,7 +159,7 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
    ```
    ```bash
-   .agents/skills/orch/scripts/approval-wait --resolve-mode
+   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait --resolve-mode
    ```
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
@@ -261,7 +263,7 @@ Use the output as `MAIN_REPO_ROOT`.
    2. Re-confirm the gate at the head about to be re-armed (skip when `GATE_MODE` is `off`):
 
       ```bash
-      .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
+      env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
       ```
 
    3. Return to step 1's exact-head arm and wait.
@@ -301,7 +303,7 @@ Use the output as `MAIN_REPO_ROOT`.
    c. Close the container through the serialized helper:
 
       ```bash
-      [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]
+      env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]
       ```
 
       `closed [PARENT_ID]` → record the closure in § 6 with every stderr diagnostic from the helper. If this container has a container parent, re-run the step-2 sync and repeat a-c for that parent.
@@ -415,7 +417,7 @@ Use the output as `MAIN_REPO_ROOT`.
    not deleting its own cwd:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
+   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
    ```
 
    A foreign-lease refusal from the helper keeps the worktree too; carry its
