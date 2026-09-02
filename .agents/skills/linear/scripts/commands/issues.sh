@@ -955,7 +955,7 @@ require_agent_routing_label() {
 
     local supplied declared_name agent_matched=0 unknown_agent=""
     for supplied in ${supplied_names[@]+"${supplied_names[@]}"}; do
-        supplied="$(kendex_trim "$supplied")"
+        kendex_trim supplied "$supplied"
         [ -n "$supplied" ] || continue
         local is_declared=0
         for declared_name in ${declared_names[@]+"${declared_names[@]}"}; do
@@ -1183,7 +1183,7 @@ create_issue() {
         local raw_label_names=()
         IFS=',' read -ra raw_label_names <<<"$labels"
         for raw_label_name in "${raw_label_names[@]}"; do
-            raw_label_name="$(kendex_trim "$raw_label_name")"
+            kendex_trim raw_label_name "$raw_label_name"
             [ -n "$raw_label_name" ] || continue
             normalized_labels="${normalized_labels:+$normalized_labels,}$raw_label_name"
         done

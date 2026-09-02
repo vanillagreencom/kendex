@@ -671,7 +671,7 @@ detect_current_harness() {
   local ancestor_cmd
   while pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') && [[ -n "$pid" && "$pid" != "0" && "$pid" != "1" ]]; do
     ancestor_cmd=$(ps -o comm= -p "$pid" 2>/dev/null || echo "")
-    ancestor_cmd="$(kendex_trim "$ancestor_cmd")"
+    kendex_trim ancestor_cmd "$ancestor_cmd"
     ancestor_cmd="${ancestor_cmd##*/}"
     case "$ancestor_cmd" in
       claude)       echo "claude"; return ;;
@@ -737,7 +737,7 @@ canon_identity() {
   # absorbed by the patterns' `*`, so untrimmed the failure looks arbitrary
   # rather than absent.) Every identity passes through here — declared,
   # detected, per-target and roster-derived — so trimming once covers them all.
-  id=$(kendex_trim "$1")
+  kendex_trim id "$1"
   id=$(lower "$id")
   # Provider-qualified ids — openai-codex/gpt-5.6-sol, openai/gpt-5.6-sol,
   # anthropic/claude-opus-4 — are exactly what Pi and OpenCode show an operator,
@@ -815,7 +815,7 @@ file_declares_current_model() {
   # `|| [[ -n "$line" ]]` so a final line with no trailing newline is still read.
   while IFS= read -r line || [[ -n "$line" ]]; do
     lineno=$((lineno + 1))
-    trimmed="$(kendex_trim "$line")"
+    kendex_trim trimmed "$line"
     # Blank and comment lines. No test covers the comment arm on its own: the
     # anchored match below already rejects anything starting with `#`, so this
     # is the guard that keeps that true if the match ever loosens.
@@ -833,7 +833,7 @@ file_declares_current_model() {
     fi
     [[ $in_env -eq 1 ]] || continue
     trimmed="${trimmed#export }"
-    trimmed="$(kendex_trim "$trimmed")"
+    kendex_trim trimmed "$trimmed"
     case "$trimmed" in
       SECOND_OPINION_CURRENT_MODEL=*|SECOND_OPINION_CURRENT_MODEL[[:space:]]*=*) return 0 ;;
     esac

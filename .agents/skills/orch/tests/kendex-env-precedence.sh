@@ -242,6 +242,34 @@ else
   s8_case "an UNREADABLE kendex.settings.toml" 'printf "[env]\nX = \"y\"\n" > kendex.settings.toml && chmod 000 kendex.settings.toml' "kendex.settings.toml: source exists but is unreadable"
 fi
 
+# Scenario 9: the per-line path forks no subshell. kendex_trim and
+# kendex_decode_value assign into a caller-named variable, so a counting
+# wrapper around the real helper sees every call the loader makes. Read
+# back through a command substitution instead — a forked subshell per line
+# of every settings file every skill script reads — each increment lands in
+# the forked copy and the count comes back short, 0 when every call site
+# forks. The count is exact so that ONE reverted call site is caught too:
+# three lines trimmed, plus one key trim and one kendex_decode_value trim
+# for each of the two assignments.
+PROJ9="$TMP_ROOT/proj9"
+mkdir -p "$PROJ9"
+printf '[env]\nK1 = "v1"\nK2 = "v2"\n' > "$PROJ9/kendex.settings.toml"
+set +e
+s9_out=$(
+  set -euo pipefail
+  source "$LIB"
+  trim_body="$(declare -f kendex_trim)"
+  eval "_kendex_trim_real${trim_body#kendex_trim}"
+  kendex_trim() { TRIM_CALLS=$((TRIM_CALLS + 1)); _kendex_trim_real "$@"; }
+  TRIM_CALLS=0
+  kendex_load_settings_file "$PROJ9/kendex.settings.toml"
+  printf '%s|%s|%s\n' "$TRIM_CALLS" "$K1" "$K2"
+)
+s9_code=$?
+set -e
+assert_eq "$s9_code" "0" "scenario 9 loads without error"
+assert_eq "$s9_out" "7|v1|v2" "scenario 9: every kendex_trim call the loader makes is visible in its own shell, none lost to a command substitution"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
