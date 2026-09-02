@@ -69,36 +69,53 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 # shellcheck source=../../skills/growth-guards/scripts/lib/configured-paths.sh
 . "$REPO/skills/growth-guards/scripts/lib/configured-paths.sh"
 
-# A REAL tracked file from each tree, the deepest one there is. A path written
-# out here would go stale the day the tree was reorganized, and a shallow one
-# would be reached by a glob that covers only the top level.
+# EVERY TRACKED PATH, not a sample. "Across the tree" is the claim, so the
+# tree is what gets asked: a glob can reach a probe and still leave most of a
+# tree outside the gate, and `crates/*.rs ui/*` is that value — it matches any
+# .rs file at any depth and every ui/ path, so any one-file-per-tree probe
+# passes while crates/app/Cargo.toml commits with no entry and nothing reds.
+# Sampling cannot tell a whole tree from a convenient corner of it.
 #
-# awk keeps the maximum rather than `sort | head`, which under this file's
-# `pipefail` would take the whole suite down on the SIGPIPE that closing the
-# pipe early sends git.
-deepest_tracked() { # DIR — deepest tracked path under it, empty when none
-  git -C "$REPO" ls-files -- "$1" \
-    | awk -F/ 'NF > depth { depth = NF; path = $0 } END { if (depth) print path }'
-}
-
+# Measured at 1030 paths and 12ms, all of it a shell `case` with no process per
+# path, so the whole tree is affordable and the claim does not need narrowing.
+#
+# Process substitution, not a pipe into the loop: this file runs under
+# `pipefail`, and a pipeline the reader can close early takes the suite down on
+# git's SIGPIPE. The loop drains its input, so nothing closes early — but the
+# rule for this file is that no pipeline ends in `head` or any other short read.
+#
 # `set -f` for the same reason lib/configured-paths.sh documents: the list is
 # word-split unquoted to act as globs, and pathname expansion here would
 # resolve each pattern against the work tree instead.
 unreached=""
 set -f
 for obliged_tree in crates ui; do
-  probe="$(deepest_tracked "$obliged_tree")"
-  if [ -z "$probe" ]; then
-    unreached="$unreached $obliged_tree/ (no tracked file to probe with)"
-  elif ! gg_path_matches "$probe" $REQUIRED_PATHS; then
-    unreached="$unreached $obliged_tree/ (nothing matches $probe)"
+  seen=0
+  missed=0
+  examples=""
+  while IFS= read -r tracked; do
+    seen=$((seen + 1))
+    if ! gg_path_matches "$tracked" $REQUIRED_PATHS; then
+      missed=$((missed + 1))
+      # A bounded sample in the message: naming 600 paths buries the one fact
+      # the reader needs, which is that the tree is not covered and where it
+      # starts. The COUNT is exact; the paths are the first few.
+      if [ "$missed" -le 3 ]; then examples="$examples $tracked"; fi
+    fi
+  done < <(git -C "$REPO" ls-files -- "$obliged_tree")
+  # Zero tracked paths is a failure, not a vacuous pass: it means this arm
+  # measured nothing, whether the tree moved or the read broke.
+  if [ "$seen" -eq 0 ]; then
+    unreached="$unreached $obliged_tree/ (no tracked path to check — the tree moved, or the read failed)"
+  elif [ "$missed" -gt 0 ]; then
+    unreached="$unreached $obliged_tree/ ($missed of $seen unmatched, from:$examples)"
   fi
 done
 set +f
 
 [ -z "$unreached" ] \
-  && ok "kendex.settings.toml obliges a changelog entry across crates/ and ui/" \
-  || bad "kendex.settings.toml obliges a changelog entry across crates/ and ui/" \
+  && ok "kendex.settings.toml obliges a changelog entry across every tracked path in crates/ and ui/" \
+  || bad "kendex.settings.toml obliges a changelog entry across every tracked path in crates/ and ui/" \
        "GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = \"$REQUIRED_PATHS\" does not reach:$unreached — a change there would commit with no changelog entry and nothing red anywhere"
 
 new_fixture() { # NAME — a clone-shaped repo carrying the package and these tools
