@@ -38,10 +38,8 @@ pub(crate) fn unsupported_kind(kind: ItemKind, name: &str) -> CoreError {
     }
 }
 
-/// Whether keeping an edit as a fork can capture this rendering: a skill's
-/// canonical tree always round-trips, an agent's only from the tools whose
-/// format the source parser reads back. The Updates page asks before it
-/// offers the action, so the answer is the same one `fork` enforces.
+/// Whether a harness rendering can be parsed as source form. This format check
+/// does not prove capture will succeed.
 pub fn forkable_harness(kind: ItemKind, harness: HarnessId) -> bool {
     match kind {
         ItemKind::Skill => true,
@@ -77,9 +75,8 @@ pub(super) fn ambiguous_skill_tree(tree: &std::path::Path) -> bool {
     tree.join("SKILL.md").exists() && tree.join("SKILL.md.disabled").exists()
 }
 
-/// Whether keeping this rendering's edit as a fork can succeed. The
-/// read-only capture is the same eligibility result `fork` consumes, so
-/// the Updates page offers no action that the engine would refuse.
+/// Full fork eligibility for Updates, using the read-only capture shared with
+/// `fork` so the page offers no action that direct capture would refuse.
 pub fn forkable_rendering(
     env: &Env,
     scope: &Scope,
