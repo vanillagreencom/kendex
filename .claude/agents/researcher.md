@@ -33,4 +33,6 @@ Provider-backed research and the report it produces. Not production code, not ar
 
 ## Additional Instructions
 
+<!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

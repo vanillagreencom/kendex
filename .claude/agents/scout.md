@@ -41,4 +41,6 @@ Answer four things: where the relevant code lives, how the key types and functio
 
 ## Additional Instructions
 
+<!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

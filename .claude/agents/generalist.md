@@ -31,4 +31,6 @@ What changed, what you verified it against, and anything you deliberately left f
 
 ## Additional Instructions
 
+<!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

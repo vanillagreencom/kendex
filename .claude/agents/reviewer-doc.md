@@ -36,4 +36,6 @@ Wrong claims, wrong values, dead citations, contradicted invariants → `blocker
 
 ## Additional Instructions
 
+<!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

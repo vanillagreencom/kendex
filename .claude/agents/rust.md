@@ -34,4 +34,6 @@ The change, the measurement behind any performance claim, and every `unsafe` or 
 
 ## Additional Instructions
 
+<!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

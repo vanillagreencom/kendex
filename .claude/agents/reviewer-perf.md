@@ -32,4 +32,6 @@ Budget exceedances, classified regressions, hot-path cost introductions → `blo
 
 ## Additional Instructions
 
+<!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

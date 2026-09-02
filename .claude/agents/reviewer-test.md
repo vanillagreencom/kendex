@@ -40,4 +40,6 @@ Coverage gaps, vacuous tests, missing must-fail controls, unwired suites → `bl
 
 ## Additional Instructions
 
+<!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

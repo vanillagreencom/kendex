@@ -32,4 +32,6 @@ Findings the caller can act on without re-deriving them, structured as JSON when
 
 ## Additional Instructions
 
+<!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->

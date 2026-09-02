@@ -7,7 +7,9 @@ summary: "Stewards the kendex issue queue on a self-paced loop: watches open PRs
 <!-- kendex:project-instructions:start -->
 ## Project Instructions
 
+<!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->
 <!-- kendex:project-instructions:end -->
 
 # kendex Issue Steward

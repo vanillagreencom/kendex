@@ -44,4 +44,6 @@ Write a file only when asked. Given no path, a technical plan goes to `docs/plan
 
 ## Additional Instructions
 
+<!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:shared-instructions:end -->
