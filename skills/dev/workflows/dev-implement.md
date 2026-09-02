@@ -155,7 +155,6 @@ Update docs when the implementation changes a documented API or architecture.
 ## 5. Validate
 
 Before deterministic validation, run `git grep -n -F --untracked --exclude-standard -- <callee>` for every callee whose call the change deletes, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup). A one-off measurement script follows the completion summary's `handoff_to_submit_pr:` contract, is not committed, and is not a check the change adds or modifies.
-
 Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs in a repo where a baseline exists:
 
 ```bash
@@ -211,7 +210,7 @@ A signal is never silently dropped: every triggered row appears in the artifact 
 
 ### 9.1 Completion Comment
 
-Always required. Linear posts it to the issue you implemented: write `tmp/completion-summary-[ISSUE_ID].md`, then `linear.sh comments create [ISSUE_ID] --body-file tmp/completion-summary-[ISSUE_ID].md`. GitHub and ad-hoc rounds return the same content to the orchestrator instead and ALSO carry it in the artifact via `--summary-file` (§ 10).
+Always required. Every tracker writes `tmp/completion-summary-[ISSUE_ID].md` and carries it in the artifact via `--summary-file` (§ 10); Linear also posts it with `comments create`, while GitHub and ad-hoc rounds append `--no-summary`.
 
 ```markdown
 ## Completion Summary
@@ -262,7 +261,7 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] [--qa-label [LABEL]]...
 ```
 
-One `--qa-label` per § 8 signal, none if nothing triggered. Every round appends `--summary-file` with its § 9 summary; GitHub and ad-hoc rounds also append `--no-summary`. A bundle uses the parent summary from § 11 after copying child handoffs, then adds `--bundled` and its `--item` flags.
+One `--qa-label` per § 8 signal, none if nothing triggered. GitHub and ad-hoc rounds append `--no-summary --summary-file tmp/completion-summary-[ISSUE_ID].md`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
 
 **A read-only analysis round**: § 5, § 7, and § 8 do not apply. Pass the recommendation inline or as a file — exactly one of the two:
 
@@ -299,8 +298,7 @@ Summary: [ISSUE_ID] ✓
 
 1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags — the union of every sub-issue's § 8 signals. No tracker mutation.
 
-2. **Post the parent summary** (Linear only): write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`.
-   The file write runs for every tracker and includes every child handoff; only `comments create` is Linear-only.
+2. **Write the parent summary** (every tracker): write `tmp/bundle-summary-[PARENT_ID].md` with every child handoff; Linear also runs `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`.
 
    ```markdown
    ## Bundle Complete
@@ -316,7 +314,7 @@ Summary: [ISSUE_ID] ✓
 3. **Write the artifact**, keyed to the Parent ID, with that group's `Round ID:` when the bundle was delegated in groups:
 
    ```bash
-   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]...
+   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]...
    ```
 
    `--bundled` requires one `--item` per sub-issue result — `DECISION` is Applied, Skipped, or Blocked and `REASONING` non-empty plain text with no backticks — populated from the sub-issue tree. `--commit` is the last sub-issue's HEAD.
