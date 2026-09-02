@@ -130,6 +130,14 @@ A non-zero exit or empty output **aborts the merge**. Otherwise reparent each sa
 
 Some harnesses reset cwd per shell call — prefer `-C` and absolute paths over `cd &&` chains.
 
+**Every command in this section that reaches GitHub clears `GH_REPO` and
+`GITHUB_REPOSITORY` first.** `gh` honours those over both cwd and `-C`, so an
+inherited value points a read at another repository and a mutation at that
+repository's same-numbered PR — a `branch -D` authorized by the wrong PR, or
+the queue wait's late-findings guard disarming and dequeuing someone else's.
+The rule covers `gh`, the `github.sh` router and `queue-wait` alike, and a
+command added here later inherits it.
+
 ```bash
 .agents/skills/orch/scripts/git-context common-root .
 ```
@@ -160,7 +168,7 @@ Use the output as `MAIN_REPO_ROOT`.
    head:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] [--force] --expected-head [PREPARED_HEAD]
+   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] [--force] --expected-head [PREPARED_HEAD]
    ```
 
    Exit `0` merged the prepared head — continue to step 2.
@@ -170,7 +178,7 @@ Use the output as `MAIN_REPO_ROOT`.
    The `--auto` re-run arms only that same head:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --auto --expected-head [PREPARED_HEAD]
+   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --auto --expected-head [PREPARED_HEAD]
    ```
 
    Exit `0` merged the prepared head immediately — continue to step 2. Any exit
@@ -184,15 +192,6 @@ Use the output as `MAIN_REPO_ROOT`.
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 30 540 --json
    ```
-
-   Both repository variables are cleared, as they are on every other `gh` call
-   in this step and for the reason step 4 spells out: `queue-wait` resolves its
-   target with a bare `gh repo view`, and its late-findings guard disarms and
-   dequeues, so an inherited `GH_REPO` would aim those mutations at another
-   repository's same-numbered PR. Clearing is the whole fix — an inherited
-   value is the only way the wrong repository gets named — and `env VAR=value`
-   is not an available shape here ([references/codex-runtime.md](../references/codex-runtime.md)
-   § Env-assignment prefixes).
 
    The budget is spelled out because `queue-wait`'s own default (its `--help`
    § Usage) is longer than any agent harness holds a foreground call open. Size
@@ -350,8 +349,6 @@ Use the output as `MAIN_REPO_ROOT`.
    git -C [MAIN_REPO_ROOT] rev-parse "refs/heads/[PR_BRANCH]"
    ```
 
-   Run every `gh` command in this step from `[MAIN_REPO_ROOT]` with both variables cleared, as the script and `reconcile-work-items` do: an inherited `GH_REPO` or `GITHUB_REPOSITORY` points the proof at another repository, whose PR of the same number can authorize this `branch -D`.
-
    Equal → `git -C [MAIN_REPO_ROOT] branch -D "[PR_BRANCH]"`. Different → the branch carries commits the merge did not take: keep it and report it `kept` in the § 6 `Branch` row. Never `git branch -d` here — it proves merge against the branch's configured upstream, which `worktree push` sets, so it passes for any pushed branch however far it is from `[BASE_BRANCH]`.
 
    For `merge-pr all` or an explicit user request, also sweep the project. Check each local branch with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr list --head [BRANCH] --base [BASE_BRANCH] --state all --json number,state,headRefOid,isCrossRepository`, and auto-delete only a branch with no worktree whose tip equals the `headRefOid` of one of its **merged**, non-cross-repository PRs — the predicate `worktree cleanup` applies. Neither state nor a merge into another base is the test: a closed PR merged nothing, a PR merged into a release or other side branch left its commit out of `[BASE_BRANCH]` with this ref possibly the last ordinary one holding it, and a merged PR whose head differs from the tip left the extra commits reachable from this ref alone. Leave every other branch alone, and ask before removing a stale worktree or a branch with no PR. Compare `ls [TREES_DIR]/` against `worktree list --porcelain` for orphan directories, asking before removing any.
@@ -368,17 +365,16 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json mergeCommit --jq .mergeCommit.oid
    ```
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-threads [PR_NUMBER] --unresolved
+   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-threads [PR_NUMBER] --unresolved
    ```
 
    That oid is `[MERGE_SHA]`. Each reply is one of the three dispositions
    ([references/finding-disposition.md](../references/finding-disposition.md)):
    `Declined: [reason]`, `Fixed in [MERGE_SHA]`, or `Tracked: [ISSUE_ID]` with
    the issue created first, carrying its `Reached by` line. Reply and resolve
-   through `github.sh -C [MAIN_REPO_ROOT] post-reply` and `github.sh -C
-   [MAIN_REPO_ROOT] resolve-thread` — an inherited `GH_REPO` or
-   `GITHUB_REPOSITORY` points these mutations at another repository, the same
-   hazard step 4 clears for its reads. This read happens once. A thread landing
+   through `github.sh post-reply` and `github.sh resolve-thread`, under the
+   section's clearing rule and `-C [MAIN_REPO_ROOT]` like the read above.
+   This read happens once. A thread landing
    after it is unhandled: nothing else reads a merged PR's threads.
 
 6. **Verify the project and remove the worktree.** Run the build, install, and
@@ -397,8 +393,11 @@ Use the output as `MAIN_REPO_ROOT`.
    git -C [WT_PATH] status --porcelain
    ```
 
-   Any output keeps the worktree with cause `dirty tree`. Empty removes it,
-   run from `[MAIN_REPO_ROOT]` so the lane is not deleting its own cwd:
+   Any output keeps the worktree with cause `dirty tree`, and so does a
+   non-zero exit, with cause `tree unreadable`: the re-read is the only thing
+   standing between a build artifact and a forced removal, so it refuses
+   whenever it cannot prove the tree clean. Empty output and exit `0` removes
+   it, run from `[MAIN_REPO_ROOT]` so the lane is not deleting its own cwd:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
@@ -423,7 +422,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
 </output_format>
 
-The `Container` row appears only when § 5 step 2 found a container parent. The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The `Worktree` row reports `removed`, or `kept — [dirty tree | branch not merged | foreign lease | project verification failed]` when § 5 step 4 found it ineligible or step 6 could not remove it (no worktree existed → omit the row). Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
+The `Container` row appears only when § 5 step 2 found a container parent. The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The `Worktree` row reports `removed`, or `kept — [dirty tree | tree unreadable | branch not merged | foreign lease | project verification failed]` when § 5 step 4 found it ineligible or step 6 could not remove it (no worktree existed → omit the row). Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
 
 For `merge-pr all`, add the cross-PR analysis and a merge table:
 

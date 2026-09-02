@@ -19,15 +19,21 @@
 # cannot see multiplicity: split a verdict across two rows and deleting either
 # one leaves both directions green.
 #
-# The lane waits in the FOREGROUND, and that is held by the two md.sh rules at
-# the end of the loop rather than by a predicate of this file's own. A handoff
-# lane sitting at its prompt has no next boundary, so a verdict published
-# behind it waits for a human. What closes the family is the negative half: NO
-# fenced command in this workflow runs anywhere but the foreground, in one
-# piece, with its output on stdout. Stated that way it reaches the shapes a
-# per-line shape test cannot — a launcher continued onto the next line with a
-# backslash, or a subshell whose closing `) > F &` carries no command name at
-# all — because it never has to find the waiter on the offending line.
+# The lane waits in the FOREGROUND, and the rules holding that are md.sh's own
+# `forbid_fenced`, not a predicate of this file. A handoff lane sitting at its
+# prompt has no next boundary, so a verdict published behind it waits for a
+# human. Each of the three is stated as a negative — the deviation, never the
+# list of spellings that reach it — which is what lets a line scan reach the
+# multiline shapes: a launcher continued with a backslash and a subshell
+# closing `) > F &` are both caught without the check having to find the waiter
+# on the offending line.
+#
+# What NONE of them reaches is a second, non-detaching command sharing the
+# waiter's fenced block. `forbid_fenced` reads lines, md.sh's public surface
+# exposes no block reader, and reaching into the underscore-private one is not
+# this suite's to do. Every extra line that could take the wait out of the
+# foreground is caught by the first rule; a plain extra command there is
+# untidy and not a defect, and this file claims no more than that.
 #
 # Every check runs once per tree: the sources under skills/ and the committed
 # render under .agents/skills/, which is the copy a lane reads — the
@@ -126,6 +132,17 @@ table_is_read() { # doc — an empty harvest passes both set comparisons
 
 waiter_usable() { [ -x "$1" ]; }
 
+# § 5 alone, written out so the fenced scans below can be scoped to it: the
+# clearing rule is the merge section's, and §§ 1-4's reads are outside this
+# change. `forbid_fenced` takes files, not headings, so the section becomes a
+# file. The name carries the tree it came from, because a diagnostic naming
+# the scratch has to say which copy was read.
+section_five() { # doc label
+  local out="$MD_TMP/${2//\//-}-merge-pr-section-5.md"
+  awk '/^## 5\./ { s = 1 } /^## 6\./ { s = 0 } s' "$1" > "$out"
+  printf '%s' "$out"
+}
+
 # Anything that takes a command out of the foreground, off one line, or off
 # stdout. One property rather than a list of spellings: a launcher word, a
 # trailing `&`, a trailing backslash, a line that only opens a subshell, and a
@@ -133,6 +150,32 @@ waiter_usable() { [ -x "$1" ]; }
 # which is the point — they reach the multiline shapes a test looking for the
 # waiter's own line cannot see.
 DETACHED_RE='(^|[[:space:]])(setsid|nohup|disown)[[:space:]]|[^&]&[[:space:]]*$|\\[[:space:]]*$|^[[:space:]]*\([[:space:]]*$|/queue-wait[^>]*>'
+
+# Every command in the workflow that reaches GitHub opens with both repository
+# variables cleared: gh honours them over cwd and over `-C`, so an inherited
+# value points a read at another repository and a mutation at that
+# repository's same-numbered PR. Expressed as the complement of the required
+# opener, so a call added later is covered without being listed. The first
+# branch is a first-word mismatch against `env`, four alternatives because the
+# word is three characters; the second catches an `env` that clears only one
+# of the pair.
+GH_CMD='(gh[[:space:]]|[^[:space:]]*github\.sh[[:space:]]|[^[:space:]]*/queue-wait[[:space:]])'
+UNBOUND_RE="^[[:space:]]*([^e[:space:]]|e[^n]|en[^v]|env[^[:space:]]).*$GH_CMD|^[[:space:]]*env[[:space:]]+(-u[[:space:]]+(GH_REPO|GITHUB_REPOSITORY)[[:space:]]+)?$GH_CMD"
+
+# The waiter runs exactly as written, which `rule_fenced` cannot say: it asks
+# only that one line CONTAIN its tokens, so a wrapper before the command and a
+# dropped positional both satisfy it. Three deviations, none of them a
+# launcher name: nothing between the clearing and the waiter path, both
+# positionals present, and nothing after `--json`. With the budget gone the
+# call runs to queue-wait's own default, which no agent harness holds long
+# enough to reach a verdict — the defect that cost two rounds.
+#
+# What this does NOT reach is a second, non-detaching command sharing the
+# waiter's fenced block, because `forbid_fenced` reads lines and not blocks.
+# Every shape of that kind which could detach the wait — a continued launcher,
+# a subshell, a backgrounded sibling — is caught by DETACHED_RE instead; an
+# ordinary extra command there is untidy and not a defect.
+WAITER_SHAPE_RE='GITHUB_REPOSITORY[[:space:]]+[^[:space:][].*/queue-wait|/queue-wait[[:space:]]+\[PR_NUMBER\][[:space:]]+--json|/queue-wait.*--json[[:space:]]*[^[:space:]]'
 
 checked=0
 for root in "${ROOTS[@]}"; do
@@ -167,6 +210,15 @@ for root in "${ROOTS[@]}"; do
     "$DETACHED_RE" \
     'setsid queue-wait [PR_NUMBER] --json > [VERDICT_FILE] &' \
     "$doc"
+  five="$(section_five "$doc" "$label")"
+  forbid_fenced "$label: every § 5 command reaching GitHub clears both repo variables" \
+    "$UNBOUND_RE" \
+    '[MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-threads [PR_NUMBER] --unresolved' \
+    "$five"
+  forbid_fenced "$label: the queue wait runs exactly as written" \
+    "$WAITER_SHAPE_RE" \
+    'env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json' \
+    "$five"
 
   # `worktree remove` runs `git worktree remove --force` and then `rm -rf`, so
   # it issues no dirty-tree refusal of its own: step 6's own re-read is the
