@@ -43,8 +43,6 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 
 When an execution policy rejects top-level `git rebase` porcelain, never retry the porcelain and never substitute a raw `--force` push — add `--replay` to the guarded restack (`create --help`); the controls stay `restack continue|skip|abort <ID>`.
 
-A branch is rebased only through `worktree push`, `create --reuse`, or `create --restack`; add `--replay` to either create form when policy forbids rebase porcelain, and never run bare `git rebase`.
-
 ## Recovering a broken `.agents` entry
 
 Route by shape, not by whether `test -L .agents` passes. Ask both indexes what sits under the path — `git -C <worktree> ls-files -- '.agents/'`, and the same command against the main checkout. The trailing slash is the query: descendants decide the layout, and the entry itself does not count. Neither index alone decides: a branch can add the render ahead of main, or trail the commit that started tracking it. Reading one index routes a healthy tree to the untracked-only repair, where `fix-links` produces no symlink and the operator loops on a command that changed nothing. Both answer while the path itself is broken:
