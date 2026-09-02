@@ -1,25 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { piSettingsPaths, resolveSettingsRelativePath } from "./paths.js";
+import { piSettingsPaths, readPackageConfig, resolveSettingsRelativePath } from "./paths.js";
 import { DEFAULT_SHORTCUT, PACKAGE_ID, type Scope, type SortMode, type kendexConfig } from "./types.js";
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
-}
-
+// One reader for this package, in paths.ts, the way the other packages do it.
 export function readkendexConfig(cwd?: string): kendexConfig {
-	const merged: kendexConfig = {};
-	for (const path of piSettingsPaths(cwd)) {
-		if (!existsSync(path)) continue;
-		try {
-			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			const config = asRecord(asRecord(asRecord(parsed?.kendex)?.extensionManager)?.config)?.[PACKAGE_ID];
-			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
-		} catch {
-			// Ignore malformed optional settings.
-		}
-	}
-	return merged;
+	return readPackageConfig(PACKAGE_ID, cwd);
 }
 
 export function settingBoolean(key: string, fallback: boolean, cwd?: string): boolean {
