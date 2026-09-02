@@ -15,7 +15,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 # Release kendex
 
 1. Bump the workspace `version` in `Cargo.toml` and the version in
-   `crates/app/tauri.conf.json` — both must equal the tag minus the `v`,
+   `crates/app/tauri.conf.json`. Both must equal the tag minus the `v`,
    or the update feed no-ops or loops.
 2. Run `.agents/skills/growth-guards/scripts/changelog-entries --collate` to
    fold the `changelog.d` fragments into `CHANGELOG.md`'s `Unreleased`. A
@@ -24,14 +24,14 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
    entries under a new `## [<version>] - <date>` heading, leaving an empty
    `## [Unreleased]` above it; confirm every breaking change carries its
    **Breaking** call-out and migration note.
-3. Commit with `GROWTH_GUARDS_CHANGELOG_COLLATE=1` — that declaration is
+3. Commit with `GROWTH_GUARDS_CHANGELOG_COLLATE=1`. That declaration is
    what makes `CHANGELOG.md` count as the entry this commit owes for the
    version bump under `crates/`, whose fragments the collator just deleted,
    and the `commit-msg` lane refuses the commit without it. Then tag
    `v<version>` and push the tag. CI builds each target and publishes a draft
    GitHub Release with CLI binaries, app bundles, and `feed.json` (details:
    `docs/RELEASING.md`).
-4. Review the draft, then publish it — publishing is what makes the
+4. Review the draft, then publish it. Publishing is what makes the
    version "latest" for self-update.
 
 Distro packaging (Arch, Fedora, Ubuntu…) would hook in after the draft
