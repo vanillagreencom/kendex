@@ -134,7 +134,7 @@ Once the PR exists, this run is a continuing action. Clear any stop left by an
 earlier capped run before entering another post-PR gate:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state post-pr-stop clear [ISSUE_ID]
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'
 ```
 
 ### 2.1 Consumer Admin-Merge Offer
@@ -236,7 +236,7 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
    A met gate clears its head-bound budget:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state head-budget clear [ISSUE_ID] review-wait
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_budgets.review_wait = null'
    ```
 
    **Triage pass**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context. It applies the external cap to its own fix pushes; what bounds this step is the Restart check.

@@ -28,22 +28,15 @@ default. Managed runs use the caller's `issue_id`.
 
 </output_format>
 
-Standalone only, after selecting `[PR_NUMBER]`: resolve a stable state key,
-initialize it without overwriting live state, and clear the stored stop before
-this continuing action. Use the extracted issue key when
-present and `pr-[PR_NUMBER]` otherwise:
+Standalone only: use the extracted issue as `[STATE_KEY]`, or
+`pr-[PR_NUMBER]` when empty. Run `init` only when `exists` is false:
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
-```
-```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
-```
-```bash
-.agents/skills/orch/scripts/workflow-state ensure [STATE_KEY] --branch [PR_BRANCH]
-```
-```bash
-.agents/skills/orch/scripts/workflow-state post-pr-stop clear [STATE_KEY]
+.agents/skills/orch/scripts/workflow-state exists --json [STATE_KEY]
+.agents/skills/orch/scripts/workflow-state init [STATE_KEY] --branch [PR_BRANCH]
+.agents/skills/orch/scripts/workflow-state update [STATE_KEY] '.post_pr_stop = null'
 ```
 
 ## 2. Fetch Error Details
@@ -171,7 +164,7 @@ Re-confirm the review gate at the new head **before** waiting on CI, on every re
 A passing or unconfigured CI result clears the head-bound standalone budget:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state head-budget clear [STATE_KEY] ci-fix
+.agents/skills/orch/scripts/workflow-state update [STATE_KEY] '.post_pr_budgets.ci_fix = null'
 ```
 
 **Linear only** — post the short status to the tracker:

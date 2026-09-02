@@ -58,10 +58,9 @@ atomic_update() {
     ) 200>"$lock_file"
 }
 
-cmd_initialize() {
-    local mode="$1"
-    local issue_id="$2"
-    shift 2
+cmd_init() {
+    local issue_id="$1"
+    shift
 
     local agent="" worktree="" branch="" qa_labels="[]" sub_issues="[]"
 
@@ -80,15 +79,7 @@ cmd_initialize() {
     local state_file
     state_file=$(get_state_file "$issue_id")
 
-    local lock_file="${state_file}.lock"
-    local tmp_file="${state_file}.tmp"
-    (
-      flock -w 10 200 || { echo "Error: could not acquire lock on $lock_file" >&2; exit 1; }
-      if [[ "$mode" == "ensure" && -f "$state_file" ]]; then
-        printf '%s\n' "$state_file"
-        exit 0
-      fi
-      jq -n \
+    jq -n \
         --arg issue_id "$issue_id" \
         --arg agent "$agent" \
         --arg worktree "$worktree" \
@@ -129,10 +120,8 @@ cmd_initialize() {
           ci_fix: null
         },
         post_pr_stop: null
-      }' > "$tmp_file"
-      mv "$tmp_file" "$state_file"
-      printf '%s\n' "$state_file"
-    ) 200>"$lock_file"
+      }' > "$state_file"
+    echo "$state_file"
 }
 
 cmd_get() {
@@ -241,29 +230,12 @@ cmd_update_report() {
 }
 
 cmd_post_pr_stop() {
-    local action="${1:-}"
-    local issue_id="${2:-}"
+    local action="${1:-}" issue_id="${2:-}"
     [[ -n "$action" && -n "$issue_id" ]] || { echo "Error: post-pr-stop needs an action and issue_id" >&2; return 2; }
     case "$action" in
-        clear)
-            [[ $# -eq 2 ]] || { echo "Error: post-pr-stop clear takes only an issue_id" >&2; return 2; }
-            local state_file
-            state_file=$(get_state_file "$issue_id")
-            ensure_state_exists "$state_file"
-            atomic_update "$state_file" '.post_pr_stop = null'
-            printf 'cleared\n'
-            ;;
-        show)
-            [[ $# -eq 2 ]] || { echo "Error: post-pr-stop show takes only an issue_id" >&2; return 2; }
-            cmd_get "$issue_id" '.post_pr_stop'
-            ;;
         record|record-if-empty)
             [[ $# -eq 6 ]] || { echo "Error: post-pr-stop $action needs issue_id, name, gate, remaining, and comment-file" >&2; return 2; }
             local name="$3" gate="$4" remaining="$5" comment_file="$6" mode="replace"
-            [[ "$name" =~ ^[a-z0-9-]+$ ]] || { echo "Error: post-pr-stop name must use lowercase letters, digits, and hyphens" >&2; return 2; }
-            [[ "$gate" =~ ^[a-z0-9-]+$ ]] || { echo "Error: post-pr-stop gate must use lowercase letters, digits, and hyphens" >&2; return 2; }
-            [[ -n "$remaining" ]] || { echo "Error: post-pr-stop remaining work cannot be empty" >&2; return 2; }
-            [[ -d "$(dirname "$comment_file")" ]] || { echo "Error: post-pr-stop comment directory does not exist: $(dirname "$comment_file")" >&2; return 2; }
             [[ "$action" == "record-if-empty" ]] && mode="if-empty"
             local report result tmp_comment
             report=$(cmd_update_report "$issue_id" '
@@ -273,17 +245,11 @@ cmd_post_pr_stop() {
               else
                 {state: (.post_pr_stop = {name: $name, gate: $gate, remaining: [$remaining]}),
                  report: {result: "recorded", stop: {name: $name, gate: $gate, remaining: [$remaining]}}}
-              end' \
-              --arg mode "$mode" --arg name "$name" --arg gate "$gate" --arg remaining "$remaining") || return 1
+              end' --arg mode "$mode" --arg name "$name" --arg gate "$gate" --arg remaining "$remaining") || return 1
             result=$(jq -r '.result' <<<"$report")
             if [[ "$result" == "recorded" ]]; then
                 tmp_comment="${comment_file}.tmp"
-                if ! jq -r '.stop | "## Orchestration stopped\n\n- Stop: `\(.name)`\n- Gate: `\(.gate)`\n- Remaining: \(.remaining[])"' \
-                    <<<"$report" > "$tmp_comment"; then
-                    rm -f "$tmp_comment"
-                    echo "Error: could not render post-PR stop comment" >&2
-                    return 1
-                fi
+                printf '## Orchestration stopped\n\n- Stop: `%s`\n- Gate: `%s`\n- Remaining: %s\n' "$name" "$gate" "$remaining" > "$tmp_comment"
                 mv "$tmp_comment" "$comment_file"
             fi
             printf '%s\n' "$result"
@@ -292,34 +258,19 @@ cmd_post_pr_stop() {
     esac
 }
 
-head_budget_row() {
-    case "$1" in
-        review-wait) printf 'review_wait\tREVIEW_MAX_EXTERNAL_ROUNDS\n' ;;
-        ci-fix) printf 'ci_fix\tCI_FIX_MAX_CYCLES\n' ;;
-        *) echo "Error: unknown head budget: $1 (known: review-wait, ci-fix)" >&2; return 2 ;;
-    esac
-}
-
 cmd_head_budget() {
     local action="${1:-}" issue_id="${2:-}" kind="${3:-}"
     [[ -n "$action" && -n "$issue_id" && -n "$kind" ]] || { echo "Error: head-budget needs an action, issue_id, and kind" >&2; return 2; }
-    local row field setting
-    row=$(head_budget_row "$kind") || return 2
-    field="${row%%$'\t'*}"
-    setting="${row##*$'\t'}"
+    local field setting
+    case "$kind" in
+        review-wait) field=review_wait; setting=REVIEW_MAX_EXTERNAL_ROUNDS ;;
+        ci-fix) field=ci_fix; setting=CI_FIX_MAX_CYCLES ;;
+        *) echo "Error: unknown head budget: $kind" >&2; return 2 ;;
+    esac
     case "$action" in
-        clear)
-            [[ $# -eq 3 ]] || { echo "Error: head-budget clear takes issue_id and kind" >&2; return 2; }
-            local state_file
-            state_file=$(get_state_file "$issue_id")
-            ensure_state_exists "$state_file"
-            atomic_update "$state_file" '.post_pr_budgets[$field] = null' --arg field "$field"
-            printf 'cleared\n'
-            ;;
         take)
             [[ $# -eq 4 ]] || { echo "Error: head-budget take needs issue_id, kind, and head" >&2; return 2; }
             local head="$4" limit report
-            [[ -n "$head" ]] || { echo "Error: head-budget head cannot be empty" >&2; return 2; }
             limit=$(cap_limit "$setting") || return 1
             report=$(cmd_update_report "$issue_id" '
               (.post_pr_budgets[$field] // null) as $saved |
@@ -329,8 +280,7 @@ cmd_head_budget() {
               else
                 {state: (.post_pr_budgets[$field] = {head: $head, attempts: ($used + 1)}),
                  report: {verdict: "continue", attempts: ($used + 1), limit: $limit}}
-              end' \
-              --arg field "$field" --arg head "$head" --argjson limit "$limit") || return 1
+              end' --arg field "$field" --arg head "$head" --argjson limit "$limit") || return 1
             jq -r '"\(.verdict) \(.attempts)/\(.limit)"' <<<"$report"
             ;;
         *) echo "Error: unknown head-budget action: $action" >&2; return 2 ;;
@@ -602,7 +552,6 @@ Global options (before the subcommand):
 
 Commands:
   init <issue_id> [options]     Create new state file
-  ensure <issue_id> [options]   Create initialized state only when absent
     --agent <name>              Primary agent
     --worktree <path>           Worktree path
     --branch <name>             Branch name
@@ -639,13 +588,10 @@ Commands:
                                 with another writer)
   post-pr-stop record <issue_id> <name> <gate> <remaining> <comment-file>
   post-pr-stop record-if-empty <issue_id> <name> <gate> <remaining> <comment-file>
-  post-pr-stop clear|show <issue_id>
-                                Atomically record, preserve, clear, or read the
-                                post-PR stop and render its Markdown comment
+                                Atomically record or preserve the stop and
+                                render its Markdown comment
   head-budget take <issue_id> <review-wait|ci-fix> <head>
-  head-budget clear <issue_id> <review-wait|ci-fix>
-                                Atomically spend or clear a head-bound retry
-                                budget and print continue|at-cap COUNT/CAP
+                                Atomically spend a head-bound retry budget
   append <issue_id> <field> <value>   Append to array field
   append-file <issue_id> <field> <file>
                                 Append the one JSON value in <file> to the
@@ -777,8 +723,7 @@ STATE_PREFIX="workflow-state"
 # Main dispatch. The help case above answered an absent or empty subcommand,
 # so $1 is set and non-empty here.
 case "$1" in
-    init)      shift; cmd_initialize init "$@" ;;
-    ensure)    shift; cmd_initialize ensure "$@" ;;
+    init)      shift; cmd_init "$@" ;;
     get)       shift; cmd_get "$@" ;;
     update)    shift; cmd_update "$@" ;;
     update-report) shift; cmd_update_report "$@" ;;

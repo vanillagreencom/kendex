@@ -22,7 +22,7 @@ Resolve `ORCH_DECISION_MODE` once for this post-PR workflow:
 Except under `--dry-run`, this triage pass is a continuing action:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state post-pr-stop clear [ISSUE_ID]
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'
 ```
 
 On any `gh` or `github.sh` failure, report the error. `auto-recommended` retries once and logs `Retry`; a repeated failure records the named stop `github-read-failed` per [SKILL.md § The Cycle](../SKILL.md#the-cycle). `ask` presents `Retry` | `Skip step` | `Abort`, with `Retry` recommended.

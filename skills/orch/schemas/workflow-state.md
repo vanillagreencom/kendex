@@ -143,9 +143,8 @@ To target a state directory from a worktree, pass the global `--state-dir <path>
 
 ```bash
 .agents/skills/orch/scripts/workflow-state init PROJ-123 --agent backend --worktree /tmp/wt
-.agents/skills/orch/scripts/workflow-state ensure PROJ-123 --branch user/proj-123
 .agents/skills/orch/scripts/workflow-state head-budget take PROJ-123 review-wait abcdef01
-.agents/skills/orch/scripts/workflow-state post-pr-stop clear PROJ-123
+.agents/skills/orch/scripts/workflow-state update PROJ-123 '.post_pr_stop = null'
 .agents/skills/orch/scripts/workflow-state get PROJ-123 .cycles
 .agents/skills/orch/scripts/workflow-state get PROJ-123 .rereview_cycles
 .agents/skills/orch/scripts/workflow-state increment PROJ-123 cycles

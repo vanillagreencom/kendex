@@ -93,7 +93,7 @@ gate, and remaining work. When `MERGE_READY = true`, clear a stale stop before
 summarizing and merging.
 
 ```bash
-.agents/skills/orch/scripts/workflow-state post-pr-stop clear [ISSUE_ID]
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'
 ```
 
 Stop route: `upstream-stop` -> `preserve`; `no-upstream-stop` -> `record-merge-gates-unmet`; `final-stop` -> `render-summaries`.
