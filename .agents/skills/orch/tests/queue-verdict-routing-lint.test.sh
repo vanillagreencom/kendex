@@ -6,10 +6,15 @@
 # stops at a value it cannot act on, and a row naming no producer is a route
 # nothing reaches.
 #
-# The producer set is read from queue-wait's `"verdict":` JSON enum rather than
-# its § Verdicts prose: the enum is the complete set, `unknown` included, and
-# `unknown` is the one the table must carry a refusal for. Both lists are read
-# at run time and neither is written down here.
+# The producer set is read from queue-wait's CODE — the literal every
+# `emit_result` and `note_candidate` call site names — not from its `--help`.
+# Harvesting the help text makes this a doc-vs-doc check: change an emit site
+# and leave the help alone and both directions stay green while the lane hits a
+# verdict with no route and the table keeps a dead row, which is the pair of
+# failures this file exists to prevent. The help's own `"verdict":` enum is
+# checked against the code separately, so the claim that it is the complete set
+# is enforced rather than trusted. Every list is read at run time and none is
+# written down here.
 #
 # One row per verdict is checked separately. Coverage is a set question and
 # cannot see multiplicity: split a verdict across two rows and deleting either
@@ -30,17 +35,36 @@ ROOTS=("$TREE_ROOT/skills" "$TREE_ROOT/.agents/skills")
 
 echo "=== orch queue-wait verdict routing lint ==="
 
-# The verdicts queue-wait can put in a result object: the `"verdict":` field of
-# the JSON block in its --help, which runs until the line the field's value
-# ends on. The field name is stripped off the first line before the value
-# tokens are harvested.
+# The verdicts queue-wait can put in a result object, read off its call sites:
+# the second literal of every `emit_result "<status>" "<verdict>"` and the
+# first of every `note_candidate "<verdict>"`. The one emit site taking a
+# variable, `emit_result "complete" "$candidate_verdict"`, matches neither
+# pattern and needs no case: every value it can carry is a note_candidate
+# literal, which is where a candidate verdict is named.
 verdicts() { # queue-wait
+  grep -oE '(emit_result "[a-z_]+" "[a-z_]+"|note_candidate "[a-z_]+")' "$1" \
+    | sed -e 's/^emit_result "[a-z_]*" "//' -e 's/^note_candidate "//' -e 's/"$//' \
+    | sort -u
+}
+
+# The `"verdict":` field of the JSON block in --help, which runs until the line
+# the field's value ends on. The field name is stripped off the first line
+# before the value tokens are harvested.
+enum_verdicts() { # queue-wait
   "$1" --help 2>/dev/null \
     | sed -n '/^ *"verdict":/,/,$/p' \
     | sed '1s/^[^:]*://' \
     | grep -o '"[a-z_][a-z_]*"' \
     | tr -d '"' \
     | sort -u
+}
+enum_matches_code() { # queue-wait
+  local diff
+  diff="$(comm -3 <(verdicts "$1") <(enum_verdicts "$1"))"
+  [ -z "$diff" ] && return 0
+  printf '        --help enum and emit sites disagree (left code-only, right help-only):\n'
+  sed 's/^/          /' <<<"$diff"
+  return 1
 }
 
 # The verdicts merge-pr routes: the leading code span of every row of the
@@ -106,6 +130,23 @@ detach_arms_publish() { # doc
   return 1
 }
 
+# The mutant's own control: a sed that matched nothing would leave an identical
+# copy, and three green "reds" assertions would then be reporting a mutation
+# that never happened.
+planted_one_rename() { # original mutant
+  local before after
+  before="$(verdicts "$1")"
+  after="$(verdicts "$2")"
+  [ "$before" != "$after" ] || {
+    printf '        the mutant emits the same verdict set as the original\n'
+    return 1
+  }
+  [ "$(comm -3 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | wc -l)" -eq 2 ] || {
+    printf '        the mutant changed more than the one emit site\n'
+    return 1
+  }
+}
+
 waiter_usable() { [ -x "$1" ]; }
 # The planted run's own diagnostic is the expected answer here, not a finding.
 reds() { ! "$@" >/dev/null 2>&1; }
@@ -125,6 +166,8 @@ for root in "${ROOTS[@]}"; do
     every_verdict_routed "$qw" "$doc"
   check "$label: every routing row names a verdict queue-wait can produce" \
     every_route_real "$qw" "$doc"
+  check "$label: queue-wait --help's verdict enum is the set its code emits" \
+    enum_matches_code "$qw"
   check "$label: every verdict's route is one row, not several" \
     one_row_per_verdict "$doc"
   check "$label: every detach arm publishes through the part file" \
@@ -136,6 +179,19 @@ for root in "${ROOTS[@]}"; do
   rule_fenced "$label: the removal step re-reads the tree before removing it" \
     "$doc" "## 5. Execute The Merge" \
     'status' '--porcelain' '[WT_PATH]'
+  # Both merge attempts name the head the gate approved. Without the flag the
+  # call arms whatever head GitHub reports at that moment, which is the head a
+  # push landed after the approval.
+  rule_fenced "$label: the direct merge is exact-head guarded" \
+    "$doc" "## 5. Execute The Merge" \
+    '[--force]' 'pr-merge' '--expected-head' '[PREPARED_HEAD]'
+  rule_fenced "$label: the auto-merge arm is exact-head guarded" \
+    "$doc" "## 5. Execute The Merge" \
+    '--auto' 'pr-merge' '--expected-head' '[PREPARED_HEAD]'
+  # Absolute, because the lane is standing in the tree being removed.
+  rule_fenced "$label: the worktree removal runs from the main repository" \
+    "$doc" "## 5. Execute The Merge" \
+    '[MAIN_REPO_ROOT]/' 'worktree remove' '[ISSUE]'
 done
 
 if [ "$checked" -eq 0 ]; then
@@ -191,6 +247,27 @@ NO_DETACH="$MD_TMP/merge-pr-no-detach.md"
 grep -v -e '^   setsid sh -c ' -e '^   nohup sh -c ' "$CTL_DOC" > "$NO_DETACH"
 check "control: deleting every detach arm reds the same check" \
   reds detach_arms_publish "$NO_DETACH"
+
+# The producer control, and the reason the harvest reads the code: an emit site
+# renamed with --help left alone. Harvesting the help text leaves every check
+# green here while the lane hits a verdict with no route and the table keeps a
+# row nothing produces. The mutant is a whole copy of the script, and its libs
+# are linked so the copy still sources them.
+MUT_DIR="$MD_TMP/scripts"
+mkdir -p "$MUT_DIR"
+ln -s "$(dirname "$CTL_QW")/lib" "$MUT_DIR/lib"
+MUT_QW="$MUT_DIR/queue-wait"
+sed 's/emit_result "complete" "closed"/emit_result "complete" "abandoned"/' \
+  "$CTL_QW" > "$MUT_QW"
+chmod +x "$MUT_QW"
+check "control: the mutant renames exactly one emit site" \
+  planted_one_rename "$CTL_QW" "$MUT_QW"
+check "control: a renamed emit site reds the coverage direction" \
+  reds every_verdict_routed "$MUT_QW" "$CTL_DOC"
+check "control: that same rename reds the vocabulary direction" \
+  reds every_route_real "$MUT_QW" "$CTL_DOC"
+check "control: that same rename reds the enum-against-code check" \
+  reds enum_matches_code "$MUT_QW"
 
 # The harvest's own control: a renamed table header takes the whole range with
 # it, and both set comparisons then pass on nothing.
