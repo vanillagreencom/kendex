@@ -65,7 +65,15 @@ Don't:
 - Claims broader than what the adjacent code or assertion actually enforces.
 - A numeral counting things outside the sentence. State the property and the command that enumerates it. A numeral bound to something adjacent — a list in the same paragraph, a constant a check compares against, one a ratchet owns — stays.
 
-Same rules for docs, READMEs, and skill/agent files: state the rule or behavior, never its provenance or justification. Their reader is an agent — write the shortest unambiguous rule and delete sentences nothing acts on. Plain words over jargon, in code and prose alike: name things by what they do. Commit bodies explain intent, never narrate the diff.
+Markdown placement rules:
+
+- Never state a rule twice within or across package files; make later statements point to the first.
+- Never put mechanics, rationale, or history in `SKILL.md` or agent files; keep rules and commands there.
+- Never put development internals, reasons, invariants, or test instructions outside `DEVELOPMENT.md`.
+- Never put anything but purpose, high-level behavior, features, user settings, and installation in a package `README.md`.
+- Never keep content in `references/*.md` unless a named workflow loads it on demand.
+
+Write the shortest unambiguous rule and delete sentences nothing acts on. Use plain words over jargon. Commit bodies explain intent, never narrate the diff.
 
 ## Over-Engineering
 

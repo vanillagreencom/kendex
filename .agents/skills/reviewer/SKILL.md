@@ -35,6 +35,7 @@ Shared contract for every review specialist; each agent's domain and probes live
 - **Report the class, not the instance.** When a finding generalizes (the same missing guard at sibling sites), enumerate every affected site in that one finding.
 - **Duplicated judgment is a finding.** Logic the diff introduces or arms that re-answers a question implemented elsewhere in the repo is raised even when both copies agree, and so is a rule it restates that another file owns, in prose, config or a table; name the surviving copy.
 - **A claim needs the line that makes it true.** For every sentence the diff adds to a `--help`, SKILL.md, CHANGELOG entry, comment, or diagnostic that states an order, a source set, an exit code, or a guarantee, find the code that makes it true. None found is a blocker; the claim is the defect, not the code.
+- For Markdown findings, cite [code-quality § Comments and Prose](../code-quality/SKILL.md#comments-and-prose); never restate its rules.
 - Fewer high-conviction findings beat lists of nits.
 - Project decisions and architecture docs outrank generic heuristics. Do not contradict or re-litigate the decisions the delegation lists.
 - Do not re-verify what deterministic gates already enforce (preflight, size-ratchet, project lint/CI); cite gate output instead of re-deriving it.
