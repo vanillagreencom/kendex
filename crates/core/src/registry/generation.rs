@@ -113,15 +113,9 @@ impl<'e> GenerationFile<'e> {
     /// a 304 re-dates the cached one, and any failure — transport error,
     /// refused status, unparseable body — serves the cached value as
     /// stale, erring only with nothing to serve. `refused` words the
-    /// error for a status that is neither 200 nor 304.
-    ///
-    /// A generation that could not be written — a full or read-only home,
-    /// a cache path taken by something else — does not fail the read. The
-    /// answer is what the server sent and this parsed; the file is how the
-    /// next read avoids asking again. Failing here would report a machine's
-    /// own refusal as the fetch not landing, which is the one thing every
-    /// error out of this call means. The cost is a read that re-fetches
-    /// next time, which is what an unwritten cache is for.
+    /// error for a status that is neither 200 nor 304. Every error out of
+    /// this call is the fetch not landing, which is what lets a caller
+    /// holding one judgment about the network read them all the same way.
     pub fn settle<T>(
         &self,
         cached: Option<(Generation, T)>,
@@ -137,7 +131,7 @@ impl<'e> GenerationFile<'e> {
         match response.status {
             200 => match parse(&response.body) {
                 Ok(value) => {
-                    let _ = self.write(&Generation {
+                    self.write(&Generation {
                         endpoint: base_url(),
                         credential: self.credential.clone(),
                         etag: response.etag,
@@ -156,7 +150,7 @@ impl<'e> GenerationFile<'e> {
                 let (generation, value) = cached.ok_or_else(|| CoreError::RegistryMalformed {
                     why: "the server said 'unchanged' but nothing is cached".into(),
                 })?;
-                let _ = self.write(&Generation {
+                self.write(&Generation {
                     fetched_at: now,
                     credential: self.credential.clone(),
                     ..generation
@@ -171,14 +165,25 @@ impl<'e> GenerationFile<'e> {
         }
     }
 
-    fn write(&self, generation: &Generation) -> Result<()> {
+    /// Leave this fetch where the next read will find it, or leave nothing.
+    ///
+    /// A generation that could not be written — a full or read-only home, a
+    /// cache path taken by something else — is never the caller's failure.
+    /// The answer is what the server sent and the caller parsed; this file
+    /// is only how the next read avoids asking for it again. Raising here
+    /// would report a refusal by this machine as the fetch not landing,
+    /// which is what every error out of [`GenerationFile::settle`] means.
+    /// The cost of swallowing is one re-fetch, which is what an unwritten
+    /// cache is for.
+    fn write(&self, generation: &Generation) {
         let dir = self.env.registry_cache_dir();
-        std::fs::create_dir_all(&dir).map_err(|error| CoreError::io(&dir, error))?;
-        let json =
-            serde_json::to_string(generation).map_err(|error| CoreError::RegistryMalformed {
-                why: error.to_string(),
-            })?;
-        atomic_write_no_follow(&dir.join(self.file), &json)
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let Ok(json) = serde_json::to_string(generation) else {
+            return;
+        };
+        let _ = atomic_write_no_follow(&dir.join(self.file), &json);
     }
 }
 

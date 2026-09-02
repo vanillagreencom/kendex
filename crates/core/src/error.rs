@@ -17,10 +17,10 @@ pub enum CoreError {
     },
 
     /// A command that never ran: it could not be spawned, or what it needed
-    /// to run could not be written. Told apart from every failure of a
-    /// command that did run — a timeout, a non-zero exit — because only
-    /// this one means the work was never attempted, which is what a caller
-    /// deciding whether a cached answer may stand in has to know.
+    /// to run could not be written. Nothing a command that did start can
+    /// fail with belongs here — not a timeout, not a non-zero exit —
+    /// because callers read this as proof the work was never attempted,
+    /// which is what decides whether a cached answer may stand in.
     #[error("{label} could not be started: {why}")]
     CommandNotStarted { label: String, why: String },
 

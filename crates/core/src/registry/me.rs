@@ -52,12 +52,12 @@ pub enum AccountState {
 #[derive(Debug)]
 pub enum AccountUnread {
     /// This machine stopped the read: the credential store refused, the
-    /// refresh lock could not be taken, the request could not be sent, the
-    /// cached identity could not be dropped. Nothing came back from the
-    /// directory, so nothing is known about it.
+    /// refresh lock could not be taken, the request could not be sent. An
+    /// earlier request may well have gone out and come back; the answer
+    /// this read needed did not, so nothing about the directory is known.
     Local(CoreError),
-    /// A request reached the directory and no identity could be settled
-    /// from what came back, with nothing cached to stand in.
+    /// The request went out and no identity could be settled from what
+    /// came back, with nothing cached to stand in.
     Unreachable(CoreError),
 }
 
@@ -121,16 +121,23 @@ pub fn load(
         // removal lock was acquired, or said in `why` that the store would
         // not give it up. The identity this read opened with is forgotten;
         // another sign-in would discard it by key anyway.
+        //
+        // A generation that will not delete is left where it is, for the
+        // same reason one that will not be written does not fail a read:
+        // the expiry is what this read learned, and reporting a refused
+        // unlink instead would leave the surface naming the person as
+        // signed in under a credential the server has already ended. What
+        // stays behind is keyed to a sign-in nothing will open with again.
         Err(CallFailed::Expired(_)) => {
-            cache.forget().map_err(AccountUnread::Local)?;
+            let _ = cache.forget();
             return Ok(AccountState::Expired);
         }
         // This machine stopped the request this read needed. Serving the
         // cache as `Offline` would tell the user the directory was last
         // reached on some date, when nothing about it was ever in doubt.
         Err(CallFailed::Local(error)) => return Err(AccountUnread::Local(error)),
-        // The request reached the directory and did not answer usefully,
-        // which is exactly what a cached generation stands in for.
+        // The request went out and no usable answer came back, which is
+        // exactly what a cached generation stands in for.
         Err(CallFailed::Unreachable(error)) => Err(error),
     };
     let loaded = cache

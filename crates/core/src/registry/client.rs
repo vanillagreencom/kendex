@@ -12,12 +12,14 @@ use crate::registry::{Fetch, FetchResponse, base_url};
 ///
 /// A caller holding a cache reads this to decide whether a cached
 /// generation may stand in for the answer. Only `Unreachable` is a request
-/// that reached the directory; every other failure is this machine's or is
-/// news about the sign-in itself, and serving a cache for one of those
-/// would tell the user the directory was last reached on some date when
-/// what stopped this read was never out on the network. Each variant is
-/// chosen at the site that raises the failure, so a local failure added
-/// later cannot fall into the remote half by nobody naming it.
+/// that went out; every other failure is this machine's or is news about
+/// the sign-in itself, and serving a cache for one of those would tell the
+/// user the directory was last reached on some date when nothing this read
+/// needed was ever put on the network. A request that went out and found
+/// no route is `Unreachable` too — it was sent, and the cache stands in
+/// for the answer it did not get. Each variant is chosen at the site that
+/// raises the failure, so a local failure added later cannot fall into the
+/// remote half by nobody naming it.
 #[derive(Debug)]
 pub enum CallFailed {
     /// This machine holds no credential for the endpoint.
@@ -32,7 +34,8 @@ pub enum CallFailed {
     /// the one this call needed, so nothing was learned about the
     /// directory.
     Local(CoreError),
-    /// The request reached the directory and no usable answer came back.
+    /// The request went out and no usable answer came back, whether the
+    /// directory refused it, answered badly, or was never found.
     Unreachable(CoreError),
 }
 
@@ -142,6 +145,7 @@ fn rotate_locked(
             ));
         }
         Err(Refused::Transient(error)) => return Err(CallFailed::Unreachable(error)),
+        Err(Refused::NeverSent(error)) => return Err(CallFailed::Local(error)),
     };
     let rotated = Credential {
         endpoint: base_url(),
@@ -245,6 +249,10 @@ fn expired(removal: Removal, why: String) -> CallFailed {
 enum Refused {
     Definitive(String),
     Transient(CoreError),
+    /// The rotation request never went out, so nothing about the grant was
+    /// learned. Separate from `Transient` because that one is the answer
+    /// coming back wrong, which a cached generation may stand in for.
+    NeverSent(CoreError),
 }
 
 fn refresh(fetch: &dyn Fetch, refresh_token: &str) -> std::result::Result<TokenPair, Refused> {
@@ -253,9 +261,15 @@ fn refresh(fetch: &dyn Fetch, refresh_token: &str) -> std::result::Result<TokenP
         "refresh_token": refresh_token,
     })
     .to_string();
-    let response = fetch
-        .post_json(&format!("{}/api/v1/device/token", base_url()), &body)
-        .map_err(Refused::Transient)?;
+    // Which half of the send failed is the transport's to say, and `sent`
+    // is the one place that reads it; this hands the same answer on in
+    // `Refused`'s terms rather than judging it a second time.
+    let response =
+        match sent(fetch.post_json(&format!("{}/api/v1/device/token", base_url()), &body)) {
+            Ok(response) => response,
+            Err(CallFailed::Local(error)) => return Err(Refused::NeverSent(error)),
+            Err(failed) => return Err(Refused::Transient(failed.into())),
+        };
     // Only these statuses prove the refresh grant is dead. Timeouts, rate
     // limits, and server failures keep the credential available for retry.
     if matches!(response.status, 400 | 401 | 403) {

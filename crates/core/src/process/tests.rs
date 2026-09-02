@@ -559,3 +559,21 @@ fn a_descendant_holding_the_pipes_does_not_outlive_the_timeout() {
     };
     assert_eq!(source.kind(), io::ErrorKind::TimedOut);
 }
+
+/// The producer `registry/client.rs` reads to tell a request that never
+/// went out from one the directory did not answer. A real spawn failure
+/// rather than a hand-built error: the classification is only worth
+/// anything if the shipped path raises the name the seam matches on, and
+/// the error it raised one commit before this was an ordinary `Io`.
+#[test]
+fn a_program_that_cannot_be_spawned_says_it_never_started() {
+    let error = Hardened::program("/nonexistent/kendex-not-a-program", &[])
+        .timeout(Duration::from_secs(5))
+        .run()
+        .unwrap_err();
+    let CoreError::CommandNotStarted { label, why } = error else {
+        panic!("a command that never ran must say so, not report as a run that failed");
+    };
+    assert!(label.contains("kendex-not-a-program"), "{label}");
+    assert!(!why.is_empty(), "the reason it could not start is empty");
+}

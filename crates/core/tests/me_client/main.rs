@@ -418,27 +418,36 @@ fn a_local_failure_in_rotation_is_never_served_as_offline() {
 }
 
 /// A request the machine could not put out is not the directory going
-/// quiet. It lands on the first authenticated request of every read, ahead
-/// of the rotation branch, and the transport names it rather than leaving
-/// the seam to guess from where in the sequence it happened.
+/// quiet, at either of the two places a read sends one: the authenticated
+/// request every read makes, and the rotation POST behind a 401. The
+/// transport names it at the raising site rather than leaving the seam to
+/// guess from where in the sequence it happened.
 #[test]
 fn a_request_that_never_went_out_is_not_served_as_offline() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let root = rooted(&dir);
-    let env = env_in(&root);
-    let store = MemoryStore::signed_in();
-    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
-    me::load(&env, &first, &store).expect("first load");
+    // `Canned` serves one queue to both verbs, so the second answer is
+    // what the refresh POST gets.
+    let scripts: [fn() -> Vec<Result<FetchResponse>>; 2] = [
+        || vec![never_sent()],
+        || vec![ok(401, None, r#"{"error":"invalid_token"}"#), never_sent()],
+    ];
+    for script in scripts {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = rooted(&dir);
+        let env = env_in(&root);
+        let store = MemoryStore::signed_in();
+        let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+        me::load(&env, &first, &store).expect("first load");
 
-    let unsent = Canned::new(vec![never_sent()]);
-    let refused = me::load(&env, &unsent, &store).expect_err("an unsent request errors");
-    assert!(
-        matches!(
-            refused,
-            AccountUnread::Local(CoreError::CommandNotStarted { .. })
-        ),
-        "the cache stood in for a request that never went out: {refused:?}"
-    );
+        let unsent = Canned::new(script());
+        let refused = me::load(&env, &unsent, &store).expect_err("an unsent request errors");
+        assert!(
+            matches!(
+                refused,
+                AccountUnread::Local(CoreError::CommandNotStarted { .. })
+            ),
+            "the cache stood in for a request that never went out: {refused:?}"
+        );
+    }
 }
 
 /// The cache is how the next read avoids asking, never the answer itself.

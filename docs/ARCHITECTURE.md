@@ -727,10 +727,10 @@ lives in one capability table read by core and UI.
   `KENDEX_API`); tests inject transports. Bearer calls route through `registry/client.rs`: one
   named cross-process lock serializes login, logout and refresh rotation, saving rotations
   before retry; a rejected request re-takes it to clear the current credential. A call that
-  did not answer is typed by which half failed (`CallFailed`), so only a call that reached the
-  directory may be stood in for by a stale generation and a refusal on this machine reaches the
-  account surfaces as a read that failed rather than as offline. A generation the machine could
-  not write never fails a read the server answered. `skillssh.rs`
+  did not answer is typed by which half failed (`CallFailed`), so only a request that went out may
+  be stood in for by a stale generation and a refusal on this machine reaches the account surfaces
+  as a read that failed rather than as offline. A generation the machine could not write or delete
+  never fails a read. `skillssh.rs`
   pins its public wire schema and kill switch (`KENDEX_SKILLSSH=off`); a hit
   is a lead, never an identity, and installs through the same subscribe path.
   Collections install through `add`.
