@@ -256,10 +256,20 @@ echo "=== block-repo-copy: the stated limits ==="
 # copy spelled inside a quoted string is read as the copy it is not.
 run_hook "cp -r $REPO /tmp/copy"
 assert_eq "$rc" 0 'a repository named by its working-tree path is not seen'
+# The other half of the same trade: nothing here resolves or expands an
+# operand, so a source the command reaches through a variable carries no
+# marker text to read and the copy is not seen.
+run_hook 'cp -r "$SRC" /tmp/x'
+assert_eq "$rc" 0 'a source reached through a variable is not seen'
 run_hook "tar -czf /tmp/repo.tgz $REPO/.git"
 assert_eq "$rc" 0 'a tar naming its destination before its source is not seen'
 run_hook "echo \"cp -r $REPO/.git /tmp/copy\" >>notes.md"
 assert_eq "$rc" 2 'a copy spelled inside a quoted string is refused as the copy it is not'
+# The comment tail is the same reading: the whole command text is read, so the
+# three parts count where they stand after a `#` and a read-only command
+# carrying a copy in its comment is refused as the copy it is not.
+run_hook "ls -la $REPO  # cp -r $REPO/.git /tmp/copy"
+assert_eq "$rc" 2 'and so is one spelled in a comment tail'
 # The run between the marker and the destination crosses everything that is
 # not an ender, the pipe being only the one deliberately left out of ENDERS. A
 # redirection standing between them is crossed too, so a temp path that is a
