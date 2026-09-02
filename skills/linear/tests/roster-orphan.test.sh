@@ -27,7 +27,9 @@ assert_tmpdir TMP
 
 # A one-suite skill whose suite reads a value its control flips: enough for the
 # runner to stage, mutate and red, and no more, so what these cases measure is
-# the roster and not the control machinery.
+# the roster and not the control machinery. It names its failure the way
+# tests/lib/assert.sh does, since the runner refuses a mutation that reddens
+# without naming an assertion.
 fixture() {
     local root="$1"
     mkdir -p "$root/scripts" "$root/tests/controls"
@@ -39,10 +41,10 @@ D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "$D/../scripts/value.sh"
 if [ "$VALUE" = green ]; then
-    echo "  ok    the value is green"
+    echo "ok: the value is green"
     exit 0
 fi
-echo "  FAIL  the value is green"
+echo "FAIL: the value is green" >&2
 exit 1
 SUITE
     cat >"$root/tests/controls/alpha.control.sh" <<'CONTROL'
