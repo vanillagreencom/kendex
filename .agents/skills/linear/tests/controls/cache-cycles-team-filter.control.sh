@@ -1,4 +1,4 @@
-# One mutation per claim the suite makes, each checked to redden the suite
+# Four mutations over the suite's five claims, each checked to redden the suite
 # applied on its own: 2 reddens the D upcoming assertion, 3 the D past
 # assertion, and 4 the two E assertions. Claim C, that no --team is unfiltered,
 # carries none, because neutralizing the filter leaves it passing.
