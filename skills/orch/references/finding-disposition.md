@@ -19,7 +19,7 @@ One pass, in order; the first verdict stands. Step 0 runs ahead of Step 1, so a 
 
 Size tripwire, enforced before fix delegation: `dev-round-write` exits 3 when the branch diffstat exceeds twice workflow state `pr.baseline_lines`. Stop the item-by-item fix path, report the current and baseline counts, and cut back to the Done-when before minting another round. Close every thread on cut code with the deleting sha.
 
-A fix round that repairs code added by a prior fix round reverts that addition instead of patching it.
+Step 0 and Recurrence take precedence. At Step 1, a fix round repairing code added by a prior fix round reverts that addition when the issue's Done-when does not require it; otherwise it fixes the addition in place.
 
 Round cap: `REVIEW_MAX_EXTERNAL_ROUNDS` (default 4) bounds the external review rounds on an open PR, counted in `pr_comment_review.iterations`. Past it every finding gets a disposition — `Declined: <reason>` or `Tracked: <ID>` — and no fix push. The filing bar below decides which of the two, exactly as it does under the cap: a finding that misses the bar is declined at the cap as well. One exception: a defect this diff itself introduces or arms, and Step 0 does not exclude, is fixed whatever the round count. Only Step 1's introduced-or-armed branch outranks the cap. Step 1's other `fix` verdict — a pre-existing defect that blocks this change from working — is a fix below the cap and a disposition above it, like anything else.
 
