@@ -25,7 +25,7 @@ use std::fs;
 use std::path::Path;
 
 use kendex_core::env::{Env, FakeOs};
-use kendex_core::model::{ItemKind, Scope};
+use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::source::browse::{self, Catalog, InstallState};
 
 struct Fixture {
@@ -258,16 +258,75 @@ fn redirect() -> Redirect {
     // The destination declares the same subscription, which is what
     // installing into a project from a personal one leaves behind.
     put(&project.join("kendex.toml"), &declaration);
+    let destination = Scope::Project {
+        root: project.clone(),
+    };
+    // Both paths come off the engine's own resolver rather than composed
+    // here: a composed one diverges from what a read resolves wherever the
+    // home it is rooted under is a symlink.
     let browsed_lock = kendex_core::lock::lock_path(&env, &Scope::Global);
+    let destination_lock = kendex_core::lock::lock_path(&env, &destination);
     Redirect {
         env,
         browsing: Scope::Global,
-        destination: Scope::Project {
-            root: project.clone(),
-        },
+        destination,
         browsed_lock,
-        destination_lock: project.join(".kendex-lock.json"),
+        destination_lock,
         _tmp: tmp,
+    }
+}
+
+impl Redirect {
+    /// The manifest of one of this fixture's two places, off the engine's
+    /// own resolver rather than composed here.
+    fn manifest_path(&self, scope: &Scope) -> std::path::PathBuf {
+        kendex_core::manifest::manifest_path(&self.env, scope)
+    }
+
+    /// Records `gh` as installed from the `cat` subscription in one place
+    /// and nowhere else.
+    #[allow(clippy::unwrap_used)]
+    fn install_gh_in(&self, scope: &Scope) {
+        let mut lock = kendex_core::lock::Lock {
+            version: kendex_core::lock::LOCK_VERSION,
+            root: match scope {
+                Scope::Project { root } => Some(root.clone()),
+                Scope::Global => None,
+            },
+            ..Default::default()
+        };
+        lock.entries.insert(
+            kendex_core::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Claude),
+            kendex_core::lock::LockEntry {
+                name: "gh".to_owned(),
+                kind: ItemKind::Skill,
+                harness: HarnessId::Claude,
+                source: "cat".to_owned(),
+                source_repo: "cat".to_owned(),
+                method: kendex_core::manifest::Method::Symlink,
+                installed_at: "2026-01-01T00:00:00Z".to_owned(),
+                source_hash: "hash".to_owned(),
+                source_commit: None,
+                rendered_hash: None,
+                enabled: true,
+                upstream_skills: None,
+                emitted: None,
+                registration: None,
+                reasons: std::collections::BTreeSet::from([kendex_core::lock::Reason::Requested]),
+            },
+        );
+        kendex_core::lock::save(&kendex_core::lock::lock_path(&self.env, scope), &lock).unwrap();
+    }
+
+    /// Records that the person removed `gh` on purpose in one place.
+    #[allow(clippy::unwrap_used)]
+    fn suppress_gh_in(&self, scope: &Scope) {
+        let path = self.manifest_path(scope);
+        let manifest = fs::read_to_string(&path).unwrap();
+        put(
+            &path,
+            &format!("{manifest}\n[suppressed]\nskill = [\"gh\"]\n"),
+        );
     }
 }
 
@@ -384,5 +443,59 @@ fn an_unreadable_browsed_scope_leaves_the_sets_installs_alone() {
     assert!(
         browsed.records_unreadable,
         "the control: with no redirect the same damaged record still answers"
+    );
+}
+
+/// The other half of the redirect, and the one an unreadable lock cannot
+/// show: a member's standing is read out of the LANDING place's records,
+/// not just its readability. An installation recorded where the install
+/// lands is what makes the row say Installed, and a removal recorded there
+/// is what makes it say the person's own choice — neither is the browsed
+/// scope's to answer, and reading the wrong one puts a wrong count on the
+/// set page and a box the reader cannot tick for the place that is
+/// actually missing the member.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_members_standing_comes_from_the_place_the_install_lands_in() {
+    let r = redirect();
+    let member = |r: &Redirect| redirected_detail(r).members.first().map(|m| m.state);
+    let installed_count = |r: &Redirect| redirected_detail(r).installed_members;
+    assert_eq!(
+        (member(&r), installed_count(&r)),
+        (Some(InstallState::Available), 0),
+        "the control: neither place records anything about gh"
+    );
+
+    r.install_gh_in(&r.destination);
+    assert_eq!(
+        (member(&r), installed_count(&r)),
+        (Some(InstallState::Installed), 1),
+        "installed where the install lands, so the row says so"
+    );
+
+    // The inverse: recorded in the scope being browsed and nowhere else.
+    // The set is redirected into a project that does not hold it, so the
+    // row must offer it rather than call it installed.
+    let r = redirect();
+    r.install_gh_in(&r.browsing);
+    assert_eq!(
+        (member(&r), installed_count(&r)),
+        (Some(InstallState::Available), 0)
+    );
+
+    let r = redirect();
+    r.suppress_gh_in(&r.destination);
+    assert_eq!(
+        member(&r),
+        Some(InstallState::RemovedByYou),
+        "kept removed where the install lands, so the row says whose choice it was"
+    );
+
+    let r = redirect();
+    r.suppress_gh_in(&r.browsing);
+    assert_eq!(
+        member(&r),
+        Some(InstallState::Available),
+        "a removal in the scope being browsed says nothing about the project it lands in"
     );
 }

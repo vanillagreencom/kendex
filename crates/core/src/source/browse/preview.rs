@@ -57,9 +57,7 @@ pub fn package_preview(
     destination: Option<&crate::model::Scope>,
 ) -> Result<PackagePreview> {
     let browsed = super::open(env, catalog)?;
-    let redirected = destination
-        .map(|scope| super::opened::records_of(env, scope))
-        .transpose()?;
+    let landing = super::opened::landing(env, &browsed, destination)?;
     let Some(path) = crate::source::find_item(&browsed.sealed, &browsed.config, kind, name) else {
         return Err(CoreError::ItemNotInSource {
             name: name.to_owned(),
@@ -95,7 +93,6 @@ pub fn package_preview(
             bundles.push(offered.name);
         }
     }
-    let landing = redirected.as_ref().unwrap_or(browsed.records());
     // The path this function already resolved, rather than a second walk
     // for the same item.
     let text = super::item_text(&browsed, kind, Some(path.as_path()));
@@ -113,12 +110,12 @@ pub fn package_preview(
         dependencies: super::deps::dependencies(
             &browsed,
             &crate::engine::deps::OfferedSkills::default(),
-            landing,
+            &landing,
             kind,
             name,
             text.as_deref(),
         ),
-        state: browsed.state(landing, kind, name),
+        state: browsed.state(&landing, kind, name),
         collision: browsed.collision(kind, name),
     })
 }

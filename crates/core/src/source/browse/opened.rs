@@ -4,6 +4,8 @@
 //! bytes, at which revision, joined against whose records — and the pages
 //! above read the answer rather than each assembling it.
 
+use std::borrow::Cow;
+
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::Lock;
@@ -34,6 +36,10 @@ pub(crate) struct Browsed {
 /// [`crate::engine::ops::add_seeded`] mutates the scope it is handed, so a
 /// surface reading anything else offers a button the engine refuses on a
 /// record the reader was never shown.
+///
+/// `Clone` is [`Cow`]'s bound in [`landing`] and nothing else: the borrowed
+/// arm is what every unredirected read takes, and nothing calls `to_mut`.
+#[derive(Clone)]
 pub(crate) struct Records {
     pub(crate) manifest: Manifest,
     /// `None` where this scope's lock could not be read — a damaged record
@@ -43,10 +49,19 @@ pub(crate) struct Records {
     lock: Option<Lock>,
 }
 
-/// The records of a scope no catalog was opened for: the destination a
-/// redirected install lands in.
-pub(crate) fn records_of(env: &Env, scope: &Scope) -> Result<Records> {
-    records(env, scope)
+/// Which scope's records one read answers for: the destination's where a
+/// page redirects the install into one, the browsed catalog's own where it
+/// does not. Resolved here rather than at each read, so a destination-aware
+/// read added later inherits the rule instead of restating it.
+pub(crate) fn landing<'a>(
+    env: &Env,
+    browsed: &'a Browsed,
+    destination: Option<&Scope>,
+) -> Result<Cow<'a, Records>> {
+    Ok(match destination {
+        Some(scope) => Cow::Owned(records(env, scope)?),
+        None => Cow::Borrowed(browsed.records()),
+    })
 }
 
 /// The scope records the installed-state join reads. The manifest decides

@@ -74,6 +74,12 @@ pub fn package_safety(
     // The preview reads the catalog, and this project adds its own text to
     // what installs. Nobody has scored that combination yet, so the page
     // says what it did not read.
+    //
+    // The manifest is the BROWSED scope's, and stays so under a redirect:
+    // this read takes no destination, so an install redirected into a
+    // project that injects its own instructions gets no note about them.
+    // Said here rather than claimed away — the note is advisory, and the
+    // scoring an install runs reads the scope it lands in.
     let mut notes = Vec::new();
     if injected_here(&browsed.records().manifest, kind, name) {
         notes.push(format!(

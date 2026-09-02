@@ -225,17 +225,14 @@ pub fn bundle(
     destination: Option<&crate::model::Scope>,
 ) -> Result<BundleDetail> {
     let browsed = open(env, catalog)?;
-    let redirected = destination
-        .map(|scope| opened::records_of(env, scope))
-        .transpose()?;
+    let landing = opened::landing(env, &browsed, destination)?;
     let Some(found) = super::bundles::find(&browsed.sealed, &browsed.config, bundle_name)? else {
         return Err(CoreError::NoSuchBundle {
             name: bundle_name.to_owned(),
             source_name: catalog.label().to_owned(),
         });
     };
-    let landing = redirected.as_ref().unwrap_or(browsed.records());
-    Ok(detail(&browsed, landing, &found))
+    Ok(detail(&browsed, &landing, &found))
 }
 
 /// A declared set joined against `landing`: every member's state, and the
