@@ -283,7 +283,7 @@ After any fix-up push: push → the Restart check, and on a restart wait for a N
 
 The printed value is `MAX_CYCLES`. Reruns-in-place are for flakes and re-gating on unchanged workflows only; a PR that changes gate or CI workflow behavior exhibits it only on a fresh head.
 
-**Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5.1 tail`. ci-fix pushes, re-confirms the § 4 gate at the new head, and only then re-verifies CI. Record its gate re-confirmation as the § 4 result (skip when `GATE_MODE` is `off`), treat its final CI result as the § 5 result, and re-route through the table above. A returned `comments` or `changes_requested` routes through the § 4 step-1 table first, then re-enters § 5.
+**Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5.1 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`. ci-fix pushes, re-confirms the § 4 gate at the new head, and only then re-verifies CI. Record its gate re-confirmation as the § 4 result (skip when `GATE_MODE` is `off`), treat its final CI result as the § 5 result, and re-route through the table above. A returned `comments` or `changes_requested` routes through the § 4 step-1 table first, then re-enters § 5.
 
 Keep routing failures back into ci-fix until CI passes or `MAX_CYCLES` is spent. At the cap, go to § 6 with a failure report that names the checks still failing, quotes ci-fix's last error summary, and lists what each cycle attempted — never a bare "CI is failing".
 
