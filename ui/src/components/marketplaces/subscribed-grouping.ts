@@ -54,7 +54,7 @@ export interface SubscribedMarketplace {
  * platforms' shapes, while `path_root` asks `Path::is_absolute`, which
  * answers for one. On Unix `C:/catalog` is re-rooted per scope and keyed
  * here as one folder; a POSIX-rooted path on Windows mirrors it. Core
- * shipping the resolved path closes that, and is filed.
+ * shipping the resolved path closes that, and is filed as KEN-1142.
  *
  * The alias is the last resort for a declaration carrying neither. It
  * usually over-splits, which is harmless — but two scopes declaring such a
