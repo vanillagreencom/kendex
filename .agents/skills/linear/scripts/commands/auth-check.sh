@@ -7,6 +7,7 @@
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LINEAR_EMPTY_RUNS=1
 source "$SCRIPT_DIR/../lib/common.sh"
 
 strict=0
@@ -46,8 +47,6 @@ EOF
     ;;
   esac
 done
-
-linear_init
 
 # Team declared by project files, read independently of the process environment
 # so a box-global export that shadows project config is visible here.

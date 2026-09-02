@@ -10,7 +10,7 @@ skills/linear/
 │   ├── commands/               # One script per resource
 │   └── lib/
 │       ├── bash-version.sh     # Bash 4+ runtime preflight
-│       ├── help.sh             # Runtime initialization after help routing
+│       ├── help.sh             # Help classification before project config
 │       ├── common.sh           # Auth, GraphQL wire, resolvers, arg guards
 │       ├── cache.sh            # Cache reads, merges, write-through
 │       ├── formatters.sh       # safe / table / ids / raw output
@@ -52,9 +52,9 @@ The guard proves a team is **configured**, not that a write lands in it. A mutat
 
 ## Authoring Rules
 
-- Help is inert. A command's dispatcher answers help before it calls
-  `linear_init`, the sole project-configuration loader. Cache and attachment
-  paths initialize lazily after the same dispatch boundary.
+- Help is inert. `help.sh` classifies help before project configuration without
+  per-command option or surface tables. A help token immediately following an
+  option is its literal value; commands that run on empty argv declare that.
 - Build every GraphQL variables payload with `jq --arg` / `--argjson`. A name holding a quote must not be able to reshape the request, and a hand-built payload fails as "Invalid GraphQL variables JSON", which names neither the flag nor the value.
 - Validate any value spliced unquoted into JSON, a jq program, or shell arithmetic with `linear_require_pattern` before it gets there.
 - Read cache files through `cache_jq_file`. An absent file is a cold cache and returns the caller's default; a file that exists but does not parse must fail loudly, because the same empty default would report a corrupt cache as "no results".

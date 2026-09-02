@@ -7,6 +7,7 @@ set -euo pipefail
 shopt -s inherit_errexit  # Propagate set -e into command substitutions
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LINEAR_EMPTY_RUNS=1
 source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/cache.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
@@ -623,8 +624,8 @@ main() {
             *) break ;;
         esac
     done
-    linear_attachments_init
-    # Fail-closed budget guard (kendex#1032): the cache dir can be a
+
+    # Fail-closed budget guard (kendex#1032): when the cache dir is a
     # clobbered worktree-local real directory, refuse before touching the lock
     # or the API. Gated to syncs that would go full (--full, or no meta.json —
     # exactly what a freshly re-materialized empty dir looks like) or

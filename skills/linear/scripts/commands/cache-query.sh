@@ -1012,17 +1012,17 @@ cache_list_cycles() {
 # =============================================================================
 
 main() {
-    local resource="${1:-help}"
-    case "$resource:${2:-}:${3:-}" in
-    help:*:* | --help:*:* | -h:*:* | *:help:* | *:--help:* | *:-h:* | *:*:--help | *:*:-h)
-        show_help; return 0 ;;
-    esac
-    linear_attachments_init
+    if linear_help_requested "${BASH_SOURCE[0]}" "$@"; then
+        show_help
+        return 0
+    fi
+
     if [[ ! -f "$CACHE_DIR/meta.json" ]]; then
         cache_missing_error
         return 1
     fi
 
+    local resource="${1:-help}"
     shift || true
 
     case "$resource" in

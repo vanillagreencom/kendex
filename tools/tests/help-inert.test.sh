@@ -125,6 +125,12 @@ github	scripts/github.sh	Sticky	sticky-comment 23 --body --help
 linear	scripts/commands/issues.sh	Issue Operations	-
 linear	scripts/commands/issues.sh	Issue Operations	help
 linear	scripts/commands/issues.sh	Issue Operations	--help
+linear	scripts/commands/issues.sh	Issue Operations	activate --help
+linear	scripts/commands/issues.sh	Issue Operations	get --help
+linear	scripts/commands/issues.sh	Issue Operations	validate-completion --help
+linear	scripts/commands/issues.sh	Issue Operations	get KEN-1 --help
+linear	scripts/commands/issues.sh	Issue Operations	delete KEN-1 --help
+linear	scripts/commands/issues.sh	Issue Operations	list --limit 5 -h
 linear	scripts/commands/projects.sh	Project Operations	--help
 linear	scripts/commands/cycles.sh	Cycle Operations	--help
 linear	scripts/commands/labels.sh	Label Operations	--help
@@ -155,11 +161,12 @@ linear	scripts/commands/teams.sh	Team Operations	-	clean	none	no-git
 linear	scripts/commands/users.sh	User Operations	-	clean	none	no-git
 linear	scripts/commands/cache-query.sh	Linear Cache Query	issues --help	clean	none	no-git
 linear	scripts/commands/cache-query.sh	Linear Cache Query	cycles list --type --help	command,environment
+linear	scripts/commands/comments.sh	Comment Operations	list KEN-1 --help	command	api	git
 linear	scripts/commands/projects.sh	Project Operations	-
 linear	scripts/commands/cache-query.sh	Linear Cache Query	-
-linear	scripts/commands/projects.sh	Project Operations	--help	clean	api	git
 linear	scripts/linear.sh	Linear GraphQL API CLI	--help
 linear	scripts/linear.sh	Issue Operations	issues --help
+linear	scripts/linear.sh	Issue Operations	issues delete KEN-1 --help
 linear	scripts/linear.sh	Project Operations	projects --help
 linear	scripts/linear.sh	Cycle Operations	cycles --help
 linear	scripts/linear.sh	Label Operations	labels --help
@@ -192,9 +199,9 @@ linear	scripts/linear.sh	User Operations	users	clean	none	no-git
 linear	scripts/linear.sh	Linear Cache Query	cache	clean	none	no-git
 linear	scripts/linear.sh	Linear Cache Query	cache issues --help	clean	none	no-git
 linear	scripts/linear.sh	Linear Cache Query	cache cycles list --type --help	command,environment
+linear	scripts/linear.sh	Comment Operations	comments list KEN-1 --help	command	override	git
 linear	scripts/linear.sh	Project Operations	projects
 linear	scripts/linear.sh	Linear Cache Query	cache
-linear	scripts/linear.sh	Project Operations	projects --help	clean	override	git
 orch	scripts/approval-wait	Usage: approval-wait	--help
 orch	scripts/approval-wait	Usage: approval-wait	-h
 orch	scripts/approval-wait	Usage: approval-wait	help

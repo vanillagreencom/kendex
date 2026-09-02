@@ -66,7 +66,6 @@ mkdir -p "$TMP_ROOT/.cache/linear/comments"
 cd "$TMP_ROOT"
 # shellcheck disable=SC1090
 source "$SYNC"
-linear_cache_init
 
 # Anything that writes outside the sandbox would be editing the developer's
 # own Linear cache, so stop before the first write rather than after it.

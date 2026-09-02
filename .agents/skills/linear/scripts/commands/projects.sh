@@ -1277,8 +1277,6 @@ set_sort_order() {
 action="${1:-help}"
 shift || true
 
-case "$action" in help | --help | -h) show_help; exit 0 ;; esac
-linear_cache_init
 # Fail closed: a write needs a resolved team target before any API call.
 linear_guard_write_action "$action" "update delete add-dependency remove-dependency post-update reorder set-sort-order" "$@" || exit 1
 
@@ -1354,6 +1352,9 @@ set-sort-order)
         exit 1
     fi
     set_sort_order "$@"
+    ;;
+help | --help | -h)
+    show_help
     ;;
 *)
     echo "Error: Unknown action '$action'" >&2

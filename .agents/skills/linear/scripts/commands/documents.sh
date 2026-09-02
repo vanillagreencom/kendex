@@ -137,17 +137,14 @@ action="${1:-help}"
 shift || true
 
 case "$action" in
-    help|--help|-h) show_help; exit 0 ;;
-esac
-
-linear_init
-
-case "$action" in
     list)
         list_documents "$@"
         ;;
     get)
         get_document "$@"
+        ;;
+    help|--help|-h)
+        show_help
         ;;
     *)
         echo "Error: Unknown action '$action'" >&2

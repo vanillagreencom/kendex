@@ -143,12 +143,6 @@ action="${1:-help}"
 shift || true
 
 case "$action" in
-    help|--help|-h) show_help; exit 0 ;;
-esac
-
-linear_init
-
-case "$action" in
     list)
         list_teams "$@"
         ;;
@@ -158,6 +152,9 @@ case "$action" in
             exit 1
         fi
         get_team "$@"
+        ;;
+    help|--help|-h)
+        show_help
         ;;
     *)
         echo "Error: Unknown action '$action'" >&2

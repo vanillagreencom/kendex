@@ -24,8 +24,8 @@ linear_cache_project_root() {
     linear_cache_canonical_existing_dir "$root"
 }
 
-CACHE_PROJECT_ROOT=""
-CACHE_DIR=""
+CACHE_PROJECT_ROOT="$(linear_cache_project_root)"
+CACHE_DIR="$CACHE_PROJECT_ROOT/.cache/linear"
 
 # =============================================================================
 # WORKTREE CLOBBER GUARD (kendex#1032)
@@ -530,13 +530,14 @@ $ISSUE_RELATION_FIELDS
         }
     }"
 
-    # Command scripts normally provide the wire helper. A standalone library
-    # caller loads it here, then crosses the same explicit runtime boundary.
+    # Command scripts have already sourced common.sh; re-sourcing it would
+    # re-run the API-key precedence block against an environment it has itself
+    # rewritten. Load it only when the wire helper is genuinely absent, and let
+    # a failure there abort — a swallowed source leaves graphql_query undefined.
     if ! declare -F graphql_query >/dev/null; then
         # shellcheck source=common.sh
         source "$_CACHE_LIB_DIR/common.sh"
     fi
-    linear_init
     local vars result
     vars=$(jq -cn --argjson ids "$id_list" '{filter: {id: {in: $ids}}, includeArchived: true}')
     result=$(graphql_query "$query" "$vars")

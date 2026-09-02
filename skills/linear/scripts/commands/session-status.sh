@@ -6,6 +6,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LINEAR_EMPTY_RUNS=1
 source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/cache.sh"
 
@@ -423,5 +424,7 @@ case "$action" in
     --help|-h|help)
         show_help
         ;;
-    *) linear_cache_init; get_session_status "$@" ;;
+    *)
+        get_session_status "$@"
+        ;;
 esac

@@ -1,84 +1,55 @@
 #!/bin/bash
-# Runtime initialization deferred until command dispatch has ruled out help.
+# Classify help before any project-controlled configuration is read.
 
-linear_init() {
-    [[ "$LINEAR_INITIALIZED" == 1 ]] && return 0
+linear_help_requested() {
+    local caller="$1" arg="" previous=""
+    shift || true
 
-    local project_root_raw
-    project_root_raw="$(git rev-parse --show-toplevel 2>/dev/null)"
-    PROJECT_ROOT="$(linear_canonical_existing_dir "$project_root_raw")"
-
-    _CALLER_LINEAR_API_KEY="${LINEAR_API_KEY:-}"
-    unset LINEAR_API_KEY
-    _CALLER_LINEAR_TEAM_SET="${LINEAR_TEAM+x}"
-    _CALLER_LINEAR_TEAM="${LINEAR_TEAM:-}"
-
-    kendex_load_project_env "$PROJECT_ROOT"
-
-    _PROJECT_LINEAR_API_KEY="${LINEAR_API_KEY:-}"
-    if [[ -n "${LINEAR_API_KEY_OVERRIDE:-}" ]]; then
-        LINEAR_API_KEY="$LINEAR_API_KEY_OVERRIDE"
-        export LINEAR_API_KEY
-        LINEAR_API_KEY_SOURCE="override"
-    elif [[ -n "$_PROJECT_LINEAR_API_KEY" ]]; then
-        LINEAR_API_KEY_SOURCE="project-config"
-    elif [[ -n "$_CALLER_LINEAR_API_KEY" ]]; then
-        LINEAR_API_KEY="$_CALLER_LINEAR_API_KEY"
-        export LINEAR_API_KEY
-        LINEAR_API_KEY_SOURCE="environment"
-    else
-        LINEAR_API_KEY_SOURCE="unset"
+    if [[ $# -eq 0 ]]; then
+        case "$caller" in
+        */commands/*) [[ "${LINEAR_EMPTY_RUNS:-0}" != 1 ]] ;;
+        *) return 1 ;;
+        esac
+        return
     fi
+    case "${1:-}" in help | --help | -h) return 0 ;; esac
 
-    LINEAR_API_KEY_ENV_SHADOWED=0
-    LINEAR_API_KEY_ENV_FINGERPRINT=""
-    LINEAR_API_KEY_PROJECT_FINGERPRINT=""
-    if [[ "$LINEAR_API_KEY_SOURCE" == "project-config" && -n "$_CALLER_LINEAR_API_KEY" &&
-        "$_CALLER_LINEAR_API_KEY" != "$_PROJECT_LINEAR_API_KEY" ]]; then
-        LINEAR_API_KEY_ENV_SHADOWED=1
-        LINEAR_API_KEY_ENV_FINGERPRINT="$(linear_key_fingerprint "$_CALLER_LINEAR_API_KEY")"
-        LINEAR_API_KEY_PROJECT_FINGERPRINT="$(linear_key_fingerprint "$_PROJECT_LINEAR_API_KEY")"
-    fi
-
-    if [[ -n "$_CALLER_LINEAR_TEAM" ]]; then
-        LINEAR_TEAM_SOURCE="environment"
-    elif [[ -n "${LINEAR_TEAM:-}" ]]; then
-        LINEAR_TEAM_SOURCE="project-config"
-    else
-        LINEAR_TEAM_SOURCE="unset"
-    fi
-
-    if [[ -n "$_CALLER_LINEAR_TEAM_SET" && -z "$_CALLER_LINEAR_TEAM" ]]; then
-        LINEAR_TEAM_ENV_BLANK=1
-    else
-        LINEAR_TEAM_ENV_BLANK=0
-    fi
-
-    unset _CALLER_LINEAR_API_KEY _PROJECT_LINEAR_API_KEY _CALLER_LINEAR_TEAM _CALLER_LINEAR_TEAM_SET
-
-    DEFAULT_TEAM="${LINEAR_TEAM:-}"
-    DEFAULT_FORMAT="${LINEAR_FORMAT:-safe}"
-    DEFAULT_PREFIX="${LINEAR_TEAM_PREFIX:-PROJ}"
-    LINEAR_TEAM_TARGET="$DEFAULT_TEAM"
-
-    if [[ "$LINEAR_RESOLVE_API_KEY" == 1 ]]; then
-        resolve_linear_api_key || return 1
-    fi
-    LINEAR_INITIALIZED=1
+    for arg in "$@"; do
+        case "$arg" in
+        --help | -h)
+            case "$previous" in
+            --*=*) return 0 ;;
+            --*) previous=""; continue ;;
+            *) return 0 ;;
+            esac
+            ;;
+        esac
+        previous="$arg"
+    done
+    return 1
 }
 
-linear_cache_init() {
-    [[ -n "$CACHE_DIR" ]] && return 0
-    linear_init
-    CACHE_PROJECT_ROOT="$(linear_cache_project_root)"
-    CACHE_DIR="$CACHE_PROJECT_ROOT/.cache/linear"
+linear_prepare_invocation() {
+    local caller="$1"
+    shift || true
+    LINEAR_HELP_ONLY=0
+    if linear_help_requested "$caller" "$@"; then
+        LINEAR_HELP_ONLY=1
+        PROJECT_ROOT="$(linear_canonical_existing_dir "$PWD")"
+        return
+    fi
+
+    local root
+    root="$(git rev-parse --show-toplevel 2>/dev/null)"
+    PROJECT_ROOT="$(linear_canonical_existing_dir "$root")"
 }
 
-linear_attachments_init() {
-    [[ -n "$ATTACH_DIR" ]] && return 0
-    linear_cache_init
-    ATTACH_CACHE_PROJECT_ROOT="$(linear_attach_project_root)"
-    ATTACH_DIR="$ATTACH_CACHE_PROJECT_ROOT/.cache/linear/attachments"
-    ATTACH_FILES_DIR="$ATTACH_DIR/files"
-    ATTACH_MANIFEST="$ATTACH_DIR/manifest.json"
+linear_load_invocation_env() {
+    if [[ "$LINEAR_HELP_ONLY" == 0 ]]; then
+        kendex_load_project_env "$PROJECT_ROOT"
+    else
+        unset LINEAR_API_KEY LINEAR_API_KEY_OVERRIDE
+        _CALLER_LINEAR_API_KEY=""
+    fi
+    unset LINEAR_HELP_ONLY
 }
