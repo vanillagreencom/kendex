@@ -155,11 +155,11 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         }
         // Whatever it answered, the standing is read again: the work can
         // commit and then fail, and the rows must be what landed.
+        // The row this run sent, answered ok or not — `countingWrites` says
+        // why an error is not proof that nothing changed.
+        wrote([row]);
         await reload();
-        if (applied) {
-          wrote([row]);
-          await rescanEverything();
-        }
+        if (applied) await rescanEverything();
       });
     },
 
@@ -208,10 +208,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           what,
           packageCount(what.lost),
         );
-        // The same record off the same fact, which is why this run and the
-        // single-package one above share it: `wrote` is the rows the applies
-        // answered for either way.
-        wrote(what.wrote);
+        // The rows this run sent, on the same rule: `what.wrote` is what the
+        // plan moved, which is the wrong question for a refresh.
+        wrote(rows);
         await rescanEverything();
       });
     },

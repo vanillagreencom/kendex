@@ -86,9 +86,16 @@ const rowFor = (
 export const placeKey = (kind: ItemKind, name: string, scope: Scope): string =>
   `${kind}|${name}|${scopeKey(scope)}`;
 
-/** These counts with one more landed write recorded against every place in
- *  `rows`. Handed the rows the applies answered for, never the rows a click
- *  covered: a place the plan held back has nothing new to read. */
+/** These counts with one more write recorded against every place in `rows`.
+ *
+ *  Handed every place a run ATTEMPTED, not only those whose command answered
+ *  ok. An error is not proof that nothing changed: `insert_manifest_save`
+ *  leads a plan with the manifest write, so an apply that fails after it
+ *  leaves the new hold on disk with nothing else moved, and a refusal ran a
+ *  plan led the same way. A refresh that was not needed costs one re-read of
+ *  a page already on screen; one that was needed and skipped is the stale
+ *  Overview this whole record exists to remove — so this deliberately
+ *  over-covers, and is not to be tightened back to what a plan moved. */
 export const countingWrites = (
   writes: Record<string, number>,
   rows: { kind: ItemKind; name: string; scope: Scope }[],

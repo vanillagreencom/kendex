@@ -329,6 +329,40 @@ describe("the package page after an update started from its Projects tab", () =>
     expect(header(host)).not.toContain(UPDATE_LABEL);
   });
 
+  // An apply that answers an error is not proof that nothing changed:
+  // `insert_manifest_save` leads a plan with the manifest write, so an op
+  // failing after it leaves the new hold on disk. Reading the error as
+  // "nothing moved" is what leaves a rev on screen the manifest no longer
+  // has.
+  it("re-reads them when the write answers an error", async () => {
+    const write = engineWrites();
+    // The manifest moved and the apply then failed, which is the shape the
+    // plan's leading write makes reachable.
+    vi.mocked(commands.packageUpdate).mockImplementation(() => {
+      write.landed = true;
+      return Promise.resolve({ status: "error", error: "the apply stopped" });
+    });
+    // Nothing confirmed a new commit, so the rows stay where they were.
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: {
+        rows: [rowAt(OLD, true)],
+        warnings: [],
+        unreadable: [],
+        lastFetched: null,
+      },
+    });
+
+    const host = await openPage();
+    expect(host.textContent).toContain("BEFORE.md");
+
+    await pressUpdate(host);
+
+    expect(host.textContent).toContain("AFTER.md");
+    expect(host.textContent).not.toContain("BEFORE.md");
+    expect(host.textContent).toContain("v2");
+  });
+
   // A write that commits and then cannot be read back is still a write: the
   // store keeps the rows it had, so the commit the page watches never moves,
   // and the files and version under it would go on describing the copy the
