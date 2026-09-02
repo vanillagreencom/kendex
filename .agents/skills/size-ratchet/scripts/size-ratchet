@@ -468,9 +468,6 @@ WT_BATCH_L=()
 WT_BATCH_L_CHARS=0
 WT_BATCH_B=()
 WT_BATCH_B_CHARS=0
-candidate_from_index() { # PATH — 0 when this run measures the INDEX blob, not the worktree copy
-  [ "$STAGED" -eq 1 ] || [ ! -f "$1" ] || [ -h "$1" ]
-}
 clear_batch() { # UNIT
   case "$1" in
     b)
@@ -545,7 +542,7 @@ while IFS= read -r -d '' rec; do
   esac
   path_threshold "$f"
   if [ "$PU" = "b" ]; then wcflag="-c"; else wcflag="-l"; fi
-  if candidate_from_index "$f"; then
+  if [ "$STAGED" -eq 1 ] || [ ! -f "$f" ] || [ -h "$f" ]; then
     if ! n="$(git show ":$f" | wc "$wcflag")"; then
       collection_error "cannot read index blob for tracked file '$f' — its size is unmeasurable, refusing to skip it"
     fi
@@ -878,13 +875,8 @@ head_blob_size() { # PATH UNIT — HEAD's measurement on stdout, empty when HEAD
     100*) ;;
     *) return 0 ;;
   esac
-  # Read HEAD the way this run read the candidate, or the two are incomparable:
-  # raw against an index blob, smudged against the worktree copy.
-  if candidate_from_index "$f"; then
-    n="$(git show "HEAD:$f" | wc "$wcflag")"
-  else
-    n="$(git cat-file --filters "HEAD:$f" | wc "$wcflag")"
-  fi || collection_error "cannot read the HEAD blob of '$f' — the row's unit change cannot be judged, refusing to admit it"
+  # The committed blob: a worktree copy carries whatever the last checkout wrote.
+  n="$(git show "HEAD:$f" | wc "$wcflag")" || collection_error "cannot read the HEAD blob of '$f' — the row's unit change cannot be judged, refusing to admit it"
   n="${n#"${n%%[![:space:]]*}"}" # strip wc's leading whitespace (BSD wc pads)
   case "$n" in
     "" | *[!0-9]*) collection_error "$(unit_noun "$2") count for the HEAD blob of '$f' came back as '$n', not a number — refusing to judge the row against it" ;;

@@ -31,11 +31,10 @@ whose unit no longer matches its class is reported as one to re-measure, and
 `--update` writes the current quantity in the new unit. `rows_raised` checks
 the unit tag before comparing numbers, and where the tag changed on a frozen
 row it measures `HEAD:<path>` in the new unit so there is still a like quantity
-to compare against, in whichever representation that run measured the candidate
-in: the raw index blob where the candidate came from the index, filtered
-worktree content where it came from the worktree. A reference smudged when the
-candidate was not credits the conversion as headroom, which is growth admitted.
-Once per crossing row, not per tracked file. The policy is
+to compare against — the committed blob, once per crossing row and not per
+tracked file. A worktree candidate can carry a checkout conversion the blob does
+not, so on such a repo the comparison refuses a file that did not change. That
+direction is the deliberate one: the other admits growth. The policy is
 [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
 
 ## Collection
@@ -206,10 +205,9 @@ suffix and read as line counts, which is what they were.
 
 A unit migration re-measures the row in `--update`, then applies the HEAD
 comparison from [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
-For a frozen row the reference across that change is HEAD's copy measured in
-the new unit and the run's own representation, so an EXISTING row whose file
-has not grown past that copy crosses in one `--update` with no declaration,
-and one whose file did grow is
+For a frozen row the reference across that change is HEAD's blob measured in
+the new unit, so an EXISTING row whose file has not grown past that blob
+crosses in one `--update` with no declaration, and one whose file did grow is
 refused with both numbers named. The same unit change also moves files across
 the threshold in both directions; `--update` drops the rows that fell under it,
 but a file that rose over it is a new offender with no row, and `--update`
