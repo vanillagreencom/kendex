@@ -89,6 +89,9 @@ count is worse than the long file: prefer the raise.
 3. A file whose only top-level items are inherent `impl` blocks on a type
    its parent declares. That file is part 2 of the type by construction.
 
+A file header that justifies the file's existence by a line threshold is
+the author writing down that the seam is not real.
+
 **Raising a row** (`RATCHET_RAISE=1` on the invocation, reason in the
 commit body) is correct in exactly two cases, both for hand-written files:
 1. The added lines are the fix for the reported symptom and the file has

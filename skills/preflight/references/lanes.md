@@ -37,8 +37,6 @@ beginning with the runner word, accepted erring quiet. A path-prefixed binary
 `include`/`testMatch` is not evaluated. An empty or unreadable runner set
 leaves the lane quiet.
 
-This grammar is frozen by owner ruling: it lives here, not in the lane table.
-
 ## `applied-migration-edited` glob set
 
 refinery and Flyway record a checksum over a versioned migration's name and

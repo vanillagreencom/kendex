@@ -60,6 +60,8 @@ Route by shape, not by whether `test -L .agents` passes. Ask both indexes what s
 
 Run `.agents/skills/worktree/scripts/worktree fix-links <ID|PATH>` from the main checkout naming the target; a bare invocation there is refused. A non-zero exit names the paths it did not restore, and until they are restored that tree is not trustworthy for local verification. Routing table and link mechanics: `fix-links --help`.
 
+A consumer wanting this file locally gets a pointer, never a copy: `cat "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"/.agents/skills/worktree/SKILL.md` resolves the main checkout from any worktree, at any depth. A verbatim copy in a tracked `AGENTS.md` or `CLAUDE.md` is out of `kendex refresh`'s reach and goes stale silently.
+
 ## Session guard (ownership leases)
 
 `scripts/worktree-session-guard` stops cleanup from destroying a claimed worktree, using a native Git worktree lock whose reason line carries the owner and a heartbeat. Who claims and when, what staleness measures, and the guard's limits: [references/session-guard.md](references/session-guard.md); commands, exit codes and `--repo` scope: `worktree-session-guard --help`.

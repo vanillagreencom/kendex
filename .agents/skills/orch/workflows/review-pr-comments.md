@@ -243,7 +243,7 @@ When the list is non-empty, pass those exact repository-relative paths to the wr
 
 Exit 3 is the branch-size refusal. Stop before delegation, discard this fix set, and report the current and baseline counts with `Cut required`. The cut is itself a round, stamped with `--cut` and accepted like any other, per [`dev-fix.md` § 2](dev-fix.md) step 4, which is canonical. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
 
-⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
+⚠ Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 

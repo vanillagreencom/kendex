@@ -39,7 +39,7 @@ In Pi with the `web_research` tool active, use that tool, passing `outputPath` w
 .agents/skills/deep-research/scripts/deep-research doctor
 ```
 
-`deep-research help` lists every flag.
+`deep-research help` lists every flag. Exa `/search` caps the settings behind them: `numResults` 1-100, `text.maxCharacters` 1-10000, `additionalQueries` at most 10.
 
 | Mode | Exa type | Results | Text cap | Timeout | Synthesis |
 |---|---|---:|---:|---:|---|
