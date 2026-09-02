@@ -269,25 +269,22 @@ pub fn marketplace_subscribe(
     })
 }
 
-/// One About row: what was found under one root.
-#[derive(Debug, Clone, PartialEq, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AboutFound {
-    pub root: String,
-    pub kind: ItemKind,
-    pub count: u32,
-}
-
-/// The About tab's report: how the catalog's items were decided, what was
-/// found where, everything wrong with it, and when it last changed.
+/// What the About tab draws: everything the catalog's own configuration
+/// gets wrong, and when the catalog last changed.
+///
+/// The report `browse::about` answers with carries two more things — the
+/// mode its layout was decided by, and what was found under each declared
+/// root. Neither is on here: the tab is a profile of the marketplace, and
+/// how kendex read it is the catalog author's business, which `kendex
+/// index` prints for them. How many packages it offers reaches the tab
+/// through the counts every marketplace surface already carries, deduped
+/// across roots the way the Packages tab beside it counts.
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AboutView {
-    pub mode: CatalogMode,
-    pub found: Vec<AboutFound>,
     pub findings: Vec<CatalogFinding>,
-    /// ISO-8601 committer date of the commit the catalog is read at, where
-    /// kendex holds the history to read it from.
+    /// ISO-8601 committer date of the newest commit that touched anything
+    /// the catalog offers, where kendex holds the history to read it from.
     pub updated_at: Option<String>,
 }
 
@@ -296,21 +293,9 @@ pub struct AboutView {
 pub fn marketplace_about(catalog: Catalog) -> Result<AboutView, String> {
     let env = env()?;
     let about = browse::about(&env, &catalog).map_err(|e| e.to_string())?;
-    let updated_at = about.updated_at;
-    let about = about.report;
     Ok(AboutView {
-        mode: about.mode,
-        updated_at,
-        found: about
-            .found
-            .into_iter()
-            .map(|row| AboutFound {
-                root: row.root,
-                kind: row.kind,
-                count: row.count.min(u32::MAX as usize) as u32,
-            })
-            .collect(),
-        findings: about.findings,
+        updated_at: about.updated_at,
+        findings: about.report.findings,
     })
 }
 

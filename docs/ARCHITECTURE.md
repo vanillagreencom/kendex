@@ -249,8 +249,15 @@ lives in one capability table read by core and UI.
 - My Library holds what is installed; Marketplaces (Subscribed / Packages /
   Community / Mine) holds what could be. Only Marketplaces' nested pages — a
   marketplace's detail, a curated set, an available package — carry a
-  breadcrumb. The Library's From column and the package page's From line
-  read one provenance join.
+  breadcrumb. The Library's From column, the package page's From line and a
+  marketplace's own Packages table read one provenance join. That last one
+  is the split's one crossing and is drawn as such: a marketplace's own page
+  names where its packages landed, the cross-marketplace list names the
+  marketplace instead, and the answer is grouped once per table in
+  `lib/installed-places.ts` rather than scanned per row. It joins on the
+  subscription — scope, alias and repository together — because an alias
+  alone is not one: the same name in two manifests can point at two
+  repositories.
 - **A marketplace is one thing however many places subscribe to it.**
   Subscribed lists one card per marketplace, keyed by `MarketplaceRow`'s
   `repoIdentity` — core's `source_ref::repo_identity`, one string per
@@ -645,12 +652,17 @@ lives in one capability table read by core and UI.
   (`<key>/<commit>.safety/…`, never inside the receipt-signed checkout),
   keyed by content hash plus rule-set, discovery-table and record-format
   versions, each verified before reuse. Advisory like every reading of the
-  score — a preview, never a gate. `browse/updated.rs` dates the catalog
-  and every package it offers from the mirror's history, one
-  `remote::history::last_changed` walk per read; only a fetched repository
-  has one, and a history that will not read costs the dates and nothing
-  else. `library.rs` is the same join for the Library table: subscription,
-  local content (with what a fork replaced), or observed-and-unmanaged.
+  score — a preview, never a gate. `browse/updated.rs` resolves each offered
+  item's path once and asks `remote::history::last_changed` for all of them
+  in one walk, bounded by its own commit count: each package's date is the
+  newest commit that touched it, and the catalog's own date is the newest
+  that touched anything it offers — never the repository tip, which moves
+  for a codebase commit in a repo that is a catalog too. An item that IS the
+  catalog root takes the tip, since an empty pathspec matches everything.
+  Only a fetched repository has a history; one that will not read costs the
+  dates and nothing else. `library.rs` is the same join for the Library
+  table: subscription, local content (with what a fork replaced), or
+  observed-and-unmanaged.
 - **A subscription's closure is derived by re-expansion; unsubscribing
   removes or keeps exactly it.** `engine/detach.rs` expands the installed
   set with the source present and again with its declarations gone, then

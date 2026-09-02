@@ -2,7 +2,7 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AvailablePackage,
   Catalog,
@@ -54,6 +54,17 @@ vi.mock("@/stores/preinstall-safety", async (importOriginal) => {
 });
 
 const catalog = subscription({ scope: "global" }, "kendex");
+
+// These tests write both stores — provenance directly, nav through every
+// mount — and neither write belongs to the test after. Captured before any
+// test runs and replaced wholesale, so a reordering or an inserted test
+// cannot read another one's installations.
+const PROVENANCE = useProvenanceStore.getState();
+const NAV = useNavStore.getState();
+afterEach(() => {
+  useProvenanceStore.setState(PROVENANCE, true);
+  useNavStore.setState(NAV, true);
+});
 
 const row: AvailablePackage = {
   kind: "skill",
@@ -372,9 +383,10 @@ describe("the row action on a repository nobody subscribes to", () => {
   });
 });
 
-// The marketplace's own page carries three columns the cross-marketplace
-// list does not: when each package last changed, where it is installed
-// from this marketplace, and a header that re-sorts the list.
+// One column belongs to a marketplace's own page alone: where each of its
+// packages is installed from it. The Last updated column and the sorting
+// headers are drawn on both tables deliberately — the cross-marketplace
+// list wants them too.
 describe("a marketplace's own packages table", () => {
   const dated = (name: string, updatedAt: string | null): PackageEntry => ({
     catalog,
@@ -394,13 +406,15 @@ describe("a marketplace's own packages table", () => {
     expect(html.indexOf(">apply<")).toBeLessThan(html.indexOf(">review<"));
   });
 
+  // Drawn without the places column: it renders the same dash for a package
+  // installed nowhere, so with both on the page an assertion on the dash is
+  // answered by the wrong cell and says nothing about the date.
   it("dates each row, and says nothing where there is no date to say", () => {
     stub.scores = {};
     const html = renderToStaticMarkup(
       <PackagesTable
         entries={[dated("gh", "2026-08-30T12:00:00+00:00"), dated("zz", null)]}
         showMarketplace={false}
-        showPlaces
       />,
     );
     expect(html).toContain('title="2026-08-30T12:00:00+00:00"');
@@ -534,5 +548,21 @@ describe("re-sorting a marketplace's packages", () => {
       await userEvent.click(byName);
     });
     expect(names()).toEqual(["review", "apply"]);
+  });
+});
+
+// Placed after the tests that write the provenance store, and reading it
+// without writing anything: without the reset above, this sees the
+// installations the places test left behind and names a place nobody asked
+// about. The coupling is otherwise invisible — the file simply happens to
+// be ordered so nothing later looks.
+describe("what one test's store writes leave for the next", () => {
+  it("starts from the store as it was, not as the last test left it", () => {
+    // `rows` alone would not catch it: the tests above happen to end on one
+    // that sets an empty list. `loaded` is what only the reset puts back.
+    expect(useProvenanceStore.getState()).toMatchObject({
+      loaded: false,
+      rows: [],
+    });
   });
 });

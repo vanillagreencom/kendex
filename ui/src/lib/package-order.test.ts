@@ -62,6 +62,13 @@ describe("ordering by when a package last changed", () => {
     expect(names(rows, "updated", true)).toEqual(["old", "new", "undated"]);
   });
 
+  // Both directions are one click apart on the header, so both are asserted
+  // in full: the undated row lands last either way and proves nothing about
+  // the direction on its own.
+  it("puts the newest first descending", () => {
+    expect(names(rows, "updated", false)).toEqual(["new", "old", "undated"]);
+  });
+
   // Unknown is not "older than everything": a catalog with no history to
   // read would otherwise lead the list every time it is sorted oldest-first.
   it("keeps an undated package last whichever way the column points", () => {
@@ -79,13 +86,20 @@ describe("ordering by when a package last changed", () => {
 });
 
 describe("ordering by kind", () => {
+  const rows = [
+    entry("zeta", null, "skill"),
+    entry("alpha", null, "skill"),
+    entry("beta", null, "agent"),
+  ];
+
   it("groups the kinds and breaks every tie by name", () => {
-    const rows = [
-      entry("zeta", null, "skill"),
-      entry("alpha", null, "skill"),
-      entry("beta", null, "agent"),
-    ];
     expect(names(rows, "kind", true)).toEqual(["beta", "alpha", "zeta"]);
+  });
+
+  // Turning the column around turns the kinds around; names inside a kind
+  // stay A-to-Z, because the tie-break is not what was reversed.
+  it("turns the kinds around and leaves the tie-break alone", () => {
+    expect(names(rows, "kind", false)).toEqual(["alpha", "zeta", "beta"]);
   });
 });
 

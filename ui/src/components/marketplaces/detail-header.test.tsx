@@ -45,7 +45,7 @@ const catalog: Catalog = {
   source: "kit",
 };
 
-const row: MarketplaceRow = {
+const BASE: MarketplaceRow = {
   scope: { scope: "global" },
   name: "kit",
   repo: "Acme/Kit",
@@ -61,12 +61,15 @@ const row: MarketplaceRow = {
   recordsUnreadable: false,
 };
 
-const render = () =>
+// A fresh row per render. A test that mutates a shared one and undoes it at
+// the end of its body leaves the mutation behind the moment an assertion
+// fails, and the next test goes red for somebody else's reason.
+const render = (row: Partial<MarketplaceRow> = {}) =>
   renderToStaticMarkup(
     <DetailHeader
       requested={catalog}
       catalog={catalog}
-      row={row}
+      row={{ ...BASE, ...row }}
       summary={null}
     />,
   );
@@ -103,23 +106,22 @@ describe("the header's links out", () => {
     expect(html).toContain("text-info");
   });
 
-  it("carries the catalog's homepage beside it", () => {
-    row.meta = { homepage: "https://kendex.ai" };
-    const html = render();
-    expect(html).toContain("https://kendex.ai");
-    row.meta = null;
+  // Not just the string: `ExternalLink` renders the URL as its own child
+  // text, so asserting the text alone passes for a plain span too — and
+  // "the homepage is a header link" is the claim the changelog makes.
+  it("carries the catalog's homepage beside it, as a link", () => {
+    const html = render({ meta: { homepage: "https://kendex.ai" } });
+    expect(html).toMatch(/<button[^>]*>https:\/\/kendex\.ai<\/button>/);
   });
 
   it("leaves a folder as plain text, since there is no page to open", () => {
-    row.repo = null;
-    row.repoKey = null;
-    row.path = "/home/me/catalog";
-    const html = render();
+    const html = render({
+      repo: null,
+      repoKey: null,
+      path: "/home/me/catalog",
+    });
     expect(html).toContain("/home/me/catalog");
     expect(html).not.toMatch(/<button[^>]*>\/home\/me\/catalog<\/button>/);
-    row.repo = "Acme/Kit";
-    row.repoKey = "acme/kit";
-    row.path = null;
   });
 
   // The header draws before the catalog is read, so on a Community-to-repo
@@ -174,23 +176,18 @@ describe("the header's links out", () => {
 // once, so every gap is the same gap.
 describe("the header's meta line", () => {
   it("puts one separator between parts and none at either end", () => {
-    row.meta = { license: "MIT", author: "Vanilla Green" };
-    row.commit = "abcdef0123456789";
-    const html = render();
+    const html = render({
+      meta: { license: "MIT", author: "Vanilla Green" },
+      commit: "abcdef0123456789",
+    });
     const line = html.match(/<p class="mt-1 flex[^"]*">(.*?)<\/p>/s)?.[1] ?? "";
     const text = line.replace(/<[^>]+>/g, "").trim();
     expect(text).toBe("Acme/Kit·@ abcdef0·MIT·by Vanilla Green");
     expect(text).not.toMatch(/^·|·$/);
-    row.meta = null;
-    row.commit = null;
   });
 
   it("draws no line at all when there is nothing to put in it", () => {
-    row.repo = null;
-    row.repoKey = null;
-    const html = render();
+    const html = render({ repo: null, repoKey: null });
     expect(html).not.toContain('class="mt-1 flex');
-    row.repo = "Acme/Kit";
-    row.repoKey = "acme/kit";
   });
 });

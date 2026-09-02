@@ -1,11 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  AboutFound,
-  AboutView,
-  CatalogFinding,
-  MarketplaceMeta,
-} from "@/bindings";
+import type { AboutView, CatalogFinding, MarketplaceMeta } from "@/bindings";
 import {
   ABOUT_FINDINGS_TITLE,
   ABOUT_NOTHING_SAID,
@@ -35,13 +30,7 @@ const render = (
   meta: MarketplaceMeta | null = null,
   counts: { [key in string]: number } | null = null,
 ) => {
-  const about: AboutView = {
-    mode: "explicit",
-    found: [],
-    findings: [],
-    updatedAt: null,
-    ...view,
-  };
+  const about: AboutView = { findings: [], updatedAt: null, ...view };
   stub.about = { [catalogKey(catalog)]: about };
   return renderToStaticMarkup(
     <AboutSection catalog={catalog} meta={meta} counts={counts} />,
@@ -53,12 +42,6 @@ const finding: CatalogFinding = {
   problem: "no skills root",
   fix: "add one",
 };
-
-const found = (root: string, kind: AboutFound["kind"], count: number) => ({
-  root,
-  kind,
-  count,
-});
 
 describe("the About tab as a profile", () => {
   it("shows what the catalog says about itself and when it last changed", () => {
@@ -74,7 +57,9 @@ describe("the About tab as a profile", () => {
     expect(html).toContain("Skills for shipping");
     expect(html).toContain("Vanilla Green");
     expect(html).toContain("MIT");
-    expect(html).toContain("https://kendex.ai");
+    // A link, not just the string: ExternalLink renders the URL as its own
+    // child text, so the text alone passes for a plain span too.
+    expect(html).toMatch(/<button[^>]*>https:\/\/kendex\.ai<\/button>/);
     expect(html).toContain("2026-08-30T12:00:00+00:00");
   });
 
@@ -87,18 +72,15 @@ describe("the About tab as a profile", () => {
   });
 
   it("leaves the row out when nothing has counted the catalog yet", () => {
-    const html = render({ found: [found("skills", "skill", 40)] }, null, null);
+    const html = render({}, null, null);
     expect(html).not.toContain("Contains");
-    expect(html).not.toContain("40 skills");
   });
 
   // The tags, the reading mode and the per-root table were an engineer's
-  // account of kendex's own work. The header says the tags once.
+  // account of kendex's own work. The payload no longer carries the last
+  // two at all; the header says the tags once.
   it("says nothing about how kendex read the catalog", () => {
-    const html = render(
-      { mode: "explicit", found: [found("skills", "skill", 3)] },
-      { tags: ["review"] },
-    );
+    const html = render({}, { tags: ["review"] }, { skill: 3 });
     expect(html).not.toContain("kendex.toml");
     expect(html).not.toContain("review");
     expect(html).not.toContain(">skills<");
@@ -117,7 +99,7 @@ describe("the About tab's findings section", () => {
   });
 
   it("is absent, and says nothing in its place, with no findings", () => {
-    const html = render({ found: [found("skills", "skill", 3)] });
+    const html = render({}, null, { skill: 3 });
     expect(html).not.toContain(ABOUT_FINDINGS_TITLE);
     expect(html).not.toContain("Nothing wrong");
   });
