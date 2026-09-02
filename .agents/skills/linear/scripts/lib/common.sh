@@ -623,6 +623,13 @@ linear_guard_write_action() {
 
 # Resolve project name or UUID to UUID
 # Usage: resolve_project_id "Phase 1" or resolve_project_id "uuid-here"
+#
+# Linear keeps a canceled project under the name a live one reuses, and the
+# name query returns both in no fixed order, so nodes[0] handed writes the
+# canceled one at random and `issues create --project` reported success on an
+# issue nobody could find (KEN-1022). A canceled match loses to every live one;
+# an all-canceled match set is refused, naming its UUIDs so a deliberate read
+# can pass one.
 resolve_project_id() {
     local project_ref="$1"
 
@@ -632,21 +639,40 @@ resolve_project_id() {
         return 0
     fi
 
-    # Look up by name
-    local query='query GetProject($name: String!) { projects(filter: {name: {eq: $name}}) { nodes { id } } }'
+    # `state` is selected, not filtered on: the server-side `state` filter is
+    # broken (see list_projects), and the whole match set is what separates
+    # "no such project" from "only canceled ones".
+    local query='query GetProject($name: String!) { projects(filter: {name: {eq: $name}}) { nodes { id state } } }'
     local variables
     variables=$(jq -nc --arg name "$project_ref" '{name: $name}')
     local result
-    result=$(graphql_query "$query" "$variables")
-    local project_id
-    project_id=$(echo "$result" | jq -r '.projects.nodes[0].id // empty')
-
-    if [ -z "$project_id" ]; then
-        jq -nc --arg message "Project not found: $project_ref" '{error: $message}' >&2
+    # A FAILED query is an API failure (rate limit, outage); "Project not
+    # found" is only true of a lookup that succeeded and matched nothing.
+    if ! result=$(graphql_query "$query" "$variables"); then
+        jq -nc --arg name "$project_ref" \
+            '{error: ("Could not resolve project \"" + $name + "\": Linear API request failed (see previous error)")}' >&2
         return 1
     fi
 
-    echo "$project_id"
+    local project_id
+    project_id=$(echo "$result" | jq -r \
+        '[(.projects.nodes // [])[] | select((.state // "" | ascii_downcase) != "canceled")][0].id // empty')
+
+    if [ -n "$project_id" ]; then
+        echo "$project_id"
+        return 0
+    fi
+
+    local canceled_ids
+    canceled_ids=$(echo "$result" | jq -r '[(.projects.nodes // [])[].id] | join(", ")')
+    if [ -n "$canceled_ids" ]; then
+        jq -nc --arg name "$project_ref" --arg ids "$canceled_ids" \
+            '{error: ("Project not found: " + $name + " (matched only canceled projects: " + $ids + "; pass a project UUID to target one)")}' >&2
+        return 1
+    fi
+
+    jq -nc --arg message "Project not found: $project_ref" '{error: $message}' >&2
+    return 1
 }
 
 # Resolve team name to UUID

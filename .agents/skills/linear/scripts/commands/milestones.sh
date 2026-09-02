@@ -45,30 +45,6 @@ case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
 
 source "$SCRIPT_DIR/../lib/common.sh"
 
-resolve_project_id() {
-    local project_ref="$1"
-
-    # Check if it's already a UUID
-    if [[ "$project_ref" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-        echo "$project_ref"
-        return 0
-    fi
-
-    # Look up by name
-    local query='query GetProject($name: String!) { projects(filter: {name: {eq: $name}}) { nodes { id } } }'
-    local result
-    result=$(graphql_query "$query" "{\"name\": \"$project_ref\"}")
-    local project_id
-    project_id=$(echo "$result" | jq -r '.projects.nodes[0].id // empty')
-
-    if [ -z "$project_id" ]; then
-        echo "" >&2
-        return 1
-    fi
-
-    echo "$project_id"
-}
-
 list_milestones() {
     local project=""
     FORMAT="${DEFAULT_FORMAT}"
@@ -104,10 +80,10 @@ list_milestones() {
         }'
         result=$(graphql_query "$query" "{}")
     else
+        # resolve_project_id names the failure itself — not found, only-canceled
+        # matches, or an API failure — so it is not re-reported here.
         local project_id
-        project_id=$(resolve_project_id "$project")
-        if [ -z "$project_id" ]; then
-            echo "{\"error\": \"Project not found: $project\"}" >&2
+        if ! project_id=$(resolve_project_id "$project"); then
             return 1
         fi
 
@@ -226,10 +202,10 @@ create_milestone() {
         validate_length "description" "$description" $LINEAR_LIMIT_SHORT_DESC || return 1
     fi
 
+    # resolve_project_id names the failure itself — not found, only-canceled
+    # matches, or an API failure — so it is not re-reported here.
     local project_id
-    project_id=$(resolve_project_id "$project")
-    if [ -z "$project_id" ]; then
-        echo "{\"error\": \"Project not found: $project\"}" >&2
+    if ! project_id=$(resolve_project_id "$project"); then
         return 1
     fi
 

@@ -127,6 +127,8 @@ Normalized issue lists, gets, bulk gets, bundles, recursive children, relation r
 
 Available states: Backlog, Todo, In Progress, In Review, Done, Canceled (not "Cancelled"). Verify with `statuses list`.
 
+A project **name** resolves to the live project when a canceled one shares it: canceled matches lose, and a name matching nothing but canceled projects is refused, naming their UUIDs. Pass a UUID to reach a canceled project.
+
 `--labels` REPLACES the whole issue-label set. Fetch current labels, compute the final set, validate it against `cache labels list --format=safe` (which reports `is_group` so parent/group labels can be rejected), then pass the complete set. A name that does not resolve fails the update; `--clear-labels` is the only way to empty the set.
 
 - `agent:*` labels are mutually exclusive, one per issue; `issues activate` applies them with the "In Progress" transition (semantics: `issues --help`).
