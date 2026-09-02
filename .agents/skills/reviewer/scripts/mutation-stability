@@ -10,7 +10,8 @@
 #   mutation: killed 1/1; stability: N/N at T threads
 #
 # Exit: 0 killed and stable; 1 mutant survived or a stability run failed;
-# 2 instrument failure (control, empty selection, invalid mutant, bad input).
+# 2 instrument failure (control, empty selection, invalid mutant, timed-out run,
+# bad input).
 set -euo pipefail
 
 usage() {
@@ -32,6 +33,7 @@ USAGE
 }
 
 WORKTREE="" SHA="" TEST="" BUILD="" MUTATE="" N=10 THREADS="" TIMEOUT=300 KEEP=0
+THREADS_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --worktree|--sha|--test|--build|--mutate|--stability|--threads|--timeout)
@@ -43,7 +45,7 @@ while [ $# -gt 0 ]; do
         --build) BUILD="$2" ;;
         --mutate) MUTATE="$2" ;;
         --stability) N="$2" ;;
-        --threads) THREADS="$2" ;;
+        --threads) THREADS="$2"; THREADS_SET=1 ;;
         --timeout) TIMEOUT="$2" ;;
       esac
       shift ;;
@@ -56,15 +58,20 @@ done
 [ -n "$WORKTREE" ] && [ -n "$SHA" ] && [ -n "$TEST" ] && [ -n "$BUILD" ] && [ -n "$MUTATE" ] || {
   usage >&2; exit 2
 }
-case "$N" in *[!0-9]*|'') echo "--stability wants a number" >&2; exit 2 ;; esac
-[ "$N" -ge 1 ] || { echo "--stability 0 is zero samples — instrument failure by the reviewer contract" >&2; exit 2; }
-[ -n "$THREADS" ] || THREADS=$((2 * $(nproc 2>/dev/null || echo 4)))
-case "$THREADS" in *[!0-9]*|''|0) echo "--threads wants a positive integer" >&2; exit 2 ;; esac
-case "$TIMEOUT" in *[!0-9]*|''|0) echo "--timeout wants a positive integer" >&2; exit 2 ;; esac
+positive_integer() {
+  option="$1" value="$2"
+  case "$value" in
+    *[!0-9]*|''|0) echo "$option wants a positive integer" >&2; exit 2 ;;
+  esac
+}
+
+[ "$THREADS_SET" = 1 ] || THREADS=$((2 * $(nproc 2>/dev/null || echo 4)))
+positive_integer --stability "$N"
+positive_integer --threads "$THREADS"
+positive_integer --timeout "$TIMEOUT"
 
 ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX") || exit 2
 ACTIVE_PID="" ACTIVE_GROUP="" WATCHDOG_PID="" WATCHDOG_GROUP=""
-COMMAND_TIMED_OUT=0
 
 terminate_group() {
   group="$1"
@@ -110,7 +117,6 @@ extract() { # extract SHA into $1, stamped past the build before it
 run_command() { # run $2 in $1, capture output in $3, label it $4
   dir="$1" command="$2" log="$3" label="$4"
   timed_out="$log.timed-out"
-  COMMAND_TIMED_OUT=0
   rm -f "$timed_out"
 
   set -m
@@ -144,9 +150,9 @@ run_command() { # run $2 in $1, capture output in $3, label it $4
   ACTIVE_PID="" ACTIVE_GROUP="" WATCHDOG_PID="" WATCHDOG_GROUP=""
 
   if [ -f "$timed_out" ]; then
-    COMMAND_TIMED_OUT=1
     echo "$label timed out after ${TIMEOUT}s" >&2
-    return 124
+    [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
+    exit 2
   fi
   return "$status"
 }
@@ -211,11 +217,6 @@ fi
 
 mutant_status=0
 run_test "$ROOT/mutant" "$ROOT/mutant.log" || mutant_status=$?
-if [ "$COMMAND_TIMED_OUT" = 1 ]; then
-  echo "mutation: instrument-failure; mutant test timed out" >&2
-  [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
-  exit 2
-fi
 KILLED=1
 [ "$mutant_status" -ne 0 ] || KILLED=0
 

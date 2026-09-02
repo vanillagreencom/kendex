@@ -6,6 +6,14 @@ MS="$SCRIPT_DIR/../scripts/mutation-stability"
 PASS=0 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok    $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        $2"; }
+stopped() {
+  pid="$1" attempts=0
+  while kill -0 "$pid" 2>/dev/null && [ "$attempts" -lt 20 ]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  ! kill -0 "$pid" 2>/dev/null
+}
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ms-test.XXXXXX") || exit 2
 trap 'rm -rf "$TMP"' EXIT
@@ -73,16 +81,59 @@ rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" --test 'true' \
       --mutate 'true' --stability 1 2>&1) || rc=$?
 if [ "$rc" = 2 ]; then ok "omitting --build exits 2"; else bad "omitting --build exits 2" "rc=$rc out=$out"; fi
 
+for option in --stability --threads --timeout; do
+  for value in 0 nope ""; do
+    rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" --test 'true' \
+          --build 'true' --mutate 'true' "$option" "$value" 2>&1) || rc=$?
+    if [ "$rc" = 2 ]; then
+      ok "$option rejects '${value:-empty}'"
+    else
+      bad "$option rejects '${value:-empty}'" "rc=$rc out=$out"
+    fi
+  done
+done
+
+export HANG_PID_FILE="$TMP/control-build-timeout-child.pid"
+rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" --test 'true' \
+      --build 'bash hang.sh & wait' --mutate 'true' --stability 1 \
+      --timeout 1 2>&1) || rc=$?
+if [ "$rc" = 2 ]; then ok "a timed-out control build exits 2"; else bad "a timed-out control build exits 2" "rc=$rc out=$out"; fi
+case "$out" in *"control build timed out after 1s"*) ok "the control-build timeout is reported";; *) bad "the control-build timeout is reported" "$out";; esac
+case "$out" in *"build fails"*) bad "a control-build timeout is not a build failure" "$out";; *) ok "a control-build timeout is not a build failure";; esac
+control_build_child=$(cat "$HANG_PID_FILE" 2>/dev/null || true)
+if [ -n "$control_build_child" ] && stopped "$control_build_child"; then
+  ok "the timed-out control build is reaped"
+else
+  bad "the timed-out control build is reaped" "pid=${control_build_child:-missing}"
+  [ -z "$control_build_child" ] || kill -KILL "$control_build_child" 2>/dev/null || true
+fi
+
+export HANG_PID_FILE="$TMP/mutant-build-timeout-child.pid"
+rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" --test 'true' \
+      --build 'grep -q "+" lib.sh || { bash hang.sh & wait; }' \
+      --mutate 'sed -i.bak "s/+/-/" lib.sh && rm -f lib.sh.bak' \
+      --stability 1 --timeout 1 2>&1) || rc=$?
+if [ "$rc" = 2 ]; then ok "a timed-out mutant build exits 2"; else bad "a timed-out mutant build exits 2" "rc=$rc out=$out"; fi
+case "$out" in *"mutant build timed out after 1s"*) ok "the mutant-build timeout is reported";; *) bad "the mutant-build timeout is reported" "$out";; esac
+case "$out" in *"invalid-mutant"*) bad "a mutant-build timeout is not an invalid mutant" "$out";; *) ok "a mutant-build timeout is not an invalid mutant";; esac
+mutant_build_child=$(cat "$HANG_PID_FILE" 2>/dev/null || true)
+if [ -n "$mutant_build_child" ] && stopped "$mutant_build_child"; then
+  ok "the timed-out mutant build is reaped"
+else
+  bad "the timed-out mutant build is reaped" "pid=${mutant_build_child:-missing}"
+  [ -z "$mutant_build_child" ] || kill -KILL "$mutant_build_child" 2>/dev/null || true
+fi
+
 export HANG_PID_FILE="$TMP/mutant-timeout-child.pid"
 rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" \
       --test 'grep -q "+" lib.sh || { bash hang.sh & wait; }' \
       --build 'true' --mutate 'sed -i.bak "s/+/-/" lib.sh && rm -f lib.sh.bak' \
       --stability 1 --timeout 1 2>&1) || rc=$?
 if [ "$rc" = 2 ]; then ok "a timed-out mutant exits 2"; else bad "a timed-out mutant exits 2" "rc=$rc out=$out"; fi
-case "$out" in *"mutant test timed out"*) ok "a timed-out mutant is an instrument failure";; *) bad "a timed-out mutant is an instrument failure" "$out";; esac
+case "$out" in *"test timed out after 1s"*) ok "a timed-out mutant is an instrument failure";; *) bad "a timed-out mutant is an instrument failure" "$out";; esac
 case "$out" in *"mutation: killed"*) bad "a timed-out mutant is never killed" "$out";; *) ok "a timed-out mutant is never killed";; esac
 mutant_timeout_child=$(cat "$HANG_PID_FILE" 2>/dev/null || true)
-if [ -n "$mutant_timeout_child" ] && ! kill -0 "$mutant_timeout_child" 2>/dev/null; then
+if [ -n "$mutant_timeout_child" ] && stopped "$mutant_timeout_child"; then
   ok "the timed-out mutant process group is reaped"
 else
   bad "the timed-out mutant process group is reaped" "pid=${mutant_timeout_child:-missing}"
@@ -96,7 +147,7 @@ rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" \
 if [ "$rc" = 2 ]; then ok "a hanging control times out"; else bad "a hanging control times out" "rc=$rc out=$out"; fi
 case "$out" in *"timed out after 1s"*) ok "the timeout is reported";; *) bad "the timeout is reported" "$out";; esac
 timeout_child=$(cat "$HANG_PID_FILE" 2>/dev/null || true)
-if [ -n "$timeout_child" ] && ! kill -0 "$timeout_child" 2>/dev/null; then
+if [ -n "$timeout_child" ] && stopped "$timeout_child"; then
   ok "the timed-out process is reaped"
 else
   bad "the timed-out process is reaped" "pid=${timeout_child:-missing}"
@@ -113,7 +164,7 @@ while [ ! -s "$HANG_PID_FILE" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); 
 exit_child=$(cat "$HANG_PID_FILE" 2>/dev/null || true)
 kill -TERM "$ms_pid" 2>/dev/null || true
 wait "$ms_pid" 2>/dev/null || true
-if [ -n "$exit_child" ] && ! kill -0 "$exit_child" 2>/dev/null; then
+if [ -n "$exit_child" ] && stopped "$exit_child"; then
   ok "exit cleanup reaps the active test process"
 else
   bad "exit cleanup reaps the active test process" "pid=${exit_child:-missing}"
@@ -136,9 +187,22 @@ rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA2" --test 'bash check.sh' \
 if [ "$rc" = 1 ]; then ok "stability failure exits 1 even with the mutant killed"; else bad "stability failure exits 1 even with the mutant killed" "rc=$rc out=$out"; fi
 case "$out" in *"stability: 1/3 at 2 threads") ok "partial stability is reported as Y/N";; *) bad "partial stability is reported as Y/N" "$out";; esac
 
-rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" --test 'bash check.sh' \
-      --build 'true' --mutate 'true' --stability 0 2>&1) || rc=$?
-if [ "$rc" = 2 ]; then ok "--stability 0 is refused as zero samples"; else bad "--stability 0 is refused as zero samples" "rc=$rc"; fi
+export HANG_PID_FILE="$TMP/stability-timeout-child.pid"
+rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" \
+      --test 'if grep -q "-" lib.sh; then exit 1; fi; if [ -f .ran ]; then bash hang.sh & wait; fi; touch .ran' \
+      --build 'true' --mutate 'sed -i.bak "s/+/-/" lib.sh && rm -f lib.sh.bak' \
+      --stability 2 --timeout 1 2>&1) || rc=$?
+if [ "$rc" = 2 ]; then ok "a timed-out stability run exits 2"; else bad "a timed-out stability run exits 2" "rc=$rc out=$out"; fi
+case "$out" in *"test timed out after 1s"*) ok "the stability timeout is an instrument failure";; *) bad "the stability timeout is an instrument failure" "$out";; esac
+case "$out" in *"mutation: killed"*) bad "a stability timeout prints no trusted summary" "$out";; *) ok "a stability timeout prints no trusted summary";; esac
+stability_child=$(cat "$HANG_PID_FILE" 2>/dev/null || true)
+if [ -n "$stability_child" ] && stopped "$stability_child"; then
+  ok "the timed-out stability run is reaped"
+else
+  bad "the timed-out stability run is reaped" "pid=${stability_child:-missing}"
+  [ -z "$stability_child" ] || kill -KILL "$stability_child" 2>/dev/null || true
+fi
+
 rc=0; "$MS" --worktree "$REPO" --sha "$SHA" --test 'true' --build 'true' --mutate 2>/dev/null || rc=$?
 if [ "$rc" = 2 ]; then ok "a value-less option exits 2"; else bad "a value-less option exits 2" "rc=$rc"; fi
 
