@@ -9,7 +9,7 @@ pi-extensions/pi-agents-tmux/extensions/subagent/dashboard.ts	431
 pi-extensions/pi-agents-tmux/extensions/subagent/dispatch.ts	580
 pi-extensions/pi-agents-tmux/extensions/subagent/format.ts	774
 pi-extensions/pi-agents-tmux/extensions/subagent/index.ts	2140
-pi-extensions/pi-agents-tmux/extensions/subagent/pane.ts	1196
+pi-extensions/pi-agents-tmux/extensions/subagent/pane.ts	1195
 pi-extensions/pi-agents-tmux/extensions/subagent/rate-limit-quota-normalize.ts	401
 pi-extensions/pi-agents-tmux/extensions/subagent/runner.ts	1327
 pi-extensions/pi-agents-tmux/extensions/subagent/subagent-render.ts	473

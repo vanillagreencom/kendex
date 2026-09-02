@@ -1,3 +1,12 @@
+/**
+ * Eager on the extension startup path (index.ts -> rate-limit-watchdog.ts ->
+ * rate-limit-decision.ts -> here), so this module must take no node:* import:
+ * Pi 0.80.3's binary TS loader resolves transpiled TS through data: URLs and a
+ * large module with node:* imports trips Bun/JITI NameTooLong there. The
+ * provider fetch that needs node:fs is rate-limit-quota.ts, imported
+ * dynamically after a rate-limit event.
+ */
+
 import type { QuotaSnapshot, QuotaWindow } from "./rate-limit-decision.js";
 import {
 	RESET_AT_KEYS,
@@ -107,20 +116,11 @@ function normalizeQuotaWindow(window: unknown, index: number): QuotaWindow[] {
 	const title = typeof window.title === "string" && window.title ? window.title : id;
 	const windowSeconds = coerceFiniteNumber(window.windowSeconds ?? window.window_seconds ?? window.limit_window_seconds) ?? undefined;
 	const limitReached = readLimitReached(window);
-	if (resetAtMs === null || !quotaWindowHasContext(id, title, usedPercent, limitReached, windowSeconds)) return [];
+	// A reset timestamp is the whole context a window needs. Also demanding
+	// usedPercent or a limit flag dropped the reset-only windows
+	// collectCodexQuotaWindows emits, losing the usage-endpoint reset.
+	if (resetAtMs === null) return [];
 	return [{ id, limitReached: limitReached ?? undefined, resetAtMs, title, usedPercent, ...(windowSeconds ? { windowSeconds } : {}) }];
-}
-
-function quotaWindowHasContext(
-	id: string,
-	title: string,
-	usedPercent: number | null,
-	limitReached: boolean | null | undefined,
-	windowSeconds: number | undefined,
-): boolean {
-	return usedPercent !== null
-		|| limitReached !== null && limitReached !== undefined
-		|| windowSeconds !== undefined;
 }
 
 function collectProviderQuotaWindows(provider: string, snapshot: unknown, now: number): QuotaWindow[] {

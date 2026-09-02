@@ -1,12 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { safeFileName } from "./names.js";
-import { piUserDir, projectSettingsPath } from "./settings.js";
-import {
-	PACKAGE_ID,
-	type PaneTaskRecord,
-	type TaskArtifactPaths,
-} from "./types.js";
+import { piUserDir } from "./settings.js";
+import type { PaneTaskRecord, TaskArtifactPaths } from "./types.js";
 
 export function registryPath(runtimeRoot: string): string {
 	return path.join(runtimeRoot, "panes.json");
@@ -93,7 +89,6 @@ export function taskArtifactPaths(runtimeRoot: string, record: Pick<PaneTaskReco
 		transcriptPath: record.transcriptPath,
 	};
 }
-
 
 export function piPackageRuntimeRoots(): string[] {
 	return [path.join(piUserDir(), "kendex", "sessions")];

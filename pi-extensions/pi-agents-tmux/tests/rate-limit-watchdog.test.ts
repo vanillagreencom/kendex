@@ -242,6 +242,28 @@ describe("subagent rate-limit watchdog (kendex#108)", () => {
 		expect(ctx.activity[0]?.payload.degraded_reset_source).toBe(false);
 	});
 
+	// collectCodexQuotaWindows emits a window from a reset timestamp alone when the
+	// endpoint carries no utilization and no limit flag. Dropping it loses the
+	// usage-endpoint reset and falls back to the backoff ladder.
+	test("Codex usage window with a reset time and nothing else still schedules on it", () => {
+		const usageSnapshot = normalizeQuotaSnapshot("codex", "usage-endpoint", {
+			rate_limit: { primary_window: { reset_after_seconds: (STRUCTURED_USAGE_RESET_AT - RATE_LIMIT_RESET_MARGIN_MS - SESSION_LIMIT_NOW) / 1000 } },
+		}, SESSION_LIMIT_NOW);
+		expect(usageSnapshot.windows).toHaveLength(1);
+		expect(usageSnapshot.windows[0]!.usedPercent).toBeNull();
+		expect(usageSnapshot.windows[0]!.limitReached).toBeUndefined();
+
+		const ctx = makeDeps({ getUsageSnapshot: () => usageSnapshot });
+		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
+		ctx.clockMs.value = SESSION_LIMIT_NOW;
+
+		const outcome = watchdog.onMessageEnd(CLAUDE_SESSION_LIMIT_MESSAGE_END, "rust", "rust", "task-1");
+		expect(outcome.kind).toBe("scheduled-retry");
+		if (outcome.kind !== "scheduled-retry") throw new Error("expected scheduled-retry");
+		expect(outcome.at).toBe(STRUCTURED_USAGE_RESET_AT);
+		expect(outcome.resetSource).toBe("usage-endpoint");
+	});
+
 	test("async usage snapshot reschedules degraded prose timer before it can steer", async () => {
 		const usageSnapshot = normalizeQuotaSnapshot("claude", "usage-endpoint", {
 			five_hour: { utilization: 1, resets_at: new Date(STRUCTURED_USAGE_RESET_AT - RATE_LIMIT_RESET_MARGIN_MS).toISOString() },

@@ -66,6 +66,9 @@ function installGpgTrap(cwd: string): string {
 	return sentinel;
 }
 
+// The edit is the same length as HEAD's "initial\n" on purpose. Git short-circuits
+// a size mismatch and never hashes the working file, so a different-length edit
+// leaves the clean filter unspawned and any assertion about it vacuous.
 function installCleanFilterTrap(cwd: string): string {
 	const sentinel = join(cwd, "filter-invoked.log");
 	const script = join(cwd, "clean-filter.sh");
@@ -75,7 +78,7 @@ function installCleanFilterTrap(cwd: string): string {
 	writeFileSync(script, `#!/bin/sh\necho invoked >> ${JSON.stringify(sentinel)}\ncat\n`, "utf8");
 	chmodSync(script, 0o755);
 	execFileSync("git", ["config", "filter.trap.clean", script], { cwd, stdio: "ignore" });
-	writeFileSync(join(cwd, "tracked.txt"), "modified\n", "utf8");
+	writeFileSync(join(cwd, "tracked.txt"), "initiaL\n", "utf8");
 	return sentinel;
 }
 
@@ -195,7 +198,12 @@ describe("needs_completion cwd snapshots", () => {
 		}
 	});
 
-	test("markTaskNeedsCompletion avoids local clean filters while collecting dirty state", async () => {
+	// The snapshot runs `git status` in the worker cwd, so the worker repo's own
+	// `filter.<driver>.clean` runs with it. That is accepted: a clean driver is
+	// defined in .git/config, which `git clone` never copies, so a hostile repo
+	// cannot ship one — a cloned .gitattributes naming a driver that does not
+	// exist is a no-op. The only shipped producer is the user's own git-lfs.
+	test("markTaskNeedsCompletion runs the worker repo's own clean filter while collecting dirty state", async () => {
 		const runtimeRoot = tempDir("needs-completion-runtime-");
 		const cwd = tempGitRepo();
 		const filterSentinel = installCleanFilterTrap(cwd);
@@ -209,7 +217,7 @@ describe("needs_completion cwd snapshots", () => {
 
 			expect(updated?.status).toBe("needs_completion");
 			expect(persisted.cwdSnapshot?.status).toContain(" M tracked.txt");
-			expect(existsSync(filterSentinel)).toBe(false);
+			expect(existsSync(filterSentinel)).toBe(true);
 		} finally {
 			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });

@@ -9,6 +9,7 @@ let execFileProcess: ExecFileProcess = execFile;
 const GIT_SNAPSHOT_TIMEOUT_MS = 5_000;
 const GIT_SNAPSHOT_MAX_BUFFER = 256 * 1024;
 const GIT_STATUS_MAX_BUFFER = 8 * 1024 * 1024;
+export const DIRTY_STATE_UNAVAILABLE = "dirty state unavailable (git status did not complete)";
 const ANSI_ESCAPE_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
 
 export function setGitExecFileForTests(execFileOverride?: ExecFileProcess): void {
@@ -176,19 +177,26 @@ export async function snapshotCwdGitState(cwd: string | undefined, addDiagnostic
 		readDirtyStatus(resolvedCwd, addDiagnostic),
 		readGit(resolvedCwd, ["log", "-1", "--pretty=%s"], addDiagnostic),
 	]);
-	if (rawHead == null || dirtyStatus == null || lastCommitSubject == null) return undefined;
+	if (rawHead == null || lastCommitSubject == null) return undefined;
 	const head = rawHead.trim();
 	if (!/^[0-9a-f]{40}$/.test(head)) {
 		addDiagnostic(`cwdSnapshot git returned malformed HEAD for ${resolvedCwd}: ${JSON.stringify(rawHead)}`);
 		return undefined;
 	}
+	// A dirty read that failed (the 5s timeout on a large or cold worktree is the
+	// likely one) degrades the snapshot rather than discarding it: head and the
+	// last commit are what triage needs most. readGit already emitted the cause;
+	// the status field carries it too, because `dirty` has no unknown state and
+	// every renderer prints a false `dirty` as "clean".
+	if (dirtyStatus == null) addDiagnostic(`cwdSnapshot dirty state unavailable for ${resolvedCwd}; reporting head and last commit only`);
+	const status = dirtyStatus ?? DIRTY_STATE_UNAVAILABLE;
 	return sanitizeCwdSnapshot({
 		cwd: resolvedCwd,
-		dirty: dirtyStatus.length > 0,
-		dirtyStatus,
+		dirty: (dirtyStatus?.length ?? 0) > 0,
+		dirtyStatus: status,
 		head,
 		lastCommit: { subject: lastCommitSubject },
 		lastCommitSubject,
-		status: dirtyStatus,
+		status,
 	});
 }

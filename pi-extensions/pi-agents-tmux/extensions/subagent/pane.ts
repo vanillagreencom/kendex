@@ -16,7 +16,6 @@ import {
 	inboxDir,
 	paneSessionPath,
 } from "./paths.js";
-import { randomHex } from "./random.js";
 
 // kendex#60 workaround: env var names the pi-session-bridge child reads
 // on startup. The canonical home is
