@@ -67,8 +67,8 @@ kendex.settings.toml [env] > default):
                                that changes a matching path must also write a
                                changelog entry (default empty = rule off).
                                Both sets are read from the commit as a whole,
-                               so an amend is judged against the parent it
-                               will have, not the HEAD it replaces
+                               so where /proc is readable (not macOS) an amend
+                               is judged against the parent it will have
   GROWTH_GUARDS_CHANGELOG_PATHS   what counts as a written entry, with
   GROWTH_GUARDS_CHANGELOG_RECORD  — the same two scopes the changelog-entries
                                check judges (defaults "changelog.d/*/*.md"

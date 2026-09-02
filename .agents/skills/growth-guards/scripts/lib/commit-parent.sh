@@ -59,18 +59,18 @@ gg_no_value_opt() { # ARG — 0 when ARG is a `git commit` option taking NO valu
 }
 
 gg_argv_is_amend() { # FILE — 0 when the NUL-delimited argv in FILE is an amend
-  # Read NUL-delimited, the bytes the kernel holds, so an argument carrying
-  # whitespace or a newline stays ONE argument. The committer chooses some of
-  # those bytes, and a value that happens to spell the flag is not the flag.
-  # Rather than name the options whose values to step over — a list git grows,
-  # whose every gap is a commit excused wrongly — the scan reads the token
-  # IMMEDIATELY BEFORE each `--amend`: a value-taking option consumes the next
-  # argument and nothing further, so it is the only token that can swallow the
-  # flag. Dash-prefixed and not a no-value option means it did, refusing `--mess
-  # --amend`, `-am --amend`, `--message=…` and an option git has not shipped
-  # yet; anything else never reached for a value, so `-m msg --amend` is the
-  # amend it is. Same guard for `--no-amend`. The bare `--` stops the scan, and
-  # the wrapper's arguments ahead of `commit` are skipped, so `-c` is never read.
+  # Read NUL-delimited, so an argument carrying whitespace or a newline stays
+  # ONE argument, and a value the committer chose that happens to spell the flag
+  # is not the flag. Rather than name the options whose values to step over — a
+  # list git grows, every gap a commit excused wrongly — the scan reads the
+  # token IMMEDIATELY BEFORE each `--amend`: a value-taking option consumes the
+  # next argument and nothing further, so it is the only token that can swallow
+  # it. Dash-prefixed and not a no-value option means it did, refusing `--mess
+  # --amend`, `-am --amend` and `--message=…`; anything else never reached, so
+  # `-m msg --amend` is the amend it is. `--no-amend` stands OUTSIDE that guard:
+  # a missed flag costs a refusal, a missed negation leaves a stale `--amend`
+  # standing. The bare `--` stops the scan, and the wrapper's arguments ahead of
+  # `commit` are skipped, so `-c` is never read.
   local arg prev="" eaten seen=0 sub=0 amend=1
   while IFS= read -r -d '' arg; do
     if [ "$seen" -eq 0 ]; then seen=1; continue; fi
@@ -81,10 +81,8 @@ gg_argv_is_amend() { # FILE — 0 when the NUL-delimited argv in FILE is an amen
     case "$arg" in --) break ;; esac
     eaten=0
     case "$prev" in -?*) gg_no_value_opt "$prev" || eaten=1 ;; esac
-    if [ "$eaten" -eq 0 ]; then
-      if gg_opt_abbrev "$arg" --no-amend; then amend=1
-      elif gg_opt_abbrev "$arg" --amend; then amend=0
-      fi
+    if gg_opt_abbrev "$arg" --no-amend; then amend=1
+    elif [ "$eaten" -eq 0 ] && gg_opt_abbrev "$arg" --amend; then amend=0
     fi
     prev="$arg"
   done <"$1"

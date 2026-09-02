@@ -144,6 +144,7 @@ argv_pin "the flag itself is the flag" amend git commit --amend
 argv_pin "the flag BEHIND a message is the flag: the message is not dash-prefixed" amend git commit -m 'fix(KEN-1): change a crate' --amend
 argv_pin "--am is git's abbreviation of it, an amend this lane must widen for" amend git commit --am
 argv_pin "a no-value option ahead of the flag is stepped over" amend git commit --no-edit --amend
+argv_pin "a no-value SHORT option ahead of the flag is stepped over" amend git commit -a --amend
 argv_pin "a rebase reword's own argv widens" amend git commit --amend --no-gpg-sign -e --allow-empty
 argv_pin "the wrapper's arguments, ahead of the subcommand, are not the commit's" amend git -c user.name=x commit --amend --no-edit
 argv_pin "the flag BEFORE a value-taking option is still the flag" amend git commit --amend -m 'fix(KEN-1): change a crate'
@@ -154,8 +155,9 @@ argv_pin "must-fail: --trail takes a trailer" plain git commit --trail --amend
 argv_pin "must-fail: --fil takes a message file" plain git commit --fil --amend
 argv_pin "must-fail: an attached --message=… carries its value in the token" plain git commit --message=--amend
 argv_pin "must-fail: a short BUNDLE's -m consumes the argument behind it" plain git commit -am --amend
-argv_pin "must-fail: an argument after the bare -- is a pathspec" plain git commit -- --amend
+argv_pin "must-fail: an argument after the bare -- is a pathspec" plain git commit -- crates/core/lib.rs --amend
 argv_pin "must-fail: --no-amend behind the flag is git's last-spelling boolean" plain git commit --amend --no-amend -m 'fix(KEN-2): change a crate'
+argv_pin "must-fail: an unknown token cannot swallow the negation git honours" plain git commit --amend --no-status --no-amend -m 'fix(KEN-2): change a crate'
 argv_pin "must-fail: an argv that never reaches the commit subcommand is not one" plain git rebase --amend
 
 echo "=== what the WALK reads, through a FAKE git ancestor ==="

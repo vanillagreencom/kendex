@@ -373,15 +373,15 @@ the nearest `git` ancestor, the command doing the committing.
 
 Some of those bytes are the committer's own, so `--amend` counts as the flag
 only where nothing could have been reaching for a value. A value-taking option
-consumes the NEXT argument and nothing further, so the one token that can
-swallow the flag is the one immediately before it: dash-prefixed and not a
-no-value option means it did, with long names matched by prefix the way git
-matches an abbreviation. That refuses `--mess --amend`, `-am --amend`,
-`--message=--amend` and an option a later git ships — refusals the writer
-clears with `[no-changelog]` or a fragment, never a commit excused by an entry
-it does not carry. Anything else never reached for a value, so `git commit -m
-'msg' --amend` is the amend it is. `--no-amend` takes the flag back under the
-same guard; the bare `--` stops the scan.
+consumes the NEXT argument and nothing further, so that one token decides it,
+read by SHAPE and not by content: dash-prefixed and not a no-value option means
+it swallowed the flag. The refusal covers an attached value and a bundle too,
+whatever the token holds — `--mess --amend`, `--message='a real message'
+--amend`, `-am --amend`, `--status --amend` — and the writer clears it with a
+fragment or `[no-changelog]`. Anything else never reached, so `git commit -m
+'msg' --amend` is the amend it is. `--no-amend` is read whatever stands before
+it, since a missed flag costs a refusal but a missed negation leaves a stale
+`--amend` standing; the bare `--` stops the scan.
 
 Nothing readable is nothing to widen on: a process already gone, no `git` in
 eight generations, or no `/proc` at all, which is every macOS host, where an
