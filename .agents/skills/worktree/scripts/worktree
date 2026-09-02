@@ -223,7 +223,9 @@ Usage: worktree remove [ID|/path]
 
 Remove a worktree and delete its local branch when it is safely merged.
 Accepts an issue ID (resolved under the configured worktree base dir, falling
-back to the worktree registered for the issue branch) or a direct path.
+back to the worktree registered for the issue branch) or a direct path. The
+current directory names the repository, so removing the worktree you are
+standing in means cd-ing to the main checkout first, not to its parent.
 
 Failure semantics:
   remove deletes the worktree before deleting the local branch. Configured
@@ -537,10 +539,22 @@ same_canonical_dir() {
   [[ "$a" == "$b" ]]
 }
 
-# Resolve PROJECT_ROOT via git (works at any depth, inside worktrees too)
-PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
-if [[ -z "$PROJECT_ROOT" ]]; then
-  echo "Error: Not inside a git repository" >&2
+# Resolve PROJECT_ROOT via git (works at any depth, inside worktrees too).
+# The assignment sits in the condition on purpose (KEN-1166): rev-parse exits
+# 128 outside a repository, and as a bare assignment under `set -e` that
+# status escapes before the test below ever runs, so every subcommand died at
+# a bare 128 with no output. Any nonzero status refuses, git's own 128 and a
+# missing git alike, and so does an empty toplevel. The lookup refuses here or
+# not at all: nothing below searches upward or resolves a repository from an
+# argument.
+if ! PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$PROJECT_ROOT" ]]; then
+  {
+    echo "Error: not inside a git repository: $PWD"
+    echo "  Every worktree command reads the repository from the current directory and"
+    echo "  never searches for one. Run it from the checkout, including when removing"
+    echo "  the worktree you are standing in:"
+    echo "    cd <main checkout> && .agents/skills/worktree/scripts/worktree remove <ID|PATH>"
+  } >&2
   exit 1
 fi
 

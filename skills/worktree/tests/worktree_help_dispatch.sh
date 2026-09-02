@@ -8,6 +8,10 @@
 # the dispatcher routes. tools/tests/help-inert.test.sh holds the same
 # contract for the top-level forms, alongside the other CLIs that each
 # carried their own copy of it.
+#
+# The same boundary from the other side: a command that is not help does
+# reach the repository lookup, and outside a repository it refuses with a
+# diagnostic naming the cwd rather than dying at git's bare 128 (KEN-1166).
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -115,6 +119,22 @@ elif [[ "$norepo_status" -eq 128 && "$norepo_probe" == *"not a git repository"* 
     status=0
     out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" "$cmd" --help) || status=$?
     assert_eq "$status" 0 "worktree $cmd --help exits 0 outside a git repository"
+  done
+
+  # Past help, the repository lookup runs and has nothing to find. It refuses
+  # once, naming the cwd and the checkout to run from; `remove` is the form
+  # that gets run from the worktrees' parent, so it is held here too.
+  for cmd in "list" "remove ISSUE-GONE"; do
+    status=0
+    # shellcheck disable=SC2086
+    out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" $cmd 2>"$TMP_ROOT/norepo.err") || status=$?
+    err=$(cat "$TMP_ROOT/norepo.err")
+    assert_eq "$status" 1 "worktree $cmd exits 1 outside a git repository"
+    assert_contains "$err" "not inside a git repository: $NOREPO" \
+      "worktree $cmd names the cwd it could not resolve a repository from"
+    assert_contains "$err" "Run it from the checkout" \
+      "worktree $cmd names what to do instead"
+    assert_eq "$out" "" "worktree $cmd prints nothing on stdout outside a git repository"
   done
 else
   FAIL=$((FAIL + 1))
