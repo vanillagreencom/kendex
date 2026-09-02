@@ -80,6 +80,20 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
 
+# Submit-time size check (branch-size-check, submit-pr.md § 1.2).
+# Estimate -> production line allowance, used when the issue states no
+# expected delta of its own; an estimate outside the map falls through to
+# twice the recorded pr.baseline_lines.
+# ORCH_SIZE_EST_LINES = "1=400;2=800;3=1200;4=2000;5=3200"
+
+# Lines one control is allowed. The test allowance is this times two
+# controls — one plus its must-fail control — per Done-when surface.
+# ORCH_SIZE_TEST_LINES_PER_CONTROL = "40"
+
+# Render-mirror roots, blank separated. A change under one of them is
+# counted once, at the source it renders.
+# ORCH_SIZE_RENDER_ROOTS = ".agents .claude .codex .pi"
+
 # Hours before an In Progress / In Review item counts as started-stale in
 # reconcile-work-items sweeps.
 # RECONCILE_STALE_HOURS = "24"
