@@ -2,6 +2,7 @@
 //! refuses an install over them.
 
 use kendex_core::apply;
+use kendex_core::model::HarnessId;
 use kendex_core::quality::Severity;
 
 use super::fixture::{fixture, fixture_with_two_harnesses, installed, plan};
@@ -90,18 +91,14 @@ fn installed_rows_name_the_harness_and_location_the_scanner_found() {
         .collect();
     assert_eq!(
         rows.len(),
-        2 * kendex_core::model::HarnessId::ALL.len(),
+        2 * HarnessId::ALL.len(),
         "the scanner should return each harness that reads the installs"
     );
-    for harness in kendex_core::model::HarnessId::ALL {
-        let harness_dir = match harness {
-            kendex_core::model::HarnessId::Claude => ".claude",
-            kendex_core::model::HarnessId::Codex
-            | kendex_core::model::HarnessId::Opencode
-            | kendex_core::model::HarnessId::Cursor
-            | kendex_core::model::HarnessId::Pi
-            | kendex_core::model::HarnessId::Gemini
-            | kendex_core::model::HarnessId::Copilot => ".agents",
+    for harness in HarnessId::ALL {
+        let harness_dir = if harness == HarnessId::Claude {
+            ".claude"
+        } else {
+            ".agents"
         };
         for name in ["clean", "hostile"] {
             let row = rows

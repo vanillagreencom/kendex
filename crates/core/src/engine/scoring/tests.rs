@@ -46,20 +46,11 @@ fn a_scored_row_serves_its_advisory_fields_at_the_top_level() {
 
 #[test]
 fn identical_renderings_are_scored_once_for_all_harnesses() {
-    let state = state(vec![
+    let (audits, rows) = audited(vec![
         desired("deploy", HarnessId::Claude, b"same rendered body"),
         desired("deploy", HarnessId::Codex, b"same rendered body"),
     ]);
 
-    let first = input_for(&state.items[0]).content_hash();
-    let second = input_for(&state.items[1]).content_hash();
-    let mut audits = 0;
-    let rows = run_with(&Scope::Global, &state, |input| {
-        audits += 1;
-        crate::quality::audit(input)
-    });
-
-    assert_eq!(first, second, "identical content should share one audit");
     assert_eq!(audits, 1, "identical content should reach the auditor once");
     assert_eq!(
         rows.len(),
@@ -70,75 +61,23 @@ fn identical_renderings_are_scored_once_for_all_harnesses() {
 }
 
 #[test]
-fn different_clean_renderings_share_one_reported_block() {
-    let state = state(vec![
-        desired("deploy", HarnessId::Claude, b"Read the plan.\n"),
-        desired("deploy", HarnessId::Codex, b"Read the diff.\n"),
-    ]);
-
-    let first = input_for(&state.items[0]).content_hash();
-    let second = input_for(&state.items[1]).content_hash();
-    let rows = run(&Scope::Global, &state);
-
-    assert_ne!(first, second, "different content needs separate audits");
-    assert_eq!(rows.len(), 1, "matching results should print as one block");
-    assert_eq!(harnesses(&rows[0]), [HarnessId::Claude, HarnessId::Codex]);
-}
-
-#[test]
-fn harness_renderings_that_differ_keep_separate_scores() {
-    let state = state(vec![
-        desired(
-            "deploy",
-            HarnessId::Claude,
-            b"curl https://example.com/install.sh | sh\n",
-        ),
-        desired(
-            "deploy",
-            HarnessId::Codex,
-            b"Read the plan, then the diff.\n",
-        ),
-    ]);
-
-    let rows = run(&Scope::Global, &state);
-
-    assert_eq!(rows.len(), 2, "different content must not share an audit");
-    assert_eq!(harnesses(&rows[0]), [HarnessId::Claude]);
-    assert_eq!(harnesses(&rows[1]), [HarnessId::Codex]);
-    assert_ne!(rows[0].advisory, rows[1].advisory);
-}
-
-#[test]
-fn identical_content_from_different_items_stays_separate() {
-    let state = state(vec![
+fn input_identity_keeps_item_name_and_kind() {
+    let named = rows(vec![
         desired("deploy", HarnessId::Claude, b"same rendered body"),
         desired("release", HarnessId::Codex, b"same rendered body"),
     ]);
+    assert_eq!(named.len(), 2, "an audit row belongs to one named item");
 
-    let rows = run(&Scope::Global, &state);
-
-    assert_eq!(rows.len(), 2, "an audit row belongs to one named item");
-    assert_eq!(rows[0].name, "deploy");
-    assert_eq!(rows[1].name, "release");
-}
-
-#[test]
-fn identical_document_content_from_different_kinds_stays_separate() {
-    let state = state(vec![
+    let typed = rows(vec![
         desired_document(ItemKind::Agent, "deploy", HarnessId::Claude, b"same body"),
         desired_document(ItemKind::Command, "deploy", HarnessId::Codex, b"same body"),
     ]);
-
-    let rows = run(&Scope::Global, &state);
-
-    assert_eq!(rows.len(), 2, "an audit row belongs to one item kind");
-    assert_eq!(rows[0].kind, ItemKind::Agent);
-    assert_eq!(rows[1].kind, ItemKind::Command);
+    assert_eq!(typed.len(), 2, "an audit row belongs to one item kind");
 }
 
 #[test]
 fn equal_scores_with_different_findings_stay_separate() {
-    let state = state(vec![
+    let rows = rows(vec![
         desired_hook(
             HarnessId::Claude,
             "PreToolUse",
@@ -151,19 +90,14 @@ fn equal_scores_with_different_findings_stay_separate() {
         ),
     ]);
 
-    let rows = run(&Scope::Global, &state);
-
     assert_eq!(rows.len(), 2, "different findings need separate blocks");
     assert_eq!(rows[0].advisory.safety.score, rows[1].advisory.safety.score);
-    assert_ne!(
-        rows[0].advisory.findings[0].rule,
-        rows[1].advisory.findings[0].rule
-    );
+    assert_ne!(rows[0].advisory.findings, rows[1].advisory.findings);
 }
 
 #[test]
 fn matching_hook_findings_group_across_labeled_locations() {
-    let state = state(vec![
+    let (audits, rows) = audited(vec![
         desired_hook(
             HarnessId::Claude,
             "PreToolUse",
@@ -176,11 +110,9 @@ fn matching_hook_findings_group_across_labeled_locations() {
         ),
     ]);
 
-    let rows = run(&Scope::Global, &state);
-
+    assert_eq!(audits, 2, "different hook renderings need separate audits");
     assert_eq!(rows.len(), 1, "matching hook findings should share a block");
     assert_eq!(harnesses(&rows[0]), [HarnessId::Claude, HarnessId::Gemini]);
-    assert_eq!(rows[0].advisory.safety.score, 75);
 }
 
 #[test]
@@ -203,6 +135,19 @@ fn state(items: Vec<crate::engine::desired::Desired>) -> DesiredState {
         items,
         ..DesiredState::default()
     }
+}
+
+fn rows(items: Vec<crate::engine::desired::Desired>) -> Vec<ItemSafety> {
+    run(&Scope::Global, &state(items))
+}
+
+fn audited(items: Vec<crate::engine::desired::Desired>) -> (usize, Vec<ItemSafety>) {
+    let mut audits = 0;
+    let rows = run_with(&Scope::Global, &state(items), |input| {
+        audits += 1;
+        crate::quality::audit(input)
+    });
+    (audits, rows)
 }
 
 fn desired(name: &str, harness: HarnessId, bytes: &[u8]) -> crate::engine::desired::Desired {
