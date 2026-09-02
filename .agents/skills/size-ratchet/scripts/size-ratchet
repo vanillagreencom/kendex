@@ -346,8 +346,8 @@ if [ -f "$EXCLUDES_SOURCE" ]; then
     fi
     # A `!` pattern CARVES its matches back into the measured set, the only
     # way to govern hand-written source living inside an excluded render tree
-    # (README.md § Exclusion list). `!` is not escapable: a path that literally
-    # begins with it is measured, the safe direction.
+    # (README.md § Exclusion list). `!` is not escapable, so no row NAMING a
+    # path that begins with one can exclude it, the safe direction.
     case "$pat" in
       "!"*)
         carve="${pat#!}"
