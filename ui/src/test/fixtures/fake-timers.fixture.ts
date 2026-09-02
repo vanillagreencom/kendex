@@ -1,8 +1,7 @@
-// A case that installs fake timers and never restores them. The closing
-// window has to outlive that: it waits on the `setTimeout` captured at setup
-// load, so a run reaches its verdict instead of hanging on a clock nobody
-// advances. Green under the guarded config, and it hangs to the case timeout
-// the moment the wait is late-bound to `globalThis.setTimeout`.
+// A case that installs fake timers and never restores them. The window waits
+// on the `setTimeout` captured at setup load, so the run reaches a verdict.
+// Bind that wait late instead and the child dies on vitest's hook timeout —
+// "Hook timed out in 10000ms", exit 1.
 import { expect, test, vi } from "vitest";
 
 test("leaves fake timers installed", () => {

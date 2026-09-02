@@ -3,19 +3,17 @@
 // settling while the file runs still reddens it exactly as before. Each is a
 // fixture run under both configs — `guarded` carries the setup file,
 // `unguarded` does not — so the guarded verdict is read against a measured
-// baseline rather than against a comment. The fake-timers fixture is the
-// exception, guarded only: without the closing window there is nothing there
-// to hang.
+// baseline. The fake-timers fixture is the exception, guarded only: without
+// the closing window there is nothing there to hang.
 //
 // Each run is a real `vitest run` in its own process: the closing window is
 // a property of how a worker is torn down, which nothing nested in this one
 // can observe.
 //
-// Node's builtins are reached through `process.getBuiltinModule` and a local
-// shape. `ui/` has no `@types/node` — its own code ships to a webview — and
-// an ambient `declare module` is not scoped to tests: `tsconfig.json`
-// includes all of `src`, so declaring one would hand node's builtins to the
-// app tree as well.
+// Node's builtins come through `process.getBuiltinModule` and a local shape.
+// `ui/` has no `@types/node`, and an ambient `declare module` is not scoped
+// to tests: `tsconfig.json` includes all of `src`, so one would hand node's
+// builtins to the app tree too.
 import { describe, expect, it } from "vitest";
 
 type SpawnResult = {
@@ -53,17 +51,27 @@ const node = (
 const { spawnSync } = node.getBuiltinModule("node:child_process");
 const { fileURLToPath } = node.getBuiltinModule("node:url");
 
-// Resolved as URLs and converted once: a `.pathname` keeps a checkout path's
-// spaces percent-encoded, and on Windows leads with a slash before the drive.
+// Converted from URLs, not read off `.pathname`, which keeps a path's spaces
+// percent-encoded and leads with a slash before a Windows drive letter.
 const UI_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const VITEST = fileURLToPath(
   new URL("../../node_modules/vitest/vitest.mjs", import.meta.url),
 );
 
-// The spawn gives up first, so a child that overran is reported as the
-// child's ETIMEDOUT rather than as this case running out of clock.
+// The spawn gives up first, so an overrunning child reports its own
+// ETIMEDOUT rather than this case running out of clock.
 const SPAWN_TIMEOUT_MS = 45_000;
 const CASE_TIMEOUT_MS = 60_000;
+
+// Far past the late-rejection fixture's own delay, so the guarded half of
+// that differential turns on the window rather than on scheduling luck.
+const WIDE_WINDOW_MS = 2500;
+
+type Run = { status: number | null; output: string };
+
+// Every assertion below passes the child's whole output as `expect`'s message
+// argument: a nested red is rare, and losing what the child printed is the
+// expensive outcome.
 
 /** One fixture under one config, as a real nested `vitest run`. Vitest marks
  *  its workers through the environment, so a child that inherited ours would
@@ -71,10 +79,14 @@ const CASE_TIMEOUT_MS = 60_000;
 function runFixture(
   config: "guarded" | "unguarded",
   fixture: string,
-): { status: number | null; output: string } {
+  closingWindowMs?: number,
+): Run {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(node.env)) {
     if (value !== undefined && !key.startsWith("VITEST")) env[key] = value;
+  }
+  if (closingWindowMs !== undefined) {
+    env.KENDEX_CLOSING_WINDOW_MS = String(closingWindowMs);
   }
   const run = spawnSync(
     node.execPath,
@@ -98,9 +110,9 @@ describe("a rejection that settles after the file ended", () => {
     "is dropped by vitest on its own",
     () => {
       const run = runFixture("unguarded", "late-rejection");
-      expect(run.output).toContain("Test Files  1 passed (1)");
-      expect(run.output).not.toContain("late rejection fixture");
-      expect(run.status).toBe(0);
+      expect(run.output, run.output).toContain("Test Files  1 passed (1)");
+      expect(run.output, run.output).not.toContain("late rejection fixture");
+      expect(run.status, run.output).toBe(0);
     },
     CASE_TIMEOUT_MS,
   );
@@ -108,11 +120,11 @@ describe("a rejection that settles after the file ended", () => {
   it(
     "reddens the run once the closing window holds the file open",
     () => {
-      const run = runFixture("guarded", "late-rejection");
-      expect(run.output).toContain("Unhandled Rejection");
-      expect(run.output).toContain("late rejection fixture");
-      expect(run.output).toContain("Errors  1 error");
-      expect(run.status).toBe(1);
+      const run = runFixture("guarded", "late-rejection", WIDE_WINDOW_MS);
+      expect(run.output, run.output).toContain("Unhandled Rejection");
+      expect(run.output, run.output).toContain("late rejection fixture");
+      expect(run.output, run.output).toContain("Errors  1 error");
+      expect(run.status, run.output).toBe(1);
     },
     CASE_TIMEOUT_MS,
   );
@@ -124,10 +136,10 @@ describe("a rejection no hook of ours could reach", () => {
     { timeout: CASE_TIMEOUT_MS },
     (config) => {
       const run = runFixture(config, "skipped-file");
-      expect(run.output).toContain("Unhandled Rejection");
-      expect(run.output).toContain("skipped file fixture");
-      expect(run.output).toContain("Test Files  1 skipped (1)");
-      expect(run.status).toBe(1);
+      expect(run.output, run.output).toContain("Unhandled Rejection");
+      expect(run.output, run.output).toContain("skipped file fixture");
+      expect(run.output, run.output).toContain("Test Files  1 skipped (1)");
+      expect(run.status, run.output).toBe(1);
     },
   );
 });
@@ -138,16 +150,14 @@ describe("a rejection that lands while a later case is running", () => {
     { timeout: CASE_TIMEOUT_MS },
     (config) => {
       const run = runFixture(config, "mid-file-rejection");
-      expect(run.output).toContain("Unhandled Rejection");
-      expect(run.output).toContain("mid-file rejection fixture");
-      // Both cases pass: the rejection reddens the file, never a case.
-      expect(run.output).toContain("Tests  2 passed (2)");
-      expect(run.output).toContain("Errors  1 error");
-      // Vitest's hedge, which the closing window must not talk over.
-      expect(run.output).toContain(
+      expect(run.output, run.output).toContain("Unhandled Rejection");
+      expect(run.output, run.output).toContain("mid-file rejection fixture");
+      expect(run.output, run.output).toContain("Tests  2 passed (2)");
+      expect(run.output, run.output).toContain("Errors  1 error");
+      expect(run.output, run.output).toContain(
         "It doesn't mean the error was thrown inside the file itself",
       );
-      expect(run.status).toBe(1);
+      expect(run.status, run.output).toBe(1);
     },
   );
 });
@@ -157,8 +167,8 @@ describe("a case that leaves fake timers installed", () => {
     "still reaches a verdict, because the window waits on the real clock",
     () => {
       const run = runFixture("guarded", "fake-timers");
-      expect(run.output).toContain("Test Files  1 passed (1)");
-      expect(run.status).toBe(0);
+      expect(run.output, run.output).toContain("Test Files  1 passed (1)");
+      expect(run.status, run.output).toBe(0);
     },
     CASE_TIMEOUT_MS,
   );
