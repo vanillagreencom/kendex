@@ -5,11 +5,11 @@
 # carries a track-word: a claim with no issue id counts, such a reply
 # never does, later replies of any other kind, bot replies, and resolving
 # the thread do not move it. A comments page it cannot finish fails closed.
-# The writer maps the verdict to a failure status.
+# The watcher surfaces the verdict. Its mapping to a failure status is
+# review-writer.test.sh w9, driven through the writer itself.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRED="$SCRIPT_DIR/../scripts/review-predicate.sh"
-WRITER="$SCRIPT_DIR/../scripts/review-writer.sh"
 PASS=0 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok    $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        got: $2"; }
@@ -74,9 +74,6 @@ case "$out" in "1 0 "*) ok "unresolved counting unchanged";; *) bad "unresolved 
 out=$(page "$(thread true "$(human 'Tracked: KEN-1')" true)")
 case "$out" in malformed) ok "a 50+-comment thread fails closed as malformed";; *) bad "a 50+-comment thread fails closed as malformed" "$out";; esac
 
-grep -q 'untracked-claim)       desired="failure"' "$WRITER" \
-  && ok "writer maps untracked-claim to failure" \
-  || bad "writer maps untracked-claim to failure" "mapping line missing"
 grep -q 'untracked-claim' "$SCRIPT_DIR/../scripts/pr-watch.sh" \
   && ok "pr-watch accepts and surfaces the verdict" \
   || bad "pr-watch accepts and surfaces the verdict" "not referenced"

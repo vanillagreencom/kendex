@@ -77,6 +77,6 @@ The distinction is not a judgement call left to the author: `run_status` refuses
 
 ### Must-fail controls
 
-`tests/controls/<suite>.control.sh` breaks the one behaviour its suite covers, in a copy of the skill, and `tests/must-fail-controls.sh` requires the suite to go red naming the assertion that covers it. A suite with no control fails the run: an untested control is an untested suite.
+`tests/controls/<suite>.control.sh` breaks the one behaviour its suite covers, in a copy of the skill, and `tests/must-fail-controls.sh` requires the suite to go red naming the assertion that covers it. A suite with no control fails the run: an untested control is an untested suite. So does a control no suite owns, reported as `ORPHAN`: nothing runs it, so its mutation is never applied and the behaviour it names is unproven. The roster is read in both directions whatever the selection, so a single-stem run cannot pass while a control sits in the directory unrun.
 
 A control declares what it expects with `control_expect <assertion description>` and mutates with `control_replace <file> <count> <old line> <new line>` — whole-line and literal, so there is no pattern syntax to mis-escape. `control_replace` aborts unless it matches exactly `count` lines, and the runner refuses a control that changed nothing, so a mutation that failed to land can never be read as a passing control. It also refuses a stem that names no suite and a selection that matched none, because a run that measured nothing is not a run that passed.

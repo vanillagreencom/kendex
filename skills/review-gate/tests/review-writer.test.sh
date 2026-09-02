@@ -25,6 +25,10 @@
 #                                               description
 #   w8b. unreasoned-decline over a NEWER     -> posts failure directly
 #        success entry
+#   w9.  untracked-claim                     -> posts failure, remedy in the
+#                                               description
+#   w9b. untracked-claim over a NEWER        -> posts failure directly
+#        success entry
 # Write discipline (VST-65 ordering guard, success posts only):
 #   w10. guard re-read shows a non-success   -> defers (exit 0, no POST)
 #        entry at/after evaluated_at
