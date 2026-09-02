@@ -38,6 +38,17 @@ const DRAWN_FROM: [&str; 3] = ["orchestration", "code-review", "commit-guards"];
 /// one, which is how deep-research came to be undescribed.
 const BEYOND: [(ItemKind, &str); 1] = [(ItemKind::Skill, "deep-research")];
 
+/// One member per kind these sets carry, each of which has to read back.
+/// [`super::declared`] skips a list key it does not know, so a `hooks` list
+/// misspelt `hook` in kendex.toml leaves the set carrying its other kinds
+/// and nothing says the hooks went missing — the same silence, in the same
+/// file, as the `members = [...]` lists this whole issue is about.
+const A_MEMBER: [(&str, ItemKind, &str); 3] = [
+    ("workflow", ItemKind::Agent, "reviewer-arch"),
+    ("workflow", ItemKind::Skill, "orch"),
+    ("commit-guards", ItemKind::Hook, "block-bare-cd"),
+];
+
 /// One requirement and one mapping each walk below must observe. Both
 /// reads answer an unreadable file with nothing rather than an error, so
 /// a renamed frontmatter key would otherwise leave every closure
@@ -82,13 +93,25 @@ fn carries(bundle: &super::CatalogBundle, kind: ItemKind, name: &str) -> bool {
         .any(|member| member.kind == kind && member.name == name)
 }
 
-/// Every set this catalog offers carries members, and each member is an
-/// item this same catalog offers.
+/// Every set this catalog offers carries members, each member is an item
+/// this same catalog offers, and [`A_MEMBER`] names one of every kind that
+/// has to read back. Emptiness is what this walk cannot see on its own: a
+/// list key the reader does not know is a list that was never there.
 #[test]
 fn every_bundle_carries_members_this_catalog_offers() {
     let (sealed, config) = open();
     let bundles = super::offered(&sealed, &config).expect("its sets read");
     assert!(!bundles.is_empty(), "kendex.toml declares no sets at all");
+
+    for (name, kind, member) in A_MEMBER {
+        assert!(
+            carries(&set(&sealed, &config, name), kind, member),
+            "the set '{name}' does not read back {} '{member}' — check the list key \
+             its kendex.toml entry writes that kind under, since a key the reader \
+             does not know is a list it never sees",
+            kind.name()
+        );
+    }
 
     for bundle in &bundles {
         assert!(

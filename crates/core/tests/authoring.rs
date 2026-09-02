@@ -197,6 +197,22 @@ fn the_scaffolded_bundle_example_is_a_set_the_reader_accepts() {
             format!("{} {name}", name.trim_start_matches("my-"))
         })
         .collect();
+    // Both sides come out of the same generator, so both go empty together
+    // and compare equal. The grammar sentence is the third party: one member
+    // per key it lists, or the example is not the example it describes.
+    let keys = kendex_core::source::bundles::member_list_keys();
+    let listed = keys.split(", ").count();
+    assert!(
+        !keys.is_empty(),
+        "the grammar sentence lists no keys at all"
+    );
+    assert_eq!(
+        expected.len(),
+        listed,
+        "the example carries {} member(s) and the grammar sentence lists {listed} \
+         key(s) ({keys})",
+        expected.len()
+    );
     assert_eq!(
         members, expected,
         "the scaffolded example, uncommented, is not a set the reader gets every kind \
