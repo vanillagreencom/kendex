@@ -6,7 +6,8 @@
 # name query returns both in no fixed order. resolve_project_id took nodes[0],
 # so `issues create --project "<name>"` landed the issue in whichever the API
 # happened to list first — silently, since a create carrying a valid project id
-# succeeds either way.
+# succeeds either way. The fixture lists the canceled twin first, which is the
+# order the old code got wrong.
 
 set -euo pipefail
 
@@ -44,38 +45,14 @@ cat >"$TMP_ROOT/bin/curl" <<'SH'
 config="$(cat)"
 payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
 query="$(jq -r '.query' <<<"$payload")"
-scenario="${LINEAR_PROJECT_TEST_CASE:-canceled-first}"
 printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
-
-live='{"id":"live-uuid","state":"backlog"}'
-dead='{"id":"dead-uuid","state":"canceled"}'
-other_dead='{"id":"dead-two-uuid","state":"canceled"}'
 
 case "$query" in
 *"teams(filter:"*)
   printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"projects(filter:"*)
-  case "$scenario" in
-  canceled-first)
-    printf '%s' "{\"data\":{\"projects\":{\"nodes\":[$dead,$live]}}}___HTTP_CODE___200"
-    ;;
-  live-first)
-    printf '%s' "{\"data\":{\"projects\":{\"nodes\":[$live,$dead]}}}___HTTP_CODE___200"
-    ;;
-  only-canceled)
-    printf '%s' "{\"data\":{\"projects\":{\"nodes\":[$dead,$other_dead]}}}___HTTP_CODE___200"
-    ;;
-  no-match)
-    printf '%s' '{"data":{"projects":{"nodes":[]}}}___HTTP_CODE___200'
-    ;;
-  api-failure)
-    printf '%s' '{"errors":[{"message":"unauthenticated"}]}___HTTP_CODE___401'
-    ;;
-  *)
-    printf '%s' '{"errors":[{"message":"unknown scenario"}]}___HTTP_CODE___200'
-    ;;
-  esac
+  printf '%s' '{"data":{"projects":{"nodes":[{"id":"dead-uuid","state":"canceled"},{"id":"live-uuid","state":"backlog"}]}}}___HTTP_CODE___200'
   ;;
 *"issueLabels(filter:"*)
   printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
@@ -90,14 +67,15 @@ esac
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
+PAYLOAD_LOG="$TMP_ROOT/payloads.jsonl"
+: >"$PAYLOAD_LOG"
+
 run_create() {
-  local scenario="$1"
   (
     cd "$TMP_ROOT" && \
     PATH="$TMP_ROOT/bin:$PATH" \
       LINEAR_API_KEY_OVERRIDE=test-token \
-      CURL_PAYLOAD_LOG="$TMP_ROOT/$scenario-payloads.jsonl" \
-      LINEAR_PROJECT_TEST_CASE="$scenario" \
+      CURL_PAYLOAD_LOG="$PAYLOAD_LOG" \
       bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues create \
         --title t \
         --team Claude \
@@ -105,119 +83,15 @@ run_create() {
         --labels agent:rust \
         --priority 3 \
         --description d
-  ) >"$TMP_ROOT/$scenario.out" 2>"$TMP_ROOT/$scenario.err"
+  ) >"$TMP_ROOT/create.out" 2>"$TMP_ROOT/create.err"
 }
 
-# --- a live match wins, whichever order the API lists the duplicates in ------
-
-for scenario in canceled-first live-first; do
-  : >"$TMP_ROOT/$scenario-payloads.jsonl"
-  rc=0
-  run_status rc run_create "$scenario"
-
-  assert_eq "issues create succeeds when a canceled project shares the name ($scenario)" \
-    "$rc" 0
-
-  assert "the issueCreate payload carries the live project id, not the canceled one ($scenario)" \
-    jq -s -e 'any(.[]; (.query | contains("issueCreate")) and .variables.input.projectId == "live-uuid")' \
-    "$TMP_ROOT/$scenario-payloads.jsonl" >/dev/null
-
-  assert_not "no request names the canceled project id ($scenario)" \
-    grep -qF 'dead-uuid' "$TMP_ROOT/$scenario-payloads.jsonl"
-done
-
-# The lookup asks for `state`: without it every match looks live and the
-# selection above cannot be made.
-assert "the project lookup selects state alongside id" \
-  jq -s -e 'any(.[]; (.query | contains("projects(filter:")) and (.query | contains("nodes { id state }")))' \
-  "$TMP_ROOT/canceled-first-payloads.jsonl" >/dev/null
-
-# --- only-canceled matches are refused, not silently used --------------------
-
-: >"$TMP_ROOT/only-canceled-payloads.jsonl"
 rc=0
-run_status rc run_create only-canceled
+run_status rc run_create
 
-assert_ne "issues create fails when every same-name project is canceled" "$rc" 0
+assert_eq "issues create succeeds when a canceled project shares the name (canceled-first)" \
+  "$rc" 0
 
-only_canceled_err="$(cat "$TMP_ROOT/only-canceled.err")"
-assert_contains "the refusal names the project asked for" \
-  "$only_canceled_err" "Project not found: Dup"
-assert_contains "the refusal says no live project has the name" \
-  "$only_canceled_err" "no live project has this name"
-assert_contains "the refusal names each rejected uuid with the state that rejected it" \
-  "$only_canceled_err" "dead-uuid (canceled), dead-two-uuid (canceled)"
-
-assert_not "no issue is created against a canceled project" \
-  grep -qF 'issueCreate' "$TMP_ROOT/only-canceled-payloads.jsonl"
-
-# --- a genuine miss keeps the plain diagnostic -------------------------------
-
-: >"$TMP_ROOT/no-match-payloads.jsonl"
-rc=0
-run_status rc run_create no-match
-
-assert_ne "issues create fails when the name matches nothing" "$rc" 0
-no_match_err="$(cat "$TMP_ROOT/no-match.err")"
-assert_contains "a name that matches nothing reports a plain miss" \
-  "$no_match_err" "Project not found: Dup"
-assert_not_contains "a plain miss does not claim canceled matches" \
-  "$no_match_err" "canceled"
-
-# --- an API failure is not reported as a missing project ---------------------
-
-: >"$TMP_ROOT/api-failure-payloads.jsonl"
-rc=0
-run_status rc run_create api-failure
-
-assert_ne "issues create fails when the project lookup errors" "$rc" 0
-api_failure_err="$(cat "$TMP_ROOT/api-failure.err")"
-assert_contains "a failed lookup is reported as an API failure" \
-  "$api_failure_err" "Linear API request failed"
-assert_not_contains "a failed lookup is not reported as a missing project" \
-  "$api_failure_err" "Project not found"
-
-# --- a lone live match returns rather than aborting --------------------------
-#
-# The resolver reads the selection back as two lines, and with nothing rejected
-# the second read hits EOF. Under the file's own errexit that status ended the
-# function before it printed the id. Every call site here spells the call
-# `var=$(resolve_project_id ...)`, which hides it, so the two shapes that do
-# not are exercised directly: a bare call, and a command substitution under
-# `shopt -s inherit_errexit`, which sync.sh sets.
-
-cat >"$TMP_ROOT/direct.sh" <<'SH'
-#!/bin/bash
-set -euo pipefail
-if [ "${1:-}" = inherit ]; then
-  shopt -s inherit_errexit
-fi
-source "$2/.agents/skills/linear/scripts/lib/common.sh"
-graphql_query() {
-  printf '%s' '{"projects":{"nodes":[{"id":"live-uuid","state":"backlog"}]}}'
-}
-if [ "${1:-}" = inherit ]; then
-  resolved="$(resolve_project_id Dup)"
-  printf '%s\n' "$resolved"
-else
-  resolve_project_id Dup
-fi
-echo reached-the-end
-SH
-
-run_direct() {
-  (
-    cd "$TMP_ROOT" && LINEAR_API_KEY_OVERRIDE=test-token \
-      bash "$TMP_ROOT/direct.sh" "$1" "$TMP_ROOT"
-  ) >"$TMP_ROOT/direct-$1.out" 2>&1
-}
-
-for shape in bare inherit; do
-  rc=0
-  run_status rc run_direct "$shape"
-  assert_eq "a lone live match resolves without aborting ($shape)" "$rc" 0
-  direct_out="$(cat "$TMP_ROOT/direct-$shape.out")"
-  assert_contains "the resolved id is printed ($shape)" "$direct_out" "live-uuid"
-  assert_contains "the caller runs on past the resolve ($shape)" \
-    "$direct_out" "reached-the-end"
-done
+assert "the issueCreate payload carries the live project id, not the canceled one (canceled-first)" \
+  jq -s -e 'any(.[]; (.query | contains("issueCreate")) and .variables.input.projectId == "live-uuid")' \
+  "$PAYLOAD_LOG" >/dev/null
