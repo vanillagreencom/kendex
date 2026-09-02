@@ -1,11 +1,10 @@
 # Shared sandbox for the oversee-watch suites: the stub binaries every case
 # drives, the assertion helpers, and one `run_watch` entry point.
 #
-# oversee-watch reads two independent surfaces — GitHub (pr-watch, `gh pr
-# list`) and the tmux panes of the lane windows — and each has its own suite:
-# oversee_watch.sh covers the GitHub side and the process-wide failures,
-# oversee_watch_lanes.sh the pane side. Both build the same sandbox, so it
-# lives here rather than in either of them.
+# oversee-watch reads GitHub (pr-watch, `gh pr list`), Linear, and the tmux
+# panes of the lane windows. oversee_watch.sh covers GitHub and process-wide
+# failures; oversee_watch_triage.sh covers the tracker; the two lane suites
+# cover pane behavior and prompt state. They share this sandbox.
 #
 # Sourced, never run: the runners glob tests/*.sh, so nothing here executes on
 # its own. Sourcing it sets the shell options, builds $TMP_ROOT and the stub
@@ -238,7 +237,39 @@ rcf="$(pick prwatch.rc || true)"
 rc=0; [[ -n "$rcf" ]] && rc="$(cat "$rcf")"
 exit "$rc"
 EOF
-chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" "$TMP_ROOT/bin/pr-watch-stub.sh"
+
+# Fake live tracker list. tracker.out is the safe-format issue array (default
+# empty), tracker.err is stderr, and tracker.rc is the exit status. Every argv
+# reaches tracker.args so cases can pin the live-list contract.
+cat > "$TMP_ROOT/bin/linear-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+printf '%s\n' "$*" > "$STUB_DIR/tracker.args"
+[[ -f "$STUB_DIR/tracker.err" ]] && cat "$STUB_DIR/tracker.err" >&2
+rc=0; [[ -f "$STUB_DIR/tracker.rc" ]] && rc="$(cat "$STUB_DIR/tracker.rc")"
+[[ "$rc" -eq 0 ]] || exit "$rc"
+if [[ -f "$STUB_DIR/tracker.out" ]]; then
+  cat "$STUB_DIR/tracker.out"
+else
+  printf '[]\n'
+fi
+EOF
+
+# Fleet workflow-state reader. tracker-triaged.txt is the list returned by the
+# jq query; workflow-state.rc/err drive the failure path.
+cat > "$TMP_ROOT/bin/workflow-state-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+printf '%s\n' "$*" > "$STUB_DIR/workflow-state.args"
+[[ -f "$STUB_DIR/workflow-state.err" ]] && cat "$STUB_DIR/workflow-state.err" >&2
+rc=0; [[ -f "$STUB_DIR/workflow-state.rc" ]] && rc="$(cat "$STUB_DIR/workflow-state.rc")"
+[[ "$rc" -eq 0 ]] || exit "$rc"
+[[ -f "$STUB_DIR/tracker-triaged.txt" ]] && cat "$STUB_DIR/tracker-triaged.txt"
+exit 0
+EOF
+chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" \
+  "$TMP_ROOT/bin/pr-watch-stub.sh" "$TMP_ROOT/bin/linear-stub.sh" \
+  "$TMP_ROOT/bin/workflow-state-stub.sh"
 
 STUB_DIR=""
 STATE_DIR=""
@@ -283,7 +314,10 @@ run_watch() {
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
            STUB_DIR="$STUB_DIR" TMUX="fake" \
+           LINEAR_TEAM="kendex" \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
+           OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
+           OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
            ${env_args[@]+"${env_args[@]}"} \
            .agents/skills/orch/scripts/oversee-watch --interval 0 --max-loops 2 \

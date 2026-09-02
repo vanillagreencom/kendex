@@ -21,7 +21,7 @@
 #       instead; and a banner above a later user turn is scrollback, while
 #       one below that turn still fires. Codex's benign reset OFFER is not a
 #       spent account
-#   4.  a lane pane showing a question prompt (pane tail follows), under a
+#   4.  a lane pane showing a lane-asking prompt (pane tail follows), under a
 #       wrapped shell too, and on either harness's dialog screen; a selection
 #       list above the last user turn is one the lane already answered and
 #       never fires, while one below that turn still does
@@ -231,7 +231,7 @@ err="$TMP_ROOT/e3g"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
   "a limit banner above a stale prompt is usage-limit, not question" "$err"
-assert_not_contains "$out" "EVENT question" "question never preempts a spent account" "$err"
+assert_not_contains "$out" "EVENT lane-asking" "lane-asking never preempts a spent account" "$err"
 
 # The banner and the prompt are read on the same liveness answer, so a lane
 # wrapped in a shell still gets its banner seen
@@ -326,7 +326,7 @@ printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3fd"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "a codex dialog row is live input, so the banner above the turn stays scrollback" "$err"
 assert_not_contains "$out" "EVENT usage-limit" \
   "the codex dialog row never resurrects a stale banner" "$err"
@@ -460,7 +460,7 @@ new_case usage_limit_stale_banner_over_question
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3fa"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "a stale banner never masks the live question on a dialog screen" "$err"
 assert_not_contains "$out" "EVENT usage-limit" \
   "the banner above the turn stays scrollback when no composer is drawn" "$err"
@@ -525,7 +525,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
 assert_eq "$(ls -1 "$STATE_DIR/claims" | wc -l | tr -d '[:space:]')" "0" \
   "a dead claim is pruned on read, not left to accumulate" "$err"
 
-# --- 4. question -----------------------------------------------------------
+# --- 4. lane-asking --------------------------------------------------------
 new_case question
 {
   printf '⏺ I found two ways to do this.\n\n'
@@ -534,8 +534,8 @@ new_case question
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$rc" "0" "question exits 0" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" "lane with a question prompt is the event" "$err"
+assert_eq "$rc" "0" "lane-asking exits 0" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" "lane with a question prompt is the event" "$err"
 assert_contains "$out" "   ❯ 1. Yes" "pane tail follows the event line" "$err"
 assert_not_contains "$out" "gh-1" "a working lane is not reported" "$err"
 assert_not_contains "$out" "EVENT idle-after-return" \
@@ -549,7 +549,7 @@ printf '2747883\n' > "$STUB_DIR/kids-9002.txt"
 printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4a3"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "a wrapped lane's question is still the event" "$err"
 
 # Codex on a dialog. It marks the row it has selected with `›`, not `❯`, and
@@ -562,7 +562,7 @@ printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
 cat "$CODEX_PANES/codex-dialog-trust.txt" > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4c1"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "a codex directory-trust dialog is a question" "$err"
 assert_contains "$out" "Do you trust the contents of this directory?" \
   "the pane tail carries what the lane is being asked" "$err"
@@ -572,7 +572,7 @@ printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
 cat "$CODEX_PANES/codex-dialog-model.txt" > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4c2"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "a codex model picker is a question" "$err"
 assert_contains "$out" "Select Model and Effort" \
   "the pane tail carries the choice on offer" "$err"
@@ -589,7 +589,7 @@ printf '⏺ working on it\n' > "$STUB_DIR/pane-a:b.txt"
 err="$TMP_ROOT/e4a2"
 out="$(run_watch -- --max-loops 1 'a+b' 'a:b' 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "colliding lane names exit 0" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT question a+b" \
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking a+b" \
   "lanes whose names flatten to one slug keep separate pane snapshots" "$err"
 
 # A dialog the lane already answered stays on the screen. Only the slice below
@@ -608,7 +608,7 @@ new_case question_answered_dialog_above_turn
 err="$TMP_ROOT/e4a4"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "an answered dialog exits 0" "$err"
-assert_not_contains "$out" "EVENT question" \
+assert_not_contains "$out" "EVENT lane-asking" \
   "a selection list above the last user turn is answered, not waiting" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT idle-after-return gh-2" \
   "the lane reaches the idle event the answered list was masking" "$err"
@@ -624,7 +624,7 @@ new_case question_live_dialog_below_turn
 } > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e4a5"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" \
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "a selection list below the last user turn is still the event" "$err"
 assert_contains "$out" "   ❯ 1. Yes" "the pane tail follows the event line" "$err"
 
@@ -804,7 +804,7 @@ err="$TMP_ROOT/e4c"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
   "a stale prompt under an exited harness is not a question" "$err"
-assert_not_contains "$out" "EVENT question" "an exited lane never fires question" "$err"
+assert_not_contains "$out" "EVENT lane-asking" "an exited lane never fires lane-asking" "$err"
 # ...and the second pass reports it as what it is
 err="$TMP_ROOT/e4c2"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
