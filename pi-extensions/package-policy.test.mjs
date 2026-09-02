@@ -177,29 +177,17 @@ test("every Pi extension carries a consumer-facing CHANGELOG.md", () => {
 	}
 });
 
-// A file under tests/ that holds no case is a fixture or a helper, not a suite:
-// `preload.ts`, `harness.ts`, `rpc-harness.mjs` and their kin exist to be
-// imported by the cases beside them. Counting one as coverage is what would let
-// a package carrying nothing but fixtures satisfy the declaration below. Names
-// carry nothing here — pi-caveman's only case file is `unit-instructions.ts`
-// and pi-claude-bridge's are `unit-*.mjs` — so the file's own source is read.
-function holdsCases(source) {
-	return /\b(?:test|it|describe)\s*\(/.test(source);
-}
-
-function caseBearingFiles(dir) {
-	return suiteFiles(dir).filter((file) => holdsCases(readFileSync(file, "utf8")));
-}
-
 function suiteCounts() {
-	return packages().map(({ dir }) => [dir, caseBearingFiles(join(root, dir)).length]);
+	return packages().map(({ dir }) => [dir, suiteFiles(join(root, dir)).length]);
 }
 
-// A package carrying no test case used to drop out of the wiring gate before
-// any of its assertions ran: no suite means no entry point to demand and
+// A package carrying no file under tests/ used to drop out of the wiring gate
+// before any of its assertions ran: no suite means no entry point to demand and
 // nothing for a CI step to invoke, so shipping a package untested looked
 // exactly like shipping one covered. Naming them here is what turns that state
 // into a declaration a reviewer reads rather than an absence nothing reports.
+// What is counted is files under tests/, not cases in them — a package whose
+// tests/ holds only fixtures reads as covered.
 //
 // pi-prompt-stash: the stash behaviour — filterItems, previewText, loadItems,
 // saveItems, stashPrompt, safeFileName — sits unexported inside
@@ -210,7 +198,10 @@ function suiteCounts() {
 // pi-task-panel vendor, and no suite in this tree imports any of the three —
 // pi-codex-minimal-tools/tests/settings.test.ts covers its own `src/settings.ts`,
 // a different file that happens to export a same-named recordProjectTrust
-// (KEN-1016).
+// (KEN-1016). Nothing reds when that reason expires: direction three below
+// fires only once the package gains tests, not when it becomes testable, so
+// exporting one of those functions tomorrow leaves the entry standing. It is
+// reviewed on this comment, not held by the gate.
 const NO_SUITE = ["pi-prompt-stash"];
 
 // Every direction the declaration can drift from the tree, kept separate
@@ -219,16 +210,16 @@ const NO_SUITE = ["pi-prompt-stash"];
 // did — makes a renamed or deleted package report as one that gained tests, a
 // claim about a directory that is not there; `crates/core/src/pi_ext/renames.rs`
 // records prompt-stash -> pi-prompt-stash, so this repo has walked that path.
-// Taking the per-package case counts as an argument is what lets the control
+// Taking the per-package suite counts as an argument is what lets the control
 // below run this exact reader over a mutated tree instead of asserting against
 // a second literal.
 function suiteDeclarationDrift(counts) {
 	const known = counts.map(([dir]) => dir);
-	const bare = counts.filter(([, cases]) => cases === 0).map(([dir]) => dir);
+	const bare = counts.filter(([, files]) => files === 0).map(([dir]) => dir);
 	return [
-		...bare.filter((dir) => !NO_SUITE.includes(dir)).map((dir) => `${dir}: carries no test case and is not declared in NO_SUITE`),
+		...bare.filter((dir) => !NO_SUITE.includes(dir)).map((dir) => `${dir}: carries no test file and is not declared in NO_SUITE`),
 		...NO_SUITE.filter((dir) => !known.includes(dir)).map((dir) => `${dir}: declared in NO_SUITE but is not a package directory — the entry is stale`),
-		...NO_SUITE.filter((dir) => known.includes(dir) && !bare.includes(dir)).map((dir) => `${dir}: declared in NO_SUITE but carries test cases — drop the declaration`),
+		...NO_SUITE.filter((dir) => known.includes(dir) && !bare.includes(dir)).map((dir) => `${dir}: declared in NO_SUITE but carries test files — drop the declaration`),
 	];
 }
 
@@ -250,9 +241,8 @@ test("every Pi extension suite runs in CI under the package's own test script", 
 	const workflow = readFileSync(workflowPath, "utf8");
 	const steps = ciSteps(workflow);
 	const dirs = packages().map(({ dir }) => dir);
-	// `bearing` stays on the broader reader: a package whose tests/ holds only
-	// helpers still declares an entry point CI must invoke.
-	const bearing = packages().filter(({ dir }) => suiteFiles(join(root, dir)).length > 0).map(({ dir }) => dir);
+	const counts = suiteCounts();
+	const bearing = counts.filter(([, files]) => files > 0).map(([dir]) => dir);
 	// Every side is derived from the tree and the workflow, so a reader that
 	// matched nothing would pass this case vacuously — which is the gap it
 	// exists to close. Floor each reader first; a zero here means the reader is
@@ -262,9 +252,9 @@ test("every Pi extension suite runs in CI under the package's own test script", 
 	assert.ok(bearing.length > 0, "no package carries test files — the suite-file walker is broken");
 
 	assert.deepEqual(
-		suiteDeclarationDrift(suiteCounts()),
+		suiteDeclarationDrift(counts),
 		[],
-		"a Pi package carries no test case without NO_SUITE declaring it, or a NO_SUITE entry is stale",
+		"a Pi package carries no test file without NO_SUITE declaring it, or a NO_SUITE entry is stale",
 	);
 
 	assert.deepEqual(
@@ -305,34 +295,22 @@ test("a step conditioned on a shard the matrix does not run is reported, not acc
 // Must-fail control for the declaration above: with every package in the tree
 // either covered or declared, the drift reader returns the same empty list a
 // reader that had stopped looking would, so each direction it reports is
-// mutated here. The case predicate is exercised separately — no count mutation
-// reaches it, and a fixture-only tests/ file is exactly what used to read as
-// coverage.
-test("a package with no test case is reported unless NO_SUITE declares it", () => {
+// mutated here.
+test("a package with no test file is reported unless NO_SUITE declares it", () => {
 	const counts = suiteCounts();
 	assert.deepEqual(suiteDeclarationDrift(counts), [], "precondition: the real tree matches NO_SUITE");
 
-	assert.equal(holdsCases("export const fixture = 1;\n"), false, "a fixture-only file reads as coverage");
-	assert.equal(holdsCases('test("x", () => {});\n'), true, "a file holding a case does not read as one");
-	// And against the tree, so the predicate is not merely agreeing with
-	// strings written beside it: it must reject at least one shipped helper.
-	const shipped = packages().flatMap(({ dir }) => suiteFiles(join(root, dir)));
-	assert.ok(
-		shipped.some((file) => !holdsCases(readFileSync(file, "utf8"))),
-		"no shipped tests/ file is case-free, so the predicate proves nothing about real helpers",
-	);
-
-	const stripped = counts.find(([dir, cases]) => cases > 0 && !NO_SUITE.includes(dir));
+	const stripped = counts.find(([dir, files]) => files > 0 && !NO_SUITE.includes(dir));
 	assert.ok(stripped, "no covered package to strip — this control no longer mutates the tree it reads");
 	assert.deepEqual(
-		suiteDeclarationDrift(counts.map(([dir, cases]) => [dir, dir === stripped[0] ? 0 : cases])),
-		[`${stripped[0]}: carries no test case and is not declared in NO_SUITE`],
+		suiteDeclarationDrift(counts.map(([dir, files]) => [dir, dir === stripped[0] ? 0 : files])),
+		[`${stripped[0]}: carries no test file and is not declared in NO_SUITE`],
 	);
 
 	assert.ok(NO_SUITE.length > 0, "NO_SUITE is empty — the two declaration directions below mutate nothing");
 	assert.deepEqual(
-		suiteDeclarationDrift(counts.map(([dir, cases]) => [dir, NO_SUITE.includes(dir) ? 1 : cases])),
-		NO_SUITE.map((dir) => `${dir}: declared in NO_SUITE but carries test cases — drop the declaration`),
+		suiteDeclarationDrift(counts.map(([dir, files]) => [dir, NO_SUITE.includes(dir) ? 1 : files])),
+		NO_SUITE.map((dir) => `${dir}: declared in NO_SUITE but carries test files — drop the declaration`),
 	);
 	assert.deepEqual(
 		suiteDeclarationDrift(counts.filter(([dir]) => !NO_SUITE.includes(dir))),

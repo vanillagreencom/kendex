@@ -1,15 +1,18 @@
 // Live integration test for defaultReadProcessIdentity (kendex#15
 // round 5 reviewer-error BLOCK reproducer).
 //
-// Spawn `/bin/bash -lc "sleep 5"` and observe what the kernel reports:
-// bash exec(2)s the sleep binary in place, so /proc/<pid>/comm rotates
-// from "bash" to "sleep" while pid + starttime stay identical. The
-// identity check MUST treat these as the same process — otherwise the
+// Spawn `/bin/bash -c "exec sleep 5"`: bash execve(2)s the sleep binary
+// in place with no fork, so pid + starttime stay identical across the
+// exec while the process image changes underneath them. The identity
+// check MUST treat before and after as the same process — otherwise the
 // orphan watcher false-finalizes a live task on every restore.
 //
-// Requires: Linux /proc OR `ps -o lstart=,comm= -p <pid>` available.
-// Skips cleanly if the probe returns null (sandbox without /proc and
-// without ps).
+// Enforced on Linux only. There, a null from the probe against a pid
+// still present in /proc is a defect in the reader this suite gates, and
+// the case throws. Elsewhere a null logs a skip line and returns: the
+// portable `ps -o lstart=,comm= -p <pid>` path returns null for reader
+// defects too, and nothing here separates those from a host that cannot
+// probe at all, so this suite makes no promise off Linux.
 
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
