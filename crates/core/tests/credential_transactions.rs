@@ -71,8 +71,10 @@ impl CredentialStore for Store {
 
     fn clear(&self) -> Result<()> {
         if self.delete_refused {
-            // The shape `KeyringStore::clear` returns when the OS keychain
-            // will not give the sign-in up.
+            // A stand-in for a keychain that will not give the sign-in up.
+            // What `KeyringStore::clear` really builds is pinned by
+            // tests/credential_store_refusals.rs; this literal only feeds
+            // `expired()`.
             return Err(CoreError::CredentialStoreUnavailable {
                 why: "the removal was refused: the keyring is locked".to_owned(),
             });
@@ -416,11 +418,7 @@ fn a_store_that_will_not_delete_still_answers_expired() {
     );
     assert!(
         refused.contains("the credential store on this machine"),
-        "the user learns what refused it: {refused}"
-    );
-    assert!(
-        !refused.contains("community directory"),
-        "a local keychain failure must not read as a directory outage: {refused}"
+        "expired() replaced the store's refusal instead of composing it: {refused}"
     );
     assert!(
         !refused.contains("— run `kendex login` again"),

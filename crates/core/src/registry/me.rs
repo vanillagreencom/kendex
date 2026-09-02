@@ -52,9 +52,10 @@ struct WireMe {
 /// Ask who is signed in. An absent credential is `SignedOut`; a dead credential is
 /// `Expired` and its cached identity is dropped; an unreachable or
 /// misbehaving server serves the cached identity as `Offline`, and errors
-/// only with nothing cached to serve. The cache key names the sign-in this
-/// read opened with rather than either token, so a refresh rotation leaves
-/// it readable. The store gets no final read after the authenticated call:
+/// only with nothing cached to serve. A keychain that refuses is none of
+/// those: it is local, so it errors with its own sentence however warm the
+/// cache is. The cache key names the sign-in this read opened with rather
+/// than either token, so a refresh rotation leaves it readable. The store gets no final read after the authenticated call:
 /// a sign-out or account switch landing in that final request window does
 /// not change this call's answer.
 pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<AccountState> {
@@ -86,6 +87,11 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
             cache.forget()?;
             return Ok(AccountState::Expired);
         }
+        // The keychain refused a read, a write or the transaction lock
+        // somewhere inside the call. Serving the cache as `Offline` would
+        // tell the user the directory was last reached, when the machine
+        // never asked it anything.
+        Err(refused @ CoreError::CredentialStoreUnavailable { .. }) => return Err(refused),
         fetched => fetched,
     };
     let loaded = cache.settle(cached, fetched, parse, |response| {

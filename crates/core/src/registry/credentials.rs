@@ -4,7 +4,7 @@
 //! credential says where it is from, and a build kept off the real machine
 //! can neither spend nor delete the sign-in the installed app holds. No
 //! silent plaintext fallback exists: where no store answers, the caller
-//! says so and offers session-only auth.
+//! says so.
 
 use crate::error::{CoreError, Result};
 use crate::fs::LockedFile;
@@ -82,12 +82,8 @@ fn transaction_lock_file(
         .join(format!(".kendex-credential-{digest}.lock"))
 }
 
-/// Which keychain call would not answer. Every arm reports the credential
-/// store as the cause, because that is what failed: a locked keyring, a
-/// denied prompt, or a session that cannot reach the keychain. None of them
-/// is the community directory, and a user told otherwise checks a network
-/// that is working.
-#[derive(Clone, Copy, Debug)]
+/// Which keychain call would not answer. Every arm answers with
+/// `CoreError::CredentialStoreUnavailable`, whose doc holds why.
 enum StoreRefusal {
     /// No keychain answered, so no entry could be opened.
     NoStore,
@@ -194,37 +190,6 @@ mod tests {
             serde_json::from_str(stored).expect("a stored credential still reads");
         assert_eq!(credential.refresh_token, "kxr");
         assert!(credential.sign_in.is_empty());
-    }
-
-    /// The keychain is local, so its failures must not read as the
-    /// community directory being down: a user sent to check their network
-    /// never finds the locked keyring that actually refused.
-    #[test]
-    fn every_keychain_refusal_names_the_credential_store() {
-        for refusal in [
-            StoreRefusal::NoStore,
-            StoreRefusal::Save,
-            StoreRefusal::Load,
-            StoreRefusal::Clear,
-        ] {
-            let shown = refusal
-                .refused(&keyring::Error::NoStorageAccess(Box::new(
-                    std::io::Error::other("the keyring is locked"),
-                )))
-                .to_string();
-            assert!(
-                shown.contains("the credential store on this machine"),
-                "{refusal:?} names the store that refused: {shown}"
-            );
-            assert!(
-                !shown.contains("community directory"),
-                "{refusal:?} sends the user to the network instead: {shown}"
-            );
-            assert!(
-                shown.contains("the keyring is locked"),
-                "{refusal:?} drops the reason the OS gave: {shown}"
-            );
-        }
     }
 
     #[test]

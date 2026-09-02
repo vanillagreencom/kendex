@@ -13,7 +13,10 @@ use kendex_core::registry::{CurlFetch, base_url};
 pub fn login() -> Result<()> {
     let fetch = CurlFetch;
     let store = KeyringStore;
-    if let Ok(Some(_)) = store.load() {
+    // A store that refuses the read is not a machine with no credential:
+    // starting the device flow would spend the user's approval on a
+    // sign-in the keychain has already said it will not hold.
+    if store.load()?.is_some() {
         say(&format!(
             "Already signed in to {} — run `kendex logout` first to switch.",
             base_url()

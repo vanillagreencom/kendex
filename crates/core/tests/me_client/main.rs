@@ -6,8 +6,12 @@
 //! of kendex-web's `contracts/api/v1/me.json` — drift between the repos
 //! is a `cmp` away.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
+
+#[path = "../../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
 
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::{CoreError, Result};
@@ -86,34 +90,65 @@ fn away() -> Result<FetchResponse> {
     })
 }
 
-struct MemoryStore(RefCell<Option<Credential>>);
+struct MemoryStore {
+    credential: RefCell<Option<Credential>>,
+    /// Which read starts refusing, counting from one: a keychain that locks
+    /// after `load` has taken the sign-in and before the authenticated call
+    /// takes it again.
+    refuses_from: Option<u32>,
+    reads: Cell<u32>,
+}
 
 impl MemoryStore {
+    fn holding(credential: Option<Credential>) -> MemoryStore {
+        MemoryStore {
+            credential: RefCell::new(credential),
+            refuses_from: None,
+            reads: Cell::new(0),
+        }
+    }
+
     fn signed_in() -> MemoryStore {
-        MemoryStore(RefCell::new(Some(Credential {
+        MemoryStore::holding(Some(Credential {
             endpoint: "https://kendex.ai".to_owned(),
             access_token: "kxa_old".to_owned(),
             refresh_token: "kxr_old".to_owned(),
             capabilities: vec!["submission:write".to_owned()],
             sign_in: ADA.to_owned(),
-        })))
+        }))
     }
 
     fn signed_out() -> MemoryStore {
-        MemoryStore(RefCell::new(None))
+        MemoryStore::holding(None)
+    }
+
+    fn refusing_from(read: u32) -> MemoryStore {
+        MemoryStore {
+            refuses_from: Some(read),
+            ..MemoryStore::signed_in()
+        }
     }
 }
 
 impl CredentialStore for MemoryStore {
     fn save(&self, credential: &Credential) -> Result<()> {
-        *self.0.borrow_mut() = Some(credential.clone());
+        *self.credential.borrow_mut() = Some(credential.clone());
         Ok(())
     }
     fn load(&self) -> Result<Option<Credential>> {
-        Ok(self.0.borrow().clone())
+        let read = self.reads.get() + 1;
+        self.reads.set(read);
+        if self.refuses_from.is_some_and(|first| read >= first) {
+            // The shape `KeyringStore::load` answers with; its wording is
+            // pinned by tests/credential_store_refusals.rs.
+            return Err(CoreError::CredentialStoreUnavailable {
+                why: "the stored sign-in could not be read: the keyring is locked".to_owned(),
+            });
+        }
+        Ok(self.credential.borrow().clone())
     }
     fn clear(&self) -> Result<()> {
-        *self.0.borrow_mut() = None;
+        *self.credential.borrow_mut() = None;
         Ok(())
     }
     fn refresh_guard(&self) -> Result<Box<dyn CredentialRefreshGuard + '_>> {
@@ -233,6 +268,36 @@ fn network_away_serves_the_cached_identity_as_offline() {
         AccountState::Offline { identity, .. } => assert_eq!(identity.name, "Ada Lovelace"),
         other => panic!("expected offline, got {other:?}"),
     }
+}
+
+/// A warm cache answers for a directory that will not talk. It must not
+/// answer for a keychain that will not talk: the machine never asked the
+/// directory anything, so "when kendex.ai was last reached" is a lie about
+/// what failed.
+#[test]
+fn a_refusing_keychain_is_not_served_as_offline() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = rooted(&dir);
+    let env = env_in(&root);
+    let warm = MemoryStore::signed_in();
+    let first = Canned::new(vec![ok(200, None, &fixture_body(&["success", "body"]))]);
+    me::load(&env, &first, &warm).expect("first load");
+
+    // The second read is the one inside the authenticated call: the sign-in
+    // check ahead of it must still pass, or nothing reaches the seam.
+    let store = MemoryStore::refusing_from(2);
+    let unused = Canned::new(vec![]);
+    let refused = me::load(&env, &unused, &store).expect_err("a refusing keychain errors");
+
+    assert!(
+        matches!(refused, CoreError::CredentialStoreUnavailable { .. }),
+        "the cache stood in for the keychain: {refused:?}"
+    );
+    assert!(
+        !refused.to_string().contains("community directory"),
+        "the user is sent to check a working network: {refused}"
+    );
+    assert_eq!(*unused.calls.borrow(), 0, "the directory was never asked");
 }
 
 #[test]
