@@ -132,9 +132,9 @@ pub fn rename_fork(env: &Env, scope: &Scope, kind: ItemKind, old: &str, new: &st
 /// write runs is exactly the file hashed here at the old one; binding to
 /// the old path would prove nothing, the rename having emptied it.
 ///
-/// A file with no supported frontmatter block refuses the rename here,
-/// before anything is written. Other YAML name spellings may be refused by
-/// target validation later.
+/// A name no single scalar can carry refuses the rename here, before
+/// anything is written: renaming around it is how the fork ends up
+/// declared under one name and answering to another.
 fn stamp_name(kind: ItemKind, from: &Path, to: &Path, new: &str) -> Result<Vec<PlannedOp>> {
     let moved: Vec<(PathBuf, PathBuf)> = match kind {
         ItemKind::Skill => NAME_FILES

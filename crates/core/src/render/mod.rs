@@ -38,12 +38,9 @@ impl RenderWarning {
 /// could read as another type (YAML 1.1 reserved words, leading digits),
 /// open a construct (`*`, `&`, `[`, …), or smuggle structure (newlines,
 /// quotes, `: `) are double-quoted with escapes; everything else stays
-/// plain. Renderers pass foreign text for generated YAML fields through
-/// here: a raw newline there is frontmatter injection, not a cosmetic bug.
-/// Byte-preserving rewrites have their own contract; YAML skill and agent
-/// fork/import paths and namespaced skill installation share a compact
-/// frontmatter-name rewrite that handles a literal `name:` line and relies
-/// on target validation.
+/// plain. Interpolated foreign text — tool names, descriptions, skill
+/// names — must always pass through here: a raw newline in a generated
+/// file is a frontmatter injection, not a cosmetic bug.
 pub fn yaml_scalar(text: &str) -> String {
     if !needs_quoting(text) {
         return text.to_owned();

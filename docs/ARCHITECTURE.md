@@ -475,9 +475,9 @@ lives in one capability table read by core and UI.
 - **Catalogs are adversarial input.** Every catalog read goes through
   `source_read`: resolves against the canonical root, refuses symlinks,
   carries depth/count/byte budgets; raw filesystem reads over catalog
-  paths are guard-banned. Frontmatter parses as bounded YAML (aliases and duplicate
-  keys refused); generated fields take the target format's scalar encoder, and fork,
-  import and namespaced install rename copies by their `name:` line.
+  paths are guard-banned. Frontmatter parses as real YAML (aliases and
+  duplicate keys refused, bounds enforced); every interpolated value in a
+  generated file is quoted.
 - **The source store is immutable; revisions are declared.** Each commit
   is materialized once into a directory named after its object id,
   published by rename, read unchanged thereafter; fetching touches only a
@@ -698,9 +698,9 @@ lives in one capability table read by core and UI.
   from plugin-registry-shaped catalogs are `<plugin>/<item>` in manifest,
   lock and UI. The `/` never reaches disk: the halves are joined — `__` by
   default, `-` where names must be lower-kebab — by a rule beside the name
-  rule in `harness/caps.rs` and checked against it, and rendered copies carry the
-  installed name (SKILL.md rewritten, agent frontmatter generated; the catalog
-  keeps what it wrote). Two declarations landing on one file — `a/b`
+  rule in `harness/caps.rs` and checked against it, and rendered copies
+  carry the installed name (SKILL.md and agent frontmatter rewritten; the
+  catalog keeps what it wrote). Two declarations landing on one file — `a/b`
   against a literal `a__b`, or two names a filesystem folds (case, trailing
   dots and spaces, Unicode composition) — install neither, naming both. Only
   agents, commands and skills may carry a plugin segment; a `/` in a hook or
