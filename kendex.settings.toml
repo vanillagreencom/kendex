@@ -282,15 +282,18 @@ WORKTREE_BASE_DIR = "~/dev/.worktrees/kendex"
 WORKTREE_COPIES = ".kendex-lock.json"
 WORKTREE_DEFAULT_BRANCH = "main"
 WORKTREE_MKDIRS = "tmp"
-# ui/node_modules: tools/guard's UI lanes run `npx --no-install` in ui/, so a
-# worktree without it fails guard on its first commit. The link shares the
-# main checkout's real install (npm — ui/package-lock.json), and worktree
-# setup re-creates it on every pass, replacing anything materialized at this
-# path. So a ui/ dependency change is made with the branch checked out in
-# the MAIN checkout, where `npm ci --prefix ui` rebuilds the real store from
-# the changed manifests — never in a linked worktree, whose install would
-# write through the link. .gitignore's bare `node_modules` pattern covers
-# the symlink.
+# ui/node_modules: tools/guard's UI lanes run ui/package.json's scripts, and
+# this store is what supplies their binaries at the pinned versions. `npm run`
+# puts it at the front of PATH but falls through to the ambient one, so a
+# worktree without the store reds guard on its first commit wherever tsc,
+# biome and vitest are not installed globally — the normal case, not a
+# guarantee the code makes. The link shares the main checkout's real install
+# (npm — ui/package-lock.json), and worktree setup re-creates it on every
+# pass, replacing anything materialized at this path. So a ui/ dependency
+# change is made with the branch checked out in the MAIN checkout, where `npm
+# ci --prefix ui` rebuilds the real store from the changed manifests — never
+# in a linked worktree, whose install would write through the link.
+# .gitignore's bare `node_modules` pattern covers the symlink.
 WORKTREE_SYMLINKS = ".env.local .cache ui/node_modules"
 
 # Nothing needs one: .claude/CLAUDE.md is a tracked symlink, so it arrives

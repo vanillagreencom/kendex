@@ -401,19 +401,20 @@ jobs:
       - name: vitest
         working-directory: ui
         run: npm test
-      # vitest, tsc and biome are three steps here for the same reason guard
-      # runs them as three lanes: `npm run check` is `tsc --noEmit && biome
-      # check src`, so a type error short-circuits biome and one run would
-      # name only the first failure. always(): a red step above must not hide
-      # the ones after it.
-      - name: tsc
+      # One step per ui/package.json script, because a script that short-
+      # circuits another hides its findings: `check` runs `check:types` before
+      # `check:lint`, so a type error would report no lint failure at all.
+      # tools/guard runs these same three scripts, which is what keeps the two
+      # callers from drifting — the commands live in package.json, not here.
+      # always(): a red step above must not hide the ones after it.
+      - name: check:types
         if: always()
         working-directory: ui
-        run: npx --no-install tsc --noEmit
-      - name: biome
+        run: npm run check:types
+      - name: check:lint
         if: always()
         working-directory: ui
-        run: npx --no-install biome check src
+        run: npm run check:lint
 
   # AGGREGATOR — this job's name is the ruleset's required context, so the
   # `(shell + node)` in it is frozen history: renaming it to match today's
@@ -425,9 +426,13 @@ jobs:
   # skipped required context would satisfy the ruleset without any suite having
   # run (the fail-open this line exists to close).
   #
-  # Every `needs` entry is asserted by name below. A result read as anything
-  # but `success` — failure, cancelled, or the `skipped` a dropped `if:` would
-  # produce — fails this job and the required context with it.
+  # The results are asserted as a SET, not entry by entry: `toJSON(needs)`
+  # carries whatever the list holds, so an entry added above is gated the
+  # moment it is added and there is no per-entry step to forget. Any result
+  # other than `success` — failure, cancelled, or the `skipped` a dropped
+  # `if:` would produce — fails this job and the required context with it.
+  # `length > 0` is the one thing `all` cannot say for itself: over an empty
+  # object it is vacuously true, so a deleted `needs` list would pass.
   skill-suites:
     name: Skill suites (shell + node)
     needs: [skill-suites-shard, ui-tests]
@@ -435,19 +440,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: every shard succeeded
+      - name: every needed job succeeded
         env:
-          SHARDS_RESULT: ${{ needs.skill-suites-shard.result }}
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          echo "shards: $SHARDS_RESULT"
-          [ "$SHARDS_RESULT" = "success" ]
-      - name: the ui suite succeeded
-        if: always()
-        env:
-          UI_RESULT: ${{ needs.ui-tests.result }}
-        run: |
-          echo "ui: $UI_RESULT"
-          [ "$UI_RESULT" = "success" ]
+          echo "$RESULTS"
+          jq -e 'length > 0 and all(.[]; .result == "success")' <<<"$RESULTS" >/dev/null
 
   gate-selftest:
     # DELIBERATELY UNGATED: no `needs`, no approval condition, no path
@@ -524,11 +522,13 @@ jobs:
       # already a required context, so clippy gates a merge here with no admin
       # ruleset edit. `--all-targets` is the point — without it the workspace
       # denials in Cargo.toml never reach test targets, which is most of the
-      # code in this repo. clippy.toml allows `unwrap_used`, `expect_used`,
-      # `print_stdout` and `print_stderr` inside `#[test]` bodies, so those
-      # catch a helper's panic path; `dbg_macro`, `todo`, `unimplemented` and
-      # `too_many_lines` stay denied there too. always(): a failing test above
-      # must not swallow it.
+      # code in this repo. What they then catch is helper code in the
+      # integration tests under `crates/*/tests/`: clippy.toml's allows
+      # (`unwrap_used`, `expect_used`, `print_stdout`, `print_stderr`) cover a
+      # whole `#[cfg(test)]` module, helpers included, but outside one they
+      # reach only a `#[test]` body. `dbg_macro`, `todo`, `unimplemented` and
+      # `too_many_lines` are denied in test code either way. always(): a
+      # failing test above must not swallow it.
       - name: cargo clippy
         if: always()
         env:

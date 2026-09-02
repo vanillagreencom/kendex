@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
-    "check": "tsc --noEmit && biome check src",
+    "check:types": "tsc --noEmit",
+    "check:lint": "biome check src",
+    "check": "npm run check:types && npm run check:lint",
     "tauri": "tauri"
   },
   "dependencies": {
