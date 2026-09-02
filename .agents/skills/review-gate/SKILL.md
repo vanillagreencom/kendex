@@ -141,7 +141,7 @@ verdict. Evidence, trust, relay, and writer mechanics:
 - `scripts/validate.sh`: validate a consumer installation. `--help`
 - `scripts/validate-workflow.sh`: compare the adopted workflow with the template. `--help`
 - `scripts/review-predicate.sh`: evaluate one head or validate config. `--help`
-- `scripts/review-writer.sh`: converge every open PR's gate status; its header documents the workflow-only contract.
+- `scripts/review-writer.sh`: `workflow_dispatch` and `schedule` evaluate and converge every open PR; `merge_group` posts one queue success, while `WRITER_READ_ONLY=1` is a no-op. Its header documents the workflow-only contract.
 - `scripts/pr-watch.sh`: reduce open PRs to attention lines. `--help`
 
 Engine selftests run in kendex CI ([DEVELOPMENT.md](DEVELOPMENT.md)). Re-vendor

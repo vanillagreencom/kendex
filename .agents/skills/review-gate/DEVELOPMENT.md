@@ -190,9 +190,14 @@ reads.
 ## Writer mechanics (`.agents/skills/review-gate/scripts/review-writer.sh`)
 
 One workflow, defined on the default branch, is the only writer of the gate
-status. It evaluates the predicate and converges the result.
+status. Its `workflow_dispatch` and `schedule` invocations enumerate every
+open PR, then each recursive single-head invocation evaluates the predicate
+and converges its result.
 
-- Every invocation converges every open PR.
+- The `merge_group` invocation posts unconditional success for one merge-group
+  SHA without evaluating the predicate or enumerating open PRs.
+- `WRITER_READ_ONLY=1` exits before settings resolution and reads or posts
+  nothing.
 - PR-attached legs (`pull_request_target`, `pull_request_review`, `status`, and
   an opted-in `check_run`) do not run the engine. They run a group-less relay
   that dispatches a converge pass. Only `workflow_dispatch` and `schedule`
@@ -206,8 +211,9 @@ status. It evaluates the predicate and converges the result.
 - The `pull_request_target` job never executes PR-controlled code. Every
   checkout pins the default branch with credentials dropped and refuses an
   empty default-branch resolution rather than falling back.
-- The writer no-ops when the current entry already matches and defers a
-  `success` post to a newer run's entry. See § Write ordering.
+- On the converge legs, a single-head evaluation no-ops when the current entry
+  already matches and defers a `success` post to a newer run's entry. See
+  § Write ordering.
 
 ## Evidence reads
 
