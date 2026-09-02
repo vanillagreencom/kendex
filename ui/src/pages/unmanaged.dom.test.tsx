@@ -154,5 +154,6 @@ describe("an item a tool reads through a shortcut it set up", () => {
     // Read off the export: a body compared to its own words pins nothing.
     const body = manageSharedBody(SHARED, ["Claude Code"]);
     expect(body).toContain("Nothing is deleted");
+    expect(document.body.textContent).toContain(body);
   });
 });
