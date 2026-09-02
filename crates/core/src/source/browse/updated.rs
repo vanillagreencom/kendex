@@ -121,8 +121,10 @@ fn mirror_at(env: &Env, browsed: &Browsed) -> Option<(PathBuf, String)> {
 /// an error but a match on every path in the repository: it would date that
 /// skill from any commit at all, and, sharing a walk with the other
 /// packages' pathspecs, would spend the walk's newest commits on itself.
-/// Such an item is dated from the repository's own tip instead, which for a
-/// catalog that is one skill is the same fact.
+/// Such an item is dated over its own tree instead — the repository minus
+/// the folders a root skill leaves out — which [`root_tree_specs`] asks for
+/// as a pathspec set. Not the bare tip either: a commit under one of those
+/// folders changed nothing the skill publishes, so it dates nothing.
 fn rel(root: &Path, found: &Path) -> Option<PathBuf> {
     let rel = found.strip_prefix(root).ok()?;
     (!rel.as_os_str().is_empty()).then(|| rel.to_path_buf())
@@ -196,8 +198,10 @@ pub(crate) fn package_dates(
 /// Not the repository's tip. A repository can be a catalog and a codebase
 /// at once — kendex's own is, with `skills/` and `agents/` beside
 /// `crates/` and `ui/` — and a commit that touched only the codebase moves
-/// the tip without changing a single thing the marketplace offers. Where
-/// the catalog is the whole repository the two are the same date anyway.
+/// the tip without changing a single thing the marketplace offers. Not the
+/// tip even where the catalog IS the whole repository: a root item is
+/// asked about over its own tree, so a commit under one of the folders a
+/// root skill leaves out still moves nothing.
 ///
 /// Asked as its own one-record query rather than taken from the dating
 /// walk. The walk lists every filename in every matching commit to answer

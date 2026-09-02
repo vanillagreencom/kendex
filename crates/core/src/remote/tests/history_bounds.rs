@@ -1,5 +1,14 @@
 //! The record boundary of the history walk: what keeps a catalog from
 //! writing one of its own into a filename.
+//!
+//! Unix only, and only because of the fixture. What this guards is the
+//! parser reading git's bytes, which is the same code on every platform —
+//! but Windows refuses to CREATE a file whose name carries 0x1E
+//! (`InvalidFilename`), so the malicious catalog cannot be authored there
+//! through the filesystem. A catalog forged on Unix and cloned to Windows
+//! still reaches the same parser; only writing the fixture is the part
+//! Windows will not do.
+#![cfg(unix)]
 
 use std::fs;
 
