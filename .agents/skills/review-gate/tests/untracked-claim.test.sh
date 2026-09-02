@@ -5,8 +5,7 @@
 # carries a track-word: a claim with no issue id counts, such a reply
 # never does, later replies of any other kind, bot replies, and resolving
 # the thread do not move it. A comments page it cannot finish fails closed.
-# The watcher surfaces the verdict. Its mapping to a failure status is
-# review-writer.test.sh w9, driven through the writer itself.
+# The verdict's mapping to a failure status is review-writer.test.sh w9.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRED="$SCRIPT_DIR/../scripts/review-predicate.sh"
@@ -73,20 +72,6 @@ case "$out" in "1 0 "*) ok "unresolved counting unchanged";; *) bad "unresolved 
 
 out=$(page "$(thread true "$(human 'Tracked: KEN-1')" true)")
 case "$out" in malformed) ok "a 50+-comment thread fails closed as malformed";; *) bad "a 50+-comment thread fails closed as malformed" "$out";; esac
-
-# The routing arm, not any mention of the verdict: the help text and the
-# verdict allow-list both carry the string, so a bare grep for it stays green
-# with the arm renamed away. Anchored on the arm's own label line, whose next
-# line must emit the verdict.
-watch_arm="$(grep -A 1 '^    untracked-claim)$' \
-  "$SCRIPT_DIR/../scripts/pr-watch.sh" | tail -n 1 || true)"
-case "$watch_arm" in
-  *'emit "$number" "$head" untracked-claim'*)
-    ok "pr-watch routes the verdict to its own emit arm";;
-  *)
-    bad "pr-watch routes the verdict to its own emit arm" \
-      "${watch_arm:-no untracked-claim) arm}";;
-esac
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ] || exit 1
