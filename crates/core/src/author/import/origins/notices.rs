@@ -1,5 +1,7 @@
 //! The licence evidence that travels with copied bytes: the root-level
-//! LICENSE/NOTICE/COPYING files of the catalog an origin came from.
+//! licence and attribution files of the catalog an origin came from. The
+//! stems it collects are the function's own to spell, since the code is
+//! the only complete list.
 //!
 //! Its own file because it answers a different question from the rest of
 //! `origins`: not where the bytes live, but what has to be copied beside

@@ -5,6 +5,10 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 #[allow(clippy::expect_used)]
 fn kendex(home: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_kendex"))
@@ -101,4 +105,52 @@ fn import_with_no_selections_lists_candidates_and_exits_clean() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["schema"], 1);
     assert!(json["candidates"].as_array().unwrap().is_empty());
+}
+
+/// A selection whose every origin is unusable is refused before the copy,
+/// and the refusal says where the bytes were and why they cannot be taken.
+///
+/// The shipped path in: a machine holding a Codex agent, which is TOML and
+/// which a catalog's `agents/<name>.md` slot cannot store. The message is
+/// core's — one sentence for this condition wherever it is said — laid out
+/// here one origin per line.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn import_of_an_agent_in_another_format_refuses_and_says_why() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let home = home.as_path();
+    let target = home.join("mine");
+    std::fs::create_dir_all(&target).unwrap();
+    let agents = home.join(".codex/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("codexer.toml"),
+        "name = \"codexer\"\ndescription = \"about codexer\"\n",
+    )
+    .unwrap();
+
+    let output = kendex(
+        home,
+        &[
+            "marketplace",
+            "import",
+            target.to_str().unwrap(),
+            "--agent",
+            "codexer",
+        ],
+    );
+    let said = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(!output.status.success(), "{said}");
+    assert!(said.contains("has no bytes kendex can import"), "{said}");
+    assert!(said.contains("codexer.toml"), "{said}");
+    assert!(said.contains("it has no frontmatter"), "{said}");
+    assert!(
+        said.contains("a catalog stores an agent as markdown"),
+        "{said}"
+    );
+    assert!(
+        !target.join("agents").exists(),
+        "a refused import writes nothing"
+    );
 }

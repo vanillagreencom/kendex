@@ -186,4 +186,168 @@ fn the_edited_copy_of_a_marketplace_agent_is_judged_by_the_same_rule() {
             .unwrap()
             .contains("name: agentic"),
     );
+
+    // A hash matching nothing, on a candidate that still holds a usable
+    // origin, is a preview gone stale — not this rule. The refusal says so
+    // and names no file, because the refused origin was never what the
+    // selection was about.
+    let stale = ImportSelection {
+        hash: "0".repeat(64),
+        license_confirmed: true,
+        ..selection("agentic", "agentic")
+    };
+    let message = apply(&env, &scopes, &target, &[stale])
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("changed since the preview"), "{message}");
+    assert!(!message.contains("agentic.toml"), "{message}");
+    assert!(
+        !message.contains("has no bytes kendex can import"),
+        "{message}"
+    );
+}
+
+/// The two shapes `frontmatter::split_said` tells apart reach the row as
+/// different reasons, because they send a reader to different edits: add a
+/// block, or close the one you have.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_agent_whose_frontmatter_never_closes_says_so_rather_than_missing() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    file_item(
+        &root.join(".claude/agents"),
+        "unclosed.md",
+        "---\nname: unclosed\ndescription: about unclosed\nAgent body.\n",
+    );
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-unclosed");
+    let candidates = inventory(&env, &scopes).unwrap();
+
+    let unclosed = find(&candidates, "unclosed");
+    assert!(
+        unclosed.origins.iter().all(|origin| origin.hash.is_empty()),
+        "nothing selectable: {:?}",
+        unclosed.origins
+    );
+    let problem = unclosed.origins[0].problem.as_deref().unwrap_or_default();
+    assert!(
+        problem.contains("its frontmatter block is never closed"),
+        "{problem}"
+    );
+    assert!(
+        !problem.contains("it has no frontmatter"),
+        "the other edit entirely: {problem}"
+    );
+
+    let refused = apply(&env, &scopes, &target, &[selection("unclosed", "unclosed")]);
+    assert!(refused.is_err(), "an unselectable origin cannot be applied");
+    assert!(!target.join("agents").exists());
+}
+
+/// Bytes that are not text carry no frontmatter either, and the reason
+/// says which of the two it is. A file parked at `.claude/agents/<name>.md`
+/// is offered by its extension alone, so this is the shape that would
+/// otherwise land raw bytes in a catalog under a name the check calls
+/// clean.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_agent_whose_bytes_are_not_text_is_not_offered() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    let dir = root.join(".claude/agents");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("binary.md"), [0xff, 0xfe, b'\n']).unwrap();
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-binary-agent");
+    let candidates = inventory(&env, &scopes).unwrap();
+
+    let binary = find(&candidates, "binary");
+    assert!(
+        binary.origins.iter().all(|origin| origin.hash.is_empty()),
+        "nothing selectable: {:?}",
+        binary.origins
+    );
+    assert!(
+        binary.origins[0]
+            .problem
+            .as_deref()
+            .is_some_and(|problem| problem.contains("the file is not text")),
+        "{:?}",
+        binary.origins[0].problem
+    );
+
+    let refused = apply(&env, &scopes, &target, &[selection("binary", "binary")]);
+    assert!(refused.is_err(), "an unselectable origin cannot be applied");
+    assert!(!target.join("agents").exists());
+}
+
+/// The Own door, which is the migration path: a catalog a pre-fix kendex
+/// wrote already holds TOML at `agents/<name>.md`, and re-importing from
+/// it is how the breakage would reach a second package. Judged by the same
+/// rule as any other origin, because every read goes through `offered`.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_local_catalog_already_holding_toml_is_not_offered_on() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    let toml = "name = \"poisoned\"\ndescription = \"about poisoned\"\n";
+    file_item(
+        &root.join(crate::source::LOCAL_SOURCE_DIR).join("agents"),
+        "poisoned.md",
+        toml,
+    );
+    let path = lock::lock_path(&env, &scope);
+    let mut held = lock::load(&path).unwrap();
+    held.entries.insert(
+        lock::entry_key(ItemKind::Agent, "poisoned", HarnessId::Claude),
+        entry(ItemKind::Agent, "poisoned", "local", "local"),
+    );
+    lock::save(&path, &held).unwrap();
+
+    let scopes = [scope.clone()];
+    let target = target(&env, &tmp, "mine-poisoned");
+    let candidates = inventory(&env, &scopes).unwrap();
+
+    let poisoned = find(&candidates, "poisoned");
+    assert!(
+        poisoned
+            .origins
+            .iter()
+            .any(|origin| matches!(origin.group, crate::author::import::CandidateGroup::Own)),
+        "the local catalog is the origin under test: {:?}",
+        poisoned.origins
+    );
+    assert!(
+        poisoned.origins.iter().all(|origin| origin.hash.is_empty()),
+        "nothing selectable: {:?}",
+        poisoned.origins
+    );
+    assert!(
+        poisoned.origins[0]
+            .problem
+            .as_deref()
+            .is_some_and(|problem| problem.contains("it has no frontmatter")),
+        "{:?}",
+        poisoned.origins[0].problem
+    );
+
+    let message = apply(&env, &scopes, &target, &[selection("poisoned", "poisoned")])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains("has no bytes kendex can import"),
+        "{message}"
+    );
+    assert!(message.contains("poisoned.md"), "{message}");
+    assert!(
+        !target.join("agents").exists(),
+        "a refused apply writes nothing at all"
+    );
 }
