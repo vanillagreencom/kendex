@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ProblemKind } from "@/stores/problems";
 import {
   PROBLEM_HEADLINES,
   PROBLEM_LEADS,
@@ -17,15 +18,9 @@ describe("problemsFooterLabel", () => {
   });
 });
 
-// A problem card renders for Personal as readily as for a project, and no
-// filename holds across every place a problem arrives from: the two scopes
-// keep their locks under different names and their harness files under
-// different roots, and a source catalog's install state is
-// kendex-local.toml while its kendex.toml is the catalog it publishes
-// (`manifest::file::manifest_path`). kendex.toml sat off this list on the
-// premise that both scopes call it that, which that routing falsifies — a
-// card naming it above an error naming kendex-local.toml points the steps'
-// "move the file named above" at the wrong file.
+// The filenames no problem copy may name, per error-copy.ts's header: a
+// place's locks, manifests and harness roots, each of which the engine
+// routes by what the place is.
 const SCOPE_SPECIFIC = [
   ".kendex-lock.json",
   "lock.json",
@@ -44,6 +39,19 @@ const PLACE = "acme";
 const ALL_LEADS = Object.values(PROBLEM_LEADS)
   .filter((lead) => lead !== null)
   .map((lead) => lead(PLACE));
+
+// The other half of the same rule: which place this is, is the card's to
+// say and not this copy's. `scan-failure` is exempt because its scope is
+// known — the machine, no place in it.
+const SCOPE_WORDS = ["project", "personal"];
+
+const PLACED_COPY = (Object.keys(PROBLEM_HEADLINES) as ProblemKind[])
+  .filter((kind) => kind !== "scan-failure")
+  .flatMap((kind) => [
+    PROBLEM_HEADLINES[kind],
+    ...PROBLEM_STEPS[kind],
+    ...(PROBLEM_LEADS[kind] ? [PROBLEM_LEADS[kind](PLACE)] : []),
+  ]);
 
 const ALL_COPY = [
   ...Object.values(PROBLEM_HEADLINES),
@@ -74,6 +82,17 @@ describe("problem copy", () => {
     );
   });
 
+  // A kind carrying a scope reaches Personal as readily as a project
+  // (`audit_all` seeds `Scope::Global` before any project), so copy naming
+  // one renders over a card's name line naming the other.
+  it("claims no scope the card's own name line answers", () => {
+    for (const line of PLACED_COPY) {
+      for (const word of SCOPE_WORDS) {
+        expect(line.toLowerCase(), `claims ${word}`).not.toContain(word);
+      }
+    }
+  });
+
   // The same rule the lock's own refusal holds in crates/core: nothing
   // here can establish whose these files are, so nothing here asks for one
   // to be thrown away.
@@ -91,8 +110,8 @@ describe("the lead line", () => {
     for (const line of ALL_LEADS) expect(line).toContain(PLACE);
   });
 
-  // By role, never by name: the SCOPE_SPECIFIC guard above holds every
-  // filename out, so what is left has to say which file it means.
+  // By role, never by name: SCOPE_SPECIFIC holds out the filenames a lead
+  // could reach for, so what is left has to say which file it means.
   it("names the file for every kind that has one to name", () => {
     expect(PROBLEM_LEADS["lock-corrupt"]?.(PLACE)).toContain(
       "record of what it installed",
