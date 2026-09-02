@@ -77,7 +77,9 @@ symlink above all — is a lookup that could not be performed and refuses.
 Materialized copies are named `settings.file.<encoded path>` and the memos
 `settings.resolved.<encoded path>`, two namespaces the `settings.absent`
 sentinel cannot occupy, so no source name can materialize onto the path that
-means "not there". The main script handles only the flag and process-key overrides, then
+means "not there". A memo is only a cache, so one whose name will not fit as a
+single filesystem component is not written and that source resolves uncached.
+The main script handles only the flag and process-key overrides, then
 reads the baseline at the returned path. `rows_raised` consumes only those rows. The behavioral rule is
 [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
 

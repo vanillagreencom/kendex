@@ -196,10 +196,10 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
       return 0
       ;;
   esac
-  printf '%s\n' "$resolved" >"$memo" || {
-    echo "::error::$1: could not record the resolved settings source at $memo" >&2
-    return 1
-  }
+  # The memo is only a cache, and a slug spends three characters on `/` and
+  # `.`, so a legal path can encode past NAME_MAX. A write that cannot land
+  # costs a re-resolve, not an answer; stderr first silences bash's error.
+  printf '%s\n' "$resolved" 2>/dev/null >"$memo" || :
   printf '%s' "$resolved"
 }
 

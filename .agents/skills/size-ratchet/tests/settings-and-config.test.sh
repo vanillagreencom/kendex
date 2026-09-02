@@ -311,6 +311,22 @@ case "$OUT" in *"threshold 12"*"*.md=5"*) true ;; *) false ;; esac \
   && ok "the configured threshold and classes still decide a --staged run" \
   || bad "a newline in the resolved source falls back to the defaults" "rc=$RC out=$OUT"
 
+echo "=== a source whose memo name will not fit is resolved uncached ==="
+# The memo name flattens the whole settings path into one basename, and the
+# slug spends three characters on every `/` and `.`, so a path every component
+# of which sits far inside NAME_MAX can encode past that limit. The memo is a
+# cache: such a path resolves the pre-memo way rather than refusing the run.
+new_repo longmemo
+mkfile notes.md 40
+git -C "$R" add -A
+DEEP="$(awk 'BEGIN { for (i = 0; i < 60; i++) printf "d/" }')kendex.settings.toml"
+mkdir -p "$R/$(dirname "$DEEP")"
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "12"\nSIZE_RATCHET_CLASSES = "*.md=5"\n' >"$R/$DEEP"
+run_raw SIZE_RATCHET_SETTINGS_FILE="$DEEP" -- --staged || true
+case "$OUT" in *"threshold 12"*"*.md=5"*) true ;; *) false ;; esac \
+  && ok "a settings path too long to memoize still decides a --staged run" \
+  || bad "an unmemoizable settings path refuses the run" "rc=$RC out=$OUT"
+
 echo "=== the /dev/null sentinel selects NO settings source, the dotenv layer included ==="
 # It named only the settings file, so .env.local (read before it) kept
 # deciding: a caller asking for built-in defaults got whatever the
