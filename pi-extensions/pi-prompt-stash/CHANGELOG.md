@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- **Breaking**: relative `PI_CODING_AGENT_DIR` values now use `~/.pi/agent`. Set an absolute path to relocate the Pi global root.
+
 ### 2.0.0
 
 - **Breaking**: the settings namespace is renamed from `vstack` to `kendex`, with no compatibility fallback. Configuration previously read from `vstack.extensionManager.config["@vanillagreen/pi-prompt-stash"]` in `.pi/settings.json` is now read from `kendex.extensionManager.config["@vanillagreen/pi-prompt-stash"]`; settings still stored under the old key are ignored and this package silently falls back to its defaults until the key is renamed. The `package.json` block that declares these settings is renamed from `"vstack"` to `"kendex"` to match.

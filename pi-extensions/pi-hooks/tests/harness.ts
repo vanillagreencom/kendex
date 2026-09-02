@@ -91,8 +91,15 @@ export function renderedHookPath(project: string, name: string): string {
  * `log`, writes `stderr`, and exits `exitCode` — so the log proves the spawn
  * happened and carries what the extension sent. */
 export function renderStub(project: string, name: string, opts: { exitCode: number; stderr?: string; log: string }): void {
-	const path = renderedHookPath(project, name);
-	mkdirSync(join(project, ".pi", "kendex", "hooks"), { recursive: true });
+	writeStub(renderedHookPath(project, name), opts);
+}
+
+export function renderUserStub(userRoot: string, name: string, opts: { exitCode: number; stderr?: string; log: string }): void {
+	writeStub(join(userRoot, "kendex", "hooks", `${name}.sh`), opts);
+}
+
+function writeStub(path: string, opts: { exitCode: number; stderr?: string; log: string }): void {
+	mkdirSync(join(path, ".."), { recursive: true });
 	writeFileSync(path, [
 		"#!/usr/bin/env bash",
 		"set -euo pipefail",

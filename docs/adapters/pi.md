@@ -11,9 +11,9 @@ allowlist is refused.
 | Global | `~/.pi/agent` | `PI_CODING_AGENT_DIR` |
 | Project | `<project>/.pi`, plus the shared `<project>/.agents` | — |
 
-kendex treats an empty or whitespace-only `PI_CODING_AGENT_DIR` as unset and
-expands `~` against the configured home. The hook carrier uses an override only
-when it is absolute; a relative override contributes no global carrier root.
+kendex trims `PI_CODING_AGENT_DIR`, expands `~` against the configured home,
+and uses an override only when it is absolute. Empty, whitespace-only, and
+relative values use `~/.pi/agent`.
 
 Project markers: a `.pi/` or `.agents/` directory. Owner:
 `crates/core/src/harness/pi.rs`.
@@ -48,8 +48,8 @@ the three run the same bytes under Claude, Codex and Pi. It resolves the
 project from the nearest ancestor with `.pi/`, `.git/`, or
 `.kendex-lock.json`. A project script runs only where Pi reports the workspace
 trusted, since spawning it executes what the project ships. The global root is
-`~/.pi/agent` or an absolute `PI_CODING_AGENT_DIR`; a relative override yields
-no global root.
+`~/.pi/agent` or an absolute `PI_CODING_AGENT_DIR`; a relative override uses
+the default root.
 A script the carrier finds at neither scope is a hook this project has not
 installed, and nothing runs.
 

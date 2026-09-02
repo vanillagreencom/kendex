@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import {
 	readLog,
 	renderedHookPath,
 	renderStub,
+	renderUserStub,
 	runGit,
 	trusted,
 	useIsolatedGitEnv,
@@ -105,6 +107,176 @@ function renderRealHook(project: string, name: string): void {
 	writeFileSync(renderedHookPath(project, name), readFileSync(source, "utf8"));
 	chmodSync(renderedHookPath(project, name), 0o755);
 }
+
+async function withAgentDir<T>(value: string | undefined, run: () => Promise<T>): Promise<T> {
+	const saved = process.env.PI_CODING_AGENT_DIR;
+	if (value === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = value;
+	try {
+		return await run();
+	} finally {
+		if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = saved;
+	}
+}
+
+function runHandlerChild(options: {
+	home: string;
+	workspace: string;
+	agentDir: string;
+	trusted: boolean;
+	expectedReason?: string;
+}): ReturnType<typeof spawnSync> {
+	const modulePath = join(import.meta.dir, "..", "extensions", "hooks.ts");
+	const expected = options.expectedReason ?? null;
+	const program = `
+import piHooks from ${JSON.stringify(modulePath)};
+let handler;
+piHooks({ on(event, callback) { if (event === "tool_call") handler = callback; } });
+const result = await handler(
+	{ toolName: "bash", input: { command: "git commit -m x" } },
+	{ cwd: ${JSON.stringify(options.workspace)}, isProjectTrusted: () => ${options.trusted} },
+);
+if ((result?.reason ?? null) !== ${JSON.stringify(expected)}) process.exit(1);
+`;
+	return spawnSync(process.execPath, ["-e", program], {
+		cwd: options.workspace,
+		encoding: "utf8",
+		env: { ...process.env, HOME: options.home, PI_CODING_AGENT_DIR: options.agentDir },
+	});
+}
+
+describe("pi-hooks root selection", () => {
+	test("a nested Git checkout does not hide the outer kendex project", async () => {
+		const project = mkdtempSync(join(tmpdir(), "pi-hooks-outer-"));
+		const nested = join(project, "vendor", "checkout");
+		const log = join(project, "payload.log");
+		try {
+			mkdirSync(join(project, ".agents"), { recursive: true });
+			mkdirSync(join(nested, ".git"), { recursive: true });
+			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "outer guard ran", log });
+			const result = await withAgentDir("relative/root", () =>
+				installToolCallHandler()(
+					{ toolName: "bash", input: { command: "git commit -m x" } },
+					trusted(nested),
+				),
+			) as { reason?: string };
+			expect(result.reason).toBe("outer guard ran");
+			expect(readLog(log)).toContain("git commit -m x");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("an untrusted project contributes no executable root", async () => {
+		const project = initRustRepo("pi-hooks-untrusted-");
+		const log = join(project, "payload.log");
+		try {
+			renderStub(project, "pre-commit-check", { exitCode: 2, stderr: "must not run", log });
+			const result = await withAgentDir("relative/root", () =>
+				installToolCallHandler()(
+					{ toolName: "bash", input: { command: "git commit -m x" } },
+					{ cwd: project, isProjectTrusted: () => false },
+				),
+			);
+			expect(result).toBeUndefined();
+			expect(readLog(log)).toBe("");
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	test("an absolute override supplies the global root", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-hooks-global-"));
+		const workspace = mkdtempSync(join(tmpdir(), "pi-hooks-workspace-"));
+		const log = join(root, "payload.log");
+		try {
+			renderUserStub(root, "pre-commit-check", { exitCode: 2, stderr: "global guard ran", log });
+			const result = await withAgentDir(root, () =>
+				installToolCallHandler()(
+					{ toolName: "bash", input: { command: "git commit -m x" } },
+					{ cwd: workspace, isProjectTrusted: () => false },
+				),
+			) as { reason?: string };
+			expect(result.reason).toBe("global guard ran");
+			expect(readLog(log)).toContain("git commit -m x");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	test("an empty override uses the default global root", () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-hooks-home-"));
+		const workspace = mkdtempSync(join(tmpdir(), "pi-hooks-workspace-"));
+		const log = join(home, "payload.log");
+		try {
+			renderUserStub(join(home, ".pi", "agent"), "pre-commit-check", {
+				exitCode: 2,
+				stderr: "default guard ran",
+				log,
+			});
+			const child = runHandlerChild({
+				home,
+				workspace,
+				agentDir: "   ",
+				trusted: false,
+				expectedReason: "default guard ran",
+			});
+			expect(child.status, child.stderr).toBe(0);
+			expect(readLog(log)).toContain("git commit -m x");
+		} finally {
+			rmSync(home, { recursive: true, force: true });
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	test("a marker at home is not treated as a trusted project", () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-hooks-home-project-"));
+		const workspace = join(home, "dev", "unmarked");
+		const log = join(home, "payload.log");
+		try {
+			mkdirSync(workspace, { recursive: true });
+			renderUserStub(join(home, ".pi"), "pre-commit-check", {
+				exitCode: 2,
+				stderr: "home project ran",
+				log,
+			});
+			const child = runHandlerChild({
+				home,
+				workspace,
+				agentDir: "relative/root",
+				trusted: true,
+			});
+			expect(child.status, child.stderr).toBe(0);
+			expect(readLog(log)).toBe("");
+		} finally {
+			rmSync(home, { recursive: true, force: true });
+		}
+	});
+
+	test("a relative override is not an executable global root", async () => {
+		const workspace = mkdtempSync(join(tmpdir(), "pi-hooks-relative-"));
+		const relative = join("relative", "agent");
+		const log = join(workspace, "payload.log");
+		const savedCwd = process.cwd();
+		try {
+			renderUserStub(join(workspace, relative), "pre-commit-check", { exitCode: 2, stderr: "must not run", log });
+			process.chdir(workspace);
+			const result = await withAgentDir(relative, () =>
+				installToolCallHandler()(
+					{ toolName: "bash", input: { command: "git commit -m x" } },
+					{ cwd: workspace, isProjectTrusted: () => false },
+				),
+			);
+			expect(result).toBeUndefined();
+			expect(readLog(log)).toBe("");
+		} finally {
+			process.chdir(savedCwd);
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+});
 
 
 describe("pi-hooks pre-commit tool_call", () => {

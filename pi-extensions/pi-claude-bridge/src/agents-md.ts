@@ -3,7 +3,7 @@
 // Pi uses AGENTS.md for long-lived instructions; Claude Code reads the same
 // content under "# CLAUDE.md". We walk up from cwd looking for a context file,
 // fall back to <piUserDir>/AGENTS.md (~/.pi/agent/AGENTS.md unless
-// PI_CODING_AGENT_DIR points elsewhere), and rewrite pi-specific references
+// PI_CODING_AGENT_DIR is absolute), and rewrite pi-specific references
 // (~/.pi, .pi/, .pi, pi) to their Claude Code equivalents so any paths or
 // references in the file still resolve inside the CC subprocess.
 //

@@ -4,7 +4,7 @@ import { piUserDir } from "./config.js";
 
 // --- Debug logging ---
 // CLAUDE_BRIDGE_DEBUG=1 enables debug logging to <piUserDir>/claude-bridge.log
-// (~/.pi/agent/claude-bridge.log unless PI_CODING_AGENT_DIR points elsewhere).
+// (~/.pi/agent/claude-bridge.log unless PI_CODING_AGENT_DIR is absolute).
 
 export const DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
 export const DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join(piUserDir(), "claude-bridge.log");

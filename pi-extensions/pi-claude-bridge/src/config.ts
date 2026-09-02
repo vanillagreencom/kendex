@@ -7,7 +7,7 @@
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { dirname, join, resolve, sep } from "path";
+import { dirname, isAbsolute, join, resolve, sep } from "path";
 import { debug } from "./debug.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
@@ -94,14 +94,14 @@ function expandHome(input: string): string {
 	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
 	return input;
 }
-
 /**
- * The Pi agent config dir: `PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`.
+ * The Pi agent config dir: an absolute `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
  * Every bridge default that used to hardcode `~/.pi/agent` routes through this
  * so a host app that owns the agent dir owns those paths too.
  */
 export function piUserDir(): string {
-	return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
+	return isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
 }
 
 /**

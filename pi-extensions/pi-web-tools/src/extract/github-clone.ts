@@ -1,7 +1,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, normalize, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -20,7 +20,10 @@ export interface CloneResult {
 }
 
 export function defaultCacheDir(): string {
-	const piHome = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), ".pi", "agent");
+	const fallback = join(homedir(), ".pi", "agent");
+	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
+	const expanded = configured?.replace(/^~(?=\/|$)/, homedir());
+	const piHome = expanded && isAbsolute(expanded) ? resolve(expanded) : fallback;
 	return join(piHome, "cache", "github");
 }
 

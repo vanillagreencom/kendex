@@ -53,7 +53,7 @@ fn update_settings_at(
     // this build's home — a sandboxed one included. The two calls that take
     // a path to a repository on the machine read the real home instead.
     for root in settings.harness_roots.values_mut() {
-        *root = crate::paths::expand_tilde(&env.home, &root.to_string_lossy());
+        *root = kendex_core::paths::expand_tilde(&env.home, &root.to_string_lossy());
     }
     // An accepted copy is provably the file — the zoom it carries is the
     // zoom on disk, so a resize the copy predates refuses here instead of
@@ -100,7 +100,7 @@ pub fn save_zoom(percent: u16) -> Result<u16, String> {
 }
 
 fn register_project_at(env: &Env, path: &str) -> Result<SettingsRead, String> {
-    let expanded = crate::paths::expand_tilde(env.real_home(), path);
+    let expanded = kendex_core::paths::expand_tilde(env.real_home(), path);
     settings::register_project(env, &expanded)
         .map(SettingsRead::from)
         .map_err(|e| e.to_string())
@@ -121,7 +121,7 @@ pub fn register_project(path: String) -> Result<SettingsRead, String> {
 pub fn project_offers(root: String) -> Result<Vec<DriftRow>, String> {
     let env = env()?;
     let scope = kendex_core::model::Scope::Project {
-        root: crate::paths::expand_tilde(env.real_home(), &root),
+        root: kendex_core::paths::expand_tilde(env.real_home(), &root),
     };
     Ok(kendex_core::engine::unmanaged_here(&env, &scope))
 }
@@ -135,7 +135,7 @@ pub fn unregister_project(path: String) -> Result<SettingsRead, String> {
 }
 
 fn discover_projects_at(env: &Env, root: &str) -> Result<Vec<String>, String> {
-    let expanded = crate::paths::expand_tilde(env.real_home(), root);
+    let expanded = kendex_core::paths::expand_tilde(env.real_home(), root);
     Ok(discover::discover_projects(&expanded)
         .map_err(|e| e.to_string())?
         .into_iter()

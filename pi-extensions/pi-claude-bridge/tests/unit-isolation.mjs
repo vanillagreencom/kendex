@@ -75,6 +75,24 @@ describe("piUserDir", () => {
 			assert.equal(piUserDir(), resolve(dir));
 		});
 	}));
+
+	it("uses the default for empty, whitespace, and relative overrides", () => {
+		const fallback = resolve(join(homedir(), ".pi", "agent"));
+		for (const value of ["", "   ", "relative/root"]) {
+			withEnv({ PI_CODING_AGENT_DIR: value }, () => {
+				assert.equal(piUserDir(), fallback, `value: ${JSON.stringify(value)}`);
+			});
+		}
+	});
+
+	it("expands lone tilde and tilde-prefixed overrides", () => {
+		withEnv({ PI_CODING_AGENT_DIR: "~" }, () => {
+			assert.equal(piUserDir(), homedir());
+		});
+		withEnv({ PI_CODING_AGENT_DIR: "~/.pi/custom" }, () => {
+			assert.equal(piUserDir(), join(homedir(), ".pi", "custom"));
+		});
+	});
 });
 
 describe("resolveAgentsMdPath isolation", () => {

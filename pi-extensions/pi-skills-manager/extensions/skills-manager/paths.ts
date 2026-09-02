@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionInstallScope } from "./types.js";
@@ -12,7 +12,8 @@ export function expandHome(input: string): string {
 }
 
 export function userPiDir(): string {
-	return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
+	return isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
 }
 
 export function findProjectPiDir(cwd: string): string {

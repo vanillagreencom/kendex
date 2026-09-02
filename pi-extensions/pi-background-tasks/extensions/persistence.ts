@@ -19,7 +19,8 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -122,7 +123,9 @@ export interface PersistenceDeps {
 }
 
 export function piUserDir(): string {
-	return resolve(process.env.PI_CODING_AGENT_DIR?.trim() || `${process.env.HOME ?? ""}/.pi/agent`);
+	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
+	const expanded = configured?.replace(/^~(?=\/|$)/, homedir());
+	return expanded && isAbsolute(expanded) ? resolve(expanded) : join(homedir(), ".pi", "agent");
 }
 
 export function safeFileName(value: string): string {

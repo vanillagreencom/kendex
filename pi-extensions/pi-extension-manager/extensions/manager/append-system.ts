@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { InventoryItem } from "./types.js";
+
+function piUserDir(): string {
+	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
+	const expanded = configured?.replace(/^~(?=\/|$)/, homedir());
+	return expanded && isAbsolute(expanded) ? resolve(expanded) : join(homedir(), ".pi", "agent");
+}
 
 export function findAppendSystemScopeRoot(packageDir: string): string | undefined {
 	let dir = resolve(packageDir);
@@ -23,8 +29,7 @@ export function findAppendSystemScopeRoot(packageDir: string): string | undefine
 function isPiScopeRoot(scopeRoot: string): boolean {
 	if (existsSync(join(scopeRoot, "settings.json"))) return true;
 	if (basename(scopeRoot) === ".pi") return true;
-	const configuredUserRoot = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"));
-	return resolve(scopeRoot) === configuredUserRoot;
+	return resolve(scopeRoot) === piUserDir();
 }
 
 function appendSystemMarkers(name: string): { begin: string; end: string } {
@@ -159,8 +164,7 @@ export function removeAppendSystemBlockForUninstall(item: InventoryItem): void {
 		const scopeRoot = findAppendSystemScopeRoot(item.packageDir);
 		if (scopeRoot) targets.add(join(scopeRoot, "APPEND_SYSTEM.md"));
 	}
-	const configured = process.env.PI_CODING_AGENT_DIR;
-	const piDir = configured ? resolve(configured.replace(/^~(?=\/|$)/, homedir())) : join(homedir(), ".pi", "agent");
+	const piDir = piUserDir();
 	if (existsSync(piDir)) targets.add(join(piDir, "APPEND_SYSTEM.md"));
 	for (const target of targets) {
 		try {

@@ -72,20 +72,16 @@ impl HarnessAdapter for Pi {
     }
 
     fn default_global_root(&self, env: &Env) -> PathBuf {
+        let default = || env.home.join(".pi/agent");
         let Some(dir) = env
             .var("PI_CODING_AGENT_DIR")
             .map(str::trim)
             .filter(|dir| !dir.is_empty())
         else {
-            return env.home.join(".pi/agent");
+            return default();
         };
-        if dir == "~" {
-            return env.home.clone();
-        }
-        if let Some(rest) = dir.strip_prefix("~/") {
-            return env.home.join(rest);
-        }
-        PathBuf::from(dir)
+        let root = crate::paths::expand_tilde(&env.home, dir);
+        if root.is_absolute() { root } else { default() }
     }
 
     fn project_markers(&self) -> &'static [ProjectMarker] {
@@ -172,6 +168,12 @@ mod tests {
         assert_eq!(
             Pi.default_global_root(&env.with_var("PI_CODING_AGENT_DIR", "~/elsewhere")),
             PathBuf::from("/h/elsewhere")
+        );
+        assert_eq!(
+            Pi.default_global_root(
+                &Env::fake("/h", FakeOs::Linux).with_var("PI_CODING_AGENT_DIR", "relative/root")
+            ),
+            PathBuf::from("/h/.pi/agent")
         );
     }
 

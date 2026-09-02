@@ -18,12 +18,12 @@
 //
 // 2. If neither managed segment is found (legacy npm global-prefix installs
 //    or manual `npm install`), we fall back to the conventional Pi user dir
-//    from `PI_CODING_AGENT_DIR` (or `~/.pi/agent`). We only act when that dir
+//    from an absolute `PI_CODING_AGENT_DIR` (or `~/.pi/agent`). We only act when that dir
 //    already exists — npm installing one of these packages on a machine
 //    without Pi must not create stray files.
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -82,6 +82,12 @@ try {
 	process.exit(0);
 }
 
+function piUserDir() {
+	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
+	const expanded = configured?.replace(/^~(?=\/|$)/, homedir());
+	return expanded && isAbsolute(expanded) ? resolve(expanded) : join(homedir(), ".pi", "agent");
+}
+
 function findScopeRoot(start) {
 	let dir = start;
 	while (true) {
@@ -97,16 +103,14 @@ function findScopeRoot(start) {
 	// Fallback: the conventional Pi user dir, but only when it already exists.
 	// This catches legacy global-prefix installs without mutating arbitrary user
 	// state on machines without Pi installed.
-	const configured = process.env.PI_CODING_AGENT_DIR;
-	const piDir = configured ? resolve(configured.replace(/^~(?=\/|$)/, homedir())) : join(homedir(), ".pi", "agent");
+	const piDir = piUserDir();
 	return existsSync(piDir) ? piDir : undefined;
 }
 
 function isPiScopeRoot(scopeRoot) {
 	if (existsSync(join(scopeRoot, "settings.json"))) return true;
 	if (basename(scopeRoot) === ".pi") return true;
-	const configured = process.env.PI_CODING_AGENT_DIR;
-	const piDir = configured ? resolve(configured.replace(/^~(?=\/|$)/, homedir())) : join(homedir(), ".pi", "agent");
+	const piDir = piUserDir();
 	return resolve(scopeRoot) === resolve(piDir);
 }
 

@@ -4,7 +4,7 @@
 
 ### Unreleased
 
-- **Breaking**: hook lookup now uses a trusted project root plus `~/.pi/agent` or an absolute `PI_CODING_AGENT_DIR`; a relative override supplies no global root. The fixed 60s timeout still blocks before exit status is read.
+- **Breaking**: hook lookup now uses a trusted project root plus `~/.pi/agent` or an absolute `PI_CODING_AGENT_DIR`; empty, whitespace-only, and relative overrides use the default root. The fixed 60s timeout still blocks before exit status is read.
 
 ### 0.8.0
 

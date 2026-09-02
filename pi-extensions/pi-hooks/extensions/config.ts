@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -27,40 +27,61 @@ export type HookKey = Exclude<keyof typeof DEFAULTS, "clippyTimeoutMs" | "driftC
 /** Pi roots the carrier may read or execute from. Project content requires Pi
  * trust. Global content requires the default root or an absolute override. */
 export function piRoots(cwd: string, trusted: boolean): { global?: string; project?: string } {
-	const project = trusted ? join(projectRoot(cwd), ".pi") : undefined;
+	const root = projectRoot(cwd);
+	const project = trusted && root ? join(root, ".pi") : undefined;
+	const fallback = resolve(homedir(), ".pi", "agent");
 	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
-	if (!configured) return { global: resolve(homedir(), ".pi", "agent"), project };
+	if (!configured) return { global: fallback, project };
 	const expanded = configured === "~"
 		? homedir()
 		: configured.startsWith("~/")
 			? join(homedir(), configured.slice(2))
 			: configured;
-	return { global: isAbsolute(expanded) ? resolve(expanded) : undefined, project };
+	return { global: isAbsolute(expanded) ? resolve(expanded) : fallback, project };
 }
 
-/**
- * Walk up from `cwd` to the nearest Pi project marker. A nested session must
- * find the same project settings and hooks as a session at the project root.
- */
-export function projectRoot(cwd: string): string {
+const PROJECT_MARKER_DIRS = [
+	".claude",
+	".codex",
+	".opencode",
+	".cursor",
+	".pi",
+	".agents",
+	".gemini",
+] as const;
+
+function isDirectory(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+function isFile(path: string): boolean {
+	try {
+		return statSync(path).isFile();
+	} catch {
+		return false;
+	}
+}
+
+/** Walk up by kendex's project rule: a lock file wins, otherwise the nearest
+ * harness marker below home. Nested Git repositories are not project markers. */
+export function projectRoot(cwd: string): string | undefined {
 	let current = resolve(cwd);
+	const home = resolve(homedir());
 	while (true) {
-		if (existsSync(join(current, ".pi", "settings.json"))) return current;
-		if (
-			existsSync(join(current, ".pi")) ||
-			existsSync(join(current, ".git")) ||
-			existsSync(join(current, ".kendex-lock.json"))
-		) {
-			return current;
-		}
+		if (isFile(join(current, ".kendex-lock.json"))) return current;
+		if (current !== home && PROJECT_MARKER_DIRS.some((marker) => isDirectory(join(current, marker)))) return current;
 		const parent = dirname(current);
-		if (parent === current) return resolve(cwd);
+		if (parent === current) return undefined;
 		current = parent;
 	}
 }
 
 function projectSettingsPath(cwd: string): string {
-	return join(projectRoot(cwd), ".pi", "settings.json");
+	return join(projectRoot(cwd) ?? resolve(cwd), ".pi", "settings.json");
 }
 
 const PROJECT_TRUST_SYMBOL = Symbol.for("kendex.pi.project-trust");

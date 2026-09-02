@@ -6,7 +6,7 @@ import {
 import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { frameGlyphs, glyphs } from "./glyphs.js";
 
 const PACKAGE_ID = "@vanillagreen/pi-prompt-stash";
@@ -51,9 +51,9 @@ function expandHome(input: string): string {
 	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
 	return input;
 }
-
 function piUserDir(): string {
-	return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
+	return isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
 }
 
 function safeFileName(value: string): string {

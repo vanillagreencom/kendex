@@ -15,7 +15,7 @@ const HOOK_BUDGET_MS = 60_000;
 
 /**
  * Where kendex renders a Pi hook: `<project>/.pi/kendex/hooks/<name>.sh`, then
- * the global `<PI_CODING_AGENT_DIR or ~/.pi/agent>/kendex/hooks/<name>.sh`.
+ * the global `<absolute PI_CODING_AGENT_DIR or ~/.pi/agent>/kendex/hooks/<name>.sh`.
  *
  * The project script is EXECUTED, so it is behind Pi's project trust: a clone
  * the person has not trusted must not get its own code run on the first bash

@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export type Mode = "off" | "lite" | "full" | "ultra" | "micro";
 export type ActiveMode = Exclude<Mode, "off">;
@@ -66,7 +66,8 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 
 
 export function piSettingsPaths(cwd = process.cwd()): string[] {
-	const userDir = resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
+	const userDir = isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
 	const user = join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];
@@ -109,7 +110,8 @@ export interface ConfigurationSource {
 // and reports which file's `mode` key won the merge, plus any legacy keys
 // (`enabled`, `defaultMode`) present alongside `mode`. Project wins on tie.
 export function configurationSource(cwd?: string): ConfigurationSource {
-	const userDir = resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent");
+	const userDir = isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
 	const userPath = join(userDir, "settings.json");
 	const projectPath = projectSettingsPath(cwd ?? process.cwd());
 	const activePaths = new Set(piSettingsPaths(cwd));
