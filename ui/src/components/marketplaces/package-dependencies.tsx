@@ -6,6 +6,7 @@ import {
   DEPENDENCY_INSTALLED_NOTE,
   DEPENDENCY_NOT_OFFERED_NOTE,
   DEPENDENCY_REMOVED_NOTE,
+  DEPENDENCY_UNKNOWN_NOTE,
   OPTIONAL_HEADING,
   OPTIONAL_NOTE,
   REQUIRES_HEADING,
@@ -15,26 +16,33 @@ import {
 /** What a dependency's state adds to its name, or nothing when it is
  *  simply on offer. A package already here is not installed twice, one the
  *  person removed stays removed until they add it back, one the catalog
- *  carries twice is one the engine will not choose between, and one it no
- *  longer carries cannot be installed at all — each a fact about the row,
- *  said beside it and never blamed on the wrong party. */
+ *  carries twice is one the engine will not choose between, one whose
+ *  landing place has no readable record cannot be spoken for either way,
+ *  and one the catalog no longer carries cannot be installed at all — each
+ *  a fact about the row, said beside it and never blamed on the wrong
+ *  party. Unknown is named rather than falling through: the row would
+ *  otherwise read "not offered here" about a package the catalog offers. */
 export function dependencyNote(state: InstallState): string | null {
   if (state === "installed") return DEPENDENCY_INSTALLED_NOTE;
   if (state === "removed-by-you") return DEPENDENCY_REMOVED_NOTE;
   if (state === "offered-more-than-once") return DEPENDENCY_AMBIGUOUS_NOTE;
+  if (state === "unknown") return DEPENDENCY_UNKNOWN_NOTE;
   if (state === "available") return null;
   return DEPENDENCY_NOT_OFFERED_NOTE;
 }
 
-/** A dependency the install cannot take: the catalog no longer offers it,
- *  offers it under more than one plugin and will not guess, or the person
- *  removed it themselves and that removal is recorded — the engine keeps
- *  each of those out of every plan, so ticking it here would ask for
- *  something no install brings. */
+/** A dependency this install must not be asked for: the catalog no longer
+ *  offers it, offers it under more than one plugin and will not guess, the
+ *  person removed it themselves and that removal is recorded — the engine
+ *  keeps each of those out of every plan — or the landing place's lock
+ *  cannot be read, in which case an install there meets that same record
+ *  and is refused. Ticking any of them asks for something no install
+ *  brings. */
 const unavailable = (state: InstallState): boolean =>
   state === "not-offered" ||
   state === "removed-by-you" ||
-  state === "offered-more-than-once";
+  state === "offered-more-than-once" ||
+  state === "unknown";
 
 /** The package page's dependency facts: what comes with this package, and
  *  what it offers to bring. Read-only — the choosing happens in the install

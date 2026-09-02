@@ -4,7 +4,9 @@ import type { PackageDependencies } from "@/bindings";
 import {
   DEPENDENCY_AMBIGUOUS_NOTE,
   DEPENDENCY_INSTALLED_NOTE,
+  DEPENDENCY_NOT_OFFERED_NOTE,
   DEPENDENCY_REMOVED_NOTE,
+  DEPENDENCY_UNKNOWN_NOTE,
 } from "@/lib/copy-marketplaces";
 import { DependencyChoice, DependencyFacts } from "./package-dependencies";
 
@@ -20,6 +22,10 @@ const declared: PackageDependencies = {
 };
 
 const empty: PackageDependencies = { required: [], optional: [] };
+
+/** Static markup escapes an apostrophe, so copy carrying one is compared
+ *  in the form it renders as. */
+const esc = (copy: string) => copy.replace(/'/g, "&#x27;");
 
 const facts = (dependencies: PackageDependencies) =>
   renderToStaticMarkup(<DependencyFacts dependencies={dependencies} />);
@@ -60,5 +66,31 @@ describe("a package's declared dependencies on both surfaces", () => {
   it("says nothing on either surface for a package that declares none", () => {
     expect(facts(empty)).toBe("");
     expect(picker(empty)).not.toContain("Optional");
+  });
+});
+
+// The landing scope is the destination a redirected install picks, and its
+// lock may be one this build refuses while the browsed scope reads fine. A
+// dependency there is not missing and not present — nothing read the record
+// that would say — and an install asked for it meets that same record.
+describe("a dependency landing where the records cannot be read", () => {
+  const unknown: PackageDependencies = {
+    required: [
+      { name: "code-quality", shown: "code-quality", state: "unknown" },
+    ],
+    optional: [{ name: "linear", shown: "linear", state: "unknown" }],
+  };
+
+  it("says why on both surfaces, rather than calling it not offered", () => {
+    for (const html of [facts(unknown), picker(unknown)]) {
+      expect(html).toContain(esc(DEPENDENCY_UNKNOWN_NOTE));
+      expect(html).not.toContain(DEPENDENCY_NOT_OFFERED_NOTE);
+    }
+  });
+
+  it("does not let the optional one be asked for", () => {
+    const html = picker(unknown);
+    expect(html).not.toContain('data-checked=""');
+    expect(html.match(/data-disabled=""/g)).toHaveLength(1);
   });
 });

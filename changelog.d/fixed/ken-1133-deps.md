@@ -1,0 +1,1 @@
+- A dependency landing in a place whose lock can't be read now says its standing isn't known, instead of reading "not offered here", and the install picker won't let you ask for it.

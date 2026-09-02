@@ -29,6 +29,10 @@ import { type BundleRef, useNavStore } from "@/stores/nav";
  * the normal preview, safety score in view and never a gate. From a
  * repository nobody subscribes to yet, the members are listed and
  * Subscribe is the one action. */
+/** Nothing answered yet. A destination decides which tools can take the
+ *  install and which extras it brings, so both reset with it. */
+const NO_CHOICE: Choice = { harnesses: null, method: null, optional: [] };
+
 export function BundleDetailPage() {
   const bundleRef = useNavStore((s) => s.bundleRef);
   if (!bundleRef) return null;
@@ -50,11 +54,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   const busy = useMarketplacesStore((s) => s.busy);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [destination, setDestination] = useState<Scope | null>(null);
-  const [choice, setChoice] = useState<Choice>({
-    harnesses: null,
-    method: null,
-    optional: [],
-  });
+  const [choice, setChoice] = useState<Choice>(NO_CHOICE);
 
   // The cached detail is what renders while this read is out, and it may
   // predate the record breaking, so every install action is held until the
@@ -116,10 +116,9 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   // without a lock, so no scan of the rows could tell.
   const recordsUnknown = detail?.recordsUnreadable ?? false;
   // One name for "nothing here may be installed right now", so a new action
-  // on this page cannot be added past one half of it. A selection ticked
-  // against the cached detail is dropped when the landing one says the
-  // record cannot be read: it was made against a standing that no longer
-  // holds, and Install selected reads it.
+  // cannot be added past one half of it. A selection ticked against the
+  // cached detail is dropped when the landing one says the record cannot be
+  // read: it was made against a standing that no longer holds.
   const held = recordsUnknown || refreshing;
   useEffect(() => {
     if (recordsUnknown) setSelected(new Set());
@@ -216,11 +215,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                         // Which tools can take this is a fact about the
                         // destination, so a choice made against another one
                         // is not an answer here.
-                        setChoice({
-                          harnesses: null,
-                          method: null,
-                          optional: [],
-                        });
+                        setChoice(NO_CHOICE);
                         setDestination(next);
                       }}
                     />

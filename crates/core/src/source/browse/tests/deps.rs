@@ -123,3 +123,65 @@ fn a_package_that_declares_nothing_carries_no_dependencies() {
     let gh = rows.iter().find(|row| row.name == "gh").unwrap();
     assert!(gh.dependencies.is_empty(), "{:?}", gh.dependencies);
 }
+
+/// The landing scope's lock is what says whether a dependency is already
+/// there. Where it cannot be read, the row says so rather than calling the
+/// dependency missing — the same refusal every other state column on this
+/// branch makes, reached through the destination a redirected install picks
+/// rather than through the scope being browsed.
+///
+/// A removal is the manifest's word and the manifest still reads, so the
+/// held-back name keeps its own answer: only what the lock alone could have
+/// settled becomes unknown.
+#[test]
+fn a_dependency_landing_where_the_lock_cannot_be_read_is_unknown() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    let catalog = root.join("catalog");
+    needing(&catalog, "dev", &["code-quality"], &["linear", "removed"]);
+    for name in ["code-quality", "linear", "removed"] {
+        skill(&catalog, "skills", name, "body");
+    }
+
+    let (env, browsing) = project(&root, &sources_decl(&catalog));
+    let landing = Scope::Project {
+        root: root.join("elsewhere"),
+    };
+    let Scope::Project { root: elsewhere } = &landing else {
+        unreachable!()
+    };
+    fs::create_dir_all(elsewhere).unwrap();
+    fs::write(
+        elsewhere.join("kendex.toml"),
+        format!(
+            "{}\n[suppressed]\nskill = [\"removed\"]\n",
+            sources_decl(&catalog)
+        ),
+    )
+    .unwrap();
+    // Damaged bytes where the destination's lock belongs. The scope being
+    // browsed reads perfectly well, so nothing but the landing record is
+    // in question.
+    fs::write(crate::lock::lock_path(&env, &landing), "{not json").unwrap();
+
+    let preview = package_preview(
+        &env,
+        &cat(&browsing),
+        ItemKind::Skill,
+        "dev",
+        Some(&landing),
+    )
+    .unwrap();
+    assert_eq!(
+        named(&preview.dependencies.required),
+        vec![("code-quality", InstallState::Unknown)],
+        "not Available: nothing read the record that would say"
+    );
+    assert_eq!(
+        named(&preview.dependencies.optional),
+        vec![
+            ("linear", InstallState::Unknown),
+            ("removed", InstallState::RemovedByYou),
+        ]
+    );
+}

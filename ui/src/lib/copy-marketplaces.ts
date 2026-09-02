@@ -21,6 +21,11 @@ export const DEPENDENCY_INSTALLED_NOTE = "already installed";
 export const DEPENDENCY_NOT_OFFERED_NOTE = "not offered here";
 export const DEPENDENCY_REMOVED_NOTE =
   "you removed it — add it back to restore it";
+/** The landing scope's lock could not be read, so whether this dependency
+ * is already there is not known — and neither is whether an install would
+ * be refused on that same record. */
+export const DEPENDENCY_UNKNOWN_NOTE =
+  "not known here — this place's records can't be read";
 export const DEPENDENCY_AMBIGUOUS_NOTE =
   "this marketplace offers it more than once — nothing to choose between them";
 /** A row in a place whose lock kendex cannot read. What the source
