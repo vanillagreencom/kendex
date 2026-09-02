@@ -552,8 +552,8 @@ flush_batch() { # UNIT — appends one "<path><TAB><count>" row per pending file
 # other tracked path. ONE `check-attr` process for the whole set: a fork per
 # path is the cost shape that measured 5x when the sniff was tried per-file.
 # The `-z` stream is `path NUL attr NUL value NUL`, folded to one exempt path
-# per line; a newline in a path would misalign that, and the walk refuses every
-# such path before it reads this set.
+# per line; a newline in a path would misalign it, and the walk refuses every
+# such path before any verdict — a shift exempts nothing regardless.
 ATTR_EXEMPT=""
 if ! { git ls-files -z | git check-attr -z --stdin diff >"$TMP/attr.z"; }; then
   config_error "could not resolve the 'diff' attribute over the tracked set (git ls-files | git check-attr failed) — refusing to guess what git keeps out of its textual diffs"
@@ -615,16 +615,16 @@ note_if_binary() { # PATH BLOBFILE — records a tracked blob git reads as binar
 while IFS= read -r -d '' rec; do
   mode="${rec%% *}"
   f="${rec#*"$TAB"}"
-  case "$mode" in
-    120000) continue ;; # tracked symlink — no meaningful size, and no content
-    160000) continue ;; # submodule gitlink — never countable; a baseline
-  esac
-  # Both records this walk writes are line-oriented and tab-separated, and the
-  # sniff below reaches size-excluded paths too, so the refusal covers the
-  # whole tracked set rather than the measured part of it.
+  # Above every skip: both records this walk writes are line-oriented and
+  # tab-separated, and the check-attr parse below relies on the refusal
+  # covering the whole tracked set, symlinks and gitlinks included.
   case "$f" in
     *"$NL"*) config_error "tracked path contains a newline, unrepresentable in line-oriented records: '$f'" ;;
     *"$TAB"*) config_error "tracked path contains a tab, unrepresentable in the baseline TSV: '$f'" ;;
+  esac
+  case "$mode" in
+    120000) continue ;; # tracked symlink — no meaningful size, and no content
+    160000) continue ;; # submodule gitlink — never countable; a baseline
   esac
   sniff=1
   if is_diff_exempt "$f"; then sniff=0; fi

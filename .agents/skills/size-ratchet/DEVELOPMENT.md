@@ -44,59 +44,47 @@ can neither smuggle a new offender past the gate nor loosen a baselined row.
 An index blob that cannot be read (corrupt object, promisor blob
 unavailable) is a collection error (exit 2, naming the file) — a file the
 gate could not measure is never skipped. A blob that materializes but cannot
-then be counted refuses under its own wording, naming the count of the
-materialized blob rather than the read, because the object store is not the
+then be counted refuses under its own wording — the object store is not the
 fault there. A tracked path containing a tab or newline is refused loudly
-(exit 2) — it cannot be represented in the line-oriented records, and the
-content sniff below reaches every tracked path, so the refusal covers the
-whole tracked set rather than the measured part of it.
+(exit 2) before any skip, so the refusal covers the whole tracked set, which
+is what the `check-attr` parse below relies on.
 
 Every tracked blob is sniffed for a NUL in its leading 8000 bytes, git's own
 text/binary rule, which growth-guards states as `gg_blob_is_binary` and
-preflight as `content_is_binary`. The unit does not narrow the coverage: a
-line class, a byte class, and no class at all are all sniffed, because the
-property held is that the blob stays reviewable text, and its content decides
-that where the unit says nothing.
+preflight as `content_is_binary`. The unit does not narrow the coverage: line
+class, byte class, and no class at all are all sniffed, because what is held
+is that the blob stays reviewable text, and its content decides that where
+the unit says nothing. Such a blob has no textual diff and `git grep -I`
+drops it, while `wc` still returns a number and the walk-based sibling lanes
+name it skipped and exit 0. A hit here is a collection error (exit 2) naming
+the path and the byte's offset, never the byte itself — reprinting it would
+put a NUL into the log carrying the diagnostic on. The refusal runs after the
+walk and before any mode branch, so `--seed` and `--update` refuse through
+that one place rather than writing a meaningless count into the baseline.
 
 The sniff's one exemption is git's own record. `git check-attr diff` answers
 `unset` for a path given `-diff` and `binary` for one given a binary diff
 driver; either way git keeps the path out of every textual diff, so its bytes
-were never reviewable text and the sniff has nothing to ask. That is the
-escape hatch for a real binary asset. The size exclusion list answers a
-different question — which paths carry no size bound — and its entries carry
-size reasons, so it decides nothing here: a size-excluded text file is sniffed
-like every other tracked path, and the two exemptions are independent. The
-attribute is resolved for the whole tracked set in ONE
+were never reviewable text. That is the escape hatch for a real binary asset.
+The size exclusion list answers a different question — which paths carry no
+size bound — so it grants no content exemption: a size-excluded text file is
+sniffed like every other tracked path, and only a path that is both
+size-excluded and diff-exempt is skipped outright. The attribute is resolved
+for the whole tracked set in ONE
 `git ls-files -z | git check-attr -z --stdin diff` before the walk; a fork per
 path is the cost shape that measured 5x when the sniff itself was tried
-per-file. Only a path that is both size-excluded and diff-exempt is read for
-nothing, so only that one is skipped outright.
-
-Under `--staged` and for any path absent from the worktree the blob is
-materialized once, and the count and the sniff read that one copy.
-
-A hit is a collection error (exit 2) naming the path and the byte's offset,
-never the byte itself. Git records such a blob as binary, so it carries no
-textual diff; a plain `git grep` for a line inside it answers `Binary file
-<path> matches`, and a `git grep -I` drops the path outright. No line in it
-reaches diff or grep review, while `wc` still returns a number. One raw
-control byte typed in place of its escape puts a source file in that state:
-the byte is invisible or near-invisible in the usual renderings, and the
-walk-based lanes that do see it name the path as not measured, count it in
-`GG_WALK_SKIPPED`, and still exit 0. The refusal runs before any mode
-branch, so `--seed` and `--update` refuse too rather than writing a
-meaningless line count into the baseline.
+per-file. Under `--staged`, and for any path absent from the worktree, the
+blob is materialized once and the count and the sniff read that one copy.
 
 The sniff runs in two stages, so it costs no subprocess on the files that
-pass. A bounded `read -d ''` under `LC_ALL=C` stops at a NUL, bounds itself
-in bytes, and forks nothing — which makes that stage git's rule outright: a
-status of 0 over a chunk short of the window is a NUL inside the window and
-nothing else. An `od` scan of the leading 8000 bytes then locates the byte.
-Because the prefilter is byte-exact, a scan that runs, succeeds, and finds
-nothing means one of two things: the sniff is wrong, or, on the worktree path
-where the two stages read the file separately, a write landed between them.
-Either way it refuses rather than reporting clean; the refusal itself names
-the path and says the scan located none, and leaves the mechanism here.
+pass. A bounded `read -d ''` under `LC_ALL=C` stops at a NUL and bounds
+itself in BYTES, which is the unit git's rule is stated in; that makes the
+stage git's rule outright — a status of 0 over a chunk short of the window
+means a NUL inside it and nothing else. An `od` scan then locates the byte.
+Because the prefilter is byte-exact, a scan that runs, succeeds and finds
+nothing means the sniff is wrong, or — on the worktree path, where the two
+stages read the file separately — a write landed between them. Either way it
+refuses rather than reporting clean.
 
 The baseline is policy input and never enters the measured set. A self row is
 therefore stale. This makes seed, update, and staged tightening converge

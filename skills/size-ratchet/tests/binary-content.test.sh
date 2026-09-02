@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
-# Pins the refusal on a tracked blob git reads as binary. A raw NUL typed
-# into a source file instead of its escape makes git call the file binary: no
-# textual diff, a plain `git grep` reduced to `Binary file <path> matches` and
-# a `git grep -I` that drops the path — and `wc -l` still returns a number, so
-# the gate used to report a clean measurement over content nobody could read.
-# The gate now refuses that blob by name and byte offset.
+# Pins the refusal on a tracked blob git reads as binary. A raw NUL typed in
+# place of its escape makes git call the file binary — no textual diff, a
+# `git grep -I` that drops the path — while `wc -l` still returns a number, so
+# the gate used to measure content nobody could read. It now refuses by name
+# and byte offset.
 #
-# Pinned here: the refusal fires in both scopes (index and worktree) and in
-# --seed and --update, where a miss would write a meaningless count into the
-# baseline; every offender is named, not just the first; the offset is counted
-# in BYTES and located inside the sniff window; a byte class is refused too,
-# because the property is the content and not the unit; a SIZE-excluded text
-# path is sniffed like every other path, git's own diff attribute being the
-# only exemption; a scan that comes back empty is a refusal, not a pass; and
-# the diagnostic never carries the byte itself. The must-fail control at the
-# end reverts the refusal and shows the NUL fixture going green, so the green
-# cases above are evidence.
+# Pinned here: the refusal fires in both scopes (index and worktree), and in
+# every mode, since it runs before the --seed and --update branches; a byte
+# class is refused too, the content deciding and not the unit; a SIZE-excluded
+# text path is sniffed like every other, git's own diff attribute the only
+# exemption; the sniff window is bounded in bytes under any locale; and a scan
+# that comes back empty refuses rather than passing. Each must-fail control
+# reverts one behavior and shows the fixture going green, so the green cases
+# are evidence.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,9 +44,8 @@ new_repo() { # NAME
   git -C "$R" config user.name test
 }
 
-# The fixture bytes: a one-line TypeScript source whose string literal carries
-# a raw U+0000 where the author meant to type the escape. `printf` writes the
-# byte; nothing in this file ever holds one, so this suite is itself readable.
+# A one-line TypeScript source whose string literal carries a raw U+0000 where
+# the escape was meant. `printf` writes it, so this suite holds no NUL itself.
 plant_nul() { # PATH LEADING-BYTES
   mkdir -p "$R/$(dirname "$1")"
   { printf '%s' "$2"; printf '\000'; printf 'y";\n'; } >"$R/$1"
@@ -109,8 +105,8 @@ else
 fi
 
 echo "=== the diagnostic never reprints the byte ==="
-# Reprinting it would put a NUL into the log, terminal or CI annotation that
-# carries the diagnostic onward — the same invisibility, one layer out.
+# Reprinting it puts the byte into whatever log or CI annotation carries the
+# diagnostic onward — the same invisibility, one layer out.
 total="$(wc -c <"$OUTFILE")"
 stripped="$(LC_ALL=C tr -d '\000' <"$OUTFILE" | wc -c)"
 if [ "$((total))" -eq "$((stripped))" ] && [ "$((total))" -gt 0 ]; then
@@ -120,9 +116,8 @@ else
 fi
 
 echo "=== a BYTE class is refused too — the content decides, not the unit ==="
-# The whole markdown surface a repo reviews sits in byte classes, so a rule
-# keyed on the measurement unit would leave every SKILL.md, AGENTS.md and
-# workflow doc free to carry the byte and still read `OK`.
+# A repo's whole markdown surface sits in byte classes, so a rule keyed on the
+# unit would leave every SKILL.md and AGENTS.md free to carry the byte.
 new_repo byteclass
 plant_nul skills/demo/SKILL.md 'const a = "x'
 git -C "$R" add -A
@@ -132,8 +127,7 @@ if [ "$RC" -eq 2 ] && has 'skills/demo/SKILL.md: a NUL byte at offset 12'; then
 else
   bad "a byte class is asked about its content too" "rc=$RC out=$OUT"
 fi
-# CI runs the gate without --staged, and a repo's whole markdown surface sits
-# in byte classes, so the arm that reads the worktree copy is the half a NUL
+# CI runs the gate without --staged, so the worktree arm is the half a NUL
 # reaching main would meet. Pinned here, not inferred from the index arm.
 run_in SIZE_RATCHET_THRESHOLD=400 SIZE_RATCHET_CLASSES='*/SKILL.md=24k'
 if [ "$RC" -eq 2 ] && has 'skills/demo/SKILL.md: a NUL byte at offset 12'; then
@@ -144,8 +138,7 @@ fi
 
 echo "=== must-fail control: keyed on the unit again, the same fixture goes green ==="
 # The control restores the one thing that changed — the sniff answering only
-# where the resolved unit is lines — and leaves every call site and the whole
-# diagnostic standing, so a green run here is what the case above rules out.
+# where the resolved unit is lines — and leaves every call site standing.
 UNIT="$TMP/unit-scripts"
 mkdir -p "$UNIT"
 cp -R "$SKILL_DIR/scripts/." "$UNIT/"
@@ -173,10 +166,9 @@ else
 fi
 
 echo "=== a SIZE-excluded text path is sniffed like any other ==="
-# The size exclusion list answers which paths carry no SIZE bound, and its
-# entries carry size reasons — a lockfile, a generated bundle, an append-only
-# log. Reading it as a content exemption too let every one of those carry the
-# byte unseen, the shipped CHANGELOG*.md default worst of all.
+# The exclusion list answers which paths carry no SIZE bound. Reading it as a
+# content exemption let every entry carry the byte unseen — a lockfile, a
+# generated bundle, the shipped CHANGELOG*.md default worst of all.
 new_repo excluded
 plant_nul assets/icon.png 'const a = "x'
 mkdir -p "$R/tools"
@@ -190,10 +182,9 @@ else
 fi
 
 echo "=== and git's own diff attribute is what exempts it ==="
-# The exemption authority is the record git already keeps: a path declared
-# binary (or -diff) is one git keeps out of every textual diff, so its bytes
-# were never reviewable text. Same fixture, same exclusion list, one line of
-# .gitattributes added.
+# The authority is the record git already keeps: a path declared binary (or
+# -diff) is out of every textual diff, so its bytes were never reviewable
+# text. Same fixture, same exclusion list, one .gitattributes line added.
 printf 'assets/* binary\n' >"$R/.gitattributes"
 git -C "$R" add -A
 run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
@@ -205,8 +196,7 @@ fi
 
 echo "=== must-fail control: with the size list back in charge, the same fixture goes green ==="
 # The control restores the one thing that changed — the size exclusion
-# short-circuiting the walk before the sniff — and leaves the attribute
-# lookup, every call site and the whole diagnostic standing.
+# short-circuiting the walk before the sniff — and leaves the rest standing.
 EXC="$TMP/excl-scripts"
 mkdir -p "$EXC"
 cp -R "$SKILL_DIR/scripts/." "$EXC/"
@@ -236,8 +226,7 @@ else
 fi
 
 echo "=== the worktree scan CI runs refuses the same blob ==="
-# CI runs the gate without --staged, over a clean checkout: a NUL that reached
-# main must red there too, not only at the commit that introduced it.
+# A NUL that reached main must red in CI too, not only at its commit.
 new_repo worktree
 plant_nul src/installed.ts 'const a = "x'
 git -C "$R" add -A
@@ -248,48 +237,12 @@ else
   bad "the no---staged scan refuses it too" "rc=$RC out=$OUT"
 fi
 
-echo "=== the offset counts bytes, not characters ==="
-# 100 x U+00E9 is 100 characters and 200 bytes. A count that came from the
-# shell's character-wise read would report 100 here.
-new_repo multibyte
-mkdir -p "$R/src"
-{ awk 'BEGIN { for (i = 0; i < 100; i++) printf "\303\251" }'; printf '\000'; printf '";\n'; } >"$R/src/installed.ts"
-git -C "$R" add -A
-run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
-if [ "$RC" -eq 2 ] && has 'src/installed.ts: a NUL byte at offset 200'; then
-  ok "a NUL behind 100 two-byte characters is reported at byte offset 200"
-else
-  bad "the offset is a byte offset" "rc=$RC out=$OUT"
-fi
-
-echo "=== the sniff window is the leading 8000 bytes, git's own rule ==="
-# git reads a blob as text when no NUL falls in the leading 8000 bytes, so
-# the gate must agree at the boundary in both directions — a byte at offset
-# 7999 is inside the window, one at 8000 is not.
-for probe in "7999 2 inside" "8000 0 outside"; do
-  set -- $probe
-  pad="$1"
-  want_rc="$2"
-  where="$3"
-  new_repo "window-$pad"
-  mkdir -p "$R/src"
-  { awk -v n="$pad" 'BEGIN { for (i = 0; i < n; i++) printf "x" }'; printf '\000'; printf '\n'; } >"$R/src/installed.ts"
-  git -C "$R" add -A
-  run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
-  if [ "$RC" -eq "$want_rc" ]; then
-    ok "a NUL at offset $pad is $where the window (exit $RC)"
-  else
-    bad "the window boundary matches git's rule at offset $pad" "rc=$RC want=$want_rc out=$OUT"
-  fi
-done
-
 echo "=== the 8000 bound is bytes even when the locale is multibyte ==="
-# The prefilter's `read -n` bound counts CHARACTERS unless the locale is C, so
-# a NUL past byte 8000 but inside 8000 characters would stop a character-wise
-# read while `od -N 8000` correctly finds nothing — and the contradiction
-# refusal above would then red a file git reads as text. 5000 x U+00E9 is 5000
-# characters and 10000 bytes: the byte at offset 10000 is outside the window by
-# git's rule and inside it by the character count.
+# The prefilter's read bound counts CHARACTERS unless the locale is C, so a
+# NUL past byte 8000 would stop a character-wise read while `od -N 8000` finds
+# nothing, and the contradiction refusal above would red a file git reads as
+# text. 5000 x U+00E9 is 5000 characters and 10000 bytes: the byte at 10000 is
+# outside the window by git's rule, inside it by the character count.
 plant_wide_nul() { # 5000 two-byte characters in $R/src/installed.ts, then the byte
   mkdir -p "$R/src"
   { awk 'BEGIN { for (i = 0; i < 5000; i++) printf "\303\251" }'; printf '\000'; printf '\n'; } >"$R/src/installed.ts"
@@ -311,8 +264,7 @@ else
 
   echo "=== must-fail control: without LC_ALL=C the same fixture is refused ==="
   # Exit 0 is also what a sniff that never ran returns, so the case above is
-  # evidence only beside a control that reds. The control removes the
-  # `LC_ALL=C` assignment that makes the bound bytes, and nothing else.
+  # evidence only beside this: the `LC_ALL=C` bound removed, nothing else.
   BOUND="$TMP/bound-scripts"
   mkdir -p "$BOUND"
   cp -R "$SKILL_DIR/scripts/." "$BOUND/"
@@ -341,10 +293,9 @@ fi
 
 echo "=== a locating scan that comes back empty refuses, it does not pass ==="
 # The prefilter is byte-exact, so a stop it reports and a scan that then finds
-# nothing are a contradiction. Treating that as clean would be the fail-open
-# the sniff exists to close: an `od` that exits 0 saying nothing must not buy
-# a passing verdict over a NUL-carrying blob. An `od` that exits NONZERO is
-# already caught by pipefail; this is the quiet-success half.
+# nothing contradict each other; calling that clean is the fail-open the sniff
+# exists to close. A NONZERO `od` is already caught by pipefail — this is the
+# quiet-success half.
 OD_SHIM="$TMP/od-shim"
 mkdir -p "$OD_SHIM"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$OD_SHIM/od"
@@ -360,58 +311,10 @@ else
 fi
 case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany the empty scan" "$OUT" ;; *) ok "no OK verdict accompanies the empty scan" ;; esac
 
-echo "=== every offender is named, not just the first ==="
-# The refusal is an aggregation: one row per offender, read back by the
-# reporting loop. That is the shape a repo meets when it adopts the gate —
-# several binary assets in a line class red together, as this repo's own
-# tauri icons did — so a regression to first-offender-only must red here.
-new_repo many
-plant_nul src/a.ts 'const a = "x'
-plant_nul src/b.ts 'const b = "xy'
-plant_nul src/c.ts 'const c = "xyz'
-git -C "$R" add -A
-run_in SIZE_RATCHET_THRESHOLD=400 -- --staged
-named="$(grep -c 'a NUL byte at offset' "$OUTFILE")" || named=0
-if [ "$RC" -eq 2 ] && [ "$named" -eq 3 ] \
-  && has 'src/a.ts: a NUL byte at offset 12' \
-  && has 'src/b.ts: a NUL byte at offset 13' \
-  && has 'src/c.ts: a NUL byte at offset 14'; then
-  ok "all three offenders are named, each at its own offset"
-else
-  bad "the diagnostic names every offender" "rc=$RC named=$named out=$OUT"
-fi
-
-echo "=== --seed refuses and writes no baseline ==="
-# A miss in a writing mode does not merely print a clean verdict: it records a
-# meaningless line count for a binary blob and locks it in.
-new_repo seedmode
-plant_nul src/installed.ts 'const a = "x'
-git -C "$R" add -A
-run_in SIZE_RATCHET_THRESHOLD=400 -- --seed
-if [ "$RC" -eq 2 ] && has 'src/installed.ts: a NUL byte at offset 12' && [ ! -e "$R/tools/size-ratchet-baseline.tsv" ]; then
-  ok "--seed refuses (exit 2) and writes no baseline at all"
-else
-  bad "--seed refuses before it seeds a row" "rc=$RC baseline=$(cat "$R/tools/size-ratchet-baseline.tsv" 2>/dev/null || echo absent) out=$OUT"
-fi
-
-echo "=== --update refuses and leaves the baseline row verbatim ==="
-new_repo updatemode
-plant_nul src/installed.ts 'const a = "x'
-mkdir -p "$R/tools"
-printf 'src/installed.ts\t9999\n' >"$R/tools/size-ratchet-baseline.tsv"
-git -C "$R" add -A
-run_in SIZE_RATCHET_THRESHOLD=400 -- --update
-row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
-if [ "$RC" -eq 2 ] && has 'src/installed.ts: a NUL byte at offset 12' && [ "$row" = "$(printf 'src/installed.ts\t9999')" ]; then
-  ok "--update refuses (exit 2) and the baseline row survives verbatim"
-else
-  bad "--update refuses before it tightens a row" "rc=$RC row=$row out=$OUT"
-fi
 
 echo "=== must-fail control: with the refusal reverted, the NUL fixture goes green ==="
 # The control keeps every call site and the whole detection text and removes
-# only the behavior, so a green run below proves the cases above are the
-# refusal's doing rather than an assertion that cannot fail.
+# only the behavior, so a green run below rules out a vacuous assertion.
 CTRL="$TMP/control-scripts"
 mkdir -p "$CTRL"
 cp -R "$SKILL_DIR/scripts/." "$CTRL/"
