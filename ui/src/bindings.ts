@@ -703,6 +703,16 @@ export type BundleDetail = {
 	installedMembers: number,
 	totalMembers: number,
 	collision: string | null,
+	/**
+	 *  This scope's lock could not be read. The set page's Install all asks
+	 *  about the set rather than about a member, so it needs the scope's own
+	 *  answer: no member row can carry it, because a member the catalog no
+	 *  longer offers reads [`InstallState::NotOffered`] with or without a
+	 *  lock, and a set whose members were all dropped — or one declared with
+	 *  none — would leave the page deriving "readable" from rows that never
+	 *  consulted the record.
+	 */
+	recordsUnreadable: boolean,
 };
 
 /**  One member of a curated set, with where it stands here. */
@@ -1574,12 +1584,13 @@ export type InstallState =
  *  installed here is unknown. The catalog is still listed — what a
  *  source offers is a fact about the source — but every standing the
  *  lock alone could have given becomes this one, decided in
- *  `Browsed::state` and `Browsed::member_state` and nowhere else. Each
- *  surface that would offer an install reads the state: the Packages
- *  row, a set's member row, the set page's Install all, and the
- *  available-package page (through [`PackagePreview::state`]) all say
- *  why instead, so none offers an install the engine would refuse for
- *  the same unreadable record.
+ *  `Browsed::state` and `Browsed::member_state` and nowhere else. Every
+ *  surface offering an install for one package reads the state: the
+ *  Packages row, a set's member row, and the available-package page
+ *  (through [`PackagePreview::state`]) all say why instead, so none
+ *  offers an install the engine would refuse for the same unreadable
+ *  record. The set page's Install all is about the set, not a package,
+ *  and reads [`BundleDetail::records_unreadable`].
  */
 "unknown";
 
@@ -2872,7 +2883,7 @@ export type TemplateFinding = {
 
 /**
  *  A scope whose standing could not be read at all, and why. The reason
- *  travels with it so the Updates note naming the project says the cause
+ *  travels with it so the Updates note naming the place says the cause
  *  without a second read. Only the message travels — no typed kind — and
  *  the Problems page is where a cause is told apart from its neighbour.
  */
@@ -3053,8 +3064,8 @@ export type UpdatesReport_Deserialize = {
 	/**
 	 *  Scopes whose standing could not be read at all — a lock or manifest
 	 *  this build refuses. Carried as data, like [`crate::engine::ItemWarning`]
-	 *  above and for the same reason: one project's unreadable record must
-	 *  not blank every other project's standing. Always empty from
+	 *  above and for the same reason: one place's unreadable record must
+	 *  not blank every other place's standing. Always empty from
 	 *  [`updates`], which answers for one scope and fails outright; the
 	 *  multi-scope caller folding those answers together fills it.
 	 */
@@ -3082,8 +3093,8 @@ export type UpdatesReport_Serialize = {
 	/**
 	 *  Scopes whose standing could not be read at all — a lock or manifest
 	 *  this build refuses. Carried as data, like [`crate::engine::ItemWarning`]
-	 *  above and for the same reason: one project's unreadable record must
-	 *  not blank every other project's standing. Always empty from
+	 *  above and for the same reason: one place's unreadable record must
+	 *  not blank every other place's standing. Always empty from
 	 *  [`updates`], which answers for one scope and fails outright; the
 	 *  multi-scope caller folding those answers together fills it.
 	 */

@@ -23,9 +23,9 @@ pub fn updates_overview() -> Result<updates::UpdatesReport, String> {
 /// The standing across the scopes given, with a scope kendex cannot read
 /// carried in `unreadable` rather than failing the whole query.
 ///
-/// A lock or manifest this build refuses belongs to one project. Bubbling
+/// A lock or manifest this build refuses belongs to one place. Bubbling
 /// it up left the page with no rows at all and the sidebar with a bare "?"
-/// while every other project's standing was known, so the scope is carried
+/// while every other place's standing was known, so the scope is carried
 /// as data instead, the way [`crate::audit::AuditView`] carries its own.
 /// Only as far as the message, though: an `AuditView` also carries a typed
 /// [`crate::audit::ScopeErrorKind`], and a surface wanting to word a

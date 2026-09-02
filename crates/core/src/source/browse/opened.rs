@@ -34,7 +34,7 @@ pub(crate) struct Browsed {
 /// The scope records the installed-state join reads. The manifest decides
 /// which source resolves at all, so it stays a hard error; the lock only
 /// answers what is already installed, and an unreadable one is carried as
-/// its absence so one project's broken record never hides what every
+/// its absence so one place's broken record never hides what every
 /// subscribed catalog offers. The Problems page is where that record is
 /// explained and fixed.
 fn records(env: &Env, scope: &Scope) -> Result<(Manifest, Option<Lock>)> {

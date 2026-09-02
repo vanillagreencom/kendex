@@ -193,11 +193,11 @@ fn marketplace_browse_lists_a_subscriptions_packages() {
 }
 
 /// A lock this build refuses costs the rows their installed state, not the
-/// listing. Browse used to bubble that failure out of the whole command: a
-/// script asking what a marketplace offers got a lock error and no rows,
-/// for a question the lock has no say in. The rows come back with `state`
-/// widened to "unknown" and the command exits 0 — the additive change the
-/// module comment documents for schema-1 consumers.
+/// listing. Browse used to drop the scope in silence: a script asking what
+/// a marketplace offers got no rows, no error and exit 0, for a question
+/// the lock has no say in. The rows come back now, with `state` widened to
+/// "unknown" — the additive change the module comment documents for
+/// schema-1 consumers.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn marketplace_browse_answers_over_an_unreadable_lock() {
@@ -228,7 +228,7 @@ fn marketplace_browse_answers_over_an_unreadable_lock() {
     );
     assert!(
         output.status.success(),
-        "an unreadable lock no longer fails the listing: {}",
+        "an unreadable lock costs the listing nothing: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let listed: serde_json::Value =
@@ -251,7 +251,7 @@ fn marketplace_browse_answers_over_an_unreadable_lock() {
     assert!(text.status.success());
     let stdout = String::from_utf8_lossy(&text.stdout);
     assert!(
-        stdout.contains("[unknown (this project's lock can't be read)]"),
+        stdout.contains("[unknown (this place's lock can't be read)]"),
         "the text line says why rather than claiming a state: {stdout}"
     );
 }

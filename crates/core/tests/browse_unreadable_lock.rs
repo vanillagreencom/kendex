@@ -25,6 +25,7 @@ struct Fixture {
     _tmp: tempfile::TempDir,
     env: Env,
     scope: Scope,
+    source: std::path::PathBuf,
     lock_path: std::path::PathBuf,
 }
 
@@ -69,6 +70,7 @@ fn fixture() -> Fixture {
         scope: Scope::Project {
             root: project.clone(),
         },
+        source,
         lock_path: project.join(".kendex-lock.json"),
         _tmp: tmp,
     }
@@ -91,13 +93,29 @@ fn offered(f: &Fixture) -> Vec<(String, InstallState)> {
 }
 
 #[allow(clippy::unwrap_used)]
+fn detail(f: &Fixture) -> browse::BundleDetail {
+    browse::bundle(&f.env, &catalog(&f.scope), "starter").unwrap()
+}
+
+#[allow(clippy::unwrap_used)]
 fn members(f: &Fixture) -> Vec<(String, InstallState)> {
-    browse::bundle(&f.env, &catalog(&f.scope), "starter")
-        .unwrap()
+    detail(f)
         .members
         .into_iter()
         .map(|member| (member.name, member.state))
         .collect()
+}
+
+/// Renames the catalog's only skill out from under the set, so `starter`
+/// names a member nothing offers — what an upstream rename or removal
+/// leaves behind.
+#[allow(clippy::unwrap_used)]
+fn drop_the_member(f: &Fixture) {
+    fs::rename(
+        f.source.join("skills/gh"),
+        f.source.join("skills/gh-renamed"),
+    )
+    .unwrap();
 }
 
 /// The control the degraded read is measured against: with a readable
@@ -206,4 +224,50 @@ fn the_package_page_carries_the_same_unknown_the_row_showed() {
 
     fs::write(&f.lock_path, "{not json").unwrap();
     assert_eq!(preview(&f), InstallState::Unknown);
+}
+
+/// The must-fail control on `member_state`'s not-offered arm under an
+/// unreadable lock. A member the catalog no longer carries needs no lock to
+/// say so, and the set page relies on that staying true — collapsing the
+/// unreadable branch to Unknown for every member would hide the rename
+/// behind a record complaint.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_dropped_member_says_so_without_a_lock_to_read() {
+    let f = fixture();
+    drop_the_member(&f);
+    assert_eq!(
+        members(&f),
+        [("gh".to_owned(), InstallState::NotOffered)],
+        "the control: with a readable record, a dropped member is a rename, not an unknown"
+    );
+
+    fs::write(&f.lock_path, "{not json").unwrap();
+    assert_eq!(members(&f), [("gh".to_owned(), InstallState::NotOffered)]);
+}
+
+/// So the set page cannot read the scope's record off the rows: every
+/// member answering NotOffered is exactly the shape that looks readable.
+/// `records_unreadable` is the scope's own answer, carried rather than
+/// derived, and Install all is what reads it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_set_carries_the_scopes_answer_even_where_no_member_shows_it() {
+    let f = fixture();
+    drop_the_member(&f);
+    assert!(
+        !detail(&f).records_unreadable,
+        "the control: a readable record says so"
+    );
+
+    fs::write(&f.lock_path, "{not json").unwrap();
+    let detail = detail(&f);
+    assert!(detail.records_unreadable);
+    assert!(
+        detail
+            .members
+            .iter()
+            .all(|member| member.state == InstallState::NotOffered),
+        "no member row carries the fact, which is why the set must"
+    );
 }

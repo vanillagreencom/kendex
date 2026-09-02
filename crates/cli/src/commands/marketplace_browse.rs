@@ -4,10 +4,11 @@
 //! `--json` stays at `"schema": 1`. A lock this build refuses widened
 //! `package.state` by one value, `"unknown"` — every key a schema-1
 //! consumer reads is still there and still means what it did, so the change
-//! is additive rather than a bump. Two things did change for a script: a
-//! scope whose lock will not read now contributes rows instead of none, and
-//! the command exits 0 where that scope used to fail it. What a marketplace
-//! offers is a fact about the source, and the lock has no say in it; a
+//! is additive rather than a bump. One thing did change for a script: a
+//! scope whose lock will not read used to be skipped in silence — no rows,
+//! no error — and now lists its catalog with `state` `"unknown"`. What a
+//! marketplace offers is a fact about the source, and the lock has no say
+//! in it; a
 //! consumer that matches `state` exhaustively needs an arm for `"unknown"`,
 //! which means the installed state alone could not be settled.
 
@@ -95,6 +96,6 @@ fn install_state(state: &kendex_core::source::browse::InstallState) -> &'static 
         InstallState::Available => "available",
         InstallState::NotOffered => "no longer offered",
         InstallState::RemovedByYou => "removed by you",
-        InstallState::Unknown => "unknown (this project's lock can't be read)",
+        InstallState::Unknown => "unknown (this place's lock can't be read)",
     }
 }

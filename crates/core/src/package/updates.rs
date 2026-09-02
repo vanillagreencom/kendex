@@ -114,7 +114,7 @@ fn no_per_package_update(kind: ItemKind) -> Option<String> {
 }
 
 /// A scope whose standing could not be read at all, and why. The reason
-/// travels with it so the Updates note naming the project says the cause
+/// travels with it so the Updates note naming the place says the cause
 /// without a second read. Only the message travels — no typed kind — and
 /// the Problems page is where a cause is told apart from its neighbour.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -134,8 +134,8 @@ pub struct UpdatesReport {
     pub warnings: Vec<ItemWarning>,
     /// Scopes whose standing could not be read at all — a lock or manifest
     /// this build refuses. Carried as data, like [`crate::engine::ItemWarning`]
-    /// above and for the same reason: one project's unreadable record must
-    /// not blank every other project's standing. Always empty from
+    /// above and for the same reason: one place's unreadable record must
+    /// not blank every other place's standing. Always empty from
     /// [`updates`], which answers for one scope and fails outright; the
     /// multi-scope caller folding those answers together fills it.
     pub unreadable: Vec<UnreadableScope>,

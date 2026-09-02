@@ -22,7 +22,10 @@ vi.mock("@/bindings", () => ({
 }));
 
 const catalog = subscription({ scope: "global" }, "kit");
-const detail = (state: InstallState): BundleDetail => ({
+const detail = (
+  state: InstallState,
+  recordsUnreadable = state === "unknown",
+): BundleDetail => ({
   name: "starter",
   description: null,
   version: null,
@@ -31,11 +34,12 @@ const detail = (state: InstallState): BundleDetail => ({
   installedMembers: 0,
   totalMembers: 1,
   collision: null,
+  recordsUnreadable,
 });
 
-const render = (state: InstallState) => {
+const render = (set: BundleDetail) => {
   useMarketplacesStore.setState({
-    bundles: { [bundleKey(catalog, "starter")]: detail(state) },
+    bundles: { [bundleKey(catalog, "starter")]: set },
     readErrors: {},
     summaries: {},
     busy: false,
@@ -58,19 +62,38 @@ const installAll = (host: HTMLElement) =>
 // went straight to the engine, which refuses on the same record.
 describe("a set whose project records could not be read", () => {
   it("does not offer to install the whole set", () => {
-    expect(installAll(render("unknown"))?.disabled).toBe(true);
-    expect(installAll(render("available"))?.disabled).toBe(false);
+    expect(installAll(render(detail("unknown")))?.disabled).toBe(true);
+    expect(installAll(render(detail("available")))?.disabled).toBe(false);
   });
 
   it("says why, and the way to the page that carries the reason", () => {
-    const html = render("unknown").innerHTML;
+    const html = render(detail("unknown")).innerHTML;
     expect(html).toContain(unreadableRecordsLine("Personal"));
     expect(html).toContain(SEE_PROBLEMS_LABEL);
   });
 
   it("says nothing of the sort where the records read", () => {
-    expect(render("available").innerHTML).not.toContain(
+    expect(render(detail("available")).innerHTML).not.toContain(
       unreadableRecordsLine("Personal"),
     );
+  });
+
+  // A rename or removal upstream leaves every row answering "no longer
+  // offered" — the answer a dropped member gives with or without a lock. A
+  // page scanning the rows for the scope's record reads that as readable
+  // and hands back an Install all the engine refuses.
+  it("holds where the catalog has dropped every member", () => {
+    const host = render(detail("not-offered", true));
+    expect(installAll(host)?.disabled).toBe(true);
+    expect(host.innerHTML).toContain(unreadableRecordsLine("Personal"));
+  });
+
+  // The same hole with no rows at all to scan: a set may be declared with
+  // an empty member list.
+  it("holds where the set names no members at all", () => {
+    const empty = detail("available", true);
+    const host = render({ ...empty, members: [], totalMembers: 0 });
+    expect(installAll(host)?.disabled).toBe(true);
+    expect(host.innerHTML).toContain(unreadableRecordsLine("Personal"));
   });
 });

@@ -53,12 +53,13 @@ pub enum InstallState {
     /// installed here is unknown. The catalog is still listed — what a
     /// source offers is a fact about the source — but every standing the
     /// lock alone could have given becomes this one, decided in
-    /// `Browsed::state` and `Browsed::member_state` and nowhere else. Each
-    /// surface that would offer an install reads the state: the Packages
-    /// row, a set's member row, the set page's Install all, and the
-    /// available-package page (through [`PackagePreview::state`]) all say
-    /// why instead, so none offers an install the engine would refuse for
-    /// the same unreadable record.
+    /// `Browsed::state` and `Browsed::member_state` and nowhere else. Every
+    /// surface offering an install for one package reads the state: the
+    /// Packages row, a set's member row, and the available-package page
+    /// (through [`PackagePreview::state`]) all say why instead, so none
+    /// offers an install the engine would refuse for the same unreadable
+    /// record. The set page's Install all is about the set, not a package,
+    /// and reads [`BundleDetail::records_unreadable`].
     Unknown,
 }
 
@@ -105,6 +106,14 @@ pub struct BundleDetail {
     pub installed_members: u32,
     pub total_members: u32,
     pub collision: Option<String>,
+    /// This scope's lock could not be read. The set page's Install all asks
+    /// about the set rather than about a member, so it needs the scope's own
+    /// answer: no member row can carry it, because a member the catalog no
+    /// longer offers reads [`InstallState::NotOffered`] with or without a
+    /// lock, and a set whose members were all dropped — or one declared with
+    /// none — would leave the page deriving "readable" from rows that never
+    /// consulted the record.
+    pub records_unreadable: bool,
 }
 
 /// Every package one catalog offers, across kinds.
@@ -199,6 +208,7 @@ fn detail(browsed: &Browsed, found: &super::bundles::CatalogBundle) -> BundleDet
         total_members: members.len().min(u32::MAX as usize) as u32,
         members,
         collision: browsed.bundle_collision(&found.name),
+        records_unreadable: browsed.lock_unreadable(),
     }
 }
 
