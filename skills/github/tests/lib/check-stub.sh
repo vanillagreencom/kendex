@@ -57,6 +57,7 @@ set -euo pipefail
 if [[ -n "${STUB_CALL_LOG:-}" ]]; then
     printf '%s\n' "$*" >>"$STUB_CALL_LOG"
 fi
+[[ -z "${STUB_AUTH_LOG:-}" ]] || printf 'GH=%s|GITHUB=%s|%s\n' "${GH_TOKEN-<unset>}" "${GITHUB_TOKEN-<unset>}" "$*" >>"$STUB_AUTH_LOG"
 
 case "${1:-}" in
     auth)

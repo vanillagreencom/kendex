@@ -380,7 +380,7 @@ gh_with_token() {
     if [ -n "$auth_token" ]; then
         GH_TOKEN="$auth_token" gh "$@"
     else
-        gh "$@"
+        env -u GH_TOKEN -u GITHUB_TOKEN gh "$@"
     fi
 }
 
@@ -543,6 +543,7 @@ main() {
         echo '{"error": "PR number required"}' >&2
         exit 1
     fi
+    [ "$admin" = false ] || unset GH_TOKEN GITHUB_TOKEN
     if [ -n "$supplied_head" ] && ! [[ "$supplied_head" =~ ^[0-9a-fA-F]{40}$ ]]; then
         echo "Error: --expected-head must be a 40-character commit SHA" >&2; exit 1
     fi
@@ -599,12 +600,13 @@ main() {
             echo "$check_result" | jq -r '.warnings[]' | sed 's/^/  ⚠ /' >&2
         fi
     else
-        echo "⚠ override: Skipping safety checks" >&2
+        if [ "$admin" = true ]; then echo "⚠ current-user admin mode: Skipping safety checks" >&2; else echo "⚠ override: Skipping safety checks" >&2; fi
     fi
 
     if [ "$dry_run" = true ]; then
         local token_status="not configured"
         [ -n "$token" ] && token_status="configured"
+        [ "$admin" = false ] || token_status="current-user admin mode"
         local mode="immediate"
         [ "$auto" = true ] && mode="auto-merge fallback"
         echo "Would merge PR #$pr_num ($method, mode=$mode, delete_branch=$delete_branch, token=$token_status)"
@@ -630,7 +632,7 @@ main() {
     if [ -n "$token" ]; then
         merge_output=$(gh_with_token "$token" "${cmd[@]}" 2>&1) || merge_exit=$?
     else
-        echo "Warning: GH_BOT_TOKEN not configured, using current user" >&2
+        [ "$admin" = true ] || echo "Warning: GH_BOT_TOKEN not configured, using current user" >&2
         merge_output=$(gh_with_token "" "${cmd[@]}" 2>&1) || merge_exit=$?
     fi
 

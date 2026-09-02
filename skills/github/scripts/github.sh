@@ -155,6 +155,8 @@ EOF
 
 command="${1:-help}"
 shift || true
+_current_user_admin=false
+[[ "$command" == pr-merge && " $* " == *" --admin "* ]] && _current_user_admin=true
 
 # Help is answered before project configuration or auth is touched:
 # sourcing a repo's .env.local under --help would execute
@@ -242,11 +244,15 @@ if [ -z "$_help_route" ]; then
     if [ -n "$_CALLER_GH_BOT_TOKEN_SET" ]; then
         export GH_BOT_TOKEN="$_CALLER_GH_BOT_TOKEN"
     fi
-    kendex_github_apply_selected_auth_token router || true
+    if [ "$_current_user_admin" = true ]; then
+        unset GH_TOKEN GITHUB_TOKEN
+    else
+        kendex_github_apply_selected_auth_token router || true
+    fi
     kendex_github_sanitize_gh_env
     unset _env_root _CALLER_GH_TOKEN_SET _CALLER_GH_TOKEN _CALLER_GITHUB_TOKEN_SET _CALLER_GITHUB_TOKEN _CALLER_GH_BOT_TOKEN_SET _CALLER_GH_BOT_TOKEN
 fi
-unset _help_route
+unset _help_route _current_user_admin
 
 
 

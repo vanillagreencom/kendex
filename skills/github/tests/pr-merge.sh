@@ -8,6 +8,7 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 PR_MERGE="$REPO_ROOT/skills/github/scripts/commands/pr-merge.sh"
+GITHUB="$REPO_ROOT/skills/github/scripts/github.sh"
 
 # shellcheck source=lib/check-stub.sh
 source "$TEST_DIR/lib/check-stub.sh"
@@ -42,7 +43,11 @@ run_merge_force() {
 }
 
 run_merge_admin() {
-    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --admin --keep-branch)
+    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN "$PR_MERGE" 123 --admin "$@" --keep-branch)
+}
+
+run_merge_router() {
+    (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" "$GITHUB" -C "$TMPDIR/repo" pr-merge 123 "$@" --keep-branch)
 }
 
 run_merge_force_auto() {
@@ -212,6 +217,7 @@ status=$?
 set -e
 assert_eq "$status" "0" "documented --force remains a deliberate override"
 assert_contains "$(cat "$call_log")" "pr merge" "--force deliberately invokes gh pr merge"
+assert_not_contains "$(cat "$call_log")" "--admin" "--force never escalates to GitHub admin mode"
 
 : >"$call_log"
 set +e
@@ -225,6 +231,23 @@ status=$?
 set -e
 assert_eq "$status" "0" "explicit --admin bypass merges immediately"
 assert_contains "$(cat "$call_log")" "--admin" "--admin reaches the guarded gh merge mutation"
+assert_contains "$out" "current-user admin mode" "admin warning names the deliberate current-user mode"
+assert_not_contains "$out" "GH_BOT_TOKEN not configured" "admin warning does not report bot-token misconfiguration"
+
+out=$(run_merge_admin --dry-run 2>&1)
+assert_contains "$out" "current-user admin mode" "admin dry-run names current-user mode"
+
+auth_log="$TMPDIR/admin-auth.log"; : >"$auth_log"
+out=$(STUB_AUTH_LOG="$auth_log" STUB_POST_STATE=MERGED STUB_MERGE_COMMIT=admin-merge-oid \
+    GH_TOKEN=ghp_user GH_BOT_TOKEN=ghp_test_token run_merge_router --admin 2>&1)
+assert_not_contains "$(cat "$auth_log")" "ghp_user" "admin router clears a caller token from every gh call"
+assert_not_contains "$(cat "$auth_log")" "ghp_test_token" "admin router never promotes the project bot token"
+assert_contains "$(cat "$auth_log")" "GH=<unset>|GITHUB=<unset>" "admin preflight, mutation, snapshot, and cleanup use keyring auth"
+
+: >"$auth_log"
+out=$(STUB_AUTH_LOG="$auth_log" STUB_REQUIRE_TOKEN=true STUB_POST_STATE=MERGED STUB_MERGE_COMMIT=forced-merge-oid \
+    GH_BOT_TOKEN=ghp_test_token run_merge_router --force 2>&1)
+assert_contains "$(cat "$auth_log")" "GH=ghp_test_token" "non-admin router control still promotes bot auth"
 
 echo
 echo "=== pr-merge --check superseded-run scoping (kendex#492/#494) ==="

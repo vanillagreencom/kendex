@@ -56,7 +56,7 @@ pi-extensions/pi-web-tools/src/tools/web-research.ts	445
 pi-extensions/pi-web-tools/tests/youtube-video.test.ts	844
 skills/decider/scripts/decisions	484
 skills/deep-research/scripts/deep-research	529
-skills/github/scripts/commands/pr-merge.sh	712
+skills/github/scripts/commands/pr-merge.sh	714
 skills/github/scripts/git-diff-summary	599
 skills/github/scripts/lib/gh-auth.sh	475
 skills/github/scripts/lib/github-api.sh	612
@@ -99,7 +99,7 @@ skills/orch/scripts/open-terminal	703
 skills/orch/scripts/oversee-watch	737
 skills/orch/scripts/queue-wait	1067
 skills/orch/scripts/review-artifact-check	413
-skills/orch/scripts/workflow-state	743
+skills/orch/scripts/workflow-state	776
 skills/orch/tests/approval_wait.sh	1356
 skills/orch/tests/lanes.sh	888
 skills/orch/tests/queue_wait.sh	896

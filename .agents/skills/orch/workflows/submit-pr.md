@@ -139,23 +139,16 @@ earlier capped run before entering another post-PR gate:
 
 ### 2.1 Consumer Admin-Merge Offer
 
-Read the repository and the complete branch diff:
+Bind eligibility to the repository, resolved base, and current PR head:
 
 ```bash
 gh repo view --json nameWithOwner --jq .nameWithOwner
+git -C "[WORKTREE_PATH]" rev-parse "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"
+git -C "[WORKTREE_PATH]" rev-parse HEAD
+.agents/skills/orch/scripts/workflow-state admin-merge classify [ISSUE_ID] [OWNER/REPO] [PR_NUMBER] [BASE_SHA] [HEAD_SHA] [WORKTREE_PATH]
 ```
 
-```bash
-git -C "[WORKTREE_PATH]" diff --name-only "origin/[BASE_BRANCH]"...HEAD
-```
-
-Skip this offer in `vanillagreencom/kendex`. In any other repository, offer `Admin-merge, skipping review and CI` | `Continue through review and CI` only when the whole diff is one of these classes:
-
-- harness renders under `.agents/`, `.claude/`, `.codex/`, `.pi/`, `.opencode/`, or `.cursor/`;
-- values in `kendex.settings.toml` or `.kendex/settings.toml`;
-- Markdown or plain-text prose.
-
-This is always an explicit ask to the user or overseer. `ORCH_DECISION_MODE` never selects admin merge. Append the answer and the matching class to the PR body's `## Merge decision` section, then update the PR with `pr-edit-body`. `Continue through review and CI` goes to § 3. `Admin-merge` invokes `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7` with `admin_merge_authorized: true`, then continues through `workflows/lane-postmerge.md`.
+An ineligible result skips the offer. Otherwise explicitly ask `Admin-merge, skipping review and CI` | `Continue through review and CI`; `ORCH_DECISION_MODE` never answers it. On admin consent, rerun the command with `authorize`, append its class and head to the PR body's `## Merge decision`, then invoke `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7` with `merge_mode: admin`. The merge workflow revalidates the stored head. Continue-through-review goes to § 3.
 
 ---
 
