@@ -73,24 +73,19 @@ The full session from inside a worktree: implement → review → submit → fin
 
 ## 5. Finalize
 
-Before posting either summary, finalize the returned gate state. When a PR
-exists and `MERGE_READY = false`, preserve a more precise stop already written
-by `submit-pr` and create `merge-gates-unmet` only when none exists:
+Before either summary, `MERGE_READY = false` preserves submit-pr's stop or creates `merge-gates-unmet`:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state post-pr-stop record-if-empty [ISSUE_ID] merge-gates-unmet merge "[UNMET_GATE_AND_REMAINING_WORK]" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
 ```
 
-On `recorded`, post that rendered file. On `kept`, post nothing and retain the
-upstream name:
+On `recorded`, post the rendered file. On `kept`, retain the upstream stop:
 
 ```bash
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
 ```
 
-Read the final stored stop before § 5.1 so both summaries render the same name,
-gate, and remaining work. When `MERGE_READY = true`, clear a stale stop before
-summarizing and merging.
+Read the final stop before § 5.1. `MERGE_READY = true` clears it:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'

@@ -7,8 +7,7 @@ Analyze CI failures and route them to the right agent.
 | `ci-fix` \| `ci-fix [PR_NUMBER]` | § 1 → § 2 → § 3 → § 5 |
 | `ci-fix queue` | § 1 → § 2 → § 4 → § 5 |
 
-**Caller context** (via `⤵`): `lifecycle` is `"managed"`; standalone is the
-default. Managed runs use the caller's `issue_id`.
+**Caller context** (via `⤵`): managed `lifecycle` uses the caller's `issue_id`; standalone is the default.
 
 ## 1. Identify Failures
 
@@ -199,29 +198,22 @@ Still failing:
 
 </output_format>
 
-Managed runs return the failure to the caller, which owns
-`CI_FIX_MAX_CYCLES`. Standalone `auto-recommended` resolves the authoritative
-head and atomically spends that head's retry budget:
+Managed failures return to the caller, which owns `CI_FIX_MAX_CYCLES`.
+Standalone `auto-recommended` spends the authoritative head's budget:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
-```
-```bash
 .agents/skills/orch/scripts/workflow-state head-budget take [STATE_KEY] ci-fix [CI_HEAD]
 ```
 
-`continue` reruns § 1. `at-cap` records `ci-fix-cap`, posts the rendered
-comment, and returns the stored stop:
+`continue` reruns § 1. `at-cap` records and returns `ci-fix-cap`:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state post-pr-stop record [STATE_KEY] ci-fix-cap ci "[REMAINING_CHECKS_AND_ATTEMPTS]" [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
-```
-```bash
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
 ```
 
-Under `ask`, present `Run ci-fix again` | `Stop`, with another run
-recommended. A user continuation clears the stop before re-entering § 1.
+Under `ask`, present `Run ci-fix again` | `Stop`; continuation clears the stop.
 
 Decision route: `auto-recommended` + `retry-budget` -> `restart-ci-fix`; `auto-recommended` + `retry-cap` -> `record-ci-fix-cap`; `ask` -> `present-ci-fix-choice`.
 
