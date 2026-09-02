@@ -35,7 +35,7 @@ const queue: QueueItem[] = [];
 const queued = new Set<string>();
 let draining = false;
 
-/** Empty the cache and the queue — half of [dropCatalogCaches], which is
+/** Empty the cache and the queue — half of [droppedSetCaches], which is
  * where a drop is declared and where the one [catalogDrops] bump is taken.
  * Call that rather than this: a scan already in flight would otherwise land
  * in the slot this just emptied, and `want` short-circuits on a stored

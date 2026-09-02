@@ -1,34 +1,19 @@
 // The marketplaces store's cached reads: each answer lands under its own
 // key, and each failure under its own error key, so a later success
 // elsewhere never erases why a different read produced nothing.
-import {
-  type AboutView,
-  type AvailablePackage,
-  type BundleDetail,
-  type Catalog,
-  type CatalogSummary,
-  commands,
-} from "@/bindings";
+import { type Catalog, commands } from "@/bindings";
 import { settled } from "@/lib/settled";
 import {
   bundleKey,
+  type CatalogCaches,
+  catalogBundlesErrorKey,
   catalogDrops,
   catalogKey,
   readErrorKey,
   without,
 } from "./marketplaces-shared";
 
-/** The slice of the store these reads write. */
-interface ReadCaches {
-  packages: Record<string, AvailablePackage[]>;
-  summaries: Record<string, CatalogSummary>;
-  about: Record<string, AboutView>;
-  bundles: Record<string, BundleDetail>;
-  catalogBundles: Record<string, BundleDetail[]>;
-  readErrors: Record<string, string>;
-}
-
-type SetReads = (fn: (state: ReadCaches) => Partial<ReadCaches>) => void;
+type SetReads = (fn: (state: CatalogCaches) => Partial<CatalogCaches>) => void;
 
 export function catalogReads(set: SetReads) {
   return {
@@ -51,12 +36,11 @@ export function catalogReads(set: SetReads) {
       );
     },
     loadCatalogBundles: (catalog: Catalog) => {
-      const key = catalogKey(catalog);
       return settle(
         set,
         "catalogBundles",
-        key,
-        readErrorKey(key, "bundles"),
+        catalogKey(catalog),
+        catalogBundlesErrorKey(catalog),
         () => commands.marketplaceBundles(catalog),
       );
     },
@@ -77,13 +61,13 @@ export function catalogReads(set: SetReads) {
  * retry it. The read is asked once more under the new generation rather than
  * only discarded: the slot the drop emptied has no other asker, and every
  * consumer keys on presence, so discarding alone leaves the page blank. */
-async function settle<F extends Exclude<keyof ReadCaches, "readErrors">>(
+async function settle<F extends Exclude<keyof CatalogCaches, "readErrors">>(
   set: SetReads,
   field: F,
   key: string,
   errorKey: string,
   read: () => Promise<
-    | { status: "ok"; data: ReadCaches[F][string] }
+    | { status: "ok"; data: CatalogCaches[F][string] }
     | { status: "error"; error: string }
   >,
 ): Promise<void> {

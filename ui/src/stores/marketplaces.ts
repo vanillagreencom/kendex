@@ -1,11 +1,7 @@
 import { toast } from "sonner";
 import { create } from "zustand";
 import {
-  type AboutView,
-  type AvailablePackage,
-  type BundleDetail,
   type Catalog,
-  type CatalogSummary,
   commands,
   type MarketplaceRow,
   type Scope,
@@ -21,11 +17,16 @@ import { settled } from "@/lib/settled";
 import { saying, sayUndone } from "@/lib/undone";
 import { catalogReads } from "./marketplaces-catalog-reads";
 import { type InstallActions, installActions } from "./marketplaces-install";
-import { dropCatalogCaches, openLead } from "./marketplaces-shared";
+import {
+  type CatalogCaches,
+  dropCatalogCaches,
+  openLead,
+} from "./marketplaces-shared";
 import { sourceActions } from "./marketplaces-sources";
 
 export {
   bundleKey,
+  catalogBundlesErrorKey,
   catalogKey,
   catalogLabel,
   declaredHolder,
@@ -37,24 +38,10 @@ export {
   subscription,
 } from "./marketplaces-shared";
 
-interface MarketplacesState extends InstallActions {
+// The cached reads come from [CatalogCaches], declared once beside the drop
+// that empties them so a field cannot be renamed here alone.
+interface MarketplacesState extends InstallActions, CatalogCaches {
   rows: MarketplaceRow[];
-  /** Each opened catalog's offered packages, by [catalogKey]. */
-  packages: Record<string, AvailablePackage[]>;
-  /** Each opened catalog's About report, by [catalogKey]. */
-  about: Record<string, AboutView>;
-  /** Each opened catalog's own account of itself, by [catalogKey] — for a
-   * repository this is the read that fetches it. */
-  summaries: Record<string, CatalogSummary>;
-  /** Each opened curated set, by [catalogKey]::bundle. */
-  bundles: Record<string, BundleDetail>;
-  /** Each opened catalog's declared curated sets, by [catalogKey] — what the
-   * Bundles tab lists, straight from the catalog rather than derived from
-   * the packages it offers. */
-  catalogBundles: Record<string, BundleDetail[]>;
-  /** Why a read produced nothing, by the same keys — the page the person is
-   * looking at says it instead of loading forever. */
-  readErrors: Record<string, string>;
   /** How the last overview read went. A failed read leaves the rows it had,
    * and nothing may treat them as the truth about what is subscribed until
    * one lands again. Kept apart from `error` below, which

@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import {
+  catalogBundlesErrorKey,
   catalogKey,
   marketKey,
   readErrorKey,
@@ -55,7 +56,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
     (s) => s.catalogBundles[catalogKey(catalog)],
   );
   const bundlesError = useMarketplacesStore(
-    (s) => s.readErrors[readErrorKey(catalogKey(catalog), "bundles")],
+    (s) => s.readErrors[catalogBundlesErrorKey(catalog)],
   );
 
   useEffect(() => {

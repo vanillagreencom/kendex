@@ -1,16 +1,47 @@
 // The cache vocabulary the marketplaces store and its readers share: the
 // collision-free subscription key, and the invalidation every catalog-moving
 // mutation runs.
-import type { Catalog, MarketplaceRow, Scope } from "@/bindings";
+import type {
+  AboutView,
+  AvailablePackage,
+  BundleDetail,
+  Catalog,
+  CatalogSummary,
+  MarketplaceRow,
+  Scope,
+} from "@/bindings";
 import { invalidations, type ReadState } from "@/lib/read-state";
 import { resetPreinstallSafety } from "./preinstall-safety";
 
-/** Bumped once by [dropCatalogCaches], the one place a drop is declared. A
- * read that began before one describes a checkout that may no longer be the
- * one installed from, and every derived cache keys on presence rather than
- * freshness — a stale answer landing in the emptied slot would pin the
- * commit before the change for the session, with nothing left to ask
- * again. Shared with the pre-install scores, which the same drop clears. */
+/** Every cached catalog read the store holds, declared once here so the
+ * store, the reads that fill it and the drops that empty it cannot disagree
+ * about a field name — a rename lands on all three or on none. */
+export interface CatalogCaches {
+  /** Each opened catalog's offered packages, by [catalogKey]. */
+  packages: Record<string, AvailablePackage[]>;
+  /** Each opened catalog's About report, by [catalogKey]. */
+  about: Record<string, AboutView>;
+  /** Each opened catalog's own account of itself, by [catalogKey] — for a
+   * repository this is the read that fetches it. */
+  summaries: Record<string, CatalogSummary>;
+  /** Each opened curated set, by [bundleKey]. */
+  bundles: Record<string, BundleDetail>;
+  /** Each opened catalog's declared curated sets, by [catalogKey] — what the
+   * Bundles tab lists, straight from the catalog rather than derived from
+   * the packages it offers. */
+  catalogBundles: Record<string, BundleDetail[]>;
+  /** Why a read produced nothing, by the same keys — the page the person is
+   * looking at says it instead of loading forever. */
+  readErrors: Record<string, string>;
+}
+
+/** Bumped once by [droppedSetCaches] and [dropCatalogCaches], the only two
+ * places a drop is declared. A read that began before one describes a
+ * checkout that may no longer be the one installed from, and every derived
+ * cache keys on presence rather than freshness — a stale answer landing in
+ * the emptied slot would pin the commit before the change for the session,
+ * with nothing left to ask again. Shared with the pre-install scores, which
+ * the same drop clears. */
 export const catalogDrops = invalidations();
 
 /** One subscription's cache key: where it lives plus its alias, encoded so
@@ -83,31 +114,44 @@ export function without<T>(
   return rest;
 }
 
-/** Every cache carrying a curated set's member states: the opened set and
- * the list of sets a catalog declares, both holding the same per-member
+/** Both caches carrying a curated set's member states, emptied — the opened
+ * set and the list of sets a catalog declares, holding the same per-member
  * `InstallState` and the counts derived from it. An install moves those
- * states, so the two are emptied together — one of them left behind is a
- * card confidently showing the count from before the install, with no
- * empty slot to make the page ask again. */
-export const setCaches = (): { bundles: object; catalogBundles: object } => ({
-  bundles: {},
-  catalogBundles: {},
-});
+ * states, so the two go together: one left behind is a card confidently
+ * showing the count from before the install.
+ *
+ * Declaring the drop is half of this act, not a separate one a caller can
+ * forget. Emptying a slot only makes the page ask again; a read already in
+ * flight still lands, and `settle` refuses it solely on the generation this
+ * bumps. Without that, the answer from before the install fills the slot
+ * that was just emptied and presence-based `readDue` never asks again. So
+ * the empty caches are only reachable through this call, and the
+ * invalidation comes with them. */
+export const droppedSetCaches = (): Pick<
+  CatalogCaches,
+  "bundles" | "catalogBundles"
+> => {
+  catalogDrops.moved();
+  // Everything keyed to that generation goes with the bump. A pre-install
+  // scan in flight is discarded on it, and only this reset clears the
+  // `queued` mark the discard leaves behind — without it the row's score is
+  // never asked for again and it reads "Checking…" for the session.
+  resetPreinstallSafety();
+  return { bundles: {}, catalogBundles: {} };
+};
 
 /** A mutation that can change what any catalog offers empties every derived
  * cache — the pages re-read, and pre-install scores are re-asked, so nothing
  * keeps describing the commit before the change. Summaries go with them: a
  * summary says which subscription a page carries on as, and a mutation is
  * exactly what changes that answer. */
-export function dropCatalogCaches(set: (partial: object) => void) {
-  // Before anything is emptied, and once for the whole drop: this is where
-  // the invalidation is declared, so it cannot be stubbed out from under
-  // the caches it guards.
-  catalogDrops.moved();
-  resetPreinstallSafety();
+export function dropCatalogCaches(set: (partial: CatalogCaches) => void) {
   set({
     packages: {},
-    ...setCaches(),
+    // Declares the invalidation for the whole drop, and clears what else
+    // hangs off it, before anything is emptied: the object is built before
+    // `set` is called.
+    ...droppedSetCaches(),
     about: {},
     summaries: {},
     readErrors: {},
@@ -118,6 +162,14 @@ export function dropCatalogCaches(set: (partial: object) => void) {
  * reads of the same catalog so a later success elsewhere never erases it. */
 export const readErrorKey = (key: string, read: string): string =>
   `${key}::${read}`;
+
+/** The key a failed catalog-level curated-set read lands under. One
+ * function for the read that writes it and the page that subscribes to it,
+ * the way [bundleKey] already serves the per-name set: spelled twice, the
+ * two ends drift and the page loads forever with the reason under a key
+ * nothing reads. */
+export const catalogBundlesErrorKey = (catalog: Catalog): string =>
+  readErrorKey(catalogKey(catalog), "bundles");
 
 /** A tree or skills.sh URL was pointing at one package; land on it so
  * Install is the next click, with its safety score in view. */

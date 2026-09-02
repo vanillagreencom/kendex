@@ -20,7 +20,11 @@ import {
 } from "@/lib/copy-repo-effects";
 import { rescanEverything } from "@/lib/rescan";
 import { sayUndone } from "@/lib/undone";
-import { catalogKey, setCaches, subscription } from "./marketplaces-shared";
+import {
+  catalogKey,
+  droppedSetCaches,
+  subscription,
+} from "./marketplaces-shared";
 import { useProblemsStore } from "./problems";
 
 /** One install: what to put where, and — when the picker was used — which
@@ -125,7 +129,7 @@ export function installActions(set: Set, get: Get): InstallActions {
         packages: { ...state.packages, [key]: response.data.packages },
         // Member states in every set this install touched moved with it,
         // in the open set and in the list of sets alike.
-        ...setCaches(),
+        ...droppedSetCaches(),
         error: null,
         // The files are in; what a package does to the repository is a
         // second question, asked once the install is reported.

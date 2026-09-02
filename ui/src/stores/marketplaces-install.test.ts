@@ -13,11 +13,14 @@ import {
   repoEffectsWithheldToast,
 } from "@/lib/copy-repo-effects";
 import { useMarketplacesStore } from "./marketplaces";
+import { catalogKey, subscription } from "./marketplaces-shared";
+import { usePreinstallSafety } from "./preinstall-safety";
 import { useProblemsStore } from "./problems";
 
 vi.mock("@/bindings", () => ({
   commands: {
     marketplaceInstall: vi.fn(),
+    marketplaceBundles: vi.fn(),
     repoEffectsApply: vi.fn(),
   },
 }));
@@ -52,6 +55,18 @@ const disclosure = (name: string): Disclosure => ({
   notes: [],
   undo: null,
 });
+
+const declared = (name: string) =>
+  ({
+    name,
+    description: null,
+    version: null,
+    category: null,
+    members: [],
+    installedMembers: 0,
+    totalMembers: 0,
+    collision: null,
+  }) as never;
 
 const installed = (shown: Disclosure[], withheld = []) => ({
   status: "ok" as const,
@@ -108,6 +123,49 @@ describe("what an install leaves waiting", () => {
 // behind is worse than an empty one: nothing re-reads a slot that is
 // present, so the tab shows pre-install counts for the rest of the session.
 describe("what an install invalidates", () => {
+  // Emptying the slot is only half of it. The answer from a read already in
+  // flight still arrives, and the only thing that can refuse it is the
+  // generation the drop bumps — without that it fills the slot the install
+  // just emptied and presence-based readDue never asks again, so the tab
+  // shows pre-install counts for the rest of the session.
+  it("refuses a curated-sets read that was in flight when it landed", async () => {
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed([]));
+    const catalog = subscription({ scope: "global" }, "cat");
+    const key = catalogKey(catalog);
+    let settleOld: (value: unknown) => void = () => {};
+    vi.mocked(commands.marketplaceBundles)
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (settleOld = resolve)) as never,
+      )
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: [declared("after-install")],
+      });
+
+    const reading = useMarketplacesStore.getState().loadCatalogBundles(catalog);
+    await install();
+    settleOld({ status: "ok", data: [declared("before-install")] });
+    await reading;
+
+    expect(commands.marketplaceBundles).toHaveBeenCalledTimes(2);
+    expect(useMarketplacesStore.getState().catalogBundles[key]?.[0]?.name).toBe(
+      "after-install",
+    );
+  });
+
+  // The bump that refuses the in-flight read also discards a pre-install
+  // scan in flight, and the only thing that clears the `queued` mark such a
+  // discard leaves is this reset. Left out, the row's score is never asked
+  // for again and it reads "Checking…" for the session.
+  it("clears the pre-install scores that hang off the same drop", async () => {
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed([]));
+    usePreinstallSafety.setState({ scores: { "any::gh": "clean" as never } });
+
+    await install();
+
+    expect(usePreinstallSafety.getState().scores).toEqual({});
+  });
+
   it("empties both curated-set caches so the counts are read again", async () => {
     vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed([]));
     useMarketplacesStore.setState({
