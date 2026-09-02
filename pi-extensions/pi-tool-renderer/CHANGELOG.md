@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- A relative or blank `PI_CODING_AGENT_DIR` now uses `~/.pi/agent` instead of resolving against the session's directory, so the user scope cannot land inside an untrusted checkout.
+
 ### 2.0.0
 
 - **Breaking**: the settings namespace is renamed from `vstack` to `kendex`, with no compatibility fallback. Configuration previously read from `vstack.extensionManager.config["@vanillagreen/pi-tool-renderer"]` in `.pi/settings.json` is now read from `kendex.extensionManager.config["@vanillagreen/pi-tool-renderer"]`; settings still stored under the old key are ignored and this package silently falls back to its defaults until the key is renamed. The `package.json` block that declares these settings is renamed from `"vstack"` to `"kendex"` to match.

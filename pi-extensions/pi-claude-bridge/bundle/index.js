@@ -26941,7 +26941,7 @@ function splitPrefixSuffix(input, options = {}) {
 // src/config.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
 import { homedir } from "os";
-import { dirname as dirname2, join as join3, resolve as resolve2, sep as sep2 } from "path";
+import { dirname as dirname2, isAbsolute as isAbsolute2, join as join3, resolve as resolve2, sep as sep2 } from "path";
 
 // src/debug.ts
 import { appendFileSync as appendFileSync2, chmodSync, mkdirSync as mkdirSync2 } from "fs";
@@ -27054,7 +27054,8 @@ function expandHome(input) {
   return input;
 }
 function piUserDir() {
-  return resolve2(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+  const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+  return resolve2(isAbsolute2(override) ? override : expandHome("~/.pi/agent"));
 }
 function isolatedFromEnv() {
   const v2 = (process.env.CLAUDE_BRIDGE_ISOLATED ?? "").trim().toLowerCase();

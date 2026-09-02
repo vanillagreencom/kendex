@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 
 import { CONFIG_ID } from "./constants.js";
 import type { kendexConfig } from "./types.js";
@@ -57,7 +57,8 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 
 
 function piSettingsPaths(cwd = process.cwd()): string[] {
-	const userDir = resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+	const userDir = resolve(isAbsolute(override) ? override : expandHome("~/.pi/agent"));
 	const user = join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];
@@ -119,9 +120,8 @@ export function logFilePath(id: string, now: number = Date.now()): string {
 }
 
 function piAgentDir(): string {
-	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
-	if (configured) return resolve(configured.startsWith("~/") ? join(homedir(), configured.slice(2)) : configured);
-	return join(homedir(), ".pi", "agent");
+	const configured = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+	return isAbsolute(configured) ? resolve(configured) : join(homedir(), ".pi", "agent");
 }
 
 export function taskEnv(): NodeJS.ProcessEnv {

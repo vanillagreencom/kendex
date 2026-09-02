@@ -32,6 +32,7 @@ const HARNESS_VARS: [&str; 7] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Env {
     pub home: PathBuf,
+    os: FakeOs,
     real_home: PathBuf,
     config_dir: PathBuf,
     cache_dir: PathBuf,
@@ -44,6 +45,7 @@ impl Env {
         let data_dir = dirs::data_dir().ok_or(CoreError::NoHomeDir)?;
         let home = dirs::home_dir().ok_or(CoreError::NoHomeDir)?;
         let machine = Env {
+            os: HOST_OS,
             real_home: home.clone(),
             home,
             config_dir: dirs::config_dir().ok_or(CoreError::NoHomeDir)?,
@@ -88,6 +90,10 @@ impl Env {
         self
     }
 
+    pub(crate) fn is_windows(&self) -> bool {
+        self.os == FakeOs::Windows
+    }
+
     /// Fixture environment shaped like the given OS, rooted under `home`.
     pub fn fake(home: impl Into<PathBuf>, os: FakeOs) -> Self {
         Self::rooted(home.into(), os)
@@ -122,6 +128,7 @@ impl Env {
             ),
         };
         Env {
+            os,
             real_home: home.clone(),
             home,
             config_dir: config,

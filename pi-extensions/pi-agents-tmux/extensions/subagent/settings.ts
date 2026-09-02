@@ -23,7 +23,8 @@ export function expandHome(input: string): string {
 }
 
 export function piUserDir(): string {
-	return path.resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+	return path.resolve(path.isAbsolute(override) ? override : expandHome("~/.pi/agent"));
 }
 
 export function sessionIdForContext(ctx: ExtensionContext): string {

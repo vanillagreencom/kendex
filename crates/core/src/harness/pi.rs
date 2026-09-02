@@ -8,6 +8,56 @@ pub struct Pi;
 
 const EXTENSION_EXTS: &[&str] = &["ts", "js"];
 
+fn pi_root_is_absolute_for(value: &str, windows: bool) -> bool {
+    if !windows {
+        return value.starts_with('/');
+    }
+    let bytes = value.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
+    {
+        return true;
+    }
+    let Some(rest) = value
+        .strip_prefix(r"\\")
+        .or_else(|| value.strip_prefix("//"))
+    else {
+        return false;
+    };
+    let mut parts = rest.split(['\\', '/']);
+    matches!((parts.next(), parts.next()), (Some(server), Some(share)) if !server.is_empty() && !share.is_empty())
+}
+
+fn pi_global_root(env: &Env) -> PathBuf {
+    let default = || env.home.join(".pi/agent");
+    let Some(dir) = env
+        .var("PI_CODING_AGENT_DIR")
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+    else {
+        return default();
+    };
+    let root = crate::paths::expand_tilde(&env.home, dir);
+    if pi_root_is_absolute_for(&root.to_string_lossy(), env.is_windows()) {
+        root
+    } else {
+        default()
+    }
+}
+
+#[cfg(test)]
+const PI_ROOT_ABSOLUTE_CASES: &[(&str, bool, bool)] = &[
+    ("/root", true, false),
+    ("C:/root", false, true),
+    ("C:\\root", false, true),
+    ("//server/share", true, true),
+    ("\\\\server\\share", false, true),
+    ("\\root", false, false),
+    ("relative/root", false, false),
+];
+
 /// The segment kendex parks its Pi hook storage under, at both scopes.
 /// Pi warns about a `hooks/` directory sitting directly beside a root it
 /// loads on the name alone, whatever it holds, and the migration it names
@@ -72,10 +122,7 @@ impl HarnessAdapter for Pi {
     }
 
     fn default_global_root(&self, env: &Env) -> PathBuf {
-        match env.var("PI_CODING_AGENT_DIR") {
-            Some(dir) => PathBuf::from(dir),
-            None => env.home.join(".pi/agent"),
-        }
+        pi_global_root(env)
     }
 
     fn project_markers(&self) -> &'static [ProjectMarker] {
@@ -145,8 +192,56 @@ mod tests {
         let env = Env::fake("/h", FakeOs::Linux);
         assert_eq!(Pi.default_global_root(&env), PathBuf::from("/h/.pi/agent"));
 
-        let env = env.with_var("PI_CODING_AGENT_DIR", "/pi-root");
-        assert_eq!(Pi.default_global_root(&env), PathBuf::from("/pi-root"));
+        assert_eq!(
+            Pi.default_global_root(&env.clone().with_var("PI_CODING_AGENT_DIR", "/pi-root")),
+            PathBuf::from("/pi-root")
+        );
+        for empty in ["", "   "] {
+            assert_eq!(
+                Pi.default_global_root(&env.clone().with_var("PI_CODING_AGENT_DIR", empty)),
+                PathBuf::from("/h/.pi/agent")
+            );
+        }
+        assert_eq!(
+            Pi.default_global_root(&env.clone().with_var("PI_CODING_AGENT_DIR", "~")),
+            PathBuf::from("/h")
+        );
+        assert_eq!(
+            Pi.default_global_root(&env.with_var("PI_CODING_AGENT_DIR", "~/elsewhere")),
+            PathBuf::from("/h/elsewhere")
+        );
+        assert_eq!(
+            Pi.default_global_root(
+                &Env::fake("/h", FakeOs::Linux).with_var("PI_CODING_AGENT_DIR", "relative/root")
+            ),
+            PathBuf::from("/h/.pi/agent")
+        );
+    }
+
+    #[test]
+    fn global_root_uses_the_environment_platform_rule() {
+        let posix_env = Env::fake("/home/pat", FakeOs::Linux);
+        let windows_env = Env::fake(r"C:\Users\pat", FakeOs::Windows);
+        for (value, posix_absolute, windows_absolute) in PI_ROOT_ABSOLUTE_CASES {
+            assert_eq!(
+                Pi.default_global_root(&posix_env.clone().with_var("PI_CODING_AGENT_DIR", value)),
+                if *posix_absolute {
+                    PathBuf::from(value)
+                } else {
+                    posix_env.home.join(".pi/agent")
+                },
+                "POSIX {value}"
+            );
+            assert_eq!(
+                Pi.default_global_root(&windows_env.clone().with_var("PI_CODING_AGENT_DIR", value)),
+                if *windows_absolute {
+                    PathBuf::from(value)
+                } else {
+                    windows_env.home.join(".pi/agent")
+                },
+                "Windows {value}"
+            );
+        }
     }
 
     #[test]

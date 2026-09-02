@@ -5,7 +5,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export function expandHome(input: string): string {
 	if (input === "~") return homedir();
@@ -14,7 +14,8 @@ export function expandHome(input: string): string {
 }
 
 export function piUserDir(): string {
-	return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+	return resolve(isAbsolute(override) ? override : expandHome("~/.pi/agent"));
 }
 
 export function projectSettingsPath(cwd: string): string {

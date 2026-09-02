@@ -7,7 +7,7 @@
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { dirname, join, resolve, sep } from "path";
+import { dirname, isAbsolute, join, resolve, sep } from "path";
 import { debug } from "./debug.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
@@ -101,7 +101,8 @@ function expandHome(input: string): string {
  * so a host app that owns the agent dir owns those paths too.
  */
 export function piUserDir(): string {
-	return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+	return resolve(isAbsolute(override) ? override : expandHome("~/.pi/agent"));
 }
 
 /**

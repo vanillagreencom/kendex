@@ -44,6 +44,18 @@ const VERBATIM: &str = r"\\?\";
 /// the Win32 parser refuses.
 const LEGACY_MAX_PATH: usize = 248;
 
+/// Expands a leading `~/` or a lone `~` against `home`. A `~user` prefix is
+/// left untouched because it names another account, not `home`.
+pub fn expand_tilde(home: &Path, input: &str) -> PathBuf {
+    if input == "~" {
+        return home.to_path_buf();
+    }
+    match input.strip_prefix("~/") {
+        Some(rest) => home.join(rest),
+        None => PathBuf::from(input),
+    }
+}
+
 /// A path as text, spelled with `/` whatever the platform builds it with.
 ///
 /// A verbatim path is reduced by [`plain`] first, since `\\?\C:\x` with
@@ -166,6 +178,25 @@ fn drive_rooted(text: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tilde_expands_against_home_without_rewriting_other_paths() {
+        let home = Path::new("/home/pat");
+        assert_eq!(expand_tilde(home, "~"), PathBuf::from("/home/pat"));
+        assert_eq!(
+            expand_tilde(home, "~/dev/hyprtrade"),
+            PathBuf::from("/home/pat/dev/hyprtrade")
+        );
+        assert_eq!(expand_tilde(home, "~alex/dev"), PathBuf::from("~alex/dev"));
+        assert_eq!(
+            expand_tilde(home, "dev/hyprtrade"),
+            PathBuf::from("dev/hyprtrade")
+        );
+        assert_eq!(
+            expand_tilde(home, "/opt/dev/hyprtrade"),
+            PathBuf::from("/opt/dev/hyprtrade")
+        );
+    }
 
     /// The spelling rule, driven with a Windows-shaped path on whatever
     /// host runs the suite. Against `to_string_lossy` — the call every one

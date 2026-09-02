@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
 	CONFIG_ID,
 	bridgeCavemanHookEnabled,
@@ -26,7 +26,8 @@ const SETTINGS_EVENT = "kendex:extension-settings-changed";
 
 
 function piUserDir(): string {
-	return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+	return resolve(isAbsolute(override) ? override : expandHome("~/.pi/agent"));
 }
 
 function safeFileName(value: string): string {

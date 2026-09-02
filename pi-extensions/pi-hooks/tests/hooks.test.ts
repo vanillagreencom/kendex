@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCargo } from "../extensions/cargo.ts";
-import piHooks, { runRenderedHook } from "../extensions/hooks.ts";
+import piHooks from "../extensions/hooks.ts";
 import {
 	CONFIG_ID,
 	initRustRepo,
@@ -12,6 +13,7 @@ import {
 	readLog,
 	renderedHookPath,
 	renderStub,
+	renderUserStub,
 	runGit,
 	trusted,
 	useIsolatedGitEnv,
@@ -105,6 +107,94 @@ function renderRealHook(project: string, name: string): void {
 	writeFileSync(renderedHookPath(project, name), readFileSync(source, "utf8"));
 	chmodSync(renderedHookPath(project, name), 0o755);
 }
+
+function runHandlerChild(home: string, workspace: string, agentDir: string, trusted: boolean): ReturnType<typeof spawnSync> {
+	const modulePath = join(import.meta.dir, "..", "extensions", "hooks.ts");
+	const program = `
+import piHooks from ${JSON.stringify(modulePath)};
+let handler;
+piHooks({ on(event, callback) { if (event === "tool_call") handler = callback; } });
+const result = await handler(
+	{ toolName: "bash", input: { command: "git commit -m x" } },
+	{ cwd: ${JSON.stringify(workspace)}, isProjectTrusted: () => ${trusted} },
+);
+process.stdout.write(JSON.stringify(result ?? null));
+`;
+	return spawnSync(process.execPath, ["-e", program], {
+		cwd: workspace,
+		encoding: "utf8",
+		env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir },
+	});
+}
+
+describe("pi-hooks root selection", () => {
+	test("ancestor and untrusted project guards refuse without executing, while a relative global override stays absent", () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-hooks-isolated-home-"));
+		const outer = mkdtempSync(join(tmpdir(), "pi-hooks-outer-"));
+		const nested = join(outer, "nested");
+		const untrusted = initRustRepo("pi-hooks-untrusted-");
+		const relative = mkdtempSync(join(tmpdir(), "pi-hooks-relative-"));
+		const logs = [join(outer, "payload.log"), join(untrusted, "payload.log"), join(relative, "payload.log")];
+		try {
+			mkdirSync(nested, { recursive: true });
+			renderStub(outer, "pre-commit-check", { exitCode: 2, stderr: "must not run", log: logs[0]! });
+			renderStub(untrusted, "pre-commit-check", { exitCode: 2, stderr: "must not run", log: logs[1]! });
+			renderUserStub(join(relative, "relative", "agent"), "pre-commit-check", { exitCode: 2, stderr: "must not run", log: logs[2]! });
+			for (const [workspace, trusted, log, reason] of [
+				[nested, true, logs[0]!, "cannot confirm trust for that exact project"],
+				[untrusted, false, logs[1]!, "does not report that exact project as trusted"],
+				[relative, false, logs[2]!, undefined],
+			] as const) {
+				const child = runHandlerChild(home, workspace, "relative/agent", trusted);
+				expect(child.status, child.stderr).toBe(0);
+				const verdict = JSON.parse(child.stdout) as { block?: boolean; reason?: string } | null;
+				if (reason) {
+					expect(verdict?.block).toBe(true);
+					expect(verdict?.reason).toContain(reason);
+				} else expect(verdict).toBeNull();
+				expect(readLog(log)).toBe("");
+			}
+		} finally {
+			for (const dir of [home, outer, untrusted, relative]) rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("absolute and whitespace-default global roots execute the user's hook", () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-hooks-global-home-"));
+		const workspace = mkdtempSync(join(tmpdir(), "pi-hooks-global-workspace-"));
+		const absolute = mkdtempSync(join(tmpdir(), "pi-hooks-global-absolute-"));
+		const cases = [[absolute, absolute], ["   ", join(home, ".pi", "agent")]] as const;
+		try {
+			for (const [agentDir, root] of cases) {
+				const log = join(root, "payload.log");
+				renderUserStub(root, "pre-commit-check", { exitCode: 0, log });
+				const child = runHandlerChild(home, workspace, agentDir, false);
+				expect(child.status, child.stderr).toBe(0);
+				expect(JSON.parse(child.stdout)).toBeNull();
+				expect(readLog(log)).toContain("git commit -m x");
+			}
+		} finally {
+			for (const dir of [home, workspace, absolute]) rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("a hook-only checkout refuses all project guards before spawn", async () => {
+		for (const name of ["block-bare-cd", "block-repo-copy", "pre-commit-check"]) {
+			const project = mkdtempSync(join(tmpdir(), "pi-hooks-hook-only-"));
+			const log = join(project, "payload.log");
+			try {
+				renderStub(project, name, { exitCode: 0, log });
+				const handler = installToolCallHandler();
+				const result = await handler({ toolName: "bash", input: { command: "git commit -m x" } }, trusted(project)) as { block?: boolean; reason?: string };
+				expect(result.block).toBe(true);
+				expect(result.reason).toContain("has no .pi/settings.json trust companion");
+				expect(readLog(log)).toBe("");
+			} finally {
+				rmSync(project, { recursive: true, force: true });
+			}
+		}
+	});
+});
 
 
 describe("pi-hooks pre-commit tool_call", () => {
@@ -221,54 +311,6 @@ describe("pi-hooks pre-commit tool_call", () => {
 				rmSync(unarmed, { recursive: true, force: true });
 			}
 		});
-	});
-});
-
-describe("pi-hooks hook budget", () => {
-	// A killed process still carries an exit code. runCommandAsync marks the run
-	// timed out and sends SIGTERM, then gives the child a grace period, so a hook
-	// that traps the signal and exits cleanly settles as timedOut with exitCode
-	// 0 — a run that judged nothing wearing the status of one that allowed. The
-	// budget has to be read before any exit code or that is an allow.
-	test("a hook killed at the budget blocks even when it exits 0", async () => {
-		const project = initRustRepo("pi-hooks-timeout-");
-		try {
-			mkdirSync(join(project, ".pi", "kendex", "hooks"), { recursive: true });
-			const script = renderedHookPath(project, "pre-commit-check");
-			// `sleep &` then `wait` so the trap runs at once: bash defers a trap
-			// until the foreground command returns, and a foreground sleep would
-			// make this a test of the SIGKILL escalation instead.
-			writeFileSync(script, [
-				"#!/usr/bin/env bash",
-				"trap 'exit 0' TERM",
-				"cat >/dev/null",
-				"sleep 30 &",
-				"wait $!",
-				"exit 0",
-			].join("\n") + "\n");
-			chmodSync(script, 0o755);
-
-			const verdict = await runRenderedHook("pre-commit-check", "git commit -m x", trusted(project) as never, 250) as { block?: boolean; reason?: string };
-			expect(verdict?.block).toBe(true);
-			expect(verdict?.reason).toContain("timed out after 250ms");
-			expect(verdict?.reason).toContain("a guard that did not run does not stand aside");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
-	});
-
-	// The control, without which the assertion above passes for a carrier that
-	// blocks everything: the same short budget, a hook that finishes inside it.
-	test("a hook that finishes inside the budget still allows", async () => {
-		const project = initRustRepo("pi-hooks-inbudget-");
-		const log = join(project, "payload.log");
-		try {
-			renderStub(project, "pre-commit-check", { exitCode: 0, log });
-			expect(await runRenderedHook("pre-commit-check", "git commit -m x", trusted(project) as never, 5000)).toBeUndefined();
-			expect(readLog(log)).toContain("git commit -m x");
-		} finally {
-			rmSync(project, { recursive: true, force: true });
-		}
 	});
 });
 

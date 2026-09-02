@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { CONFIG_ID } from "./constants.js";
 
 export type kendexConfig = Record<string, unknown>;
@@ -57,7 +57,8 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 
 
 export function piSettingsPaths(cwd = process.cwd()): string[] {
-	const userDir = resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+	const userDir = resolve(isAbsolute(override) ? override : expandHome("~/.pi/agent"));
 	const user = join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];

@@ -195,7 +195,8 @@ function projectSettingsTrusted(settingsPath: string): boolean {
 
 
 function piSettingsPaths(cwd = process.cwd()): string[] {
-	const userDir = path.resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+	const userDir = path.resolve(path.isAbsolute(override) ? override : expandHome("~/.pi/agent"));
 	const user = path.join(userDir, "settings.json");
 	const project = projectSettingsPath(cwd);
 	return projectSettingsTrusted(project) ? [user, project] : [user];

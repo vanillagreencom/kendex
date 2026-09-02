@@ -13,7 +13,6 @@ pub mod marketplaces;
 mod mine;
 mod native;
 mod packages;
-mod paths;
 pub mod recovery;
 pub mod repo_effects;
 mod scopes;

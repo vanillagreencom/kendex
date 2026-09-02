@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-output-policy.installed");
 const CONFIG_ID = "@vanillagreen/pi-output-policy";
@@ -152,7 +152,8 @@ function expandHome(input: string): string {
 }
 
 function piUserDir(): string {
-	return resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	const override = expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "");
+	return resolve(isAbsolute(override) ? override : expandHome("~/.pi/agent"));
 }
 
 function safeFileName(value: string): string {
