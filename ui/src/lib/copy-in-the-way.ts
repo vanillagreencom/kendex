@@ -43,10 +43,10 @@ export const manageConfirmTitle = (name: string): string =>
 // happens to them, not where they are. Where they land differs by arm — a
 // project skill's own folder is renamed into the project's shared .agents
 // tree and the tool's path becomes a link to it, while everything else is
-// copied into kendex's store with the original trashed — and nothing the
-// page holds says which arm a row is on. So the words claim only what is
-// true either way: the files move, the path each tool reads goes on
-// working, and nothing is deleted.
+// copied into kendex's store with the original trashed — and which arm a
+// row is on is core's rule, not one the page re-derives in TS to reword a
+// dialog. So the words claim only what is true either way: the files move,
+// the path each tool reads goes on working, and nothing is deleted.
 export const MANAGE_CONFIRM_BODY =
   "kendex moves these files to where it manages them from and leaves each tool reading them at the same path. Nothing is deleted.";
 // The opener and the title carry the action, and the body says what

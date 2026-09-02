@@ -20,16 +20,10 @@ pub use held::{can_keep_all, can_keep_for};
 use shared::{SharedTarget, shared_capture_ops, shared_target};
 pub(super) use shared::{link_target, shared_tools};
 
-/// Record an observed, unmanaged item into the manifest, by whichever of
-/// two arms fits it — nothing is ever lost either way. Capture (agents,
-/// global skills, a namespaced name) moves the content into the scope's
-/// local source, declares source `local`, and trashes the original
-/// artifact. In place (a project skill under its own name) renames the real
-/// directory into `.agents/skills/<name>` and declares source `in-place`,
-/// trashing only the links it cleared, whatever occupied that home, and any
-/// second copy — the original is what moves. A follow-up apply renders the
-/// managed replacement: kendex's copy on the capture arm, a relative link
-/// to the shared tree in place.
+/// Record an observed, unmanaged item into the manifest: its content moves
+/// into the scope's local source (nothing is ever lost), the item is
+/// declared from source `local`, and the original artifact goes to the
+/// trash. A follow-up apply renders the managed replacement.
 ///
 /// State machine: target-has-files → merge into declaration;
 /// live symlink → adopt the *target's* content when it passes the shared-

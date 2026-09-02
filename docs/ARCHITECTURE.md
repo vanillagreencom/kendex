@@ -113,11 +113,10 @@ lives in one capability table read by core and UI.
    The CLI names the verb and flag under it. A foreign link pointing at a real
    skill folder several tools read offers keeping only. Exception: a link the user
    explicitly adopts that resolves to a real skill folder outside kendex's trees —
-   adopt moves a project skill's folder into `.agents/skills/<name>` and captures
-   every other kind's content, trashing the folder it captured (bound to the exact
-   bytes captured); either arm clears every sibling link reading it, and the
-   follow-up apply restores the sharing from what kendex now holds; the confirm
-   names the folder and every tool reading it. A link at anything else stays a conflict.
+   adopt captures the folder's content, trashes the folder (bound to the exact
+   bytes captured) and every sibling link reading it, and the follow-up apply
+   restores the sharing from kendex's copy; the confirm names the folder and every
+   tool reading it. A link at anything else stays a conflict.
    Ownership is what kendex wrote, read from the positions lock entries
    wrote (recorded for skills and codex commands, derived elsewhere) —
    never from the lock key alone, from an entry merely on the books, or
