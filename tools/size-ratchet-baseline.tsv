@@ -81,7 +81,7 @@ skills/iced-rs/iced_wgpu/src/lib.rs	960
 skills/iced-rs/iced_wgpu/src/text.rs	649
 skills/iced-rs/iced_wgpu/src/triangle.rs	887
 skills/iced-rs/iced_wgpu/src/window/compositor.rs	427
-skills/linear/scripts/commands/cache-query.sh	1209
+skills/linear/scripts/commands/cache-query.sh	1231
 skills/linear/scripts/commands/initiatives.sh	470
 skills/linear/scripts/commands/issues.sh	3221
 skills/linear/scripts/commands/projects.sh	1366

@@ -713,12 +713,34 @@ cache_get_project() {
         return 1
     fi
 
-    local project
-    project=$(cache_jq_file "$CACHE_DIR/projects.json" "" --arg ref "$project_ref" \
-        '.[] | select(.id == $ref or .name == $ref)') || return 1
+    # Linear keeps a canceled project under the name a live one reuses
+    # (KEN-1022), and `.[] | select(.id == $ref or .name == $ref)` emitted one
+    # top-level object PER match: `cache projects get "<name>" | jq -r '.id'`
+    # read two ids at rc 0 and the safe formatter shaped each object (KEN-1153).
+    # The selection below is the cache-side spelling of lib/common.sh
+    # resolve_project_id's rule, so both spellings of `projects get` answer
+    # alike: an id match wins outright whatever its state, a canceled match
+    # otherwise loses to every live one, and an all-canceled match set is
+    # refused. One pass, so the refusal's list is the selection's complement
+    # rather than a second predicate that can drift from it.
+    local matches project
+    matches=$(cache_jq_file "$CACHE_DIR/projects.json" "[]" --arg ref "$project_ref" \
+        '[.[] | select(.id == $ref or .name == $ref)]') || return 1
+    project=$(echo "$matches" | jq -c --arg ref "$project_ref" '
+        [.[] | select(.id == $ref)] as $by_id
+        | if ($by_id | length) > 0 then $by_id[0]
+          else [.[] | select((.state // "" | ascii_downcase) != "canceled")][0] // empty
+          end')
 
-    if [[ -z "$project" || "$project" == "null" ]]; then
-        echo "{\"error\": \"Project not found in cache: $project_ref\"}" >&2
+    if [[ -z "$project" ]]; then
+        # Naming each rejected UUID and its state is what lets a deliberate
+        # read of a canceled project pass one.
+        echo "$matches" | jq -c --arg ref "$project_ref" \
+            'if length == 0 then {error: ("Project not found in cache: " + $ref)}
+             else {error: ("Project not found in cache: " + $ref
+                 + " (no live project has this name; matches: "
+                 + (map(.id + " (" + (.state // "") + ")") | join(", "))
+                 + "; pass a project UUID to target one)")} end' >&2
         return 1
     fi
 
