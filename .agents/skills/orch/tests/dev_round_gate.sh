@@ -211,7 +211,10 @@ assert_eq "$quoted_paths" "" \
 # U+00A0 is the case the regex form got wrong: the writer records it, while
 # Oniguruma called it a space and the reader killed the round at exit 2 after
 # the agent had done the work.
-adds_nbsp="$(printf 'tools/a\u00a0b')"
+# `\xc2\xa0` rather than `\u00a0`: bash 3.2 does not read the second form,
+# so the escape would survive as literal text and the case would assert
+# nothing about a no-break space at all.
+adds_nbsp="$(printf 'tools/a\xc2\xa0b')"
 for adds_case in 'tools/a;b:writer-possible' 'crates/app/icons/128x128@2x.png:writer-possible' \
   "$adds_nbsp:writer-possible" \
   'tools/one path.sh:writer-impossible' '-c:writer-impossible'; do
