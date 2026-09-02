@@ -63,23 +63,32 @@ _kendex_github_forward_bounded_signal() {
   case "$signal" in HUP) return 129 ;; INT) return 130 ;; TERM) return 143 ;; esac
 }
 
-kendex_github_run_bounded() {
-  local seconds="$1"
-  shift
-
-  # The bound is polled on a 0.1s tick below, so it is read to one decimal
-  # place and no finer: a figure the poll could not honour is junk, not a
-  # tighter bound. A leading zero is decimal, never octal.
-  local whole frac
+# The one reading of the bound grammar. The bound is polled on a 0.1s tick
+# below, so it is read to one decimal place and no finer: a figure the poll
+# could not honour is junk, not a tighter bound. A leading zero is decimal,
+# never octal.
+#
+# Separate from the runner because a caller has to be able to tell a bound it
+# cannot read from a command that failed, and it may not ask by running the
+# command: 125 arrives after the command did not run, so there is no output to
+# explain it. Asking here keeps one judge of the grammar.
+kendex_github_bound_ticks() { # SECONDS — tenths on stdout; 1 when unreadable
+  local seconds="$1" whole frac
   case "$seconds" in
     *.*) whole="${seconds%.*}" frac="${seconds#*.}" ;;
     *) whole="$seconds" frac=0 ;;
   esac
-  case "$whole" in '' | *[!0-9]*) return 125 ;; esac
-  case "$frac" in [0-9]) ;; *) return 125 ;; esac
+  case "$whole" in '' | *[!0-9]*) return 1 ;; esac
+  case "$frac" in [0-9]) ;; *) return 1 ;; esac
+  printf '%s' "$(((10#$whole) * 10 + frac))"
+}
+
+kendex_github_run_bounded() {
+  local seconds="$1"
+  shift
 
   local restore_monitor=0 pid="" ticks=0 max_ticks status=0 target=""
-  max_ticks=$(((10#$whole) * 10 + frac))
+  max_ticks="$(kendex_github_bound_ticks "$seconds")" || return 125
   if [ "$max_ticks" -eq 0 ]; then
     "$@"
     return

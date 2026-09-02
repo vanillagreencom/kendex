@@ -172,14 +172,8 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
   elif [ "${SR_SETTINGS_FROM_INDEX:-0}" = "1" ]; then
     dir="${SR_SETTINGS_INDEX_DIR:-}"
   fi
-  # No snapshot, or a name that cannot round-trip through a one-line memo:
-  # resolve it the long way rather than record an answer that reads back wrong.
-  case "$dir$SR_SETTINGS_NL$1" in
-    "$SR_SETTINGS_NL"* | *"$SR_SETTINGS_NL"*"$SR_SETTINGS_NL"*)
-      sr_settings_resolve "$1"
-      return
-      ;;
-  esac
+  # No snapshot: nothing to memoize, and nowhere to put it.
+  [ -n "$dir" ] || { sr_settings_resolve "$1"; return; }
   sr_settings_slug "$1"
   memo="$dir/settings.resolved.$SR_SETTINGS_SLUG"
   if [ -f "$memo" ]; then
@@ -192,6 +186,16 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
     fi
   fi
   resolved="$(sr_settings_resolve "$1")" || return 1
+  # A memo holds one line, so a resolution carrying a newline cannot come back
+  # out: the read above would return its first line, which names no file, and
+  # the key would fall back to its default with nothing said. Guarded on the
+  # value, not on what built it, so a new return path cannot reopen this.
+  case "$resolved" in
+    *"$SR_SETTINGS_NL"*)
+      printf '%s' "$resolved"
+      return 0
+      ;;
+  esac
   printf '%s\n' "$resolved" >"$memo" || {
     echo "::error::$1: could not record the resolved settings source at $memo" >&2
     return 1

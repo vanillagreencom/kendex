@@ -293,6 +293,32 @@ assert_eq "$rc" "0" "gh timeout accepts a leading-zero decimal" "$stderr"
 assert_eq "$(jq -r .number <<<"$output")" "42" \
   "leading-zero gh bound returns PR JSON" "$stderr"
 
+# A bound outside the grammar the help advertises. The runner refuses it with
+# 125 having run nothing, so without a mapping here the caller reads a
+# configuration typo as a GitHub auth failure or as gh itself failing — the
+# one surface an operator debugging their own setting actually sees. Every
+# name the loop checks is driven, because a name dropped from it would fail
+# exactly this way again.
+for bound in KENDEX_GITHUB_AUTH_TIMEOUT KENDEX_GITHUB_OP_TIMEOUT \
+  KENDEX_GITHUB_PR_VIEW_TIMEOUT; do
+  stderr="$TMP_ROOT/bad-bound-$bound.err"
+  calls="$TMP_ROOT/bad-bound-$bound.calls"
+  : >"$calls"
+  set +e
+  output=$(run_pr_view "$bound=2.55" STUB_GH_CALLS="$calls" 2>"$stderr")
+  rc=$?
+  set -e
+  assert_eq "$rc" "2" "an unreadable $bound exits 2" "$stderr"
+  assert_eq "$(jq -r .status <<<"$output")" "bad_timeout" \
+    "an unreadable $bound emits the configuration status" "$stderr"
+  assert_contains "$(jq -r .error <<<"$output")" "$bound" \
+    "the refusal names $bound" "$stderr"
+  assert_eq "$(jq -r .detail <<<"$output")" "2.55" \
+    "the refusal carries the value it rejected for $bound" "$stderr"
+  assert_eq "$(wc -c <"$calls")" "0" \
+    "an unreadable $bound reaches no gh call" "$stderr"
+done
+
 rm -f "$TMP_ROOT/op.calls"
 stderr="$TMP_ROOT/inherited-gh-token-op.err"
 set +e

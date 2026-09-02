@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
-# The roster contract of tests/must-fail-controls.sh, both directions, driven
-# against a synthetic one-suite skill rather than this one.
+# The verdict contract of tests/must-fail-controls.sh, driven against a
+# synthetic one-suite skill rather than this one.
 #
-# Why a fixture and not this skill's own roster: that roster is matched, so
-# the orphan branch is never taken by a run over skills/linear and deleting it
-# would leave every committed suite green. The fixture is the only place the
-# condition is constructible.
+# Why a fixture and not this skill's own roster: that roster is matched and
+# every one of its controls works, so neither the orphan branch nor the
+# failing-control branch is ever taken by a run over skills/linear, and
+# deleting either would leave every committed suite green. The fixture is the
+# only place those conditions are constructible.
 #
 #   - a matched suite/control pair exits 0 and prints no ORPHAN line, so a
 #     case here cannot pass by always reporting a failure
 #   - a control no suite owns exits non-zero and the diagnostic names it
 #   - a targeted single-stem run reads the roster too: a selection cannot
 #     hide an orphan
+#   - a control that does not red its suite is counted and fails the run,
+#     which is the whole regime: without it the 50 controls over this skill
+#     could all rot and the runner would still exit 0
+#   - a junk job width is refused rather than run at some silent default
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -92,3 +97,38 @@ assert_file_contains "the targeted run names the orphaned control" \
     "$TMP/orphan-one.log" "ORPHAN   controls/ghost.control.sh"
 assert_file_contains "the targeted run counts the orphan" \
     "$TMP/orphan-one.log" "1 controls, 0 failing, 1 orphaned"
+
+# --- a control that does not red its suite is a failure --------------------
+# The runner judges each control in a background job and turns its status into
+# the verdict when that batch is reaped. Nothing above reaches that path: every
+# control there works, so the count is always "0 failing" and the line could be
+# deleted with all of it still green. Here the mutation lands (the tree really
+# changes, so it is not NOOP) on a file the suite never reads, which leaves the
+# suite passing over its own broken subject — GREEN, the case the whole regime
+# exists to catch.
+green="$TMP/green"
+fixture "$green"
+printf 'INERT=1\n' >"$green/scripts/inert.sh"
+cat >"$green/tests/controls/alpha.control.sh" <<'CONTROL'
+control_expect "the value is green"
+control_replace scripts/inert.sh 1 'INERT=1' 'INERT=2'
+CONTROL
+
+rc="$(run_roster "$TMP/green.log" "$green")"
+assert_ne "a control that leaves its suite passing fails the run" "$rc" 0
+assert_file_contains "the diagnostic names the suite that stayed green" \
+    "$TMP/green.log" "GREEN    alpha.test.sh"
+assert_file_contains "the failing control is counted, not just printed" \
+    "$TMP/green.log" "1 controls, 1 failing, 0 orphaned"
+
+# --- a junk job width is refused ------------------------------------------
+# Not clamped and not defaulted: a width the runner cannot read would either
+# launch every control at once or launch none, and a run that launched none
+# reports "0 failing" like a clean one.
+jobs_log="$TMP/jobs.log"
+CONTROL_JOBS=some bash "$matched/tests/must-fail-controls.sh" >"$jobs_log" 2>&1
+rc=$?
+assert_eq "a non-numeric CONTROL_JOBS exits 2" "$rc" 2
+assert_file_contains "the refusal names the setting and the value" \
+    "$jobs_log" "CONTROL_JOBS must be a positive integer, got: some"
+assert_file_lacks "a refused width judges nothing" "$jobs_log" "controls, "

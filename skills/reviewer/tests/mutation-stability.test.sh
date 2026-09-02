@@ -76,7 +76,10 @@ run_ms "$SHA" --test 'bash check.sh' --build 'true' \
   --mutate 'sed -i.bak "s/+/-/" lib.sh && rm -f lib.sh.bak' \
   --stability 2 --threads 2
 is_rc 0 "killed mutant exits 0"
-if [ "$out" = "mutation: killed 1/1; stability: 2/2 at 2 threads" ]; then ok "summary line is the exact format"; else bad "summary line is the exact format" "$out"; fi
+# The LAST line, not the whole stream: the run may say something on stderr
+# first — a skipped settle boundary does — and the claim here is the shape of
+# the verdict this script ends on.
+if [ "${out##*$'\n'}" = "mutation: killed 1/1; stability: 2/2 at 2 threads" ]; then ok "summary line is the exact format"; else bad "summary line is the exact format" "$out"; fi
 
 run_ms "$SHA" --test 'bash check.sh' --build 'true' \
   --mutate 'echo "# decoy: still says +" >> lib.sh' --stability 1
@@ -138,7 +141,13 @@ settle_arm() { # DESC EXPECTATION(present|absent) env-argument...
   fi
 }
 settle_arm "the default settle waits a whole second" present -u MUTATION_STABILITY_SETTLE
+lacks "settle: 0" "the default run says nothing about a skipped boundary"
 settle_arm "a zero settle asks for no wait at all" absent MUTATION_STABILITY_SETTLE=0
+# A verdict reached without the boundary has to be identifiable afterwards:
+# where BUILD does share a cache, a reused binary reads as a survivor and
+# nothing else in the output says why.
+has "settle: 0 — copies are not mtime-separated" \
+  "a skipped boundary is named in the run's own output"
 
 # KEN-999: one timeout control also checks adoption under a non-reaping PID 1.
 export HANG_PID_FILE="$TMP/timeout-child.pid"

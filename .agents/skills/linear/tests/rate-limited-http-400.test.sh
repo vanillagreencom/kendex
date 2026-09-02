@@ -118,3 +118,33 @@ junk="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" \
 assert_ne "a non-numeric base delay fails the call" "$junk_rc" 0
 assert_contains "a non-numeric base delay names the setting" \
   "$junk" "LINEAR_RETRY_BASE_DELAY must be a whole number of seconds"
+
+# The process environment is not the only way this value arrives: SKILL.md
+# points non-secret defaults at the project's committed settings, and every
+# other LINEAR_* key resolves from there. A guard the settings file can walk
+# past is no guard — the bad value reaches `sleep` and the run dies mid-flight,
+# after the request has already gone out.
+printf '[env]\nLINEAR_RETRY_BASE_DELAY = "soon"\n' >"$TMP_BASE/rl/kendex.settings.toml"
+settings_rc=0
+settings_out="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" \
+  LINEAR_API_KEY_OVERRIDE="lin_api_test" LINEAR_TEAM="Claude" \
+  "$TMP_BASE/rl/.agents/skills/linear/scripts/linear.sh" statuses list 2>&1)" || settings_rc=$?
+assert_ne "a non-numeric base delay in kendex.settings.toml fails the call" "$settings_rc" 0
+assert_contains "a settings-file base delay reaches the same named refusal" \
+  "$settings_out" "LINEAR_RETRY_BASE_DELAY must be a whole number of seconds"
+rm -f "$TMP_BASE/rl/kendex.settings.toml"
+
+# A leading zero is a decimal figure. Read in the shell's default base it is
+# octal, and 08 is not a number at all: the run would die on an arithmetic
+# error where the caller expects the structured rate-limit answer.
+: >"$TMP_BASE/rl/slept"
+zero_out="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" \
+  LINEAR_API_KEY_OVERRIDE="lin_api_test" LINEAR_TEAM="Claude" \
+  LINEAR_RETRY_BASE_DELAY=08 \
+  "$TMP_BASE/rl/.agents/skills/linear/scripts/linear.sh" statuses list 2>&1)" || true
+assert_eq "a leading-zero base delay is read in base ten" \
+  "$(tr '\n' ' ' <"$TMP_BASE/rl/slept")" "8 16 "
+assert_contains "a leading-zero base delay still answers with the rate limit" \
+  "$zero_out" "Rate limited. Try again later."
+assert_not_contains "a leading-zero base delay is never an arithmetic error" \
+  "$zero_out" "value too great for base"

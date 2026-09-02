@@ -24,6 +24,12 @@ CONTROL_JOBS="${CONTROL_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 
 WORK="$(mktemp -d)"
 trap 'rm -rf -- "${WORK:?}"' EXIT
+# An interrupted run takes its controls with it. Only the pids this script
+# recorded when it launched them: every lane on this machine runs these same
+# suites out of its own worktree, so an argv match would reach theirs too.
+# Bash ignores INT in the async children of a shell without job control, so
+# Ctrl-C never reaches them on its own; TERM does.
+trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 130' INT TERM
 
 # --- control vocabulary -----------------------------------------------------
 # A control script runs with CONTROL_ROOT pointing at its own copy of the
@@ -93,17 +99,28 @@ control_write() {
 # --- runner -----------------------------------------------------------------
 
 PIDS=()
+BATCH=()
 FAILURES=0
 
-# Wait out the launched batch, scoring one failure per control that reported
-# one. `wait -n` would keep the pipe full, but these suites must start under
-# the Bash 3.2 in /bin on macOS, which does not have it.
+# Wait out the launched batch, score one failure per control that reported
+# one, then print what that batch found. `wait -n` would keep the pipe full
+# instead of draining it in batches, but this skill supports Bash 4.0 and
+# newer (README § Setup) and `wait -n` arrived in 4.3.
+#
+# Printing here rather than after the last batch is what a run killed by CI,
+# a wrapper timeout or Ctrl-C leaves behind: the verdicts already reached.
+# A batch's pids are in roster order and the batches are too, so incremental
+# output is the same order the whole run would have printed.
 reap() {
-	local pid
+	local pid stem
 	for pid in ${PIDS[@]+"${PIDS[@]}"}; do
 		wait "$pid" || FAILURES=$((FAILURES + 1))
 	done
+	for stem in ${BATCH[@]+"${BATCH[@]}"}; do
+		cat "$WORK/$stem.log"
+	done
 	PIDS=()
+	BATCH=()
 }
 
 run_one() {
@@ -177,7 +194,7 @@ run_one() {
 }
 
 main() {
-	local -a wanted=("$@") stems=() ran=()
+	local -a wanted=("$@") stems=()
 	local suite_path control_path suite stem want total=0 orphans=0
 
 	for suite_path in "$TESTS_DIR"/*.test.sh; do
@@ -211,20 +228,14 @@ main() {
 			continue
 		fi
 		total=$((total + 1))
-		ran+=("$stem")
 		run_one "$suite" "$stem" >"$WORK/$stem.log" 2>&1 &
 		PIDS+=("$!")
+		BATCH+=("$stem")
 		[[ ${#PIDS[@]} -lt "$CONTROL_JOBS" ]] || reap
 	done
 	reap
 
 	[[ "$total" -gt 0 ]] || die "selection matched no suites"
-
-	# Roster order, not finish order: the report reads the same whatever the
-	# machine's width.
-	for stem in "${ran[@]}"; do
-		cat "$WORK/$stem.log"
-	done
 
 	printf '\n%d controls, %d failing, %d orphaned\n' \
 		"$total" "$FAILURES" "$orphans"

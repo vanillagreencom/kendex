@@ -11,18 +11,6 @@ LINEAR_API="https://api.linear.app/graphql"
 LINEAR_LIMIT_SHORT_DESC=255    # Initiatives, projects, milestones, labels
 LINEAR_LIMIT_ISSUE_DESC=100000 # Issues have no practical limit
 
-# Seconds before the first retry of a rate-limited or failed GraphQL call;
-# each further attempt doubles it. Overridable so a suite driving the retry
-# path against a stubbed curl does not spend the real backoff — the wait is
-# for Linear's benefit, and there is no Linear on the other end of a stub.
-LINEAR_RETRY_BASE_DELAY="${LINEAR_RETRY_BASE_DELAY:-1}"
-case "$LINEAR_RETRY_BASE_DELAY" in
-*[!0-9]* | "")
-    echo '{"error": "LINEAR_RETRY_BASE_DELAY must be a whole number of seconds"}' >&2
-    exit 1
-    ;;
-esac
-
 # Internal lib directory (underscore prefix avoids overwriting caller's SCRIPT_DIR)
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -76,6 +64,24 @@ _CALLER_LINEAR_TEAM="${LINEAR_TEAM:-}"
 # shellcheck source=kendex-env.sh
 source "$_LIB_DIR/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
+
+# Seconds before the first retry of a rate-limited or failed GraphQL call;
+# each further attempt doubles it. Overridable so a suite driving the retry
+# path against a stubbed curl does not spend the real backoff — the wait is
+# for Linear's benefit, and there is no Linear on the other end of a stub.
+#
+# Below the project load, where every LINEAR_* value resolves:
+# kendex_load_project_env snapshots only EXPORTED names, so a default assigned
+# above it is a plain variable the settings files overwrite unvalidated. Base
+# ten at the seed, so a leading zero is decimal and not the octal 08 rejects.
+LINEAR_RETRY_BASE_DELAY="${LINEAR_RETRY_BASE_DELAY:-1}"
+case "$LINEAR_RETRY_BASE_DELAY" in
+*[!0-9]* | "")
+    echo '{"error": "LINEAR_RETRY_BASE_DELAY must be a whole number of seconds"}' >&2
+    exit 1
+    ;;
+esac
+LINEAR_RETRY_BASE_DELAY=$((10#$LINEAR_RETRY_BASE_DELAY))
 
 # Where each target-selecting value came from: override (LINEAR_API_KEY_OVERRIDE),
 # project-config (kendex.settings.toml / .env.local), environment (process

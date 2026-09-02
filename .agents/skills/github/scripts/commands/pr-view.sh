@@ -75,8 +75,10 @@ Errors:
   Emits structured JSON on stdout ({"status":..., "error":..., "detail":...,
   "exit_code":..., "number":...}) and exits nonzero. status is one of no_pr,
   auth_error, token_resolution_failed, token_resolution_timeout,
-  token_resolution_unavailable, auth_timeout, gh_timeout, or gh_error. Raw
-  gh/op detail is preserved in stderr and the JSON detail field.
+  token_resolution_unavailable, auth_timeout, gh_timeout, bad_timeout, or
+  gh_error. bad_timeout exits 2 and names the KENDEX_GITHUB_*_TIMEOUT setting
+  whose value is not a number of seconds to one decimal place; nothing ran.
+  Raw gh/op detail is preserved in stderr and the JSON detail field.
 
 Examples:
   github.sh pr-view              # View PR for current branch
@@ -119,6 +121,24 @@ main() {
                 shift
                 ;;
         esac
+    done
+
+    # A bound the runner cannot read stops the command before it runs and
+    # comes back as 125 — with no output, because nothing ran, so at the call
+    # site it is indistinguishable from the command's own failure and an
+    # operator debugging a typo in their own setting is pointed at GitHub
+    # auth. Refused here by name, ahead of any request. The grammar is asked
+    # of the runner's own reader rather than restated.
+    local bound_name bound_value
+    for bound_name in KENDEX_GITHUB_AUTH_TIMEOUT KENDEX_GITHUB_OP_TIMEOUT \
+        KENDEX_GITHUB_PR_VIEW_TIMEOUT; do
+        bound_value="${!bound_name:-}"
+        [ -n "$bound_value" ] || continue
+        kendex_github_bound_ticks "$bound_value" >/dev/null && continue
+        emit_error_result "bad_timeout" \
+            "$bound_name is not a number of seconds to one decimal place" \
+            "$bound_value" 2
+        exit 2
     done
 
     local auth_out auth_err pr_out pr_err

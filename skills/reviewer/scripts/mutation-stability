@@ -81,6 +81,13 @@ case "$SETTLE" in
     exit 2
     ;;
 esac
+# The precondition for skipping the boundary — that BUILD keeps no cache the
+# copies could share — is the caller's to know and this script cannot check
+# it. When it does not hold the mutant reuses the clean run's binary and reads
+# as survived, and nothing about that verdict looks wrong afterwards. Say it
+# once, so a transcript shows which verdicts were produced without it.
+[ "$SETTLE" -ne 0 ] ||
+  echo "settle: 0 — copies are not mtime-separated; verdicts assume BUILD shares no cache" >&2
 
 ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX") || exit 2
 ACTIVE_PID="" ACTIVE_GROUP=""
