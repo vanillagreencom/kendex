@@ -508,6 +508,142 @@ assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
 assert_eq "$(ls -1 "$STATE_DIR/claims" | wc -l | tr -d '[:space:]')" "0" \
   "a dead claim is pruned on read, not left to accumulate" "$err"
 
+# --- 3d. the reset time the banner states -----------------------------------
+# Claude Code formats its reset through `Intl` in en-US, lowercases the
+# meridiem and drops the space before it, so a bare clock inside a day reads
+# `9:50am` and the IANA zone follows in parentheses. The zone in the banner is
+# what makes these cases answer the same in any runner's local zone, and
+# `now.epoch` pins the instant they are read at. Every case here runs under
+# `TZ=UTC`, so a banner naming America/Los_Angeles answers correctly only when
+# the zone it names is honored, on a runner in any zone including that one.
+new_case usage_limit_reset_live
+printf '1788364800' > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z, 50m early
+{
+  printf '⏺ Working through the queue.\n'
+  printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3k"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-02T16:50:00Z" \
+  "the event carries the reset the banner states, resolved to UTC" "$err"
+
+# ...and the case the issue was filed on: the same screen read after the wall
+# lifted. The banner is the pane remembering a window that has since reopened,
+# so the lane wants a nudge, not another wait — a distinct event, because the
+# supervisor cannot tell the two apart from the banner text alone.
+new_case usage_limit_reset_passed
+printf '1788369300' > "$STUB_DIR/now.epoch"   # 2026-09-02T17:15:00Z, 25m late
+{
+  printf '⏺ Working through the queue.\n'
+  printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n"
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3l"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit-passed gh-2 resets=2026-09-02T16:50:00Z" \
+  "a reset already behind us is its own event" "$err"
+assert_not_contains "$out" "EVENT usage-limit " \
+  "a spent wall never reports as a standing one" "$err"
+
+# A bare clock names no day, and Claude draws one only while the reset is
+# inside 24 hours: the occurrence NEAREST now is it. Read at 01:00 the night
+# after, `resets 11pm` is last night's — two hours gone, not twenty-two to go.
+new_case usage_limit_reset_nearest
+printf '1788397200' > "$STUB_DIR/now.epoch"   # 2026-09-03T01:00:00Z
+printf "You've hit your usage limit \xc2\xb7 resets 11pm\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3m"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit-passed gh-2 resets=2026-09-02T23:00:00Z" \
+  "a bare clock resolves to its nearest occurrence, not to today" "$err"
+
+# ...and its control: the same banner read before that clock comes round is a
+# wall still standing, on the same day the naive reading would have picked
+new_case usage_limit_reset_nearest_live
+printf '1788382800' > "$STUB_DIR/now.epoch"   # 2026-09-02T21:00:00Z
+printf "You've hit your usage limit \xc2\xb7 resets 11pm\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3n"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-02T23:00:00Z" \
+  "the same clock two hours earlier is a wall still standing" "$err"
+
+# Past 24 hours out — a weekly window — Claude switches to a dated form and
+# prints the year only when it is not the current one
+new_case usage_limit_reset_dated
+printf '1788364800' > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
+printf "You've hit your weekly limit \xc2\xb7 resets Sep 6, 4pm\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3o"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-06T16:00:00Z" \
+  "a dated banner is read as a date, not as a clock today" "$err"
+
+new_case usage_limit_reset_dated_year
+printf '1788364800' > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
+printf "You've hit your weekly limit \xc2\xb7 resets Oct 7, 2027, 11:32am\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3p"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2027-10-07T11:32:00Z" \
+  "the year the dated form carries wins over the current one" "$err"
+
+# Codex opens its own with `Try again at` and formats through chrono's
+# `%-I:%M %p`, so the meridiem is upper case and the space before it is real
+new_case usage_limit_reset_codex
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+printf '1788364800' > "$STUB_DIR/now.epoch"   # 2026-09-02T16:00:00Z
+printf "You've hit your usage limit. Try again at 4:30 PM\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3q"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 resets=2026-09-02T16:30:00Z" \
+  "codex's own wording and upper-case meridiem read the same" "$err"
+
+# The must-fail control. Claude's fast-mode cooldown states its reset as a
+# duration, which names no instant: the event keeps its old shape rather than
+# carrying a guessed one, and stays `usage-limit` — a time nobody could read
+# is never evidence the wall has lifted.
+new_case usage_limit_reset_unreadable
+printf '1788364800' > "$STUB_DIR/now.epoch"
+{
+  printf '⏺ Working through the queue.\n'
+  printf "You've hit your fast limit \xc2\xb7 resets in 5m\n"
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3r"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
+  "a reset stated as a duration leaves the event without a time" "$err"
+assert_not_contains "$out" "resets=" "no time is invented for a banner that states none" "$err"
+assert_not_contains "$out" "usage-limit-passed" \
+  "an unreadable reset is never read as a spent one" "$err"
+
+# A `resets` clause the account is not speaking is not the account's reset:
+# only the banner line is read, so a transcript line below it cannot supply
+# the time the event carries
+new_case usage_limit_reset_off_banner
+printf '1788364800' > "$STUB_DIR/now.epoch"
+{
+  printf "You've hit your usage limit \xc2\xb7 resets in 5m\n"
+  printf '⏺ Wrote a note saying the deploy resets 9:50am (America/Los_Angeles)\n'
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3s"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2" \
+  "a reset clause on a transcript line is not the account speaking" "$err"
+
+# The config dir and the reset ride the same line, and `resets=` is keyed so
+# the optional field before it cannot shift what the time is read as
+new_case usage_limit_reset_with_claim
+printf '1788364800' > "$STUB_DIR/now.epoch"
+printf '900 %%3\n' > "$STUB_DIR/panes.txt"
+printf '900 %%3\n' > "$STUB_DIR/pane-key-gh-2.txt"
+mkdir -p "$STATE_DIR/claims"
+printf '900\t%%3\t/home/me/.eclaude\tgh-2\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/c.claim"
+printf "You've hit your usage limit \xc2\xb7 resets 9:50am (America/Los_Angeles)\n" > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3t"
+out="$(run_watch TZ=UTC -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 /home/me/.eclaude resets=2026-09-02T16:50:00Z" \
+  "the account and the reset ride one event, the reset keyed" "$err"
+
 # --- 4. lane-asking --------------------------------------------------------
 new_case question
 {

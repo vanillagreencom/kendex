@@ -31,9 +31,16 @@ Events, checked in this order every pass:
   EVENT lane-exited <lane>   `pgrep -P` reports no child under a bare shell on
                              two passes; pane tail follows. An unusable probe
                              is not an answer and keeps the lane watched
-  EVENT usage-limit <lane> [<config-dir>]
+  EVENT usage-limit <lane> [<config-dir>] [resets=<utc>]
                              a live harness shows its limit banner below the
-                             last user turn on its screen; pane tail follows
+                             last user turn on its screen; pane tail follows.
+                             `resets=` carries the reset time the banner
+                             states, when it states one in a shape the
+                             harnesses draw; the wall is still standing
+  EVENT usage-limit-passed <lane> [<config-dir>] resets=<utc>
+                             the same banner, naming a reset already behind
+                             us: the screen is remembering a spent window that
+                             has since reopened. Bump the lane, never park it
   EVENT lane-asking <lane>   a question or selection prompt differs from the
                              last one emitted for this lane; pane tail follows
   EVENT idle-after-return <lane>
@@ -208,6 +215,18 @@ LANE_ASKING_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel
 # prints "Usage limit reached" and its out-of-credits wording. `.` stands in
 # for the apostrophe: ASCII in the binaries, typographic once rendered.
 USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
+# The reset time the same banner line states, in the shapes the harnesses draw
+# it in. Claude Code formats it through `Intl` in en-US, then lowercases the
+# meridiem and drops the space before it: a bare clock while the reset is under
+# a day out (`resets 9am`, `resets 9:50am`), a dated one beyond that
+# (`resets Sep 6, 4pm`, `resets Oct 7, 2027, 11:32am`), and the IANA zone in
+# parentheses when the banner asks for one. Codex opens its own with
+# `Try again at` and formats through chrono's `%-I:%M %p`, so the meridiem is
+# matched in either case and the space before it is optional. Anything else —
+# Claude's relative `resets in 5m` for a fast-mode cooldown, a weekday with no
+# clock — leaves the event without a time rather than with a guessed one.
+USAGE_RESET_RE='(resets|[Tt]ry again at)[[:space:]]+(([A-Z][a-z][a-z])[[:space:]]+([0-9]{1,2}),[[:space:]]+([0-9]{4},[[:space:]]+)?)?([0-9]{1,2})(:([0-9]{2}))?[[:space:]]?([AaPp])[Mm]'
+USAGE_RESET_ZONE_RE='\(([A-Za-z]+(/[A-Za-z0-9_+-]+)+)\)'
 # A turn in flight: the interrupt hint (both harnesses), the hint shown while
 # a foreground shell runs, or the streaming token counter of the status line.
 WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
@@ -243,10 +262,32 @@ if [[ ${#LANES[@]} -gt 0 && -z "${TMUX:-}" ]]; then
   die "lane windows given (${LANES[*]}) but not inside tmux; drop the lanes or run from the tmux session that owns them"
 fi
 
-# ISO8601 (UTC, Z suffix) → epoch, GNU date first, then BSD/macOS. -u is
-# load-bearing so the timestamp is not shifted by the local zone.
+# `date` under an explicit zone. An empty ZONE leaves TZ alone, which is the
+# runner's own zone — the zone a harness banner naming none was drawn in, since
+# it was drawn on this host.
+tz_date() {
+  local zone="$1"
+  shift
+  if [[ -n "$zone" ]]; then TZ="$zone" date "$@"; else date "$@"; fi
+}
+
+# A timestamp → epoch, GNU date first, then BSD/macOS. FMT is the BSD arm's
+# input format, which GNU does not need, and ZONE the zone the stamp is written
+# in. Both default to the ISO8601 UTC form, which is what every caller but the
+# reset-banner parser hands it; UTC is load-bearing there, so a `--since` floor
+# is not shifted by the runner's local zone.
 to_epoch() {
-  date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
+  local stamp="$1" fmt="${2:-%Y-%m-%dT%H:%M:%SZ}" zone="${3-UTC}"
+  tz_date "$zone" -d "$stamp" +%s 2>/dev/null \
+    || tz_date "$zone" -j -f "$fmt" "$stamp" +%s 2>/dev/null
+}
+
+# The other direction on the same ladder: GNU spells an epoch input `-d @`,
+# BSD `-r`.
+from_epoch() {
+  local epoch="$1" fmt="$2" zone="${3-UTC}"
+  tz_date "$zone" -d "@$epoch" +"$fmt" 2>/dev/null \
+    || tz_date "$zone" -r "$epoch" +"$fmt" 2>/dev/null
 }
 
 # No floor by default: the floor must not move between runs, and a run has no
@@ -514,6 +555,59 @@ pane_turn_slice() {
 pane_below_last_turn() { pane_turn_slice "$1" below; }
 pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
 
+# The reset time a limit banner in SLICE states, as an epoch — empty when it
+# states none in a shape USAGE_RESET_RE recognizes. Read only off a line that
+# carries the banner itself: both harnesses put the clause on that line, and a
+# transcript line elsewhere in the slice is not the account speaking.
+#
+# A bare clock names no day. Claude Code draws one only while the reset is
+# inside 24 hours, so the occurrence of that wall clock NEAREST now is it: a
+# `resets 11pm` read at 1am is last night's, not tonight's. Each candidate day
+# is resolved through `date` in the banner's own zone rather than by adding
+# 86400 to an epoch, so a DST boundary between now and the reset cannot shift
+# it by an hour.
+usage_reset_epoch() {
+  local slice="$1" now="$2" line hour min meridiem mon day year zone stamp
+  local cand delta abs best="" best_abs=0
+  line="$(grep -E -- "$USAGE_LIMIT_RE" <<<"$slice" | grep -Em1 -- "$USAGE_RESET_RE" || true)"
+  [[ -n "$line" ]] || return 0
+  [[ "$line" =~ $USAGE_RESET_RE ]] || return 0
+  mon="${BASH_REMATCH[3]}"
+  day="${BASH_REMATCH[4]}"
+  year="${BASH_REMATCH[5]%%,*}"
+  hour="${BASH_REMATCH[6]}"
+  min="${BASH_REMATCH[8]:-00}"
+  meridiem="${BASH_REMATCH[9]}"
+  # Read AFTER every field above: the match overwrites BASH_REMATCH.
+  zone=""
+  if [[ "$line" =~ $USAGE_RESET_ZONE_RE ]]; then zone="${BASH_REMATCH[1]}"; fi
+  # 12-hour to 24-hour. An hour outside 1-12 is not a clock either formatter
+  # draws, so it is a misread of the line rather than a time to act on.
+  hour=$((10#$hour))
+  [[ "$hour" -ge 1 && "$hour" -le 12 ]] || return 0
+  case "$meridiem" in
+    [Pp]) [[ "$hour" -eq 12 ]] || hour=$((hour + 12)) ;;
+    *) [[ "$hour" -ne 12 ]] || hour=0 ;;
+  esac
+  # A dated banner carries its year only when that year is not the current one,
+  # so an absent year is this year in the banner's zone.
+  if [[ -n "$mon" ]]; then
+    [[ -n "$year" ]] || year="$(from_epoch "$now" %Y "$zone")" || return 0
+    stamp="$(printf '%s %02d %s %02d:%s' "$mon" "$((10#$day))" "$year" "$hour" "$min")"
+    to_epoch "$stamp" '%b %d %Y %H:%M' "$zone" || return 0
+    return 0
+  fi
+  for delta in -86400 0 86400; do
+    stamp="$(from_epoch "$((now + delta))" '%b %d %Y' "$zone")" || continue
+    cand="$(to_epoch "$stamp $(printf '%02d:%s' "$hour" "$min")" '%b %d %Y %H:%M' "$zone")" || continue
+    abs=$((cand - now))
+    [[ "$abs" -ge 0 ]] || abs=$(( -abs ))
+    if [[ -z "$best" || "$abs" -lt "$best_abs" ]]; then best="$cand"; best_abs="$abs"; fi
+  done
+  [[ -n "$best" ]] || return 0
+  printf '%s\n' "$best"
+}
+
 # Watch-list positions whose harness read as exited on the previous pass.
 LANE_SHELL_SEEN=""
 # Watch-list positions that sat at an idle harness prompt on the previous pass.
@@ -576,6 +670,7 @@ observe_lanes() {
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
   local lane pane below cmd pid state probe i states="" shell_now="" idle_now="" asking_now="" claims="" claimed pane_key
+  local now reset_at reset_utc reset_note event
   local asking_state="${PW_SEEN[0]}" next_state fingerprint prior turn_identity
   i=0
   for lane in "${LANES[@]}"; do
@@ -644,7 +739,8 @@ check_lanes() {
     i=$((i + 1))
     if [[ "$(lane_state "$states" "$i")" == exited ]]; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
-    if grep -Eq -- "$USAGE_LIMIT_RE" <<<"$(pane_below_last_turn "$pane")"; then
+    below="$(pane_below_last_turn "$pane")"
+    if grep -Eq -- "$USAGE_LIMIT_RE" <<<"$below"; then
       # The detail is a nicety; a claim store this process cannot read must
       # not take down the event that carries the pane tail.
       claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
@@ -657,7 +753,25 @@ check_lanes() {
       if [[ -z "$claimed" && -n "$claims" ]]; then
         echo "oversee-watch: no live lane claim for the pane behind '$lane'; the usage-limit event names no account" >&2
       fi
-      echo "EVENT usage-limit $lane${claimed:+ $claimed}"
+      # The banner states when the wall lifts, and that decides which event
+      # this is. A reset already behind us means the lane is parked against a
+      # window that has since reopened — the harness will not notice on its
+      # own — so it is bumped, not waited on. An unreadable reset keeps the
+      # plain event with no time on it: the overseer falls back on the pane
+      # tail, which is where it stood before. `resets=` is keyed rather than
+      # positional because the config dir before it is optional.
+      now="$(date -u +%s || true)"
+      reset_at=""
+      [[ -z "$now" ]] || reset_at="$(usage_reset_epoch "$below" "$now")"
+      event=usage-limit
+      reset_note=""
+      reset_utc=""
+      [[ -z "$reset_at" ]] || reset_utc="$(from_epoch "$reset_at" '%Y-%m-%dT%H:%M:%SZ' || true)"
+      if [[ -n "$reset_utc" ]]; then
+        reset_note=" resets=$reset_utc"
+        [[ "$reset_at" -gt "$now" ]] || event=usage-limit-passed
+      fi
+      echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
       [[ -z "$pane" ]] || pane_tail "$pane"
       pr_watch_context
       exit 0
