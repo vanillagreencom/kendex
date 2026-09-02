@@ -3,43 +3,48 @@
 #
 # Copies WORKTREE at SHA into a fresh temp dir (git archive; the shared tree
 # is never touched), runs TEST there as a control (must pass), applies MUTATE
-# (a shell command run inside the copy), reruns TEST (must now fail = mutant
-# killed), then runs TEST N more times on a clean copy at elevated
+# (a shell command run inside the copy), builds the mutant, reruns TEST (must
+# now fail = mutant killed), then runs TEST N more times on a clean copy at elevated
 # parallelism and prints the one summary line reviewers report:
 #
 #   mutation: killed 1/1; stability: N/N at T threads
 #
 # Exit: 0 killed and stable; 1 mutant survived or a stability run failed;
-# 2 control failure (test red before mutation, bad args, archive failure).
+# 2 instrument failure (control, empty selection, invalid mutant, bad input).
 set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: mutation-stability --worktree PATH --sha SHA --test CMD --mutate CMD
-                          [--stability N] [--threads T] [--keep]
+usage: mutation-stability --worktree PATH --sha SHA --test CMD --build CMD
+                          --mutate CMD [--stability N] [--threads T]
+                          [--timeout S] [--keep]
 
   --test CMD       run via bash -c inside the copy; exit 0 = pass
+  --build CMD      compile the mutated copy without running its tests
   --mutate CMD     run via bash -c inside the copy before the kill check
   --stability N    clean-copy repeat runs (default 10; minimum 1)
   --threads T      exported to TEST as THREADS and RUST_TEST_THREADS
                    (default 2x nproc); a runner that takes a flag must be
-                   given it in TEST, e.g. --test 'cargo test -- --test-threads $THREADS' 
+                   given it in TEST, e.g. --test 'cargo test -- --test-threads $THREADS'
+  --timeout S      deadline for each build or test command (default 300)
   --keep           print the temp dirs instead of deleting them
 USAGE
 }
 
-WORKTREE="" SHA="" TEST="" MUTATE="" N=10 THREADS="" KEEP=0
+WORKTREE="" SHA="" TEST="" BUILD="" MUTATE="" N=10 THREADS="" TIMEOUT=300 KEEP=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --worktree|--sha|--test|--mutate|--stability|--threads)
+    --worktree|--sha|--test|--build|--mutate|--stability|--threads|--timeout)
       [ $# -ge 2 ] || { echo "$1 needs a value" >&2; usage >&2; exit 2; }
       case "$1" in
         --worktree) WORKTREE="$2" ;;
         --sha) SHA="$2" ;;
         --test) TEST="$2" ;;
+        --build) BUILD="$2" ;;
         --mutate) MUTATE="$2" ;;
         --stability) N="$2" ;;
         --threads) THREADS="$2" ;;
+        --timeout) TIMEOUT="$2" ;;
       esac
       shift ;;
     --keep) KEEP=1 ;;
@@ -48,16 +53,42 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ -n "$WORKTREE" ] && [ -n "$SHA" ] && [ -n "$TEST" ] && [ -n "$MUTATE" ] || {
+[ -n "$WORKTREE" ] && [ -n "$SHA" ] && [ -n "$TEST" ] && [ -n "$BUILD" ] && [ -n "$MUTATE" ] || {
   usage >&2; exit 2
 }
 case "$N" in *[!0-9]*|'') echo "--stability wants a number" >&2; exit 2 ;; esac
 [ "$N" -ge 1 ] || { echo "--stability 0 is zero samples — instrument failure by the reviewer contract" >&2; exit 2; }
 [ -n "$THREADS" ] || THREADS=$((2 * $(nproc 2>/dev/null || echo 4)))
 case "$THREADS" in *[!0-9]*|''|0) echo "--threads wants a positive integer" >&2; exit 2 ;; esac
+case "$TIMEOUT" in *[!0-9]*|''|0) echo "--timeout wants a positive integer" >&2; exit 2 ;; esac
 
 ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX") || exit 2
-[ "$KEEP" = 1 ] || trap 'rm -rf "$ROOT"' EXIT
+ACTIVE_PID="" ACTIVE_GROUP="" WATCHDOG_PID="" WATCHDOG_GROUP=""
+
+terminate_group() {
+  group="$1"
+  [ -n "$group" ] || return 0
+  kill -TERM "-$group" 2>/dev/null || :
+  kill -KILL "-$group" 2>/dev/null || :
+}
+
+cleanup_active() {
+  terminate_group "$WATCHDOG_GROUP"
+  [ -z "$WATCHDOG_PID" ] || wait "$WATCHDOG_PID" 2>/dev/null || :
+  terminate_group "$ACTIVE_GROUP"
+  [ -z "$ACTIVE_PID" ] || wait "$ACTIVE_PID" 2>/dev/null || :
+  ACTIVE_PID="" ACTIVE_GROUP="" WATCHDOG_PID="" WATCHDOG_GROUP=""
+}
+
+cleanup() {
+  trap - EXIT HUP INT TERM
+  cleanup_active
+  [ "$KEEP" = 1 ] || rm -rf "$ROOT"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # A build cache keyed on mtimes rebuilds only for a source STRICTLY newer than
 # what it holds, and a filesystem or cache keeping whole seconds rounds two
@@ -75,14 +106,83 @@ extract() { # extract SHA into $1, stamped past the build before it
   git -C "$WORKTREE" archive "$SHA" | tar -x -m -C "$1"
 }
 
-run_test() { # run TEST in dir $1 with threads $2
-  (cd "$1" && THREADS="$2" RUST_TEST_THREADS="$2" bash -c "$TEST") >/dev/null 2>&1
+run_command() { # run $2 in $1, capture output in $3, label it $4
+  dir="$1" command="$2" log="$3" label="$4"
+  timed_out="$log.timed-out"
+  rm -f "$timed_out"
+
+  set -m
+  (
+    cd "$dir" || exit 2
+    RUST_TEST_THREADS="$THREADS"
+    export THREADS RUST_TEST_THREADS
+    exec bash -c "$command"
+  ) >"$log" 2>&1 &
+  ACTIVE_PID=$!
+  ACTIVE_GROUP=$ACTIVE_PID
+  set +m
+
+  set -m
+  (
+    sleep "$TIMEOUT"
+    : > "$timed_out"
+    kill -TERM "-$ACTIVE_GROUP" 2>/dev/null || exit 0
+    sleep 1
+    kill -KILL "-$ACTIVE_GROUP" 2>/dev/null || :
+  ) &
+  WATCHDOG_PID=$!
+  WATCHDOG_GROUP=$WATCHDOG_PID
+  set +m
+
+  status=0
+  wait "$ACTIVE_PID" || status=$?
+  terminate_group "$WATCHDOG_GROUP"
+  wait "$WATCHDOG_PID" 2>/dev/null || :
+  terminate_group "$ACTIVE_GROUP"
+  ACTIVE_PID="" ACTIVE_GROUP="" WATCHDOG_PID="" WATCHDOG_GROUP=""
+
+  if [ -f "$timed_out" ]; then
+    echo "$label timed out after ${TIMEOUT}s" >&2
+    return 124
+  fi
+  return "$status"
+}
+
+run_test() { # run TEST in $1 and capture output in $2
+  run_command "$1" "$TEST" "$2" "test"
+}
+
+cargo_selection_nonempty() {
+  awk '
+    /test result: ok\./ {
+      saw_summary = 1
+      for (i = 1; i < NF; i++) {
+        if ($i ~ /^[0-9]+$/ && $(i + 1) == "passed;" && $i > 0) {
+          saw_pass = 1
+        }
+      }
+    }
+    END {
+      if (!saw_summary) exit 2
+      if (!saw_pass) exit 1
+    }
+  ' "$1"
 }
 
 extract "$ROOT/mutant" || { echo "control: git archive failed for $SHA" >&2; exit 2; }
 
-if ! run_test "$ROOT/mutant" "$THREADS"; then
+control_status=0
+run_test "$ROOT/mutant" "$ROOT/control.log" || control_status=$?
+if [ "$control_status" -ne 0 ]; then
   echo "control: test fails before any mutation — not a usable instrument" >&2
+  [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
+  exit 2
+fi
+
+selection_status=0
+cargo_selection_nonempty "$ROOT/control.log" || selection_status=$?
+if [ "$selection_status" = 1 ]; then
+  echo "control: filter selected no test — not a usable instrument" >&2
   [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
   exit 2
 fi
@@ -90,14 +190,22 @@ fi
 outrank_last_build
 (cd "$ROOT/mutant" && bash -c "$MUTATE") || { echo "mutate command failed" >&2; exit 2; }
 
+build_status=0
+run_command "$ROOT/mutant" "$BUILD" "$ROOT/build.log" "mutant build" || build_status=$?
+if [ "$build_status" -ne 0 ]; then
+  echo "mutation: invalid-mutant; build failed after mutation" >&2
+  [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
+  exit 2
+fi
+
 KILLED=1
-if run_test "$ROOT/mutant" "$THREADS"; then KILLED=0; fi
+if run_test "$ROOT/mutant" "$ROOT/mutant.log"; then KILLED=0; fi
 
 PASSES=0
 extract "$ROOT/clean" || { echo "control: second archive failed" >&2; exit 2; }
 i=0
 while [ "$i" -lt "$N" ]; do
-  if run_test "$ROOT/clean" "$THREADS"; then PASSES=$((PASSES + 1)); fi
+  if run_test "$ROOT/clean" "$ROOT/stability-$i.log"; then PASSES=$((PASSES + 1)); fi
   i=$((i + 1))
 done
 

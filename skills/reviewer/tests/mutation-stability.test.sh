@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Behavioral suite for scripts/mutation-stability: a killed mutant passes,
-# a surviving (decoy) mutant fails, a red-before-mutation control refuses,
-# and the summary line is the exact reported format.
+# Behavioral suite for scripts/mutation-stability.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MS="$SCRIPT_DIR/../scripts/mutation-stability"
@@ -24,19 +22,65 @@ git -C "$REPO" -c user.email=t@t -c user.name=t commit -qm x
 SHA=$(git -C "$REPO" rev-parse HEAD)
 
 rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" --test 'bash check.sh' \
-      --mutate 'sed -i "s/+/-/" lib.sh' --stability 2 --threads 2) || rc=$?
+      --build 'true' --mutate 'sed -i.bak "s/+/-/" lib.sh && rm -f lib.sh.bak' \
+      --stability 2 --threads 2) || rc=$?
 if [ "$rc" = 0 ]; then ok "killed mutant exits 0"; else bad "killed mutant exits 0" "rc=$rc out=$out"; fi
 case "$out" in "mutation: killed 1/1; stability: 2/2 at 2 threads") ok "summary line is the exact format";; *) bad "summary line is the exact format" "$out";; esac
 
 rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" --test 'bash check.sh' \
-      --mutate 'echo "# decoy: still says +" >> lib.sh' --stability 1) || rc=$?
+      --build 'true' --mutate 'echo "# decoy: still says +" >> lib.sh' \
+      --stability 1) || rc=$?
 if [ "$rc" = 1 ]; then ok "surviving decoy mutant exits 1"; else bad "surviving decoy mutant exits 1" "rc=$rc out=$out"; fi
 case "$out" in "mutation: killed 0/1;"*) ok "survivor reported as killed 0/1";; *) bad "survivor reported as killed 0/1" "$out";; esac
 
 rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" --test 'false' \
-      --mutate 'true' --stability 1 2>&1) || rc=$?
+      --build 'true' --mutate 'true' --stability 1 2>&1) || rc=$?
 if [ "$rc" = 2 ]; then ok "red-before-mutation control exits 2"; else bad "red-before-mutation control exits 2" "rc=$rc"; fi
 case "$out" in *"before any mutation"*) ok "control names the instrument failure";; *) bad "control names the instrument failure" "$out";; esac
+
+rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" \
+      --test 'printf "test result: ok. 0 passed; 0 failed; 0 ignored\n"' \
+      --build 'true' --mutate 'true' --stability 1 2>&1) || rc=$?
+if [ "$rc" = 2 ]; then ok "an empty Cargo selection exits 2"; else bad "an empty Cargo selection exits 2" "rc=$rc out=$out"; fi
+case "$out" in *"filter selected no test"*) ok "an empty selection has its own outcome";; *) bad "an empty selection has its own outcome" "$out";; esac
+case "$out" in *"survived"*) bad "an empty selection is never a surviving mutant" "$out";; *) ok "an empty selection is never a surviving mutant";; esac
+
+rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" --test 'true' \
+      --build 'test -f lib.sh' --mutate 'rm lib.sh' --stability 1 2>&1) || rc=$?
+if [ "$rc" = 2 ]; then ok "a non-compiling mutant exits 2"; else bad "a non-compiling mutant exits 2" "rc=$rc out=$out"; fi
+case "$out" in *"invalid-mutant"*) ok "a build failure reports invalid-mutant";; *) bad "a build failure reports invalid-mutant" "$out";; esac
+case "$out" in *"killed"*) bad "a non-compiling mutant is never killed" "$out";; *) ok "a non-compiling mutant is never killed";; esac
+
+export TIMEOUT_PID_FILE="$TMP/timeout-child.pid"
+rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" \
+      --test 'echo $$ > "$TIMEOUT_PID_FILE"; trap "" TERM; while :; do :; done' \
+      --build 'true' --mutate 'true' --stability 1 --timeout 1 2>&1) || rc=$?
+if [ "$rc" = 2 ]; then ok "a hanging control times out"; else bad "a hanging control times out" "rc=$rc out=$out"; fi
+case "$out" in *"timed out after 1s"*) ok "the timeout is reported";; *) bad "the timeout is reported" "$out";; esac
+timeout_child=$(cat "$TIMEOUT_PID_FILE" 2>/dev/null || true)
+if [ -n "$timeout_child" ] && ! kill -0 "$timeout_child" 2>/dev/null; then
+  ok "the timed-out process is reaped"
+else
+  bad "the timed-out process is reaped" "pid=${timeout_child:-missing}"
+  [ -z "$timeout_child" ] || kill -KILL "$timeout_child" 2>/dev/null || true
+fi
+
+export EXIT_PID_FILE="$TMP/exit-child.pid"
+"$MS" --worktree "$REPO" --sha "$SHA" \
+  --test 'echo $$ > "$EXIT_PID_FILE"; trap "" TERM; while :; do :; done' \
+  --build 'true' --mutate 'true' --stability 1 --timeout 30 >/dev/null 2>&1 &
+ms_pid=$!
+i=0
+while [ ! -s "$EXIT_PID_FILE" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+exit_child=$(cat "$EXIT_PID_FILE" 2>/dev/null || true)
+kill -TERM "$ms_pid" 2>/dev/null || true
+wait "$ms_pid" 2>/dev/null || true
+if [ -n "$exit_child" ] && ! kill -0 "$exit_child" 2>/dev/null; then
+  ok "exit cleanup reaps the active test process"
+else
+  bad "exit cleanup reaps the active test process" "pid=${exit_child:-missing}"
+  [ -z "$exit_child" ] || kill -KILL "$exit_child" 2>/dev/null || true
+fi
 
 # flaky test: passes only on its first run in a copy (state file marks reruns)
 cat > "$REPO/check.sh" <<'T'
@@ -49,14 +93,15 @@ git -C "$REPO" add -A
 git -C "$REPO" -c user.email=t@t -c user.name=t commit -qm flaky
 SHA2=$(git -C "$REPO" rev-parse HEAD)
 rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA2" --test 'bash check.sh' \
-      --mutate 'sed -i "s/+/-/" lib.sh' --stability 3 --threads 2) || rc=$?
+      --build 'true' --mutate 'sed -i.bak "s/+/-/" lib.sh && rm -f lib.sh.bak' \
+      --stability 3 --threads 2) || rc=$?
 if [ "$rc" = 1 ]; then ok "stability failure exits 1 even with the mutant killed"; else bad "stability failure exits 1 even with the mutant killed" "rc=$rc out=$out"; fi
 case "$out" in *"stability: 1/3 at 2 threads") ok "partial stability is reported as Y/N";; *) bad "partial stability is reported as Y/N" "$out";; esac
 
 rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA" --test 'bash check.sh' \
-      --mutate 'true' --stability 0 2>&1) || rc=$?
+      --build 'true' --mutate 'true' --stability 0 2>&1) || rc=$?
 if [ "$rc" = 2 ]; then ok "--stability 0 is refused as zero samples"; else bad "--stability 0 is refused as zero samples" "rc=$rc"; fi
-rc=0; "$MS" --worktree "$REPO" --sha "$SHA" --test 'true' --mutate 2>/dev/null || rc=$?
+rc=0; "$MS" --worktree "$REPO" --sha "$SHA" --test 'true' --build 'true' --mutate 2>/dev/null || rc=$?
 if [ "$rc" = 2 ]; then ok "a value-less option exits 2"; else bad "a value-less option exits 2" "rc=$rc"; fi
 
 # A build cache the caller shares across both copies must answer neither run
@@ -78,7 +123,8 @@ git -C "$REPO" add -A
 git -C "$REPO" -c user.email=t@t -c user.name=t commit -qm cached
 SHA3=$(git -C "$REPO" rev-parse HEAD)
 rc=0; out=$("$MS" --worktree "$REPO" --sha "$SHA3" --test 'bash check.sh' \
-      --mutate 'sed -i "s/+/-/" lib.sh' --stability 3 --threads 2) || rc=$?
+      --build 'true' --mutate 'sed -i.bak "s/+/-/" lib.sh && rm -f lib.sh.bak' \
+      --stability 3 --threads 2) || rc=$?
 if [ "$rc" = 0 ]; then ok "a shared whole-second build cache reaches the right verdict"; else bad "a shared whole-second build cache reaches the right verdict" "rc=$rc out=$out"; fi
 case "$out" in "mutation: killed 1/1"*) ok "the mutant build rebuilds instead of reusing the control";; *) bad "the mutant build rebuilds instead of reusing the control" "$out";; esac
 case "$out" in *"stability: 3/3 at 2 threads") ok "the clean copy rebuilds instead of reusing the mutant";; *) bad "the clean copy rebuilds instead of reusing the mutant" "$out";; esac
@@ -87,7 +133,8 @@ case "$out" in *"stability: 3/3 at 2 threads") ok "the clean copy rebuilds inste
 # build before it to the same second, and a cache rebuilds on a strictly newer
 # source, not an equal one. Each copy is stamped a full second past the last.
 kept=$("$MS" --worktree "$REPO" --sha "$SHA3" --test 'bash check.sh' \
-      --mutate 'sed -i "s/+/-/" lib.sh' --stability 1 --threads 2 --keep 2>&1 >/dev/null || true)
+      --build 'true' --mutate 'sed -i.bak "s/+/-/" lib.sh && rm -f lib.sh.bak' \
+      --stability 1 --threads 2 --keep 2>&1 >/dev/null || true)
 root=$(printf '%s\n' "$kept" | sed -n 's/^kept: //p')
 if [ -d "$root/clean" ]; then
   gap=$(( $(stat -c %Y "$root/clean/check.sh") - $(stat -c %Y "$root/mutant/check.sh") ))
