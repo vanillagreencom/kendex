@@ -36,7 +36,10 @@ Events, checked in this order every pass:
                              last user turn on its screen; pane tail follows.
                              `resets=` carries the reset time the banner
                              states, when it states one in a shape the
-                             harnesses draw; the wall is still standing
+                             harnesses draw; the wall is still standing. A
+                             clause naming a clock and no day is read as the
+                             occurrence within the last session window, and
+                             forward past that
   EVENT usage-limit-passed <lane> [<config-dir>] resets=<utc>
                              the same banner, naming a reset already behind
                              us: the screen is remembering a spent window that
@@ -215,18 +218,54 @@ LANE_ASKING_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel
 # prints "Usage limit reached" and its out-of-credits wording. `.` stands in
 # for the apostrophe: ASCII in the binaries, typographic once rendered.
 USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
-# The reset time the same banner line states, in the shapes the harnesses draw
-# it in. Claude Code formats it through `Intl` in en-US, then lowercases the
-# meridiem and drops the space before it: a bare clock while the reset is under
-# a day out (`resets 9am`, `resets 9:50am`), a dated one beyond that
-# (`resets Sep 6, 4pm`, `resets Oct 7, 2027, 11:32am`), and the IANA zone in
-# parentheses when the banner asks for one. Codex opens its own with
-# `Try again at` and formats through chrono's `%-I:%M %p`, so the meridiem is
-# matched in either case and the space before it is optional. Anything else —
-# Claude's relative `resets in 5m` for a fast-mode cooldown, a weekday with no
-# clock — leaves the event without a time rather than with a guessed one.
-USAGE_RESET_RE='(resets|[Tt]ry again at)[[:space:]]+(([A-Z][a-z][a-z])[[:space:]]+([0-9]{1,2}),[[:space:]]+([0-9]{4},[[:space:]]+)?)?([0-9]{1,2})(:([0-9]{2}))?[[:space:]]?([AaPp])[Mm]'
+# The reset clause the same banner line states. Grammar and wording follow the
+# sibling parser this repository already has for the question,
+# pi-extensions/pi-agents-tmux/extensions/subagent/rate-limit-reset.ts: the
+# trigger is `reset` or `resets` with an optional `at`, and a clock with no
+# meridiem is a 24-hour one. Codex's own `Try again at`, the one literal its
+# stripped binary yields, opens the same tails. Three tails, tried in this order, each named for
+# the shape it reads:
+#   dated    `resets Sep 6, 4pm`, `resets Oct 7, 2027, 11:32am` — Claude Code
+#            past 24 hours out, from `Intl` in en-US with the meridiem
+#            lowercased and the space before it dropped. The year is printed
+#            only when it is not the current one.
+#   weekday  `resets Thursday 4am` — the weekly-limit copy this repository
+#            records as the CLI's own at
+#            pi-extensions/pi-claude-bridge/tests/unit-usage-limit.mjs.
+#   clock    `resets 9:50am (America/Los_Angeles)`, `resets 21:00` — Claude
+#            Code inside 24 hours, with the IANA zone in parentheses when the
+#            banner asks for one, and in 24-hour form under the harness's own
+#            `timeFormat` setting (`24-hour`, `24-hour-utc`, or a strftime
+#            pattern). Codex formats through chrono's `%-I:%M %p`, so the
+#            meridiem matches in either case and the space before it is
+#            optional.
+# Deliberately outside: a duration (Claude's `resets in 5m` for a fast-mode
+# cooldown) and a weekday with no clock. Each leaves the event without a time
+# rather than with a guessed one.
+USAGE_RESET_LEAD='([Rr]esets?|[Tt]ry again)[[:space:]]+(at[[:space:]]+)?'
+USAGE_RESET_CLOCK='([0-9]{1,2})(:([0-9]{2}))?(:[0-9]{2})?[[:space:]]?([AaPp][Mm])?'
+USAGE_RESET_DATED_RE="${USAGE_RESET_LEAD}([A-Z][a-z][a-z])[a-z]*[[:space:]]+([0-9]{1,2}),[[:space:]]+(([0-9]{4}),[[:space:]]+)?${USAGE_RESET_CLOCK}"
+USAGE_RESET_WEEKDAY_RE="${USAGE_RESET_LEAD}([A-Z][a-z]+day)[[:space:]]+${USAGE_RESET_CLOCK}"
+USAGE_RESET_CLOCK_RE="${USAGE_RESET_LEAD}${USAGE_RESET_CLOCK}"
+USAGE_RESET_ANY_RE="${USAGE_RESET_DATED_RE}|${USAGE_RESET_WEEKDAY_RE}|${USAGE_RESET_CLOCK_RE}"
+# The zone the banner names, always an IANA path. Trusted only once the host
+# resolves it: TZ falls back to UTC for a name it does not know, silently and
+# with a zero status, so an unchecked one turns a standing wall into a lifted
+# one on a seven-hour error.
 USAGE_RESET_ZONE_RE='\(([A-Za-z]+(/[A-Za-z0-9_+-]+)+)\)'
+ZONEINFO_DIR="${TZDIR:-/usr/share/zoneinfo}"
+# Month and weekday names are matched here rather than through `date`, whose
+# `%b`/`%a` follow LC_TIME while its parser reads English only: a host with a
+# non-English LC_TIME would round-trip every label into nothing. Every format
+# this file hands `date` is numeric for the same reason.
+USAGE_RESET_MONTHS='Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'
+USAGE_RESET_WEEKDAYS='Monday Tuesday Wednesday Thursday Friday Saturday Sunday'
+# How far back a clock that names no day may be read. Claude Code's short
+# window is five hours (`five_hour`, `windowSeconds:18000` in the binary), so a
+# bare clock is overwhelmingly a session wall whose reset is at most a window
+# behind the screen showing it; past that the clause is read forward, as the
+# next occurrence still to come.
+USAGE_RESET_PAST_TOLERANCE=18000
 # A turn in flight: the interrupt hint (both harnesses), the hint shown while
 # a foreground shell runs, or the streaming token counter of the status line.
 WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
@@ -555,57 +594,92 @@ pane_turn_slice() {
 pane_below_last_turn() { pane_turn_slice "$1" below; }
 pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
 
+# One-based index of WORD in LIST, empty when it is absent.
+word_index() {
+  awk -v want="$2" '{ for (i = 1; i <= NF; i++) if ($i == want) { print i; exit } }' <<<"$1"
+}
+
 # The reset time a limit banner in SLICE states, as an epoch — empty when it
-# states none in a shape USAGE_RESET_RE recognizes. Read only off a line that
-# carries the banner itself: both harnesses put the clause on that line, and a
-# transcript line elsewhere in the slice is not the account speaking.
-#
-# A bare clock names no day. Claude Code draws one only while the reset is
-# inside 24 hours, so the occurrence of that wall clock NEAREST now is it: a
-# `resets 11pm` read at 1am is last night's, not tonight's. Each candidate day
-# is resolved through `date` in the banner's own zone rather than by adding
-# 86400 to an epoch, so a DST boundary between now and the reset cannot shift
-# it by an hour.
+# states none in a shape the three tails above read, or names a zone this host
+# cannot resolve. Read only off a line that carries the banner itself: both
+# harnesses put the clause on that line, and a transcript line elsewhere in the
+# slice is not the account speaking.
 usage_reset_epoch() {
-  local slice="$1" now="$2" line hour min meridiem mon day year zone stamp
-  local cand delta abs best="" best_abs=0
-  line="$(grep -E -- "$USAGE_LIMIT_RE" <<<"$slice" | grep -Em1 -- "$USAGE_RESET_RE" || true)"
+  local slice="$1" now="$2" line hour min meridiem mon day year weekday zone
+  local anchor stamp cand want_dow last d floor
+  line="$(grep -E -- "$USAGE_LIMIT_RE" <<<"$slice" | grep -Em1 -- "$USAGE_RESET_ANY_RE" || true)"
   [[ -n "$line" ]] || return 0
-  [[ "$line" =~ $USAGE_RESET_RE ]] || return 0
-  mon="${BASH_REMATCH[3]}"
-  day="${BASH_REMATCH[4]}"
-  year="${BASH_REMATCH[5]%%,*}"
-  hour="${BASH_REMATCH[6]}"
-  min="${BASH_REMATCH[8]:-00}"
-  meridiem="${BASH_REMATCH[9]}"
-  # Read AFTER every field above: the match overwrites BASH_REMATCH.
-  zone=""
-  if [[ "$line" =~ $USAGE_RESET_ZONE_RE ]]; then zone="${BASH_REMATCH[1]}"; fi
-  # 12-hour to 24-hour. An hour outside 1-12 is not a clock either formatter
-  # draws, so it is a misread of the line rather than a time to act on.
-  hour=$((10#$hour))
-  [[ "$hour" -ge 1 && "$hour" -le 12 ]] || return 0
-  case "$meridiem" in
-    [Pp]) [[ "$hour" -eq 12 ]] || hour=$((hour + 12)) ;;
-    *) [[ "$hour" -ne 12 ]] || hour=0 ;;
-  esac
-  # A dated banner carries its year only when that year is not the current one,
-  # so an absent year is this year in the banner's zone.
-  if [[ -n "$mon" ]]; then
-    [[ -n "$year" ]] || year="$(from_epoch "$now" %Y "$zone")" || return 0
-    stamp="$(printf '%s %02d %s %02d:%s' "$mon" "$((10#$day))" "$year" "$hour" "$min")"
-    to_epoch "$stamp" '%b %d %Y %H:%M' "$zone" || return 0
+  mon=""; day=""; year=""; weekday=""
+  # Tried longest tail first: a dated clause also matches the bare-clock one
+  # from its clock onwards, and a weekday one would lose its day.
+  if [[ "$line" =~ $USAGE_RESET_DATED_RE ]]; then
+    mon="${BASH_REMATCH[3]}"; day="${BASH_REMATCH[4]}"; year="${BASH_REMATCH[6]}"
+    hour="${BASH_REMATCH[7]}"; min="${BASH_REMATCH[9]}"; meridiem="${BASH_REMATCH[11]}"
+  elif [[ "$line" =~ $USAGE_RESET_WEEKDAY_RE ]]; then
+    weekday="${BASH_REMATCH[3]}"
+    hour="${BASH_REMATCH[4]}"; min="${BASH_REMATCH[6]}"; meridiem="${BASH_REMATCH[8]}"
+  elif [[ "$line" =~ $USAGE_RESET_CLOCK_RE ]]; then
+    hour="${BASH_REMATCH[3]}"; min="${BASH_REMATCH[5]}"; meridiem="${BASH_REMATCH[7]}"
+  else
     return 0
   fi
-  for delta in -86400 0 86400; do
-    stamp="$(from_epoch "$((now + delta))" '%b %d %Y' "$zone")" || continue
-    cand="$(to_epoch "$stamp $(printf '%02d:%s' "$hour" "$min")" '%b %d %Y %H:%M' "$zone")" || continue
-    abs=$((cand - now))
-    [[ "$abs" -ge 0 ]] || abs=$(( -abs ))
-    if [[ -z "$best" || "$abs" -lt "$best_abs" ]]; then best="$cand"; best_abs="$abs"; fi
+  # 12-hour to 24-hour; a clock with no meridiem is already a 24-hour one, as
+  # it is for the sibling parser. Nothing range-checks the result: every clock
+  # is handed to `date` below, which rejects an impossible one, and a rejected
+  # candidate leaves the event without a time — the same answer a range check
+  # would give, from the one implementation that has to agree with itself.
+  hour=$((10#$hour)); min=$((10#${min:-0}))
+  case "$meridiem" in
+    [Pp]*) [[ "$hour" -eq 12 ]] || hour=$((hour + 12)) ;;
+    [Aa]*) [[ "$hour" -ne 12 ]] || hour=0 ;;
+  esac
+  # Read AFTER every field above: the match overwrites BASH_REMATCH. A zone the
+  # host cannot resolve is dropped whole rather than silently read as UTC.
+  zone=""
+  if [[ "$line" =~ $USAGE_RESET_ZONE_RE ]]; then
+    zone="${BASH_REMATCH[1]}"
+    [[ -r "$ZONEINFO_DIR/$zone" ]] || return 0
+  fi
+  stamp="$(printf '%02d:%02d' "$hour" "$min")"
+  # A dated clause names its day outright, and carries its year only when that
+  # year is not the current one.
+  if [[ -n "$mon" ]]; then
+    mon="$(word_index "$USAGE_RESET_MONTHS" "$mon")"
+    [[ -n "$mon" ]] || return 0
+    [[ -n "$year" ]] || year="$(from_epoch "$now" '%Y' "$zone")" || return 0
+    to_epoch "$(printf '%s-%02d-%02d %s' "$year" "$mon" "$((10#$day))" "$stamp")" \
+      '%Y-%m-%d %H:%M' "$zone" || return 0
+    return 0
+  fi
+  # Every other clause names a time of day and leaves the day to be found. The
+  # walk starts one day back so a reset that has just passed is still read as
+  # the one the banner named, and runs forward to the first candidate later
+  # than the tolerance floor. Beyond that floor the clause reads forward, which
+  # is what keeps a wall still standing from being reported as a spent one.
+  #
+  # Days are enumerated calendrically off local NOON, never by adding 86400 to
+  # `now`: a DST shift moves local midnight, so `now` plus a day can skip the
+  # next calendar day altogether or repeat the current one.
+  want_dow=""
+  last=1
+  if [[ -n "$weekday" ]]; then
+    want_dow="$(word_index "$USAGE_RESET_WEEKDAYS" "$weekday")"
+    [[ -n "$want_dow" ]] || return 0
+    last=7
+  fi
+  anchor="$(to_epoch "$(from_epoch "$now" '%Y-%m-%d' "$zone") 12:00" '%Y-%m-%d %H:%M' "$zone")" \
+    || return 0
+  floor=$((now - USAGE_RESET_PAST_TOLERANCE))
+  for ((d = -1; d <= last; d++)); do
+    if [[ -n "$want_dow" && "$(from_epoch "$((anchor + d * 86400))" '%u' "$zone")" != "$want_dow" ]]; then
+      continue
+    fi
+    cand="$(to_epoch "$(from_epoch "$((anchor + d * 86400))" '%Y-%m-%d' "$zone") $stamp" \
+      '%Y-%m-%d %H:%M' "$zone")" || continue
+    [[ "$cand" -gt "$floor" ]] || continue
+    printf '%s\n' "$cand"
+    return 0
   done
-  [[ -n "$best" ]] || return 0
-  printf '%s\n' "$best"
 }
 
 # Watch-list positions whose harness read as exited on the previous pass.

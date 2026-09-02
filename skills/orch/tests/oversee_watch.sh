@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Regression tests for the GitHub side of orch/scripts/oversee-watch, and for
-# the failures that take the whole process down. The pane side — window-gone,
-# lane-exited, usage-limit, lane-asking, idle-after-return — is in the two
-# lane suites. Tracker events are in oversee_watch_triage.sh. All use the
+# the failures that take the whole process down. The pane side is in the three
+# lane suites: window-gone, lane-exited, lane-asking and idle-after-return in
+# oversee_watch_lanes.sh, prompt state across runs in
+# oversee_watch_lane_asking.sh, and usage-limit with usage-limit-passed in
+# oversee_watch_usage_limit.sh. Tracker events are in oversee_watch_triage.sh. All use the
 # shared lib/oversee-watch-harness.sh sandbox.
 #
 # oversee-watch is the overseer's single blocking watch: it loops until the
