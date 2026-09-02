@@ -189,6 +189,62 @@ for probe in "7999 2 inside" "8000 0 outside"; do
   fi
 done
 
+echo "=== the 8000 bound is bytes even when the locale is multibyte ==="
+# The prefilter's `read -n` bound counts CHARACTERS unless the locale is C, so
+# a NUL past byte 8000 but inside 8000 characters would stop a character-wise
+# read while `od -N 8000` correctly finds nothing — and the contradiction
+# refusal above would then red a file git reads as text. 5000 x U+00E9 is 5000
+# characters and 10000 bytes: the byte at offset 10000 is outside the window by
+# git's rule and inside it by the character count.
+plant_wide_nul() { # 5000 two-byte characters in $R/src/installed.ts, then the byte
+  mkdir -p "$R/src"
+  { awk 'BEGIN { for (i = 0; i < 5000; i++) printf "\303\251" }'; printf '\000'; printf '\n'; } >"$R/src/installed.ts"
+  git -C "$R" add -A
+}
+# No locale is assumed present: the case needs a multibyte one to say anything.
+utf8_locale="$({ locale -a 2>/dev/null || true; } | awk 'tolower($0) ~ /\.utf-?8$/ && !f { v = $0; f = 1 } END { if (f) print v }')"
+if [ -z "$utf8_locale" ]; then
+  printf '  skip  the byte-bound case needs a UTF-8 locale; `locale -a` lists none here\n'
+else
+  new_repo bytebound
+  plant_wide_nul
+  run_in "LC_ALL=$utf8_locale" "LANG=$utf8_locale" SIZE_RATCHET_THRESHOLD=400 -- --staged
+  if [ "$RC" -eq 0 ] && ! has 'located none'; then
+    ok "under $utf8_locale a NUL past byte 8000 leaves the blob text (exit 0)"
+  else
+    bad "the sniff bound counts bytes under a multibyte locale" "rc=$RC out=$OUT"
+  fi
+
+  echo "=== must-fail control: without LC_ALL=C the same fixture is refused ==="
+  # Exit 0 is also what a sniff that never ran returns, so the case above is
+  # evidence only beside a control that reds. The control removes the two words
+  # that make the bound bytes and nothing else.
+  BOUND="$TMP/bound-scripts"
+  mkdir -p "$BOUND"
+  cp -R "$SKILL_DIR/scripts/." "$BOUND/"
+  BOUND_ANCHOR='  local LC_ALL=C chunk status=0 off'
+  if awk -v anchor="$BOUND_ANCHOR" '
+      $0 == anchor { print "  local chunk status=0 off"; n++; next }
+      { print }
+      END { exit (n == 1 ? 0 : 3) }
+    ' "$BOUND/size-ratchet" >"$BOUND/size-ratchet.mut"; then
+    mv "$BOUND/size-ratchet.mut" "$BOUND/size-ratchet"
+    chmod +x "$BOUND/size-ratchet"
+    new_repo boundctrl
+    plant_wide_nul
+    GATE="$BOUND/size-ratchet"
+    run_in "LC_ALL=$utf8_locale" "LANG=$utf8_locale" SIZE_RATCHET_THRESHOLD=400 -- --staged
+    GATE="$SR"
+    if [ "$RC" -eq 2 ] && has 'located none'; then
+      ok "a character-counting bound refuses the same fixture — the case above is evidence"
+    else
+      bad "the control removes the byte bound it should" "rc=$RC out=$OUT"
+    fi
+  else
+    bad "the byte-bound control's substitution matched exactly one site" "no single '$BOUND_ANCHOR' line in $BOUND/size-ratchet"
+  fi
+fi
+
 echo "=== a locating scan that comes back empty refuses, it does not pass ==="
 # The prefilter is byte-exact, so a stop it reports and a scan that then finds
 # nothing are a contradiction. Treating that as clean would be the fail-open

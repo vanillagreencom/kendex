@@ -43,12 +43,12 @@ blob, so "every tracked file" holds on partial trees too — a sparse checkout
 can neither smuggle a new offender past the gate nor loosen a baselined row.
 An index blob that cannot be read (corrupt object, promisor blob
 unavailable) is a collection error (exit 2, naming the file) — a file the
-gate could not measure is never skipped. A blob that reads but cannot then be
-counted refuses under its own wording, naming the count of the materialized
-blob rather than the read, because the object store is not the fault there.
-A tracked path containing a tab or
-newline is refused loudly (exit 2; exclude it to skip the gate) — it cannot
-be represented in the line-oriented records.
+gate could not measure is never skipped. A blob that materializes but cannot
+then be counted refuses under its own wording, naming the count of the
+materialized blob rather than the read, because the object store is not the
+fault there. A tracked path containing a tab or newline is refused loudly
+(exit 2; exclude it to skip the gate) — it cannot be represented in the
+line-oriented records.
 
 Every blob the gate measures in LINES is sniffed for a NUL in its leading
 8000 bytes, git's own text/binary rule, which growth-guards states as
@@ -61,14 +61,14 @@ exclusion list.
 A hit is a collection error (exit 2) naming the path and the byte's offset,
 never the byte itself. Git records such a blob as binary, so it carries no
 textual diff; a plain `git grep` for a line inside it answers `Binary file
-<path> matches`, and the `git grep -I` the growth-guards lanes run drops the
-path outright. No line in it reaches diff or grep review, while `wc -l` still
-returns a number. One raw control byte typed in place of its escape puts a
-source file in that state: the byte is invisible or near-invisible in the
-usual renderings, and the walk-based lanes that do see it name the path as
-not measured, count it in `GG_WALK_SKIPPED`, and still exit 0. The refusal
-runs before any mode branch, so `--seed` and `--update` refuse too rather
-than writing a meaningless line count into the baseline.
+<path> matches`, and a `git grep -I` drops the path outright. No line in it
+reaches diff or grep review, while `wc -l` still returns a number. One raw
+control byte typed in place of its escape puts a source file in that state:
+the byte is invisible or near-invisible in the usual renderings, and the
+walk-based lanes that do see it name the path as not measured, count it in
+`GG_WALK_SKIPPED`, and still exit 0. The refusal runs before any mode
+branch, so `--seed` and `--update` refuse too rather than writing a
+meaningless line count into the baseline.
 
 The sniff runs in two stages, so it costs no subprocess on the files that
 pass. A bounded `read -d ''` under `LC_ALL=C` stops at a NUL, bounds itself
