@@ -36,10 +36,8 @@ assert_contains "$tracker_args" "issues list --team kendex --created-since " \
 assert_contains "$tracker_args" "d --max --format=safe" \
   "triage uses a created-since day window and fetches every result" "$err"
 state_file="$STATE_DIR/owner_repo__2026-08-15T09_00_00Z"
-assert_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1200')" \
-  "triage records the event in the first repository baseline" "$err"
-assert_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1204')" \
-  "the team-wide item uses that same baseline" "$err"
+assert_not_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1200')" \
+  "printing an event does not acknowledge the item" "$err"
 assert_eq "$(find "$STATE_DIR" -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" "1" \
   "triage creates no second state-file class" "$err"
 triage_rule="$(grep '^- `triage`' "$REPO_ROOT/skills/orch/workflows/oversee.md")"
@@ -52,12 +50,32 @@ assert_contains "$triage_rule" "before re-running" \
 heartbeat_rule="$(grep '^- `heartbeat`' "$REPO_ROOT/skills/orch/workflows/oversee.md")"
 assert_contains "$heartbeat_rule" "only issues a fleet lane filed" \
   "the heartbeat backstop stays lane-authored only" "$err"
+workflow_text="$(cat "$REPO_ROOT/skills/orch/workflows/oversee.md")"
+assert_contains "$workflow_text" "triaged is the verdict log, not the watcher baseline" \
+  "the workflow separates verdicts from watcher dedup" "$err"
+assert_contains "$workflow_text" "first repository's OVERSEE_WATCH_STATE_DIR baseline" \
+  "the workflow names the owner-required baseline" "$err"
+assert_contains "$workflow_text" "<project-root>/tmp/oversee-watch" \
+  "the workflow names the default state directory" "$err"
+assert_contains "$workflow_text" "Deleting that baseline resets watcher dedup" \
+  "the workflow states reset and rebuild behavior" "$err"
 
 err="$TMP_ROOT/triage-b"
 out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT triage KEN-1200" \
+  "an unacknowledged item repeats on the next run" "$err"
+
+printf 'KEN-1200\nKEN-1202\nKEN-1204\n' > "$STUB_DIR/tracker-triaged.txt"
+err="$TMP_ROOT/triage-b2"
+out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-08-15T09:00:00Z" \
-  "an already-triaged item does not repeat" "$err"
-assert_not_contains "$out" "EVENT triage" "the triage verdict closes the event" "$err"
+  "recorded verdicts close the repeated events" "$err"
+assert_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1204')" \
+  "the verdict rebuilds the watcher baseline" "$err"
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "kept" \
+  "the verdict read accepts kept outcomes" "$err"
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "canceled" \
+  "the verdict read accepts canceled outcomes" "$err"
 
 cat > "$STUB_DIR/tracker.out" <<'EOF'
 [
@@ -102,14 +120,34 @@ assert_contains "$(cat "$err")" "tracker output is not an array" \
 
 new_case triage_state_failure
 printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
+printf 'KEN-1200\n' > "$STUB_DIR/tracker-triaged.txt"
 mkdir -p "$STATE_DIR/owner_repo__2026-08-15T09_00_00Z"
 err="$TMP_ROOT/triage-g"
 out="$(run_watch OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/absent-pr-watch" -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "an unwritable triage baseline exits 2" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT triage KEN-1200" \
-  "the triage event is delivered before the baseline write" "$err"
+assert_eq "$out" "" "a verdict baseline write failure emits no event" "$err"
 assert_contains "$(cat "$err")" "could not write the pr-watch state file" \
   "the triage failure names the shared baseline" "$err"
+
+# Triage keys and reducer keys coexist in the one first-repository baseline.
+# A triage rewrite that starts from empty loses the standing reducer edge and
+# the next run incorrectly emits pr-watch.
+new_case triage_preserves_pr_keys
+printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
+printf '1\n' > "$STUB_DIR/prwatch.rc"
+printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
+printf 'KEN-1200\n' > "$STUB_DIR/tracker-triaged.txt"
+err="$TMP_ROOT/triage-coexist-a"
+out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+state_file="$STATE_DIR/owner_repo__2026-08-15T09_00_00Z"
+assert_contains "$(cat "$state_file")" "$(printf '12\tthreads-open')" \
+  "triage reconciliation preserves the reducer key" "$err"
+assert_contains "$(cat "$state_file")" "$(printf 'triage\tKEN-1200')" \
+  "the verdict key shares the reducer baseline" "$err"
+err="$TMP_ROOT/triage-coexist-b"
+out="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-08-15T09:00:00Z" \
+  "unchanged reducer attention stays baselined after triage" "$err"
 
 new_case since_requires_utc_z
 err="$TMP_ROOT/triage-h"
@@ -126,6 +164,12 @@ assert_eq "$rc" "2" "an offset --since is rejected" "$err"
 assert_eq "$out" "" "an offset --since emits no event" "$err"
 assert_contains "$(cat "$err")" "UTC timestamp ending in Z" \
   "the offset refusal names the documented form" "$err"
+
+date_harness="$(cat "$REPO_ROOT/skills/orch/tests/lib/oversee-watch-harness.sh")"
+assert_contains "$date_harness" "OVERSEE_TEST_REAL_DATE" \
+  "the harness resolves date before its PATH shadow" "$err"
+assert_not_contains "$date_harness" "exec /usr/bin/date" \
+  "the date stub carries no Linux-only absolute fallback" "$err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

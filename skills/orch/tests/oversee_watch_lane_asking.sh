@@ -66,6 +66,30 @@ out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "the same prompt emits in a replacement pane" "$err"
 
+# The prompt text can repeat in one pane after the operator answered it. The
+# submitted turn is the occurrence boundary even when the new dialog is equal.
+new_case lane_asking_identical_reprompt
+printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+run_watch -- --max-loops 1 gh-1 gh-2 >/dev/null 2>"$TMP_ROOT/asking-reprompt-a"
+{
+  printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n'
+  printf '❯ 1\n'
+  printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/asking-reprompt-b"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
+  "an identical prompt emits after a submitted answer" "$err"
+
+# A failed fresh capture is window-gone even while tmux still lists the window
+# and reports a command. A failed redirect must not leave a reusable marker.
+new_case lane_asking_capture_failure
+: > "$STUB_DIR/capture-fail-gh-2"
+err="$TMP_ROOT/asking-capture-fail"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT window-gone gh-2" \
+  "capture failure stays window-gone with a live window and command" "$err"
+
 # Control: a pane without a prompt emits no lane-asking event.
 new_case lane_asking_no_prompt
 err="$TMP_ROOT/asking-d"

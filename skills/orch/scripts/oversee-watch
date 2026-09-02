@@ -44,9 +44,9 @@ Events, checked in this order every pass:
   EVENT heartbeat            --max-loops passes with no event; open PRs follow
 
 The latest pr-watch attention lines follow every event when any exist. Triage
-always reads the live tracker list and stores its event keys in the first
-repository's existing OVERSEE_WATCH_STATE_DIR baseline. Lane prompts are keyed
-by pane occurrence and slice until that prompt disappears or changes.
+always reads the live tracker list and rebuilds acknowledged keys in the first
+repository's existing OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
+fleet verdicts. Lane prompts are keyed by pane occurrence and submitted turn.
 
 Options:
   --interval SECS     seconds between passes (default 240)
@@ -72,6 +72,7 @@ gate-stale line. Its credential needs actions:write.
 Environment:
   OVERSEE_WATCH_PR_WATCH      path to pr-watch.sh
   OVERSEE_WATCH_TRACKER       path to the Linear CLI
+  OVERSEE_WATCH_WORKFLOW_STATE path to workflow-state
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     pr-watch and lane-asking baselines plus claims/
 USAGE
@@ -140,6 +141,7 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
+WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 
 # Lane-asking shares the review reducer's state directory and keeps only pane
@@ -227,6 +229,8 @@ LANE_ASKING_STATE_FILE="$PW_STATE_DIR/lane-asking__$(pw_slug "${SINCE:-none}").j
 if [[ -n "$SINCE" ]]; then
   if [[ ! -x "$TRACKER" ]]; then
     echo "oversee-watch: tracker CLI not found at $TRACKER; skipping triage" >&2
+  elif [[ ! -x "$WORKFLOW_STATE" ]]; then
+    echo "oversee-watch: workflow-state CLI not found at $WORKFLOW_STATE; skipping triage" >&2
   elif [[ -z "${LINEAR_TEAM:-}" ]]; then
     echo "oversee-watch: LINEAR_TEAM is unset; skipping triage" >&2
   else
@@ -348,7 +352,29 @@ check_merged() {
 
 check_triage() {
   [[ "$TRIAGE_ENABLED" -eq 1 ]] || return 0
-  local errf="$WORK_DIR/triage.err" now age days out ids seen id new_ids="" next rc=0
+  local errf="$WORK_DIR/triage.err" now age days out ids verdicts pr_keys triage_keys="" seen id new_ids="" next rc=0
+  verdicts="$("$WORKFLOW_STATE" get oversee '.triaged // [] | map(select(.verdict == "kept" or .verdict == "canceled") | .issue) | .[]' 2>"$errf")" || rc=$?
+  [[ "$rc" -eq 0 ]] \
+    || die "could not read the fleet triage verdict log (rc=$rc): $(cat "$errf")"
+  verdicts="$(awk 'NF && !seen[$0]++' <<<"$verdicts")"
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    [[ "$id" =~ ^[A-Za-z0-9._-]+$ ]] \
+      || die "fleet triage verdict log returned an invalid issue id: '$id'"
+    [[ -z "$triage_keys" ]] || triage_keys+=$'\n'
+    triage_keys+="triage"$'\t'"$id"
+  done <<<"$verdicts"
+  pr_keys="$(awk -F'\t' '$1 != "triage" { print }' <<<"${PW_SEEN[0]}")"
+  if [[ -n "$pr_keys" && -n "$triage_keys" ]]; then
+    next="$pr_keys"$'\n'"$triage_keys"
+  else
+    next="$pr_keys$triage_keys"
+  fi
+  if [[ "$next" != "${PW_SEEN[0]}" ]]; then
+    pw_stage_state "$(pw_state_file "${REPOS[0]}")" "$next"
+    pw_commit_state "$(pw_state_file "${REPOS[0]}")"
+    PW_SEEN[0]="$next"
+  fi
   now="$(date -u +%s)" || die "could not read the current UTC time for triage"
   age=$((now - SINCE_EPOCH))
   [[ "$age" -ge 0 ]] || age=0
@@ -380,14 +406,6 @@ check_triage() {
   while IFS= read -r id; do
     echo "EVENT triage $id"
   done <<<"$new_ids"
-  next="${PW_SEEN[0]}"
-  while IFS= read -r id; do
-    [[ -z "$next" ]] || next+=$'\n'
-    next+="triage"$'\t'"$id"
-  done <<<"$new_ids"
-  pw_stage_state "$(pw_state_file "${REPOS[0]}")" "$next"
-  pw_commit_state "$(pw_state_file "${REPOS[0]}")"
-  PW_SEEN[0]="$next"
   pr_watch_context
   exit 0
 }
@@ -447,16 +465,21 @@ note_probe_unusable() {
 # becoming the boundary itself: that would empty the slice and turn
 # usage-limit into a silent no-op for the lane. Unrecognized fails toward a
 # stale banner, never toward silence.
-pane_below_last_turn() {
-  awk -v marker="$PANE_MARKER_RE" -v composer="$CLAUDE_COMPOSER_RE" -v codex="$CODEX_MARKER_RE" '
+pane_turn_slice() {
+  awk -v mode="$2" -v marker="$PANE_MARKER_RE" -v composer="$CLAUDE_COMPOSER_RE" -v codex="$CODEX_MARKER_RE" '
     { line[NR] = $0; if ($0 ~ marker) { prev = last; last = NR } }
     END {
       live = (last > 0 && (last == NR || line[last] ~ composer || line[last] ~ codex))
       turn = live ? prev : last
-      for (i = turn + 1; i <= NR; i++) print line[i]
+      first = mode == "before" ? 1 : turn + 1
+      final = mode == "before" ? turn : NR
+      for (i = first; i <= final; i++) print line[i]
     }
   ' <<<"$1"
 }
+
+pane_below_last_turn() { pane_turn_slice "$1" below; }
+pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
 
 # Watch-list positions whose harness read as exited on the previous pass.
 LANE_SHELL_SEEN=""
@@ -468,7 +491,9 @@ LANE_IDLE_SEEN=""
 # on the lane's position in the watch list — a tmux window name can carry any
 # character, and two names that differ only outside a filename-safe set would
 # otherwise share one snapshot and classify each other's screens.
-lane_state() { awk -F'\t' -v i="$2" '$1 == i { print $2 }' <<<"$1"; }
+LANE_OBS=""
+lane_field() { awk -F'\t' -v i="$2" -v field="$3" '$1 == i { print $field }' <<<"$1"; }
+lane_state() { lane_field "$1" "$2" 2; }
 lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 
 lane_asking_pane_key() {
@@ -478,29 +503,40 @@ lane_asking_pane_key() {
   printf '%s' "$key"
 }
 
-# Refresh only invalidations before any event can end the pass. A new or
-# changed prompt remains unrecorded until check_lanes emits it.
-refresh_lane_asking_state() {
+# Build one immutable lane snapshot for the pass. The final capture path is
+# the success marker; a failed redirect leaves only a removed scratch file.
+observe_lanes() {
+  LANE_OBS=""
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane below key prefix prior next clear i=0 state="$LANE_ASKING_STATE"
+  local existing lane pane below key prefix prior next obs pid cmd capture i=0 state="$LANE_ASKING_STATE"
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    clear=0
-    rm -f "$WORK_DIR/asking-refresh.$i"
-    if ! grep -qxF -- "$lane" <<<"$existing" || ! key="$(lane_asking_pane_key "$lane")" \
-       || ! tmux capture-pane -t "$lane" -p >"$WORK_DIR/asking-refresh.$i" 2>/dev/null; then
-      clear=1
-    else
-      pane="$(cat -- "$WORK_DIR/asking-refresh.$i")"
-      below="$(pane_below_last_turn "$pane")"
-      prior="$(jq -r --arg lane "$lane" '.[$lane] // ""' <<<"$state")" \
-        || die "could not read lane '$lane' from $LANE_ASKING_STATE_FILE"
-      prefix="${key}|"
-      grep -Eq -- "$LANE_ASKING_RE" <<<"$below" || clear=1
-      if [[ -n "$prior" && "$prior" != "$prefix"* ]]; then clear=1; fi
+    capture="$(lane_pane_file "$i")"
+    rm -f "$capture" "$capture.$$.tmp"
+    if ! grep -qxF -- "$lane" <<<"$existing" \
+       || ! obs="$(tmux display-message -p -t "$lane" '#{pane_pid} #{pane_current_command}' 2>/dev/null)" \
+       || [[ ! "$obs" =~ ^[0-9]+[[:blank:]]+[^[:space:]] ]] \
+       || ! key="$(lane_asking_pane_key "$lane")" \
+       || ! tmux capture-pane -t "$lane" -p >"$capture.$$.tmp" 2>/dev/null; then
+      rm -f "$capture.$$.tmp"
+      LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
+      next="$(jq -c --arg lane "$lane" 'del(.[$lane])' <<<"$state")" \
+        || die "could not clear lane '$lane' from $LANE_ASKING_STATE_FILE"
+      state="$next"
+      continue
     fi
-    if [[ "$clear" -eq 1 ]]; then
+    mv "$capture.$$.tmp" "$capture" || die "could not publish the pane capture behind '$lane'"
+    pid="${obs%%[[:blank:]]*}"
+    cmd="${obs#*[[:blank:]]}"
+    LANE_OBS+="$i"$'\t'"ready"$'\t'"$pid"$'\t'"$cmd"$'\t'"$key"$'\n'
+    pane="$(cat -- "$capture")"
+    below="$(pane_below_last_turn "$pane")"
+    prior="$(jq -r --arg lane "$lane" '.[$lane] // ""' <<<"$state")" \
+      || die "could not read lane '$lane' from $LANE_ASKING_STATE_FILE"
+    prefix="${key}|$(pane_turn_identity "$pane")|"
+    if ! grep -Eq -- "$LANE_ASKING_RE" <<<"$below" \
+       || [[ -n "$prior" && "$prior" != "$prefix"* ]]; then
       next="$(jq -c --arg lane "$lane" 'del(.[$lane])' <<<"$state")" \
         || die "could not clear lane '$lane' from $LANE_ASKING_STATE_FILE"
       state="$next"
@@ -514,11 +550,12 @@ refresh_lane_asking_state() {
 
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane below obs cmd pid state probe i states="" shell_now="" idle_now="" asking_now="" claims="" claimed pane_key
-  local asking_state="$LANE_ASKING_STATE" next_state fingerprint prior
-  existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
+  local lane pane below cmd pid state probe i states="" shell_now="" idle_now="" asking_now="" claims="" claimed pane_key
+  local asking_state="$LANE_ASKING_STATE" next_state fingerprint prior turn_identity
+  i=0
   for lane in "${LANES[@]}"; do
-    if ! grep -qxF -- "$lane" <<<"$existing"; then
+    i=$((i + 1))
+    if [[ "$(lane_state "$LANE_OBS" "$i")" != ready ]]; then
       echo "EVENT window-gone $lane"
       pr_watch_context
       exit 0
@@ -530,22 +567,8 @@ check_lanes() {
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if ! obs="$(tmux display-message -p -t "$lane" '#{pane_pid} #{pane_current_command}' 2>/dev/null)" \
-       || [[ ! "$obs" =~ ^[0-9]+[[:blank:]]+[^[:space:]] ]]; then
-      echo "EVENT window-gone $lane"
-      pr_watch_context
-      exit 0
-    fi
-    if [[ -f "$WORK_DIR/asking-refresh.$i" ]]; then
-      cp "$WORK_DIR/asking-refresh.$i" "$(lane_pane_file "$i")" \
-        || die "could not reuse the pane capture behind '$lane'"
-    elif ! tmux capture-pane -t "$lane" -p >"$(lane_pane_file "$i")" 2>/dev/null; then
-      echo "EVENT window-gone $lane"
-      pr_watch_context
-      exit 0
-    fi
-    pid="${obs%%[[:blank:]]*}"
-    cmd="${obs#*[[:blank:]]}"
+    pid="$(lane_field "$LANE_OBS" "$i" 3)"
+    cmd="$(lane_field "$LANE_OBS" "$i" 4)"
     state=live
     if is_bare_shell "$cmd"; then
       probe=0; pane_has_child "$pid" || probe=$?
@@ -608,7 +631,7 @@ check_lanes() {
       # unique only within a session: the account is resolved on the pane
       # actually captured here — `<server pid> <pane id>`, the same key the
       # claim's liveness uses — so no other lane can answer for it.
-      pane_key="$(tmux display-message -p -t "$lane" '#{pid} #{pane_id}' 2>/dev/null || true)"
+      pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
       claimed="$(lane_claims_config_dir "$claims" "${pane_key%% *}" "${pane_key##* }")"
       if [[ -z "$claimed" && -n "$claims" ]]; then
         echo "oversee-watch: no live lane claim for the pane behind '$lane'; the usage-limit event names no account" >&2
@@ -631,9 +654,9 @@ check_lanes() {
     below="$(pane_below_last_turn "$pane")"
     if grep -Eq -- "$LANE_ASKING_RE" <<<"$below"; then
       asking_now+="$i"$'\n'
-      pane_key="$(lane_asking_pane_key "$lane")" \
-        || die "could not identify the pane behind '$lane' for lane-asking"
-      fingerprint="${pane_key}|$(printf '%s' "$below" | cksum)"
+      pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
+      turn_identity="$(pane_turn_identity "$pane")"
+      fingerprint="${pane_key}|${turn_identity}|$(printf '%s' "$below" | cksum)"
       prior="$(jq -r --arg lane "$lane" '.[$lane] // ""' <<<"$asking_state")" \
         || die "could not read lane '$lane' from $LANE_ASKING_STATE_FILE"
       next_state="$(jq -c --arg lane "$lane" --arg fingerprint "$fingerprint" '.[$lane] = $fingerprint' <<<"$asking_state")" \
@@ -692,7 +715,7 @@ heartbeat() {
 loop=0
 while :; do
   loop=$((loop + 1))
-  refresh_lane_asking_state
+  observe_lanes
   check_pr_watch
   check_merged
   check_triage

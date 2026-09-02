@@ -20,6 +20,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)" || { echo "oversee-watch harness: mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$TMP_ROOT"' EXIT
+OVERSEE_TEST_REAL_DATE="$(command -v date)" \
+  || { echo "oversee-watch harness: date not found before PATH shadowing" >&2; exit 1; }
+[[ -x "$OVERSEE_TEST_REAL_DATE" ]] \
+  || { echo "oversee-watch harness: resolved date is not executable: $OVERSEE_TEST_REAL_DATE" >&2; exit 1; }
 
 PASS=0
 FAIL=0
@@ -147,6 +151,7 @@ case "${1:-}" in
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; shift; done
     n=0; [[ -f "$STUB_DIR/pane-$lane.calls" ]] && n="$(cat "$STUB_DIR/pane-$lane.calls")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/pane-$lane.calls"
+    [[ -f "$STUB_DIR/capture-fail-$lane" ]] && { echo "capture failed: $lane" >&2; exit 1; }
     src="$STUB_DIR/pane-$lane.$n.txt"; [[ -f "$src" ]] || src="$STUB_DIR/pane-$lane.txt"
     [[ -f "$src" ]] || { echo "can't find window: $lane" >&2; exit 1; }
     cat "$src"; exit 0 ;;
@@ -271,11 +276,31 @@ if [[ "$*" == "-u +%s" && -f "$STUB_DIR/now.epoch" ]]; then
   cat "$STUB_DIR/now.epoch"
   exit 0
 fi
-exec /usr/bin/date "$@"
+real="${OVERSEE_TEST_REAL_DATE:-}"
+if [[ ! -x "$real" ]]; then
+  for candidate in /usr/bin/date /bin/date; do
+    if [[ -x "$candidate" ]]; then real="$candidate"; break; fi
+  done
+fi
+[[ -x "$real" ]] || { echo "date stub: no executable system date found" >&2; exit 127; }
+exec "$real" "$@"
+EOF
+
+# Fleet verdict-log reader. tracker-triaged.txt holds kept/canceled ids.
+cat > "$TMP_ROOT/bin/workflow-state-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+printf '%s\n' "$*" > "$STUB_DIR/workflow-state.args"
+[[ -f "$STUB_DIR/workflow-state.err" ]] && cat "$STUB_DIR/workflow-state.err" >&2
+rc=0; [[ -f "$STUB_DIR/workflow-state.rc" ]] && rc="$(cat "$STUB_DIR/workflow-state.rc")"
+[[ "$rc" -eq 0 ]] || exit "$rc"
+[[ -f "$STUB_DIR/tracker-triaged.txt" ]] && cat "$STUB_DIR/tracker-triaged.txt"
+exit 0
 EOF
 
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" \
-  "$TMP_ROOT/bin/pr-watch-stub.sh" "$TMP_ROOT/bin/linear-stub.sh" "$TMP_ROOT/bin/date"
+  "$TMP_ROOT/bin/pr-watch-stub.sh" "$TMP_ROOT/bin/linear-stub.sh" "$TMP_ROOT/bin/date" \
+  "$TMP_ROOT/bin/workflow-state-stub.sh"
 
 STUB_DIR=""
 STATE_DIR=""
@@ -319,10 +344,11 @@ run_watch() {
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
-           STUB_DIR="$STUB_DIR" TMUX="fake" \
+           STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
            LINEAR_TEAM="kendex" \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
+           OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
            ${env_args[@]+"${env_args[@]}"} \
            .agents/skills/orch/scripts/oversee-watch --interval 0 --max-loops 2 \
