@@ -18,7 +18,7 @@ import {
   repoEffectsSaidTitle,
   repoEffectsWithheldToast,
 } from "@/lib/copy-repo-effects";
-import { rescanEverything } from "@/lib/rescan";
+import { writingRepo } from "@/lib/rescan";
 import { sayUndone } from "@/lib/undone";
 import {
   catalogKey,
@@ -92,69 +92,74 @@ export function installActions(set: Set, get: Get): InstallActions {
   return {
     pendingEffects: null,
 
-    install: async ({
+    install: ({
       scope,
       source,
       items,
       bundle = null,
       destination,
       delivery,
-    }: InstallRequest) => {
-      set({ busy: true });
-      let response: Awaited<ReturnType<typeof commands.marketplaceInstall>>;
-      try {
-        response = await commands.marketplaceInstall(
-          scope,
-          source,
-          items,
-          bundle,
-          destination ?? null,
-          false,
-          delivery?.harnesses ?? null,
-          delivery?.method ?? null,
-          // Empty is the answer, not the absence of one: an extra nobody
-          // ticked is not installed.
-          delivery?.optional ?? [],
-        );
-      } finally {
-        set({ busy: false });
-      }
-      if (response.status === "error") {
-        toast.error(response.error);
-        return false;
-      }
-      const target = destination ?? scope;
-      // The command answers with the refreshed package list for this
-      // subscription, so the table flips to Installed without a second query.
-      const key = catalogKey(subscription(target, source));
-      const { shown, withheld } = response.data.repoEffects;
-      set((state) => ({
-        packages: { ...state.packages, [key]: response.data.packages },
-        // Member states in every set this install touched moved with it,
-        // in the open set and in the list of sets alike.
-        ...droppedSetCaches(),
-        error: null,
-        // The files are in; what a package does to the repository is a
-        // second question, asked once the install is reported.
-        pendingEffects:
-          shown.length > 0 ? { scope: target, queue: shown } : null,
-      }));
-      const what = bundle
-        ? `the ${bundle} bundle`
-        : items.length === 1
-          ? items[0].name
-          : `${items.length} packages`;
-      toast.success(`Installed ${what}`);
-      // Whatever an install's plan took away, and what its uninstaller
-      // ran on the way out. Said, never asked about: the second question
-      // this dialog exists for is about arming, and this already happened.
-      sayUndone(response.data.undone);
-      for (const held of withheld) {
-        toast.info(repoEffectsWithheldToast(held.name, held.reason));
-      }
-      await rescanEverything();
-      return true;
-    },
+    }: InstallRequest) =>
+      writingRepo(
+        async () => {
+          set({ busy: true });
+          try {
+            return await commands.marketplaceInstall(
+              scope,
+              source,
+              items,
+              bundle,
+              destination ?? null,
+              false,
+              delivery?.harnesses ?? null,
+              delivery?.method ?? null,
+              // Empty is the answer, not the absence of one: an extra nobody
+              // ticked is not installed.
+              delivery?.optional ?? [],
+            );
+          } finally {
+            set({ busy: false });
+          }
+        },
+        (response) => {
+          if (response.status === "error") {
+            toast.error(response.error);
+            return false;
+          }
+          const target = destination ?? scope;
+          // The command answers with the refreshed package list for this
+          // subscription, so the table flips to Installed without a second
+          // query.
+          const key = catalogKey(subscription(target, source));
+          const { shown, withheld } = response.data.repoEffects;
+          set((state) => ({
+            packages: { ...state.packages, [key]: response.data.packages },
+            // Member states in every set this install touched moved with it,
+            // in the open set and in the list of sets alike.
+            ...droppedSetCaches(),
+            error: null,
+            // The files are in; what a package does to the repository is a
+            // second question, asked once the install is reported.
+            pendingEffects:
+              shown.length > 0 ? { scope: target, queue: shown } : null,
+          }));
+          const what = bundle
+            ? `the ${bundle} bundle`
+            : items.length === 1
+              ? items[0].name
+              : `${items.length} packages`;
+          toast.success(`Installed ${what}`);
+          // Whatever an install's plan took away, and what its uninstaller
+          // ran on the way out. Said, never asked about: the second question
+          // this dialog exists for is about arming, and this already
+          // happened.
+          sayUndone(response.data.undone);
+          for (const held of withheld) {
+            toast.info(repoEffectsWithheldToast(held.name, held.reason));
+          }
+          return true;
+        },
+      ),
 
     /** Run the installer of the package at the head of the line, here and
      *  now, and show its own last word: an installer that deliberately

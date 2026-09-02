@@ -4,7 +4,7 @@
 import { toast } from "sonner";
 import type { Scope } from "@/bindings";
 import { commands } from "@/bindings";
-import { rescanEverything } from "@/lib/rescan";
+import { writingRepo } from "@/lib/rescan";
 import { sayUndone } from "@/lib/undone";
 import { dropCatalogCaches } from "./marketplaces-shared";
 
@@ -17,19 +17,21 @@ type Set = (partial: object) => void;
 
 export function sourceActions(set: Set, get: () => Sources) {
   return {
-    toggle: async (scope: Scope, source: string, enabled: boolean) => {
-      const response = await commands.sourceToggle(scope, source, enabled);
-      if (response.status === "error") {
-        toast.error(response.error);
-        return;
-      }
-      sayUndone(response.data.undone);
-      // Turning a holder on or off changes which subscription a repository
-      // page carries on as, so every derived read goes.
-      dropCatalogCaches(set);
-      await get().load();
-      await rescanEverything();
-    },
+    toggle: (scope: Scope, source: string, enabled: boolean) =>
+      writingRepo(
+        () => commands.sourceToggle(scope, source, enabled),
+        async (response) => {
+          if (response.status === "error") {
+            toast.error(response.error);
+            return;
+          }
+          sayUndone(response.data.undone);
+          // Turning a holder on or off changes which subscription a
+          // repository page carries on as, so every derived read goes.
+          dropCatalogCaches(set);
+          await get().load();
+        },
+      ),
 
     checkForUpdates: async () => {
       set({ busy: true });

@@ -13,7 +13,7 @@ import {
   readOf,
   readOrder,
 } from "@/lib/read-state";
-import { rescanEverything } from "@/lib/rescan";
+import { writingRepo } from "@/lib/rescan";
 import { settled } from "@/lib/settled";
 import { saying, sayUndone } from "@/lib/undone";
 import { catalogReads } from "./marketplaces-catalog-reads";
@@ -185,37 +185,40 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
     return get().install({ scope, source: outcome.name, items });
   },
 
-  unsubscribe: async (scope, source, keep, discardEdits) => {
-    set({ busy: true });
-    let response: Awaited<ReturnType<typeof commands.marketplaceUnsubscribe>>;
-    try {
-      response = await commands.marketplaceUnsubscribe(
-        scope,
-        source,
-        keep,
-        discardEdits,
-      );
-    } finally {
-      set({ busy: false });
-    }
-    if (response.status === "error") {
-      set({ error: response.error });
-      return { error: response.error };
-    }
-    set({ error: null });
-    toast.success(
-      keep
-        ? `Unsubscribed from '${source}' — its packages are yours now`
-        : `Unsubscribed from '${source}'`,
-    );
-    saying(response);
-    // A page carried on as this subscription must stop pointing at it, and
-    // every other derived read goes with it.
-    dropCatalogCaches(set);
-    await get().load();
-    await rescanEverything();
-    return { done: true };
-  },
+  unsubscribe: (scope, source, keep, discardEdits) =>
+    writingRepo(
+      async () => {
+        set({ busy: true });
+        try {
+          return await commands.marketplaceUnsubscribe(
+            scope,
+            source,
+            keep,
+            discardEdits,
+          );
+        } finally {
+          set({ busy: false });
+        }
+      },
+      async (response): Promise<UnsubscribeOutcome> => {
+        if (response.status === "error") {
+          set({ error: response.error });
+          return { error: response.error };
+        }
+        set({ error: null });
+        toast.success(
+          keep
+            ? `Unsubscribed from '${source}' — its packages are yours now`
+            : `Unsubscribed from '${source}'`,
+        );
+        saying(response);
+        // A page carried on as this subscription must stop pointing at it,
+        // and every other derived read goes with it.
+        dropCatalogCaches(set);
+        await get().load();
+        return { done: true };
+      },
+    ),
 
   ...sourceActions(set, get),
   ...installActions(set, get),

@@ -8,10 +8,10 @@ import {
 } from "@/bindings";
 import { adoptedToastLabel } from "@/lib/copy";
 import { replacedToastLabel } from "@/lib/copy-in-the-way";
+import { writingRepo } from "@/lib/rescan";
 import { sayUndone } from "@/lib/undone";
 import { replaceView } from "./audit-fold";
 import { type ErrorAction, useProblemsStore } from "./problems";
-import { useScanStore } from "./scan";
 
 /** Every action here answers whether it worked. Most callers only need the
  *  state update that comes with it; the ones running several in a row need
@@ -71,11 +71,7 @@ type Run = (action: AuditAction, opts: RunOpts) => Promise<boolean>;
 // for one row can stop at the first that did not instead of carrying on
 // against a page that is now wrong.
 export function auditRunner(
-  set: (partial: {
-    busy?: boolean;
-    views?: AuditView[];
-    error?: string | null;
-  }) => void,
+  set: (partial: { busy?: boolean; views?: AuditView[] }) => void,
   get: () => { views: AuditView[] },
   /** Called at both ends of a command attempt, however it ends. An attempt
    *  is a span, not a moment: each of these runs a plan before a step that
@@ -86,41 +82,47 @@ export function auditRunner(
    *  re-read, which is the direction with nothing to lose. */
   attempted: () => void,
 ): Run {
-  const run: Run = async (action, opts) => {
-    set({ busy: true });
-    attempted();
-    let response: Awaited<ReturnType<typeof action>>;
-    try {
-      response = await action();
-    } finally {
-      set({ busy: false });
-      attempted();
-    }
-    if (response.status === "ok") {
-      set({
-        views: replaceView(get().views, response.data),
-        error: null,
-      });
-      if (opts.successMessage) toast.success(opts.successMessage);
-      // What the removal ran in the repository, said whatever the action
-      // was called: every command here answers with the same view.
-      sayUndone(response.data.undone);
-      await useScanStore.getState().refresh();
-      return true;
-    }
-    set({ error: response.error });
-    const retry: ErrorAction = {
-      label: "Retry",
-      onClick: () => void run(action, opts),
-    };
-    useProblemsStore.getState().showError({
-      title: opts.title,
-      message: response.error,
-      steps: opts.steps,
-      actions: [retry],
-    });
-    return false;
-  };
+  const run: Run = (action, opts) =>
+    // Every one of these reaches `repo_effects`, so the machine is read
+    // again whatever the command answered — `lib/rescan.ts` holds the rule
+    // and the reasons. The fresh view an ok answer carries is this scope's
+    // alone, and a refusal carries none at all.
+    writingRepo(
+      async () => {
+        set({ busy: true });
+        attempted();
+        try {
+          return await action();
+        } finally {
+          set({ busy: false });
+          attempted();
+        }
+      },
+      (response) => {
+        if (response.status === "ok") {
+          set({ views: replaceView(get().views, response.data) });
+          if (opts.successMessage) toast.success(opts.successMessage);
+          // What the removal ran in the repository, said whatever the action
+          // was called: every command here answers with the same view.
+          sayUndone(response.data.undone);
+          return true;
+        }
+        // The dialog and nowhere else. A copy in the store's `error` had no
+        // reader and now has no life either — the audit this call's rescan
+        // forces writes that same slot on its way in or out.
+        const retry: ErrorAction = {
+          label: "Retry",
+          onClick: () => void run(action, opts),
+        };
+        useProblemsStore.getState().showError({
+          title: opts.title,
+          message: response.error,
+          steps: opts.steps,
+          actions: [retry],
+        });
+        return false;
+      },
+    );
   return run;
 }
 

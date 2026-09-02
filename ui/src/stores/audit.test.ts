@@ -237,6 +237,12 @@ describe("audit store run() actions", () => {
       dialog: { open: false, title: "", steps: [], actions: [] },
     });
     vi.clearAllMocks();
+    // Every one of these actions reads the machine again behind itself, on
+    // `lib/rescan.ts`'s rule, and that read forces an audit of its own.
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [emptyView],
+    });
   });
 
   it("shows the error modal with the backend message on a failed action, not silently", async () => {
@@ -251,9 +257,9 @@ describe("audit store run() actions", () => {
     expect(dialog.open).toBe(true);
     expect(dialog.title).toBe("Couldn't remove lint");
     expect(dialog.message).toBe("disk is full");
-    expect(useAuditStore.getState().error).toBe("disk is full");
-    // A failed item action is not a failed audit: only refresh may write
-    // the signal Home's couldn't-check row reads.
+    // A failed item action is not a failed audit: the audit the rescan
+    // behind it forced answered, so nothing writes the signal Home's
+    // couldn't-check row reads.
     expect(useAuditStore.getState().read.error).toBeNull();
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -378,25 +384,38 @@ describe("an audit that lands after a command it cannot answer for", () => {
     return { parked, land: (value: T) => land(value) };
   };
 
+  // Two parked audits, because every one of these commands now asks for one
+  // of its own: the reading that overlapped the attempt, and the forced one
+  // the rescan behind the command queues after it. Landing only the first
+  // is what the assertions are about — the second is landed at the end so
+  // the action can finish.
   it("keeps the command's view rather than putting the row back", async () => {
-    const audit = park<{ status: "ok"; data: AuditView[] }>();
-    vi.mocked(commands.auditAll).mockReturnValue(
-      audit.parked as ReturnType<typeof commands.auditAll>,
-    );
+    const overlapping = park<{ status: "ok"; data: AuditView[] }>();
+    const forced = park<{ status: "ok"; data: AuditView[] }>();
+    vi.mocked(commands.auditAll)
+      .mockReturnValueOnce(
+        overlapping.parked as ReturnType<typeof commands.auditAll>,
+      )
+      .mockReturnValue(forced.parked as ReturnType<typeof commands.auditAll>);
     vi.mocked(commands.removeItem).mockResolvedValue({
       status: "ok",
       data: settled,
     });
 
     const running = useAuditStore.getState().refresh();
-    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
-    audit.land({ status: "ok", data: [stale] });
+    const acting = useAuditStore
+      .getState()
+      .removeItem(globalScope, "hook", "lint");
+    overlapping.land({ status: "ok", data: [stale] });
     await running;
 
     expect(useAuditStore.getState().views).toEqual([settled]);
-    // Undated, so the next visit pays for a reading that can speak for
-    // what just happened instead of reusing one that cannot.
+    // Undated, so nothing reuses a reading that cannot speak for what just
+    // happened — the forced one behind it is still out.
     expect(useAuditStore.getState().auditedAt).toBeNull();
+
+    forced.land({ status: "ok", data: [settled] });
+    await acting;
   });
 
   // The two orderings the pair of marks exists for, each reachable on its
@@ -410,11 +429,13 @@ describe("an audit that lands after a command it cannot answer for", () => {
   // START of the attempt has fired, and it is what says this reading
   // cannot answer.
   it("drops a reading that landed while an attempt was still running", async () => {
-    const audit = park<{ status: "ok"; data: AuditView[] }>();
+    const overlapping = park<{ status: "ok"; data: AuditView[] }>();
     const command = park<{ status: "ok"; data: AuditView }>();
-    vi.mocked(commands.auditAll).mockReturnValue(
-      audit.parked as ReturnType<typeof commands.auditAll>,
-    );
+    vi.mocked(commands.auditAll)
+      .mockReturnValueOnce(
+        overlapping.parked as ReturnType<typeof commands.auditAll>,
+      )
+      .mockResolvedValue({ status: "ok", data: [settled] });
     vi.mocked(commands.removeItem).mockReturnValue(
       command.parked as ReturnType<typeof commands.removeItem>,
     );
@@ -423,7 +444,7 @@ describe("an audit that lands after a command it cannot answer for", () => {
     const acting = useAuditStore
       .getState()
       .removeItem(globalScope, "hook", "lint");
-    audit.land({ status: "ok", data: [stale] });
+    overlapping.land({ status: "ok", data: [stale] });
     await running;
 
     expect(useAuditStore.getState().views).toEqual([emptyView]);
@@ -437,7 +458,8 @@ describe("an audit that lands after a command it cannot answer for", () => {
   // begins, so that one cannot tell this reading apart. Only the mark at
   // the END of the attempt moves the counter under it.
   it("drops a reading an attempt finished under", async () => {
-    const audit = park<{ status: "ok"; data: AuditView[] }>();
+    const overlapping = park<{ status: "ok"; data: AuditView[] }>();
+    const forced = park<{ status: "ok"; data: AuditView[] }>();
     const command = park<{ status: "ok"; data: AuditView }>();
     vi.mocked(commands.removeItem).mockReturnValue(
       command.parked as ReturnType<typeof commands.removeItem>,
@@ -448,27 +470,32 @@ describe("an audit that lands after a command it cannot answer for", () => {
     // The attempt is under way before the audit is asked for.
     await Promise.resolve();
 
-    vi.mocked(commands.auditAll).mockReturnValue(
-      audit.parked as ReturnType<typeof commands.auditAll>,
-    );
+    vi.mocked(commands.auditAll)
+      .mockReturnValueOnce(
+        overlapping.parked as ReturnType<typeof commands.auditAll>,
+      )
+      .mockReturnValue(forced.parked as ReturnType<typeof commands.auditAll>);
     const running = useAuditStore.getState().refresh();
 
     command.land({ status: "ok", data: settled });
-    await acting;
-    audit.land({ status: "ok", data: [stale] });
+    overlapping.land({ status: "ok", data: [stale] });
     await running;
 
-    // The command's own view stands, undated so the next visit pays for a
-    // reading that can speak for what it did.
+    // The command's own view stands, undated — the forced audit behind the
+    // command is still out, and until it answers nothing may be reused.
     expect(useAuditStore.getState().views).toEqual([settled]);
     expect(useAuditStore.getState().auditedAt).toBeNull();
+
+    forced.land({ status: "ok", data: [settled] });
+    await acting;
   });
 
-  // Dropping the read is only half of it. The command installed its own
-  // scope and nothing re-read the rest, so a stamp left standing would hold
-  // the freshness window open over the very bytes the force was about — an
-  // editor save, say, with every score still quoting the state before it.
-  it("pays for the read it dropped instead of reusing the stamp", async () => {
+  // Dropping the read is only half of it. The audit the command's own rescan
+  // forces re-reads the rest and normally re-stamps — but it can fail, and
+  // then a stamp the dropped reading left standing would hold the freshness
+  // window open over the very bytes the command changed, with every score
+  // still quoting the state before it.
+  it("pays for the read it dropped when the forced one could not answer", async () => {
     vi.mocked(commands.auditAll).mockResolvedValue({
       status: "ok",
       data: [stale],
@@ -476,18 +503,27 @@ describe("an audit that lands after a command it cannot answer for", () => {
     await useAuditStore.getState().refresh();
     expect(useAuditStore.getState().auditedAt).not.toBeNull();
 
-    const audit = park<{ status: "ok"; data: AuditView[] }>();
-    vi.mocked(commands.auditAll).mockReturnValue(
-      audit.parked as ReturnType<typeof commands.auditAll>,
-    );
+    const overlapping = park<{ status: "ok"; data: AuditView[] }>();
+    vi.mocked(commands.auditAll)
+      .mockReturnValueOnce(
+        overlapping.parked as ReturnType<typeof commands.auditAll>,
+      )
+      // The audit the command's rescan forces cannot answer either, so
+      // nothing after the dropped reading re-stamps.
+      .mockResolvedValue({ status: "error", error: "audit crashed" });
     vi.mocked(commands.removeItem).mockResolvedValue({
       status: "ok",
       data: settled,
     });
     const forced = useAuditStore.getState().refresh({ force: true });
-    await useAuditStore.getState().removeItem(globalScope, "hook", "lint");
-    audit.land({ status: "ok", data: [stale] });
+    const acting = useAuditStore
+      .getState()
+      .removeItem(globalScope, "hook", "lint");
+    overlapping.land({ status: "ok", data: [stale] });
     await forced;
+    await acting;
+
+    expect(useAuditStore.getState().auditedAt).toBeNull();
 
     const dropped = vi.mocked(commands.auditAll).mock.calls.length;
     vi.mocked(commands.auditAll).mockResolvedValue({

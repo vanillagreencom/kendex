@@ -8,10 +8,10 @@ import {
 } from "@/bindings";
 import { type Draft, emptyDraft } from "@/lib/editor-draft";
 
+import { writingRepo } from "@/lib/rescan";
 import { everyPlace, sameScope } from "@/lib/scope";
 import { settingsDraft, withEdit } from "@/lib/settings-rows";
 import { saying } from "@/lib/undone";
-import { useAuditStore } from "./audit";
 import {
   mergedPlaces,
   opening,
@@ -21,7 +21,6 @@ import {
   readPlace,
   recordedRead,
 } from "./editor-cache";
-import { useScanStore } from "./scan";
 import { useSettingsStore } from "./settings";
 
 export { openInventory } from "./editor-cache";
@@ -132,43 +131,45 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
   const write = async (draft: Draft) => {
     const { scope, base, manifestDirty, settingsEdits, settings } = get();
-    set({ saving: true });
-    let response: Awaited<ReturnType<typeof commands.saveCustomize>>;
-    try {
-      response = await commands.saveCustomize(
-        scope,
-        manifestDirty ? { manifest: draft, base } : null,
-        settingsDraft(settingsEdits, settings),
-      );
-    } finally {
-      set({ saving: false });
-    }
-    if (response.status === "error") {
-      // Stale is a refusal, not a failure: the file changed outside this
-      // draft, and writing the draft would put the older file back. The
-      // draft cannot be merged, so the page offers the reload as a choice
-      // rather than taking the person's edits on its own. A refusal with
-      // something to say about the packages leaving answers `failed`
-      // instead, so nothing it said is dropped for the reload.
-      if (response.error.kind === "stale") {
-        set({ stale: true, error: null });
-      } else {
-        set({ error: response.error.message, stale: false });
-      }
-      return;
-    }
-    set({ error: null, stale: false });
-    // Saving a manifest that takes a package away owes the same account a
-    // removal does. Wired here rather than by the write the update commands
-    // share: the editor answers a refusal shape of its own and never goes
-    // through it.
-    saying(response);
-    await load();
-    // Forced: a save rewrote the manifest this scope renders from, so an
-    // audit inside its freshness window would keep every score answering
-    // for the files as they were before the edit.
-    await useAuditStore.getState().refresh({ force: true });
-    await useScanStore.getState().refresh();
+    // A save reaches `repo_effects`, so the machine is read again whatever
+    // it answered — `lib/rescan.ts` holds the rule and the reasons.
+    await writingRepo(
+      async () => {
+        set({ saving: true });
+        try {
+          return await commands.saveCustomize(
+            scope,
+            manifestDirty ? { manifest: draft, base } : null,
+            settingsDraft(settingsEdits, settings),
+          );
+        } finally {
+          set({ saving: false });
+        }
+      },
+      async (response) => {
+        if (response.status === "error") {
+          // Stale is a refusal, not a failure: the file changed outside this
+          // draft, and writing the draft would put the older file back. The
+          // draft cannot be merged, so the page offers the reload as a choice
+          // rather than taking the person's edits on its own. A refusal with
+          // something to say about the packages leaving answers `failed`
+          // instead, so nothing it said is dropped for the reload.
+          if (response.error.kind === "stale") {
+            set({ stale: true, error: null });
+          } else {
+            set({ error: response.error.message, stale: false });
+          }
+          return;
+        }
+        set({ error: null, stale: false });
+        // Saving a manifest that takes a package away owes the same account a
+        // removal does. Wired here rather than by the write the update
+        // commands share: the editor answers a refusal shape of its own and
+        // never goes through it.
+        saying(response);
+        await load();
+      },
+    );
   };
 
   return {

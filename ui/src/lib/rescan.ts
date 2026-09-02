@@ -14,20 +14,13 @@
 // The join belongs here instead, where every write that already says "read
 // the machine again" refreshes it, including routes nobody has thought of.
 //
-// Call it after a write none of those reads has seen: an install, a
-// package coming current, a registry change. The buttons offering to look
-// again call it because nothing else knows what changed.
-//
-// The audit's item actions do not: each answers with the scope's fresh view
-// and refreshes the scan itself. The Follow-source flip does — it runs the
-// same apply an update does, so the bytes both reads answer for move under
-// it — and calls this once its own standing has landed.
-//
-// The writes on the Updates page and the package page call this whatever
-// their write answered: `updates.ts`'s [`updateOne`] and [`updateRows`],
-// `updates-edits.ts`'s `run`, `updates-follow.ts`'s [`followSwitch`], and
-// `package-version-actions.ts`'s `afterChange`. The reasoning lives here
-// rather than at each of them.
+// The rule, for every write that reaches `repo_effects`: the machine is read
+// again once the write has been answered for, whatever it answered. No
+// caller carves itself out — a refusal is not an account of the disk, a
+// success is not a complete one, and the two reasons below say why no
+// predicate over the response is allowed to decide it. The buttons offering
+// to look again call [`rescanEverything`] directly, because nothing else
+// knows what changed.
 //
 // A refusal is no account of what is on disk. `repo_effects::execute` runs
 // the leaving packages' uninstallers before the plan, so an `Undo` error
@@ -43,9 +36,25 @@
 // the response decides this, and a write that moved nothing pays one scan
 // and one forced audit rather than leaving a dated page.
 //
-// This speaks only for those five. The marketplace, source-toggle and
-// settings callers still return on the error before reaching here; whether
-// that is right is their own question.
+// Two spellings carry the rule, and between them they are the set —
+// `grep -rnE "writingRepo\(|rescanEverything\(" ui/src` finds every one.
+// [`writingRepo`] below is the wrapper: it runs the command, hands the
+// answer to the caller, and reads the machine once the caller is done with
+// it — which is how the marketplace install, the source toggle, the
+// unsubscribe, the editor save and the audit's item actions cannot skip it,
+// and how a sixth of them will not either. The Updates page and the package
+// page spell it out instead, calling [`rescanEverything`] as the last step
+// of a `holdingBusy` block that runs whatever the apply answered:
+// `updates.ts`'s [`updateOne`] and [`updateRows`], `updates-edits.ts`'s
+// `run`, `updates-follow.ts`'s [`followSwitch`], and
+// `package-version-actions.ts`'s `afterChange`.
+//
+// `settings.ts`'s [`setHarnessRoot`] is the one write that gates on its
+// answer and is right to: it saves the settings file and never reaches
+// `repo_effects`, so a save that failed left nothing on disk for a stale
+// page to report. It rescans on success because moving a tool's folder
+// changes which files the scan finds, not because a write might have
+// half-landed.
 //
 // Adding a project, dropping one, or moving a harness's folder changes
 // which scopes the audit reads, and a scope with no view of its own counts
@@ -72,4 +81,31 @@ export async function rescanEverything(opts?: {
     // put, which is what every reader already handles.
     useProvenanceStore.getState().reload(),
   ]);
+}
+
+/** Run a write that reaches `repo_effects` and read the machine again once
+ *  it has been answered for.
+ *
+ *  `write` makes the call — and holds whatever busy flag its page already
+ *  held over it, which is why the flag stays the caller's and is not taken
+ *  over here. `answered` gets the answer the moment the engine gives it and
+ *  does everything the caller does with it, refusal arm included: the toast,
+ *  the state update, its own re-reads. Its value is this call's value, so a
+ *  caller reporting a boolean or an outcome object still reports it.
+ *
+ *  Then [`rescanEverything`], on the rule above: after `answered`, so the
+ *  person hears the outcome without waiting on three machine-wide reads, and
+ *  in a `finally`, so a caller that throws over the answer — or a transport
+ *  failure that rejects instead of refusing, leaving nobody able to say what
+ *  the engine got as far as — still reads the machine before the throw goes
+ *  on up. */
+export async function writingRepo<T, R>(
+  write: () => Promise<T>,
+  answered: (answer: T) => R | Promise<R>,
+): Promise<R> {
+  try {
+    return await answered(await write());
+  } finally {
+    await rescanEverything();
+  }
 }
