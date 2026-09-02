@@ -94,10 +94,14 @@ fn scope_gaining_a_catalog_skill() -> (tempfile::TempDir, Env, Scope) {
 
 /// The chain that turns a mid-apply refusal into the stale choice,
 /// exercised whole: the plan's own manifest write binds to the editor
-/// copy's base (`PlanOptions::manifest_base`), a writer lands after
-/// the copy was read, and the apply refuses in a way `stale_at`
-/// recognises while the writer's bytes stand. A plan observing the
-/// file instead of taking the base would accept this writer.
+/// copy's base (`PlanOptions::manifest_base`), a writer lands after the
+/// copy was read, and the apply refuses while the writer's bytes stand. A
+/// plan observing the file instead of taking the base would accept this
+/// writer.
+///
+/// Nothing declaring an uninstaller is in this scope, so the refusal
+/// carries an empty account — the one shape the reload choice is for, and
+/// the control the disarmed case below is read against.
 #[test]
 fn a_writer_landing_after_the_editor_read_is_refused_mid_apply() {
     let (_tmp, env, scope) = scope_gaining_a_catalog_skill();
@@ -126,16 +130,68 @@ fn a_writer_landing_after_the_editor_read_is_refused_mid_apply() {
         report.plan.ops
     );
 
-    let error = kendex_core::apply::execute(&env, &report.plan).unwrap_err();
+    let refused = crate::repo_effects::execute(&env, &report).unwrap_err();
     assert!(
-        stale_at(
-            &error,
-            std::slice::from_ref(&manifest::manifest_path(&env, &scope))
+        matches!(&refused, ExecuteError::Apply { said, .. } if said.is_empty()),
+        "the fixture ran an uninstaller, so this is not the empty-account shape"
+    );
+    assert!(
+        matches!(
+            refused_write(refused, std::slice::from_ref(&path)),
+            WriteRefused::Stale
         ),
-        "{error:?}"
+        "a copy that moved under a write that ran nothing is the reload choice"
     );
     let kept = std::fs::read_to_string(&path).unwrap();
     assert!(kept.contains("all = \"kept\""), "{kept}");
+}
+
+/// The same refusal with the scope root reached through a symlink: the
+/// plan speaks the canonical spelling, so the targets a caller matches the
+/// refusal against must speak it too, whatever spelling the scope arrived
+/// under. macOS reaches every temp directory through `/var` ->
+/// `/private/var` and runs the tests above this way; the link reproduces
+/// that shape on every platform.
+#[cfg(unix)]
+#[test]
+fn a_refusal_through_a_symlinked_root_is_still_the_stale_choice() {
+    let (tmp, env, _real) = scope_gaining_a_catalog_skill();
+    std::os::unix::fs::symlink(tmp.path().join("dev"), tmp.path().join("via")).unwrap();
+    let scope = Scope::Project {
+        root: tmp.path().join("via/app"),
+    };
+
+    let path = manifest::manifest_path(&env, &scope);
+    let (read, base) = manifest::read_for_mutation(&path).unwrap();
+    let editor_copy = read.unwrap();
+    let lock = load_lock(&lock_path(&env, &scope)).unwrap();
+    let options = PlanOptions {
+        manifest_base: Some(base),
+        ..PlanOptions::default()
+    };
+    let report = engine::plan_scope(&env, &scope, &editor_copy, &lock, &options).unwrap();
+    assert!(
+        engine::persists_manifest(&report.plan.ops),
+        "{:?}",
+        report.plan.ops
+    );
+
+    // The writer in between, landing through the same link.
+    let original = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        format!("{original}\n[skill-instructions]\nall = \"kept\"\n"),
+    )
+    .unwrap();
+
+    let refused = crate::repo_effects::execute(&env, &report).unwrap_err();
+    assert!(
+        matches!(
+            refused_write(refused, std::slice::from_ref(&path)),
+            WriteRefused::Stale
+        ),
+        "the scope's spelling decided the refusal instead of the file"
+    );
 }
 
 /// The first save on a scope with no kendex.toml creates the file. The
@@ -651,17 +707,20 @@ fn an_uninstaller_that_ran_before_a_refusal_is_still_reported() {
     );
 }
 
-/// And a refusal on the file this copy came from reaches the page as the
-/// reload choice, with the executor's error carrying what already ran.
+/// A refusal that ran an uninstaller first is not the reload choice, and
+/// it says what it ran.
 ///
 /// The uninstaller runs before the plan writes, so a refusal landing after
-/// that point is a refusal with a disarmed repository behind it. Driven
-/// through the real executor against a real moved precondition: the
-/// manifest the plan binds is rewritten after the report is built, so the
-/// apply rolls back with the uninstaller already run.
+/// that point is a refusal with a disarmed repository behind it — the one
+/// shape where "nothing happened, reload" is a lie, even though the same
+/// precondition moved. It reaches the page as a message instead, with the
+/// lines ahead of the reason. Driven through the real executor against a
+/// real moved precondition: the manifest the plan binds is rewritten after
+/// the report is built, so the apply rolls back with the uninstaller
+/// already run.
 #[cfg(unix)]
 #[test]
-fn a_refusal_after_the_uninstaller_ran_is_the_reload_choice() {
+fn a_refusal_after_the_uninstaller_ran_says_what_it_ran() {
     let held = scope_carrying_a_declaring_package();
     let (_tmp, env, scope) = (&held.0, &held.1, &held.2);
     scope_whose_package_stops_rendering(&held);
@@ -696,28 +755,20 @@ fn a_refusal_after_the_uninstaller_ran_is_the_reload_choice() {
 
     let refused = crate::repo_effects::execute(env, &report).unwrap_err();
 
-    // What the write already ran is on the executor's own error, so a
-    // caller that shows the message shows the disarm with it.
-    let said = refused.to_string();
+    let WriteRefused::Failed { message } = refused_write(refused, std::slice::from_ref(&path))
+    else {
+        panic!("a refusal over a disarmed repository offered the reload choice");
+    };
     assert!(
-        said.contains("guards: running scripts/arm --uninstall"),
-        "the refusal dropped the account of what it had already run: {said}"
+        message.contains("guards: running scripts/arm --uninstall"),
+        "the refusal dropped the account of what it had already run: {message}"
     );
     assert!(
-        said.contains("guards: disarmed"),
-        "the refusal carried only part of the account: {said}"
+        message.contains("guards: disarmed"),
+        "the refusal carried only part of the account: {message}"
     );
     assert!(
-        said.lines().count() > 2,
-        "the refusal said nothing about why it refused: {said}"
-    );
-
-    // And the page gets the choice rather than a message it cannot act on.
-    assert!(
-        matches!(
-            refused_write(refused, std::slice::from_ref(&path)),
-            WriteRefused::Stale
-        ),
-        "a precondition that moved reached the page as an apply error"
+        message.lines().count() > 2,
+        "the refusal said nothing about why it refused: {message}"
     );
 }

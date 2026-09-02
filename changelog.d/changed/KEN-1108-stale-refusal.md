@@ -1,0 +1,1 @@
+- A Customize save refused because the file moved now says what it already ran, where a leaving package's uninstaller had run before the refusal; the reload is offered only where nothing ran.

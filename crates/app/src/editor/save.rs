@@ -158,9 +158,11 @@ fn write_customize(
     // permission or an encoding, and offering it would hide what did.
     let (current, now) = manifest::read_for_mutation(&path).map_err(|e| e.to_string())?;
     let mut options = PlanOptions::default();
-    // Every file this write binds a precondition to. A rollback on one of
-    // them is the same answer the base checks give, and reaches the page
-    // the same way.
+    // The whole-file copies this save holds: the scope manifest, and the
+    // settings file where there is one. A rollback on either is the same
+    // answer the base checks give and reaches the page the same way; every
+    // other op in the plan binds a `Pre` too, and a rollback there is a
+    // failure to say out loud rather than a copy to reload.
     let mut targets = Vec::new();
     // The manifest half. Without one, the scope is reconciled to the file
     // as it sits and no manifest write is added.
@@ -255,16 +257,24 @@ fn write_customize(
 
 /// How a write the executor refused reaches the page.
 ///
-/// A precondition that moved is the reload choice the editor already
-/// draws; anything else is a failure to say out loud. The account the
-/// write already ran rides on the message either way, through
-/// `ExecuteError`'s own `Display`.
+/// The reload choice is for a refusal that ran nothing: one of the copies
+/// this save holds moved under it, and the way out is to read the file
+/// again. That is why the arm requires an empty account as well as a
+/// moved precondition — a plan runs a leaving package's uninstaller
+/// before it writes, so a refusal with lines behind it is a refusal with a
+/// disarmed repository behind it, and "nothing happened, reload" is the
+/// one thing that is not true there.
+///
+/// Everything else is a failure to say out loud, and `ExecuteError`'s own
+/// `Display` puts what already ran ahead of why the write stopped.
 ///
 /// Named rather than inlined so the mapping can be driven with a real
 /// stale error rather than inferred from the branch.
 pub(super) fn refused_write(refused: ExecuteError, targets: &[std::path::PathBuf]) -> WriteRefused {
     match refused {
-        ExecuteError::Apply { error, .. } if stale_at(&error, targets) => WriteRefused::Stale,
+        ExecuteError::Apply { said, error } if said.is_empty() && stale_at(&error, targets) => {
+            WriteRefused::Stale
+        }
         other => WriteRefused::Failed {
             message: other.to_string(),
         },

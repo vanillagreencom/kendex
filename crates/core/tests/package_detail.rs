@@ -172,6 +172,26 @@ fn a_file_reads_capped_and_traversal_is_refused() {
     }
 }
 
+/// A preview is a read of one file, not of the whole of an enormous one.
+/// The cap cuts at its own bound and the answer says it cut, so a reader
+/// is never shown a prefix that reads as the file.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_file_past_the_cap_is_cut_at_it_and_says_so() {
+    const CAP: usize = 64 * 1024;
+    let w = world();
+    let big = w.upstream.join("skills/gh/references/big.md");
+    fs::create_dir_all(big.parent().unwrap()).unwrap();
+    fs::write(&big, "a".repeat(CAP + 500)).unwrap();
+    install(&w);
+
+    let file =
+        detail::package_file(&w.env, &w.scope, ItemKind::Skill, "gh", "references/big.md").unwrap();
+
+    assert_eq!(file.content.len(), CAP);
+    assert!(file.truncated);
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_exact_readme_wins_over_case_variants() {

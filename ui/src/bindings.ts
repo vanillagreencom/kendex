@@ -3091,12 +3091,18 @@ export type Withheld = {
  */
 export type WriteRefused = 
 /**
- *  The file is no longer the one this copy was read from. Something
- *  else wrote it — a fork, a hold, an install, another window — and
- *  writing this copy would put that back.
+ *  The file is no longer the one this copy was read from, and the
+ *  write ran nothing. Something else wrote it — a fork, a hold, an
+ *  install, another window — and writing this copy would put that
+ *  back, so reading the file again is the whole of the way out.
  */
 { kind: "stale" } | 
-/**  Anything else that stopped the write, in the words the person gets. */
+/**
+ *  Anything else that stopped the write, in the words the person
+ *  gets — including a stale file the write reached only after running
+ *  a leaving package's uninstaller, where the reload alone would say
+ *  nothing happened.
+ */
 { kind: "failed"; message: string };
 
 /**  One path the package writes, where it actually lands. */
