@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { piUserDir } from "./config.js";
@@ -65,9 +65,9 @@ export interface RegistryRead {
 	 */
 	unreadable?: string;
 	/**
-	 * How many registrations the project's registry holds under this listener,
-	 * where trust withheld them. Counted before the matcher, so it does not
-	 * depend on which tool this one call names.
+	 * How many registrations the project's registry holds under this listener
+	 * that could run, where trust withheld them. Counted before the matcher,
+	 * so it does not depend on which tool this one call names.
 	 */
 	withheld: number;
 }
@@ -119,6 +119,20 @@ function absent(error: unknown): boolean {
 	return code === "ENOENT" || code === "ENOTDIR";
 }
 
+/**
+ * A rendered script that is not on disk. Only that: any other stat failure —
+ * a directory this session may not read, say — leaves the hook to the spawn,
+ * whose own exit status names the real cause.
+ */
+function scriptGone(script: string): boolean {
+	try {
+		statSync(script);
+		return false;
+	} catch (error) {
+		return absent(error);
+	}
+}
+
 /** The registrations one scope root holds for a listener, in file order. */
 function readRegistry(root: string, listener: string, toolName: string): RegistryRead {
 	const path = resolve(root, "hooks.json");
@@ -139,6 +153,7 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
 
 	const hooks: RegisteredHook[] = [];
 	let position = 0;
+	let installed = 0;
 	for (const group of groups) {
 		const entry = group as { matcher?: unknown; hooks?: unknown };
 		if (!Array.isArray(entry.hooks)) continue;
@@ -146,7 +161,9 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
 		for (const registration of entry.hooks) {
 			position += 1;
 			const hook = registration as { type?: unknown; command?: unknown; timeout?: unknown };
-			if (!covers || hook.type !== "command" || typeof hook.command !== "string" || hook.command === "") continue;
+			if (hook.type !== "command" || typeof hook.command !== "string" || hook.command === "") continue;
+			installed += 1;
+			if (!covers) continue;
 			const timeout = typeof hook.timeout === "number" && Number.isFinite(hook.timeout) && hook.timeout > 0
 				? hook.timeout * 1000
 				: undefined;
@@ -160,7 +177,7 @@ function readRegistry(root: string, listener: string, toolName: string): Registr
 			});
 		}
 	}
-	return { hooks, withheld: position };
+	return { hooks, withheld: installed };
 }
 
 /**
@@ -221,7 +238,7 @@ export function registeredHooks(listener: string, toolName: string, project: str
 			}
 			// A registration whose render is gone judges nothing, so it must
 			// not stand in front of a healthy copy at the next scope down.
-			if (hooks[at]!.script !== undefined && !existsSync(hooks[at]!.script!) && hook.script !== undefined && existsSync(hook.script)) {
+			if (hooks[at]!.script !== undefined && scriptGone(hooks[at]!.script!) && hook.script !== undefined && !scriptGone(hook.script)) {
 				hooks[at] = hook;
 			}
 		}
@@ -229,7 +246,7 @@ export function registeredHooks(listener: string, toolName: string, project: str
 	// Stat-ed once, at the end, rather than per scope above it.
 	for (const [, at] of byName) {
 		const hook = hooks[at]!;
-		if (hook.script !== undefined && !existsSync(hook.script)) hooks[at] = { ...hook, missing: true };
+		if (hook.script !== undefined && scriptGone(hook.script)) hooks[at] = { ...hook, missing: true };
 	}
 	return { hooks, withheld, ...(unreadable === undefined ? {} : { unreadable }) };
 }

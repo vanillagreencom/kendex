@@ -65,7 +65,7 @@ export async function runRegisteredHook(hook: RegisteredHook, payload: string, c
 	if (hook.missing) {
 		return {
 			block: true,
-			reason: `pi-hooks: ${name} is registered for this project but its rendered script is missing (${hook.script}), so this command was not judged; run kendex refresh, or kendex remove ${name} if you no longer want it.`,
+			reason: `pi-hooks: ${name} is registered and its rendered script is missing (${hook.script}), so this command was not judged; run kendex refresh.`,
 		};
 	}
 	const budgetMs = Math.min(hook.budgetMs ?? ceilingMs, ceilingMs);
@@ -158,8 +158,9 @@ export default function piHooks(pi: ExtensionAPI): void {
 		const toolName = claudeToolName(event.toolName);
 		// The count's one consumer is the notice below; where that cannot
 		// fire there is nothing to read an untrusted registry for.
-		const countWithheld = ctx.hasUI === true && project !== undefined && !WITHHELD_TOLD.has(project);
-		const registry = registeredHooks(TOOL_CALL_LISTENER, toolName, project, projectTrusted(ctx), countWithheld);
+		const trusted = projectTrusted(ctx);
+		const countWithheld = ctx.hasUI === true && project !== undefined && !trusted && !WITHHELD_TOLD.has(project);
+		const registry = registeredHooks(TOOL_CALL_LISTENER, toolName, project, trusted, countWithheld);
 
 		// A registry kendex wrote and this could not read is not the person
 		// standing their guards down, and these hooks are labelled enforced.
@@ -169,12 +170,17 @@ export default function piHooks(pi: ExtensionAPI): void {
 				reason: `pi-hooks: the rendered hook registry could not be read, so this command was not judged; a guard that did not run does not stand aside. ${registry.unreadable}`,
 			};
 		}
-		if (registry.withheld > 0 && project !== undefined && countWithheld) {
+		// Marked told whatever the read returned: the read is what happens once
+		// per project per session, and a registry that would not parse counts
+		// nothing while costing the same work.
+		if (countWithheld && project !== undefined) {
 			WITHHELD_TOLD.add(project);
-			ctx.ui.notify(
-				`pi-hooks: ${registry.withheld} kendex hook(s) are installed in ${project} and are not running, because Pi does not report this workspace trusted. Trust it to arm them.`,
-				"warning",
-			);
+			if (registry.withheld > 0) {
+				ctx.ui.notify(
+					`pi-hooks: ${registry.withheld} kendex hook(s) are installed in ${project} and are not running, because Pi does not report this workspace trusted. Trust it to arm them.`,
+					"warning",
+				);
+			}
 		}
 		if (registry.hooks.length === 0) return undefined;
 

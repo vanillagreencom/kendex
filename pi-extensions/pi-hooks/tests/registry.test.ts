@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -493,6 +493,46 @@ describe("pi-hooks registry dispatch: a rendered hook whose script is gone", () 
 			rmSync(project, { recursive: true, force: true });
 		}
 	});
+
+	test("a global registration's missing render is not said to be the project's", async () => {
+		const agentDir = process.env.PI_CODING_AGENT_DIR!;
+		const workspace = mkdtempSync(join(tmpdir(), "pi-hooks-global-gone-cwd-"));
+		try {
+			// A bare directory for a cwd, so there is no project scope at all and
+			// the global registry is the one that named the hook.
+			registerRendered(agentDir, "tool_call", "Bash", `bash "${join(agentDir, "kendex", "hooks", "audit.sh")}"`);
+			const handler = installToolCallHandler();
+			const refused = await handler({ toolName: "bash", input: { command: "ls" } }, { cwd: workspace, isProjectTrusted: () => false }) as { block?: boolean; reason?: string };
+			expect(refused.block).toBe(true);
+			expect(refused.reason).toContain("rendered script is missing");
+			expect(refused.reason).not.toContain("this project");
+			// `kendex remove` without -g acts on the project, so it repairs nothing here.
+			expect(refused.reason).not.toContain("kendex remove");
+		} finally {
+			rmSync(join(agentDir, "kendex"), { recursive: true, force: true });
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	test("a render this session may not stat is left to the spawn", async () => {
+		const project = initCleanRustRepo("pi-hooks-unreadable-render-");
+		const hooksDir = join(project, ".pi", "kendex", "hooks");
+		try {
+			// The render is there and executable; its directory is not readable.
+			// Calling that missing would send the person to kendex refresh, which
+			// hits the same denial, and drop bash's own accurate 126.
+			renderStub(project, "audit", { exitCode: 0, log: join(project, "audit.log") });
+			chmodSync(hooksDir, 0o000);
+			const handler = installToolCallHandler();
+			const refused = await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project)) as { block?: boolean; reason?: string };
+			expect(refused.block).toBe(true);
+			expect(refused.reason).not.toContain("rendered script is missing");
+			expect(refused.reason).toContain("exited 126");
+		} finally {
+			chmodSync(hooksDir, 0o755);
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("pi-hooks registry dispatch: the counts and the vocabulary", () => {
@@ -506,6 +546,12 @@ describe("pi-hooks registry dispatch: the counts and the vocabulary", () => {
 			for (const matcher of ["Bash", "Bash", "Bash", "Read", "Read"]) {
 				registerRendered(root, "tool_call", matcher, "exit 0");
 			}
+			// Nor what could never run: the notice says what trusting the
+			// workspace would arm, and these five are all of it.
+			const path = join(root, "kendex", "hooks.json");
+			const registry = JSON.parse(readFileSync(path, "utf8"));
+			registry.hooks.tool_call[0].hooks.push({ type: "prompt", command: "exit 0" }, { type: "command", command: "" }, "junk", 7);
+			writeFileSync(path, JSON.stringify(registry));
 			const handler = installToolCallHandler();
 			// A read call, which two of the five match.
 			await handler({ toolName: "read", input: { path: "/etc/hosts" } }, {
@@ -539,6 +585,49 @@ describe("pi-hooks registry dispatch: the counts and the vocabulary", () => {
 			else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
 			rmSync(agentDir, { recursive: true, force: true });
 			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
+	// The read is what happens once per project per session. A registry that
+	// will not parse counts nothing, and re-reading it on every call is the
+	// unbounded work on a file an untrusted party sizes that the skip prevents.
+	test("an untrusted project's unparseable registry is read once a session", async () => {
+		const project = initCleanRustRepo("pi-hooks-unparseable-once-");
+		const notices: string[] = [];
+		try {
+			const path = join(project, ".pi", "kendex", "hooks.json");
+			mkdirSync(join(path, ".."), { recursive: true });
+			writeFileSync(path, "{ not json");
+			const handler = installToolCallHandler();
+			const ctx = { cwd: project, isProjectTrusted: () => false, hasUI: true, ui: { notify: (m: string) => notices.push(m) } };
+			expect(await handler({ toolName: "bash", input: { command: "ls" } }, ctx)).toBeUndefined();
+
+			// A registry a second read would count one hook from, and say so.
+			rmSync(path);
+			registerRendered(join(project, ".pi"), "tool_call", "Bash", "exit 0");
+			expect(await handler({ toolName: "bash", input: { command: "ls" } }, ctx)).toBeUndefined();
+			expect(notices).toEqual([]);
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
+	// The global registry is read second, so a project scope that answered must
+	// not swallow its failure — that would allow every call in the session.
+	test("a global registry that cannot be read refuses behind a healthy project", async () => {
+		const project = initCleanRustRepo("pi-hooks-global-behind-");
+		const agentDir = process.env.PI_CODING_AGENT_DIR!;
+		try {
+			registerRendered(join(project, ".pi"), "tool_call", "Bash", "exit 0");
+			mkdirSync(join(agentDir, "kendex"), { recursive: true });
+			writeFileSync(join(agentDir, "kendex", "hooks.json"), "{ not json");
+			const handler = installToolCallHandler();
+			const refused = await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project)) as { block?: boolean; reason?: string };
+			expect(refused.block).toBe(true);
+			expect(refused.reason).toContain(join(agentDir, "kendex", "hooks.json"));
+		} finally {
+			rmSync(join(agentDir, "kendex"), { recursive: true, force: true });
+			rmSync(project, { recursive: true, force: true });
 		}
 	});
 

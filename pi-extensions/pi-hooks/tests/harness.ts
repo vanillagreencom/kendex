@@ -1,5 +1,5 @@
 import { afterAll, beforeAll } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -53,6 +53,7 @@ const CLEARED = ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"]
 export function useIsolatedGitEnv(): void {
 	const isolatedEnv: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 	const savedEnv: Record<string, string | undefined> = {};
+	let emptyAgentDir: string | undefined;
 	beforeAll(() => {
 		for (const [name, value] of Object.entries(isolatedEnv)) {
 			savedEnv[name] = process.env[name];
@@ -62,12 +63,19 @@ export function useIsolatedGitEnv(): void {
 			savedEnv[name] = process.env[name];
 			delete process.env[name];
 		}
+		// Unset, piUserDir() is ~/.pi/agent, so the developer's own global
+		// registry and settings answer as a second scope in every case that
+		// does not name one. An empty root is the one nobody has installed to.
+		savedEnv.PI_CODING_AGENT_DIR = process.env.PI_CODING_AGENT_DIR;
+		emptyAgentDir = mkdtempSync(join(tmpdir(), "pi-hooks-empty-agent-"));
+		process.env.PI_CODING_AGENT_DIR = emptyAgentDir;
 	});
 	afterAll(() => {
 		for (const [name, value] of Object.entries(savedEnv)) {
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;
 		}
+		if (emptyAgentDir !== undefined) rmSync(emptyAgentDir, { recursive: true, force: true });
 	});
 }
 
