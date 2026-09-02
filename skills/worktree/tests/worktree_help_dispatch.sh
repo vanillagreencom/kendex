@@ -139,6 +139,11 @@ elif [[ "$norepo_status" -eq 128 && "$norepo_probe" == *"not a git repository"* 
       "worktree $cmd names the cwd it could not resolve a repository from"
     assert_contains "$err" "Run it from a checkout of the repository you mean" \
       "worktree $cmd names what to do instead"
+    # One refusal serves every non-help command, so its example names none: a
+    # subcommand baked in here is the wrong next step for the other callers,
+    # and `remove` deletes a worktree and a branch.
+    assert_contains "$err" "scripts/worktree <command>" \
+      "worktree $cmd offers a recovery example with no subcommand of its own"
     assert_eq "$out" "" "worktree $cmd prints nothing on stdout outside a git repository"
   done
 

@@ -554,7 +554,7 @@ if ! PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$PROJ
     echo "Error: could not resolve a git repository from: $PWD"
     if [[ -n "$GIT_LOOKUP_DIAG" ]]; then echo "  git said: $GIT_LOOKUP_DIAG"; fi
     echo "  Run it from a checkout of the repository you mean:"
-    echo "    cd <main checkout> && .agents/skills/worktree/scripts/worktree remove <ID|PATH>"
+    echo "    cd <main checkout> && .agents/skills/worktree/scripts/worktree <command>"
   } >&2
   exit 1
 fi
