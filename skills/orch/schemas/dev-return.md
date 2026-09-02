@@ -54,7 +54,6 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 | `bundled` | Optional | `--bundled` sets `true` | `true` for a bundled implement |
 | `items` | Conditional | `--item N DECISION REASONING` | Per kind rules below |
 
-Implement workflows always supply `summary` through `--summary-file`; bundles use the parent summary containing child handoffs, and submit-pr excludes fix artifacts from summary selection.
 `items[]` elements are `{n: number, decision: "Applied"|"Skipped"|"Blocked", reasoning: string}`, with `n` the review item's `#N` or the sub-issue index and `reasoning` non-empty — citing the decision id or rule when `Skipped`.
 
 ## Kind rules

@@ -154,7 +154,8 @@ Update docs when the implementation changes a documented API or architecture.
 
 ## 5. Validate
 
-Before deterministic validation, run `git grep -n -F --untracked --exclude-standard -- <callee>` for every callee whose call the change deletes, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup). A one-off script records `handoff_to_submit_pr: measurement: <script text or exact command>; exit: <status>; result: <result>`, is not committed, and is not a check the change adds or modifies.
+Before deterministic validation, run `git grep -n -F --untracked --exclude-standard -- <callee>` for every callee whose call the change deletes, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup); the build and tests below validate every deletion.
+
 Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs in a repo where a baseline exists:
 
 ```bash
@@ -166,7 +167,7 @@ Deterministic gates first — every finding is fixed here, never carried into re
 
 Then the project's validation command — the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints (empty → the project's documented build/test/lint command), run from the worktree root — plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
 
-Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)).
+A script written only to produce a number for the issue is not committed; put its result in the PR body. Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)); an uncommitted measurement is not a check the change adds or modifies.
 
 **Visual QA** — **skip if** the issue has no `design` label. Otherwise use the project's visual QA skills to confirm what your change affects renders correctly, not the full checklist. Do NOT capture golden baselines.
 
@@ -210,7 +211,7 @@ A signal is never silently dropped: every triggered row appears in the artifact 
 
 ### 9.1 Completion Comment
 
-Always required. Every tracker writes `tmp/completion-summary-[ISSUE_ID].md` and carries it in the artifact via `--summary-file` (§ 10); Linear also posts it with `comments create`, while GitHub and ad-hoc rounds append `--no-summary`.
+Always required. Linear posts it to the issue you implemented: write `tmp/completion-summary-[ISSUE_ID].md`, then `linear.sh comments create [ISSUE_ID] --body-file tmp/completion-summary-[ISSUE_ID].md`. GitHub and ad-hoc rounds return the same content to the orchestrator instead and ALSO carry it in the artifact via `--summary-file` (§ 10).
 
 ```markdown
 ## Completion Summary
@@ -261,7 +262,7 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] [--qa-label [LABEL]]...
 ```
 
-One `--qa-label` per § 8 signal, none if nothing triggered. Every implement round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`; GitHub and ad-hoc rounds also append `--no-summary`, and bundles use the parent file in § 11.
+One `--qa-label` per § 8 signal, none if nothing triggered. GitHub and ad-hoc rounds append `--no-summary --summary-file tmp/completion-summary-[ISSUE_ID].md`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
 
 **A read-only analysis round**: § 5, § 7, and § 8 do not apply. Pass the recommendation inline or as a file — exactly one of the two:
 
@@ -298,7 +299,7 @@ Summary: [ISSUE_ID] ✓
 
 1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags — the union of every sub-issue's § 8 signals. No tracker mutation.
 
-2. **Write the parent summary** (every tracker): write `tmp/bundle-summary-[PARENT_ID].md` with every child handoff; Linear also runs `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`.
+2. **Post the parent summary** (Linear only): write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`.
 
    ```markdown
    ## Bundle Complete
@@ -314,7 +315,7 @@ Summary: [ISSUE_ID] ✓
 3. **Write the artifact**, keyed to the Parent ID, with that group's `Round ID:` when the bundle was delegated in groups:
 
    ```bash
-   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]...
+   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]...
    ```
 
    `--bundled` requires one `--item` per sub-issue result — `DECISION` is Applied, Skipped, or Blocked and `REASONING` non-empty plain text with no backticks — populated from the sub-issue tree. `--commit` is the last sub-issue's HEAD.
