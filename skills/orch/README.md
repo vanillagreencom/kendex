@@ -39,7 +39,7 @@ Invoke through your AI coding harness (`/orch <command>`, `/skill:orch <command>
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `ORCH_STATE_DIR` | State-file directory (the `--state-dir` flag wins when both are set) | `tmp` |
+| `ORCH_STATE_DIR` | State-file directory (the `--state-dir` flag wins when both are set). `oversee-watch` joins relative values to the project root and preserves absolute values | `tmp` |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names (matched case-insensitively, then canonicalized: `issue-N` lowercase, Linear-style uppercase) | `([A-Z]+-[0-9]+\|issue-[0-9]+)` |
 | `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission or merge recovery | `6` |
 | `REVIEW_MAX_CYCLES` | Max internal re-review cycles per issue in review-pr § 4; the `rereview_panel` write raises `rereview_cycles` and refuses at it, so the number configured is the number of re-entries allowed | `4` |

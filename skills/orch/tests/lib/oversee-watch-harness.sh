@@ -15,9 +15,9 @@
 # suite that forgot it must not get a sandbox built without it.
 set -euo pipefail
 
-# Resolved through Git so macOS path aliases use the repository's physical root.
-REPO_ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")/../../../.." rev-parse --show-toplevel)" \
-  || { echo "oversee-watch harness: repository root not found" >&2; exit 1; }
+# Four levels selects the repository for source tests and .agents for renders.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd -P)" \
+  || { echo "oversee-watch harness: test root not found" >&2; exit 1; }
 TMP_ROOT="$(mktemp -d)" || { echo "oversee-watch harness: mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$TMP_ROOT"' EXIT
 OVERSEE_TEST_REAL_DATE="$(command -v date)" \
@@ -138,7 +138,9 @@ EOF
 # id>` lines, the lane-claim liveness key). pane-<lane>.<N>.txt and
 # cmd-<lane>.<N>.txt override the plain file on the Nth read of that lane, so a
 # case can change a screen between passes; obs-<lane>.txt replaces the whole
-# liveness reply, for a case that needs a malformed one.
+# liveness reply, for a case that needs a malformed one. pane-key-<lane>.txt
+# overrides pane identity; pane-key-fail-<lane> and capture-fail-<lane> make
+# their probes fail.
 cat > "$TMP_ROOT/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail

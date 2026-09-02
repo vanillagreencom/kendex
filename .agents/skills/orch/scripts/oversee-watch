@@ -19,9 +19,8 @@ Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO]...
                      [LANE_WINDOW...]
 
-Blocks until the fleet needs the overseer, prints one event, or one line per
-item for `merged` and `triage`, then exits. Re-run it after handling the event
-with the live lanes and items still in scope.
+Blocks until the fleet needs the overseer, then prints one event or one line per
+merged and triage item. Re-run after handling it with the live fleet in scope.
 
 Events, checked in this order every pass:
   EVENT pr-watch rc=N        new review-gate attention; reducer output follows
@@ -44,9 +43,8 @@ Events, checked in this order every pass:
   EVENT heartbeat            --max-loops passes with no event; open PRs follow
 
 The latest pr-watch attention lines follow every event when any exist. Triage
-always reads the live tracker list and rebuilds acknowledged keys in the first
-repository's existing OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
-fleet verdicts. Lane prompts are keyed by pane occurrence and submitted turn.
+rebuilds the first repository's OVERSEE_WATCH_STATE_DIR baseline from live
+tracker items and kept or canceled verdicts. Lane prompts use pane and turn.
 
 Options:
   --interval SECS     seconds between passes (default 240)
@@ -70,6 +68,8 @@ The pr-watch step writes: `--heal` dispatches PR_WATCH_WRITER_WORKFLOW on a
 gate-stale line. Its credential needs actions:write.
 
 Environment:
+  ORCH_STATE_DIR              workflow-state directory; relative paths join
+                              the project root; absolute paths stay unchanged
   OVERSEE_WATCH_PR_WATCH      path to pr-watch.sh
   OVERSEE_WATCH_TRACKER       path to the Linear CLI
   OVERSEE_WATCH_WORKFLOW_STATE path to workflow-state
