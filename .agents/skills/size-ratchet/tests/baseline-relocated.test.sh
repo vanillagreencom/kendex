@@ -46,6 +46,16 @@ while IFS='|' read -r label mode declaration frozen dormant source expect_rc exp
   case "$source" in
     nested) SETTINGS_FILE=.kendex/settings.toml ;;
     explicit) SETTINGS_FILE=policy/settings.toml; SETTINGS_MODE=explicit ;;
+    # The same explicit source, never committed: it is a candidate only, so
+    # the key it assigns has no historical form and the run refuses rather
+    # than judge the candidate against a HEAD that never carried the value.
+    # explicit-default above is the control — the identical source committed,
+    # which must resolve and catch the raise instead of refusing.
+    candidate-explicit)
+      SETTINGS_FILE=policy/settings.toml
+      SETTINGS_MODE=explicit
+      printf 'policy/settings.toml\n' >"$R/.gitignore"
+      ;;
     envlocal) SETTINGS_FILE=.env.local ;;
     tracked-link)
       SETTINGS_FILE=policy/settings.toml
@@ -128,6 +138,8 @@ tracked-link-default||0||no|tracked-link|1|baseline row raised: big.txt — row 
 tracked-link-staged|--staged|0||no|tracked-link|2|tracked as a symlink|
 explicit-default||0||no|explicit|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
 explicit-staged|--staged|0||no|explicit|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+candidate-explicit-default||0||no|candidate-explicit|2|policy/settings.toml: SIZE_RATCHET_BASELINE has no historical form in HEAD|
+candidate-explicit-staged|--staged|0||no|candidate-explicit|2|policy/settings.toml: SIZE_RATCHET_BASELINE has no historical form in HEAD|
 flag-default||0||no|flag|1|baseline row raised: big.txt — row 15 -> 20 lines|
 flag-staged|--staged|0||no|flag|1|baseline row raised: big.txt — row 15 -> 20 lines|
 envvar-default||0||no|envvar|1|baseline row raised: big.txt — row 15 -> 20 lines|
