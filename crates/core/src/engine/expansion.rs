@@ -316,7 +316,7 @@ impl Catalogs<'_> {
         let config = source_config(&sealed, crate::source::repo_leaf(&ready.provenance)).ok()?;
         // Everything derived — a set's members, a skill's dependencies —
         // reaches its catalog through here, so this is where the removal pass
-        // learns that a catalog could not say what it offers at all.
+        // learns that a catalog answered with less than it offers.
         if config.hides_content() {
             state.unreadable_catalogs.insert(source.to_owned());
         }

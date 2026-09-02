@@ -88,12 +88,12 @@ const INSTALL_DECLARATION: &str = "source";
 /// The `[bundles]` table of a catalog's own `kendex.toml`: the sets it
 /// offers, and the ones this reader will not read.
 ///
-/// A set is only ever as real as what comes out of this, so nothing in a
-/// body is skipped — everything skipped is a member the set silently loses,
-/// which is how `members = [...]` shipped as four sets that installed
-/// nothing. The breakage is the set's, never the catalog's: one unreadable
-/// body costs the other sets and every item nothing, the way `[marketplace]`
-/// metadata that will not read leaves the catalog working.
+/// A set is only ever as real as what comes out of this, so no body KEY is
+/// skipped — a key skipped is a member the set silently loses, which is how
+/// `members = [...]` shipped as four sets that installed nothing. A member
+/// list holding something other than names still reads as the names it has.
+/// One unreadable body costs the other sets and every item nothing to
+/// install; what it costs a removal is [`SourceConfig::hides_content`].
 pub(super) fn declared(
     table: &toml::Table,
 ) -> (

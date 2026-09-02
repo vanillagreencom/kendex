@@ -213,9 +213,9 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
             )),
         },
     }
-    // A set whose body will not read is that set's breakage and no more:
-    // it is dropped, reported, and everything else the catalog offers —
-    // its other sets and every item — still installs.
+    // A set whose body will not read is dropped and reported, and everything
+    // else the catalog offers still installs. What it costs on the removal
+    // side is what `hides_content` above says.
     let (readable, unreadable) = bundles::declared(table);
     config.bundles = readable;
     // A plugin-registry catalog's plugins are its sets and this table is
