@@ -199,7 +199,21 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
             )),
         },
     }
-    config.bundles = bundles::declared(table);
+    match bundles::declared(table) {
+        Ok(declared) => config.bundles = declared,
+        // A set nothing readable backs is a catalog that installs nothing
+        // under a name it offers, so it is the control file's breakage
+        // rather than a shorter set — the same verdict a `[catalog]` list
+        // this reader cannot read gets.
+        Err(unreadable) => {
+            config.unusable(
+                crate::manifest::MANIFEST_FILE,
+                unreadable.problem,
+                &unreadable.fix,
+            );
+            return;
+        }
+    }
     if let Some(mapping) = table.get("agent-skills").and_then(|t| t.as_table()) {
         for (agent, skills) in mapping {
             if let Some(list) = string_list(Some(skills)) {

@@ -209,3 +209,59 @@ fn a_second_marketplaces_same_named_bundle_is_refused_naming_the_first() {
         && f.project.join(".claude/skills/docs").exists();
     assert!(members_installed, "the first bundle stays whole");
 }
+
+/// A set the catalog offers and can hand nothing over for is refused at the
+/// declaration. What a set installs derives at plan time, so declaring it
+/// would record the set, plan nothing, and report a successful install of no
+/// files — the shape a `skills = ["nope"]` list leaves behind.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_set_whose_members_the_catalog_does_not_offer_is_refused() {
+    let f = world();
+    let catalog = f.home.join("catalog");
+    skill(&catalog, "dev");
+    write(
+        &catalog,
+        "kendex.toml",
+        "[bundles.ghost]\ndescription = \"gone\"\nskills = [\"nope\"]\n\n[bundles.starter]\nskills = [\"dev\"]\n",
+    );
+    manifest_with(&f, &[("cat", &catalog)], "");
+    let before = fs::read_to_string(f.project.join("kendex.toml")).unwrap();
+
+    let error = ops::add(
+        &f.env,
+        &f.scope,
+        &ops::AddRequest {
+            source: Some("cat".to_owned()),
+            bundles: vec!["ghost".into()],
+            no_auto_skills: true,
+            ..ops::AddRequest::default()
+        },
+    )
+    .unwrap_err();
+
+    let said = error.to_string();
+    assert!(
+        matches!(error, CoreError::BundleInstallsNothing { ref name, .. } if name == "ghost"),
+        "{said}"
+    );
+    assert!(said.contains("nope"), "the member it cannot offer: {said}");
+    assert_eq!(
+        fs::read_to_string(f.project.join("kendex.toml")).unwrap(),
+        before,
+        "a refusal writes nothing"
+    );
+
+    // The set beside it installs: the refusal is about what the catalog can
+    // hand over, not about sets.
+    add_and_apply(
+        &f,
+        &ops::AddRequest {
+            source: Some("cat".to_owned()),
+            bundles: vec!["starter".into()],
+            no_auto_skills: true,
+            ..ops::AddRequest::default()
+        },
+    );
+    assert!(f.project.join(".claude/skills/dev").exists());
+}

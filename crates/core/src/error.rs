@@ -398,6 +398,24 @@ pub enum CoreError {
     #[error("source '{source_name}' offers no bundle called '{name}'")]
     NoSuchBundle { name: String, source_name: String },
 
+    /// The name is real and what it holds is not: declaring it would record
+    /// an install and put nothing anywhere. Beside [`Self::NoSuchBundle`]
+    /// because it is the same refusal one step in — the catalog offers the
+    /// set, and offers none of it.
+    #[error(
+        "the bundle '{name}' from source '{source_name}' would install nothing — {}",
+        match members.is_empty() {
+            true => "it carries no members".to_owned(),
+            false => format!("that source offers none of its members: {}", members.join(", ")),
+        }
+    )]
+    BundleInstallsNothing {
+        name: String,
+        source_name: String,
+        /// The members the set names, none of which the source offers.
+        members: Vec<String>,
+    },
+
     /// Nothing was left behind, and `cause` is the failure that stopped it
     /// — kept whole rather than flattened into `reason`, because what a
     /// caller does about a rollback depends on why: a precondition that

@@ -212,3 +212,81 @@ fn a_safety_finding_is_reported_and_fails_nothing() {
     assert_eq!(report.failing(false), 0);
     assert_eq!(report.failing(true), 0, "advisory under --strict too");
 }
+
+/// A `[bundles.<name>]` body key no reader reads is a set that carries
+/// nothing, and the check says so: kendex's own four sets were written with
+/// a `members = [...]` list, installed nothing, and every check ran green.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_bundle_key_no_reader_reads_is_breakage() {
+    let (_tmp, root) = repo();
+    skill_at(&root, "skills", "gh");
+    fs::write(
+        root.join("kendex.toml"),
+        "[bundles.starter]\ndescription = \"the basics\"\nmembers = [\"skill/gh\"]\n",
+    )
+    .unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    assert!(report.tally().breakage >= 1);
+    assert!(report.failing(false) >= 1, "it fails without --strict too");
+    let finding = &report.catalog[0];
+    assert_eq!(finding.severity, "error");
+    assert!(finding.message.contains("members"), "{}", finding.message);
+    assert!(
+        finding.message.contains("[bundles.starter]"),
+        "{}",
+        finding.message
+    );
+    for list in ["agents", "skills", "commands", "hooks", "mcp-servers"] {
+        assert!(finding.fix.contains(list), "{}: {}", list, finding.fix);
+    }
+}
+
+/// The same catalog with its members under a list the reader reads: no
+/// finding, and the set carries the skill. Without this the assertion above
+/// would hold just as well for a check that called every catalog broken.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
+    let (_tmp, root) = repo();
+    skill_at(&root, "skills", "gh");
+    fs::write(
+        root.join("kendex.toml"),
+        "[bundles.starter]\ndescription = \"the basics\"\nskills = [\"gh\"]\n",
+    )
+    .unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    assert_eq!(report.tally().breakage, 0);
+    assert_eq!(report.failing(true), 0);
+    let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
+    let sets = kendex_core::source::bundles::offered(&sealed, &config).unwrap();
+    let members: Vec<&str> = sets[0]
+        .members
+        .iter()
+        .map(|member| member.name.as_str())
+        .collect();
+    assert_eq!(members, ["gh"]);
+}
+
+/// One file is both when a project offers what it installs: `[bundles.<name>]
+/// source = "…"` in a project's own kendex.toml records an installed set, and
+/// reading it as a malformed catalog set would make the project unreadable as
+/// a source of its own skills.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_installed_set_recorded_beside_the_catalog_is_not_a_malformed_set() {
+    let (_tmp, root) = repo();
+    skill_at(&root, "skills", "gh");
+    fs::write(
+        root.join("kendex.toml"),
+        "schema = 6\n\n[bundles.starter]\nsource = \"cat\"\n",
+    )
+    .unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    assert_eq!(report.tally().breakage, 0, "{:?}", report.catalog);
+    let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
+    assert_eq!(names, ["gh"], "the catalog still offers its own skills");
+}

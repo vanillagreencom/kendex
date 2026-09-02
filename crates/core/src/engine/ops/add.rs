@@ -245,18 +245,7 @@ fn add_from(
         source_name,
         request,
     )?);
-    let mut sets = Vec::new();
-    for name in &wanted.bundles {
-        match crate::source::bundles::find(&sealed, &config, name)? {
-            Some(bundle) => sets.push(bundle),
-            None => {
-                return Err(CoreError::NoSuchBundle {
-                    name: name.clone(),
-                    source_name: source_name.to_owned(),
-                });
-            }
-        }
-    }
+    let sets = resolve_sets(&sealed, &config, source_name, &wanted.bundles)?;
 
     // Bundles first: declaring a set folds in the equal-option members
     // declared earlier, while an item this same request asks for by name
@@ -295,7 +284,7 @@ mod lands;
 mod optional;
 mod pick;
 mod place;
-use bundles::{declare_bundle, require_free, subsume};
+use bundles::{declare_bundle, require_free, resolve_sets, subsume};
 use lands::lands_nowhere;
 pub use lands::{requested_kinds, targets_for};
 use optional::optional_choices;

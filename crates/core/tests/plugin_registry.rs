@@ -397,3 +397,37 @@ fn a_changed_plugin_refreshes_in_place() {
     assert!(read(&f, ".claude/skills/data-science__eda/SKILL.md").contains("twice"));
     assert!(is_clean(&f));
 }
+
+/// A catalog whose sets cannot be read is a plan that says which catalog,
+/// not a bundle that quietly derives to nothing: the set stays installed and
+/// the members it carries are unknown until the read succeeds.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_set_whose_catalog_cannot_be_read_names_it_in_the_plan() {
+    let f = fixture(
+        "\"claude\"",
+        "[bundles.\"data-science\"]\nsource = \"market\"\n",
+    );
+    // A plugin manifest that is not text: the read fails rather than
+    // answering with a plugin that ships nothing.
+    fs::write(
+        f.market
+            .join("plugins/data-science/.claude-plugin/plugin.json"),
+        [0x7b, 0xff, 0xfe, 0x7d],
+    )
+    .unwrap();
+
+    let report = audit(&f.env, &f.scope).unwrap();
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.contains("data-science") && note.contains("market")),
+        "{:?}",
+        report.notes
+    );
+    assert!(
+        !f.project.join(".claude/skills/data-science__eda").exists(),
+        "nothing derives from a set that could not be read"
+    );
+}

@@ -152,3 +152,40 @@ pub(super) fn shaped_by_user(
     }
     None
 }
+
+/// The sets one request names, as the catalog offers them. A name it does
+/// not offer is refused, and so is a set it offers and can hand nothing
+/// over for: what a set installs derives at plan time, so declaring one
+/// would record the set, plan nothing, and report a successful install of
+/// no files — the shape a member list nothing backs leaves behind.
+pub(super) fn resolve_sets(
+    sealed: &crate::source_read::SealedSource,
+    config: &crate::source::SourceConfig,
+    source_name: &str,
+    wanted: &[String],
+) -> Result<Vec<CatalogBundle>> {
+    let mut sets = Vec::new();
+    for name in wanted {
+        let Some(bundle) = crate::source::bundles::find(sealed, config, name)? else {
+            return Err(CoreError::NoSuchBundle {
+                name: name.clone(),
+                source_name: source_name.to_owned(),
+            });
+        };
+        if !bundle.members.iter().any(|member| {
+            crate::source::find_item(sealed, config, member.kind, &member.name).is_some()
+        }) {
+            return Err(CoreError::BundleInstallsNothing {
+                name: name.clone(),
+                source_name: source_name.to_owned(),
+                members: bundle
+                    .members
+                    .iter()
+                    .map(|member| crate::names::shown(&member.name))
+                    .collect(),
+            });
+        }
+        sets.push(bundle);
+    }
+    Ok(sets)
+}

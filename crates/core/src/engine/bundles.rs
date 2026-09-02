@@ -187,8 +187,18 @@ fn installable(
     let Some((sealed, config, _)) = catalogs.get(&decl.source, decl.rev.as_deref(), state) else {
         return Vec::new();
     };
-    let Ok(offered) = crate::source::bundles::find(sealed, config, name) else {
-        return Vec::new();
+    let offered = match crate::source::bundles::find(sealed, config, name) {
+        Ok(offered) => offered,
+        // The set is installed and this pass cannot say what it holds, so
+        // the plan carries the catalog it could not read rather than the
+        // empty set it would otherwise derive.
+        Err(problem) => {
+            state.notes.push(format!(
+                "bundle {name}: the catalog '{}' could not be read — {problem}",
+                decl.source
+            ));
+            return Vec::new();
+        }
     };
     let Some(bundle) = offered else {
         state.notes.push(format!(

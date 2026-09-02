@@ -601,3 +601,36 @@ fn the_scaffold_matches_its_checked_in_golden_digest() {
         assert_eq!(digest, expected, "{license:?} scaffold bytes drifted");
     }
 }
+
+/// A folder whose sets cannot be read is unreadable, and both callers of the
+/// row say why. `0 bundle(s)` would be the answer for a catalog that declares
+/// none — the two cannot share a rendering.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_folder_whose_sets_cannot_be_read_is_not_a_folder_with_none() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp).join("market");
+    let plugin = root.join("plugins/data-science");
+    fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+    fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+    fs::write(
+        root.join(".claude-plugin/marketplace.json"),
+        r#"{"name": "workflows", "owner": {"name": "someone"},
+            "plugins": [{"name": "data-science", "source": "./plugins/data-science"}]}"#,
+    )
+    .unwrap();
+    skills_repo(&plugin);
+
+    let readable = author::status(&root).unwrap();
+    assert_eq!(readable.bundles, 1, "the plugin is the set it ships");
+
+    // A plugin manifest that is not text: the read fails rather than
+    // answering with a catalog that offers no sets.
+    fs::write(
+        plugin.join(".claude-plugin/plugin.json"),
+        [0x7b, 0xff, 0xfe, 0x7d],
+    )
+    .unwrap();
+    let error = author::status(&root).unwrap_err().to_string();
+    assert!(error.contains("plugin.json"), "{error}");
+}

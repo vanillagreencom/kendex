@@ -96,9 +96,10 @@ pub fn status(path: &Path) -> Result<MineRow> {
     for item in &report.items {
         *counts.entry(item.kind.name().to_owned()).or_default() += 1;
     }
-    let bundles = crate::source::bundles::offered(&sealed, &config)
-        .map(|offered| offered.len() as u32)
-        .unwrap_or(0);
+    // A folder whose sets cannot be read is unreadable, not a folder with no
+    // sets: both callers of this row report why one is missing, and `0
+    // bundle(s)` would say the author declared none.
+    let bundles = crate::source::bundles::offered(&sealed, &config)?.len() as u32;
     let tally = report.tally();
     let meta = config.marketplace.clone().unwrap_or_default();
     Ok(MineRow {

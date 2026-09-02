@@ -70,19 +70,61 @@ pub struct CatalogBundle {
     pub members: Vec<BundleMember>,
 }
 
-/// The `[bundles]` table of a catalog's own `kendex.toml`, read leniently the
-/// way every other catalog-side table is: a member list that is not a list of
-/// names carries no members, and the declaration that installs the set is
-/// where a name nothing backs gets reported.
-pub(super) fn declared(table: &toml::Table) -> BTreeMap<String, CatalogBundle> {
+/// A `[bundles.<name>]` body written in a shape this reader does not read,
+/// as the problem and fix the catalog's own breakage is reported with.
+pub(super) struct UnreadableBundle {
+    pub problem: String,
+    pub fix: String,
+}
+
+/// The one key beside the member lists a set's body may carry.
+const DESCRIPTION: &str = "description";
+
+/// The key the manifest requires of every `[bundles.<name>]` it declares,
+/// and one no set on offer can carry: members are bare names inside the
+/// catalog that offers them, so a set names no source of its own.
+const INSTALL_DECLARATION: &str = "source";
+
+/// The `[bundles]` table of a catalog's own `kendex.toml`. A member list that
+/// is not a list of names carries no members, and the declaration that
+/// installs the set is where a name nothing backs gets reported — but a body
+/// key that is neither a member list nor `description` is the catalog's own
+/// breakage, because everything this reader does not read is a member the
+/// set silently loses. That is how `members = [...]` shipped as four sets
+/// that installed nothing.
+pub(super) fn declared(
+    table: &toml::Table,
+) -> std::result::Result<BTreeMap<String, CatalogBundle>, UnreadableBundle> {
     let mut bundles = BTreeMap::new();
     let Some(declared) = table.get("bundles").and_then(toml::Value::as_table) else {
-        return bundles;
+        return Ok(bundles);
     };
     for (name, body) in declared {
         let Some(body) = body.as_table() else {
             continue;
         };
+        // One file is both when a project offers what it installs: the
+        // manifest records an installed set under this same table name, and
+        // that body belongs to the manifest reader, not here.
+        if body.contains_key(INSTALL_DECLARATION) {
+            continue;
+        }
+        for key in body.keys() {
+            if key == DESCRIPTION || MEMBER_LISTS.iter().any(|(list, _)| list == key) {
+                continue;
+            }
+            return Err(UnreadableBundle {
+                problem: format!(
+                    "`[bundles.{}]` carries `{}`, which is not one of the lists a set's members are read from",
+                    crate::names::shown(name),
+                    crate::names::shown(key)
+                ),
+                fix: format!(
+                    "remove it, or write the members under one of: {}",
+                    member_list_keys()
+                ),
+            });
+        }
         let mut members = Vec::new();
         for (list, kind) in MEMBER_LISTS {
             let Some(names) = body.get(list).and_then(toml::Value::as_array) else {
@@ -100,7 +142,7 @@ pub(super) fn declared(table: &toml::Table) -> BTreeMap<String, CatalogBundle> {
             CatalogBundle {
                 name: name.clone(),
                 description: body
-                    .get("description")
+                    .get(DESCRIPTION)
                     .and_then(toml::Value::as_str)
                     .map(crate::names::shown),
                 version: None,
@@ -109,7 +151,7 @@ pub(super) fn declared(table: &toml::Table) -> BTreeMap<String, CatalogBundle> {
             },
         );
     }
-    bundles
+    Ok(bundles)
 }
 
 /// Every set this catalog offers.
