@@ -292,10 +292,12 @@ for loc in C C.UTF-8; do
 done
 # The SHAPE rule answers under the same rules. Its scope class is ASCII in
 # every surface that documents it, and a bracket range is a COLLATION range
-# under a UTF-8 locale — so an accented scope is admitted there and refused
-# here unless the match is pinned. These bytes sit in the scope, which is the
-# only part of the ERE a locale changes; the length fixtures above carry
-# theirs in the subject and reach none of it.
+# under a UTF-8 locale, which is the one thing that could admit an accented
+# scope. C and C.UTF-8 are what the hosts this suite runs on carry, so what
+# these arms prove is that the verdict does not vary across them — not that
+# collation cannot bite on some other glibc or grep. These bytes sit in the
+# scope, which is the only part of the ERE a locale changes; the length
+# fixtures above carry theirs in the subject and reach none of it.
 for loc in C C.UTF-8; do
   run_stdin 'fix(café): tighten the gate' "LC_ALL=$loc"
   [ "$RC" -eq 1 ] && case "$OUT" in *"non-conventional header"*) true ;; *) false ;; esac \

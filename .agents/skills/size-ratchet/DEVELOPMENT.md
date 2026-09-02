@@ -67,15 +67,17 @@ still governs unless the rewrite lands.
 ## Trusted reference snapshot
 
 `resolve_head_baseline_file` sets the settings library's HEAD mode and calls
-`sr_setting`. `sr_settings_source` owns source names, precedence, historical
-materialization, and tracked-symlink traversal. `git ls-tree` answers for a
-complete path only, so before it may report a source absent from HEAD,
-`sr_settings_head_absence_real` classifies each ancestor: absent ends the
-walk, a tree continues it, and anything else — a symlink above all — is a
-lookup that could not be performed and refuses. Materialized copies are named
-`settings.file.<encoded path>`, a namespace the `settings.absent` sentinel
-cannot occupy, so no source name can materialize onto the path that means "not
-there". The main script handles only the flag and process-key overrides, then
+`sr_setting`. `sr_settings_resolve` owns source names, precedence, historical
+materialization, and tracked-symlink traversal; `sr_settings_source` is the
+memo front over it, recording each answer beside the snapshot it came from.
+`git ls-tree` answers for a complete path only, so before it may report a
+source absent from HEAD, `sr_settings_head_absence_real` classifies each
+ancestor: absent ends the walk, a tree continues it, and anything else — a
+symlink above all — is a lookup that could not be performed and refuses.
+Materialized copies are named `settings.file.<encoded path>` and the memos
+`settings.resolved.<encoded path>`, two namespaces the `settings.absent`
+sentinel cannot occupy, so no source name can materialize onto the path that
+means "not there". The main script handles only the flag and process-key overrides, then
 reads the baseline at the returned path. `rows_raised` consumes only those rows. The behavioral rule is
 [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
 

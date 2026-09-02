@@ -47,6 +47,10 @@ Run `./scripts/github.sh --help` for the command list, or
 | `KENDEX_GITHUB_PR_VIEW_TIMEOUT` | Seconds allowed for `gh pr view` | `30` |
 | `KENDEX_GITHUB_GIT_HTTPS_FALLBACK` | `auto`, `never`, or `always` for `git-https-auth` | `auto` |
 
+The three `KENDEX_GITHUB_*_TIMEOUT` bounds are read to one decimal place, so
+`0.5` is half a second and `0` means no bound. A figure finer than a tenth is
+refused rather than rounded, and the command does not run.
+
 Values already set in the parent process win over project files. Tokens may be
 literal (`ghp_*`, `github_pat_*`, …) or `op://vault/item/field` references;
 keep them in `.env.local` rather than committed settings.

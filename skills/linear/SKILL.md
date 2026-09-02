@@ -73,6 +73,7 @@ In a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed syml
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `PROJ` |
 | `LINEAR_AGENT_LABELS` | Declared `agent:*` taxonomy; non-empty makes `issues create` refuse unrouted creates | none (unset = off) |
 | `LINEAR_REQUIRE_REACH` | Non-empty makes `issues create` refuse a body with no `Reached by:` line | none (unset = off) |
+| `LINEAR_RETRY_BASE_DELAY` | Seconds before the first retry of a rate-limited or failed GraphQL call, doubling per attempt | `1` |
 
 `LINEAR_API_KEY` belongs in `.env.local`; non-secret defaults in committed `kendex.settings.toml` `[env]`. A key from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key.
 

@@ -23,11 +23,14 @@ GH_ISSUE_PATTERN = ""
 # project-root `verify.sh`, then to auto-detected build stacks.
 GH_VERIFY_CMD = ""
 
-# Seconds a 1Password token resolution may take.
+# Seconds a 1Password token resolution may take. Read to one decimal
+# place: 0 means no bound, and anything finer than a tenth is refused.
 KENDEX_GITHUB_OP_TIMEOUT = "10"
 
-# Seconds the `gh` auth preflight may take.
+# Seconds the `gh` auth preflight may take. Read to one decimal place:
+# 0 means no bound, and anything finer than a tenth is refused.
 KENDEX_GITHUB_AUTH_TIMEOUT = "10"
 
-# Seconds a single `pr-view` read may take.
+# Seconds a single `pr-view` read may take. Read to one decimal place:
+# 0 means no bound, and anything finer than a tenth is refused.
 KENDEX_GITHUB_PR_VIEW_TIMEOUT = "30"

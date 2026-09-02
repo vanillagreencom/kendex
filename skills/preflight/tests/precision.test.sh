@@ -46,8 +46,12 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   git -C "$R" remote set-url origin "$R.git"
 }
 
+# Local R: this builds the template and nothing else, and run_pf cd's into
+# whatever R holds. Left global it would be an out-parameter no signature
+# names, and any call from outside seed would run the next case against the
+# shared template.
 build_seed_template() {
-  R="$SEED_TEMPLATE"
+  local R="$SEED_TEMPLATE"
   mkdir -p "$R/docs" "$R/scripts" "$R/hooks" "$R/tests" "$R/data" "$R/store/migrations" \
     "$R/src/main/resources/db/migration"
   git -C "$R" -c init.defaultBranch=main init -q

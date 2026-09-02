@@ -126,7 +126,10 @@ printf '%s\n' "\$1" >>"$TMP/slept"
 case "\$1" in *.*) exec $(command -v sleep) "\$@" ;; esac
 SH
 chmod +x "$TMP/sleepbin/sleep"
-settle_arm() { # DESC EXPECTATION(present|absent) env-argument...
+# WANT is the number of seconds the run should have asked for, or `absent` for
+# no whole-second wait at all. The figure and not just its shape: a default
+# silently changed from 1 to 30 is still a whole number, and would read green.
+settle_arm() { # DESC EXPECTATION(seconds|absent) env-argument...
   desc="$1"; want="$2"; shift 2
   : >"$TMP/slept"
   rc=0
@@ -135,12 +138,13 @@ settle_arm() { # DESC EXPECTATION(present|absent) env-argument...
     --mutate 'sed -i.bak "s/+/-/" lib.sh && rm -f lib.sh.bak' \
     --stability 1 --threads 2 2>&1) || rc=$?
   is_rc 0 "control: $desc still reaches its verdict"
-  if grep -qxE '[0-9]+' "$TMP/slept"; then found=present; else found=absent; fi
+  found="$(grep -xE '[0-9]+' "$TMP/slept" | head -1 || true)"
+  [ -n "$found" ] || found=absent
   if [ "$found" = "$want" ]; then ok "$desc"; else
     bad "$desc" "whole-second wait $found; slept: $(tr '\n' ' ' <"$TMP/slept")"
   fi
 }
-settle_arm "the default settle waits a whole second" present -u MUTATION_STABILITY_SETTLE
+settle_arm "the default settle waits one whole second" 1 -u MUTATION_STABILITY_SETTLE
 lacks "settle: 0" "the default run says nothing about a skipped boundary"
 settle_arm "a zero settle asks for no wait at all" absent MUTATION_STABILITY_SETTLE=0
 # A verdict reached without the boundary has to be identifiable afterwards:

@@ -101,7 +101,10 @@ Configuration:
       Seconds allowed for GitHub auth preflight. Default: 10.
   KENDEX_GITHUB_PR_VIEW_TIMEOUT
       Seconds allowed for gh pr view in pr-view. Default: 30.
-      Every bound above is read to one decimal place; 0 means no bound.
+
+  All three bounds above are read to one decimal place; 0 means no bound, and
+  a figure finer than a tenth is refused rather than rounded.
+
   KENDEX_GITHUB_GIT_HTTPS_FALLBACK
       git-https-auth mode: auto, never, or always. Default: auto.
 
