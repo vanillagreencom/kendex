@@ -1,1 +1,0 @@
-- `linear.sh cache cycles list --type upcoming|past` now answers by date when no cycle is running, instead of returning the oldest cycle for `upcoming` and future cycles for `past`.

@@ -1,1 +1,0 @@
-- `linear.sh cache cycles list --type current|upcoming|past` now takes its cutoff in UTC, so the boundary no longer shifts by the machine's UTC offset.
