@@ -16,17 +16,27 @@ not a CI failure.
    [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree path [ISSUE]
    ```
    ```bash
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/workflow-state exists --json [ISSUE]
+   ```
+
+   `exists` answers `{path, exists}`. On `"exists": false` there is no active
+   round to read, so proceed. On `"exists": true`, read the token:
+
+   ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/workflow-state get [ISSUE] '.dev_round_id // empty'
    ```
 
-   A printed token whose record `[WT_PATH]/tmp/dev-round-[ISSUE]-[TOKEN].json`
-   exists with no `[WT_PATH]/tmp/dev-return-[ISSUE]-[TOKEN].json` beside it is a
-   round in flight: hand back without restacking. This is the same refusal
-   `worktree-push` makes, at the one path that rebases without reaching it —
-   the round record pins the commit the delegated agent is working from, and
-   the restack moves the branch out from under it. Land that round's receipt,
-   or stamp a fresh `dev_round_id`, then restack. No token, no record, or a
-   receipt already beside it means no round is in flight.
+   Proceed on an empty token, on a token whose record
+   `[WT_PATH]/tmp/dev-round-[ISSUE]-[TOKEN].json` does not exist, or on one with
+   `[WT_PATH]/tmp/dev-return-[ISSUE]-[TOKEN].json` beside it; hand back without
+   restacking on a record with no receipt beside it, and on a `get` that exits
+   nonzero, which is a state that could not be read rather than a state with no
+   round. This is the refusal `worktree-push` makes, in the same two arms, for
+   a path that never reaches it: the round record pins the commit the delegated
+   agent is working from, and the restack moves the branch out from under it.
+   Land that round's receipt, or stamp a fresh `dev_round_id`, then restack.
+   `worktree create [ISSUE] --reuse` rebases outside this check too, and carries
+   no live-round refusal of its own.
 
    Then start the guarded restack:
 

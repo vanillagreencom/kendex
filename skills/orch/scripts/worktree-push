@@ -22,8 +22,9 @@
 #
 # A fix round in flight is refused rather than reconciled. Its record
 # (`tmp/dev-round-<issue>-<round>.json`, written at delegation time) pins the
-# base snapshot dev-artifact-check compares against, and the rebase this
-# command runs would move every commit out from under it. The round in flight
+# commit the delegated agent is working from, and the rebase this command runs
+# would move every commit out from under it, leaving the round's receipt to
+# name a `.commit` no longer on the branch. The round in flight
 # is the ACTIVE one — the record whose token equals workflow state
 # `dev_round_id`. Two things end that: the round's dev-return receipt landing,
 # or a fresh `dev_round_id` whose token names no stamped record. An earlier
@@ -229,7 +230,7 @@ if [[ "$state_present" == "true" ]]; then
 			|| fail "workflow state for $issue records worktree '$state_wt_abs', not '$worktree_abs'; refusing to rewrite another worktree's record"
 	fi
 fi
-# A live fix round pins the snapshot dev-artifact-check compares against, and
+# A live fix round pins the commit the delegated agent is working from, and
 # the rebase below would move the branch out from under it. Refuse before the
 # push: nothing is rebased, so nothing needs repair. The ACTIVE round is live
 # from the moment dev-round-write stamps its record until the dev-return

@@ -70,7 +70,7 @@ The record is input, never receipt: it proves what was delegated, not that anyth
 
 The gate checks additions only. Git rename detection keeps moves and renames outside it.
 
-Two references scope it, and a path must be an addition against both. `base_sha` gives the round its scope: a file already in that tree is not this round's, which is what keeps a later round from re-refusing an addition an earlier one authorized. The branch's merge base with its base branch gives the honest attribution: a rebase orphans `base_sha`, and the orphaned tree alone reads every file the base branch advanced by as an addition this round made. A path the base branch already carries at that merge base was added by nobody here.
+`base_sha` is the reference: a file already in that tree is not this round's, which is what keeps a later round from re-refusing an addition an earlier one authorized. A rebase orphans it, and the orphaned tree alone reads every file the base branch advanced by as an addition this round made. So when `base_sha` is no longer an ancestor of `HEAD`, and only then, a second reference excludes what it can: a path the branch's merge base with its base branch already carries was added by nobody here. That fallback is conditional on the merge base resolving. When none does, the probe measures from the orphaned `base_sha` alone and can name a path the base branch merged; the reader's answer there is a fresh round, never an `Adds:` line for a path nobody on the branch added. `dev-artifact-check` says on stderr which of the two ran.
 
 Protected additions are:
 

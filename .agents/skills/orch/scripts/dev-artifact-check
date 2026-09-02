@@ -38,8 +38,8 @@
 # HEAD) and tracker corroboration stay in the orch workflow.
 #
 # The same rebase orphans the round record's base_sha, and there the answer is a
-# second reference rather than a warning: the additions probe refuses only paths
-# both base_sha and the branch's merge base call additions (kendex#944).
+# fallback reference rather than a warning: the additions probe then excludes a
+# path the branch's merge base already carries (kendex#944).
 
 set -euo pipefail
 
@@ -52,6 +52,9 @@ ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 # --expect-items is a comma-separated list of item numbers.
 EXPECT_GRAMMAR='^[0-9]+(,[0-9]+)*$'
 scratch_files=()
+# branch_merge_base's answer: the fallback reference, or the cause when none.
+MERGE_BASE=""
+MERGE_BASE_UNRESOLVED=""
 
 cleanup_scratch() {
   if (( ${#scratch_files[@]} > 0 )); then
@@ -115,11 +118,9 @@ that runs while the branch is over its size tripwire. Its receipt is accepted
 only when the branch came back to twice workflow state pr.baseline_lines: over
 that cap is reason=cut_not_shrunk, and a cap that cannot be measured at all is
 reason=cut_unmeasurable. Every other gate applies unchanged.
-Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
-The additions probe measures from the record's base_sha AND from the branch's
-merge base with its base branch, and refuses only a path both call an addition:
-a rebase orphans base_sha, and the orphaned snapshot alone reads every file the
-base branch advanced by as an addition this round made (kendex#944).
+Protected-addition scope, and which reference the additions probe measures from
+when a rebase has orphaned base_sha:
+skills/orch/schemas/dev-round.md § Protected additions.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
@@ -153,14 +154,14 @@ reason meanings when ok=false:
               --file mode has no repo to check against and skips this gate.
   unapproved_additions
               a fix round added a protected file since the round record's
-              base_sha, and the branch added it since its merge base with the
-              base branch, without naming that exact file in adds. The files
-              field names every refused path. Renames and moves do not count,
-              and neither does a path the base branch already carries.
+              base_sha without naming that exact file in adds. The files field
+              names every refused path. Renames and moves do not count, and
+              neither does what the orphaned-base fallback excludes (the schema
+              section above owns that rule). Stderr says which reference the
+              refusal was measured against.
   comparison_failed
-              Git could not compare the round record's base_sha, or the branch's
-              merge base, to HEAD. No file classification is inferred from a
-              failed comparison.
+              Git could not compare the round record's base_sha to HEAD. No file
+              classification is inferred from a failed comparison.
   classifier_failed
               the protected-addition classifier produced no valid JSON array.
   cut_not_shrunk
@@ -352,34 +353,34 @@ is_protected_addition() {
   return 1
 }
 
-# Bash 3.2 has no associative arrays and an added path may carry a newline, so
-# membership is an exact-string scan of the list rather than a text lookup.
-list_contains() {
-  local needle="$1" candidate
-  shift
-  for candidate in "$@"; do
-    [[ "$candidate" == "$needle" ]] && return 0
-  done
-  return 1
-}
-
-# The second reference the additions probe is scoped by: the branch's merge base
-# with its base branch. Prints nothing when no usable one exists, which leaves
-# the probe unintersected — see collect_unapproved_additions. A base ref left
-# unfetched narrows the same way the empty answer does: less, never more.
+# The fallback reference for an orphaned base_sha: the branch's merge base with
+# its base branch. It answers in MERGE_BASE, with MERGE_BASE_UNRESOLVED naming
+# why none was found, rather than on stdout — a command substitution would run
+# it in a subshell and the cause would die with that subshell, leaving the
+# caller to report an arm it cannot see. Every failure here leaves the probe
+# measuring from base_sha alone, which refuses more, never less.
 branch_merge_base() {
-  local repo="$1" base_branch base_ref merge_base=""
-  base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$repo" 2>/dev/null || true)"
-  [[ -n "$base_branch" ]] || return 0
+  local repo="$1" base_branch base_ref status=0
+  MERGE_BASE=""
+  MERGE_BASE_UNRESOLVED=""
+  base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$repo" 2>/dev/null)" || status=$?
+  if (( status != 0 )); then
+    MERGE_BASE_UNRESOLVED="resolve-base-branch exited $status"
+    return 0
+  fi
+  if [[ -z "$base_branch" ]]; then
+    MERGE_BASE_UNRESOLVED="resolve-base-branch named no base branch"
+    return 0
+  fi
   for base_ref in "refs/remotes/origin/$base_branch" "refs/heads/$base_branch"; do
     git -C "$repo" rev-parse --verify --quiet "$base_ref" >/dev/null 2>&1 || continue
     # A base ref that already contains HEAD leaves the branch nothing of its
-    # own: that probe would be empty and would empty the intersection with it.
+    # own, so its tree answers for every path and would excuse them all.
     git -C "$repo" merge-base --is-ancestor HEAD "$base_ref" >/dev/null 2>&1 && continue
-    merge_base="$(git -C "$repo" merge-base "$base_ref" HEAD 2>/dev/null)" || merge_base=""
-    [[ -n "$merge_base" ]] && break
+    MERGE_BASE="$(git -C "$repo" merge-base "$base_ref" HEAD 2>/dev/null)" || MERGE_BASE=""
+    [[ -n "$MERGE_BASE" ]] && break
   done
-  printf '%s' "$merge_base"
+  [[ -n "$MERGE_BASE" ]] || MERGE_BASE_UNRESOLVED="no usable merge base with $base_branch"
 }
 
 # base_sha reaches `git diff` as a revision argument, so the schema arm above
@@ -392,23 +393,22 @@ branch_merge_base() {
 #
 # base_sha is HEAD at delegation, and a rebase orphans it exactly as it orphans
 # the artifact's .commit (kendex#944). The orphaned sha still resolves, so the
-# snapshot comparison succeeds across the base branch's whole advance and names
-# files another author merged as this round's additions. The branch's merge base
-# with its base branch settles it: a path already present there was added by
-# nobody here, so the gate refuses only what BOTH probes call an addition.
+# comparison succeeds across the base branch's whole advance and names files
+# another author merged as this round's additions. Only then does a second
+# reference apply: on a live base_sha the recorded tree IS the round's starting
+# point, and consulting anything else could only subtract refusals it owes.
 #
-# The intersection removes nothing the gate needs. base_sha keeps the round
-# scope — an addition an earlier round authorized sits in this round's base
-# tree, so no later round re-refuses it — and the merge base only drops paths
-# the base branch already carries. Two arms skip the second probe rather than
-# weaken the first: no resolvable merge base, and a base ref that already
-# contains HEAD (nothing of the branch's own to measure). Both leave the
-# unintersected set, a superset, so a skip is stricter than the scoping.
+# The fallback asks one question per candidate path — does the branch's merge
+# base with its base branch already carry it — because a path the base branch
+# carries was added by nobody here. It is a tree lookup, not a second diff:
+# rename detection over the branch's whole range would pair an earlier
+# branch-side deletion with this round's addition and drop the path before it
+# was ever classified. The lookup admits no such pairing, and a lookup that
+# errors for any other reason leaves the path refused.
 collect_unapproved_additions() {
   local repo="$1" round_record="$2" result="$3" base_sha path probe
-  local merge_base branch_probe
+  local merge_base=""
   local additions=()
-  local branch_additions=()
   base_sha="$(jq -r '.base_sha' "$round_record")"
   probe="$(mktemp "$repo/tmp/.dev-artifact-additions.XXXXXX")" \
     || return 3
@@ -418,30 +418,23 @@ collect_unapproved_additions() {
     return 2
   fi
   if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then
-    printf '%s: round base %s resolves but is not an ancestor of HEAD in %s (orphaned by a rebase?); the additions probe is scoped by the branch merge base\n' \
-      "$PROG" "$base_sha" "$repo" >&2
-  fi
-  merge_base="$(branch_merge_base "$repo")"
-  if [[ -n "$merge_base" ]]; then
-    branch_probe="$(mktemp "$repo/tmp/.dev-artifact-branch.XXXXXX")" \
-      || { rm -f -- "$probe"; return 3; }
-    scratch_files+=("$branch_probe")
-    if ! git -C "$repo" diff --find-renames --diff-filter=A --name-only -z "$merge_base" HEAD > "$branch_probe"; then
-      rm -f -- "$probe" "$branch_probe"
-      return 2
+    branch_merge_base "$repo"
+    merge_base="$MERGE_BASE"
+    if [[ -n "$merge_base" ]]; then
+      printf '%s: round base %s resolves but is not an ancestor of HEAD in %s (orphaned by a rebase?); paths the branch merge base %s already carries are excluded\n' \
+        "$PROG" "$base_sha" "$repo" "$merge_base" >&2
+    else
+      printf '%s: round base %s resolves but is not an ancestor of HEAD in %s (orphaned by a rebase?), and no base-branch merge base resolved (%s); additions measure from that base alone, which refuses more, never less\n' \
+        "$PROG" "$base_sha" "$repo" "$MERGE_BASE_UNRESOLVED" >&2
     fi
-    while IFS= read -r -d '' path; do
-      branch_additions+=("$path")
-    done < "$branch_probe"
-    rm -f -- "$branch_probe"
   fi
   while IFS= read -r -d '' path; do
-    if [[ -n "$merge_base" ]] \
-      && ! list_contains "$path" ${branch_additions[@]+"${branch_additions[@]}"}; then
-      continue
-    fi
     if is_protected_addition "$path" \
       && ! jq -e --arg path "$path" '.adds | index($path) != null' "$round_record" >/dev/null; then
+      if [[ -n "$merge_base" ]] \
+        && git -C "$repo" cat-file -e "$merge_base:$path" >/dev/null 2>&1; then
+        continue
+      fi
       additions+=("$path")
     fi
   done < "$probe"
