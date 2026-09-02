@@ -60,6 +60,13 @@ pub struct SealedSource {
     given: PathBuf,
 }
 
+/// Directory names that are never catalog content, wherever the question
+/// comes up: the tree a repo-root skill publishes, the walk that discovers
+/// skills, the history query that dates a root item. One list, because
+/// three answers to "what is not content" that drift are three different
+/// ideas of what a package contains.
+pub const NOT_CONTENT: [&str; 6] = [".git", "node_modules", "target", "dist", "build", ".venv"];
+
 impl SealedSource {
     pub fn open(root: &Path) -> Result<SealedSource> {
         let given = root.to_path_buf();
@@ -242,7 +249,7 @@ impl SealedSource {
         // Either spelling of the root is the root: the repo-root exclusions
         // must hold however the caller reached it.
         let skip: &[&str] = match dir == self.root || dir == self.given {
-            true => &[".git", "node_modules", "target", "dist", "build", ".venv"],
+            true => &NOT_CONTENT,
             false => &[],
         };
         self.collect_tree(dir, skip)

@@ -41,9 +41,6 @@ const SKILL_ROOTS: [&str; 9] = [
 /// folder or two, never a whole-repo crawl.
 const MAX_NEST: usize = 3;
 
-/// Directory names that are never catalog content.
-const SKIP_DIRS: [&str; 6] = [".git", "node_modules", "target", "dist", "build", ".venv"];
-
 /// More skills than any real catalog ships; past it the walk stops with a
 /// finding rather than letting a hostile tree soak the scan.
 const MAX_SKILLS: usize = 512;
@@ -154,7 +151,10 @@ impl Walk<'_> {
                 ));
                 continue;
             };
-            if name.starts_with('.') || SKIP_DIRS.contains(&name) || !self.sealed.is_dir(&path) {
+            if name.starts_with('.')
+                || crate::source_read::NOT_CONTENT.contains(&name)
+                || !self.sealed.is_dir(&path)
+            {
                 continue;
             }
             let rel = rel.join(name);

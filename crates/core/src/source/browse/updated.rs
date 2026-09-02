@@ -63,20 +63,17 @@ const MAX_DATED_COMMITS: usize = 1_000;
 
 /// What a repository-root skill's tree leaves out, as pathspecs.
 ///
-/// The list is [`SealedSource::collect_skill_tree`]'s own, spelled the way
-/// git takes it: a root skill IS the repository, so everything but these
-/// folders is content the skill publishes and an install copies —
-/// `crates/`, `ui/` and `docs/` included. Asking history for that set is
-/// the only way to date such an item honestly. The bare tip would count a
-/// `target/`-only commit, which changed nothing the skill contains.
-///
-/// [`SealedSource::collect_skill_tree`]: crate::source_read::SealedSource::collect_skill_tree
-const ROOT_TREE_SKIPS: [&str; 6] = [".git", "node_modules", "target", "dist", "build", ".venv"];
-
+/// Derived from [`crate::source_read::NOT_CONTENT`], never restated: a
+/// root skill IS the repository, so everything but those folders is
+/// content the skill publishes and an install copies — `crates/`, `ui/`
+/// and `docs/` included. Asking history for that set is the only way to
+/// date such an item honestly; the bare tip would count a `target/`-only
+/// commit, which changed nothing the skill contains. A folder added to
+/// the one list is added here by construction.
 fn root_tree_specs() -> Vec<String> {
-    ROOT_TREE_SKIPS
+    crate::source_read::NOT_CONTENT
         .iter()
-        .map(|s| history::excluding(s))
+        .map(|folder| history::excluding(folder))
         .collect()
 }
 
@@ -158,7 +155,8 @@ fn split(browsed: &Browsed, items: &[Offered]) -> Split {
 /// no entry rather than a borrowed date.
 ///
 /// An item that IS the catalog root is dated over its own tree — the
-/// repository minus [`ROOT_TREE_SKIPS`] — in a mixed catalog as much as in
+/// repository minus [`crate::source_read::NOT_CONTENT`] — in a mixed
+/// catalog as much as in
 /// a one-skill one, because that tree is what the item contains:
 /// `package_preview` lists a root skill's files from the root down, so a
 /// commit anywhere but those folders really did change it. Not the bare
@@ -210,7 +208,7 @@ pub(crate) fn package_dates(
 ///
 /// Every offered item counts, with no special case for the root one. An
 /// item that IS the catalog root has no narrower path, but it does have a
-/// tree — the repository minus [`ROOT_TREE_SKIPS`] — and that tree
+/// tree — the repository minus [`crate::source_read::NOT_CONTENT`] — and that tree
 /// subsumes the other packages' paths, so where such an item is offered
 /// one query over it answers for the whole catalog. The About tab can
 /// therefore never read older than a package on the Packages tab beside
