@@ -283,7 +283,7 @@ if [[ -n "$SINCE" ]]; then
       || die "workflow-state CLI not found at $WORKFLOW_STATE; triage needs it (set OVERSEE_WATCH_WORKFLOW_STATE)"
     TRIAGE_ENABLED=1
   elif [[ -n "$LINEAR_TEAM_FROM_PARENT_ENV" ]]; then
-    die "LINEAR_TEAM is exported as an empty value, which shadows any team this project configures; triage cannot tell that from a project with no team. Export the team name, or drop the variable from the environment (env -u LINEAR_TEAM) to watch without triage"
+    die "LINEAR_TEAM is exported as an empty value, which shadows any team this project configures; triage cannot tell that from a project with no team. Export the team name."
   else
     echo "oversee-watch: LINEAR_TEAM is unset; skipping the team triage check (pr-watch/merged/window/lane-asking checks still run)" >&2
   fi
