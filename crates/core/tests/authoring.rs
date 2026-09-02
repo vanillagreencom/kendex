@@ -148,9 +148,9 @@ fn the_scaffold_writes_the_licence_evidence() {
 /// The scaffold teaches the `[bundles]` grammar in a commented-out example,
 /// and the only other check over it pins bytes. Bytes are happy to pin a
 /// shape no reader looks at, which is how kendex's own four sets shipped
-/// installing nothing. So the example is held two ways: it names every key
-/// the reader reads, and uncommented it is a set the reader gets members
-/// out of.
+/// installing nothing. The example is generated from the reader's own list,
+/// so the question left is whether the round trip closes: uncomment what the
+/// scaffold wrote and the reader has to get every kind back out of it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_scaffolded_bundle_example_is_a_set_the_reader_accepts() {
@@ -160,13 +160,6 @@ fn the_scaffolded_bundle_example_is_a_set_the_reader_accepts() {
         .find(|(rel, _)| rel == "kendex.toml")
         .unwrap()
         .1;
-
-    for (key, _) in kendex_core::source::bundles::MEMBER_LISTS {
-        assert!(
-            manifest.contains(key),
-            "the scaffold never names `{key}`, a key a set's members are written under"
-        );
-    }
 
     let example: String = manifest
         .lines()
@@ -185,18 +178,28 @@ fn the_scaffolded_bundle_example_is_a_set_the_reader_accepts() {
     let config = kendex_core::source::source_config(&sealed, "scaffolded").unwrap();
     let sets = kendex_core::source::bundles::offered(&sealed, &config).unwrap();
 
-    let members: Vec<(kendex_core::model::ItemKind, &str)> = sets
+    let members: Vec<String> = sets
         .iter()
         .flat_map(|set| set.members.iter())
-        .map(|member| (member.kind, member.name.as_str()))
+        .map(|member| format!("{} {}", member.kind.name(), member.name))
+        .collect();
+    // What the example is expected to yield is the example itself, read back
+    // through the reader: every kind, under the name the scaffold wrote for
+    // it. A kind added to the grammar extends both sides at once, and a kind
+    // the reader stops seeing shortens only one.
+    let expected: Vec<String> = kendex_core::source::bundles::member_list_example()
+        .lines()
+        .map(|line| {
+            let name = line
+                .split('"')
+                .nth(1)
+                .unwrap_or_else(|| panic!("the example line '{line}' names a member"));
+            format!("{} {name}", name.trim_start_matches("my-"))
+        })
         .collect();
     assert_eq!(
-        members,
-        [
-            (kendex_core::model::ItemKind::Agent, "my-agent"),
-            (kendex_core::model::ItemKind::Skill, "my-skill"),
-        ],
-        "the scaffolded example, uncommented, is not a set the reader gets members \
+        members, expected,
+        "the scaffolded example, uncommented, is not a set the reader gets every kind \
          out of:\n{example}"
     );
 }
@@ -561,15 +564,15 @@ fn the_scaffold_matches_its_checked_in_golden_digest() {
     for (license, expected) in [
         (
             License::Mit,
-            "3314ea3c24efa01b4f5d6b0693b72788348d63db49ab2af9fb2b68c6e8f8da18",
+            "98a5e948dac921d6cba4cae5b07e514a9e6cba1a638fa6c45ce30ff45aa55f79",
         ),
         (
             License::Apache2,
-            "ba340037e1eeae2b72f17b9b8ed5d8f7619012ad146ab71d877debe2ce41d289",
+            "4e63fd7bba05248e94e5247a5749c9ff51d5cbfd791468bd2b0f0838b99c0deb",
         ),
         (
             License::NoneYet,
-            "4038839a19299791a402f451394fb457b0b913b6ed73cc23041ccd685d7f7958",
+            "171067bedea26065af8967fb445f306fb97e322c989325d2d97e52e404d19741",
         ),
     ] {
         let files: Vec<(std::path::PathBuf, Vec<u8>)> =

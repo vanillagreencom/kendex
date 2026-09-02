@@ -19,10 +19,10 @@ tags = ["agents", "skills", "hooks", "official"]
 # Curated sets, drawn from how these packages depend on one another. Install
 # a whole set with one preview, or pick from it. Members are bare names in
 # one list per kind, the shape `[bundles]` is read in. `workflow` is
-# orchestration, code-review and commit-guards in one install; those three
-# stay for partial installs, and research sits beside it.
+# orchestration, code-review and commit-guards plus deep-research, in one
+# install; those three stay for partial installs, and research sits beside it.
 [bundles.workflow]
-description = "The agents, skills and hooks the orchestration, review and commit-guard loop runs on"
+description = "Orchestration, code review and commit guards in one install, with deep-research"
 agents = [
   "reviewer-arch",
   "reviewer-correctness",
