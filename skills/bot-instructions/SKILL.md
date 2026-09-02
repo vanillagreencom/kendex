@@ -63,15 +63,15 @@ A `[[surface]]` reaches Copilot, CodeRabbit and Macroscope, plus Qodo through `b
 
 The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. Retire a surface with delete, then `render`. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
 
-Every render excludes the render trees. CodeRabbit and Macroscope subtract them; Codex, Copilot and Qodo receive the paths as prose and may still comment. Enforcement: [references/checklist.md](references/checklist.md) § Excluding the render trees.
-
+## Every rendered config excludes the render trees
+A repo enables `[exclusions] derive_render` or lists every render tree in `[[exclusions.path]]`. Set construction: [schemas/repo-toml.md](schemas/repo-toml.md) § `[exclusions]`. Placement and enforcement: [schemas/renders.md](schemas/renders.md) § Doctrine routing.
 ## A pull request changing its own review
 
 - Treat every policy path below as invalidating prior review evidence.
 - Require trusted human approval on a pull request that touches a policy path.
 - Run `check` in CI from the default branch copy, with `--spec` naming the pull request tree's package copy.
 
-Render inputs:
+## The render inputs
 - `bot-instructions.toml`.
 - The spec copy's doctrine source and routing table.
 - `.bot-instructions/coderabbit-schema.json` when CodeRabbit is on.
