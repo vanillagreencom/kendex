@@ -35,16 +35,16 @@ describe("a candidate with no selectable bytes", () => {
       row([
         {
           group: { group: "unmanaged" },
-          locations: [
-            "/home/jane/app/.codex/agents/codexer.toml — it has no frontmatter, and a catalog stores an agent as markdown",
-          ],
+          locations: ["/home/jane/app/.codex/agents/codexer.toml"],
           hash: "",
+          problem:
+            "it has no frontmatter, and a catalog stores an agent as markdown",
         },
       ]),
     );
     expect(html).toContain("codexer.toml");
     expect(html).toContain("a catalog stores an agent as markdown");
-    expect(html).toContain("not readable now");
+    expect(html).toContain("nothing kendex can import");
   });
 
   it("says nothing extra once one origin can be selected", () => {
@@ -54,10 +54,11 @@ describe("a candidate with no selectable bytes", () => {
           group: { group: "unmanaged" },
           locations: ["/home/jane/app/.claude/agents/codexer.md"],
           hash: "abc123",
+          problem: null,
         },
       ]),
     );
     expect(html).not.toContain("codexer.md");
-    expect(html).not.toContain("not readable now");
+    expect(html).not.toContain("nothing kendex can import");
   });
 });

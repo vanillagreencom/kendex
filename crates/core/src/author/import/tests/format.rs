@@ -55,12 +55,17 @@ fn an_agent_in_another_format_is_not_offered_under_either_name() {
         "nothing selectable: {:?}",
         codexer.origins
     );
-    let location = &codexer.origins[0].locations[0];
-    assert!(location.contains("codexer.toml"), "{location}");
-    assert!(location.contains("it has no frontmatter"), "{location}");
+    let refused = &codexer.origins[0];
     assert!(
-        location.contains("a catalog stores an agent as markdown"),
-        "{location}"
+        refused.locations[0].contains("codexer.toml"),
+        "the place is a path and nothing else: {:?}",
+        refused.locations
+    );
+    let problem = refused.problem.as_deref().unwrap_or_default();
+    assert!(problem.contains("it has no frontmatter"), "{problem}");
+    assert!(
+        problem.contains("a catalog stores an agent as markdown"),
+        "{problem}"
     );
 
     // The markdown agent in the same scan is untouched by the rule: this
@@ -142,22 +147,29 @@ fn the_edited_copy_of_a_marketplace_agent_is_judged_by_the_same_rule() {
     );
     // The TOML is claimed twice — as the edited copy of the marketplace
     // agent, and by the unmanaged scan of an install the lock does not
-    // cover — and both claims are refused by the one rule.
+    // cover — and the two claims are refused by the one rule and listed
+    // once, under the strictest provenance of the claimants.
+    assert_eq!(refused.len(), 1, "{:?}", agentic.origins);
     assert!(
-        refused.iter().any(|origin| matches!(
-            origin.group,
+        matches!(
+            refused[0].group,
             crate::author::import::CandidateGroup::Edited { .. }
-        )),
+        ),
         "{:?}",
         agentic.origins
     );
     assert!(
-        refused.iter().all(|origin| {
-            origin.locations[0].contains("agentic.toml")
-                && origin.locations[0].contains("a catalog stores an agent as markdown")
-        }),
+        refused[0].locations[0].contains("agentic.toml"),
         "{:?}",
-        agentic.origins
+        refused[0].locations
+    );
+    assert!(
+        refused[0]
+            .problem
+            .as_deref()
+            .is_some_and(|problem| problem.contains("a catalog stores an agent as markdown")),
+        "{:?}",
+        refused[0].problem
     );
 
     // And the markdown half really does import, so the rule took away the

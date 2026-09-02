@@ -789,10 +789,22 @@ licenseRecognized: boolean } |
 
 export type CandidateOrigin = {
 	group: CandidateGroup,
-	/**  Every place these exact bytes were seen. */
+	/**
+	 *  Every place these exact bytes were seen — places and nothing else,
+	 *  so a caller may match a path against one.
+	 */
 	locations: string[],
-	/**  Content identity — what apply revalidates before copying. */
+	/**
+	 *  Content identity — what apply revalidates before copying. Empty
+	 *  where there is nothing to select, which is every origin carrying a
+	 *  `problem`.
+	 */
 	hash: string,
+	/**
+	 *  Why these bytes are not on offer, when they are not: a marketplace
+	 *  nobody fetched, an agent in a format a catalog cannot store.
+	 */
+	problem: string | null,
 };
 
 export type CapabilityRow = {

@@ -41,10 +41,16 @@ pub struct ImportCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct CandidateOrigin {
     pub group: CandidateGroup,
-    /// Every place these exact bytes were seen.
+    /// Every place these exact bytes were seen — places and nothing else,
+    /// so a caller may match a path against one.
     pub locations: Vec<String>,
-    /// Content identity — what apply revalidates before copying.
+    /// Content identity — what apply revalidates before copying. Empty
+    /// where there is nothing to select, which is every origin carrying a
+    /// `problem`.
     pub hash: String,
+    /// Why these bytes are not on offer, when they are not: a marketplace
+    /// nobody fetched, an agent in a format a catalog cannot store.
+    pub problem: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -175,33 +181,43 @@ pub(super) struct ResolvedSelection {
 }
 
 /// Every package the given scopes hold, grouped and deduplicated. Origins
-/// whose bytes cannot be read right now are listed with an empty hash so
-/// the wizard can show them; selecting one refuses at apply.
+/// with nothing to select are listed with an empty hash and their
+/// `problem` so the wizard can show them and say why; selecting one
+/// refuses at apply.
 pub fn inventory(env: &Env, scopes: &[Scope]) -> Result<Vec<ImportCandidate>> {
     let unmanaged = unmanaged_paths(env, scopes);
     let mut candidates: BTreeMap<(ItemKind, String), Vec<CandidateOrigin>> = BTreeMap::new();
     for row in crate::library::provenance(env, scopes)? {
-        for (group, bytes, location, _) in origins_of(env, &row, &unmanaged) {
-            let hash = bytes.map(|bytes| bytes.hash()).unwrap_or_default();
+        for read in origins_of(env, &row, &unmanaged) {
+            let hash = read.bytes.map(|bytes| bytes.hash()).unwrap_or_default();
             let origins = candidates.entry((row.kind, row.name.clone())).or_default();
             // Identical bytes are one origin whatever offered them; the
-            // strictest provenance among the claimants governs it.
-            match origins
-                .iter_mut()
-                .find(|origin| !hash.is_empty() && origin.hash == hash)
-            {
+            // strictest provenance among the claimants governs it. With no
+            // bytes there is no hash to match on, so the same place
+            // refused for the same reason is the one row — a file claimed
+            // both as a marketplace's edited copy and by the unmanaged
+            // scan would otherwise be listed and printed twice.
+            match origins.iter_mut().find(|origin| match hash.is_empty() {
+                false => origin.hash == hash,
+                true => {
+                    origin.hash.is_empty()
+                        && origin.problem == read.problem
+                        && origin.locations.contains(&read.location)
+                }
+            }) {
                 Some(origin) => {
-                    if !origin.locations.contains(&location) {
-                        origin.locations.push(location);
+                    if !origin.locations.contains(&read.location) {
+                        origin.locations.push(read.location);
                     }
-                    if group.strictness() > origin.group.strictness() {
-                        origin.group = group;
+                    if read.group.strictness() > origin.group.strictness() {
+                        origin.group = read.group;
                     }
                 }
                 None => origins.push(CandidateOrigin {
-                    group,
-                    locations: vec![location],
+                    group: read.group,
+                    locations: vec![read.location],
                     hash,
+                    problem: read.problem,
                 }),
             }
         }
@@ -223,6 +239,57 @@ pub fn inventory(env: &Env, scopes: &[Scope]) -> Result<Vec<ImportCandidate>> {
             }
         })
         .collect())
+}
+
+/// How the places under [`no_importable_bytes`] are laid out.
+pub enum Places {
+    /// All on the sentence's own line. What a [`crate::error::CoreError`]
+    /// takes: a message that does not own its breaks has them escaped
+    /// where the CLI prints it.
+    OneLine,
+    /// One place per line, for a caller whose refusal owns its breaks.
+    PerLine,
+}
+
+/// The refusal for a name whose every origin is unusable — one sentence,
+/// wherever it is said.
+///
+/// Two callers reach it: the apply-time resolve, which has the origins in
+/// hand, and the CLI, which refuses before a selection exists. They differ
+/// only in layout, which is presentation and stays theirs; the sentence,
+/// the place-and-reason join and the escaping are one thing and live here.
+///
+/// Every value is spelled through [`crate::names::shown`]: a name is read
+/// off a directory on disk and a place is a path off one, so either can
+/// carry a control character or a bidi override, and no caller has to
+/// remember. The same place refused for the same reason is said once.
+pub fn no_importable_bytes(
+    kind: ItemKind,
+    name: &str,
+    places: &[(String, Option<String>)],
+    layout: Places,
+) -> String {
+    let (lead, between) = match layout {
+        Places::OneLine => (" ", "; "),
+        Places::PerLine => ("\n", "\n"),
+    };
+    let mut said: Vec<String> = Vec::new();
+    for (place, problem) in places {
+        let line = match problem {
+            Some(problem) => format!("{place} — {problem}"),
+            None => place.clone(),
+        };
+        let line = crate::names::shown(&line);
+        if !said.contains(&line) {
+            said.push(line);
+        }
+    }
+    format!(
+        "{} '{}' has no bytes kendex can import:{lead}{}",
+        kind.name(),
+        crate::names::shown(name),
+        said.join(between)
+    )
 }
 
 /// Licences kendex recognizes as redistributable. A licence outside this

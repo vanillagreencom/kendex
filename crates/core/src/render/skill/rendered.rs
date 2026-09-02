@@ -22,14 +22,9 @@ use std::path::PathBuf;
 /// different edits. The validators say the same things plainly, and
 /// writing around any of them here would hide it.
 pub(crate) fn with_name(text: &str, installed: &str) -> std::result::Result<String, &'static str> {
-    // `split` tells a missing block from one whose closing marker is gone,
-    // and the two send a reader to different edits.
-    let (yaml, _) = crate::frontmatter::split(text).map_err(|problem| {
-        match problem.contains("unterminated") {
-            true => "its frontmatter block is never closed",
-            false => "it has no frontmatter",
-        }
-    })?;
+    // `split_said` tells a missing block from one whose closing marker is
+    // gone, and the two send a reader to different edits.
+    let (yaml, _) = crate::frontmatter::split_said(text)?;
     let yaml_start = yaml.as_ptr() as usize - text.as_ptr() as usize;
     let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
     let entry = format!("name: {}", crate::render::yaml_scalar(installed));

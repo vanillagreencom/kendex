@@ -510,12 +510,16 @@ fn an_in_place_skill_is_an_own_candidate_read_from_its_tree() {
         .find(|r| r.name == "here" && matches!(r.origin, crate::library::Origin::Own { .. }))
         .unwrap_or_else(|| panic!("no own row: {rows:?}"));
     let reads = origins_of(&env, own_row, &BTreeMap::new());
-    let [(group, bytes, location, _)] = reads.as_slice() else {
+    let [read] = reads.as_slice() else {
         panic!("one owned read expected, got {}", reads.len());
     };
-    assert!(matches!(group, CandidateGroup::Own));
-    assert!(bytes.is_some());
-    assert!(location.contains(".agents/skills/here"), "{location}");
+    assert!(matches!(read.group, CandidateGroup::Own));
+    assert!(read.bytes.is_some());
+    assert!(
+        read.location.contains(".agents/skills/here"),
+        "{}",
+        read.location
+    );
 
     // The candidate the wizard lists carries those bytes, so the skill is
     // importable; identical observed claims may still govern its group.

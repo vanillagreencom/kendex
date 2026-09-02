@@ -121,6 +121,22 @@ pub fn split(text: &str) -> Result<(&str, &str), String> {
     Err("unterminated frontmatter".to_owned())
 }
 
+/// The same split as [`split`], with its failure said as a clause a
+/// caller's own sentence can carry: the block is missing, or it opens and
+/// never closes.
+///
+/// The two send a reader to different edits — "add a block" against "close
+/// the one you have" — so telling them apart lives here, beside the
+/// messages this module composes, rather than in each caller re-deriving
+/// it from a substring of one. Rewording either message above changes no
+/// caller's answer.
+pub fn split_said(text: &str) -> Result<(&str, &str), &'static str> {
+    split(text).map_err(|_| match opens(text) {
+        true => "its frontmatter block is never closed",
+        false => "it has no frontmatter",
+    })
+}
+
 #[derive(Debug, Default, PartialEq)]
 pub struct Parsed {
     pub map: Map,

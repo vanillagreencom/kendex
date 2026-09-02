@@ -1,4 +1,8 @@
-import type { CandidateGroup, ImportCandidate } from "@/bindings";
+import type {
+  CandidateGroup,
+  CandidateOrigin,
+  ImportCandidate,
+} from "@/bindings";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
@@ -16,6 +20,19 @@ export interface RowChoice {
   destination: string;
   licenseConfirmed: boolean;
   licenseBasis: string;
+}
+
+/** Where each unselectable origin was and why, said once: the same file is
+ * claimed twice where a marketplace install is also reached by the
+ * unmanaged scan, and core merges only what it can key on. */
+function refusals(origins: CandidateOrigin[]): string[] {
+  const said: string[] = [];
+  for (const origin of origins) {
+    const place = origin.locations.join(" = ");
+    const line = origin.problem ? `${place} — ${origin.problem}` : place;
+    if (!said.includes(line)) said.push(line);
+  }
+  return said;
 }
 
 export function groupLabel(group: CandidateGroup): string {
@@ -39,10 +56,11 @@ export function groupLabel(group: CandidateGroup): string {
  * rename input when a harness would refuse the name, and the licence
  * evidence for marketplace-origin content.
  *
- * A candidate with nothing selectable lists where its bytes were: the
- * location is what says why they cannot be taken — a marketplace nobody
- * fetched, an agent in a format a catalog cannot store — and the row's own
- * "not readable now" says only that they cannot. */
+ * A candidate with nothing selectable lists where its bytes were and the
+ * reason core gave for each: a marketplace nobody fetched, an agent in a
+ * format a catalog cannot store. The label beside the name says only that
+ * nothing here can be imported, because "not readable" would be the wrong
+ * cause for a Codex agent, which reads fine. */
 export function MineImportRow({
   candidate,
   choice,
@@ -75,15 +93,15 @@ export function MineImportRow({
         <span className="font-medium">{candidate.name}</span>
         <span className="text-xs text-muted-foreground">
           {candidate.kind}
-          {chosen ? ` · ${groupLabel(chosen.group)}` : " · not readable now"}
+          {chosen
+            ? ` · ${groupLabel(chosen.group)}`
+            : " · nothing kendex can import"}
         </span>
       </div>
       {readable.length === 0 ? (
         <ul className="pl-6 text-xs text-warning">
-          {candidate.origins.map((origin) => (
-            <li key={`${origin.group.group}:${origin.locations.join(" = ")}`}>
-              {origin.locations.join(" = ")}
-            </li>
+          {refusals(candidate.origins).map((refusal) => (
+            <li key={refusal}>{refusal}</li>
           ))}
         </ul>
       ) : null}
