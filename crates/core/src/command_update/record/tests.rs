@@ -147,6 +147,11 @@ fn a_run_acting_as_root_writes_no_record() {
     );
 }
 
+/// The shape both recorders share, so the table below names one type
+/// instead of spelling the signature inline.
+#[cfg(unix)]
+type Recorder = dyn Fn(&Env, &Path) -> Result<(), String>;
+
 /// The guard is wired to this process's own uid and not to a constant,
 /// on every entry that writes a record.
 ///
@@ -168,11 +173,6 @@ fn a_run_acting_as_root_writes_no_record() {
 /// answering `false` always is the defect this change exists to close, and
 /// fails it under a root runner. Neither uid is skipped and neither passes
 /// for free.
-/// The shape both recorders share, so the table below names one type
-/// instead of spelling the signature inline.
-#[cfg(unix)]
-type Recorder = dyn Fn(&Env, &Path) -> Result<(), String>;
-
 #[test]
 #[cfg(unix)]
 fn every_public_write_follows_this_process_uid() {

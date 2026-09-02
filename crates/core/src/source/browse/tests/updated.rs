@@ -11,7 +11,7 @@ use crate::env::{Env, FakeOs};
 use crate::process::Hardened;
 
 use super::repo::git;
-use super::test_util::rooted;
+use crate::test_util::rooted;
 
 const REPO: &str = "owner/dated";
 

@@ -9,9 +9,10 @@ name: Skill Tests
 # the ui lane and every cargo lane run on pull_request as well as in the merge
 # queue and on the push to main, so a green PR has proven what the queue
 # re-proves and an ejection — dequeue, fix, requeue, pay the merge latency
-# again — is rare instead of routine. Whatever does NOT run on every event carries its own
-# `if:` saying why. The review gate never conditions CI (it answers
-# review-only; see the review-gate skill) — no gate job reads the predicate.
+# again — is rare instead of routine. Whatever does NOT run on every event
+# carries its own `if:` saying why. The review gate never conditions CI (it
+# answers review-only; see the review-gate skill) — no gate job reads the
+# predicate.
 #
 # Every job names its GitHub-hosted runner in `runs-on:`, the same label on
 # every event. The repository is public, so those runners are free, and shard
@@ -400,13 +401,19 @@ jobs:
       - name: vitest
         working-directory: ui
         run: npm test
-      # `check` is `tsc --noEmit && biome check src`, so this step and the one
-      # above are the three checks guard runs over ui/. always(): one run names
-      # every ui failure instead of a red suite hiding a type error.
-      - name: tsc and biome
+      # vitest, tsc and biome are three steps here for the same reason guard
+      # runs them as three lanes: `npm run check` is `tsc --noEmit && biome
+      # check src`, so a type error short-circuits biome and one run would
+      # name only the first failure. always(): a red step above must not hide
+      # the ones after it.
+      - name: tsc
         if: always()
         working-directory: ui
-        run: npm run check
+        run: npx --no-install tsc --noEmit
+      - name: biome
+        if: always()
+        working-directory: ui
+        run: npx --no-install biome check src
 
   # AGGREGATOR — this job's name is the ruleset's required context, so the
   # `(shell + node)` in it is frozen history: renaming it to match today's
@@ -516,11 +523,12 @@ jobs:
       # Rides this job rather than taking one of its own: the name above is
       # already a required context, so clippy gates a merge here with no admin
       # ruleset edit. `--all-targets` is the point — without it the workspace
-      # denials in Cargo.toml (`unwrap_used`, `expect_used`, `print_stdout`, …)
-      # never reach test targets, which is most of the code in this repo.
-      # clippy.toml already allows them inside `#[test]` bodies, so what stays
-      # denied is a panic path in a helper. always(): a failing test above must
-      # not swallow it.
+      # denials in Cargo.toml never reach test targets, which is most of the
+      # code in this repo. clippy.toml allows `unwrap_used`, `expect_used`,
+      # `print_stdout` and `print_stderr` inside `#[test]` bodies, so those
+      # catch a helper's panic path; `dbg_macro`, `todo`, `unimplemented` and
+      # `too_many_lines` stay denied there too. always(): a failing test above
+      # must not swallow it.
       - name: cargo clippy
         if: always()
         env:

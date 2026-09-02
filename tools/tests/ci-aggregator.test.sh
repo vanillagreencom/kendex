@@ -20,7 +20,8 @@ trap 'rm -rf "$SCRATCH"' EXIT
 # Prints one line per `needs` entry of the aggregator that no step compares
 # against "success"; prints nothing when every entry is asserted. A workflow
 # whose aggregator carries no `needs` list at all fails here too — that is the
-# reader losing its subject, not a clean result.
+# reader losing its subject, not a clean result, and an unterminated flow list
+# lands there as well rather than passing on the entries it managed to read.
 unasserted() { # WORKFLOW_FILE
   awk -v job="$JOB" '
     # Job keys sit at indent 2. Every other line belongs to the job last seen,
@@ -28,7 +29,17 @@ unasserted() { # WORKFLOW_FILE
     /^  [A-Za-z][A-Za-z0-9_-]*:[ \t]*$/ { inblock = ($0 == "  " job ":"); next }
     !inblock { next }
     $0 ~ /^    needs: \[/ {
-      list = $0; sub(/^[^[]*\[/, "", list); sub(/\].*$/, "", list)
+      list = $0; sub(/^[^[]*\[/, "", list)
+      # A flow list may wrap across lines. Read on until the closing bracket,
+      # or the entries after the break are never checked. A continuation that
+      # is the next mapping key, or EOF, means the bracket never closed: drop
+      # the list so END reports a lost subject rather than a partial roster.
+      while (list !~ /\]/) {
+        if ((getline continuation) <= 0) { list = ""; break }
+        if (continuation ~ /^[ \t]*[A-Za-z_][A-Za-z0-9_-]*:/) { list = ""; break }
+        list = list " " continuation
+      }
+      sub(/\].*$/, "", list)
       n = split(list, entries, ",")
       for (i = 1; i <= n; i++) {
         gsub(/^[ \t]+|[ \t]+$/, "", entries[i])
@@ -79,5 +90,18 @@ grep -v '\[ "\$UI_RESULT" = "success" \]' "$WORKFLOW" >"$SCRATCH/no-compare.yml"
 cmp -s "$WORKFLOW" "$SCRATCH/no-compare.yml" && fail "the no-compare mutation matched nothing — it no longer removes the comparison it names"
 [ "$(unasserted "$SCRATCH/no-compare.yml")" = 'ui-tests: needs.ui-tests.result is read into $UI_RESULT and never compared against success' ] \
   || fail "a needs entry whose result is read but never compared was not reported"
+
+# The same forgotten step, with the needs list wrapped across two lines: a
+# reader that takes the roster from one line drops every entry after the break
+# and calls the workflow clean. Both mutations at once, because the wrap on its
+# own is a legitimate workflow the reader must still read whole.
+grep -v 'UI_RESULT' "$WORKFLOW" \
+  | awk '$0 == "    needs: [skill-suites-shard, ui-tests]" {
+      print "    needs: [skill-suites-shard,"; print "      ui-tests]"; next
+    } { print }' >"$SCRATCH/wrapped.yml"
+grep -q '^      ui-tests\]$' "$SCRATCH/wrapped.yml" \
+  || fail "the wrapped-needs mutation matched nothing — the aggregator's needs list is no longer the line it rewrites"
+[ "$(unasserted "$SCRATCH/wrapped.yml")" = "ui-tests: no step reads needs.ui-tests.result" ] \
+  || fail "an entry after a wrapped needs list's line break was not checked"
 
 echo "ci-aggregator: every job the aggregator needs is asserted by name"
