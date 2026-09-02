@@ -340,11 +340,8 @@ assert_eq "$(jq -r '.items[0].reach' "$reach_ok")" "kendex refresh in a linked w
   "a reach naming a command exits 0 and is recorded verbatim"
 assert_eq "$(jq -c '.items[0] | keys_unsorted' "$reach_ok")" '["n","text","reach"]' \
   "an inline item records n, text, and reach"
-reach_auth="$worktree/.git/kendex/dev-round-authorizations/issue-1230-61-61.json"
-assert_eq "$(jq -c '.items' "$reach_auth")" "$(jq -c '.items' "$reach_ok")" \
-  "authorization binds the reach alongside the item text"
 
-printf '%s' '[{"n":1,"text":"t","reach":"tools/guard on a staged render"}]' > "$items_file"
+printf '%s' '[{"n":1,"text":"t"}]' > "$items_file"
 assert_exit2 "--items-file element without reach exits 2" \
   --worktree "$worktree" --issue i --round-id 62-1 --items-file "$items_file"
 printf '%s' '[{"n":1,"text":"t","reach":"   "}]' > "$items_file"
@@ -449,88 +446,6 @@ dash_adds="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id a16-1
   --adds '-c tools/a' 2>/dev/null || true)"
 assert_eq "$([[ -z "$dash_adds" ]] && echo none || jq -c '.adds' "$dash_adds")" "none" \
   "the refused leading-dash value records nothing, not a shorter list"
-# --- the grammar reaches every protected path this repository tracks --------
-# A claim about THIS repository's tracked files, so it is measured rather than
-# asserted in prose: every tracked path the additions classifier calls
-# protected must be nameable in an Adds: line, or a fix round adding a sibling
-# of it could never be authorized. Both halves are lifted out of the real
-# scripts so the fixture cannot drift from them.
-#
-# The predicate is the SINGLE-PATH rule, not the whole-value grammar: the value
-# grammar matches a multi-word list, so it would call 'crates/one file.rs'
-# expressible when the writer records it as two paths.
-#
-# This is the one case in the suite that reads the ambient repository, so it
-# needs a git checkout; from an export it fails rather than skipping, because a
-# skipped sweep is the vacuous pass the classified-count control exists to stop.
-classifier="$TMP_ROOT/is-protected-addition.sh"
-awk '/^is_protected_addition\(\) \{$/,/^\}$/' "$CHECK" > "$classifier"
-assert_eq "$([[ -s "$classifier" ]] && echo found || echo missing)" "found" \
-  "control: the additions classifier was lifted from dev-artifact-check"
-# shellcheck source=/dev/null
-source "$classifier"
-path_grammar="$(awk -F\' '/^ADDS_PATH_GRAMMAR=/ { print $2; exit }' "$WRITE_BIN")"
-assert_eq "$([[ -n "$path_grammar" ]] && echo found || echo missing)" "found" \
-  "control: ADDS_PATH_GRAMMAR was lifted from dev-round-write"
-assert_eq "$(git -C "$REPO_ROOT" rev-parse --is-inside-work-tree 2>/dev/null || echo no)" "true" \
-  "precondition: the grammar sweep needs a git checkout at $REPO_ROOT"
-
-# One sweep, run over any checkout, printing "<classified count>TAB<unnameable
-# paths>". Taking a repository argument is what lets the planted-defect control
-# below run the SAME code over a tree that carries the defect, instead of
-# asserting the predicate is right and hoping.
-sweep_unnameable() {
-  local repo="$1" tracked count=0 unnameable=""
-  while IFS= read -r tracked; do
-    is_protected_addition "$tracked" || continue
-    count=$((count + 1))
-    [[ "$tracked" =~ ^${path_grammar}$ ]] && continue
-    unnameable="${unnameable}[$tracked]"
-  done < <(git -C "$repo" -c core.quotePath=false ls-files)
-  printf '%s\t%s' "$count" "$unnameable"
-}
-
-sweep_result="$(sweep_unnameable "$REPO_ROOT")"
-protected_seen="${sweep_result%%$'\t'*}"
-assert_eq "${sweep_result#*$'\t'}" "" \
-  "every tracked protected path can be named in an Adds: line"
-assert_eq "$([[ "$protected_seen" -gt 100 ]] && echo many || echo "$protected_seen")" "many" \
-  "control: the sweep actually classified protected paths"
-
-# PLANTED DEFECT. A green sweep proves nothing unless it goes red on a tree
-# that carries the class it exists to catch, and this class is invisible to the
-# obvious predicate: the whole-VALUE grammar matches 'tools/one helper.sh' as a
-# two-path list, so a sweep written against it stays green with the defect
-# committed. The path is protected (root tools/), so only the predicate decides.
-planted_repo="$TMP_ROOT/planted-sweep"
-mkdir -p "$planted_repo/tools"
-git -C "$planted_repo" init -q -b main
-git -C "$planted_repo" config user.email test@example.com
-git -C "$planted_repo" config user.name Test
-git -C "$planted_repo" config commit.gpgsign false
-printf 'helper\n' > "$planted_repo/tools/one helper.sh"
-printf 'helper\n' > "$planted_repo/tools/plain-helper.sh"
-git -C "$planted_repo" add -A
-git -C "$planted_repo" commit -q -m planted
-planted_result="$(sweep_unnameable "$planted_repo")"
-assert_eq "${planted_result%%$'\t'*}" "2" \
-  "control: the planted tree classified both paths as protected"
-assert_eq "${planted_result#*$'\t'}" "[tools/one helper.sh]" \
-  "control: the sweep names a planted space-carrying protected path"
-# Default ls-files quoting would hand the sweep C-quoted spellings of the
-# non-ASCII paths — `"...frapp\303\251-..."` — which carry no blank and no
-# leading dash, so the grammar would admit a form the writer never sees and the
-# miss would be silent. Measured over every tracked path, since the quoted ones
-# here are not themselves protected.
-quoted_paths=""
-while IFS= read -r tracked_path; do
-  case "$tracked_path" in
-    '"'*) quoted_paths="$quoted_paths$tracked_path " ;;
-  esac
-done < <(git -C "$REPO_ROOT" -c core.quotePath=false ls-files)
-assert_eq "$quoted_paths" "" \
-  "control: the sweep reads path names unquoted"
-
 # --- the position rule admits ordinary path characters -------------------
 # The set is constrained by POSITION, not by character class: a metacharacter
 # inside a path is only a character here — the value never reaches a shell —

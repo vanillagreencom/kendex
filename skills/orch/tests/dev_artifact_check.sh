@@ -321,7 +321,7 @@ git -C "$rr_wt" commit -q --allow-empty -m base
 init_growth_state "$STATE" "$rr_wt" issue-9 seed 1000000
 rr_head="$(git -C "$rr_wt" rev-parse HEAD)"
 "$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 \
-  --item 1 "fix nil deref" "tools/guard on a staged render" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tools/guard on a staged render" "tests/auth.rs expiry case" >/dev/null
+  --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
 "$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items-from-round)" "valid" \
@@ -332,7 +332,7 @@ assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-
 "$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$rr_head" \
   --validate pass --item 1 Applied a >/dev/null
 "$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 8-9 \
-  --item 1 "fix nil deref" "tools/guard on a staged render" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tools/guard on a staged render" "tests/auth.rs expiry case" >/dev/null
+  --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
 assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 8-9 --expect-items-from-round)" "incomplete" \
   "artifact missing a persisted delegated item → incomplete"
 set +e
