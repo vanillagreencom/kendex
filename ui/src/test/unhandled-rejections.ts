@@ -18,6 +18,7 @@
 // default and does not fail the run, so it stays a debugging aid: this is
 // what makes the run red.
 import { afterAll } from "vitest";
+import { resolveClosingWindowMs } from "./closing-window";
 
 const env = (
   globalThis as unknown as {
@@ -25,10 +26,10 @@ const env = (
   }
 ).process.env;
 
-/** How long the file stays open after its last case. A rejection scheduled
- *  beyond it still escapes; the controls widen it through the environment so
- *  their fixtures are not racing worker teardown. */
-const CLOSING_WINDOW_MS = Number(env.KENDEX_CLOSING_WINDOW_MS) || 50;
+// A rejection scheduled beyond the window still escapes. The controls widen
+// it so their fixtures are not racing worker teardown; every real test file
+// gets the default, which `closing-window.ts` pins.
+const CLOSING_WINDOW_MS = resolveClosingWindowMs(env.KENDEX_CLOSING_WINDOW_MS);
 
 // Captured before any test can call `vi.useFakeTimers()`: a wait on a fake
 // clock nobody advances never returns.

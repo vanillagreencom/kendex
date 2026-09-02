@@ -13,9 +13,9 @@ export default defineConfig({
   },
   clearScreen: false,
   test: {
-    // Every test file gets the unhandled-rejection guard; the environment
-    // stays a per-file choice, on the `// @vitest-environment jsdom` line
-    // the files that need a DOM carry.
+    // Every test file gets the closing window; the environment stays a
+    // per-file choice, on the `// @vitest-environment jsdom` line the files
+    // that need a DOM carry.
     setupFiles: ["./src/test/unhandled-rejections.ts"],
   },
   server: {

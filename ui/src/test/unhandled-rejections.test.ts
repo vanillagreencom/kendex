@@ -44,12 +44,16 @@ const node = (
       getBuiltinModule(id: "node:url"): {
         fileURLToPath(url: URL): string;
       };
+      getBuiltinModule(id: "node:fs"): {
+        readdirSync(path: string): string[];
+      };
     };
   }
 ).process;
 
 const { spawnSync } = node.getBuiltinModule("node:child_process");
 const { fileURLToPath } = node.getBuiltinModule("node:url");
+const { readdirSync } = node.getBuiltinModule("node:fs");
 
 // Converted from URLs, not read off `.pathname`, which keeps a path's spaces
 // percent-encoded and leads with a slash before a Windows drive letter.
@@ -69,9 +73,9 @@ const WIDE_WINDOW_MS = 2500;
 
 type Run = { status: number | null; output: string };
 
-// Every assertion below passes the child's whole output as `expect`'s message
-// argument: a nested red is rare, and losing what the child printed is the
-// expensive outcome.
+// The status assertions pass the child's whole output as `expect`'s message
+// argument, because a number would not show it. The output assertions do not:
+// a failing `toContain` already prints the whole subject.
 
 /** One fixture under one config, as a real nested `vitest run`. Vitest marks
  *  its workers through the environment, so a child that inherited ours would
@@ -81,9 +85,13 @@ function runFixture(
   fixture: string,
   closingWindowMs?: number,
 ): Run {
+  // The window comes from the case, never from the environment this run was
+  // started in: an exported KENDEX_CLOSING_WINDOW_MS would otherwise ride
+  // into every nested run that declares none.
   const env: Record<string, string> = {};
+  const ambient = /^(VITEST|KENDEX_CLOSING_WINDOW_MS$)/;
   for (const [key, value] of Object.entries(node.env)) {
-    if (value !== undefined && !key.startsWith("VITEST")) env[key] = value;
+    if (value !== undefined && !ambient.test(key)) env[key] = value;
   }
   if (closingWindowMs !== undefined) {
     env.KENDEX_CLOSING_WINDOW_MS = String(closingWindowMs);
@@ -110,8 +118,8 @@ describe("a rejection that settles after the file ended", () => {
     "is dropped by vitest on its own",
     () => {
       const run = runFixture("unguarded", "late-rejection");
-      expect(run.output, run.output).toContain("Test Files  1 passed (1)");
-      expect(run.output, run.output).not.toContain("late rejection fixture");
+      expect(run.output).toContain("Test Files  1 passed (1)");
+      expect(run.output).not.toContain("late rejection fixture");
       expect(run.status, run.output).toBe(0);
     },
     CASE_TIMEOUT_MS,
@@ -121,9 +129,9 @@ describe("a rejection that settles after the file ended", () => {
     "reddens the run once the closing window holds the file open",
     () => {
       const run = runFixture("guarded", "late-rejection", WIDE_WINDOW_MS);
-      expect(run.output, run.output).toContain("Unhandled Rejection");
-      expect(run.output, run.output).toContain("late rejection fixture");
-      expect(run.output, run.output).toContain("Errors  1 error");
+      expect(run.output).toContain("Unhandled Rejection");
+      expect(run.output).toContain("late rejection fixture");
+      expect(run.output).toContain("Errors  1 error");
       expect(run.status, run.output).toBe(1);
     },
     CASE_TIMEOUT_MS,
@@ -136,9 +144,9 @@ describe("a rejection no hook of ours could reach", () => {
     { timeout: CASE_TIMEOUT_MS },
     (config) => {
       const run = runFixture(config, "skipped-file");
-      expect(run.output, run.output).toContain("Unhandled Rejection");
-      expect(run.output, run.output).toContain("skipped file fixture");
-      expect(run.output, run.output).toContain("Test Files  1 skipped (1)");
+      expect(run.output).toContain("Unhandled Rejection");
+      expect(run.output).toContain("skipped file fixture");
+      expect(run.output).toContain("Test Files  1 skipped (1)");
       expect(run.status, run.output).toBe(1);
     },
   );
@@ -150,11 +158,11 @@ describe("a rejection that lands while a later case is running", () => {
     { timeout: CASE_TIMEOUT_MS },
     (config) => {
       const run = runFixture(config, "mid-file-rejection");
-      expect(run.output, run.output).toContain("Unhandled Rejection");
-      expect(run.output, run.output).toContain("mid-file rejection fixture");
-      expect(run.output, run.output).toContain("Tests  2 passed (2)");
-      expect(run.output, run.output).toContain("Errors  1 error");
-      expect(run.output, run.output).toContain(
+      expect(run.output).toContain("Unhandled Rejection");
+      expect(run.output).toContain("mid-file rejection fixture");
+      expect(run.output).toContain("Tests  2 passed (2)");
+      expect(run.output).toContain("Errors  1 error");
+      expect(run.output).toContain(
         "It doesn't mean the error was thrown inside the file itself",
       );
       expect(run.status, run.output).toBe(1);
@@ -167,9 +175,44 @@ describe("a case that leaves fake timers installed", () => {
     "still reaches a verdict, because the window waits on the real clock",
     () => {
       const run = runFixture("guarded", "fake-timers");
-      expect(run.output, run.output).toContain("Test Files  1 passed (1)");
+      expect(run.output).toContain("Test Files  1 passed (1)");
       expect(run.status, run.output).toBe(0);
     },
     CASE_TIMEOUT_MS,
   );
+});
+
+describe("an exported KENDEX_CLOSING_WINDOW_MS", () => {
+  it(
+    "does not reach a run that declared no window",
+    () => {
+      // 15s is past vitest's 10s hook timeout, so a child that read it would
+      // die on "Hook timed out in 10000ms" instead of passing at the default.
+      node.env.KENDEX_CLOSING_WINDOW_MS = "15000";
+      try {
+        const run = runFixture("guarded", "fake-timers");
+        expect(run.output).toContain("Test Files  1 passed (1)");
+        expect(run.status, run.output).toBe(0);
+      } finally {
+        delete node.env.KENDEX_CLOSING_WINDOW_MS;
+      }
+    },
+    CASE_TIMEOUT_MS,
+  );
+});
+
+// Every control above passes `--config`, so none of them reads the config a
+// plain `vitest run` resolves — and vitest prefers `vitest.config.*` over
+// `vite.config.ts`. Measured: with a `vitest.config.ts` present that does not
+// carry `setupFiles`, a real test file runs at `setup 0ms` while every
+// control here stays green. No fixture can be pointed at the resolved config
+// — vitest has no `--include` flag and the default include never matches a
+// `*.fixture.ts` — so what is pinned is that nothing shadows it.
+describe("the config a plain vitest run resolves", () => {
+  it("is the one the controls pin, unshadowed", () => {
+    const shadows = readdirSync(UI_ROOT).filter((name) =>
+      name.startsWith("vitest.config."),
+    );
+    expect(shadows).toEqual([]);
+  });
 });

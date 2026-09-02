@@ -11,6 +11,10 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noEmit": true,
+    // `guarded.config.ts` imports the root vite config by path; without the
+    // extension Vite's native config loader warns that the import will stop
+    // resolving, and with it TypeScript needs this. Legal under `noEmit`.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "resolveJsonModule": true,
     "isolatedModules": true,

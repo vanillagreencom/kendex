@@ -2,7 +2,7 @@
 // `test.setupFiles`, not a copy: delete that line and these runs stop
 // differing from the unguarded ones.
 import { defineConfig } from "vitest/config";
-import base from "../../../vite.config";
+import base from "../../../vite.config.ts";
 
 export default defineConfig({
   test: {
