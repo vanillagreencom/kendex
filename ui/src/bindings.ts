@@ -1589,8 +1589,10 @@ export type InstallState =
  *  Packages row, a set's member row, and the available-package page
  *  (through [`PackagePreview::state`]) all say why instead, so none
  *  offers an install the engine would refuse for the same unreadable
- *  record. The set page's Install all is about the set, not a package,
- *  and reads [`BundleDetail::records_unreadable`].
+ *  record. The state answers for the BROWSED scope: an install a page
+ *  redirects into a different scope is not yet judged against that
+ *  destination's record. The set page's Install all is about the set,
+ *  not a package, and reads [`BundleDetail::records_unreadable`].
  */
 "unknown";
 
@@ -1976,6 +1978,14 @@ export type MarketplaceRow = {
 	meta: MarketplaceMeta | null,
 	/**  How the catalog's items were decided, where readable. */
 	mode: CatalogMode | null,
+	/**
+	 *  This row's scope has no readable lock, so every installed state it
+	 *  alone would settle reads Unknown. Carried on the row rather than
+	 *  joined from the updates read: the Packages tab says so above its
+	 *  table, and a fact that arrives with the rows it describes is
+	 *  refreshed by the same read instead of by another surface's clock.
+	 */
+	recordsUnreadable: boolean,
 };
 
 export type Method = "symlink" | "copy";

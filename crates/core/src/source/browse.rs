@@ -28,6 +28,7 @@ mod safety;
 mod summary;
 pub use catalog::Catalog;
 use catalog::browsable;
+pub use opened::records_unreadable;
 pub(crate) use opened::{Browsed, open, open_repo};
 pub use preview::{PackagePreview, package_file, package_preview};
 pub use safety::{PackageSafety, package_safety};
@@ -58,8 +59,10 @@ pub enum InstallState {
     /// Packages row, a set's member row, and the available-package page
     /// (through [`PackagePreview::state`]) all say why instead, so none
     /// offers an install the engine would refuse for the same unreadable
-    /// record. The set page's Install all is about the set, not a package,
-    /// and reads [`BundleDetail::records_unreadable`].
+    /// record. The state answers for the BROWSED scope: an install a page
+    /// redirects into a different scope is not yet judged against that
+    /// destination's record. The set page's Install all is about the set,
+    /// not a package, and reads [`BundleDetail::records_unreadable`].
     Unknown,
 }
 

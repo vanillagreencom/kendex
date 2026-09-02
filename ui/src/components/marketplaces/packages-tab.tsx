@@ -27,7 +27,6 @@ import {
   useMarketplacesStore,
 } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
-import { useUpdatesStore } from "@/stores/updates";
 
 const KINDS: ItemKind[] = [
   "agent",
@@ -47,11 +46,6 @@ export function PackagesTab() {
   const rows = useMarketplacesStore((s) => s.rows);
   const packages = useMarketplacesStore((s) => s.packages);
   const readErrors = useMarketplacesStore((s) => s.readErrors);
-  // Which places have no readable lock is the update read's answer, held
-  // store-wide from the app's startup read — the same fact the Updates
-  // page and the sidebar badge draw from, rather than a second reading of
-  // it off these rows.
-  const unreadable = useUpdatesStore((s) => s.unreadable);
   const loadPackages = useMarketplacesStore((s) => s.loadPackages);
   const searchFocus = useNavStore((s) => s.searchFocus);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -103,8 +97,8 @@ export function PackagesTab() {
   // marketplace, and so a row saying nothing about its installed state says
   // why. One line per place — see [troubledScopes].
   const troubled = useMemo(
-    () => troubledScopes(rows, readErrors, unreadable),
-    [rows, readErrors, unreadable],
+    () => troubledScopes(rows, readErrors),
+    [rows, readErrors],
   );
   const marketplaceNames = [...new Set(rows.map((row) => row.name))];
   const whereOptions = [

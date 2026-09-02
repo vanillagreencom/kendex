@@ -1,4 +1,4 @@
-import type { MarketplaceRow, Scope, UnreadableScope } from "@/bindings";
+import type { MarketplaceRow, Scope } from "@/bindings";
 import {
   SEE_PROBLEMS_LABEL,
   unreadableRecordsLine,
@@ -15,7 +15,7 @@ import { useNavStore } from "@/stores/nav";
  * projects printed three identical lines naming nothing a reader could act
  * on. `sources` is a marketplace here that refused to load, so its packages
  * are missing from the table; `records` is this place's lock, which the
- * update read reports for the place as a whole and the Problems page
+ * overview read reports for the place as a whole and the Problems page
  * explains. A place with both is named once, under `sources` — the missing
  * rows are the larger fact. */
 export interface TroubledScope {
@@ -25,18 +25,19 @@ export interface TroubledScope {
   records: boolean;
 }
 
-/** `records` is read off the update read's own list of places it could not
- * read, not inferred from the rows: a row's "unknown" state is one symptom
- * of the unreadable lock, and it is missing in exactly the case the line
- * matters most — a place whose marketplaces ALSO failed has no cached
- * packages to carry the symptom, so an inference from rows leaves it with
- * the sources line and no way to the reason. */
+/** `records` is the subscription row's own `recordsUnreadable`, the answer
+ * the overview read carried for the place the row lives in — not inferred
+ * from the package rows and not joined from the update read. Inference
+ * fails in exactly the case the line matters most: a place whose
+ * marketplaces ALSO failed has no cached packages to carry the "unknown"
+ * symptom, so it would get the sources line and no way to the reason. A
+ * join fails on freshness: the update read runs on its own clock, so a
+ * place registered since it last landed shows unknown rows under no line
+ * at all. Carried on the row, the fact lands with the rows it describes. */
 export function troubledScopes(
   rows: MarketplaceRow[],
   readErrors: Record<string, string>,
-  unreadable: UnreadableScope[],
 ): TroubledScope[] {
-  const noRecords = new Set(unreadable.map((place) => scopeLabel(place.scope)));
   const places = new Map<string, TroubledScope>();
   for (const row of rows) {
     if (!row.enabled) continue;
@@ -45,8 +46,9 @@ export function troubledScopes(
       key,
       scope: row.scope,
       sources: false,
-      records: noRecords.has(key),
+      records: false,
     };
+    if (row.recordsUnreadable) place.records = true;
     const market = marketKey(row.scope, row.name);
     if (readErrors[readErrorKey(market, "packages")]) place.sources = true;
     if (place.sources || place.records) places.set(key, place);

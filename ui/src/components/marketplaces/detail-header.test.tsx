@@ -49,6 +49,7 @@ const row: MarketplaceRow = {
   counts: null,
   meta: null,
   mode: null,
+  recordsUnreadable: false,
 };
 
 const render = () =>

@@ -40,8 +40,22 @@ pub(crate) struct Browsed {
 fn records(env: &Env, scope: &Scope) -> Result<(Manifest, Option<Lock>)> {
     let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
         .unwrap_or_default();
-    let lock = crate::lock::load(&crate::lock::lock_path(env, scope)).ok();
-    Ok((manifest, lock))
+    Ok((manifest, lock_of(env, scope)))
+}
+
+/// This scope's lock, or `None` where it could not be read. The one place
+/// that decides what "unreadable" means, so every carrier of the fact —
+/// [`Browsed::lock_unreadable`] and [`records_unreadable`] — answers alike.
+fn lock_of(env: &Env, scope: &Scope) -> Option<Lock> {
+    crate::lock::load(&crate::lock::lock_path(env, scope)).ok()
+}
+
+/// Whether this scope's lock could be read, asked without opening a
+/// catalog: a listing carries the fact for the scope each row lives in, so
+/// the answer arrives with the rows it describes rather than from a read on
+/// another clock.
+pub fn records_unreadable(env: &Env, scope: &Scope) -> bool {
+    lock_of(env, scope).is_none()
 }
 
 pub(crate) fn open(env: &Env, catalog: &Catalog) -> Result<Browsed> {

@@ -271,3 +271,21 @@ fn the_set_carries_the_scopes_answer_even_where_no_member_shows_it() {
         "no member row carries the fact, which is why the set must"
     );
 }
+
+/// The Marketplaces overview lists subscriptions without opening a catalog,
+/// and the Packages tab says which place has no readable record above that
+/// table. Asking the scope directly is what lets the listing carry the fact
+/// with the rows it describes — a place registered since the update read
+/// last landed would otherwise show unknown rows under no line at all.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_scope_answers_for_its_records_without_a_catalog_open() {
+    let f = fixture();
+    assert!(
+        !browse::records_unreadable(&f.env, &f.scope),
+        "the control: a readable record says so"
+    );
+
+    fs::write(&f.lock_path, "{not json").unwrap();
+    assert!(browse::records_unreadable(&f.env, &f.scope));
+}

@@ -605,10 +605,10 @@ lives in one capability table read by core and UI.
   from the scope's manifest and lock on every call — installed is a lock
   entry from this subscription, "partly installed (2 of 6)" is counted
   from a bundle's members; a lock this build refuses lists the catalog all
-  the same, every row it alone would settle Unknown and every install surface gated on that — a set's
-  Install all on the set's own flag, since a dropped member reads NotOffered either way; with no subscription the join answers
-  Available and judges name clashes against the personal scope. A name another source holds is surfaced on
-  the row (`collision`); the refusal stays in the engine (invariant 4). A
+  the same, every row it alone would settle Unknown and every install surface reading that scope's own record gated on it — a set's
+  Install all on the set's own flag, since a dropped member reads NotOffered either way; an install redirected into another scope is
+  not yet gated on the destination's record. With no subscription the join answers Available and judges name clashes against the
+  personal scope. A name another source holds is surfaced on the row (`collision`); the refusal stays in the engine (invariant 4). A
   bare repository is fetched by `remote::sync` into the store under the
   canonical `owner/repo` every GitHub spelling folds to — the key Subscribe
   is prefilled with; only GitHub opens blind (`NotBrowsable` otherwise); a
