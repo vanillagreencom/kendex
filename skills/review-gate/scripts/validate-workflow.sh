@@ -229,7 +229,7 @@ ok "one adopted writer workflow: $adopted"
 # is what Actions runs, and an untracked target is a red writer on every leg.
 exec_target="$(sed -n 's/^[[:space:]]*exec[[:space:]]\{1,\}\([^[:space:]]*review-writer\.sh\)[[:space:]]*$/\1/p' "$adopted" | head -n 1)"
 if [ -z "$exec_target" ]; then
-  bad "$adopted names no exec target — the discovery above matched, so this is a parse gap in this tool rather than a repo fault; report it with \`kendex report\`"
+  bad "$adopted names no exec target — the discovery above matched, so this is a parse gap in this tool rather than a repo fault; report it to the package owner"
 elif [ -L "$exec_target" ]; then
   bad "$adopted execs $exec_target, which is a SYMLINK — CI checks out the link and runs whatever sits at the other end, which is nothing when the target is untracked or outside the repository. Commit the engine at that path"
 elif git ls-files --error-unmatch -- "$exec_target" >/dev/null 2>&1; then

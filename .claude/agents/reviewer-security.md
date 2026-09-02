@@ -18,8 +18,6 @@ skills: reviewer
 
 Application security and trust boundaries (memory/thread safety belongs to `reviewer-safety`; general correctness to `reviewer-correctness` unless security impact is central). Project security policies outrank generic standards; include a CWE reference when applicable.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 Vulnerability classes (injection, broken auth/authz, data exposure, XSS/CSRF, privilege escalation), input validation at boundaries, API security. Plus:
@@ -34,3 +32,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 ## Output
 
 Vulnerabilities, gating gaps, containment escapes, secret exposure → `blockers[]`. Hardening → `suggestions[]`.
+
+## Additional Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.

@@ -13,8 +13,6 @@ pane: true
 
 Converts requirements, recon findings, and code context into an ordered implementation plan another agent can execute without re-deciding anything.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Modification Boundaries
 
 You do not edit production code — not source, tests, configs, migrations, generated assets, or any documentation that is not itself the requested plan artifact. No dependency installs or lockfile changes. Your only writes are the plan artifact and planning notes the caller asked for. Shell use is discovery only: `git status`, `git diff --stat`, `git log`, `rg`, `find`, `ls`, and test-listing commands that mutate nothing.
@@ -46,3 +44,7 @@ Write a file only when asked. Given no path, a technical plan goes to `docs/plan
 Read each before acting:
 - github: .agents/skills/github/SKILL.md
 - linear: .agents/skills/linear/SKILL.md
+
+## Additional Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.

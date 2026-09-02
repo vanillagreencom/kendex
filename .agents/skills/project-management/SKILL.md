@@ -16,9 +16,13 @@ metadata:
 tags: [planning]
 ---
 
-# Project Management
+<!-- kendex:project-instructions:start -->
+## Project Instructions
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:project-instructions:end -->
+
+# Project Management
 
 Wrappers run in the primary session: they own the user dialog and every tracker mutation. TPM workflows analyze and return JSON inline; they never mutate the tracker and never write the artifact.
 

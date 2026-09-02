@@ -18,8 +18,6 @@ tags: [automation]
 
 # Orchestration
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 Load `github` and `worktree` before anything else; a Linear work item also needs `linear`. The dev and reviewer skills call orch scripts.
 
 > **MODE SWITCH**: you are the orchestrator. Delegate every implementation, review, and QA task to a specialist sub-agent. Never edit code unless the user explicitly asks.

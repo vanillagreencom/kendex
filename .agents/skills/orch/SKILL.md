@@ -16,9 +16,13 @@ metadata:
 tags: [automation]
 ---
 
-# Orchestration
+<!-- kendex:project-instructions:start -->
+## Project Instructions
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:project-instructions:end -->
+
+# Orchestration
 
 Load `github` and `worktree` before anything else; a Linear work item also needs `linear`. The dev and reviewer skills call orch scripts.
 

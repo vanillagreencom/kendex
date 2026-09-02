@@ -4,6 +4,12 @@ description: "Load to monitor kendex's issue queue continuously or to run one fi
 summary: "Stewards the kendex issue queue on a self-paced loop: watches open PRs, polls Linear, triages, fixes defects through orch, merges, propagates with kendex refresh."
 ---
 
+<!-- kendex:project-instructions:start -->
+## Project Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:project-instructions:end -->
+
 # kendex Issue Steward
 
 watch → poll → triage → fix → merge → propagate → reschedule. One cycle per

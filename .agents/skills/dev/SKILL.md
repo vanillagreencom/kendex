@@ -16,9 +16,13 @@ metadata:
 tags: [automation]
 ---
 
-# Dev Workflows
+<!-- kendex:project-instructions:start -->
+## Project Instructions
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:project-instructions:end -->
+
+# Dev Workflows
 
 orch is the caller and runtime: it owns delegation format, round acceptance, and every shell-shape rule.
 

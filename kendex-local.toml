@@ -8,6 +8,12 @@ enabled = true
 repo = "vanillagreencom/kendex"
 enabled = true
 
+[skill-instructions]
+all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."
+
+[agent-additional-instructions]
+all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."
+
 [install]
 harnesses = [
     "claude",

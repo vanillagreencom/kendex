@@ -18,8 +18,6 @@ skills: reviewer
 
 The highest-value question is not "is there a test?" but "**can this test still fail?**" — hunt for tests that stay green when the behavior they guard is weakened, inverted, or deleted.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 Coverage of changed paths (branches, error paths, boundaries), test quality, determinism, environment assumptions. Leave the underlying product bug to `reviewer-correctness` — you report the missing or weak test. Demand tests that catch real bugs, not coverage theater.
@@ -39,3 +37,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 ## Output
 
 Coverage gaps, vacuous tests, missing must-fail controls, unwired suites → `blockers[]`. Quality improvements, nice-to-have tests → `suggestions[]`.
+
+## Additional Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.

@@ -13,9 +13,13 @@ metadata:
 tags: [planning]
 ---
 
-# Decider
+<!-- kendex:project-instructions:start -->
+## Project Instructions
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:project-instructions:end -->
+
+# Decider
 
 Numbered decision documents indexed in one `INDEX.md` (default `docs/decisions/`), with a search CLI, canonical format, and creation/supersession workflows.
 

@@ -16,9 +16,13 @@ metadata:
 tags: [release]
 ---
 
-# dep-radar — pinned-version sweep, safe auto-update, and capability report
+<!-- kendex:project-instructions:start -->
+## Project Instructions
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:project-instructions:end -->
+
+# dep-radar — pinned-version sweep, safe auto-update, and capability report
 
 **inventory → detect → research → classify → upgrade-with-fixes → report the
 owner tier**.

@@ -94,7 +94,6 @@ There is no flag that turns any of these into a `true`.
 The script is upstream's. `kendex refresh` rewrites the render tree, and a
 local edit to `.agents/skills/harness-ci/` is drift that the next refresh
 overwrites. Send changes to
-[vanillagreencom/kendex](https://github.com/vanillagreencom/kendex) via
-`kendex report`.
+[vanillagreencom/kendex](https://github.com/vanillagreencom/kendex).
 
 Maintainer notes: [DEVELOPMENT.md](DEVELOPMENT.md).

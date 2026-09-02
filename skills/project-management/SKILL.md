@@ -18,8 +18,6 @@ tags: [planning]
 
 # Project Management
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 Wrappers run in the primary session: they own the user dialog and every tracker mutation. TPM workflows analyze and return JSON inline; they never mutate the tracker and never write the artifact.
 
 ## Disposition

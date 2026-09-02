@@ -94,11 +94,8 @@ Once per re-vendor train, on ONE consumer PR, collect upstream-remedy findings
 from BOTH surfaces: the review bodies, AND EVERY vendored-path thread a
 location-bound reviewer left.
 
-`kendex report --skill [NAME] --title [TITLE] --body-file [PATH]` files the
-report. The command is non-interactive: `--title` is required, and exactly one
-of `--body` or `--body-file` must be given — with neither (or both) it exits
-without filing. `--dry-run` prints the decision and the `gh` command it would
-run.
+File the report against the catalog repo through the owner's configured
+route.
 
 The lock is the one judge, and it records provenance for every kind — skills,
 agents, hooks and Pi extensions alike. A name routes upstream when the lock
@@ -211,7 +208,7 @@ the catalog repo and to the PR author out of band. Under a flat rule there is
 no on-PR surface left, which also removes the consolidated-comment fallback
 the vendored template gives a location-bound reviewer.
 
-**The report files against the catalog repo**, by the same `kendex report`
+**The report files against the catalog repo**, through the owner's configured
 route and the same lock ownership rule as § The consumer session's half. An
 item rendered from a third-party catalog carries that catalog in its lock
 entries and reports here instead, so open that issue by hand.

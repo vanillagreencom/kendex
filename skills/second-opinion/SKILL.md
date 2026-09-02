@@ -16,8 +16,6 @@ tags: [review]
 
 # Second Opinion
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPINION_MODELS` roster in priority order and takes the first target that is available and runs a different model — Codex from a Claude Code session, Claude from a Codex session; when nothing eligible remains the run refuses and says why. The full contract — options, target selection and identity rules, environment keys and defaults, review scope and stamping, output clearing and ownership, option syntax, and exit codes — is `second-opinion --help`.
 
 ```bash

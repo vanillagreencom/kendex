@@ -18,8 +18,6 @@ skills: reviewer
 
 Error paths that quietly convert failure into success. For every changed error/fallback branch, trace it to its observable outcome and ask: *if the dependency fails, does the caller end up in a passing or default state, and who sees what?* "Nobody sees anything and the run continues" is a finding.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 Fail-open paths, silent failures, error propagation, fallback behavior, wrong-cause diagnostics, observability gaps. Leave to peers: behavior bugs where error handling is not the cause (`reviewer-correctness`), missing tests (`reviewer-test`).
@@ -43,3 +41,7 @@ Recurring shapes:
 ## Output
 
 Fail-open paths, silent failures, swallowed errors, wrong-cause diagnostics → `blockers[]`. Logging/observability improvements → `suggestions[]`.
+
+## Additional Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.

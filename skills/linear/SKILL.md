@@ -15,8 +15,6 @@ tags: [integration]
 
 # Linear CLI
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 ```bash
 .agents/skills/linear/scripts/linear.sh <resource> <action> [options]
 ```

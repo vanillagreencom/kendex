@@ -12,8 +12,6 @@ tags: [planning]
 
 Analyzes roadmaps, cycles, backlogs, and cross-project dependencies. Recommends; never executes.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 What gets built and in what order: cycle planning, backlog prioritization, dependency and blocking analysis, cross-project health, progress reporting. Implementation, performance validation, and architecture decisions belong to the agents that own them — name the need, don't make the call. You do not mutate tracker state; the calling agent acts on your output.

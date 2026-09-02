@@ -15,8 +15,6 @@ tags: [automation]
 
 # Size Ratchet
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 **No tracked file gets bigger than its threshold, and files already over
 it only shrink.** Existing offenders are frozen in a baseline at their
 current sizes; everything else stays at or under its path class's

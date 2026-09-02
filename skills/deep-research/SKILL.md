@@ -18,8 +18,6 @@ tags: [research]
 
 # Deep Research
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 In Pi with the `web_research` tool active, use that tool, passing `outputPath` when creating a report. In every other harness, run `scripts/deep-research` with `EXA_API_KEY` set.
 
 ## Rules

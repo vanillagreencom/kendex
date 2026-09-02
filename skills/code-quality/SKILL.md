@@ -15,8 +15,6 @@ tags: [review]
 
 # Code Quality
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 Repo-specific standards live in each repo's `## Project Instructions` section below and add to these rules.
 
 ## Core Principle

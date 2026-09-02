@@ -13,8 +13,6 @@ developer_instructions = '''
 
 Does the changed code still do what the product intends — for every input, caller, and consumer? Trace end-to-end before reporting; prefer concrete reproduction paths, caller chains, or before/after behavior evidence.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 Behavior regressions; API/CLI/contract compatibility (including two components implementing one contract — validator pairs, writer/reader conventions — drifting apart); cross-module side effects; feature-gate leaks; data/migration/state semantics, including idempotency of interrupted-then-retried flows; developer-workflow breakage (report only changes to how contributors build, run, configure, or connect — not routine dependency bumps). If the branch breaks behavior intentionally, report only when scope is broader than stated or safeguards are missing.
@@ -64,4 +62,8 @@ Regressions, boundary defects, compatibility/contract breaks, feature leaks, sta
 
 Read each before acting:
 - reviewer: .agents/skills/reviewer/SKILL.md
+
+## Additional Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
 '''

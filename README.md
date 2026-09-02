@@ -161,7 +161,6 @@ kendex apply --plan                                     # preview the full recon
 | `guard` | Commit-time quality guards and the git hooks that run them |
 | `source add/remove/enable/disable/refresh` | manage catalogs per scope |
 | `project add/remove/list/discover` | the app's project registry |
-| `report` | file an issue, routed to the asset's owner |
 | `index` | Emit the summary of a marketplace directory the community directory consumes (default: the current directory) |
 | `version-compare` | Where the first version stands against the second under SemVer precedence: newer, same, or older |
 | `update`, `update-pi`, `init` | self-update, Pi packages, catalog scaffolding |

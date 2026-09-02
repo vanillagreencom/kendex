@@ -13,9 +13,13 @@ metadata:
 tags: [review]
 ---
 
-# Review Gate
+<!-- kendex:project-instructions:start -->
+## Project Instructions
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:project-instructions:end -->
+
+# Review Gate
 
 The gate answers ONE question: **has this exact PR head been reviewed?** It
 posts that answer as a commit status the repo's branch rules require. It does

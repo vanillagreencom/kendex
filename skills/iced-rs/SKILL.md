@@ -15,8 +15,6 @@ tags: [ui]
 
 # Iced 0.14
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 ## Workflow
 
 1. Classify the surface against `references/guide-surface-selection.md`. Do not skip.

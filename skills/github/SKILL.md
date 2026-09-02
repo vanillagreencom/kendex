@@ -15,8 +15,6 @@ tags: [git, integration]
 
 # GitHub Queries
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 ```bash
 .agents/skills/github/scripts/github.sh [-C <path>] <command> [options]
 ```

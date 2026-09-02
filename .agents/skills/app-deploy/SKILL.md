@@ -4,6 +4,12 @@ description: "Load when asked to cut, ship, or release a kendex version."
 summary: "Releases a kendex version: bumps versions, finalizes the changelog, tags per docs/RELEASING.md."
 ---
 
+<!-- kendex:project-instructions:start -->
+## Project Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:project-instructions:end -->
+
 # Release kendex
 
 1. Bump the workspace `version` in `Cargo.toml` and the version in

@@ -16,8 +16,6 @@ skills: decider, deep-research, github, linear
 
 Executes delegated research prompts and produces evidence-backed findings reports.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 Provider-backed research and the report it produces. Not production code, not architecture decisions beyond the recommendation the evidence supports, not creating or reshaping tracked work unless the delegation instructs it, and never coordinating other agents.
@@ -32,3 +30,7 @@ Provider-backed research and the report it produces. Not production code, not ar
 ## Output
 
 `findings.md` at the exact requested path, raw provider metadata in its sidecar, and exactly one completion message — sent after the report exists and its validation passes.
+
+## Additional Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.

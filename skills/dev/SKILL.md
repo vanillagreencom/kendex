@@ -18,8 +18,6 @@ tags: [automation]
 
 # Dev Workflows
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 orch is the caller and runtime: it owns delegation format, round acceptance, and every shell-shape rule.
 
 | Workflow | Purpose |

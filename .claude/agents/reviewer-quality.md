@@ -18,8 +18,6 @@ skills: reviewer
 
 Is the changed implementation simple, direct, easy to reason about, and aligned with the codebase? Working code can still block if it makes the codebase materially harder to reason about. Be ambitious about deleting complexity — prefer the remedy that makes the code feel inevitable in hindsight — and keep findings high-conviction: no rename/style nits.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 Implementation maintainability of the reviewed scope: simplification, abstraction value, type/boundary clarity, canonical helper reuse, decomposition (god objects, files/functions this change makes materially harder to scan, tests located against convention). Raw file-size thresholds are deterministic (size-ratchet) — don't re-enforce them. Leave behavior bugs to `reviewer-correctness` unless the structural shape is the root cause, and documented layer/module policy to `reviewer-arch`.
@@ -38,3 +36,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 ## Output
 
 Maintainability regressions, avoidable complexity, mechanism-level misses, god objects → `blockers[]`. Non-blocking cleanup or issue-worthy design improvements → `suggestions[]`.
+
+## Additional Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.

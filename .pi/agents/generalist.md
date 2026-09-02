@@ -14,8 +14,6 @@ pane: true
 
 Handles cross-cutting maintenance: documentation accuracy, stale references, broken links and lint, and configuration organization.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 Changes whose correctness is settled by reading: doc claims, references, links, file and config organization. Work needing domain judgment — core logic, performance-critical code, architecture decisions — goes back to the caller with what you found, not with a patch.
@@ -40,3 +38,7 @@ Read each before acting:
 - linear: .agents/skills/linear/SKILL.md
 - preflight: .agents/skills/preflight/SKILL.md
 - review-gate: .agents/skills/review-gate/SKILL.md
+
+## Additional Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.

@@ -15,8 +15,6 @@ tags: [review, testing]
 
 # Preflight
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 Every lane is diff-scoped and fail-only: findings land only on lines this
 change ADDED; a lane that cannot decide reports nothing. There is no
 warnings tier. CONTENT decides which lines a lane may read, never an

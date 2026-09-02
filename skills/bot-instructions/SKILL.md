@@ -15,8 +15,6 @@ tags: [review]
 
 # Bot Instructions
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 ```bash
 .agents/skills/bot-instructions/scripts/bot-instructions render   # write every enabled surface
 .agents/skills/bot-instructions/scripts/bot-instructions check    # re-render and compare

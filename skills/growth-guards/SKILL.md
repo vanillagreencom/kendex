@@ -31,8 +31,6 @@ repo-effects:
 
 # Growth Guards
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 ```bash
 .agents/skills/growth-guards/scripts/growth-guards              # batch: every enabled repo check
 .agents/skills/growth-guards/scripts/growth-guards all --staged # the same batch at commit scope

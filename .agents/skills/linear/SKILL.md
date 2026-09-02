@@ -13,9 +13,13 @@ metadata:
 tags: [integration]
 ---
 
-# Linear CLI
+<!-- kendex:project-instructions:start -->
+## Project Instructions
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:project-instructions:end -->
+
+# Linear CLI
 
 ```bash
 .agents/skills/linear/scripts/linear.sh <resource> <action> [options]

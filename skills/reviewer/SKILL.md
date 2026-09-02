@@ -18,8 +18,6 @@ tags: [review]
 
 # Reviewer
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 Shared contract for every review specialist; each agent's domain and probes live in its own agent file. These workflows run orch scripts and do not stand alone.
 
 | Workflow | Purpose |

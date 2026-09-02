@@ -15,8 +15,6 @@ tags: [automation]
 
 # Harness CI
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 **One question, one answer: is this diff nothing but kendex render
 output?** The classifier reads a diff's changed-file set and prints
 `harness_only=true` when every path sits under `.agents/`, `.claude/`,

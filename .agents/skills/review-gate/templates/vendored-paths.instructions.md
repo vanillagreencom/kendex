@@ -96,8 +96,8 @@ that most often survive and they are the two the flat rule forbids.
 
    - **The fix lands in these rendered bytes**: do not raise it on this PR, on
      any surface. The session that runs the refresh files it against the
-     catalog repo with `kendex report`, and the fix arrives here as a later
-     render.
+     catalog repo through the owner's configured route, and the fix arrives
+     here as a later render.
 
 4. REPLACE the third routing bullet ("[UPSTREAM_REPO]'s own docs …") with:
 

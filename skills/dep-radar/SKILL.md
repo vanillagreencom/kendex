@@ -18,8 +18,6 @@ tags: [release]
 
 # dep-radar — pinned-version sweep, safe auto-update, and capability report
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 **inventory → detect → research → classify → upgrade-with-fixes → report the
 owner tier**.
 

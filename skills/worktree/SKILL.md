@@ -16,8 +16,6 @@ tags: [git]
 
 # Worktree Management
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 ```bash
 .agents/skills/worktree/scripts/worktree <command> [options]
 ```

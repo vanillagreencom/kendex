@@ -13,9 +13,13 @@ metadata:
 tags: [automation]
 ---
 
-# Size Ratchet
+<!-- kendex:project-instructions:start -->
+## Project Instructions
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
+<!-- kendex:project-instructions:end -->
+
+# Size Ratchet
 
 **No tracked file gets bigger than its threshold, and files already over
 it only shrink.** Existing offenders are frozen in a baseline at their

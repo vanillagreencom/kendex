@@ -15,8 +15,6 @@ tags: [data]
 
 # Price Handling Patterns
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 ## The price type is `f64`
 
 IEEE 754 double precision. No fixed-point, no decimal types.

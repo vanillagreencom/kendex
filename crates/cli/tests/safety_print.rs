@@ -9,7 +9,7 @@
 
 #[path = "../../test_util.rs"]
 mod test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::Path;
@@ -291,6 +291,32 @@ fn no_verb_or_help_line_offers_a_review() {
             );
         }
     }
+}
+
+/// Report remains callable for owners who know it exists, but the general
+/// command list does not advertise it to package consumers.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn report_is_hidden_from_root_help_but_keeps_its_own_help() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+
+    let root = kendex(&home, &home, &["--help"]);
+    assert!(root.status.success(), "{root:?}");
+    let root_help = String::from_utf8_lossy(&root.stdout);
+    assert!(
+        !root_help
+            .lines()
+            .any(|line| line.trim_start().starts_with("report ")),
+        "root help still advertises report: {root_help}"
+    );
+
+    let report = kendex(&home, &home, &["report", "--help"]);
+    assert!(report.status.success(), "{report:?}");
+    assert!(
+        !report.stdout.is_empty(),
+        "report --help succeeded without printing help"
+    );
 }
 
 /// A repository that is one skill has no path inside itself, so the score

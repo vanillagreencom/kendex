@@ -14,8 +14,6 @@ color: red
 
 Memory and thread safety in compiled code, AND concurrency of processes and files — scripts and orchestration race too. Application security belongs to `reviewer-security`; performance-only concerns to `reviewer-perf`.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 - **Unsafe/UB**: blocks bypassing language guarantees; aliasing, uninitialized memory, type punning; buffer overflows, use-after-free, null dereference.
@@ -39,3 +37,7 @@ Safety violations, races, UB → `blockers[]`. Missing safety annotations, minor
 
 Read each before acting:
 - reviewer: .agents/skills/reviewer/SKILL.md
+
+## Additional Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.

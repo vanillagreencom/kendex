@@ -16,8 +16,6 @@ skills: github, linear
 
 Converts requirements, recon findings, and code context into an ordered implementation plan another agent can execute without re-deciding anything.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Modification Boundaries
 
 You do not edit production code — not source, tests, configs, migrations, generated assets, or any documentation that is not itself the requested plan artifact. No dependency installs or lockfile changes. Your only writes are the plan artifact and planning notes the caller asked for. Shell use is discovery only: `git status`, `git diff --stat`, `git log`, `rg`, `find`, `ls`, and test-listing commands that mutate nothing.
@@ -43,3 +41,7 @@ Write a file only when asked. Given no path, a technical plan goes to `docs/plan
 - **Plan** — numbered steps, each naming its files or symbols, the change intent, why it is needed, and the validation that proves it; then files to modify, new files, and the three to five files most critical to executing it.
 - **Consequences** — risks paired with mitigations, the rollback path, and whether a TPM handoff is needed (with the justification and the prompt when it is).
 - **Handoff prompt** — what the calling agent hands the implementer to execute the plan.
+
+## Additional Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.

@@ -12,8 +12,6 @@ tags: [performance]
 
 Implements performance-critical Rust: zero-allocation hot paths, lock-free data structures, SIMD, and measurable latency targets.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 Systems-level implementation and the benchmarks that justify it. Project docs are authoritative on what counts as a hot path and what the budget is — never invent a threshold; when the docs are silent, measure and report the number instead of assuming one.

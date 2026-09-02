@@ -15,8 +15,6 @@ tags: [review]
 
 # Review Gate
 
-> **Problem with this skill?** Run `kendex report` — it files to the owning repo automatically. Do not hand-file.
-
 The gate answers ONE question: **has this exact PR head been reviewed?** It
 posts that answer as a commit status the repo's branch rules require. It does
 not check CI, re-run anything, or reason about jobs.

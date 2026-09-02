@@ -18,8 +18,6 @@ skills: reviewer
 
 Validate performance with evidence: benchmarks against baselines, project-defined thresholds and budgets, percentiles over averages. Thresholds and hot/cold-path definitions come from the project's docs — never fabricate budgets; when docs are silent, report evidence-based risk instead. Classify every regression — silent omission is forbidden. Leave style and architecture to their owners unless perf impact is demonstrated.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Scope
 
 - **Benchmark execution and regression detection** against baselines, classified by path criticality (hot vs cold). Operational rules — recording, feature-gated lanes, zero-result and fail-closed recorder handling: `.agents/skills/reviewer/references/perf-qa.md` (read before running or recording any benchmark).
@@ -31,3 +29,7 @@ A finding in a class `.agents/skills/orch/references/finding-disposition.md` Ste
 ## Output
 
 Budget exceedances, classified regressions, hot-path cost introductions → `blockers[]`. Minor observations → `suggestions[]`.
+
+## Additional Instructions
+
+Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.

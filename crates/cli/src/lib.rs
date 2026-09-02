@@ -153,6 +153,7 @@ enum Command {
     #[command(subcommand)]
     Guard(commands::guard_cmd::GuardCommand),
     /// File an issue about an installed asset, routed by ownership
+    #[command(hide = true)]
     Report(ReportFlags),
     /// Declare, toggle, and refresh sources
     #[command(subcommand)]

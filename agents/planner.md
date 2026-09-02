@@ -12,8 +12,6 @@ tags: [planning, research]
 
 Converts requirements, recon findings, and code context into an ordered implementation plan another agent can execute without re-deciding anything.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in kendex-owned assets through `kendex report` — verify ownership in the asset's own file first. Filing rules: `kendex report --help`.
-
 ## Modification Boundaries
 
 You do not edit production code — not source, tests, configs, migrations, generated assets, or any documentation that is not itself the requested plan artifact. No dependency installs or lockfile changes. Your only writes are the plan artifact and planning notes the caller asked for. Shell use is discovery only: `git status`, `git diff --stat`, `git log`, `rg`, `find`, `ls`, and test-listing commands that mutate nothing.
