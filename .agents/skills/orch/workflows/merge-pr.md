@@ -182,8 +182,17 @@ Use the output as `MAIN_REPO_ROOT`.
    waits for a human. No lane detaches this wait.
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 30 540 --json
+   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 30 540 --json
    ```
+
+   Both repository variables are cleared, as they are on every other `gh` call
+   in this step and for the reason step 4 spells out: `queue-wait` resolves its
+   target with a bare `gh repo view`, and its late-findings guard disarms and
+   dequeues, so an inherited `GH_REPO` would aim those mutations at another
+   repository's same-numbered PR. Clearing is the whole fix — an inherited
+   value is the only way the wrong repository gets named — and `env VAR=value`
+   is not an available shape here ([references/codex-runtime.md](../references/codex-runtime.md)
+   § Env-assignment prefixes).
 
    The budget is spelled out because `queue-wait`'s own default (its `--help`
    § Usage) is longer than any agent harness holds a foreground call open. Size

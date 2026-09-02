@@ -155,9 +155,14 @@ for root in "${ROOTS[@]}"; do
     one_row_per_verdict "$doc"
 
   # The lane's own wait, and the whole detach family around it.
-  rule_fenced "$label: the lane blocks on a budgeted queue-wait" \
+  # The repository binding rides the same line: `queue-wait` resolves its
+  # target with a bare `gh repo view`, and its late-findings guard disarms and
+  # dequeues, so an inherited GH_REPO would send those mutations at another
+  # repository's same-numbered PR. Every other gh call in this step clears the
+  # pair; this one is the mutating waiter.
+  rule_fenced "$label: the lane blocks on a budgeted queue-wait, repo bound" \
     "$doc" "## 5. Execute The Merge" \
-    '/queue-wait' '[PR_NUMBER]' '--json'
+    '/queue-wait' '[PR_NUMBER]' '--json' '-u GH_REPO' '-u GITHUB_REPOSITORY'
   forbid_fenced "$label: no command in the workflow leaves the foreground" \
     "$DETACHED_RE" \
     'setsid queue-wait [PR_NUMBER] --json > [VERDICT_FILE] &' \
