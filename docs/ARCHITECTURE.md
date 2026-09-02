@@ -330,11 +330,11 @@ lives in one capability table read by core and UI.
   settings object holds (when the file does); the first stays out of the
   settings object. The size reaches the file through its own command
   carrying only a percent; a copy read before a resize is refused as stale.
-  At most one save in flight; asks during it collapse into one follow-up.
-  A commit waits for every resize still out and then asks the window what
-  size it is at, so a size the window refused never reaches the file; a
-  size the file refuses stays on screen. The close is not held for an
-  in-flight write.
+  The window records a size before its set command returns and both window
+  commands run in order, so a commit reads back the size the last press
+  reached and one the window refused never reaches the file; a size the
+  file refuses stays on screen. Core's settings lock serializes the write.
+  The close is not held for an in-flight write.
 - **A whole-file write carries the base of the file its copy came from.**
   The Customize tab's `kendex.toml` and the Settings page's app
   `settings.toml` are read as content plus a `Base` (`kendex_core::base`,
