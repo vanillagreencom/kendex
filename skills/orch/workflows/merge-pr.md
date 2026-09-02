@@ -140,8 +140,10 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Resolve the repository, gate mode, and exact head before any merge attempt.
    `[RECOVERY_COUNT]` is `0` initially and one more per recovery cycle taken in
-   this run. A merge-pr run reaches its verdict without handing back, so the
-   count and the cap below live in one invocation and nothing persists them.
+   this run. Nothing persists it: a run resumed after a compaction, or
+   relaunched by oversee's `window-gone` rule, starts a fresh budget. Read a run
+   that keeps returning to ci-fix as the signal the cap is there for, whatever
+   the count says.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
@@ -177,25 +179,38 @@ Use the output as `MAIN_REPO_ROOT`.
    Exit `75` means queued or armed. Wait it out here, blocking, and route the
    verdict it prints. The lane does not hand back and come look later: a lane
    sitting at its prompt has no next boundary, so a verdict published behind it
-   waits for a human.
+   waits for a human. No lane detaches this wait.
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 30 540 --json
    ```
 
-   Run it once and stay on it until it returns; never re-run it because the
-   harness yielded early, and never poll merge state by hand. Under Codex this
-   is the only shape the classifier accepts anyway
+   The budget is spelled out because `queue-wait`'s own default (its `--help`
+   § Usage) is longer than any agent harness holds a foreground call open. Size
+   it under the harness's shell-tool ceiling and above `QUEUE_WAIT_ARM_GRACE`
+   (`--help` § Environment), so a slow enqueue is not read as `not_queued` —
+   the way `ci-wait` and `approval-wait` are sized where § 3.1 and the Recovery
+   cycle call them. Never leave the default in place here.
+
+   Stay on the call until it returns, and never poll merge state by hand. Three
+   endings, and only the first two end the wait:
+
+   - A verdict on stdout — route it on the table below.
+   - No result object at all: `queue-wait --help` § Exit codes gives exit `2` to
+     a usage error and exit `4` to a repository deleted mid-wait. Hand back
+     naming the exit; do not retry.
+   - The harness killed the call before it returned, so there is no exit code
+     and no output. Run the same command again. One blocking call is live at a
+     time, and a queue outlasting one budget is the `queued` /
+     `still_progressing` row below, which prescribes the same repeat.
+
+   Successive waits are the designed shape for a long queue, and each one
+   starts with the queue priors of `queue-wait --help` § Verdicts: it reads
+   `conflicting` off the live PR every poll, but a transition it did not itself
+   observe is not re-observed.
+
+   Under Codex the blocking call is the only shape the classifier accepts
    ([references/codex-runtime.md](../references/codex-runtime.md)).
-
-   A run that emits no result object is a hand-back naming its exit, not a
-   retry: `queue-wait --help` § Exit codes gives exit `2` to a usage error and
-   exit `4` to a repository deleted mid-wait, and neither prints anything the
-   table below can route.
-
-   The detached form — `nohup queue-wait <pr> --json > <artifact> 2>&1 &`, read
-   later — belongs to the overseer surface, which has a loop to read it in. No
-   lane uses it.
 
    | `verdict` | Route |
    |-----------|-------|
@@ -290,7 +305,7 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
    ```
 
-   **Worktree disposal is by rule.** When the PR's worktree exists, its tree is clean (`git -C [WT_PATH] status --porcelain` empty), and its checked-out branch is `[PR_BRANCH]`, step 6 removes it — no question. A dirty tree or a foreign-lease refusal from `worktree remove` keeps the worktree and its checked-out branch; a worktree on a branch other than the merged one is kept as-is (the merged branch then falls to the standalone delete below). Report any kept worktree with its cause in the § 6 `Worktree` row.
+   **Worktree disposal is by rule.** When the PR's worktree exists, its tree is clean (`git -C [WT_PATH] status --porcelain` empty), and its checked-out branch is `[PR_BRANCH]`, step 6 removes it — no question. A foreign-lease refusal from `worktree remove`, or a dirty tree found by step 6's re-read, keeps the worktree and its checked-out branch; a worktree on a branch other than the merged one is kept as-is (the merged branch then falls to the standalone delete below). Report any kept worktree with its cause in the § 6 `Worktree` row.
 
    **The merged predicate is `worktree cleanup`'s**: ancestry into the repository's default branch, or, when ancestry fails, a pull request merged into that same default branch whose head commit is the local branch's tip. A squash merge leaves no ancestry, so the second proof is the one that applies to every PR landing through the queue, and it is the commit that proves it — a branch carrying commits past its merged PR is unmerged work. `worktree remove` applies the predicate itself when deleting the branch: a nonzero exit after the tree is gone means the branch survived, and the diagnostic names the answer the lookup gave; carry that as `kept` in the § 6 `Branch` row.
 

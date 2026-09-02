@@ -104,30 +104,41 @@ table_is_read() { # doc — an empty harvest passes both set comparisons
 }
 
 # The lane waits in the FOREGROUND. A handoff lane sitting at its prompt has no
-# next boundary, so a verdict published behind it waits for a human — which is
-# what a detached lane wait cost five lanes in one night. Two halves, and both
-# are needed: an existence check alone passes while a backgrounded arm is added
-# beside the blocking call, and the no-background half alone passes when the
-# wait is deleted outright.
+# next boundary, so a verdict published behind it waits for a human.
 #
-# The blocking call is pinned to its whole line: a trailing redirection is what
-# turns it back into a detached wait whose result nothing in the lane reads.
-# The detached form belongs to the overseer surface and merge-pr.md names it in
-# one prose clause, which is not a fenced command and so is not a lane
-# instruction.
-fenced_cmds() { # doc
-  fenced "$1" | cut -f3-
+# One predicate over the whole family, not a rule about the `&` character:
+# harvest every fenced command naming the waiter, require exactly one, and
+# require that one to BE the blocking call. Anything else the family can spell
+# — a `setsid` or `nohup` or `disown` prefix, a subshell, a redirection of
+# stdout, a trailing `&`, a second arm beside the blocking one, or the call
+# buried in a longer command line — fails the same shape test, because the
+# shape is anchored at both ends of the line rather than searched for inside
+# it. Two halves searched separately is what let a `setsid … > FILE` arm pass:
+# it carries no trailing `&`.
+#
+# The poll and budget positionals are admitted and required. Their VALUES are
+# not pinned — the ceiling that sizes them belongs to the harness and the floor
+# to QUEUE_WAIT_ARM_GRACE, neither of which is this file's to transcribe — but
+# their presence is: the default budget outlives any foreground call an agent
+# harness will hold, so a call that drops them is killed with nothing routable
+# on stdout.
+BLOCKING_CALL='^[[:space:]]*(\[MAIN_REPO_ROOT\]/)?\.agents/skills/orch/scripts/queue-wait \[PR_NUMBER\] [0-9]+ [0-9]+ --json[[:space:]]*$'
+
+waiter_invocations() { # doc — every fenced command line naming the waiter
+  fenced "$1" | cut -f3- | grep -F '/queue-wait' || true
 }
 lane_wait_is_foreground() { # doc
-  local cmds background
-  cmds="$(fenced_cmds "$1")"
-  if ! grep -qE '/queue-wait \[PR_NUMBER\] --json[[:space:]]*$' <<<"$cmds"; then
-    printf '        no fenced command blocks on queue-wait [PR_NUMBER] --json\n'
+  local calls count
+  calls="$(waiter_invocations "$1")"
+  count="$(grep -c . <<<"$calls" || true)"
+  [ -n "$calls" ] || count=0
+  if [ "$count" -ne 1 ]; then
+    printf '        %s fenced command(s) name the waiter; the lane runs exactly one:\n' "$count"
+    sed 's/^/          /' <<<"$calls"
     return 1
   fi
-  background="$(grep -E '&[[:space:]]*$' <<<"$cmds" || true)"
-  [ -z "$background" ] && return 0
-  printf '        the lane is told to background a command: %s\n' "$background"
+  grep -qE "$BLOCKING_CALL" <<<"$calls" && return 0
+  printf '        the waiter call is not the bare blocking form: %s\n' "$calls"
   return 1
 }
 
@@ -239,23 +250,54 @@ check "control: a verdict routed by two rows reds the one-row direction" \
 check "control: that same duplicate leaves the coverage direction green" \
   every_verdict_routed "$CTL_QW" "$DUPED"
 
-BACKGROUNDED="$MD_TMP/merge-pr-backgrounded.md"
-awk '{ print }
-  /^   \[MAIN_REPO_ROOT\]\/\.agents\/skills\/orch\/scripts\/queue-wait \[PR_NUMBER\] --json$/ {
-    print "   nohup [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json > [ARTIFACT] &" }' \
-  "$CTL_DOC" > "$BACKGROUNDED"
-check "control: a backgrounded arm beside the blocking call reds" \
-  reds lane_wait_is_foreground "$BACKGROUNDED"
+# The blocking call's own line, harvested rather than written down, so a
+# retuned budget does not have to be edited into this suite.
+CALL_LINE="$(waiter_invocations "$CTL_DOC")"
 
-REDIRECTED="$MD_TMP/merge-pr-redirected.md"
-sed 's|^\(   \[MAIN_REPO_ROOT\]/\.agents/skills/orch/scripts/queue-wait \[PR_NUMBER\] --json\)$|\1 > [ARTIFACT]|' \
-  "$CTL_DOC" > "$REDIRECTED"
-check "control: redirecting the blocking call away from stdout reds" \
-  reds lane_wait_is_foreground "$REDIRECTED"
+# A plant that matched nothing would leave an identical file, and every `reds`
+# assertion below it would report a mutation that never happened.
+planted() { # FILE
+  cmp -s "$CTL_DOC" "$1" || return 0
+  printf '        nothing was planted in %s\n' "$1"
+  return 1
+}
+
+# One planted arm per spelling the predicate has to close. The first two are
+# the shapes measured as surviving the `&`-only check; the rest are the family
+# around them. Each is planted BESIDE the blocking call, which the count half
+# alone would catch, and again REPLACING it, which only the shape half can.
+plant() { # MODE NAME LINE — MODE `beside` appends, `instead` substitutes
+  local f="$MD_TMP/merge-pr-$1-$2.md"
+  if [ "$1" = beside ]; then
+    awk -v line="$3" -v want="$CALL_LINE" '{ print } $0 == want { print line }' "$CTL_DOC" > "$f"
+  else
+    awk -v line="$3" -v want="$CALL_LINE" '{ if ($0 == want) print line; else print }' "$CTL_DOC" > "$f"
+  fi
+  printf '%s' "$f"
+}
+
+CALL='[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 30 540 --json'
+for arm in \
+  "setsid|   setsid $CALL > [VERDICT_FILE]" \
+  "redirect|   $CALL > [VERDICT_FILE]" \
+  "nohup|   nohup $CALL > [VERDICT_FILE] &" \
+  "subshell|   ( $CALL > [VERDICT_FILE] ) &" \
+  "nobudget|   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] --json" \
+  "trailing|   $CALL  # and then some" \
+; do
+  name="${arm%%|*}"; line="${arm#*|}"
+  for mode in beside instead; do
+    case "$mode" in beside) where="beside the call" ;; *) where="in place of the call" ;; esac
+    f="$(plant "$mode" "$name" "$line")"
+    check "control: the $name arm was really planted $where" planted "$f"
+    check "control: a $name arm $where reds the foreground check" \
+      reds lane_wait_is_foreground "$f"
+  done
+done
 
 NO_WAIT="$MD_TMP/merge-pr-no-wait.md"
-grep -v '^   \[MAIN_REPO_ROOT\]/\.agents/skills/orch/scripts/queue-wait \[PR_NUMBER\] --json$' \
-  "$CTL_DOC" > "$NO_WAIT"
+awk -v want="$CALL_LINE" '$0 != want' "$CTL_DOC" > "$NO_WAIT"
+check "control: the deletion really removed the call" planted "$NO_WAIT"
 check "control: deleting the blocking call reds the same check" \
   reds lane_wait_is_foreground "$NO_WAIT"
 

@@ -103,7 +103,7 @@ The three waiters exit `3` on hard auth failure — [references/gates.md](refere
 
 **Review-gate modes.** Read the effective gate mode (`approval`, `review`, or `off`) only through `approval-wait --resolve-mode`. [references/gates.md](references/gates.md).
 
-**A queued merge is waited out in the lane.** `merge-pr.md` § 5 step 1 blocks on `queue-wait [PR_NUMBER] --json` and routes the verdict it prints, then finishes its post-merge steps and ends. It never hands back armed: a lane sitting at its prompt has no next boundary, so a verdict landing behind it waits for a human. The routing table is § 5 step 1 and the semantics are `queue-wait --help` § Verdicts. Detaching the wait to an artifact read later is the overseer surface's form, not a lane's.
+**A queued merge is waited out in the lane.** `merge-pr.md` § 5 step 1 blocks on `queue-wait`, sized to the harness, and routes the verdict it prints, then finishes its post-merge steps and ends. It never detaches and never hands back armed: a lane sitting at its prompt has no next boundary, so a verdict landing behind it waits for a human. The routing table is § 5 step 1 and the semantics are `queue-wait --help` § Verdicts.
 
 ## Schemas
 

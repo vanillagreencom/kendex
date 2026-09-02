@@ -73,8 +73,8 @@ state is volatile — an ejection or a failed protection check disarms it
 silently — so the caller arms one exact head and then waits on that head. The
 helpers live in sibling skills (install orch and review-gate beside this one):
 
-- `.agents/skills/orch/scripts/queue-wait <N> --json` blocks until the queue
-  decides and prints one verdict object.
+- `.agents/skills/orch/scripts/queue-wait <N> --json` blocks on the queue up to
+  its budget and prints one verdict object.
 - `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
   pass that prints `disarmed … (re-arm)` lines.
 
