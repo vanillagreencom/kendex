@@ -6,8 +6,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Cache queries are local reads. Source common helpers without resolving
-# LINEAR_API_KEY/op:// secrets so cache access works without 1Password auth.
 
 show_help() {
     cat <<'EOF'
@@ -67,7 +65,8 @@ Examples:
 EOF
 }
 case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
-
+# Cache queries are local reads. Source common helpers without resolving
+# LINEAR_API_KEY/op:// secrets so cache access works without 1Password auth.
 LINEAR_SKIP_API_KEY_RESOLUTION=1
 source "$SCRIPT_DIR/../lib/common.sh"
 unset LINEAR_SKIP_API_KEY_RESOLUTION
@@ -1027,7 +1026,7 @@ main() {
         case "$arg" in
         --project | --project-id | --state | --status | --label | --labels | --cycle | \
             --updated-since | --created-since | --search | --limit | --format | --team | \
-            --assignee | --include-children-of)
+            --assignee | --include-children-of | --type)
             skip_value="true"
             ;;
         --help | -h)

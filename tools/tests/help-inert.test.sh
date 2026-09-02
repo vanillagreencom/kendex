@@ -145,6 +145,7 @@ linear	scripts/linear.sh	Document Operations	documents --help
 linear	scripts/linear.sh	Project Label Operations	project-labels --help
 linear	scripts/linear.sh	Project Operations	projects
 linear	scripts/linear.sh	Linear Cache Query	cache
+linear	scripts/linear.sh	Linear Cache Query	cache cycles list --type --help	command,environment
 orch	scripts/approval-wait	Usage: approval-wait	--help
 orch	scripts/approval-wait	Usage: approval-wait	-h
 orch	scripts/approval-wait	Usage: approval-wait	help
