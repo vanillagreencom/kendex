@@ -61,10 +61,12 @@ tags = ["rust", "review"]
 skills = ["skills", "extra-skills"]
 agents = ["agents"]
 
-# Optional: curated sets people install with one click.
+# Optional: curated sets people install with one click. Members are bare
+# names, in one list per kind: agents, skills, commands, hooks, mcp-servers.
 [bundles.starter]
 description = "Everything a new project needs"
-members = ["skill/review", "agent/scout"]
+skills = ["review"]
+agents = ["scout"]
 ```
 
 Everything is optional. A missing `[marketplace]` table means the directory

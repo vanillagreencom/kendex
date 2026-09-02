@@ -55,6 +55,16 @@ pub fn run(name: Option<String>, kind: Option<String>) -> CliResult {
     Ok(())
 }
 
+/// What a freshly declared catalog says about itself. The `[bundles]`
+/// lines name the keys `source::bundles::MEMBER_LISTS` reads, which the
+/// test below holds them to: a marker teaching a shape no reader looks at
+/// is how the four kendex bundles shipped installing nothing.
+const CATALOG_MARKER: &str = "# This file marks the folder as a kendex catalog. Items live in\n\
+     # agents/, skills/, hooks/, commands/ and mcp/. Optional tables:\n\
+     # [marketplace] name, description, author, license, tags\n\
+     # [bundles.<name>] description, then agents/skills/commands/hooks/\n\
+     # mcp-servers lists of bare names\n";
+
 /// Executable kinds install only from a catalog that declared kendex's
 /// layout — a bare `hooks/` folder is repository tooling. Scaffolding
 /// therefore declares the folder, once, and never touches a declaration
@@ -64,14 +74,7 @@ fn declare_catalog(cwd: &Path) -> CliResult {
     if control.exists() {
         return Ok(());
     }
-    fs::write(
-        &control,
-        "# This file marks the folder as a kendex catalog. Items live in\n\
-         # agents/, skills/, hooks/, commands/ and mcp/. Optional tables:\n\
-         # [marketplace] name, description, author, license, tags\n\
-         # [bundles.<name>] description, then agents/skills/commands/hooks/\n\
-         # mcp-servers lists of bare names\n",
-    )?;
+    fs::write(&control, CATALOG_MARKER)?;
     say(&format!("declared the catalog ({})", control.display()));
     Ok(())
 }
@@ -85,4 +88,23 @@ fn write_new(path: &Path, content: &str) -> CliResult {
     }
     fs::write(path, content)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CATALOG_MARKER;
+
+    /// The marker teaches the `[bundles]` grammar in prose, and prose drifts
+    /// from the reader silently. Held against the reader's own list, a key
+    /// renamed there turns this red instead.
+    #[test]
+    fn the_catalog_marker_names_every_member_list_key() {
+        for (key, _) in kendex_core::source::bundles::MEMBER_LISTS {
+            assert!(
+                CATALOG_MARKER.contains(key),
+                "the catalog marker never names `{key}`, a key a set's members are \
+                 written under:\n{CATALOG_MARKER}"
+            );
+        }
+    }
 }

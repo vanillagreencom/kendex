@@ -19,7 +19,12 @@ use crate::source_read::SealedSource;
 use super::SourceConfig;
 
 /// The kinds a set may carry, under the list name a catalog writes for each.
-const MEMBER_LISTS: [(&str, ItemKind); 5] = [
+///
+/// Public because the texts that teach catalog authors this shape are
+/// written elsewhere — the `kendex marketplace new` scaffold, the
+/// `kendex init` marker — and each has to be held against this list rather
+/// than against a copy of it. A copy is how the shape shipped wrong.
+pub const MEMBER_LISTS: [(&str, ItemKind); 5] = [
     ("agents", ItemKind::Agent),
     ("skills", ItemKind::Skill),
     ("commands", ItemKind::Command),
@@ -137,33 +142,72 @@ fn from_plugin(sealed: &SealedSource, entry: &super::PluginEntry) -> Result<Cata
 /// The four sets this file's reader has always defined were declared with a
 /// `members = ["skill/orch", ...]` list instead, which no reader has ever
 /// looked at: `kendex add --bundle` recorded the set and installed nothing,
-/// with every check green. A set is only ever as real as what [`declared`]
-/// gets out of it, so that is what is asserted here.
+/// with every check green. A set is only ever as real as what
+/// [`super::declared`] gets out of it, so that is what is asserted here.
+///
+/// A set also has to carry what its members load, because installing one
+/// switches the agent-to-skill expansion off (`engine::ops::add`, gated by
+/// `request.no_auto_skills`). Whatever an agent member's mapping names
+/// arrives only if the set names it too.
 #[cfg(test)]
 mod own_catalog {
     use std::path::{Path, PathBuf};
 
     use crate::model::ItemKind;
-    use crate::source::{find_item, source_config};
+    use crate::source::{SourceConfig, find_item, list_items, source_config};
     use crate::source_read::SealedSource;
 
-    /// The set that is the whole agent workflow in one install. A partial
-    /// set leans on dependency expansion to complete itself; this one
-    /// promises to carry what it needs.
+    /// The set that is orchestration, code-review and commit-guards in one
+    /// install. A partial set leans on dependency expansion to complete
+    /// itself; this one promises to carry what it needs.
     const WHOLE: &str = "workflow";
 
+    /// The sets [`WHOLE`] is the union of. `research` is deliberately not
+    /// among them: it is the partial install that sits beside it.
+    const DRAWN_FROM: [&str; 3] = ["orchestration", "code-review", "commit-guards"];
+
+    /// One requirement and one mapping each walk below must observe. Both
+    /// reads answer an unreadable file with nothing rather than an error, so
+    /// a renamed frontmatter key would otherwise leave every closure
+    /// assertion unreached and the whole test green.
+    const A_REQUIREMENT: (&str, &str) = ("orch", "dev");
+    /// Named through `[agent-skills]` rather than by prefix: `reviewer-arch`
+    /// would still reach `reviewer` with the whole mapping table gone.
+    const A_MAPPING: (&str, &str) = ("researcher", "deep-research");
+
     fn repo_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .canonicalize()
-            .expect("the repository root is two levels above crates/core")
+        let guess = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        guess.canonicalize().unwrap_or_else(|error| {
+            panic!(
+                "{} is not a readable directory, so this crate is not sitting in the \
+                 kendex checkout: {error}",
+                guess.display()
+            )
+        })
     }
 
-    fn open() -> (SealedSource, crate::source::SourceConfig) {
+    fn open() -> (SealedSource, SourceConfig) {
         let root = repo_root();
-        let sealed = SealedSource::open(&root).expect("this repository opens as a catalog");
-        let config = source_config(&sealed, "kendex").expect("its kendex.toml reads");
+        let sealed = SealedSource::open(&root).unwrap_or_else(|error| {
+            panic!("{} does not open as a catalog: {error}", root.display())
+        });
+        let config = source_config(&sealed, "kendex").unwrap_or_else(|error| {
+            panic!("{}/kendex.toml does not read: {error}", root.display())
+        });
         (sealed, config)
+    }
+
+    fn set(sealed: &SealedSource, config: &SourceConfig, name: &str) -> super::CatalogBundle {
+        super::find(sealed, config, name)
+            .expect("its sets read")
+            .unwrap_or_else(|| panic!("kendex.toml offers no set called '{name}'"))
+    }
+
+    fn carries(bundle: &super::CatalogBundle, kind: ItemKind, name: &str) -> bool {
+        bundle
+            .members
+            .iter()
+            .any(|member| member.kind == kind && member.name == name)
     }
 
     /// Every set this catalog offers carries members, and each member is an
@@ -193,22 +237,65 @@ mod own_catalog {
         }
     }
 
-    /// The whole-workflow set carries every skill its members require, so
-    /// installing it alone is the whole workflow rather than a set plus
+    /// Every set carries the skills its agent members load. The mapping is
+    /// resolved the way an install resolves it, so a set whose agent points
+    /// at a skill it does not carry installs an agent that reads a file
+    /// nothing wrote.
+    #[test]
+    fn every_bundle_carries_the_skills_its_agent_members_load() {
+        let (sealed, config) = open();
+        let available = list_items(&sealed, &config, ItemKind::Skill);
+        let bundles = super::offered(&sealed, &config).expect("its sets read");
+        let mut seen: Vec<(String, String)> = Vec::new();
+
+        for bundle in &bundles {
+            for member in &bundle.members {
+                if member.kind != ItemKind::Agent {
+                    continue;
+                }
+                let path = find_item(&sealed, &config, member.kind, &member.name)
+                    .unwrap_or_else(|| panic!("the catalog offers agent '{}'", member.name));
+                let text = sealed
+                    .read_if_exists(&path)
+                    .unwrap_or_else(|error| panic!("agent '{}' reads: {error}", member.name))
+                    .unwrap_or_else(|| panic!("agent '{}' is a file", member.name));
+                let parsed = crate::render::agent::parse_source_agent(&text)
+                    .unwrap_or_else(|error| panic!("agent '{}' parses: {error}", member.name));
+                for skill in
+                    crate::mapping::upstream_skills(&member.name, parsed.role, &config, &available)
+                {
+                    seen.push((member.name.clone(), skill.clone()));
+                    assert!(
+                        carries(bundle, ItemKind::Skill, &skill),
+                        "the set '{}' carries agent '{}', which loads skill '{skill}' — \
+                         installing a set skips agent-to-skill expansion, so add '{skill}' \
+                         to the set",
+                        bundle.name,
+                        member.name
+                    );
+                }
+            }
+        }
+
+        let anchor = (A_MAPPING.0.to_owned(), A_MAPPING.1.to_owned());
+        assert!(
+            seen.contains(&anchor),
+            "the walk never saw agent '{}' load skill '{}', so the mapping read is \
+             answering with nothing and the assertions above were never reached",
+            A_MAPPING.0,
+            A_MAPPING.1
+        );
+    }
+
+    /// The whole-workflow set carries every skill its skill members require,
+    /// so installing it alone is the whole loop rather than a set plus
     /// whatever dependency expansion happened to drag along.
     #[test]
     fn the_whole_workflow_set_carries_what_its_members_require() {
         let (sealed, config) = open();
-        let bundle = super::find(&sealed, &config, WHOLE)
-            .expect("its sets read")
-            .unwrap_or_else(|| panic!("kendex.toml offers no set called '{WHOLE}'"));
+        let bundle = set(&sealed, &config, WHOLE);
+        let mut seen: Vec<(String, String)> = Vec::new();
 
-        let carried = |name: &str| {
-            bundle
-                .members
-                .iter()
-                .any(|member| member.kind == ItemKind::Skill && member.name == name)
-        };
         for member in &bundle.members {
             if member.kind != ItemKind::Skill {
                 continue;
@@ -218,10 +305,42 @@ mod own_catalog {
             let declared = crate::engine::deps::declared_dependencies(&sealed, &dir)
                 .expect("a member skill's frontmatter reads");
             for required in &declared.required {
+                seen.push((member.name.clone(), required.clone()));
                 assert!(
-                    carried(required),
-                    "the set '{WHOLE}' carries skill '{}', which requires skill '{required}' \
-                     — add '{required}' to the set",
+                    carries(&bundle, ItemKind::Skill, required),
+                    "the set '{WHOLE}' carries skill '{}', which requires skill \
+                     '{required}' — add '{required}' to the set",
+                    member.name
+                );
+            }
+        }
+
+        let anchor = (A_REQUIREMENT.0.to_owned(), A_REQUIREMENT.1.to_owned());
+        assert!(
+            seen.contains(&anchor),
+            "the walk never saw skill '{}' require skill '{}', so the frontmatter read \
+             is answering with nothing and the assertions above were never reached",
+            A_REQUIREMENT.0,
+            A_REQUIREMENT.1
+        );
+    }
+
+    /// The whole-workflow set is the union of the three it is drawn from.
+    /// Nothing else holds that: a member added to one of them later would
+    /// otherwise leave `workflow` silently short.
+    #[test]
+    fn the_whole_workflow_set_contains_the_sets_it_is_drawn_from() {
+        let (sealed, config) = open();
+        let whole = set(&sealed, &config, WHOLE);
+
+        for name in DRAWN_FROM {
+            let part = set(&sealed, &config, name);
+            for member in &part.members {
+                assert!(
+                    carries(&whole, member.kind, &member.name),
+                    "the set '{name}' carries {} '{}' and '{WHOLE}' does not — '{WHOLE}' \
+                     is the union of {DRAWN_FROM:?}",
+                    member.kind.name(),
                     member.name
                 );
             }

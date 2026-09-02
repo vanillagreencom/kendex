@@ -7,6 +7,10 @@ use std::path::{Path, PathBuf};
 use kendex_core::author::{self, CreateRequest, License};
 use kendex_core::env::{Env, FakeOs};
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 #[allow(clippy::unwrap_used)]
 fn fake() -> (tempfile::TempDir, Env) {
     let tmp = tempfile::tempdir().unwrap();
@@ -139,6 +143,62 @@ fn the_scaffold_writes_the_licence_evidence() {
         .unwrap()
         .1;
     assert!(manifest.contains("license = \"MIT\""));
+}
+
+/// The scaffold teaches the `[bundles]` grammar in a commented-out example,
+/// and the only other check over it pins bytes. Bytes are happy to pin a
+/// shape no reader looks at, which is how kendex's own four sets shipped
+/// installing nothing. So the example is held two ways: it names every key
+/// the reader reads, and uncommented it is a set the reader gets members
+/// out of.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_scaffolded_bundle_example_is_a_set_the_reader_accepts() {
+    let files = author::plan(&request(Path::new("/x"), License::Mit)).unwrap();
+    let manifest = &files
+        .iter()
+        .find(|(rel, _)| rel == "kendex.toml")
+        .unwrap()
+        .1;
+
+    for (key, _) in kendex_core::source::bundles::MEMBER_LISTS {
+        assert!(
+            manifest.contains(key),
+            "the scaffold never names `{key}`, a key a set's members are written under"
+        );
+    }
+
+    let example: String = manifest
+        .lines()
+        .skip_while(|line| !line.starts_with("# [bundles."))
+        .map(|line| format!("{}\n", line.trim_start_matches('#').trim_start()))
+        .collect();
+    assert!(
+        !example.is_empty(),
+        "the scaffold writes no [bundles.<name>] example:\n{manifest}"
+    );
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    fs::write(root.join("kendex.toml"), &example).unwrap();
+    let sealed = kendex_core::source_read::SealedSource::open(&root).unwrap();
+    let config = kendex_core::source::source_config(&sealed, "scaffolded").unwrap();
+    let sets = kendex_core::source::bundles::offered(&sealed, &config).unwrap();
+
+    let members: Vec<(kendex_core::model::ItemKind, &str)> = sets
+        .iter()
+        .flat_map(|set| set.members.iter())
+        .map(|member| (member.kind, member.name.as_str()))
+        .collect();
+    assert_eq!(
+        members,
+        [
+            (kendex_core::model::ItemKind::Agent, "my-agent"),
+            (kendex_core::model::ItemKind::Skill, "my-skill"),
+        ],
+        "the scaffolded example, uncommented, is not a set the reader gets members \
+         out of:\n{example}"
+    );
 }
 
 #[test]
