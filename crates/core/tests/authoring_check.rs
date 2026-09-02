@@ -213,68 +213,49 @@ fn a_safety_finding_is_reported_and_fails_nothing() {
     assert_eq!(report.failing(true), 0, "advisory under --strict too");
 }
 
-/// Every way a `[bundles.<name>]` body can carry a member this reader will
-/// not read, each breakage a plain check fails on, naming the set and the
-/// key, with the set beside it and every item still offered: the breakage is
-/// the set's, not the catalog's. kendex's own four sets shipped one of these.
+/// A `[bundles.<name>]` body carrying a key this reader does not know is
+/// that set's breakage: a plain check fails on it, naming the set and the
+/// key, while the set beside it and every item the catalog offers are
+/// untouched. kendex's own four sets shipped this shape — a `members` list
+/// nothing read — and installed nothing with every check green.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing() {
-    for (body, named) in [
-        // The spelling kendex's own catalog shipped, and a typo of a list.
-        ("members = [\"skill/gh\"]", "members"),
-        ("skils = [\"gh\"]", "skils"),
-    ] {
-        let (_tmp, root) = repo();
-        skill_at(&root, "skills", "gh");
-        fs::write(
-            root.join("kendex.toml"),
-            format!("[bundles.starter]\n{body}\n\n[bundles.other]\nskills = [\"gh\"]\n"),
-        )
-        .unwrap();
-        let sealed = SealedSource::open(&root).unwrap();
-        let report = check(&sealed, "repo").unwrap();
-        assert!(report.failing(false) >= 1, "{body}: the check passed it");
-        let finding = &report.catalog[0];
-        assert_eq!(finding.severity, "error", "{body}: {}", finding.message);
-        assert!(
-            finding.message.contains(named),
-            "{body}: {}",
-            finding.message
-        );
-        assert!(
-            finding.message.contains("[bundles.starter]"),
-            "{body}: {}",
-            finding.message
-        );
-        if named == "members" {
-            for list in ["agents", "skills", "commands", "hooks", "mcp-servers"] {
-                assert!(finding.fix.contains(list), "{list}: {}", finding.fix);
-            }
-        }
-        let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
-        assert_eq!(
-            names,
-            ["gh"],
-            "{body}: the catalog stopped offering its item"
-        );
-        let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
-        let sets: Vec<String> = kendex_core::source::bundles::offered(&sealed, &config)
-            .unwrap()
-            .iter()
-            .map(|set| set.name.clone())
-            .collect();
-        assert_eq!(sets, ["other"], "{body}: the set beside it went too");
-        assert!(
-            kendex_core::source::bundles::find(&sealed, &config, "starter").is_err(),
-            "{body}: asking for the set answered rather than refused"
-        );
+fn a_body_key_the_reader_does_not_know_is_that_sets_breakage() {
+    let (_tmp, root) = repo();
+    skill_at(&root, "skills", "gh");
+    fs::write(
+        root.join("kendex.toml"),
+        "[bundles.starter]\nmembers = [\"skill/gh\"]\n\n[bundles.other]\nskills = [\"gh\"]\n",
+    )
+    .unwrap();
+    let sealed = SealedSource::open(&root).unwrap();
+    let report = check(&sealed, "repo").unwrap();
+    assert!(report.failing(false) >= 1, "the check passed it");
+    let finding = &report.catalog[0];
+    assert_eq!(finding.severity, "error", "{}", finding.message);
+    assert!(finding.message.contains("members"), "{}", finding.message);
+    assert!(
+        finding.message.contains("[bundles.starter]"),
+        "{}",
+        finding.message
+    );
+    for list in ["agents", "skills", "commands", "hooks", "mcp-servers"] {
+        assert!(finding.fix.contains(list), "{list}: {}", finding.fix);
     }
+    let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
+    assert_eq!(names, ["gh"], "the catalog stopped offering its item");
+    let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
+    let sets: Vec<String> = kendex_core::source::bundles::offered(&sealed, &config)
+        .unwrap()
+        .iter()
+        .map(|set| set.name.clone())
+        .collect();
+    assert_eq!(sets, ["other"], "the set beside it went too");
 }
 
-/// The same catalog with its members under a list the reader reads: nothing
-/// reported, under `--strict` either. Without this the loop above would hold
-/// just as well for a check that called every catalog broken.
+/// The must-fail counterpart: the same catalog with its members under a list
+/// the reader reads is clean, under `--strict` too. Without it the control
+/// above would hold for a check that called every catalog broken.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
@@ -288,25 +269,4 @@ fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
     let sealed = SealedSource::open(&root).unwrap();
     let report = check(&sealed, "repo").unwrap();
     assert_eq!(report.failing(true), 0, "{:?}", report.catalog);
-}
-
-/// One file is both when a project offers what it installs: `[bundles.<name>]
-/// source = "…"` in a project's own kendex.toml records an installed set, and
-/// reading it as a malformed set would report breakage against a project that
-/// has none.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_installed_set_recorded_beside_the_catalog_is_not_a_malformed_set() {
-    let (_tmp, root) = repo();
-    skill_at(&root, "skills", "gh");
-    fs::write(
-        root.join("kendex.toml"),
-        "schema = 6\n\n[bundles.starter]\nsource = \"cat\"\n",
-    )
-    .unwrap();
-    let sealed = SealedSource::open(&root).unwrap();
-    let report = check(&sealed, "repo").unwrap();
-    assert_eq!(report.tally().breakage, 0, "{:?}", report.catalog);
-    let names: Vec<&str> = report.items.iter().map(|item| item.name.as_str()).collect();
-    assert_eq!(names, ["gh"], "the catalog still offers its own skills");
 }

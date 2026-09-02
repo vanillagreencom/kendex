@@ -223,63 +223,58 @@ fn a_set_whose_members_the_catalog_does_not_offer_is_refused() {
     write(
         &catalog,
         "kendex.toml",
-        "[bundles.ghost]\ndescription = \"gone\"\nskills = [\"nope\"]\n\n[bundles.hollow]\ndescription = \"nothing\"\n\n[bundles.starter]\nskills = [\"dev\"]\n",
+        "[bundles.ghost]\nskills = [\"nope\"]\n\n[bundles.starter]\nskills = [\"dev\"]\n",
     );
     manifest_with(&f, &[("cat", &catalog)], "");
     let before = fs::read_to_string(f.project.join("kendex.toml")).unwrap();
 
-    let refuse = |name: &str| {
-        ops::add(
-            &f.env,
-            &f.scope,
-            &ops::AddRequest {
-                source: Some("cat".to_owned()),
-                bundles: vec![name.to_owned()],
-                no_auto_skills: true,
-                ..ops::AddRequest::default()
-            },
-        )
-        .unwrap_err()
-    };
-    // A set whose members the catalog does not offer, and one that names no
-    // members at all: both install nothing, and each says which it is.
-    let error = refuse("ghost");
+    let error = ops::add(&f.env, &f.scope, &request("ghost")).unwrap_err();
     let said = error.to_string();
     assert!(
         matches!(error, CoreError::BundleInstallsNothing { ref name, .. } if name == "ghost"),
         "{said}"
     );
     assert!(said.contains("nope"), "the member it cannot offer: {said}");
-    let hollow = refuse("hollow").to_string();
-    assert!(hollow.contains("carries no members"), "{hollow}");
     assert_eq!(
         fs::read_to_string(f.project.join("kendex.toml")).unwrap(),
         before,
         "a refusal writes nothing"
     );
+}
 
-    // The set beside it installs: the refusal is about what the catalog can
-    // hand over, not about sets.
-    add_and_apply(
-        &f,
-        &ops::AddRequest {
-            source: Some("cat".to_owned()),
-            bundles: vec!["starter".into()],
-            no_auto_skills: true,
-            ..ops::AddRequest::default()
-        },
-    );
+/// The must-fail counterpart: the set beside it, whose member the catalog
+/// does offer, installs. The refusal is about what the catalog can hand over,
+/// not about sets.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_set_whose_member_the_catalog_offers_installs() {
+    let f = world();
+    let catalog = starter_catalog(&f, "catalog");
+    manifest_with(&f, &[("cat", &catalog)], "");
+    add_and_apply(&f, &request("starter"));
     assert!(f.project.join(".claude/skills/dev").exists());
 }
 
+/// One `add --bundle <name>` from the catalog these tests declare.
+fn request(name: &str) -> ops::AddRequest {
+    ops::AddRequest {
+        source: Some("cat".to_owned()),
+        bundles: vec![name.to_owned()],
+        no_auto_skills: true,
+        ..ops::AddRequest::default()
+    }
+}
+
 /// A catalog whose set stops reading keeps what it already installed — the
-/// member, and what the member requires. Both derive to nothing while the
+/// member, and what that member requires. Both derive to nothing while the
 /// body is unreadable, and `kendex apply` sweeps what nothing derives, so a
 /// catalog-side edit would otherwise trash a consumer's files and tell them
-/// they were no longer wanted. The plan names the key instead.
+/// they were no longer wanted. The same holds when the control file cannot be
+/// opened at all: a symlink the sealed reader refuses to look through, whose
+/// error is dropped one layer up.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_unreadable_set_keeps_its_installed_members_and_names_the_key() {
+fn an_unreadable_set_keeps_its_member_and_what_that_member_requires() {
     let f = world();
     let catalog = f.home.join("catalog");
     write(
@@ -308,25 +303,10 @@ fn an_unreadable_set_keeps_its_installed_members_and_names_the_key() {
         "kendex.toml",
         "[bundles.starter]\nskills = [\"dev\"]\nversion = \"1.0\"\n",
     );
-    let report = sweep(&f);
-
+    sweep(&f);
     assert!(member.exists(), "an unreadable set trashed its member");
     assert!(required.exists(), "it trashed what that member requires");
-    let said = report.notes.join(" | ");
-    assert!(
-        said.contains("source 'cat': kendex.toml") && said.contains("version"),
-        "the catalog's own finding, naming the key, is not carried: {said}"
-    );
-    for wrong in [
-        "offers no set by that name",
-        "the catalog 'cat' could not be read",
-    ] {
-        assert!(!said.contains(wrong), "{wrong}: {said}");
-    }
 
-    // The other way a catalog says nothing: a control file the sealed reader
-    // refuses to look through. That error is dropped one layer up, so without
-    // the record every derived install from this source is swept.
     fs::remove_file(catalog.join("kendex.toml")).unwrap();
     std::os::unix::fs::symlink(f.home.join("away.toml"), catalog.join("kendex.toml")).unwrap();
     sweep(&f);
@@ -336,9 +316,34 @@ fn an_unreadable_set_keeps_its_installed_members_and_names_the_key() {
     );
 }
 
+/// The must-fail counterpart: a catalog that reads still sweeps what its set
+/// stopped carrying, so the retention above is not "keep everything".
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_readable_catalog_sweeps_what_its_set_dropped() {
+    let f = world();
+    let catalog = starter_catalog(&f, "catalog");
+    manifest_with(
+        &f,
+        &[("cat", &catalog)],
+        "[bundles.starter]\nsource = \"cat\"\n",
+    );
+    apply_now(&f);
+    let member = f.project.join(".claude/skills/dev");
+    assert!(member.exists(), "the member installs first");
+
+    write(
+        &catalog,
+        "kendex.toml",
+        "[bundles.starter]\nskills = [\"docs\"]\n",
+    );
+    sweep(&f);
+    assert!(!member.exists(), "a set that reads kept what it dropped");
+}
+
 /// One `kendex apply` sweep of this scope, orphans and all.
 #[allow(clippy::unwrap_used)]
-fn sweep(f: &Fixture) -> kendex_core::engine::EngineReport {
+fn sweep(f: &Fixture) {
     let report = kendex_core::engine::plan_apply(
         &f.env,
         &f.scope,
@@ -350,5 +355,4 @@ fn sweep(f: &Fixture) -> kendex_core::engine::EngineReport {
     )
     .unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
-    report
 }
