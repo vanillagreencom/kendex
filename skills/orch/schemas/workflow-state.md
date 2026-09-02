@@ -81,8 +81,7 @@ Persistent state file for orch workflows. Survives context compaction.
     "frozen_causes": []
   },
   "pr_approval": {
-    "forced": false,
-    "gate": "on"
+    "forced": false
   },
   "merge_queue_watch": {
     "state_path": "/repository/.git/kendex/orch/merge-queue/PROJ-123.json",
@@ -114,16 +113,16 @@ Persistent state file for orch workflows. Survives context compaction.
 | `pre_delegate_sha` | string\|null | HEAD before delegation — scopes re-review diffs. review-pr § 2.2 sends it to a re-review re-entry as `Diff-range`, a boundary no reviewer can derive from its own delegation |
 | `skip_qa` | boolean | Skip QA for re-cycle (cleared after routing) |
 | `cycles` | number | General fix-round tally — `dev-fix.md` increments it on every fix round (review-pr § 4 and § 7, plus pre-loop review/submit rounds). It fills review-pr § 1.2's previous-cycle block and the session summaries; it decides no cap |
-| `rereview_cycles` | number | § 4 → § 2 re-review cycles entered, counting entries already taken. `workflow-state set … rereview_panel` raises it in the same locked write it gates, so only that re-entry spends the budget `REVIEW_MAX_CYCLES` bounds — a § 7 QA re-check (`qa_recheck_panel`) and any fix round do not |
+| `rereview_cycles` | number | § 4 → § 2 re-review cycles entered, counting entries already taken. `workflow-state set … rereview_panel` raises it in the same locked write it gates, so only that re-entry spends the budget `REVIEW_MAX_CYCLES` bounds — a § 7 QA re-check (`qa_recheck_panel`), a § 2 verification pass (`verification_panel`), and any fix round do not |
 | `submit_cycles` | number | Submit-PR iteration count (created-issue re-submit loops) |
 | `review_delegated_at` | number | Epoch seconds of last review delegation — the freshness boundary `review-pr.md` § 3 passes to `review-artifact-check` |
 | `dev_delegated_at` | number | Epoch seconds of last dev/QA delegation (implement, fix, or analysis) — the watchdog deadline for stall escalation. It does not gate artifact acceptance; the round id does |
 | `dev_round_id` | string | Unique per-delegation round token, minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA delegation (implement, fix, or analysis) and embedded in it. It is the completion artifact's identity ([`dev-return.md`](dev-return.md)) and, on a fix round, the delegated-item record's ([`dev-round.md`](dev-round.md)) |
 | `review_skipped` | string | Set to `tiny-docs` when a trivial diff skipped review by rule |
 | `rereview_skipped` | string | Why a fix round routed to submit WITHOUT re-review. Present only when the skip happened |
-| `rereview_panel` | object | `{agents: string[], reason}` for a § 4 fix round re-reviewed by a scoped panel instead of the full set. Setting it is the § 4 → § 2 re-review re-entry: the write raises `rereview_cycles` and refuses once that count reaches `REVIEW_MAX_CYCLES`, which is therefore the number of re-entries allowed |
-| `qa_recheck_panel` | object | `{agents: string[], reason}` for review-pr § 7's § 7 → § 6 QA re-check. A QA re-check is not a re-review cycle, so this key is deliberately separate from `rereview_panel`: the cap neither counts nor refuses it, and a § 4 loop that spent its whole budget still gets its QA re-check |
-| `verification_panel` | object | `{agents: string[], reason}` for review-pr § 7's § 7 → § 2 pass over a fix diff no reviewer has seen. A verification pass is not a fix cycle, so this key is separate from `rereview_panel`: the cap neither counts nor refuses it, which is what § 4's rule states in words |
+| `rereview_panel` | object | `{agents: string[], reason}` for a § 4 fix round re-reviewed by a scoped panel instead of the full set. Setting it is the § 4 → § 2 re-review re-entry |
+| `qa_recheck_panel` | object | `{agents: string[], reason}` for review-pr § 7's § 7 → § 6 QA re-check |
+| `verification_panel` | object | `{agents: string[], reason}` for review-pr § 7's § 7 → § 2 pass over a fix diff no reviewer has seen |
 | `auto_decisions` | string[] | Audit trail of decisions taken without a user prompt under `ORCH_DECISION_MODE=auto-recommended`: one `auto-selected: [option] — [reason]` line per auto-executed ask-user step. Absent under the default `ask` mode |
 | `json_paths` | string[] | Accumulated review JSON file paths |
 | `fixed_items` | object[] | Blockers successfully fixed. A `commit` of the form `dropped:<sha>` marks a fix whose commit vanished in a rebase (its patch was already upstream) — publishers omit it or cite the upstream equivalent, never print it as a live SHA |
@@ -133,8 +132,8 @@ Persistent state file for orch workflows. Survives context compaction.
 | `pr` | object | Pull-request growth state. `baseline_lines` is the one authoritative value. Accepted round-mode implementation receipts write it only when null; fix rounds only read it. Rebases and later rounds do not move it |
 | `pr_review_baseline` | object | `last_threads[]` — the unresolved review-thread IDs present at the end of the last triage pass. `review-pr-comments.md` § 6.3 calls a thread new when its id is absent from this array; never store a count here |
 | `pr_comment_review` | object | PR comment review tracking: `iterations`, `fixes[]`, `issues_created[]`, `skipped[]`, `replied[]` (thread IDs answered), `patched_causes[]` — one `{cause, commit}` per patched cause, the single record [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence) reads: this workflow writes it where the reply resolves the thread, and [dev-fix.md](../workflows/dev-fix.md) § 2 writes it for the `pr-review`, `qa-review`, and `review` loops, whose items land in `fixed_items`; `frozen_causes[]` — one `{cause, issue}` per cause frozen by [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), written before the `Tracked:` reply; a later finding on a listed cause is declined, never re-triaged |
-| `pr_approval` | object | Reviewer-gate override tracking: `forced` (the user chose Force merge past a missing verdict), `reviewer_down` (`PR_REVIEW_ON_TIMEOUT=proceed` auto-proceeded past the deadline with every reviewer silent), `gate` (legacy: `off` for a reviewer-less repo, still written and still read as the gate-4 fallback) |
-| `pr_review` | object | Reviewer-gate mode tracking: `mode` ("approval"/"review"/"off" as printed by `approval-wait --resolve-mode` from `PR_REVIEW_GATE`, or derived from legacy `PR_APPROVAL_GATE`) |
+| `pr_approval` | object | Reviewer-gate override tracking: `forced` (the user chose Force merge past a missing verdict), `reviewer_down` (`PR_REVIEW_ON_TIMEOUT=proceed` auto-proceeded past the deadline with every reviewer silent) |
+| `pr_review` | object | Reviewer-gate mode tracking: `mode` ("approval"/"review"/"off" as printed by `approval-wait --resolve-mode`) |
 | `merge_queue_watch` | object | Pointer to the lifecycle file owned by `merge-queue-watch`. `state_path`, `watch_id`, `repository`, `pr_number`, and `head_sha` bind workflow state to the prepared repository, PR, head, and generation. Its terminal statuses, its cleanup dispositions, and the fields `consume` revalidates before claiming are `merge-queue-watch --help` |
 
 ## CLI

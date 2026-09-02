@@ -176,11 +176,7 @@ Record the resolved mode as a bare word (never pre-quoted):
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review.mode [GATE_MODE]
 ```
 
-For `off` also record the legacy field the gate-4 check reads, then skip the wait and go to § 5 — the internal review, CI, and comment-hygiene gates still apply in full:
-
-```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_approval.gate off
-```
+For `off`, skip the wait and go to § 5 — the internal review, CI, and comment-hygiene gates still apply in full.
 
 1. **Wait.** Poll for the verdict and new comments together:
 
@@ -290,10 +286,10 @@ Empty `json_paths` means no internal review is recorded: report the unmet gate a
 
 Re-run the gate-3 command once; if threads remain, present them and ask: `Triage again` | `Force merge` | `Stop here`.
 
-**Gate 4** — verify the recorded § 4 result. Read the recorded mode; the `gsub` strips literal quote characters left by older state files:
+**Gate 4** — verify the recorded § 4 result. Read the recorded mode:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '(.pr_review.mode // .pr_approval.gate // "") | gsub("\"";"")'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_review.mode // ""'
 ```
 
 `MERGE_READY = true` only when all four gates are met.

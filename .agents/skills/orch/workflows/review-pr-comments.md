@@ -301,9 +301,9 @@ git -C "[WORKTREE_PATH]" push origin HEAD
 | Already fixed | The finding's `draft_response` |
 | Question | The finding's `draft_response` |
 
-The word "tracked" (any form) without a `KEN-` or `#` issue id turns the gate red (`untracked-claim`) unless the reply opens with `Fixed in <sha>` or `Declined:`; only a later reply of one of the three forms clears it, and resolving the thread does not. A decline is a decline — say so.
+The word "tracked" (any form) without a tracker id turns the gate red (`untracked-claim`) unless the reply opens with `Fixed in <sha>` or `Declined:`; only a later reply of one of the three forms clears it, and resolving the thread does not. A decline is a decline — say so.
 
-`[REASON]` takes one of the forms [../references/finding-disposition.md](../references/finding-disposition.md) § Decision flow sets out. A label instead of a reason — `frozen`, `at the cap`, `out of scope`, `pre-existing`, `flagged separately`, a test count — is never one. An empty reason, or one that is nothing but labels the gate knows, turns it red (`unreasoned-decline`), and dropping the colon exempts nothing: `Declined, out of scope` is read as the decline it is. A label beside a real reason is fine.
+`[REASON]` takes one of the forms [../references/finding-disposition.md](../references/finding-disposition.md) § Decision flow sets out; a reason that fails them turns the gate red (`unreasoned-decline`).
 
 ```bash
 .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" "[REPLY_BODY]" --pr "[PR_NUMBER]"

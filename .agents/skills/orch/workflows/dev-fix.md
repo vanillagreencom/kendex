@@ -206,9 +206,6 @@ Cancel ends the workflow; a selection goes to § 2.
 
    The entry goes through a file, never `--arg` or `--argjson`.
 
-   `cycles` is the general fix-round tally that fills review-pr § 1.2's previous-cycle block; it decides no cap. The re-review budget is `rereview_cycles`, raised only by review-pr § 4's `rereview_panel` write, so no fix round spends it and neither does § 7's QA re-check.
-
-
 ## 3. Return
 
 **Standalone**:
