@@ -160,6 +160,11 @@ run_hook "$(printf 'cp -r %s/.git \\\n/tmp/copy' "$REPO")"
 assert_eq "$rc" 2 'and the destination alone at column 0 is the same one copy'
 run_hook "$(printf 'cp -r \\\n.git /tmp/x')"
 assert_eq "$rc" 2 'a marker opening the continuation line is still the marker'
+# The third separator that takes a JOIN: the one after the verb. It has no
+# blank before the backslash, which is what makes the binding newline the only
+# separator there — with a blank, the GAP alone already carries this row.
+run_hook "$(printf 'cp\\\n -r %s/.git /tmp/x' "$REPO")"
+assert_eq "$rc" 2 'a continuation abutting the verb is the separator after it'
 run_hook "$(printf 'rsync -a \\\n  %s/target \\\n  /tmp/out' "$REPO")"
 assert_eq "$rc" 2 'and so is an rsync wrapped over three lines'
 # A doubled pipe is two pipes: the first is crossed as ordinary text because the

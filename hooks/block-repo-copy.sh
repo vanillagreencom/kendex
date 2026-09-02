@@ -63,19 +63,18 @@ fi
 # — one binary out of a build tree — is not a tree copy; the optional RUN
 # ending in a slash, quote or GAP before it is what makes it a component of its
 # own, so a `…/bar.git` clone URL and a `build-target` directory are not the
-# marker. That run is OPTIONAL because the one mandatory GAP after the verb is
-# itself the left edge when the marker is the first operand, as in
+# marker. That run is OPTIONAL because the one mandatory separator after the
+# verb is itself the left edge when the marker is the first operand, as in
 # `git clone .git /tmp/scratch`; requiring a second separator there would let a
 # whole local clone through. The run before the destination is what keeps the
-# destination a word of its own, so `/home/tmp/x` is not `/tmp`. Two of those
-# separators — the marker's left edge and the run before the destination — take
-# a JOIN as well as their own class, because a binding newline is where a word
-# ends when a wrapped line is not indented, and without them the same copy
-# reaches different verdicts for its indentation alone. The marker's RIGHT edge
-# does not, and must not: a backslash there has no blank before it, so bash
-# removes the continuation and joins the two words into one operand — `cp -r
-# repo/.git\` and `/tmp/x` on the next line is `cp -r repo/.git/tmp/x`, which
-# names no destination and copies nothing.
+# destination a word of its own, so `/home/tmp/x` is not `/tmp`. Every one of
+# those separators but the marker's RIGHT edge takes a JOIN as well as its own
+# class, because a binding newline is where a word ends when a wrapped line is
+# not indented, and without them the same copy reaches different verdicts for
+# its indentation alone. That right edge does not, and must not: a backslash
+# there has no blank before it, so bash removes the continuation and joins the
+# two words into one operand — `cp -r repo/.git\` and `/tmp/x` on the next line
+# is `cp -r repo/.git/tmp/x`, which names no destination and copies nothing.
 #
 # The shell tokenizer this replaced resolved every operand and stat-ed it for
 # marker directories, to catch a source spelled as a working-tree path or
@@ -106,7 +105,7 @@ RIGHT_EDGE="[${QUOTES}${BLANK}]"
 END_EDGE="[${QUOTES}${SPACE_ANY}]"
 MARKER='(\.git|target)'
 DEST='(/tmp|/var/tmp|\$\{TMPDIR\}|\$TMPDIR)'
-BLOCK_RE="(^|[^[:alnum:]_.-])${VERB}${GAP}(${RUN}(${LEFT_EDGE}|${JOIN}))?${MARKER}/?${RIGHT_EDGE}(${RUN}(${GAP}|${JOIN}))?${QUOTE}?${DEST}(/|${END_EDGE}|\$)"
+BLOCK_RE="(^|[^[:alnum:]_.-])${VERB}(${GAP}|${JOIN})(${RUN}(${LEFT_EDGE}|${JOIN}))?${MARKER}/?${RIGHT_EDGE}(${RUN}(${GAP}|${JOIN}))?${QUOTE}?${DEST}(/|${END_EDGE}|\$)"
 
 if [[ ! $COMMAND =~ $BLOCK_RE ]]; then
   exit 0

@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Block a recursive rm with a path operand that starts with a variable that may expand empty — a path outside the working tree wherever that variable is empty or unset. Names the rewrite the harness accepts without a prompt.
-# safety: The harness stops the whole session on that shape with a "Dangerous rm operation on possibly-empty variable path" prompt; refusing it here lets the agent rewrite and continue. One regex over the raw command decides: an rm in command position (the start of a line included, so a multi-line call is read past its first line), a recursion flag — a single-dash cluster carrying r or R, or `--recursive` — and an operand rooted in `$NAME`, `${NAME}` or `${NAME:-…}`, in either order and wherever in that rm's operands they stand. `${NAME:?…}` is the one form that cannot expand empty and it passes, and a redirection target is not an operand. A bypass the shell would assemble — a quoted flag, a line continuation, a variable holding the flag — is not seen here; the harness prompt is the backstop, and this hook only spares the session that stall.
+# safety: The harness stops the whole session on that shape with a "Dangerous rm operation on possibly-empty variable path" prompt; refusing it here lets the agent rewrite and continue. One regex over the raw command decides: an rm, a recursion flag — a single-dash cluster carrying r or R, or `--recursive` — and an operand rooted in `$NAME`, `${NAME}` or `${NAME:-…}`, in either order and wherever in that command they stand. `${NAME:?…}` is the one form that cannot expand empty and it passes, and a redirection target is not an operand. Reading the three parts wherever they stand refuses a harmless command that merely spells them — `git rm -r --cached $X`, a quoted `rm -rf $X` inside an echo — and that is the accepted cost: it fails closed, so it stalls one command rather than deleting a tree. A bypass the shell would assemble — a quoted flag, a line continuation, a variable holding the flag — is not seen here; the harness prompt is the backstop, and this hook only spares the session that stall.
 # harnesses: [claude-code, cursor, opencode, codex]
 # ---
 
@@ -33,24 +33,24 @@ if ! COMMAND=$(printf '%s' "$INPUT" \
 fi
 
 # The whole rule, built from named parts so each one is readable on its own.
-# ENDERS says where one command ends and the next begins: POSITION reads it to
-# find where an rm may START, and GAP and SKIP exclude it so a scan never
-# REACHES out of the command it began in. Both questions are answered from the
-# one set, so the two answers cannot drift apart:
+# The parts count WHEREVER they stand in the command. There is no
+# command-position test: one was tried, and a hand-written list of the keywords
+# that may precede an rm is an enumeration of shell grammar — every revision of
+# it named fewer members than it missed, and `if`, `while`, `until`, `!` and
+# `time` all carried a real variable-rooted recursive rm straight past it.
+# ENDERS is what remains of that reading: it says where one command ends and
+# the next begins, so GAP and SKIP exclude it and a scan never REACHES out of
+# the command it began in.
 #
 #   ENDERS    the characters that END one command: `;`, `&`, `|` and a newline.
-#             The newline is one of them because a newline both starts a
-#             command and ends the one before it.
-#   POSITION  `rm` in command position — the start of the command, one of
-#             ENDERS, a brace or parenthesis, or a `then`/`do`/`else` keyword.
-#             A word before it that is none of those makes it another command's
-#             argument, so `git rm -r --cached $X` is git's and not this
-#             hook's. The newline earns its place here because bash's `=~` runs
-#             without REG_NEWLINE, so `^` anchors the whole command and nothing
-#             else would reach line two of a multi-line call. KEYWORD_EDGE is
-#             what stands to the left of the keyword: whitespace or an ENDERS
-#             member, because bash accepts `;then` and `;do` with no space at
-#             all and the keyword itself hides the `;` from the arm above.
+#             The newline is one of them because the words of the next line are
+#             not this rm's operands.
+#   RM_EDGE   what may stand immediately left of the `rm`: the start of the
+#             command, or any character an identifier cannot hold, so
+#             `confirm -rf $X` is one word and not this hook's rm. It is a word
+#             boundary and nothing more — bash's `=~` runs without REG_NEWLINE,
+#             so `^` alone would never reach line two of a multi-line call, and
+#             a newline is one of the characters this admits.
 #   RECURSE   a flag word that means recursion: a single-dash cluster carrying
 #             `r` or `R`, or `--recursive` spelled out. A long flag merely
 #             holding an r (`--verbose`, `--interactive`, `--preserve-root`) is
@@ -69,9 +69,9 @@ fi
 #             whitespace character in ENDERS is the newline: a gap that crossed
 #             one would read the next command's words as this rm's operands.
 #   SPACE     whitespace INCLUDING that newline, spelled apart from GAP so the
-#             two places it belongs are the two places it stands: after a
-#             POSITION keyword, and after a trailing RECURSE, where a newline
-#             ends the flag word rather than reaching past it.
+#             one place it belongs is the one place it stands: after a trailing
+#             RECURSE, where a newline ends the flag word rather than reaching
+#             past it.
 #   SKIP      the words the scan crosses to get from one part to the next: GAP
 #             then a run of CROSSABLE, repeated. CROSSABLE is any character but
 #             ENDERS, `<`, `>` and whitespace, so it is a word BODY and GAP is
@@ -101,13 +101,12 @@ BLANK='[:blank:]'
 SPACE_ANY='[:space:]'
 GAP="[${BLANK}]"
 SPACE="[${SPACE_ANY}]"
-KEYWORD_EDGE="[${ENDERS}${SPACE_ANY}]"
-POSITION="(^|[${ENDERS}(){}]|${KEYWORD_EDGE}(then|do|else)${SPACE})${SPACE}*rm"
+RM_EDGE='(^|[^[:alnum:]_.-])'
 RECURSE="(-[^-${SPACE_ANY}]*[rR][^${SPACE_ANY}]*|--recursive)"
 ROOT='"*\$([A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*([^:A-Za-z0-9_]|:[^?]))'
 CROSSABLE="[^${ENDERS}<>${SPACE_ANY}]"
 SKIP="(${GAP}+${CROSSABLE}+)*"
-UNSAFE_RE="${POSITION}${SKIP}${GAP}+(${RECURSE}${SKIP}${GAP}+${ROOT}|${ROOT}${CROSSABLE}*${SKIP}${GAP}+${RECURSE}(${SPACE}|\$))"
+UNSAFE_RE="${RM_EDGE}rm${SKIP}${GAP}+(${RECURSE}${SKIP}${GAP}+${ROOT}|${ROOT}${CROSSABLE}*${SKIP}${GAP}+${RECURSE}(${SPACE}|\$))"
 
 if [[ ! $COMMAND =~ $UNSAFE_RE ]]; then
   exit 0
