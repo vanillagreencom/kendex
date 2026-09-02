@@ -8,9 +8,7 @@ Repo-specific rules:
 
 - `crates/core` is pure domain logic — no Tauri, no IPC, no UI concerns.
 - `ui/` renders state and invokes commands; domain logic and types live in Rust, and TS bindings are generated, never hand-written.
-- `docs/ARCHITECTURE.md` never gains net lines; reword existing text within its current line count.
 - Every CI job runs on GitHub-hosted runners; no workflow reads `vars.CI_RUNNER_*`.
-- Linked-worktree kendex writes and render verification follow the orch skill's `Workflow Execution` worktree-scope rule.
 - In a worktree, sync a skill's `.agents/` render by replaying the source diff, never by copying `SKILL.md`; renders may carry an injected instructions block.
 - A test that needs a host path reads it from `Env` (`host_rooted`, `drift_dir`), never composes the platform path.
 - A test that shells out to git clears `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` together.
