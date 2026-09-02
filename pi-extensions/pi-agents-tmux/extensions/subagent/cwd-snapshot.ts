@@ -10,6 +10,26 @@ const GIT_SNAPSHOT_TIMEOUT_MS = 5_000;
 const GIT_SNAPSHOT_MAX_BUFFER = 256 * 1024;
 const GIT_STATUS_MAX_BUFFER = 8 * 1024 * 1024;
 export const DIRTY_STATE_UNAVAILABLE = "dirty state unavailable (git status did not complete)";
+
+export type DirtyState = "dirty" | "clean" | "unknown";
+
+/**
+ * The one place a snapshot's dirty state becomes a word. `dirty` is a boolean
+ * with no room for "the read failed", so a degraded snapshot would otherwise
+ * read as clean on every surface that prints it. Every renderer goes through
+ * this, and the sentinel in `status` is what tells the two apart.
+ */
+export function dirtyStateOf(snapshot: Pick<CwdSnapshot, "dirty" | "status"> | undefined): DirtyState {
+	if (!snapshot) return "unknown";
+	if (snapshot.status === DIRTY_STATE_UNAVAILABLE) return "unknown";
+	return snapshot.dirty ? "dirty" : "clean";
+}
+
+/** The word every surface prints, so the three of them cannot drift apart. */
+export function dirtyLabel(snapshot: Pick<CwdSnapshot, "dirty" | "status"> | undefined): string {
+	const state = dirtyStateOf(snapshot);
+	return state === "unknown" ? "dirty state unknown" : state;
+}
 const ANSI_ESCAPE_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
 
 export function setGitExecFileForTests(execFileOverride?: ExecFileProcess): void {

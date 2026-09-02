@@ -112,11 +112,18 @@ function packageEntryMatches(item: InventoryItem, normalized: { source: string; 
 
 // The uninstall stripped the APPEND_SYSTEM.md block up front; put it back and
 // say so if that fails, rather than letting the caller read "npm failed" as
-// "nothing changed".
-function appendSystemRestoreNote(item: InventoryItem): string {
+// "nothing changed". A package that was already disabled had no block to
+// strip, so restoring would write back instructions the user switched off.
+function appendSystemRestoreNote(item: InventoryItem, wasDisabled: boolean): string {
+	if (wasDisabled) return "";
 	return restoreAppendSystemBlockAfterFailedUninstall(item)
 		? ""
 		: " Its APPEND_SYSTEM.md block was removed before the uninstall and could not be restored; toggle the package off and on to rewrite it.";
+}
+
+// Same two inputs toggleItem derives currentlyDisabled from.
+function isDisabledAtUninstall(item: InventoryItem, inventory: Inventory): boolean {
+	return item.state === "disabled" || inventory.managerState.disabledItems.includes(item.id);
 }
 
 export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: boolean; message: string } {
@@ -141,25 +148,35 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 		// APPEND_SYSTEM.md block goes with the tree. An uninstall that then
 		// fails leaves the package installed and enabled, so the block has to
 		// go back or its instructions silently stop reaching the model.
-		removeAppendSystemBlockForUninstall(plan.item);
+		const wasDisabled = isDisabledAtUninstall(plan.item, inventory);
+		const blockRemoved = removeAppendSystemBlockForUninstall(plan.item);
 		const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
 		if (result.error) {
-			return { ok: false, message: `Failed to launch ${plan.method.command}: ${stringifyError(result.error)}${appendSystemRestoreNote(plan.item)}` };
+			return { ok: false, message: `Failed to launch ${plan.method.command}: ${stringifyError(result.error)}${appendSystemRestoreNote(plan.item, wasDisabled)}` };
 		}
 		if ((result.status ?? 1) !== 0) {
 			const stderr = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit ${result.status}`;
-			return { ok: false, message: `npm uninstall failed: ${stderr}${appendSystemRestoreNote(plan.item)}` };
+			return { ok: false, message: `npm uninstall failed: ${stderr}${appendSystemRestoreNote(plan.item, wasDisabled)}` };
 		}
 		const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
-		return { ok: true, message: `npm uninstall ${plan.method.npmName} succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}` };
+		// npm has deleted the tree, and the script with it, so a failed strip is
+		// now permanent: nothing left can rewrite that file.
+		const blockNote = blockRemoved
+			? ""
+			: ` Its APPEND_SYSTEM.md block could not be removed before the package tree was deleted, so it is now stale; edit APPEND_SYSTEM.md to drop the ${plan.item.packageName ?? plan.item.sourceName} block by hand.`;
+		return { ok: true, message: `npm uninstall ${plan.method.npmName} succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}${blockNote}` };
 	}
 	const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 	// Orphan branch: the settings.json strip is the only other cleanup, so
-	// remove this package's APPEND_SYSTEM.md block too.
-	removeAppendSystemBlockForUninstall(plan.item);
+	// remove this package's APPEND_SYSTEM.md block too. The package dir stays
+	// on disk here, so a failed removal is retryable.
+	const orphanBlockRemoved = removeAppendSystemBlockForUninstall(plan.item);
+	const orphanBlockNote = orphanBlockRemoved
+		? ""
+		: " Its APPEND_SYSTEM.md block could not be removed; the package directory is still on disk, so retry the uninstall.";
 	return stripped
-		? { ok: true, message: `Removed ${plan.item.sourceName} from ${plan.item.scope} settings.json.` }
-		: { ok: false, message: `Could not find a matching entry for ${plan.item.sourceName} in ${plan.item.scope} settings.json.` };
+		? { ok: true, message: `Removed ${plan.item.sourceName} from ${plan.item.scope} settings.json.${orphanBlockNote}` }
+		: { ok: false, message: `Could not find a matching entry for ${plan.item.sourceName} in ${plan.item.scope} settings.json.${orphanBlockNote}` };
 }
 
 export function planUpdate(item: InventoryItem, inventory: Inventory, ctx: ExtensionCommandContext | ExtensionContext): UpdatePlan | undefined {

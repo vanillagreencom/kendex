@@ -1,0 +1,1 @@
+- pi-agents-tmux again schedules a rate-limit retry from a usage-endpoint window that carries only a reset time, instead of falling back to the backoff ladder.

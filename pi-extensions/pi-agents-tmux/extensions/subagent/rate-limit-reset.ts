@@ -1,10 +1,10 @@
 /**
- * Eager on the extension startup path (index.ts -> rate-limit-watchdog.ts ->
- * rate-limit-decision.ts -> here), so this module must take no node:* import:
- * Pi 0.80.3's binary TS loader resolves transpiled TS through data: URLs and a
- * large module with node:* imports trips Bun/JITI NameTooLong there. The
- * provider fetch that needs node:fs is rate-limit-quota.ts, imported
- * dynamically after a rate-limit event.
+ * Eager on the extension startup path: index.ts imports rate-limit-watchdog.ts
+ * statically, so every module in that transitive static closure loads at
+ * startup and none of them may take a node:* import. Pi 0.80.3's binary TS
+ * loader resolves transpiled TS through data: URLs and a large module with
+ * node:* imports trips Bun/JITI NameTooLong there. The provider fetch that
+ * needs node:fs is rate-limit-quota.ts, dynamically imported. Not enforced.
  */
 
 export const RATE_LIMIT_CLOCK_RESET_PAST_TOLERANCE_MS = 10 * 60_000;

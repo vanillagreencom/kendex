@@ -3,7 +3,6 @@ import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionC
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type AutocompleteItem } from "@earendil-works/pi-tui";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import { frameGlyphs, glyphs, glyphStyle, treeGlyph } from "./glyphs.js";

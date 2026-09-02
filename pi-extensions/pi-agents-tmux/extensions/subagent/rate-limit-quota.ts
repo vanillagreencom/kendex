@@ -12,10 +12,9 @@ import { normalizeQuotaSnapshot, quotaSourceFailureSummary } from "./rate-limit-
  * reaches it through a dynamic import after a rate-limit event. That is what
  * lets it take node:* imports at all. Pi 0.80.3's binary extension loader
  * resolves transpiled TS modules through data: URLs, and a large module with
- * node:* imports can trip Bun/JITI NameTooLong at startup, so the three
- * modules that do load eagerly (rate-limit-watchdog.ts, rate-limit-decision.ts,
- * and through it rate-limit-reset.ts and rate-limit-quota-normalize.ts) stay
- * free of them.
+ * node:* imports can trip Bun/JITI NameTooLong at startup, so everything in
+ * the transitive static closure of index.ts -> rate-limit-watchdog.ts stays
+ * free of them. Each module in that closure says so in its own header.
  */
 
 type FetchLike = (input: string, init?: Record<string, unknown>) => Promise<{

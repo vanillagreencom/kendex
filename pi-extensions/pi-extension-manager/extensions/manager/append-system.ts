@@ -3,6 +3,12 @@ import { join } from "node:path";
 import { runCommand } from "./process.js";
 import type { InventoryItem } from "./types.js";
 
+const SCRIPT_NAME = "append-system.mjs";
+// A package-supplied script runs on every enable/disable toggle, on Pi's TUI
+// thread. A hung write to a network-mounted scope root, or a script that reads
+// stdin, would wedge it with no way out.
+const APPEND_SYSTEM_TIMEOUT_MS = 10_000;
+
 /**
  * Pi extension packages can declare `pi.appendSystem` in their package.json,
  * pointing at a markdown file whose contents are mirrored into the scope's
@@ -19,25 +25,37 @@ import type { InventoryItem } from "./types.js";
  */
 function runAppendSystemScript(packageDir: string | undefined, action: "install" | "remove"): boolean {
 	if (!packageDir) return true;
-	const script = join(packageDir, "scripts", "append-system.mjs");
+	const script = join(packageDir, "scripts", SCRIPT_NAME);
 	if (!existsSync(script)) {
 		if (declaresAppendSystem(packageDir)) {
-			console.warn(`pi-extension-manager: ${packageDir} declares pi.appendSystem but ships no scripts/append-system.mjs; APPEND_SYSTEM.md not updated`);
+			console.warn(`pi-extension-manager: ${packageDir} declares pi.appendSystem but ships no scripts/${SCRIPT_NAME}; APPEND_SYSTEM.md not updated`);
 			return false;
 		}
 		return true;
 	}
-	const result = runCommand("node", [script, action], { cwd: packageDir });
+	const result = runCommand("node", [script, action], { cwd: packageDir, killSignal: "SIGKILL", timeout: APPEND_SYSTEM_TIMEOUT_MS });
 	if (result.error) {
 		console.warn(`pi-extension-manager: append-system ${action} failed to launch for ${packageDir}: ${String(result.error)}`);
 		return false;
 	}
 	const stderr = (result.stderr ?? "").trim();
 	const status = result.status ?? 0;
-	if (stderr || status !== 0) {
-		console.warn(`pi-extension-manager: append-system ${action} reported a problem for ${packageDir} (exit ${status}): ${stderr || "no output"}`);
+	// A killed child reports a signal and a null status.
+	if (result.signal) {
+		console.warn(`pi-extension-manager: append-system ${action} for ${packageDir} exceeded ${APPEND_SYSTEM_TIMEOUT_MS}ms and was killed (${result.signal})${stderr ? `: ${stderr}` : ""}`);
 		return false;
 	}
+	// Only the script's own lines are a verdict. Everything else on stderr is
+	// the node process talking, an ExperimentalWarning from the user's
+	// NODE_OPTIONS being the common one, and must not turn a written block into
+	// a reported failure.
+	const reported = stderr.split("\n").filter((line) => line.trimStart().startsWith(`${SCRIPT_NAME}:`));
+	if (reported.length > 0 || status !== 0) {
+		const detail = reported.length > 0 ? reported.join("; ") : stderr || "no output";
+		console.warn(`pi-extension-manager: append-system ${action} reported a problem for ${packageDir} (exit ${status}): ${detail}`);
+		return false;
+	}
+	if (stderr) console.warn(`pi-extension-manager: append-system ${action} for ${packageDir} wrote to stderr but reported no problem: ${stderr}`);
 	return true;
 }
 

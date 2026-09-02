@@ -2,6 +2,14 @@
  * Rate-limit retry decision. The event and quota-snapshot readers it needs
  * live in rate-limit-reset.ts and rate-limit-quota-normalize.ts; this module
  * is the decision itself.
+ *
+ * Eager on the extension startup path: index.ts imports rate-limit-watchdog.ts
+ * statically, which imports this. Every module in that transitive static
+ * closure, including the two this file pulls in, must take no node:* import.
+ * Pi 0.80.3's binary TS loader resolves transpiled TS through data: URLs and a
+ * large module with node:* imports trips Bun/JITI NameTooLong there. The
+ * provider fetch that needs node:fs is rate-limit-quota.ts, imported
+ * dynamically after a rate-limit event. Documented, not enforced.
  */
 
 import {

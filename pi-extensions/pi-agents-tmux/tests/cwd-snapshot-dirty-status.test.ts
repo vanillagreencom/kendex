@@ -4,7 +4,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { DIRTY_STATE_UNAVAILABLE, setGitExecFileForTests, snapshotCwdGitState } from "../extensions/subagent/cwd-snapshot.js";
+import { DIRTY_STATE_UNAVAILABLE, dirtyLabel, dirtyStateOf, setGitExecFileForTests, snapshotCwdGitState } from "../extensions/subagent/cwd-snapshot.js";
+import { compactThenEmptySummary } from "../extensions/subagent/runner.js";
 
 function tempDir(prefix: string): string {
 	return mkdtempSync(join(tmpdir(), prefix));
@@ -72,9 +73,14 @@ describe("cwd snapshot dirty status", () => {
 			expect(snapshot?.head).toBe("a".repeat(40));
 			expect(snapshot?.lastCommit.subject).toBe("initial commit");
 			expect(snapshot?.status).toBe(DIRTY_STATE_UNAVAILABLE);
-			expect(snapshot?.dirty).toBe(false);
 			expect(diagnostics.join("\n")).toContain("status --porcelain");
 			expect(diagnostics.join("\n")).toContain("dirty state unavailable");
+			// The field alone would pass with the bug present: `dirty` is false
+			// for a failed read and for a genuinely clean tree alike. What has to
+			// hold is that no surface prints "clean" for the first one.
+			expect(dirtyStateOf(snapshot)).toBe("unknown");
+			expect(compactThenEmptySummary(snapshot)).toContain("(dirty state unknown)");
+			expect(compactThenEmptySummary(snapshot)).not.toContain("(clean)");
 		} finally {
 			setGitExecFileForTests();
 			rmSync(cwd, { force: true, recursive: true });
@@ -139,5 +145,14 @@ describe("cwd snapshot dirty status", () => {
 			setGitExecFileForTests();
 			rmSync(cwd, { force: true, recursive: true });
 		}
+	});
+
+	// The word all three renderers print, in one place so they cannot drift.
+	test("dirtyLabel separates a failed read from a clean tree", () => {
+		const base = { cwd: "/w", head: "a".repeat(40), lastCommit: { subject: "s" }, lastCommitSubject: "s" };
+		expect(dirtyLabel({ ...base, dirty: false, status: "" })).toBe("clean");
+		expect(dirtyLabel({ ...base, dirty: true, status: " M a.txt" })).toBe("dirty");
+		expect(dirtyLabel({ ...base, dirty: false, status: DIRTY_STATE_UNAVAILABLE })).toBe("dirty state unknown");
+		expect(dirtyLabel(undefined)).toBe("dirty state unknown");
 	});
 });

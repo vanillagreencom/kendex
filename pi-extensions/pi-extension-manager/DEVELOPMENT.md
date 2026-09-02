@@ -35,23 +35,35 @@ Enable, disable and uninstall run the package's own vendored
 `preuninstall`. The manager holds no second copy of the upsert.
 
 The script resolves its own scope by walking up from its package dir to a
-`packages/` or `npm/node_modules/` segment, and **falls back to
-`PI_CODING_AGENT_DIR` (or `~/.pi/agent`) when it finds neither**. So a package
-installed outside any Pi-managed tree, a legacy npm global-prefix install, has
-its block written to the user-global `APPEND_SYSTEM.md`. That is where the
-package's own `postinstall` put it, so it is also the only place the manager
-can remove it from. `test/actions.test.ts` pins where a block lands for the
-`packages/` layout, and `test/inventory.test.ts` for `npm/node_modules/`.
+`packages/` or `npm/node_modules/` segment. Finding neither, it falls back to
+`PI_CODING_AGENT_DIR` (or `~/.pi/agent`), but only when that directory already
+exists, so installing one of these packages on a machine without Pi writes
+nothing. A package installed outside any Pi-managed tree, a legacy npm
+global-prefix install, therefore has its block written to the user-global
+`APPEND_SYSTEM.md`. That is where the package's own `postinstall` put it, so
+it is also the only place the manager can remove it from. All three branches
+are pinned in `test/actions.test.ts`: the `packages/` layout, the
+`npm/node_modules/` layout, and the fallback.
 
-The script is best-effort for npm's sake: it exits 0 on every failure and
-reports only on stderr. `append-system.ts` therefore treats non-empty stderr
-as a failure alongside a non-zero exit, warns with the action, package dir and
-captured stderr, and returns false so the toggle notice and the uninstall
-message can say the block was not written.
+The script is best-effort for npm's sake: given `install` or `remove` it exits
+0 on every failure and reports only on stderr. (Any other argv exits 1, which
+the manager never produces.) `append-system.ts` therefore reads a stderr line
+beginning `append-system.mjs:` as the failure, not any stderr at all, since
+`runCommand` inherits the environment and node's own warnings would otherwise
+read as one. It warns with the action, package dir and the script's own lines,
+and returns false; every caller folds that into what the user sees. The spawn
+carries a bounded timeout and `SIGKILL`, because a package-supplied script runs
+on Pi's TUI thread.
 
-The npm uninstall path runs the removal **before** `npm uninstall`, because
-npm 7+ does not reliably run a removed package's own `preuninstall` and the
-script is deleted with the tree. If npm then fails, the package is still
-installed and enabled, so the block is rewritten and the failure message says
-so when the rewrite itself fails.
+The npm uninstall path runs the removal before `npm uninstall`, because npm 7+
+does not reliably run a removed package's own `preuninstall` and the script is
+deleted with the tree. Two consequences the messages have to carry: a removal
+that failed is permanent once npm deletes the tree, so the success message
+names the file to edit by hand; and if npm itself fails the package is still
+installed, so the block is rewritten, unless it was a disabled package that had
+no block to begin with.
 
+Test spawns go through `useSandboxedSpawn`, which pins the child's `HOME` and
+`PI_CODING_AGENT_DIR`. `spawnSync` snapshots the environment the process
+started with, so a child left to inherit it resolves the developer's real
+`~/.pi/agent` and writes into their live `APPEND_SYSTEM.md`.

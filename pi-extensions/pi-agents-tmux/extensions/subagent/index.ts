@@ -29,7 +29,7 @@ import {
 	shouldReplaceDashboardItem,
 	sortDashboardItems,
 } from "./dashboard.js";
-import { sanitizeCwdSnapshot, sanitizeCwdSnapshotText } from "./cwd-snapshot.js";
+import { dirtyLabel, sanitizeCwdSnapshot, sanitizeCwdSnapshotText } from "./cwd-snapshot.js";
 import {
 	autoShowAgentDashboardOnce,
 	cycleAgentDashboard,
@@ -944,8 +944,7 @@ export default function (pi: ExtensionAPI) {
 			const base = record.diagnostics?.at(-1) ?? COMPLETION_SUMMARY_UNAVAILABLE;
 			const snapshot = sanitizeCwdSnapshot(record.cwdSnapshot);
 			if (!snapshot) return base;
-			const dirty = snapshot.dirty ? "dirty" : "clean";
-			return `${base} · HEAD ${snapshot.head.slice(0, 12)} (${dirty}) ${snapshot.lastCommit.subject}`;
+			return `${base} · HEAD ${snapshot.head.slice(0, 12)} (${dirtyLabel(snapshot)}) ${snapshot.lastCommit.subject}`;
 		}
 		if (isTerminalTaskStatus(record.status)) return COMPLETION_SUMMARY_UNAVAILABLE;
 		return record.diagnostics?.at(-1) ?? record.task;

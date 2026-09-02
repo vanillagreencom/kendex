@@ -5,10 +5,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { frameGlyphs, glyphs } from "./glyphs.js";
-import { piUserDir, projectSettingsTrustedForCwd, readPackageConfig, recordProjectTrust } from "./settings.js";
+import { piUserDir, readPackageConfig, recordProjectTrust } from "./settings.js";
 
 const PACKAGE_ID = "@vanillagreen/pi-prompt-stash";
 const DEFAULT_STORE_FILE = "prompt-stash.json";
