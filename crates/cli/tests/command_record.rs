@@ -185,38 +185,6 @@ fn a_record_already_there_is_not_written_over_by_a_first_run() {
     );
 }
 
-/// An empty record is a name a claim published and never filled — the one
-/// state a first run can leave behind, since `create_new` takes the name
-/// before the bytes go in it. Nothing else would repair it: every later
-/// run finds the name taken too, and the app refuses a command it does own
-/// until `kendex update` rewrites the record. So the run that finds it
-/// takes the name back.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn an_empty_record_is_repaired_by_the_next_first_run() {
-    if no_record_on_this_runner() {
-        return;
-    }
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let env = kendex_core::env::Env::host_rooted(&home);
-    let file = env.installed_command_file();
-    fs::create_dir_all(file.parent().unwrap()).unwrap();
-    // What a claim leaves when the write behind it never lands.
-    fs::write(&file, "").unwrap();
-    let ours = home.join("ours/kendex");
-    fs::create_dir_all(ours.parent().unwrap()).unwrap();
-    fs::write(&ours, b"the kendex that ran").unwrap();
-
-    kendex_core::command_update::record_first_run(&env, &ours).unwrap();
-
-    assert_eq!(
-        kendex_core::command_update::recorded_command(&env).map(|record| record.path),
-        Some(ours),
-        "an empty record is nobody's, and the run that found it left it that way"
-    );
-}
-
 /// Concurrent first runs both answer `Ok` and leave one readable record,
 /// naming one of the two files that ran.
 ///

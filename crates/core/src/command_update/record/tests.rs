@@ -178,9 +178,8 @@ fn every_public_write_follows_this_process_uid() {
     ];
 
     // A home of its own for each: a record already there is what
-    // `record_first_run` reads to decide it is not the first, so one home
-    // shared between them would have an earlier entry answering for a
-    // later one.
+    // `record_first_run` leaves alone, so one home shared between them
+    // would have an earlier entry answering for a later one.
     for (entry, write) in entries {
         let dir = tempfile::tempdir().unwrap();
         let env = Env::host_rooted(dir.path());
