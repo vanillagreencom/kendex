@@ -27,7 +27,7 @@ Memory and thread safety in compiled code, AND concurrency of processes and file
 - **File/process races**: TOCTOU (existence check separate from the effectful operation), non-atomic multi-file updates, signals to possibly-reused PIDs, teardown awaits without deadlines that can hang exit. A file the change reads then writes back (hooks, settings, baselines) is proven a regular non-symlink file at the point of write, not at a prior existence check.
 - **Lock-free**: atomic ordering, ABA, memory reclamation.
 
-A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Rust Rules
 

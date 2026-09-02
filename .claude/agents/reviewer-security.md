@@ -29,7 +29,7 @@ Vulnerability classes (injection, broken auth/authz, data exposure, XSS/CSRF, pr
 - **Secret exposure**: credentials or userinfo-bearing URLs reaching logs, diagnostics, or error output; automation that can sweep uncontrolled local edits (and their secrets) into commits.
 - **Untrusted input in control position**: attacker-controlled filenames/branches/settings echoed into shells, workflow commands, or evaluated config; code or config loaded from a reviewed-but-untrusted tree.
 
-A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Output
 

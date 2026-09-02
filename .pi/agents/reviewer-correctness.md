@@ -22,7 +22,7 @@ Behavior regressions; API/CLI/contract compatibility (including two components i
 
 Leave to peers: exploitability (`reviewer-security`), error-path causes (`reviewer-error`), missing tests (`reviewer-test` — you report the bug, not the absent test), maintainability, perf, docs.
 
-A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Boundary Probes
 

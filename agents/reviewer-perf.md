@@ -22,7 +22,7 @@ Validate performance with evidence: benchmarks against baselines, project-define
 - **Hot-path cost review** of the diff: per-event work introduced on hot paths — synchronous I/O or re-parsing inside stream/event handlers, config re-read where a snapshot belongs, allocation churn in loops.
 - **Budget validation** against documented targets.
 
-A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Output
 

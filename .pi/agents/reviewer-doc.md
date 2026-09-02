@@ -26,7 +26,7 @@ The method is verification, not proofreading — **open the implementation behin
 - **Moved prose**: relocated help text, README, schema, and changelog prose is new prose — verify it sentence by sentence against the code it now describes, never against the file it moved from.
 - **Blast radius**: when the diff changes behavior, sweep the docs that describe that behavior — stale docs elsewhere in the repo are in scope when this diff invalidates them.
 
-A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Output
 

@@ -24,7 +24,7 @@ The highest-value question is not "is there a test?" but "**can this test still 
 
 Coverage of changed paths (branches, error paths, boundaries), test quality, determinism, environment assumptions. Leave the underlying product bug to `reviewer-correctness` — you report the missing or weak test. Demand tests that catch real bugs, not coverage theater.
 
-A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Probes
 

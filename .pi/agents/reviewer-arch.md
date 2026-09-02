@@ -23,7 +23,7 @@ Compliance criteria come from the project's architecture docs — do not invent 
 - **Spec/proposal review** — when the change is a design document, audit the proposed mechanism itself: race windows (TOCTOU between pin and use), trust-boundary holes (who can alter the inputs a decision reads), enforcement-surface coverage (does the path/tier map reach every surface that can weaken a guard), and failure semantics (does a persistently missing dependency stay green forever).
 - **Technical debt**: accumulated debt worth naming, prioritized by impact; architecture docs drifting from actual structure.
 
-A same-machine race, or a second writer with the user's privileges, is never a finding. A symlink, `..`, or malformed input is one only when you name the shipped producer emitting it. Security, data-loss and fail-open defects are exempt.
+A finding in a class `.agents/skills/orch/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined — do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
 ## Output
 
