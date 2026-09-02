@@ -42,7 +42,7 @@ const view = (drift: DriftRow[]): AuditView => ({
 });
 
 /** The folder the shortcut resolves to, which is what adoption moves. */
-const SHARED = "/work/acme/.agents/skills/gh";
+const SHARED = "/work/acme/team-skills/gh";
 
 /** Claude's shortcut at it, in the shape `sharedLinkOf` reads the scan in. */
 const LINKED = {
