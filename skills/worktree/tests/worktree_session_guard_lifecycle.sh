@@ -503,6 +503,21 @@ assert_contains "$gone_list" '"directory_present":false' "list marks the directo
 assert_contains "$("$GUARD_SCRIPT" sweep --repo "$REG_ROOT/main" --ttl-minutes 0)" \
   "released $REL_WT" "sweep releases a destroyed worktree's lease"
 
+echo "=== a newline in a worktree path ==="
+
+# A registration records its worktree path with a trailing newline, so reading
+# only the file's first line truncates a path that contains one (kendex#911).
+NL_ROOT="$TMP_ROOT/newline"
+make_repo "$NL_ROOT"
+NL_WT="$NL_ROOT/trees/issue"$'\n'"nl"
+git -C "$NL_ROOT/main" worktree add -q -b issue-nl "$NL_WT" main
+"$GUARD_SCRIPT" claim "$NL_WT" --owner NL-OWNER >/dev/null
+assert_eq "$(guard_status_code "$NL_WT" "$NL_ROOT/main" --owner NL-OWNER)" "0" \
+  "a worktree path containing a newline resolves for status"
+assert_contains "$("$GUARD_SCRIPT" list --repo "$NL_ROOT/main")" \
+  "\"path\":\"${NL_WT//$'\n'/\\n}\"" \
+  "list reports the newline path as one escaped JSON object"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -42,6 +42,6 @@ worktree_abs="$(cd -P -- "$worktree" 2>/dev/null && pwd -P)" || fail "not a dire
 # separate mutation open a window in which the answer changes between them.
 rc=0
 (cd "$worktree_abs" && "$GUARD" claim "$worktree_abs" --owner "$issue") || rc=$?
-[[ "$rc" == 0 || "$rc" == 4 || "$rc" == 75 ]] \
+[[ "$rc" == 0 || "$rc" == 75 ]] \
 	|| fail "worktree-session-guard claim failed on $worktree_abs (exit $rc)"
 exit "$rc"

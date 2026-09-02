@@ -1,1 +1,1 @@
-- **Breaking:** `worktree create --restack` now requires the tool-created pending marker on every reused worktree; re-create one whose restack state predates the marker.
+- **Breaking:** `worktree restack continue|skip|abort` now requires the tool-created pending marker and state token on every paused restack; re-create a worktree whose state predates them.

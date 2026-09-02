@@ -165,9 +165,14 @@ resolve_common_dir() {
 
 # A registration's gitdir file may hold a relative path, which git writes
 # relative to the registration directory itself — never to the caller's cwd.
+#
+# The whole file, not its first line: a worktree path may contain a newline
+# (kendex#911). Command substitution strips the trailing newline git writes —
+# and only that one, since the recorded value always ends in "/.git", so no
+# trailing newline can be part of the path itself.
 registered_gitdir() {
 	local registration="$1" gitdir
-	gitdir="$(head -n 1 "$registration/gitdir" 2>/dev/null || true)"
+	gitdir="$(cat -- "$registration/gitdir" 2>/dev/null || true)"
 	[[ -n "$gitdir" ]] || return 1
 	[[ "$gitdir" == /* ]] || gitdir="$registration/$gitdir"
 	printf '%s\n' "$gitdir"
@@ -210,10 +215,13 @@ release_guard_mutex() {
 # flock(1) is preferred because the kernel releases it however the holder dies.
 # Stock macOS ships none, so a mkdir mutex carries the claim there: mkdir is
 # atomic on POSIX filesystems, so exactly one contender creates the directory.
-# The two never mix, because every guard process on a host resolves the same
-# mechanism from the same PATH — the same single-host assumption the lock's
-# location in the common dir already makes. When neither can take the lock the
-# command fails loudly rather than running unguarded.
+# The two do not lock each other out, so this ASSUMES every guard process on a
+# host resolves the same one. Nothing enforces that — `command -v flock` is
+# re-evaluated per invocation — and a flock-less PATH running beside a normal
+# one takes two independent locks and serializes nothing. It sits beside the
+# single-host assumption the lock's location in the common dir already makes.
+# When neither mechanism can take the lock the command fails loudly rather
+# than running unguarded.
 acquire_guard_mutex() {
 	local common="$1" lock_path tries=0
 	lock_path="$common/kendex-worktree-session-guard.lock"
@@ -222,13 +230,21 @@ acquire_guard_mutex() {
 		flock -x 9 || fail "cannot acquire the session-guard lock: $lock_path"
 		return 0
 	fi
+	# Armed before the loop, never after it wins: with no holder liveness a
+	# leaked directory is never reclaimed, so every later mutation on this
+	# repository would wait 60s and fail. release_guard_mutex is a no-op while
+	# GUARD_MUTEX_DIR is empty, so arming early costs nothing. One command
+	# boundary is still uncovered — a signal handled between mkdir returning
+	# and the assignment below — because recording the directory before mkdir
+	# would let a losing contender rmdir the winner's mutex, which is worse
+	# than a rare leak the error message already tells an operator to clear.
+	trap release_guard_mutex EXIT
 	while ! mkdir -- "$lock_path.d" 2>/dev/null; do
 		tries=$((tries + 1))
 		[[ "$tries" -lt 600 ]] || fail "cannot acquire the session-guard mutex after 60s: $lock_path.d. If no guard process is running, remove it: rmdir '$lock_path.d'"
 		sleep 0.1
 	done
 	GUARD_MUTEX_DIR="$lock_path.d"
-	trap release_guard_mutex EXIT
 }
 
 write_lease() {
