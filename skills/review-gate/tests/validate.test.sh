@@ -344,51 +344,26 @@ expect_clean "live exclusion globs pass" "$dir"
 
 setting_fails "a glob matching no tracked path is dead config" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "no-such-directory/*.md" "matches no tracked path"
 
-# Pattern SPELLING is the engine's call, relayed through --check-config: one
-# grammar, in the matcher's own file, so this tool cannot drift from it.
-setting_fails "a leading-'/' anchor is refused by the engine and relayed" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md" "a committed setting is not legal"
+# Pattern SPELLING is the engine's call, and this tool has no copy of the
+# grammar to test: it makes ONE `--check-config` call and relays whatever
+# comes back. So the spellings are enumerated where the matcher lives —
+# predicate-unknown-arg.test.sh, `--check-config` direct and ~11x cheaper per
+# case — and what is proven HERE is the relay itself: the refusal becomes a
+# finding, and the engine's own reason survives into the verdict.
+setting_fails "a refused spelling is relayed as a finding" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md" "a committed setting is not legal"
 printf '%s' "$OUT" | grep -qF "is not supported" &&
   ok "the engine's own reason rides out in the verdict" ||
   bad "the engine's own reason rides out in the verdict" "$OUT"
 
-# Parent-relative is dead the same way, and so not waivable: a declaration
-# says "no tracked match TODAY", and this one cannot match on any day.
-setting_fails "a parent-relative glob is refused by the engine" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*" "a committed setting is not legal"
-
+# A PROPHYLACTIC declaration cannot rescue a refused spelling: the relay above
+# runs before the declaration loop and is unconditional, so an unreachable
+# pattern is a finding whether or not it is declared. One case pins that
+# ordering; the spellings themselves are the engine's business, above.
 sandbox
 dir="$DIR"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
 settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "../future/*"
 expect_fail "declaring an unreachable pattern prophylactic does not rescue it" "$dir" "a committed setting is not legal"
-
-# The rule is REACHABILITY, not a list of anchors: a dot-relative glob and an
-# embedded dot component are unreachable for the same reason.
-setting_fails "a dot-relative glob is refused by the engine" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "./future/*" "a committed setting is not legal"
-
-setting_fails "an embedded dot component is refused by the engine" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/./guide.md" "a committed setting is not legal"
-
-# The grammar is closed in the ENGINE and every spelling outside it is
-# refused there and relayed here: refusing the spelling is what leaves no
-# equivalence to enumerate.
-setting_fails "a bracket-class glob is refused by the engine's grammar" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*" "a committed setting is not legal"
-
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "[.]/future/*"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "[.]/future/*"
-expect_fail "declaring a refused spelling prophylactic does not rescue it" "$dir" "a committed setting is not legal"
-
-setting_fails "a backslash escape is refused by the engine's grammar" REVIEW_GATE_CARRY_FORWARD_EXCLUDE 'docs/\.md' "a committed setting is not legal"
-
-# An EMPTY component is unreachable for the same reason a '.' one is: git
-# names carry neither. A trailing '/' is the same thing spelt at the end.
-setting_fails "an empty path component is refused by the engine" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs//guide.md" "a committed setting is not legal"
-
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "docs/"
-expect_fail "a trailing '/' is refused, declaration or not" "$dir" "a committed setting is not legal"
 
 # ...and an ordinary glob with a dot in a NAME is reachable and stays so.
 setting_clean "a dot inside a filename is not a dot component" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/*.md"

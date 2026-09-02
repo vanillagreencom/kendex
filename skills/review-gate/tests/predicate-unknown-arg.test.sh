@@ -93,6 +93,9 @@ config_reject "a comment-reviewer pair with an empty login" REVIEW_GATE_COMMENT_
 config_reject "an exclusion anchored with a leading '/'" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md"
 config_reject "a parent-relative exclusion" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
 config_reject "a dot-relative exclusion" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "./future/*"
+# The rule is REACHABILITY, not a list of anchors: a '.' component is
+# unreachable wherever it sits, not only at the front.
+config_reject "an embedded dot component" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/./guide.md"
 config_reject "an exclusion with an empty path component" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs//guide.md"
 config_reject "an exclusion ending in '/'" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/"
 config_reject "an unreachable PROPHYLACTIC declaration" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "../future/*"

@@ -280,10 +280,16 @@ relay_run() { # step-path, read_only, workflow_ref, gh_codes, event_name, header
   done
 }
 
+# The extracted steps, and the copy each one CAME FROM. Two arrays because
+# RELAY_STEPS only grows on a successful extraction while WORKFLOW_LABELS is
+# populated for every discovered copy — so indexing the labels by a step's
+# position would, the moment one extraction failed, print the surviving copy's
+# results under the failed copy's name, in the log a maintainer is reading to
+# diagnose that failure.
 RELAY_STEPS=()
-relay_battery() { # file, label
+RELAY_STEP_LABELS=()
+relay_extract() { # file, label — appends the step and its label, on success
   local wf="$1" tag="$2" step="$TMP_ROOT/relay-step-${#RELAY_STEPS[@]}.sh"
-  local ref="o/r/.github/workflows/review-gate-writer.yml@refs/heads/main"
   awk '
     /^      - name: Request a converge pass$/ { found = 1; next }
     found && !inblock && /^        run: \|$/ { inblock = 1; next }
@@ -294,11 +300,16 @@ relay_battery() { # file, label
   ' "$wf" > "$step"
   if [[ -s "$step" ]] && grep -qF -- "/dispatches" "$step"; then
     RELAY_STEPS+=("$step")
+    RELAY_STEP_LABELS+=("$tag")
     PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "relay: the step script extracted from the workflow (non-empty, dispatches)"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "relay: could NOT extract the step script — every case below would prove nothing"
-    return
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "relay: could NOT extract the step script — the battery and the cross-copy identity check below both lose this copy"
   fi
+}
+
+relay_battery() { # step script, label
+  local step="$1" tag="$2"
+  local ref="o/r/.github/workflows/review-gate-writer.yml@refs/heads/main"
   # Read from the step, not hardcoded: every wait assertion below is stated as
   # an exact clamp plus this bound, so a retuned jitter must move them with it.
   RELAY_JITTER_MAX="$(grep -oE '^jitter_max=[0-9]+' "$step" | head -n 1 | cut -d= -f2 || true)"
@@ -556,13 +567,27 @@ $rl_ok"
 
 echo "=== relay step behavior (request-converge, VST-210) ==="
 for i in "${!WORKFLOWS[@]}"; do
-  relay_battery "${WORKFLOWS[$i]}" "${WORKFLOW_LABELS[$i]}"
+  relay_extract "${WORKFLOWS[$i]}" "${WORKFLOW_LABELS[$i]}"
 done
 
-# The battery above proves each copy's step behaves; this proves they are the
-# SAME step. Behavior equivalence under the cases we thought to write is
-# weaker than byte-identity for a script that exists in two hand-maintained
-# places — a divergence the cases do not happen to probe would otherwise ship.
+# The battery runs ONCE, against the first copy that EXTRACTED — which is the
+# template unless its extraction failed, so the label travels with the step
+# rather than being re-derived from a position. It is 40 cases run under both
+# entries of RELAY_SHELLS, 80 step executions and 221 checks, and the
+# byte-identity check below proves the other copy's step is the SAME BYTES —
+# so a second battery would execute one script twice and call the agreement a
+# result. Identity is the stronger claim of the two, and it is the one that
+# must not be skipped: if extraction lost a copy, relay_extract has already
+# reddened above.
+if [[ "${#RELAY_STEPS[@]}" -ge 1 ]]; then
+  relay_battery "${RELAY_STEPS[0]}" "${RELAY_STEP_LABELS[0]}"
+fi
+
+# The battery above proves one copy's step behaves; this proves the other is
+# the SAME step, which is what carries that behavior across to it. Behavior
+# equivalence under the cases we thought to write is weaker than byte-identity
+# for a script that exists in two hand-maintained places — a divergence the
+# cases do not happen to probe would otherwise ship.
 # The step is pure logic with no vendored paths in it, so unlike the rest of
 # the file it has no legitimate reason to differ in any copy.
 # WHOLE-FILE drift, not just the relay step: a cross-copy tooth covering only

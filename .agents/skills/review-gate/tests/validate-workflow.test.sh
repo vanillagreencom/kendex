@@ -18,6 +18,14 @@ trap 'rm -rf "$TMP"' EXIT
 # shellcheck source=lib/sandbox.sh
 . "$TEST_DIR/lib/sandbox.sh"
 
+# The template cases below judge validate-workflow.sh, so they run IT and not
+# the full driver: the verdict lines are the peer's own, relayed verbatim, and
+# the driver costs an order of magnitude more per case for the same answer.
+# That the driver still runs the peer and folds its counts in is proven where
+# it belongs — the `stands alone` section at the bottom, which restores
+# DRIVER_REL first.
+DRIVER_REL="$WORKFLOW_REL"
+
 echo "=== the adopted workflow is the template ==="
 
 mutate() { # DIR SED-EXPR
@@ -309,6 +317,10 @@ expect_fail "the opt-in allowance does not cover a second edit" "$dir" "has dive
 
 
 echo "=== the workflow half stands alone ==="
+
+# Back to the full driver: the cases from here down are about the SEAM — the
+# peer's own exit codes, and the driver's fold of them.
+DRIVER_REL="$VALIDATE_REL"
 
 sandbox
 dir="$DIR"

@@ -104,7 +104,8 @@ What it therefore never answers is what the TEMPLATE says. Both sides of the
 diff come from that one file, so an edit re-copied into every consumer is
 invisible here by construction. One instrument upstream reads the template's
 content — the relay battery in `tests/review-writer-template.test.sh`, which
-extracts the relay step and EXECUTES it against a gh stub, over both copies.
+extracts the relay step from both copies, EXECUTES it against a gh stub once,
+and proves the two extracted steps byte-identical.
 Everything else the template says is unasserted — an expression, a trigger, a
 `permissions:` scope, a concurrency group — with one exception: this tool
 refuses to run at all when the template stops carrying the COMMENTED

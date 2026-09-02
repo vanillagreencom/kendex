@@ -5,6 +5,12 @@
 #
 # Contract with the caller: it sets SKILL_DIR and TMP, and defines nothing
 # this file also defines. Sourcing it builds the pristine sandbox once.
+#
+# DRIVER_REL is the one exception — the entry point run_validate drives. A
+# caller may set it either side of the source line: the default below yields
+# to a value already set, so the ordering cannot silently cost a suite its
+# driver. Assigning it after sourcing changes the driver for every case that
+# follows, which is how a suite switches back mid-file.
 
 # The verdict counters and their two writers: every helper below reports
 # through these, and each suite prints the totals itself.
@@ -22,8 +28,13 @@ bad() {
 # the only shape either script has to work in.
 VALIDATE_REL=".agents/skills/review-gate/scripts/validate.sh"
 WORKFLOW_REL=".agents/skills/review-gate/scripts/validate-workflow.sh"
-# Built once and copied per case: a fresh `cp -R` of the skill plus a `git
-# init` for every one of the cases below is the bulk of this suite's runtime.
+# Built once — the `git init` is paid here, not per case — and copied per
+# case. The copies are NOT shareable at any price: cases chmod and overwrite
+# the vendored scripts inside their own sandbox, so a reflinked or symlinked
+# tree would let one case corrupt the next. What a suite can change is the
+# entry point each case runs, which is DRIVER_REL below; the two entry points
+# differ by an order of magnitude, and the copy's share of a case varies with
+# the driver and with whether TMPDIR is tmpfs, so measure before assuming.
 PRISTINE="$TMP/pristine"
 mkdir -p "$PRISTINE/.agents/skills" "$PRISTINE/.github/workflows" "$PRISTINE/docs"
 cp -R "$SKILL_DIR" "$PRISTINE/.agents/skills/review-gate"
@@ -55,12 +66,21 @@ commit() { # DIR — re-commit whatever the case mutated
   (cd "$1" && git add -A && git commit -q -m "case" --allow-empty)
 }
 
+# The entry point every expectation below drives. It defaults to the full
+# driver and YIELDS to a caller that set it first, so a suite may name its
+# driver either side of the source line; a suite whose subject is the workflow
+# half points it at that tool and proves the driver's fold of the peer's
+# verdicts in its own cases rather than re-proving it under every one of them.
+# Both tools print `FAIL` at the start of a verdict line and exit 1 on a
+# finding, which is the only shape expect_clean and expect_fail read.
+DRIVER_REL="${DRIVER_REL:-$VALIDATE_REL}"
+
 OUT=""
 RC=0
 run_validate() { # DIR
   OUT=""
   RC=0
-  OUT="$(cd "$1" && "./$VALIDATE_REL" 2>&1)" || RC=$?
+  OUT="$(cd "$1" && "./$DRIVER_REL" 2>&1)" || RC=$?
 }
 
 # `settings` NAME VALUE — append one assignment to the sandbox settings file
