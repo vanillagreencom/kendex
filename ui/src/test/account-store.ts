@@ -4,7 +4,11 @@
 // Each test file installs its own `vi.mock("@/bindings", ...)`; the
 // helpers here read through whichever mock the importing file set up.
 import { vi } from "vitest";
-import { type AccountStatus, commands } from "@/bindings";
+import {
+  type AccountReadFailed,
+  type AccountStatus,
+  commands,
+} from "@/bindings";
 import { type SettledAccount, useAccountStore } from "@/stores/account";
 import { setAccountReader } from "@/stores/account-read";
 
@@ -18,10 +22,16 @@ export const answers = (state: AccountStatus["state"]) =>
     data: { state, endpoint: "https://kendex.ai" },
   } as Awaited<ReturnType<typeof commands.accountStatus>>);
 
-export const unreadable = (why = "keychain locked") =>
+/** What the command answers when the read did not land. The default is a
+ *  refusal on this machine, which is the failure that says nothing about
+ *  kendex.ai; pass `"unreachable"` for the directory not answering. */
+export const unreadable = (
+  why = "keychain locked",
+  kind: AccountReadFailed["kind"] = "local",
+) =>
   vi.mocked(commands.accountStatus).mockResolvedValue({
     status: "error",
-    error: why,
+    error: { kind, message: why },
   } as Awaited<ReturnType<typeof commands.accountStatus>>);
 
 /** What a backend that has reached the server answers with. */

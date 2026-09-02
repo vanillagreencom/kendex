@@ -3,12 +3,22 @@
 // The store keeps what the last read settled on; this is the read itself —
 // the command, the rename from its wire shape, and the seam a test takes
 // over to answer as a state no server is behind.
-import { type AccountStatus, commands } from "@/bindings";
+import {
+  type AccountReadFailed,
+  type AccountStatus,
+  commands,
+} from "@/bindings";
 import type { SettledAccount } from "./account";
 
 /** What a read of the account answers: the state it settled on, or why it
- * could not be read. */
-export type AccountRead = { ok: SettledAccount } | { error: string };
+ * could not be read.
+ *
+ * `kind` is whether kendex.ai was asked at all, which is the backend's to
+ * say and not something a reason can be read for. Only a read that reached
+ * it leaves the name it had standing as last-confirmed. */
+export type AccountRead =
+  | { ok: SettledAccount }
+  | { error: string; kind: AccountReadFailed["kind"] };
 
 type ReadAccount = () => Promise<AccountRead>;
 
@@ -32,7 +42,8 @@ const settled = (wire: AccountStatus["state"]): SettledAccount => {
  * and with the rejection when the credential is dead. */
 const fromBridge: ReadAccount = async () => {
   const status = await commands.accountStatus();
-  if (status.status === "error") return { error: status.error };
+  if (status.status === "error")
+    return { error: status.error.message, kind: status.error.kind };
   return { ok: settled(status.data.state) };
 };
 
@@ -59,6 +70,8 @@ export const readAccount: ReadAccount = async () => {
   try {
     return await reader();
   } catch (error: unknown) {
-    return { error: String(error) };
+    // A reader that threw never got an answer out of the backend, so
+    // nothing was asked of kendex.ai on the far side of it either.
+    return { error: String(error), kind: "local" };
   }
 };

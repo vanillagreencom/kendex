@@ -332,7 +332,7 @@ export const commands = {
 	 *  text the repository publishes.
 	 */
 	mineAuthoringDoc: () => __TAURI_INVOKE<string>("mine_authoring_doc"),
-	accountStatus: () => typedError<AccountStatus, string>(__TAURI_INVOKE("account_status")),
+	accountStatus: () => typedError<AccountStatus, AccountReadFailed>(__TAURI_INVOKE("account_status")),
 	accountLoginStart: () => typedError<LoginStart, string>(__TAURI_INVOKE("account_login_start")),
 	/**  One poll; the frontend owns the timer so a closed dialog stops asking. */
 	accountLoginPoll: (deviceCode: string) => typedError<LoginPoll, string>(__TAURI_INVOKE("account_login_poll", { deviceCode })),
@@ -503,6 +503,22 @@ export type AboutView = {
  *  describing `Failed` too.
  */
 export type AccountCallRefused = { kind: "expired"; message: string } | { kind: "failed"; message: string };
+
+/**
+ *  Why the account could not be read.
+ * 
+ *  The two are one question the surface has to answer: may the name from
+ *  the last read stand as the last one kendex.ai confirmed? Only a read
+ *  that reached the directory and came back with nothing leaves it
+ *  standing; one this machine refused says nothing about the directory,
+ *  and showing the name as offline would name the wrong cause and send
+ *  the person to check a working network.
+ * 
+ *  Each carries the whole sentence, because the surface that shows it has
+ *  nothing else to say. It is named here rather than on the variants
+ *  because specta hoists a variant's doc above the whole union.
+ */
+export type AccountReadFailed = { kind: "local"; message: string } | { kind: "unreachable"; message: string };
 
 /**
  *  What the account surfaces render, every one of them settled: the UI

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::env::Env;
 use crate::error::{CoreError, Result};
-use crate::registry::client::{self, server_message};
+use crate::registry::client::{self, CallFailed, server_message};
 use crate::registry::credentials::{Credential, CredentialStore};
 use crate::registry::generation::GenerationFile;
 use crate::registry::{Fetch, base_url};
@@ -42,6 +42,33 @@ pub enum AccountState {
     Expired,
 }
 
+/// Why an account read could not answer at all.
+///
+/// [`AccountState`] is what a read settles on; this is the absence of an
+/// answer. A surface holding a name from an earlier read has to choose
+/// between showing it as the last one confirmed and saying nothing new
+/// was learned, and only the difference between "the directory did not
+/// answer" and "this machine refused" settles that choice.
+#[derive(Debug)]
+pub enum AccountUnread {
+    /// The directory was never asked: the credential store refused, the
+    /// refresh lock could not be taken, the cached identity could not be
+    /// dropped.
+    Local(CoreError),
+    /// The directory was asked and no identity could be settled from what
+    /// came back, with nothing cached to stand in.
+    Unreachable(CoreError),
+}
+
+impl AccountUnread {
+    /// The failure itself, for a surface that shows its sentence.
+    pub fn error(&self) -> &CoreError {
+        match self {
+            AccountUnread::Local(error) | AccountUnread::Unreachable(error) => error,
+        }
+    }
+}
+
 /// The wire shape of GET /api/v1/me, exactly as the contract fixture says.
 #[derive(Deserialize)]
 struct WireMe {
@@ -52,17 +79,23 @@ struct WireMe {
 /// Ask who is signed in. An absent credential is `SignedOut`; a dead credential is
 /// `Expired` and its cached identity is dropped; an unreachable or
 /// misbehaving server serves the cached identity as `Offline`, and errors
-/// only with nothing cached to serve. A keychain refusal that reaches this
-/// call on its own is none of those: it is local, so it errors with its own
-/// sentence however warm the cache is. One that refused the removal behind
-/// the server's rejection rides in that `SignInExpired`'s `why` and still
+/// only with nothing cached to serve. A failure on this machine is none of
+/// those: [`client::with_access`] hands back which half of the call failed,
+/// so a local one errors with its own sentence however warm the cache is
+/// and never reaches [`GenerationFile::settle`], whose whole domain is a
+/// fetch that did not land. A store that refused the removal behind the
+/// server's rejection rides in that `SignInExpired`'s `why` and still
 /// answers `Expired`. The cache key names the sign-in this read opened with
 /// rather than either token, so a refresh rotation leaves it readable. The
 /// store gets no final read after the authenticated call: a sign-out or
 /// account switch landing in that final request window does not change this
 /// call's answer.
-pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result<AccountState> {
-    let Some(credential) = store.load()? else {
+pub fn load(
+    env: &Env,
+    fetch: &dyn Fetch,
+    store: &dyn CredentialStore,
+) -> std::result::Result<AccountState, AccountUnread> {
+    let Some(credential) = store.load().map_err(AccountUnread::Local)? else {
         return Ok(AccountState::SignedOut);
     };
     // The sign-in's own name, which a rotation carries and only a new
@@ -79,28 +112,33 @@ pub fn load(env: &Env, fetch: &dyn Fetch, store: &dyn CredentialStore) -> Result
     let fetched = match client::with_access(fetch, store, |access| {
         fetch.get_auth(&url, etag.as_deref(), Some(access))
     }) {
+        Ok(response) => Ok(response),
         // Logout won a race with this read: the re-login state without
         // refreshing, exactly as if the credential had been gone up front.
-        Err(CoreError::NotSignedIn) => return Ok(AccountState::SignedOut),
+        Err(CallFailed::NotSignedIn) => return Ok(AccountState::SignedOut),
         // Producing this removed whichever credential was current when the
         // removal lock was acquired, or said in `why` that the store would
         // not give it up. The identity this read opened with is forgotten;
         // another sign-in would discard it by key anyway.
-        Err(CoreError::SignInExpired { .. }) => {
-            cache.forget()?;
+        Err(CallFailed::Expired(_)) => {
+            cache.forget().map_err(AccountUnread::Local)?;
             return Ok(AccountState::Expired);
         }
-        // The keychain refused a read or a write somewhere inside the call.
+        // The machine refused before the directory was asked anything.
         // Serving the cache as `Offline` would tell the user the directory
-        // was last reached, when the machine never asked it anything.
-        Err(refused @ CoreError::CredentialStoreUnavailable { .. }) => return Err(refused),
-        fetched => fetched,
+        // was last reached, when nothing ever asked it.
+        Err(CallFailed::Local(error)) => return Err(AccountUnread::Local(error)),
+        // The directory was asked and did not answer usefully, which is
+        // exactly what a cached generation stands in for.
+        Err(CallFailed::Unreachable(error)) => Err(error),
     };
-    let loaded = cache.settle(cached, fetched, parse, |response| {
-        CoreError::RegistryUnavailable {
-            why: server_message(response),
-        }
-    })?;
+    let loaded = cache
+        .settle(cached, fetched, parse, |response| {
+            CoreError::RegistryUnavailable {
+                why: server_message(response),
+            }
+        })
+        .map_err(AccountUnread::Unreachable)?;
     Ok(match loaded.stale {
         false => AccountState::SignedIn {
             identity: loaded.value,

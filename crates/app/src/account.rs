@@ -10,7 +10,7 @@ use kendex_core::env::Env;
 use kendex_core::error::CoreError;
 use kendex_core::registry::credentials::{Credential, KeyringStore};
 use kendex_core::registry::login::{self, Poll};
-use kendex_core::registry::me::{self, AccountState};
+use kendex_core::registry::me::{self, AccountState, AccountUnread};
 use kendex_core::registry::submit::{self, SubmissionRow};
 use kendex_core::registry::{CurlFetch, base_url};
 use serde::{Deserialize, Serialize};
@@ -23,11 +23,44 @@ pub struct AccountStatus {
     pub endpoint: String,
 }
 
+/// Why the account could not be read.
+///
+/// The two are one question the surface has to answer: may the name from
+/// the last read stand as the last one kendex.ai confirmed? Only a read
+/// that reached the directory and came back with nothing leaves it
+/// standing; one this machine refused says nothing about the directory,
+/// and showing the name as offline would name the wrong cause and send
+/// the person to check a working network.
+///
+/// Each carries the whole sentence, because the surface that shows it has
+/// nothing else to say. It is named here rather than on the variants
+/// because specta hoists a variant's doc above the whole union.
+#[derive(Debug, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum AccountReadFailed {
+    Local { message: String },
+    Unreachable { message: String },
+}
+
+impl From<AccountUnread> for AccountReadFailed {
+    fn from(unread: AccountUnread) -> AccountReadFailed {
+        let message = unread.error().to_string();
+        match unread {
+            AccountUnread::Local(_) => AccountReadFailed::Local { message },
+            AccountUnread::Unreachable(_) => AccountReadFailed::Unreachable { message },
+        }
+    }
+}
+
 #[tauri::command(async)]
 #[specta::specta]
-pub fn account_status() -> Result<AccountStatus, String> {
-    let env = Env::detect().map_err(|e| e.to_string())?;
-    let state = me::load(&env, &CurlFetch, &KeyringStore).map_err(|e| e.to_string())?;
+pub fn account_status() -> Result<AccountStatus, AccountReadFailed> {
+    // A machine with no home directory to read from has asked kendex.ai
+    // nothing, so this is local like any other refusal ahead of the call.
+    let env = Env::detect().map_err(|error| AccountReadFailed::Local {
+        message: error.to_string(),
+    })?;
+    let state = me::load(&env, &CurlFetch, &KeyringStore)?;
     Ok(AccountStatus {
         state,
         endpoint: base_url(),

@@ -113,14 +113,30 @@ describe("the account state a read settles on", () => {
 
 // A read that failed knows nothing new, so it takes nothing away.
 describe("a read that could not be made", () => {
-  it("becomes offline when a name is already in hand", async () => {
+  it("becomes offline when the directory was asked and a name is in hand", async () => {
+    useAccountStore.setState({
+      account: { kind: "signed-in", identity: ADA },
+    });
+    unreadable("no route to kendex.ai", "unreachable");
+    await load();
+    expect(account()).toEqual({
+      kind: "offline",
+      identity: ADA,
+    });
+    expect(useAccountStore.getState().readError).toBe("no route to kendex.ai");
+  });
+
+  // Offline says kendex.ai was reached on some date and not since. A
+  // refusal on this machine never asked it anything, so the state stands
+  // as the last read left it and the reason is all this one adds.
+  it("leaves the name it had alone when the machine refused", async () => {
     useAccountStore.setState({
       account: { kind: "signed-in", identity: ADA },
     });
     unreadable();
     await load();
     expect(account()).toEqual({
-      kind: "offline",
+      kind: "signed-in",
       identity: ADA,
     });
     expect(useAccountStore.getState().readError).toBe("keychain locked");

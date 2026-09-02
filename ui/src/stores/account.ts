@@ -119,10 +119,14 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     if (handover.stale(before)) return;
     if ("error" in answer) {
       // A read that failed knows nothing new, so it never takes anything
-      // away. With an identity already in hand the failure is exactly
-      // offline; a credential without a name stays signed in, and a state
-      // never read stays unread with the failure to show for it.
-      const offline = asOffline(get().account);
+      // away. Where it reached kendex.ai and came back with nothing, an
+      // identity already in hand is exactly offline; a credential without
+      // a name stays signed in, and a state never read stays unread with
+      // the failure to show for it. A failure on this machine settles
+      // nothing about the directory, so it leaves every state alone and
+      // the reason is all it adds.
+      const offline =
+        answer.kind === "unreachable" ? asOffline(get().account) : null;
       const readError = answer.error;
       set(offline ? { account: offline, readError } : { readError });
       return;

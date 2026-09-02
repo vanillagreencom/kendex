@@ -31,10 +31,13 @@ type WithIdentity = Extract<AccountState, { kind: "signed-in" | "offline" }>;
 export const hasCredential = (account: AccountState): account is WithIdentity =>
   account.kind === "signed-in" || account.kind === "offline";
 
-/** The same credential, no longer confirmed: what a read that failed
- *  leaves when it already knew who holds it. Null when there is nothing
- *  to go offline with, which is a credential whose name has not been read
- *  yet, or no credential at all. */
+/** The same credential, no longer confirmed: what a read that reached
+ *  kendex.ai and came back with nothing leaves when it already knew who
+ *  holds it. Reserved for that read. A failure on this machine never gets
+ *  here — the directory was not asked, so "when kendex.ai was last
+ *  reached" would name a cause nothing observed. Null when there is
+ *  nothing to go offline with, which is a credential whose name has not
+ *  been read yet, or no credential at all. */
 export const asOffline = (account: AccountState): SettledAccount | null =>
   hasCredential(account) && account.identity
     ? { kind: "offline", identity: account.identity }
