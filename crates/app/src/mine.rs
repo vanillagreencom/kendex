@@ -80,40 +80,6 @@ pub fn mine_import_apply(
     author::apply(&env, &scopes, &target, &selections).map_err(|e| e.to_string())
 }
 
-/// One offered write, previewed: the exact relative path and bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct OfferPreview {
-    pub rel: String,
-    pub bytes: String,
-}
-
-#[tauri::command(async)]
-#[specta::specta]
-pub fn mine_offer_manifest(
-    path: PathBuf,
-    name: String,
-    description: String,
-    author_name: String,
-) -> Result<OfferPreview, String> {
-    let bytes = author::scaffold::offer_manifest(&path, &name, &description, &author_name)
-        .map_err(|e| e.to_string())?;
-    Ok(OfferPreview {
-        rel: "kendex.toml".to_owned(),
-        bytes,
-    })
-}
-
-#[tauri::command(async)]
-#[specta::specta]
-pub fn mine_offer_workflow(path: PathBuf) -> Result<OfferPreview, String> {
-    let bytes = author::scaffold::offer_workflow(&path).map_err(|e| e.to_string())?;
-    Ok(OfferPreview {
-        rel: ".github/workflows/kendex-check.yml".to_owned(),
-        bytes,
-    })
-}
-
 #[tauri::command(async)]
 #[specta::specta]
 pub fn mine_accept_manifest(

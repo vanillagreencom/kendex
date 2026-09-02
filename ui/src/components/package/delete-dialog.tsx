@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import type { ItemKind, Scope } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
@@ -7,8 +7,6 @@ import {
   DELETE_PLACES_LABEL,
   deleteTitle,
   REINSTALL_OWN,
-  REINSTALL_READING,
-  REINSTALL_UNREAD,
   reinstallFrom,
 } from "@/lib/copy-projects";
 import { scopePath } from "@/lib/labels";
@@ -18,40 +16,28 @@ import { useAuditStore } from "@/stores/audit";
 import { originsFor, useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 
-/** How the read behind the note stands. Three answers the dialog must
- *  keep apart: one still running, one that failed, and one that landed.
- *  Only the last may be confirmed over. */
-type NoteRead = "reading" | "landed" | "failed";
-
-/** Every marketplace a deleted package can be had from again, beside how
- *  the read that found them went.
+/** Every marketplace a deleted package can be had from again.
  *
  *  The read is taken on every open rather than once. `loaded` says only
  *  that some snapshot landed, never that it covers this installation:
  *  installing refreshes the scan and the audit and leaves this join
  *  alone, so a Library visit before an install would answer for a package
- *  that did not exist yet. */
+ *  that did not exist yet.
+ *
+ *  A read that has not landed leaves the note off. It is where to get the
+ *  package again, not what the deletion does, and Delete is not held for
+ *  it: the engine answers for the removal either way. */
 function useReinstallNote(
   kind: ItemKind,
   name: string,
   scopes: Scope[],
   open: boolean,
-): { note: string | null; read: NoteRead } {
+): string | null {
   const rows = useProvenanceStore((s) => s.rows);
   const reload = useProvenanceStore((s) => s.reload);
-  const [read, setRead] = useState<NoteRead>("reading");
   useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    setRead("reading");
-    void reload().then((landed) => {
-      if (!cancelled) setRead(landed ? "landed" : "failed");
-    });
-    return () => {
-      cancelled = true;
-    };
+    if (open) void reload();
   }, [open, reload]);
-  if (read !== "landed") return { note: null, read };
   const origins = originsFor(rows, kind, name, scopes);
   // Every marketplace among them, sorted so the note reads the same on
   // every open: this deletion reaches each place, and each place records
@@ -63,14 +49,10 @@ function useReinstallNote(
       ),
     ),
   ].sort();
-  if (marketplaces.length > 0)
-    return { note: reinstallFrom(marketplaces), read };
+  if (marketplaces.length > 0) return reinstallFrom(marketplaces);
   // No marketplace to name. "Your own" is a claim, so it is made only
   // where a row actually says so, never from an origin nothing recorded.
-  return {
-    note: origins.some((one) => one.origin === "own") ? REINSTALL_OWN : null,
-    read,
-  };
+  return origins.some((one) => one.origin === "own") ? REINSTALL_OWN : null;
 }
 
 /** Deleting a package takes every copy of it with it — it is one thing to
@@ -95,7 +77,7 @@ export function DeleteDialog({
   onGone: () => void;
 }) {
   const { busy, removeItem } = useAuditStore();
-  const { note, read } = useReinstallNote(kind, name, scopes, open);
+  const note = useReinstallNote(kind, name, scopes, open);
   return (
     <ConfirmDialog
       open={open}
@@ -105,13 +87,6 @@ export function DeleteDialog({
       confirmLabel={DELETE_LABEL}
       destructive
       busy={busy}
-      // The dialog exists to say where the package can be had again, so it
-      // does not confirm a deletion while that is unknown. Cancel stays
-      // live either way.
-      confirmDisabled={read !== "landed"}
-      confirmDisabledNote={
-        read === "failed" ? REINSTALL_UNREAD : REINSTALL_READING
-      }
       onConfirm={() => {
         void (async () => {
           // One failure stops the rest: a deletion that could not finish
@@ -144,13 +119,7 @@ export function DeleteDialog({
             </li>
           ))}
         </ul>
-        {read === "reading" ? (
-          <p className="text-sm text-muted-foreground">{REINSTALL_READING}</p>
-        ) : read === "failed" ? (
-          <p className="text-sm text-muted-foreground">{REINSTALL_UNREAD}</p>
-        ) : note ? (
-          <p className="text-sm text-muted-foreground">{note}</p>
-        ) : null}
+        {note ? <p className="text-sm text-muted-foreground">{note}</p> : null}
       </div>
     </ConfirmDialog>
   );

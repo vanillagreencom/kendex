@@ -112,8 +112,8 @@ fn a_companion_already_here_reads_as_installed() {
     assert!(!companion(offer, "preflight").installed);
 }
 
-/// A set that carries a declaring package brings the same offer, on both
-/// of the app's bundle routes.
+/// A set that carries a declaring package brings the same offer an
+/// install of the package by name does.
 #[test]
 fn a_bundle_carrying_the_package_brings_its_offer() {
     let f = fixture();
@@ -125,24 +125,8 @@ fn a_bundle_carrying_the_package_brings_its_offer() {
         installed.repo_effects
     );
     assert_eq!(installed.repo_effects.shown[0].name, "growth-guards");
-
-    let g = fixture();
-    let installed = kendex_app::sources::install_bundle(
-        &g.env,
-        &g.scope,
-        "cat".to_owned(),
-        "guards".to_owned(),
-        false,
-    )
-    .unwrap_or_else(|error| panic!("bundle_install: {error}"));
-    assert_eq!(
-        installed.repo_effects.shown.len(),
-        1,
-        "{:?}",
-        installed.repo_effects
-    );
     assert!(
-        !g.project.join(".git/hooks/kendex-guards").exists(),
+        !f.project.join(".git/hooks/kendex-guards").exists(),
         "the bundle install armed the hooks with nobody asked"
     );
 }
@@ -400,146 +384,4 @@ fn a_write_that_must_remove_nothing_refuses_when_it_would() {
         f.project.join(".git/hooks/kendex-guards").is_file(),
         "the refusal ran the uninstaller anyway"
     );
-}
-
-/// A chatty package cannot bury the notice its neighbour is owed.
-///
-/// The account interleaves kendex's own lines with unbounded output from
-/// each departing package, in name order. A budget spent across the whole
-/// list lets the first package's chatter push the second's notice off the
-/// end — and "declares no uninstaller — what it changed stays" is the only
-/// place kendex says an effect was left standing and names the manual
-/// remedy. A verbose uninstaller does that by accident; an installed
-/// package can do it on purpose.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_chatty_package_cannot_bury_a_neighbour_s_stand_down() {
-    let f = fixture();
-    let catalog = f.env.home.join("catalog");
-    // Sorted first, so its output is emitted before the other's notice.
-    let loud = catalog.join("skills/aaa-loud/scripts");
-    fs::create_dir_all(&loud).unwrap();
-    fs::write(
-        catalog.join("skills/aaa-loud/SKILL.md"),
-        "---\nname: aaa-loud\ndescription: says a great deal on the way out\n\
-         repo-effects:\n  summary: \"talks\"\n  uninstaller: \"scripts/out\"\n---\nBody.\n",
-    )
-    .unwrap();
-    fs::write(
-        loud.join("out"),
-        "#!/bin/sh\ni=0\nwhile [ $i -lt 200 ]; do echo \"chatter $i\"; i=$((i+1)); done\n",
-    )
-    .unwrap();
-    fs::set_permissions(loud.join("out"), fs::Permissions::from_mode(0o755)).unwrap();
-    // Sorted second, and it declares no uninstaller — so its one line is
-    // the only word anybody gets about what it left behind.
-    fs::create_dir_all(catalog.join("skills/zzz-quiet")).unwrap();
-    fs::write(
-        catalog.join("skills/zzz-quiet/SKILL.md"),
-        "---\nname: zzz-quiet\ndescription: leaves something standing\n\
-         repo-effects:\n  summary: \"changes the repository\"\n  \
-         removal: \"undo it by hand\"\n---\nBody.\n",
-    )
-    .unwrap();
-    install_skills(&f, &["aaa-loud", "zzz-quiet"], None);
-
-    // Both leave together: the manifest stops declaring either.
-    let manifest = f.project.join("kendex.toml");
-    let text = fs::read_to_string(&manifest).unwrap();
-    let kept: String = text
-        .split("\n[")
-        .enumerate()
-        .filter(|(n, block)| {
-            *n == 0
-                || !(block.starts_with("skills.aaa-loud]")
-                    || block.starts_with("skills.zzz-quiet]"))
-        })
-        .map(|(n, block)| match n {
-            0 => block.to_owned(),
-            _ => format!("\n[{block}"),
-        })
-        .collect();
-    fs::write(&manifest, kept).unwrap();
-
-    let view = kendex_app::audit::apply_scope(&f.env, &f.scope, true)
-        .unwrap_or_else(|error| panic!("apply_scope: {error}"));
-
-    let said = view.undone.join("\n");
-    assert!(
-        said.contains("zzz-quiet: declares no uninstaller"),
-        "the chatty package buried its neighbour's stand-down:\n{said}"
-    );
-    assert!(said.contains("to undo: undo it by hand"), "{said}");
-    // And the chatter itself is still bounded, with the count said rather
-    // than the tail dropped in silence.
-    assert!(
-        view.undone.len() < 40,
-        "the account carried {} lines",
-        view.undone.len()
-    );
-    assert!(said.contains("more lines from that package"), "{said}");
-}
-
-/// A project registered beside the fixture's own, carrying a manifest that
-/// will not parse — so the whole-machine listing every source action ends
-/// with fails, after the write.
-#[allow(clippy::unwrap_used)]
-fn a_second_project_that_cannot_be_listed(f: &Fixture) {
-    let broken = f.env.home.join("dev/broken");
-    fs::create_dir_all(&broken).unwrap();
-    fs::write(broken.join("kendex.toml"), "schema = 6\n[sources.x\n").unwrap();
-    let settings = f.env.settings_file();
-    fs::create_dir_all(settings.parent().unwrap()).unwrap();
-    fs::write(
-        &settings,
-        format!(
-            "schema = 1\nprojects = [{}, {}]\n",
-            toml::Value::from(kendex_core::paths::slashed(&f.project)),
-            toml::Value::from(kendex_core::paths::slashed(&broken)),
-        ),
-    )
-    .unwrap();
-}
-
-/// A read that fails after the write still says what the write ran.
-///
-/// By the time a source action reads back what stands, the uninstallers
-/// have run and the plan is committed. A `?` on that read used to discard
-/// the account with the answer it was riding on, leaving the person a
-/// listing error over a repository that had just been disarmed — this
-/// issue's own failure mode, reached through the error path.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_listing_that_fails_after_the_write_still_says_what_ran() {
-    let f = fixture();
-    arm(&f);
-    // The package stops rendering, so the plan drops its lock entry and
-    // runs its uninstaller whatever the verb was asked to do.
-    fs::write(
-        f.env
-            .home
-            .join("catalog/skills/growth-guards/SKILL.md.disabled"),
-        "---\nname: growth-guards\ndescription: gates the commits\n---\n",
-    )
-    .unwrap();
-    a_second_project_that_cannot_be_listed(&f);
-
-    let refused = kendex_app::sources::install_bundle(
-        &f.env,
-        &f.scope,
-        "cat".to_owned(),
-        "guards".to_owned(),
-        false,
-    )
-    .unwrap_err();
-
-    assert!(
-        !f.project.join(".git/hooks/kendex-guards").exists(),
-        "the fixture did not actually remove the package"
-    );
-    assert!(
-        refused.contains("growth-guards: running scripts/install-git-hooks --uninstall"),
-        "the account was dropped with the failed listing: {refused}"
-    );
-    assert!(refused.contains("invalid TOML"), "{refused}");
 }

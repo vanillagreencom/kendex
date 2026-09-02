@@ -1,4 +1,4 @@
-use kendex_core::engine::{self, ItemSource};
+use kendex_core::engine::{self};
 use kendex_core::env::Env;
 use kendex_core::manifest::{self};
 use kendex_core::model::{HarnessId, ItemKind, Scope};
@@ -222,20 +222,6 @@ pub fn editor_inventory(scope: Scope) -> Result<EditorInventory, String> {
         .names()
         .to_vec();
     Ok(inventory)
-}
-
-/// The primary file behind one installed item, for the Library preview
-/// pane — SKILL.md for a skill, the document itself for everything else
-/// that has its own file.
-#[tauri::command(async)]
-#[specta::specta]
-pub fn item_source(
-    scope: Scope,
-    kind: ItemKind,
-    name: String,
-    harness: HarnessId,
-) -> Result<ItemSource, String> {
-    engine::item_source(&env()?, &scope, kind, &name, harness).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

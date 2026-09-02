@@ -4,11 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView, ItemSafety, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { vendorHelp } from "@/lib/copy";
 import {
   SAFETY_CHECK_FAILED,
   SAFETY_NOT_READ,
   SAFETY_NOT_READ_BODY,
   SAFETY_RETRY_LABEL,
+  SAFETY_TAB_FAILED,
+  SAFETY_TAB_STALE,
+  SAFETY_VENDOR,
   staleSafetyNote,
 } from "@/lib/copy-safety";
 import { SEVERITY_LABELS } from "@/lib/labels";
@@ -289,5 +293,82 @@ describe("when the audit answered with no reading for this package", () => {
     await settle();
 
     expect(host.textContent).toContain("58/100");
+  });
+});
+
+// A reading that outlived the check meant to replace it is the last thing
+// anything knows, not what the files say now. The panel heads it that way;
+// the label is what somebody standing on another tab sees, and a kept
+// figure drawn as a current one there is a claim nothing supports.
+describe("the label when the check could not run again", () => {
+  it("marks a kept reading, in words and not colour alone", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "error",
+      error: "audit crashed",
+    });
+    act(() => {
+      useAuditStore.setState({
+        views: [view([gh])],
+        auditedAt: Date.now() - 3 * 60 * 60 * 1000,
+        backgroundFailureAnnounced: true,
+      });
+    });
+
+    const host = mount(
+      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
+    );
+    await settle();
+
+    expect(host.querySelector(".sr-only")?.textContent).toBe(SAFETY_TAB_STALE);
+  });
+
+  // A dash is also what a pending check and an unscored answer show, so a
+  // first check that failed has to say so rather than show one.
+  it("marks a first check that failed", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "error",
+      error: "audit crashed",
+    });
+    act(() => {
+      useAuditStore.setState({ backgroundFailureAnnounced: true });
+    });
+
+    const host = mount(
+      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
+    );
+    await settle();
+
+    expect(host.querySelector(".sr-only")?.textContent).toBe(SAFETY_TAB_FAILED);
+  });
+});
+
+// Content a tool ships itself is skipped by observed_rows, so no audit will
+// ever score it. Left to the unscored state it would sit on a permanent
+// dash behind a Try again that asks for a check that is not coming.
+describe("a package the harness ships itself", () => {
+  it("says who ships it, and offers no check it cannot run", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [view([])],
+    });
+
+    const host = mount(
+      <SafetyTab
+        reference={{ kind: "skill", name: "gh", scope: GLOBAL }}
+        vendor="OpenAI"
+      />,
+    );
+    await settle();
+
+    // No disc: a dash reads as a figure still on its way.
+    expect(host.textContent).not.toContain("—");
+    expect(host.textContent).toContain(SAFETY_VENDOR);
+    expect(host.textContent).toContain(vendorHelp("OpenAI"));
+    expect(host.textContent).not.toContain(SAFETY_NOT_READ);
+    expect(
+      [...host.querySelectorAll("button")].find(
+        (button) => button.textContent === SAFETY_RETRY_LABEL,
+      ),
+    ).toBeUndefined();
   });
 });

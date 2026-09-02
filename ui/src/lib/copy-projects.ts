@@ -40,10 +40,5 @@ const eitherOf = (names: string[]): string => {
  *  naming one would send the reader somewhere that never held the rest. */
 export const reinstallFrom = (marketplaces: string[]): string =>
   `You can install it again from ${eitherOf(marketplaces)}.`;
-export const REINSTALL_READING = "Reading where this package came from…";
-/** A deletion says where the package can be had again. When that read
- *  fails the dialog holds Delete rather than confirming without it. */
-export const REINSTALL_UNREAD =
-  "Where this package came from could not be read, so Delete is held.";
 export const REINSTALL_OWN =
   "This package is your own, so there is no marketplace to install it from again.";

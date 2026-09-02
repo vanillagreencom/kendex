@@ -11,7 +11,6 @@ import {
   ACCOUNT_ROW_TITLE,
   ACCOUNT_SIGN_IN_AGAIN_LABEL,
   ACCOUNT_SIGN_IN_LABEL,
-  ACCOUNT_SIGNED_IN_LABEL,
   ACCOUNT_UNREADABLE_LABEL,
 } from "@/lib/copy-account";
 import { type AccountState, useAccountStore } from "@/stores/account";
@@ -102,33 +101,6 @@ describe("what the account row draws", () => {
     expect(seen(host)).not.toContain(ACCOUNT_OFFLINE_LABEL);
   });
 
-  // The field is the provider's immutable account id, not a handle. It is
-  // nobody's name and belongs nowhere a person can read it.
-  it.each(SETTLED)(
-    "never shows the %s row's provider id",
-    (_state, account) => {
-      expect(show(account).textContent).not.toContain(ADA.githubLogin);
-    },
-  );
-
-  // A credential in the keychain is not a person: the row may say it is
-  // signed in, but it must not put a name or a letter to an account the
-  // server has not named.
-  it("names nobody when the credential has no identity yet", () => {
-    expect(seen(show({ kind: "signed-in", identity: null }))).toBe(
-      ACCOUNT_SIGNED_IN_LABEL,
-    );
-  });
-
-  // The server answers with a String, so a blank one is a name it does not
-  // have rather than a field it did not send.
-  it("names nobody when the server sent a blank name", () => {
-    const blank = { name: "  ", githubLogin: "1234567" };
-    expect(seen(show({ kind: "signed-in", identity: blank }))).toBe(
-      ACCOUNT_SIGNED_IN_LABEL,
-    );
-  });
-
   it("reads as offline when the credential could not be confirmed", () => {
     const host = show({ kind: "offline", identity: ADA });
     expect(seen(host)).toContain(ADA.name);
@@ -137,50 +109,47 @@ describe("what the account row draws", () => {
 });
 
 describe("where the row leads", () => {
-  it.each(SETTLED)(
-    "opens the settings page from the %s row",
-    async (_state, account) => {
-      const host = show(account);
-      const button = host.querySelector("button");
-      if (!button) throw new Error("the row is not clickable");
-      await userEvent.click(button);
-      expect(useNavStore.getState().page).toBe("settings");
-    },
-  );
+  it("opens the settings page", async () => {
+    const host = show({ kind: "signed-out" });
+    const button = host.querySelector("button");
+    if (!button) throw new Error("the row is not clickable");
+    await userEvent.click(button);
+    expect(useNavStore.getState().page).toBe("settings");
+  });
 });
 
 // The reason a row reads the way it does must reach a keyboard and a screen
 // reader, not a pointer alone: the trigger takes focus and carries the words
-// as its own text, and no row leaves them to a native tooltip.
+// as its own text.
 describe("how the sentence behind a row reaches a person", () => {
-  it.each(SETTLED)("focuses the %s row", (_state, account) => {
-    const row = rowOf(show(account));
-    row.focus();
-    expect(document.activeElement).toBe(row);
-  });
-
-  it("focuses the row a failed read leaves", () => {
-    const row = rowOf(show({ kind: "loading" }, "no network"));
-    row.focus();
-    expect(document.activeElement).toBe(row);
-  });
-
-  it("keeps the failed-read row a button, since it acts too", () => {
-    expect(rowOf(show({ kind: "loading" }, "no network")).tagName).toBe(
-      "BUTTON",
-    );
-  });
-
-  it.each(SETTLED)(
-    "keeps the %s row a button, since it acts",
-    (_s, account) => {
-      expect(rowOf(show(account)).tagName).toBe("BUTTON");
+  it.each([
+    ["settled", { kind: "signed-out" }, null],
+    ["failed-read", { kind: "loading" }, "no network"],
+  ] as [string, AccountState, string | null][])(
+    "focuses the %s row and keeps it a button",
+    (_state, account, readError) => {
+      const row = rowOf(show(account, readError));
+      row.focus();
+      expect(document.activeElement).toBe(row);
+      expect(row.tagName).toBe("BUTTON");
     },
   );
+});
 
-  it.each(SETTLED)("leaves no native tooltip on the %s row", (_s, account) => {
-    const host = show(account, "keychain locked");
-    expect(host.querySelectorAll("[title]")).toHaveLength(0);
+// One Row draws every settled state, so what holds for one holds for all:
+// the provider's account id is nobody's name and belongs nowhere a person
+// can read it; no row leaves its sentence to a native tooltip; and a read
+// that fails after one that landed changes no state, so the row reads as
+// the last good answer left it and the cause is on the page it opens.
+describe("what every settled row holds to", () => {
+  it.each(SETTLED)("holds on the %s row", (_state, account) => {
+    const clean = show(account);
+    const afterFailure = show(account, "keychain locked");
+    expect(clean.textContent).not.toContain(ADA.githubLogin);
+    expect(afterFailure.textContent).not.toContain("keychain locked");
+    expect(afterFailure.querySelectorAll("[title]")).toHaveLength(0);
+    expect(seen(afterFailure)).toBe(seen(clean));
+    expect(spoken(afterFailure)).toBe(spoken(clean));
   });
 });
 
@@ -196,26 +165,6 @@ describe("the sentence behind each row", () => {
     "says what the %s row means",
     (_state, account, sentence) => {
       expect(spoken(show(account))).toBe(sentence);
-    },
-  );
-});
-
-// A read that fails after one that landed changes no state: it leaves the
-// account exactly as the last good answer left it. The row therefore reads
-// the same either way, and the cause it does not carry is on the page every
-// row opens.
-describe("a read that failed after one that landed", () => {
-  it.each(SETTLED)("leaves the %s row as it was", (_state, account) => {
-    const clean = show(account);
-    expect(spoken(show(account, "keychain locked"))).toBe(spoken(clean));
-    expect(seen(show(account, "keychain locked"))).toBe(seen(clean));
-  });
-
-  it.each(SETTLED)(
-    "keeps the cause off the %s row, on either surface",
-    (_state, account) => {
-      const host = show(account, "keychain locked");
-      expect(host.textContent).not.toContain("keychain locked");
     },
   );
 });

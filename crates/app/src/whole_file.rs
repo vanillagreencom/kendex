@@ -7,8 +7,6 @@
 //! it too instead of inventing a message the UI would have to recognise
 //! by its words.
 
-use std::path::PathBuf;
-
 use kendex_core::error::CoreError;
 use serde::Serialize;
 use specta::Type;
@@ -22,20 +20,9 @@ pub enum WriteRefused {
     /// The file is no longer the one this copy was read from. Something
     /// else wrote it — a fork, a hold, an install, another window — and
     /// writing this copy would put that back.
-    ///
-    /// Carries whatever the write already did to the repository before it
-    /// refused. A plan runs a leaving package's uninstaller before it
-    /// touches the files, so a refusal landing after that point is a
-    /// refusal with a disarmed repository behind it — and a reload notice
-    /// on its own would send somebody away believing nothing happened.
-    /// Empty on the base check, which refuses before anything runs.
-    Stale {
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        undone: Vec<String>,
-    },
-    Failed {
-        message: String,
-    },
+    Stale,
+    /// Anything else that stopped the write, in the words the person gets.
+    Failed { message: String },
 }
 
 impl From<String> for WriteRefused {
@@ -53,36 +40,24 @@ impl From<String> for WriteRefused {
 /// went wrong.
 pub fn refusal(error: CoreError) -> WriteRefused {
     match error {
-        CoreError::PlanStale { .. } => WriteRefused::Stale { undone: Vec::new() },
+        CoreError::PlanStale { .. } => WriteRefused::Stale,
         other => WriteRefused::Failed {
             message: other.to_string(),
         },
     }
 }
 
-/// Whether an apply refused because this file moved under it. The write is
-/// bound to the file the copy on screen came from, so a rollback with that
-/// precondition underneath is the same answer the base check gives a
-/// moment earlier — and it reaches the person the same way, as a reload to
-/// take, rather than as an apply error they can do nothing with.
-pub fn stale_at(error: &CoreError, targets: &[PathBuf]) -> bool {
-    match error {
-        CoreError::PlanStale { path: moved } => targets.contains(moved),
-        CoreError::RolledBack { cause, .. } => stale_at(cause, targets),
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn a_stale_base_is_the_reload_choice_and_any_other_failure_is_not() {
         let path = PathBuf::from("/w/app/kendex.toml");
         assert!(matches!(
             refusal(CoreError::PlanStale { path }),
-            WriteRefused::Stale { .. }
+            WriteRefused::Stale
         ));
         assert!(matches!(
             refusal(CoreError::LegacyManifest {
@@ -90,44 +65,6 @@ mod tests {
                 message: "it names no schema".to_owned(),
             }),
             WriteRefused::Failed { .. }
-        ));
-    }
-
-    /// The write is bound to the file the copy on screen came from, so a
-    /// rollback with that precondition underneath is the same refusal the
-    /// check gives — and the page already knows what to do with it. Told
-    /// as an apply failure it reaches the person as a message with no
-    /// choice in it.
-    #[test]
-    fn a_rollback_on_this_file_is_the_refusal_the_page_can_offer() {
-        let path = PathBuf::from("/w/app/kendex.toml");
-        let moved = CoreError::PlanStale { path: path.clone() };
-        assert!(stale_at(&moved, std::slice::from_ref(&path)));
-        assert!(stale_at(
-            &CoreError::RolledBack {
-                reason: "'Save kendex.toml' failed".into(),
-                cause: Box::new(moved),
-            },
-            &[path]
-        ));
-    }
-
-    /// A refusal can name only the path core lists for the scope — and
-    /// nothing else.
-    #[test]
-    fn a_refusal_matches_the_name_the_scope_manifest_answers_to() {
-        let targets = [PathBuf::from("/w/app/kendex.toml")];
-        for name in &targets {
-            assert!(stale_at(
-                &CoreError::PlanStale { path: name.clone() },
-                &targets
-            ));
-        }
-        assert!(!stale_at(
-            &CoreError::PlanStale {
-                path: "/w/app/.claude/settings.json".into()
-            },
-            &targets
         ));
     }
 }

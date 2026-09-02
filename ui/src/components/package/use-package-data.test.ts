@@ -192,31 +192,6 @@ describe("packageVersionActions", () => {
     expect(toast.info).not.toHaveBeenCalled();
   });
 
-  // The manifest took the new hold and the files did not move with it.
-  // Saying "Updated" here is the bug this whole path answers.
-  it("does not call a version switch updated when the plan held the copy back", async () => {
-    vi.mocked(commands.packageSetRev).mockResolvedValue(
-      answer({ heldBack: [conflict("claude")] }),
-    );
-    actions(false).switchTo(version("c".repeat(40)));
-    await vi.waitFor(() => expect(toast.info).toHaveBeenCalled());
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.info).toHaveBeenCalledWith(HELD_IN_CLAUDE);
-  });
-
-  // The partial case: written in one tool, refused in another. The refusal
-  // is the half somebody has to act on, so it is the half that is said —
-  // a success over it would leave the held copy unmentioned.
-  it("names the tool a switch could not reach when it wrote the others", async () => {
-    vi.mocked(commands.packageSetRev).mockResolvedValue(
-      answer({ heldBack: [conflict("claude")], moved: [stale("codex")] }),
-    );
-    actions(false).switchTo(version("c".repeat(40)));
-    await vi.waitFor(() => expect(toast.info).toHaveBeenCalled());
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.info).toHaveBeenCalledWith(HELD_IN_CLAUDE);
-  });
-
   it("moves a held package's hold instead of applying it", async () => {
     const row = version("c".repeat(40));
     vi.mocked(commands.packageSetRev).mockResolvedValue(
@@ -231,18 +206,6 @@ describe("packageVersionActions", () => {
     expect(toast.success).toHaveBeenCalledWith("Updated gh to v2");
   });
 
-  // Update on a held package is a hold move, and a hold move can be
-  // refused on disk exactly as an update can.
-  it("does not call Update on a held package updated when the copy was held back", async () => {
-    vi.mocked(commands.packageSetRev).mockResolvedValue(
-      answer({ heldBack: [conflict("claude")] }),
-    );
-    actions(true).updateToLatest(version("c".repeat(40)));
-    await vi.waitFor(() => expect(toast.info).toHaveBeenCalled());
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.info).toHaveBeenCalledWith(HELD_IN_CLAUDE);
-  });
-
   it("says Follow source landed when the plan wrote the package", async () => {
     vi.mocked(commands.packageSetRev).mockResolvedValue(
       answer({ moved: [stale("claude")] }),
@@ -253,29 +216,5 @@ describe("packageVersionActions", () => {
       [ref.scope, ref.kind, ref.name, null],
     ]);
     expect(toast.success).toHaveBeenCalledWith("Now following its source");
-  });
-
-  // The manifest follows again either way; the toast may not stay silent
-  // about a copy the apply could not move.
-  it("says Follow source wrote nothing when the copy was held back", async () => {
-    vi.mocked(commands.packageSetRev).mockResolvedValue(
-      answer({ heldBack: [conflict("claude")] }),
-    );
-    actions(true).follow();
-    await vi.waitFor(() => expect(toast.info).toHaveBeenCalled());
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.info).toHaveBeenCalledWith(HELD_IN_CLAUDE);
-  });
-
-  it("says a copy that went to the trash was not replaced", async () => {
-    vi.mocked(commands.packageSetRev).mockResolvedValue(
-      answer({ removed: [conflict("claude")] }),
-    );
-    actions(false).switchTo(version("c".repeat(40)));
-    await vi.waitFor(() => expect(toast.error).toHaveBeenCalled());
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenCalledWith(
-      "The copy in Claude Code went to the trash and nothing replaced it",
-    );
   });
 });

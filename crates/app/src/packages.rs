@@ -108,38 +108,6 @@ fn render_scope(env: &Env, scope: &Scope) -> Result<AuditView, String> {
     settle_report(env, scope, &report)
 }
 
-#[tauri::command(async)]
-#[specta::specta]
-pub fn fork_rename(
-    scope: Scope,
-    kind: ItemKind,
-    old_name: String,
-    new_name: String,
-) -> Result<AuditView, String> {
-    let env = env()?;
-    let plan = engine::fork::rename_fork(&env, &scope, kind, &old_name, &new_name)
-        .map_err(|e| e.to_string())?;
-    apply::execute(&env, &plan).map_err(|e| e.to_string())?;
-    // The old name's artifacts come off disk with the rename — the user
-    // asked for this by name, which is what an explicit removal is.
-    let report = kendex_core::engine::plan_scope(
-        &env,
-        &scope,
-        &manifest::load_for_mutation(&manifest::manifest_path(&env, &scope))
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "no manifest".to_owned())?,
-        &kendex_core::lock::load(&kendex_core::lock::lock_path(&env, &scope))
-            .map_err(|e| e.to_string())?,
-        &engine::PlanOptions {
-            remove_orphans: true,
-            removal_filter: Some(vec![(None, old_name)]),
-            ..Default::default()
-        },
-    )
-    .map_err(|e| e.to_string())?;
-    settle_report(&env, &scope, &report)
-}
-
 /// Discard one package's edits and re-render it — the door back to "the
 /// catalog's version wins". Scoped to the package the user named twice
 /// over: a neighbour's edits are never taken along, and the scope's other

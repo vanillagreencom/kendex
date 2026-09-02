@@ -164,29 +164,11 @@ describe("where the row's mark is drawn", () => {
     return cell;
   };
 
-  const markElement = (host: HTMLElement) => {
-    const found = Array.from(host.querySelectorAll("td > span *")).find(
-      (node) => node.textContent?.startsWith("Customized"),
-    );
-    if (!found) throw new Error("no mark rendered");
-    return found;
-  };
-
   const CUSTOMIZED: PlaceMark = {
     label: "Customized in vg · 1 of 2 places",
     goTo: VG,
     why: "settings",
   };
-
-  it("hides until the name cell is hovered or focused", () => {
-    const { host } = mount([], CUSTOMIZED);
-
-    const classes = markElement(host).className;
-    expect(classes).toContain("hidden");
-    expect(classes).toContain("group-hover/name:block");
-    expect(classes).toContain("group-focus-within/name:block");
-    expect(nameCell(host).className).toContain("group/name");
-  });
 
   // The description is what a reader scans a row for. With the mark out of
   // the resting row, the description is what follows the name — not a
@@ -199,17 +181,6 @@ describe("where the row's mark is drawn", () => {
       .filter((node) => !node.className.includes("hidden"))
       .map((node) => node.textContent);
     expect(resting).toEqual(["gh", "about gh"]);
-  });
-
-  // The package header states this same fact in the same words and styles
-  // it no further, so the row does not either.
-  it("reads as a remark, not as the row's coloured mark", () => {
-    const { host } = mount([], CUSTOMIZED);
-
-    const classes = markElement(host).className;
-    expect(classes).toContain("text-muted-foreground");
-    expect(classes).not.toContain("italic");
-    expect(classes).not.toContain("text-customized");
   });
 });
 

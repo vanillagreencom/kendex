@@ -34,158 +34,6 @@ fn scope_with_manifest() -> (tempfile::TempDir, Env, Scope) {
     (tmp, env, Scope::Project { root: project })
 }
 
-/// A scope whose agent's role gained a skill upstream since it was
-/// installed: the one thing that still makes the plan write the manifest
-/// itself, and so the one write `PlanOptions::manifest_base` binds.
-///
-/// Two phases, because the addition is measured against what the lock
-/// recorded: install once with the role carrying `recon`, then let the
-/// catalog give the role `probe` as well.
-fn scope_gaining_a_catalog_skill() -> (tempfile::TempDir, Env, Scope) {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = Env::fake(tmp.path(), kendex_core::env::FakeOs::Linux);
-    let project = tmp.path().join("dev/app");
-    std::fs::create_dir_all(project.join(".claude")).unwrap();
-    let catalog = tmp.path().join("catalog");
-    std::fs::create_dir_all(catalog.join("agents")).unwrap();
-    let skill = |name: &str| {
-        std::fs::create_dir_all(catalog.join("skills").join(name)).unwrap();
-        std::fs::write(
-            catalog.join("skills").join(name).join("SKILL.md"),
-            format!("---\nname: {name}\ndescription: skill {name}\n---\nBody.\n"),
-        )
-        .unwrap();
-    };
-    skill("recon");
-    skill("probe");
-    std::fs::write(
-        catalog.join("agents/rev.md"),
-        "---\nname: rev\ndescription: agent rev\nrole: reviewer\n---\nBody.\n",
-    )
-    .unwrap();
-    let role_skills = |carried: &str| {
-        std::fs::write(
-            catalog.join("kendex.toml"),
-            format!("is_source_catalog = true\n\n[role-skills]\nreviewer = [{carried}]\n"),
-        )
-        .unwrap();
-    };
-    role_skills("\"recon\"");
-    std::fs::write(
-        project.join("kendex.toml"),
-        format!(
-            "schema = {MANIFEST_SCHEMA}\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[agents.rev]\nsource = \"cat\"\n\n[skills.recon]\nsource = \"cat\"\n\n[agent-skills]\nrev = [\"recon\"]\n",
-            source_path(&catalog)
-        ),
-    )
-    .unwrap();
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-
-    // Phase one: install, so the lock records the upstream set an addition
-    // is measured against.
-    crate::audit::apply_scope(&env, &scope, false).unwrap();
-
-    // Phase two: the role gains a skill the manifest does not name.
-    role_skills("\"recon\", \"probe\"");
-    (tmp, env, scope)
-}
-
-/// The chain that turns a mid-apply refusal into the stale choice,
-/// exercised whole: the plan's own manifest write binds to the editor
-/// copy's base (`PlanOptions::manifest_base`), a writer lands after
-/// the copy was read, and the apply refuses in a way `stale_at`
-/// recognises while the writer's bytes stand. A plan observing the
-/// file instead of taking the base would accept this writer.
-#[test]
-fn a_writer_landing_after_the_editor_read_is_refused_mid_apply() {
-    let (_tmp, env, scope) = scope_gaining_a_catalog_skill();
-    let path = manifest::manifest_path(&env, &scope);
-    let (read, base) = manifest::read_for_mutation(&path).unwrap();
-    let editor_copy = read.unwrap();
-
-    // The writer in between: lands after the editor copy left, before
-    // the plan is made.
-    let original = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(
-        &path,
-        format!("{original}\n[skill-instructions]\nall = \"kept\"\n"),
-    )
-    .unwrap();
-
-    let lock = load_lock(&lock_path(&env, &scope)).unwrap();
-    let options = PlanOptions {
-        manifest_base: Some(base),
-        ..PlanOptions::default()
-    };
-    let report = engine::plan_scope(&env, &scope, &editor_copy, &lock, &options).unwrap();
-    assert!(
-        engine::persists_manifest(&report.plan.ops),
-        "the catalog's new skill is the plan's manifest write: {:?}",
-        report.plan.ops
-    );
-
-    let error = kendex_core::apply::execute(&env, &report.plan).unwrap_err();
-    assert!(
-        stale_at(
-            &error,
-            std::slice::from_ref(&manifest::manifest_path(&env, &scope))
-        ),
-        "{error:?}"
-    );
-    let kept = std::fs::read_to_string(&path).unwrap();
-    assert!(kept.contains("all = \"kept\""), "{kept}");
-}
-
-/// The mid-apply refusal with the scope root reached through a symlink:
-/// the plan speaks the canonical spelling, so the targets a caller matches
-/// the refusal against must speak it too, whatever spelling the scope
-/// arrived under. macOS reaches every temp directory through `/var` →
-/// `/private/var` and runs the tests above this way; the link reproduces
-/// that shape on every platform.
-#[cfg(unix)]
-#[test]
-fn a_refusal_through_a_symlinked_root_is_still_the_stale_choice() {
-    let (tmp, env, _real) = scope_gaining_a_catalog_skill();
-    std::os::unix::fs::symlink(tmp.path().join("dev"), tmp.path().join("via")).unwrap();
-    let scope = Scope::Project {
-        root: tmp.path().join("via/app"),
-    };
-
-    let path = manifest::manifest_path(&env, &scope);
-    let (read, base) = manifest::read_for_mutation(&path).unwrap();
-    let editor_copy = read.unwrap();
-    let lock = load_lock(&lock_path(&env, &scope)).unwrap();
-    let options = PlanOptions {
-        manifest_base: Some(base),
-        ..PlanOptions::default()
-    };
-    let report = engine::plan_scope(&env, &scope, &editor_copy, &lock, &options).unwrap();
-    assert!(
-        engine::persists_manifest(&report.plan.ops),
-        "{:?}",
-        report.plan.ops
-    );
-
-    // The writer in between, landing through the same link.
-    let original = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(
-        &path,
-        format!("{original}\n[skill-instructions]\nall = \"kept\"\n"),
-    )
-    .unwrap();
-
-    let error = kendex_core::apply::execute(&env, &report.plan).unwrap_err();
-    assert!(
-        stale_at(
-            &error,
-            std::slice::from_ref(&manifest::manifest_path(&env, &scope))
-        ),
-        "{error:?}"
-    );
-}
-
 /// The first save on a scope with no kendex.toml creates the file. The
 /// schema the draft arrives with is what decides it: `check` runs before
 /// the plan's `manifest::save` would stamp one, so a draft naming any
@@ -271,7 +119,7 @@ fn a_save_from_a_stale_copy_is_refused_and_the_newer_file_stands() {
         panic!("a stale save must be refused");
     };
 
-    assert!(matches!(refused, WriteRefused::Stale { .. }), "{refused:?}");
+    assert!(matches!(refused, WriteRefused::Stale), "{refused:?}");
     let (kept, _) = manifest::read_for_mutation(&path).unwrap();
     let kept = kept.unwrap();
     assert_eq!(
@@ -295,7 +143,7 @@ fn a_copy_predating_the_first_save_is_refused_once_a_file_exists() {
     let Err(refused) = write_customize(&env, scope, Some((empty, Base::absent())), None) else {
         panic!("a no-file claim against an existing file must be refused");
     };
-    assert!(matches!(refused, WriteRefused::Stale { .. }), "{refused:?}");
+    assert!(matches!(refused, WriteRefused::Stale), "{refused:?}");
 }
 
 fn manifest() -> Manifest {
@@ -493,7 +341,7 @@ fn a_stale_settings_copy_refuses_and_takes_the_manifest_edit_with_it() {
     ) else {
         panic!("a stale settings copy must be refused");
     };
-    assert!(matches!(refused, WriteRefused::Stale { .. }), "{refused:?}");
+    assert!(matches!(refused, WriteRefused::Stale), "{refused:?}");
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), newer);
     let (kept, _) = manifest::read_for_mutation(&manifest_path).unwrap();
     assert!(kept.unwrap().skill_instructions.is_empty());
@@ -696,68 +544,5 @@ fn an_uninstaller_that_ran_before_a_refusal_is_still_reported() {
             "guards: disarmed".to_owned()
         ],
         "a refused rendering removed the package without saying what it ran"
-    );
-}
-
-/// And the account survives the refusal itself.
-///
-/// The uninstaller runs before the plan writes, so a refusal landing after
-/// that point is a refusal with a disarmed repository behind it. Dropping
-/// the lines into a unit variant told the person only to reload, which is
-/// the one shape where "nothing happened" is a lie — and it is this
-/// issue's own end state reached from the other direction.
-///
-/// Driven through the real executor against a real moved precondition:
-/// the manifest the plan binds is rewritten after the report is built, so
-/// the apply rolls back with the uninstaller already run.
-#[cfg(unix)]
-#[test]
-fn a_refusal_after_the_uninstaller_ran_still_carries_the_account() {
-    let held = scope_carrying_a_declaring_package();
-    let (_tmp, env, scope) = (&held.0, &held.1, &held.2);
-    scope_whose_package_stops_rendering(&held);
-    let path = manifest::manifest_path(env, scope);
-    let (read, base) = manifest::read_for_mutation(&path).unwrap();
-    let editor_copy = read.unwrap();
-    let lock = load_lock(&lock_path(env, scope)).unwrap();
-    let report = engine::plan_scope(
-        env,
-        scope,
-        &editor_copy,
-        &lock,
-        &PlanOptions {
-            manifest_base: Some(base),
-            ..PlanOptions::default()
-        },
-    )
-    .unwrap();
-    assert!(
-        !report.repo_effects_leaving.is_empty(),
-        "the fixture built a report with nothing leaving"
-    );
-
-    // The writer in between: lands after the report was built, so the
-    // apply rolls back on the precondition it bound.
-    let original = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(
-        &path,
-        format!("{original}\n[skill-instructions]\nall = \"kept\"\n"),
-    )
-    .unwrap();
-
-    let refused = crate::repo_effects::execute(env, &report).unwrap_err();
-    let refused = refused_write(refused, std::slice::from_ref(&path));
-
-    let undone = match refused {
-        WriteRefused::Stale { undone } => undone,
-        other => panic!("expected a stale refusal, got {other:?}"),
-    };
-    assert_eq!(
-        undone,
-        vec![
-            "guards: running scripts/arm --uninstall".to_owned(),
-            "guards: disarmed".to_owned(),
-        ],
-        "the refusal reported a reload over a repository it had just disarmed"
     );
 }

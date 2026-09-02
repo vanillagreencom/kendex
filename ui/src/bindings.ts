@@ -110,7 +110,7 @@ export const commands = {
 	 *  window — would put the older file back over it. A copy of a file that
 	 *  is no longer there is refused, never applied.
 	 */
-	updateSettings: (settings: AppSettings, base: string | null) => typedError<SettingsRead, WriteRefused_Serialize>(__TAURI_INVOKE("update_settings", { settings, base })),
+	updateSettings: (settings: AppSettings, base: string | null) => typedError<SettingsRead, WriteRefused>(__TAURI_INVOKE("update_settings", { settings, base })),
 	/**
 	 *  The size on screen, written on its own. Nothing else in the file moves
 	 *  with it, and nothing else can move it: a size the person is looking at
@@ -181,19 +181,13 @@ export const commands = {
 } | null, settings: {
 	edits: SettingsEdit[],
 	base: string | null,
-} | null) => typedError<AuditView_Serialize, WriteRefused_Serialize>(__TAURI_INVOKE("save_customize", { scope, manifest, settings })),
+} | null) => typedError<AuditView_Serialize, WriteRefused>(__TAURI_INVOKE("save_customize", { scope, manifest, settings })),
 	editorInventory: (scope: Scope) => typedError<EditorInventory, string>(__TAURI_INVOKE("editor_inventory", { scope })),
 	/**
 	 *  Per-hook, per-harness delivery for the hooks as currently drafted in the
 	 *  editor — outer Vec in the order the hooks were passed.
 	 */
 	customHookDeliveries: (scope: Scope, hooks: CustomHook_Deserialize[]) => typedError<HookDelivery[][], string>(__TAURI_INVOKE("custom_hook_deliveries", { scope, hooks })),
-	/**
-	 *  The primary file behind one installed item, for the Library preview
-	 *  pane — SKILL.md for a skill, the document itself for everything else
-	 *  that has its own file.
-	 */
-	itemSource: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId) => typedError<ItemSource, string>(__TAURI_INVOKE("item_source", { scope, kind, name, harness })),
 	/**
 	 *  Native folder picker. Blocking, so this must not run on the main thread
 	 *  — an async command already runs off it, which is what the plugin's own
@@ -223,23 +217,12 @@ export const commands = {
 	 *  a prefix check would wave through `http://localhost.evil.example`.
 	 */
 	openUrl: (url: string) => typedError<null, string>(__TAURI_INVOKE("open_url", { url })),
-	/**  Every declared source in every scope — the Sources page's one query. */
-	sourcesOverview: () => typedError<SourceRow[], string>(__TAURI_INVOKE("sources_overview")),
-	sourceAdd: (scope: Scope, name: string, reference: string) => typedError<SourcesAfter_Serialize, string>(__TAURI_INVOKE("source_add", { scope, name, reference })),
-	sourceRemove: (scope: Scope, name: string) => typedError<SourcesAfter_Serialize, string>(__TAURI_INVOKE("source_remove", { scope, name })),
 	sourceToggle: (scope: Scope, name: string, enabled: boolean) => typedError<SourcesAfter_Serialize, string>(__TAURI_INVOKE("source_toggle", { scope, name, enabled })),
 	/**
 	 *  Re-resolve every enabled remote across every scope. Returns warnings
 	 *  (offline caches keep serving); hard failures surface as the error.
 	 */
 	sourcesRefresh: () => typedError<string[], string>(__TAURI_INVOKE("sources_refresh")),
-	/**  What the Catalogs page lists under each source — one query. */
-	bundlesOverview: () => typedError<BundleRow[], string>(__TAURI_INVOKE("bundles_overview")),
-	/**
-	 *  Install a set whole. Its members derive from the catalog, so this declares
-	 *  one name and applies the plan that follows from it.
-	 */
-	bundleInstall: (scope: Scope, source: string, name: string, hold: boolean) => typedError<BundleInstalled_Serialize, string>(__TAURI_INVOKE("bundle_install", { scope, source, name, hold })),
 	/**
 	 *  Every subscription across every scope — the Marketplaces page's one
 	 *  query.
@@ -332,8 +315,6 @@ export const commands = {
 	mineForget: (path: string) => typedError<null, string>(__TAURI_INVOKE("mine_forget", { path })),
 	mineImportInventory: () => typedError<ImportCandidate[], string>(__TAURI_INVOKE("mine_import_inventory")),
 	mineImportApply: (target: string, selections: ImportSelection[]) => typedError<ImportOutcome, string>(__TAURI_INVOKE("mine_import_apply", { target, selections })),
-	mineOfferManifest: (path: string, name: string, description: string, authorName: string) => typedError<OfferPreview, string>(__TAURI_INVOKE("mine_offer_manifest", { path, name, description, authorName })),
-	mineOfferWorkflow: (path: string) => typedError<OfferPreview, string>(__TAURI_INVOKE("mine_offer_workflow", { path })),
 	mineAcceptManifest: (path: string, name: string, description: string, authorName: string) => typedError<MineRow, string>(__TAURI_INVOKE("mine_accept_manifest", { path, name, description, authorName })),
 	mineAcceptWorkflow: (path: string) => typedError<MineRow, string>(__TAURI_INVOKE("mine_accept_workflow", { path })),
 	/**
@@ -395,7 +376,6 @@ export const commands = {
 	 *  original on its source, then render both.
 	 */
 	packageForkBeside: (scope: Scope, kind: ItemKind, name: string, harness: HarnessId, newName: string, rev: string | null) => typedError<AuditView_Serialize, ForkBesideError>(__TAURI_INVOKE("package_fork_beside", { scope, kind, name, harness, newName, rev })),
-	forkRename: (scope: Scope, kind: ItemKind, oldName: string, newName: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("fork_rename", { scope, kind, oldName, newName })),
 	/**
 	 *  Discard one package's edits and re-render it — the door back to "the
 	 *  catalog's version wins". Scoped to the package the user named twice
@@ -720,53 +700,11 @@ export type BundleDetail = {
 	collision: string | null,
 };
 
-/**
- *  What a bundle install hands back: every set as it stands now, the
- *  repository effects its members brought for the window to ask about, and
- *  what any package the plan took away had undone.
- */
-export type BundleInstalled = BundleInstalled_Serialize | BundleInstalled_Deserialize;
-
-/**
- *  What a bundle install hands back: every set as it stands now, the
- *  repository effects its members brought for the window to ask about, and
- *  what any package the plan took away had undone.
- */
-export type BundleInstalled_Deserialize = {
-	bundles: BundleRow[],
-	repoEffects: Offers,
-	undone: string[],
-};
-
-/**
- *  What a bundle install hands back: every set as it stands now, the
- *  repository effects its members brought for the window to ask about, and
- *  what any package the plan took away had undone.
- */
-export type BundleInstalled_Serialize = {
-	bundles: BundleRow[],
-	repoEffects: Offers,
-	undone?: string[],
-};
-
 /**  One member of a curated set, with where it stands here. */
 export type BundleMemberRow = {
 	kind: ItemKind,
 	name: string,
 	state: InstallState,
-};
-
-/**  One curated set a catalog offers, as the Catalogs page lists it. */
-export type BundleRow = {
-	scope: Scope,
-	source: string,
-	name: string,
-	description: string | null,
-	version: string | null,
-	category: string | null,
-	/**  What it carries, each as the kind and name it installs under. */
-	members: string[],
-	installed: boolean,
 };
 
 export type CandidateGroup = 
@@ -2085,12 +2023,6 @@ export type ObservedItem = {
 	vendor: string | null,
 };
 
-/**  One offered write, previewed: the exact relative path and bytes. */
-export type OfferPreview = {
-	rel: string,
-	bytes: string,
-};
-
 /**
  *  Everything a run has to say about repository effects: the blocks to
  *  read and ask about, and the packages it could not account for.
@@ -3157,47 +3089,15 @@ export type Withheld = {
  *  here, not a failure, so it is a shape the page can act on rather than
  *  a message it would have to recognise by its words.
  */
-export type WriteRefused = WriteRefused_Serialize | WriteRefused_Deserialize;
-
-/**
- *  Why a whole-file write did not happen. Refusing is a normal answer
- *  here, not a failure, so it is a shape the page can act on rather than
- *  a message it would have to recognise by its words.
- */
-export type WriteRefused_Deserialize = 
+export type WriteRefused = 
 /**
  *  The file is no longer the one this copy was read from. Something
  *  else wrote it — a fork, a hold, an install, another window — and
  *  writing this copy would put that back.
- * 
- *  Carries whatever the write already did to the repository before it
- *  refused. A plan runs a leaving package's uninstaller before it
- *  touches the files, so a refusal landing after that point is a
- *  refusal with a disarmed repository behind it — and a reload notice
- *  on its own would send somebody away believing nothing happened.
- *  Empty on the base check, which refuses before anything runs.
  */
-({ kind: "stale"; undone: string[] }) & { message?: never } | ({ kind: "failed"; message: string }) & { undone?: never };
-
-/**
- *  Why a whole-file write did not happen. Refusing is a normal answer
- *  here, not a failure, so it is a shape the page can act on rather than
- *  a message it would have to recognise by its words.
- */
-export type WriteRefused_Serialize = 
-/**
- *  The file is no longer the one this copy was read from. Something
- *  else wrote it — a fork, a hold, an install, another window — and
- *  writing this copy would put that back.
- * 
- *  Carries whatever the write already did to the repository before it
- *  refused. A plan runs a leaving package's uninstaller before it
- *  touches the files, so a refusal landing after that point is a
- *  refusal with a disarmed repository behind it — and a reload notice
- *  on its own would send somebody away believing nothing happened.
- *  Empty on the base check, which refuses before anything runs.
- */
-({ kind: "stale"; undone?: string[] }) & { message?: never } | ({ kind: "failed"; message: string }) & { undone?: never };
+{ kind: "stale" } | 
+/**  Anything else that stopped the write, in the words the person gets. */
+{ kind: "failed"; message: string };
 
 /**  One path the package writes, where it actually lands. */
 export type Written = {

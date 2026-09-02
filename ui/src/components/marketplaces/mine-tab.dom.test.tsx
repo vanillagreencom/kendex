@@ -66,16 +66,6 @@ const READY = {
 
 const MINE: MineListRow = { state: "ready", row: READY };
 
-/** The same marketplace with no remote: nothing to key a submission by. */
-const NO_REMOTE: MineListRow = {
-  state: "ready",
-  row: {
-    ...READY,
-    path: "/home/ada/dev/scratch-skills",
-    git: { ...READY.git, remote: null, candidate: null },
-  },
-};
-
 // The tab's own rows are not what is under test: `load` is stubbed so the
 // mount reaches no command, and the tab renders its empty state while the
 // poll runs behind it.
@@ -170,58 +160,11 @@ it("leaves the account alone when a tick fails for any other reason", async () =
   expect(useAccountStore.getState().submissions).toEqual([ROW]);
 });
 
-// The defect this tab had: a read that never landed is not the same fact
-// as a server that answered with nothing. Which of the three a marketplace
-// is in is `submissionFor`'s ruling; what is asserted here is what the tab
-// draws for each.
+// Which of the three states a marketplace is in is `submissionFor`'s
+// ruling, proven in `mine-submission.test.ts`. What the tab owes is that a
+// row the server named survives a tick that failed — the defect this tab
+// had, where the failure blanked the label back to an offer to submit.
 describe("what a marketplace's submission reads as", () => {
-  const showing = async () => {
-    const host = mount(<MineTab />);
-    await settle();
-    return host.textContent ?? "";
-  };
-
-  it("draws an unknown state as unknown, claiming neither offer", async () => {
-    useMineStore.setState({ rows: [MINE] });
-    vi.mocked(commands.mineSubmissions).mockResolvedValue(
-      refused("failed", FAILED),
-    );
-
-    const text = await showing();
-
-    expect(text).toContain("Could not check your submissions");
-    expect(text).toContain(FAILED);
-    expect(text).toContain("Submission status unknown");
-    expect(text).toContain("Submit…");
-    expect(text).not.toContain("Submit to community…");
-  });
-
-  // The control: every string has to go the other way.
-  it("draws a not-submitted state as nothing said at all", async () => {
-    useMineStore.setState({ rows: [MINE] });
-    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([]));
-
-    const text = await showing();
-
-    expect(text).not.toContain("Could not check your submissions");
-    expect(text).not.toContain("Submission status unknown");
-    expect(text).toContain("Submit to community…");
-  });
-
-  // A submission is keyed by the GitHub repository, so a marketplace with
-  // no remote is not submitted however the read went.
-  it("draws a marketplace with no remote as not submitted, whatever the read did", async () => {
-    useMineStore.setState({ rows: [NO_REMOTE] });
-    vi.mocked(commands.mineSubmissions).mockResolvedValue(
-      refused("failed", FAILED),
-    );
-
-    const text = await showing();
-
-    expect(text).not.toContain("Submission status unknown");
-    expect(text).toContain("Submit to community…");
-  });
-
   // Stale and labelled beats empty: the rows are what the server last
   // said, so a row it named stays submitted under a tick that failed.
   it("keeps a row the server named through a tick that failed", async () => {

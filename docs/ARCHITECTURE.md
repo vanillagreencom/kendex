@@ -37,13 +37,13 @@ scope — what locks, drift rows, and applies track) · Bundle (a curated set a
 catalog offers under one name, installed as one declaration) · Source (path |
 git; registry reserved post-release) · Manifest · Lock (provenance + hash) ·
 Observation (scanner truth) · Drift. Core modules mirror the verbs: `model`, `scan`,
-`manifest`, `diff`, `apply`, `source`, `harness/` (one file per harness).
+`manifest`, `drift`, `apply`, `source`, `harness/` (one file per harness).
 
 ## Layout
 
 `crates/core` — pure domain, with `quality/` holding the content rules and
 both scores, disjoint from render and engine. `crates/app` — Tauri
-commands, one module per page domain; events stream scan progress.
+commands, one module per page domain.
 `crates/cli` — thin verbs over the same core. `ui/` — React 19 + Tailwind v4 +
 shadcn/ui + zustand over generated bindings (tauri-specta). Adapters in
 `core/harness/` own paths and rendering only; what each harness supports
@@ -212,7 +212,7 @@ lives in one capability table read by core and UI.
   radius flows through design tokens (guard bans raw hex in UI code).
 - A coding tool kendex writes to is a **harness**, in code and on screen
   (`HarnessId` in core, "Harnesses" in the sidebar). Never "tool" on screen.
-- Hue carries exactly one meaning: **which harness** (`--tool-*`, one per
+- Hue carries exactly one meaning: **which harness** (`--harness-*`, one per
   harness). Status keeps the semantic tokens; item kinds are told apart by
   icon. One exception: a kind icon takes `--customized` where the package
   is changed, on a Library row and on its own page; the table prints the key.
@@ -222,7 +222,8 @@ lives in one capability table read by core and UI.
 - A status a colour can carry is a dot; words on hover and in a screen-reader line.
 - Four type steps, no fifth: page title (24 semibold), section title (15
   semibold, full contrast), row label (14 medium), description (13 muted).
-  `components/section.tsx` owns all four. A heading outranks what it introduces.
+  `components/page-header.tsx` owns the page title, `components/section.tsx`
+  the rest. A heading outranks what it introduces.
 - Space groups things; boxes are for objects. A settings or detail surface
   is `Section` + `SettingRow`, never a stack of cards. A `Card` is a discrete
   thing a person acts on as a unit — a bundle, a problem, an error, a place.
@@ -265,8 +266,8 @@ lives in one capability table read by core and UI.
 - A place is customized by settings, a settings value off its package default, a
   hand edit, or a fork, and `lib/customized-places.ts::placeStandings` is the one
   answer, over a `PlacesSource` only `placesSource` builds. Its readers are what
-  `grep -rn placeStandings ui/src` finds, the Customize index
-  (`lib/customized-here.ts`) among them: it reads the drafts open for its place and calls
+  `grep -rn placeStandings ui/src` finds, and the Customize index
+  (`lib/customized-here.ts`) through `customizedHere`: it reads the drafts open for its place and calls
   nothing customized until every read lands (`lib/updates-read-state.ts`: pending is checking, failed is packages missing).
 - Hook events have one vocabulary — Claude Code's names, in
   `core/hook.rs::EVENTS`; every other harness's map is keyed by it. The
@@ -519,8 +520,7 @@ lives in one capability table read by core and UI.
   package's update notifications is a machine-local settings entry. Reuse
   is verified against a publish receipt outside the checkout: a full
   content hash of the tree and the rules that materialized it, so a
-  checkout an older kendex wrote is rebuilt rather than reused. Pre-2.0
-  clones are read where the new layout has nothing yet, never deleted.
+  checkout an older kendex wrote is rebuilt rather than reused.
   The store keeps one tree per resolved commit; nothing prunes it;
   deleting the cache is the only cleanup.
 - **A subscription reference is parsed, never guessed; one repository
@@ -673,7 +673,7 @@ lives in one capability table read by core and UI.
   before retry; a rejected request re-takes it to clear the current credential. `skillssh.rs`
   pins its public wire schema and kill switch (`KENDEX_SKILLSSH=off`); a hit
   is a lead, never an identity, and installs through the same subscribe path.
-  Collections and deep links arrive with W3/W4.
+  Collections install through `add`.
 - **Intent in the manifest, closure in the plan, edges in the lock.** The
   manifest records choices, never consequences: items asked for, bundles
   installed, optional dependencies taken, what stays removed. A bundle's

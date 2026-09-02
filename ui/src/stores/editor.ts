@@ -10,7 +10,7 @@ import { type Draft, emptyDraft } from "@/lib/editor-draft";
 
 import { everyPlace, sameScope } from "@/lib/scope";
 import { settingsDraft, withEdit } from "@/lib/settings-rows";
-import { saying, sayUndone } from "@/lib/undone";
+import { saying } from "@/lib/undone";
 import { useAuditStore } from "./audit";
 import {
   mergedPlaces,
@@ -150,11 +150,6 @@ export const useEditorStore = create<EditorState>((set, get) => {
       // rather than taking the person's edits on its own.
       if (response.error.kind === "stale") {
         set({ stale: true, error: null });
-        // A refusal is not always "nothing happened". The plan runs a
-        // leaving package's uninstaller before it writes, so a save that
-        // refused after that point left the repository disarmed — and the
-        // reload notice on its own would say the opposite.
-        sayUndone(response.error.undone);
       } else {
         set({ error: response.error.message, stale: false });
       }

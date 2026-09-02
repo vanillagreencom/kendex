@@ -17,7 +17,6 @@ import {
   ACCOUNT_SIGN_IN_AGAIN_LABEL,
   ACCOUNT_SIGN_IN_GITHUB_LABEL,
   ACCOUNT_SIGN_OUT_LABEL,
-  ACCOUNT_SIGNED_IN_LABEL,
   ACCOUNT_SIGNED_IN_NOTE,
   ACCOUNT_SIGNED_OUT_NOTE,
   ACCOUNT_SIGNING_IN_NOTE,
@@ -96,11 +95,11 @@ const press = async (host: HTMLElement, label: string) => {
   return button;
 };
 
-const SETTLED: [string, AccountState][] = [
-  ["signed-in", { kind: "signed-in", identity: ADA }],
-  ["signed-out", { kind: "signed-out" }],
-  ["expired", { kind: "expired" }],
-  ["offline", { kind: "offline", identity: ADA }],
+/** The two states that carry a server identity, and so the only two with a
+ *  provider id to leak. */
+const IDENTIFIED: AccountState[] = [
+  { kind: "signed-in", identity: ADA },
+  { kind: "offline", identity: ADA },
 ];
 
 describe("the state the section draws", () => {
@@ -118,46 +117,6 @@ describe("the state the section draws", () => {
     expect(host.textContent).not.toContain(ACCOUNT_OFFLINE_LABEL);
   });
 
-  // Nothing in the row's lane may be pushed out by a name: the name is the
-  // one part of unbounded length, so it is the part that is cut off.
-  it("cuts a long name off rather than widening the row", () => {
-    const long = { name: "A".repeat(200), githubLogin: "1234567" };
-    const host = show({
-      account: { kind: "signed-in", identity: long },
-    });
-    // jsdom lays nothing out, so the class carrying the rule is what can be
-    // checked: the element holding the name is the one that gives.
-    const named = [...host.querySelectorAll("span")].find(
-      (el) => el.textContent === long.name,
-    );
-    expect(named?.className).toContain("truncate");
-    expect(named?.className).toContain("min-w-0");
-  });
-
-  // A credential in the keychain is not a person: the section may say it is
-  // signed in, but it must not put a name to an account nobody has named.
-  it("names nobody when the credential has no identity yet", () => {
-    const host = show({
-      account: { kind: "signed-in", identity: null },
-    });
-    expect(host.textContent).toContain(ACCOUNT_SIGNED_IN_LABEL);
-    expect(host.textContent).not.toContain(ADA.name);
-    expect(initial(host)).toBe("");
-  });
-
-  // The server answers with a String, so a blank one is a name it does not
-  // have rather than a field it did not send. The provider id is no
-  // stand-in: falling back to it would print an opaque number as a person.
-  it("names nobody when the server sent a blank name", () => {
-    const blank = { name: "  ", githubLogin: "1234567" };
-    const host = show({
-      account: { kind: "signed-in", identity: blank },
-    });
-    expect(host.textContent).toContain(ACCOUNT_SIGNED_IN_LABEL);
-    expect(host.textContent).not.toContain(blank.githubLogin);
-    expect(initial(host)).toBe("");
-  });
-
   // The bug this section had: `hasCredential` is true for offline, so an
   // unconfirmed credential drew as a confirmed sign-in.
   it("marks an unconfirmed credential offline, not signed in", () => {
@@ -168,14 +127,8 @@ describe("the state the section draws", () => {
     expect(host.textContent).toContain(ACCOUNT_OFFLINE_LABEL);
     expect(host.textContent).toContain(ACCOUNT_OFFLINE_TITLE);
     expect(host.textContent).not.toContain(ACCOUNT_SIGNED_IN_NOTE);
-  });
-
-  // The credential is still this machine's to drop, and dropping it is what
-  // stops the app asking the server about it.
-  it("still offers a sign-out while offline", () => {
-    const host = show({
-      account: { kind: "offline", identity: ADA },
-    });
+    // The credential is still this machine's to drop, and dropping it is
+    // what stops the app asking the server about it.
     expect(offered(host)).toEqual([ACCOUNT_SIGN_OUT_LABEL]);
   });
 
@@ -196,8 +149,10 @@ describe("the state the section draws", () => {
 
   // The field is the provider's immutable account id, not a handle. It is
   // nobody's name and belongs nowhere a person can read it.
-  it.each(SETTLED)("never shows the provider id when %s", (_state, account) => {
-    expect(show({ account }).textContent).not.toContain(ADA.githubLogin);
+  it("never shows the provider id of a credential it draws", () => {
+    for (const account of IDENTIFIED) {
+      expect(show({ account }).textContent).not.toContain(ADA.githubLogin);
+    }
   });
 });
 

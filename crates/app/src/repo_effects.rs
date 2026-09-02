@@ -100,61 +100,6 @@ pub fn repo_effects_apply(scope: Scope, declared: DeclaredEffects) -> Result<Sai
     apply(&env, &scope, &declared)
 }
 
-/// Why a report did not get written.
-///
-/// Two, because the caller has to be able to tell them apart. The editor
-/// reads a precondition refusal as the reload choice it already draws, and
-/// that reading needs core's own error rather than a sentence about it.
-pub enum ExecuteError {
-    /// A leaving package's uninstaller failed, or could not be run. The
-    /// plan stopped before writing anything: the package's files are still
-    /// in place, and the message carries what was said before the failure.
-    Undo(String),
-    /// The undo did what it had to and the plan itself refused. The lines
-    /// already said ride along — a repository disarmed before a write that
-    /// then failed is a fact the person is still owed. Boxed: a refusal is
-    /// the rare path, and the common `Ok` should not carry its size.
-    ///
-    /// Every caller carries them, the editor's stale answer included: its
-    /// `WriteRefused::Stale` holds an `undone` for exactly this. No route
-    /// is exempt on the grounds that its own plan cannot remove anything,
-    /// because none of them can show that — a rendering the engine refuses
-    /// drops the package's lock entry whatever the planning options say
-    /// about orphans, so an uninstaller runs on a path nobody asked for a
-    /// removal on.
-    Apply {
-        said: Vec<String>,
-        error: Box<kendex_core::error::CoreError>,
-    },
-}
-
-impl std::fmt::Display for ExecuteError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ExecuteError::Undo(message) => write!(f, "{message}"),
-            ExecuteError::Apply { said, error } => {
-                for line in said {
-                    writeln!(f, "{line}")?;
-                }
-                write!(f, "{error}")
-            }
-        }
-    }
-}
-
-/// What stands in for the lines of one package's output that were not
-/// carried. Said rather than dropped: an account that quietly stops is one
-/// nobody knows to go and read in full.
-fn elided(lines: usize) -> String {
-    format!(
-        "and {lines} more line{} from that package",
-        match lines {
-            1 => "",
-            _ => "s",
-        }
-    )
-}
-
 /// Execute a report's plan — the one way a desktop command holding an
 /// `EngineReport` writes it, and the mirror of the terminal's
 /// `apply_report`.
@@ -170,36 +115,18 @@ fn elided(lines: usize) -> String {
 /// Not a refusal that points at the terminal. Removing the package is the
 /// ask, the same as it is at the prompt; what the window owes is the
 /// account, which comes back as the lines the terminal would have printed
-/// for the action's result to carry.
+/// for the action's result to carry. A plan that refuses after the undo
+/// ran carries those lines on the failure too: the repository is disarmed
+/// by then, and a bare refusal would say nothing happened.
 ///
 /// A package whose uninstaller fails stops the plan with the files still
 /// in place, so the person can run it by hand and remove again. The other
 /// order leaves the repository in the state this exists to prevent.
-pub fn execute(env: &Env, report: &EngineReport) -> Result<Vec<String>, ExecuteError> {
+pub fn write(env: &Env, report: &EngineReport) -> Result<Vec<String>, String> {
     let mut said = Vec::new();
-    // How many lines of one package's own output are carried. A departing
-    // package chooses its own output length and core relays it whole, so
-    // an account with no ceiling is a third party deciding how long the
-    // window is busy. Per package rather than over the whole account,
-    // because the budget is about one program being chatty.
-    const PACKAGE_LINES: usize = 10;
-    let mut spent = 0usize;
-    let mut dropped = 0usize;
     if let Err(error) = kendex_core::repo_effects::undo(
         &report.plan.scope,
         &report.repo_effects_leaving,
-        // Two rules, and both need the tag core attached — which is why
-        // the budget is spent here rather than over the flat list the
-        // window receives.
-        //
-        // Every Note is kept, whatever a neighbour printed. They are
-        // kendex's own account and the ONLY place it says an effect was
-        // left standing and names the manual remedy; a package that
-        // pushed a sibling's stand-down notice past a cap would be
-        // suppressing the one line nothing else can recover. Their count
-        // is bounded by the number of packages leaving, so keeping them
-        // all cannot restore the drain the budget exists to stop.
-        //
         // The package's own two streams go out escaped, the way the
         // terminal escapes them. This is a departing third party's output
         // landing in a toast that carries no attribution, so a line of
@@ -210,47 +137,25 @@ pub fn execute(env: &Env, report: &EngineReport) -> Result<Vec<String>, ExecuteE
         // The terminal's stdout door stays unescaped for the reason it
         // exists: those bytes are a pipe's answer. A window has no pipe.
         &mut |spoken| match spoken {
-            kendex_core::repo_effects::Spoken::Note(line) => {
-                if dropped > 0 {
-                    said.push(elided(dropped));
-                    dropped = 0;
-                }
-                spent = 0;
-                said.push(line);
-            }
-            other if spent < PACKAGE_LINES => {
-                spent += 1;
-                said.push(kendex_core::names::shown(&other.into_line()));
-            }
-            _ => dropped += 1,
+            kendex_core::repo_effects::Spoken::Note(line) => said.push(line),
+            other => said.push(kendex_core::names::shown(&other.into_line())),
         },
     ) {
-        if dropped > 0 {
-            said.push(elided(dropped));
-        }
         said.push(error.to_string());
-        return Err(ExecuteError::Undo(said.join("\n")));
-    }
-    if dropped > 0 {
-        said.push(elided(dropped));
+        return Err(said.join("\n"));
     }
     match kendex_core::apply::execute(env, &report.plan) {
         Ok(_) => Ok(said),
-        Err(error) => Err(ExecuteError::Apply {
-            said,
-            error: Box::new(error),
-        }),
+        Err(error) => {
+            said.push(error.to_string());
+            Err(said.join("\n"))
+        }
     }
-}
-
-/// The same write for a caller that has no use for the two kinds apart.
-pub fn write(env: &Env, report: &EngineReport) -> Result<Vec<String>, String> {
-    execute(env, report).map_err(|error| error.to_string())
 }
 
 /// Fold the account into whatever an enrichment read failed with.
 ///
-/// Once `execute` has returned, the uninstallers have run and the plan is
+/// Once `write` has returned, the uninstallers have run and the plan is
 /// committed. Everything a command does after that — reading back the
 /// sources, the sets, the packages — is enrichment, and a `?` on one of
 /// those discards the account with the answer it was riding on. The person
