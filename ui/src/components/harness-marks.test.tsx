@@ -66,18 +66,32 @@ function painted(root: ParentNode): Painted[] {
   return shapes;
 }
 
-/** `currentColor` is the token the icon sets; `url(#…)` is a paint server
- *  the file carries (Gemini's gradient). A colour literal, the implicit
- *  black default, and an inherited `none` all ignore the token — `none`
- *  included, because every mark here draws with its fill, so a shape that
- *  paints none of it draws nothing. A stroke-drawn mark would red here, and
- *  widening this is the deliberate change that should take. */
-const fromTheCaller = ({ fill }: Painted): boolean =>
-  fill === "currentColor" || fill.startsWith("url(#");
+// What a `url(#…)` fill may legitimately name. `localName` again, because
+// two of the three are capitalised.
+const PAINT_SERVERS = new Set(["linearGradient", "radialGradient", "pattern"]);
 
-const ignoringTheToken = (shapes: Painted[]): string[] =>
+/** Whether a `url(#…)` fill reaches a paint server the file actually
+ *  carries. A reference resolving to nothing paints nothing, the same blank
+ *  mark this file exists to catch, so the id is looked up rather than the
+ *  `url(#` prefix matched. */
+function paintServer(fill: string, doc: Document): boolean {
+  const id = /^url\(#(.+)\)$/.exec(fill)?.[1];
+  const named = id ? doc.getElementById(id) : null;
+  return named !== null && PAINT_SERVERS.has(named.localName);
+}
+
+/** `currentColor` is the token the icon sets; a resolved paint server is the
+ *  file's own (Gemini's gradient). A colour literal, the implicit black
+ *  default, and an inherited `none` all ignore the token — `none` included,
+ *  because every mark here draws with its fill, so a shape that paints none
+ *  of it draws nothing. A stroke-drawn mark would red here, and widening
+ *  this is the deliberate change that should take. */
+const fromTheCaller = ({ fill }: Painted, doc: Document): boolean =>
+  fill === "currentColor" || paintServer(fill, doc);
+
+const ignoringTheToken = (shapes: Painted[], doc: Document): string[] =>
   shapes
-    .filter((shape) => !fromTheCaller(shape))
+    .filter((shape) => !fromTheCaller(shape, doc))
     .map((s) => `${s.name} → ${s.fill}`);
 
 function parse(file: string, svg: string): Document {
@@ -98,21 +112,23 @@ describe("harness marks", () => {
   it.each(MARKS)(
     "%s paints every drawn shape in the caller's colour",
     (file, svg) => {
-      const shapes = painted(parse(file, svg));
+      const doc = parse(file, svg);
+      const shapes = painted(doc);
       // Zero shapes would make the assertion below pass against nothing.
       expect(shapes.length).toBeGreaterThan(0);
-      expect(ignoringTheToken(shapes)).toEqual([]);
+      expect(ignoringTheToken(shapes, doc)).toEqual([]);
     },
   );
 
   it.each(HARNESSES)(
     "%s keeps its paint through the icon svgr builds",
     (id) => {
-      const mark = mount(<HarnessIcon harness={id} />).querySelector("svg");
-      const shapes = painted(mark as Element);
+      const host = mount(<HarnessIcon harness={id} />);
+      const mark = host.querySelector("svg") as SVGElement;
+      const shapes = painted(mark);
       expect(shapes.length).toBeGreaterThan(0);
-      expect(ignoringTheToken(shapes)).toEqual([]);
-      expect(mark?.getAttribute("class")).toContain(`text-harness-${id}`);
+      expect(ignoringTheToken(shapes, mark.ownerDocument)).toEqual([]);
+      expect(mark.getAttribute("class")).toContain(`text-harness-${id}`);
     },
   );
 });
