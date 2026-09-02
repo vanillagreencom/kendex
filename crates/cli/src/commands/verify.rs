@@ -3,15 +3,18 @@ use std::process::ExitCode;
 use kendex_core::engine::{DriftRow, DriftState, audit};
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
+use kendex_core::manifest::{ManifestFile, load as load_manifest, manifest_path};
+use kendex_core::model::{ItemKind, Scope};
 
 use super::engine_common::print_unmanaged;
-use super::{fail, fail_refusal, resolve_scopes, say, scope_label};
+use super::{fail, fail_refusal, note, resolve_scopes, say, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
 /// Drift check over lock entries; non-zero exit on any failing row — this
 /// is the signal consuming repos compose in shell pipelines. Content
-/// nothing manages is named beside the rows, and never changes the count:
+/// nothing manages is named beside the rows, and so is a scope declaring
+/// packages its install record holds none of; neither changes the count:
 /// the count is the verdict and closes the run.
 pub fn run(
     env: &Env,
@@ -25,6 +28,11 @@ pub fn run(
     // the end: a count of installations is only honest beside the content
     // that was never one.
     let mut unmanaged: Vec<DriftRow> = Vec::new();
+    // Scopes whose manifest asks for packages while their install record
+    // holds none. Every check this run makes is a lock entry, so these
+    // contribute nothing to the count, and a count printed without them
+    // reports a smaller installation than the one on disk.
+    let mut unrecorded: Vec<(Scope, Vec<(ItemKind, String)>)> = Vec::new();
 
     for scope in resolve_scopes(env, filter)? {
         let lock = load_lock(&lock_path(env, &scope))?;
@@ -60,6 +68,10 @@ pub fn run(
                 .cloned(),
         );
         if lock.entries.is_empty() {
+            let declared = declared_packages(env, &scope, &names)?;
+            if !declared.is_empty() {
+                unrecorded.push((scope.clone(), declared));
+            }
             continue;
         }
         for entry in lock.entries.values() {
@@ -73,10 +85,21 @@ pub fn run(
 
     if checked == 0 {
         print_unmanaged(&unmanaged);
-        ui::ledger("nothing installed", &[]);
+        print_unrecorded(&unrecorded);
+        // A scope declaring packages it could not check is not a machine
+        // with nothing installed on it, and saying so would close the run
+        // on the one reading the reader came for.
+        ui::ledger(
+            match unrecorded.is_empty() {
+                true => "nothing installed",
+                false => "nothing checked",
+            },
+            &[],
+        );
         return Ok(ExitCode::SUCCESS);
     }
     print_unmanaged(&unmanaged);
+    print_unrecorded(&unrecorded);
     ui::ledger(
         &format!(
             "{checked} checked, {} OK, {failed} failed",
@@ -89,6 +112,58 @@ pub fn run(
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// What a scope's manifest asks to have installed, by kind and name, held
+/// to the names the run was asked about. Read for a scope whose install
+/// record holds nothing: the audit above says nothing about a declaration
+/// no entry covers, and a Pi extension never gets an entry at all.
+///
+/// A declaration switched off asks for no installation, so its absence
+/// from the record is the record being right.
+fn declared_packages(
+    env: &Env,
+    scope: &Scope,
+    names: &[String],
+) -> Result<Vec<(ItemKind, String)>, Box<dyn std::error::Error>> {
+    let ManifestFile::Current(manifest) = load_manifest(&manifest_path(env, scope))? else {
+        return Ok(Vec::new());
+    };
+    let mut declared = Vec::new();
+    for kind in ItemKind::ALL {
+        for (name, decl) in manifest.declared(kind) {
+            if !decl.enabled || (!names.is_empty() && !names.contains(name)) {
+                continue;
+            }
+            declared.push((kind, name.clone()));
+        }
+    }
+    Ok(declared)
+}
+
+/// Enough to recognise what went unchecked without burying the rows above
+/// it.
+const UNRECORDED_SHOWN: usize = 10;
+
+/// The scopes that declare packages and have no install record to check
+/// them against, said once at the end beside the unmanaged rows. Not a
+/// verdict: the exit code answers about drift, and there is no drift to
+/// read where there is nothing recorded to compare against.
+fn print_unrecorded(scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
+    for (scope, items) in scopes {
+        note(&format!(
+            "{}: {} item{} declared, none in the install record and none checked",
+            scope_label(scope),
+            items.len(),
+            if items.len() == 1 { "" } else { "s" }
+        ));
+        for (kind, name) in items.iter().take(UNRECORDED_SHOWN) {
+            say(&format!("  - {} {name}", kind.name()));
+        }
+        if items.len() > UNRECORDED_SHOWN {
+            say(&format!("  … and {} more", items.len() - UNRECORDED_SHOWN));
+        }
+    }
 }
 
 /// One locked installation's row, and whether it failed the run. The

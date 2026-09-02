@@ -106,6 +106,10 @@ fn add() {
 
 /// The verdict closes the run, and the footnote about content nothing
 /// manages stands above it rather than after it.
+///
+/// A scope that declares packages and has no record of any of them is not
+/// a machine with nothing installed on it: the declarations are named and
+/// the head says what the run checked, which was none of them.
 #[test]
 fn verify() {
     expect(
@@ -121,7 +125,12 @@ fn verify() {
     );
     expect(
         shape(&[], &["verify", "--scope", "project"]),
-        vec!["nothing installed"],
+        vec![
+            "<project>: 2 items declared, none in the install record and none checked",
+            "  - skill growth-guards",
+            "  - skill tidy",
+            "nothing checked",
+        ],
     );
 }
 

@@ -11,7 +11,7 @@ use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{BundleRev, Lock, SourceRev, lock_path};
 use crate::manifest::Manifest;
-use crate::model::Scope;
+use crate::model::{ItemKind, Scope};
 use crate::source::SourceState;
 
 use super::config_edits;
@@ -165,30 +165,87 @@ pub(super) fn source_revisions(
     revisions
 }
 
+/// Whether installs of this kind happen outside the scope plan, so no
+/// entry for one can ever land in the record this pass builds.
+///
+/// Exhaustive on purpose: a kind added to the enum has to be classified
+/// here before this compiles, and a kind whose installs move out of the
+/// plan is one whose scope would otherwise lose its record.
+fn installs_outside_the_plan(kind: ItemKind) -> bool {
+    match kind {
+        // `kendex update-pi` compares installed bytes against the source
+        // and writes the package itself. Nothing about one is derived,
+        // planned or recorded here.
+        ItemKind::PiExtension => true,
+        // A plugin carries no content of its own, but the toggle that
+        // turns it on is planned and recorded like any other install.
+        ItemKind::Plugin => false,
+        ItemKind::Skill
+        | ItemKind::Agent
+        | ItemKind::Hook
+        | ItemKind::Command
+        | ItemKind::McpServer => false,
+    }
+}
+
+/// Whether the scope declares packages no plan can put in the record.
+/// Their scope still needs the file: it is what says which build wrote
+/// the record, and what verify, edit detection and the sweep key off.
+fn declares_unplanned_installs(manifest: &Manifest) -> bool {
+    ItemKind::ALL
+        .iter()
+        .any(|kind| installs_outside_the_plan(*kind) && !manifest.declared(*kind).is_empty())
+}
+
 /// An old-version lock rewrites even when its entries are unchanged — the
 /// version bump is itself the change. So does a source that now resolves to
 /// another commit, once there are installations to reproduce: with nothing
 /// installed there is no record to keep, and no lock file is created for
 /// one.
+///
+/// A scope declaring packages the plan never records gets the file back
+/// whatever its entries come out as. Nothing about a Pi extension is
+/// planned, so a scope declaring only those derives an empty record,
+/// which matches the empty one an absent file reads as: without this the
+/// plan is empty, the verb says the scope is up to date, and no file
+/// lands for verify, edit detection or the sweep to key off. That is the
+/// state the version floor leaves behind once a person moves an older
+/// lock aside.
+///
+/// An install this pass refused is not one of those. Its kind is planned
+/// and would be recorded; there is simply nothing to record yet, and the
+/// run closes on the conflict rather than on a write.
 pub(super) fn plan_lock_write(
     env: &Env,
     scope: &Scope,
+    manifest: &Manifest,
     lock: &Lock,
     new_lock: Lock,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
-    if new_lock.entries == lock.entries
+    let unchanged = new_lock.entries == lock.entries
         && (new_lock.sources == lock.sources || new_lock.entries.is_empty())
         && (new_lock.bundles == lock.bundles || new_lock.entries.is_empty())
-        && (lock.version == crate::lock::LOCK_VERSION || lock.entries.is_empty())
-    {
+        && (lock.version == crate::lock::LOCK_VERSION || lock.entries.is_empty());
+    // Whether a file sits at the path is the one question left, and it is
+    // asked only where the answer can change what this does: reading it
+    // hashes the record, and a scope that has nothing to write and
+    // declares no unplanned install is done either way.
+    if unchanged && !declares_unplanned_installs(manifest) {
         return Ok(());
     }
     let path = lock_path(env, scope);
+    // The same read the write below binds to. An absent lock and an empty
+    // one read alike by this point, and only the file still tells them
+    // apart.
+    let pre = Pre::observed(&path)?;
+    if unchanged && !pre.binds_nothing() {
+        return Ok(());
+    }
     ops.push(PlannedOp {
         description: "Update the install record".into(),
         op: Op::WriteLock {
-            pre: crate::apply::Pre::observed(&path)?,
+            pre,
             path,
             lock: Box::new(new_lock),
         },

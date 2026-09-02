@@ -186,7 +186,7 @@ pub fn plan_scope(
     let set_changes = set_changes(lock, &new_lock);
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
-    plan_lock_write(env, scope, disk_lock, new_lock, &mut ops)?;
+    plan_lock_write(env, scope, declared, disk_lock, new_lock, &mut ops)?;
     scope_notes.extend(scope_wide(scope, &mut ops)?);
 
     let mut report = EngineReport {
