@@ -109,3 +109,49 @@ fn a_claude_fork_renders_back_the_bytes_it_was_captured_from() {
     assert_eq!(fs::read_to_string(&file).unwrap(), edited);
     assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
 }
+
+/// A body may spell the banner as an example of it — indented into a code
+/// block, where it is the person's own content. The generated banner is
+/// the first thing the rendered prefix holds, so it comes off with that
+/// prefix and their example stays where they wrote it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_banner_line_the_body_spells_as_an_example_is_kept() {
+    let example = format!("    {BANNER}");
+    let w = agent_world(
+        "\"claude\"",
+        &format!(
+            "---\nname: rev\ndescription: agent rev\n---\nUpstream body. Every rendering opens with:\n\n{example}\n"
+        ),
+        "",
+        "",
+    );
+    let file = rendered(&w, HarnessId::Claude, "rev");
+    let text = fs::read_to_string(&file).unwrap();
+    // The generated banner, and the person's example of one.
+    assert_eq!(banners(&text), 2, "{text}");
+    edit_body(&file);
+
+    let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    resettle(&w);
+
+    let source = fs::read_to_string(captured(&w, "rev")).unwrap();
+    assert_eq!(
+        banners(&source),
+        1,
+        "the example is the person's own line and the capture took it for the renderer's: {source}"
+    );
+    assert!(
+        source.contains(&example),
+        "the example keeps the indent that makes it a code block: {source}"
+    );
+
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(banners(&text), 2, "{text}");
+    assert_eq!(
+        times(&text, "My body. Every rendering opens with:"),
+        1,
+        "{text}"
+    );
+}

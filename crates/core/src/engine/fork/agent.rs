@@ -8,8 +8,8 @@ use crate::manifest::FrontmatterOverrides;
 use crate::model::{HarnessId, ItemKind, Scope};
 
 use crate::render::agent::{
-    EffectiveAgent, GENERATED_BANNER, SourceAgent, hooks_for_agent, merge_overrides,
-    merged_instructions, parse_source_agent,
+    EffectiveAgent, SourceAgent, hooks_for_agent, merge_overrides, merged_instructions,
+    parse_source_agent,
 };
 
 use super::ForkOf;
@@ -187,21 +187,18 @@ fn source_form(
 }
 
 /// The edited body with the generated wrapper removed. A wrapper only
-/// comes off when it still stands whole at that edge. Everything else is
-/// the person's text and stays byte-for-byte as the rendered harness said
-/// it, including that harness's vocabulary.
+/// comes off when it still stands whole at that edge, and the generated
+/// banner comes off inside it, being the first thing the rendered prefix
+/// holds. Everything else is the person's text and stays byte-for-byte as
+/// the rendered harness said it, including that harness's vocabulary and
+/// any line of theirs that reads like a banner.
 fn prose(body: &str, wrapper: Option<&(String, String)>) -> String {
     let mut kept = body;
     if let Some((before, after)) = wrapper {
         kept = kept.strip_prefix(before.as_str()).unwrap_or(kept);
         kept = kept.strip_suffix(after.as_str()).unwrap_or(kept);
     }
-    let mut out = String::new();
-    for line in kept.lines().filter(|line| line.trim() != GENERATED_BANNER) {
-        out.push_str(line);
-        out.push('\n');
-    }
-    format!("{}\n", out.trim_start_matches('\n').trim_end())
+    format!("{}\n", kept.trim_start_matches('\n').trim_end())
 }
 
 struct Around<'a> {
