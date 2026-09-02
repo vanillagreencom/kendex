@@ -349,8 +349,9 @@ run_watch() {
   local env_args=() repo_args=(--repo owner/repo) team_args=(LINEAR_TEAM=kendex) watch_args=() arg
   while [[ $# -gt 0 && "$1" != "--" ]]; do
     # A bare LINEAR_TEAM, no `=`, drops the name from the child environment
-    # altogether — the shape `LINEAR_TEAM=` cannot express, since an exported
-    # empty value is its own case the script refuses.
+    # altogether — the shape `LINEAR_TEAM=` cannot express, since that exports
+    # an empty value. Both are inputs the script treats the same way, and the
+    # bare form is the one the Done-when names: no LINEAR_TEAM anywhere.
     case "$1" in
       LINEAR_TEAM) team_args=() ;;
       *) env_args+=("$1") ;;

@@ -167,6 +167,17 @@ tracker_called=no
 if [[ -e "$STUB_DIR/tracker.args" ]]; then tracker_called=yes; fi
 assert_eq "$tracker_called" "no" "a working tracker goes unread with no team" "$err"
 
+# The bare sentinel above drops the name entirely. An exported empty value is
+# the other spelling of no team, and the one this change moved: it used to die
+# on the removed check. It takes the same skip path.
+new_case triage_skipped_by_an_empty_export
+printf '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]\n' > "$STUB_DIR/tracker.out"
+err="$TMP_ROOT/triage-empty-export"
+out="$(run_watch LINEAR_TEAM= -- --max-loops 1 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "an exported-empty LINEAR_TEAM keeps the watch running" "$err"
+assert_eq "$(grep -c 'skipping the team triage check' "$err")" "1" \
+  "the empty export takes the skip path the absent name takes" "$err"
+
 new_case triage_skipped_without_team_or_tracker
 err="$TMP_ROOT/triage-no-team-no-tracker"
 out="$(run_watch LINEAR_TEAM OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/absent-tracker" -- --max-loops 2 --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
