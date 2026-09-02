@@ -89,6 +89,17 @@ while IFS='|' read -r label mode declaration frozen dormant source expect_rc exp
       SETTINGS_FILE=kendex.settings.toml
       printf '.env.local\n' >"$R/.gitignore"
       ;;
+    # The explicit source is named so that a cache keyed by the encoded path
+    # alone would materialize it ONTO the absent sentinel. The .env.local
+    # lookup that follows finds no such source in HEAD and must still refuse,
+    # rather than read this file's bytes off an occupied sentinel path.
+    # untracked-envlocal below is the control: the same untracked .env.local
+    # refusal with a settings source whose name cannot collide.
+    sentinel-collision)
+      SETTINGS_FILE=absent
+      SETTINGS_MODE=explicit
+      printf '.env.local\n' >"$R/.gitignore"
+      ;;
     *) SETTINGS_FILE=kendex.settings.toml ;;
   esac
   case "$SETTINGS_FILE" in */*) mkdir -p "$R/${SETTINGS_FILE%/*}" ;; esac
@@ -106,7 +117,7 @@ while IFS='|' read -r label mode declaration frozen dormant source expect_rc exp
     printf '%s\t20\n' "$path" >"$R/tools/active.tsv"
   else
     if [ "$dormant" = no ]; then printf '%s\t20\n' "$path" >"$R/tools/target.tsv"; fi
-    if [ "$source" = untracked-envlocal ]; then
+    if [ "$source" = untracked-envlocal ] || [ "$source" = sentinel-collision ]; then
       printf 'SIZE_RATCHET_BASELINE=tools/target.tsv\n' >"$R/.env.local"
     elif [ "$SETTINGS_FILE" = .env.local ]; then
       printf 'SIZE_RATCHET_BASELINE=tools/target.tsv\n' >"$R/$SETTINGS_FILE"
@@ -146,6 +157,7 @@ envvar-default||0||no|envvar|1|baseline row raised: big.txt — row 15 -> 20 lin
 envvar-staged|--staged|0||no|envvar|1|baseline row raised: big.txt — row 15 -> 20 lines|
 parent-link-default||0||no|parent-link|2|.kendex: HEAD carries this path component as a symlink|
 parent-real-default||0||no|parent-real|1|baseline row raised: big.txt — row 15 -> 20 lines|reference tools/active.tsv
+sentinel-collision-default||0||no|sentinel-collision|2|.env.local: SIZE_RATCHET_BASELINE has no historical form in HEAD|
 untracked-envlocal-default||0||no|untracked-envlocal|2|no historical form|
 untracked-envlocal-staged|--staged|0||no|untracked-envlocal|2|no historical form|
 CASES

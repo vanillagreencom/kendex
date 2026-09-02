@@ -70,9 +70,11 @@ materialization, and tracked-symlink traversal. `git ls-tree` answers for a
 complete path only, so before it may report a source absent from HEAD,
 `sr_settings_head_absence_real` classifies each ancestor: absent ends the
 walk, a tree continues it, and anything else — a symlink above all — is a
-lookup that could not be performed and refuses. The main script handles only
-the flag and process-key overrides, then reads the baseline at the returned
-path. `rows_raised` consumes only those rows. The behavioral rule is
+lookup that could not be performed and refuses. Materialized copies are named
+`settings.file.<encoded path>`, a namespace the `settings.absent` sentinel
+cannot occupy, so no source name can materialize onto the path that means "not
+there". The main script handles only the flag and process-key overrides, then
+reads the baseline at the returned path. `rows_raised` consumes only those rows. The behavioral rule is
 [README.md § Trusted HEAD baseline](README.md#trusted-head-baseline).
 
 ## The tighten-only rewrite

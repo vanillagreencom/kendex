@@ -208,7 +208,7 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
           ;;
       esac
     done
-    copy="$SR_SETTINGS_HEAD_DIR/settings.$(printf '%s' "$file" | sed -e 's/%/%25/g' -e 's|/|%2F|g' -e 's/[.]/%2E/g')"
+    copy="$SR_SETTINGS_HEAD_DIR/settings.file.$(printf '%s' "$file" | sed -e 's/%/%25/g' -e 's|/|%2F|g' -e 's/[.]/%2E/g')"
     if [ ! -f "$copy" ] && ! git show "HEAD:$file" >"$copy" 2>/dev/null; then
       rm -f -- "$copy"
       echo "::error::$file: could not read its HEAD settings content" >&2
@@ -281,7 +281,7 @@ sr_settings_source() { # FILE — the path to actually read; nonzero + ::error o
       return 1
       ;;
   esac
-  copy="$SR_SETTINGS_INDEX_DIR/settings.$(printf '%s' "$file" | sed -e 's/%/%25/g' -e 's|/|%2F|g' -e 's/[.]/%2E/g')"
+  copy="$SR_SETTINGS_INDEX_DIR/settings.file.$(printf '%s' "$file" | sed -e 's/%/%25/g' -e 's|/|%2F|g' -e 's/[.]/%2E/g')"
   if [ ! -f "$copy" ]; then
     if ! git show ":$file" >"$copy" 2>/dev/null; then
       rm -f -- "$copy"
