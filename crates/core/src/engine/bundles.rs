@@ -193,15 +193,25 @@ fn installable(
     super::catalog::notes(config, &decl.source, state);
     let offered = match crate::source::bundles::find(sealed, config, name) {
         Ok(offered) => offered,
-        // The set is installed and this pass cannot say what it holds. It
-        // derives to nothing either way; what changes is that the plan names
-        // the catalog rather than the set's own name, and the removal pass
-        // keeps what this could not account for.
+        // The set is installed and this pass cannot say what it holds. The
+        // catalog framing belongs to a catalog that would not read; a body
+        // that will not read is that set's own breakage, and its error says
+        // so. Either way the removal pass keeps what this could not account
+        // for.
         Err(problem) => {
-            state.notes.push(format!(
-                "bundle {name}: the catalog '{}' could not be read — {problem}",
-                decl.source
-            ));
+            state.notes.push(match &problem {
+                crate::error::CoreError::UnreadableBundle { .. } => {
+                    format!("bundle {name}: {problem}")
+                }
+                _ => format!(
+                    "bundle {name}: the catalog '{}' could not be read — {problem}",
+                    decl.source
+                ),
+            });
+            state.underived_bundles.insert(BundleRef {
+                source: decl.source.clone(),
+                name: name.to_owned(),
+            });
             return Vec::new();
         }
     };

@@ -1,7 +1,7 @@
 //! This repository's own catalog, read through the same reader every
 //! consumer install reads it through.
 //!
-//! The four sets this catalog offers were declared with a
+//! The four sets this catalog then offered were declared with a
 //! `members = ["skill/orch", ...]` list, which the reader beside this file
 //! never looked at: `kendex add --bundle` recorded the set and installed
 //! nothing, with every check green. That key is now the set's own breakage,
@@ -97,10 +97,10 @@ fn carries(bundle: &super::CatalogBundle, kind: ItemKind, name: &str) -> bool {
 
 /// Every set this catalog offers carries members, each member is an item
 /// this same catalog offers, and [`A_MEMBER`] names one of every kind that
-/// has to read back. A set whose whole body will not read is not among
-/// these at all — [`super::declared`] drops it — so a set that vanished
-/// entirely is caught by the count, and a kind that quietly went missing
-/// by [`A_MEMBER`].
+/// has to read back. A set whose body will not read is dropped by
+/// [`super::declared`], and what catches that is the per-name lookup in
+/// [`A_MEMBER`] and [`DRAWN_FROM`], which panics on it: a set named in
+/// neither — `research` — is not covered here.
 #[test]
 fn every_bundle_carries_members_this_catalog_offers() {
     let (sealed, config) = open();

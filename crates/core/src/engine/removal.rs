@@ -8,7 +8,7 @@ use super::{DriftRow, DriftState, PlanOptions};
 use crate::apply::{Description, Op, PlannedOp, Pre};
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::{Lock, LockEntry};
+use crate::lock::{Lock, LockEntry, Reason};
 use crate::manifest::Manifest;
 use crate::model::{ItemKind, Scope};
 
@@ -204,7 +204,15 @@ pub(super) fn orphans(
         let unreadable_origin = derived_only(entry)
             && !named
             && !origin_readable(env, scope, manifest, state, &entry.source);
-        if unreachable_source || unreadable_origin {
+        // A set this pass could not derive is not a set that stopped carrying
+        // its members: what came in with it stays until the catalog can say.
+        let underived = derived_only(entry)
+            && !named
+            && entry.reasons.iter().any(|reason| match reason {
+                Reason::MemberOf { bundle } => state.underived_bundles.contains(bundle),
+                Reason::Requested | Reason::RequiredBy { .. } => false,
+            });
+        if unreachable_source || unreadable_origin || underived {
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;
         }

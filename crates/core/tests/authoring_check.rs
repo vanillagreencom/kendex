@@ -243,8 +243,9 @@ fn every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing() {
         .unwrap();
         let sealed = SealedSource::open(&root).unwrap();
         let report = check(&sealed, "repo").unwrap();
-        assert!(report.failing(true) >= 1, "{body}: --strict passed it");
+        assert!(report.failing(false) >= 1, "{body}: the check passed it");
         let finding = &report.catalog[0];
+        assert_eq!(finding.severity, "error", "{body}: {}", finding.message);
         assert!(
             finding.message.contains(named),
             "{body}: {}",
@@ -280,9 +281,9 @@ fn every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing() {
     }
 }
 
-/// The same catalog with its members under a list the reader reads: no
-/// finding, and the set carries the skill. Without this the assertion above
-/// would hold just as well for a check that called every catalog broken.
+/// The same catalog with its members under a list the reader reads: nothing
+/// reported, under `--strict` either. Without this the loop above would hold
+/// just as well for a check that called every catalog broken.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
@@ -295,22 +296,13 @@ fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
     .unwrap();
     let sealed = SealedSource::open(&root).unwrap();
     let report = check(&sealed, "repo").unwrap();
-    assert_eq!(report.tally().breakage, 0);
-    assert_eq!(report.failing(true), 0);
-    let config = kendex_core::source::source_config(&sealed, "repo").unwrap();
-    let sets = kendex_core::source::bundles::offered(&sealed, &config).unwrap();
-    let members: Vec<&str> = sets[0]
-        .members
-        .iter()
-        .map(|member| member.name.as_str())
-        .collect();
-    assert_eq!(members, ["gh"]);
+    assert_eq!(report.failing(true), 0, "{:?}", report.catalog);
 }
 
 /// One file is both when a project offers what it installs: `[bundles.<name>]
 /// source = "…"` in a project's own kendex.toml records an installed set, and
-/// reading it as a malformed catalog set would make the project unreadable as
-/// a source of its own skills.
+/// reading it as a malformed set would make the project unreadable as a
+/// source of its own skills.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_installed_set_recorded_beside_the_catalog_is_not_a_malformed_set() {

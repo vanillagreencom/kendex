@@ -280,23 +280,30 @@ fn a_set_whose_members_the_catalog_does_not_offer_is_refused() {
 #[allow(clippy::unwrap_used)]
 fn an_unreadable_set_keeps_its_installed_members_and_names_the_key() {
     let f = world();
-    let catalog = starter_catalog(&f, "catalog");
-    manifest_with(
-        &f,
-        &[("cat", &catalog)],
-        "[bundles.starter]\nsource = \"cat\"\n",
-    );
-    apply_now(&f);
-    let member = f.project.join(".claude/skills/dev");
-    assert!(
-        member.exists(),
-        "the member installs before the catalog breaks"
-    );
-
+    let catalog = f.home.join("catalog");
+    skill(&catalog, "dev");
+    skill(&catalog, "docs");
     write(
         &catalog,
         "kendex.toml",
-        "[bundles.starter]\ndescription = \"the starter set\"\nskills = [\"dev\", \"docs\"]\nversion = \"1.0\"\n",
+        "[bundles.starter]\nskills = [\"dev\"]\n\n[bundles.other]\nskills = [\"docs\"]\n",
+    );
+    manifest_with(
+        &f,
+        &[("cat", &catalog)],
+        "[bundles.starter]\nsource = \"cat\"\n\n[bundles.other]\nsource = \"cat\"\n",
+    );
+    apply_now(&f);
+    let member = f.project.join(".claude/skills/dev");
+    let sibling = f.project.join(".claude/skills/docs");
+    assert!(member.exists() && sibling.exists(), "both install first");
+
+    // One set stops reading; the set beside it drops its member in the shape
+    // the reader does read, so that one is a real orphan and must go.
+    write(
+        &catalog,
+        "kendex.toml",
+        "[bundles.starter]\nskills = [\"dev\"]\nversion = \"1.0\"\n\n[bundles.other]\nskills = []\n",
     );
     let report = kendex_core::engine::plan_apply(
         &f.env,
@@ -311,10 +318,19 @@ fn an_unreadable_set_keeps_its_installed_members_and_names_the_key() {
     apply::execute(&f.env, &report.plan).unwrap();
 
     assert!(member.exists(), "an unreadable set trashed its members");
-    let said = report.notes.join(" | ");
-    assert!(said.contains("version"), "the key is not named: {said}");
     assert!(
-        !said.contains("offers no set by that name"),
-        "the set's own name is blamed: {said}"
+        !sibling.exists(),
+        "a set that reads fine stopped sweeping what it no longer carries"
     );
+    let said = report.notes.join(" | ");
+    assert!(
+        said.contains("source 'cat': kendex.toml"),
+        "the catalog's own finding is not carried: {said}"
+    );
+    for wrong in [
+        "offers no set by that name",
+        "the catalog 'cat' could not be read",
+    ] {
+        assert!(!said.contains(wrong), "{wrong}: {said}");
+    }
 }

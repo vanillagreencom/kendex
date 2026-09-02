@@ -467,6 +467,12 @@ fn a_registry_catalogs_bundles_table_cannot_brick_it() {
         },
     )
     .expect("the catalog still offers its items");
+    let sealed = kendex_core::source_read::SealedSource::open(&f.market).unwrap();
+    let config = kendex_core::source::source_config(&sealed, "market").unwrap();
+    assert!(
+        !config.hides_content(),
+        "a table nothing reads made the source answer with less than it offers"
+    );
 }
 
 /// A plugin is a set already, and `add --bundle` installs it as one. A plugin

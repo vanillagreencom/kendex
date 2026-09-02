@@ -64,11 +64,12 @@ impl SourceConfig {
             .chain(self.discovery.findings.iter())
     }
 
-    /// Whether this reading answers with less than the catalog offers: an
-    /// unusable control file, or a set's body that would not read. Nothing
-    /// deciding a removal reads such a catalog as the whole truth.
+    /// Whether this reading hides the whole source: an unusable control file
+    /// hides every item and set at once, and nothing deciding a removal reads
+    /// it as the whole truth. A set whose body will not read is not that — it
+    /// costs the rest nothing, and holds back only its own members.
     pub fn hides_content(&self) -> bool {
-        self.mode == CatalogMode::Unusable || !self.unreadable_bundles.is_empty()
+        self.mode == CatalogMode::Unusable
     }
 
     fn unusable(&mut self, file: &'static str, problem: String, fix: &str) {
@@ -255,8 +256,8 @@ fn read_tables(config: &mut SourceConfig, table: &toml::Table) {
 
 /// A list of strings and nothing else — a member of any other type makes
 /// the whole value unreadable rather than a shorter list. The one judge of
-/// that, for every catalog-side list: a set's member lists are held to it
-/// too, so a list nothing readable backs is never a shorter set.
+/// the lists read out of this control file's tables — `[catalog]`, the
+/// skill mappings, a set's member lists — so none of them is ever short.
 pub(super) fn string_list(value: Option<&toml::Value>) -> Option<Vec<String>> {
     let list = value?.as_array()?;
     list.iter().map(|v| v.as_str().map(str::to_owned)).collect()

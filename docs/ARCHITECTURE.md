@@ -748,9 +748,9 @@ lives in one capability table read by core and UI.
   reader will not read — a key that is neither `description` nor a member
   list, a list that is not a list of names, `source` beside members — drops
   that set alone and is reported: everything skipped is a member the set
-  silently loses, and a catalog answering with less than it offers keeps
-  what it already installed rather than having it swept. A body carrying
-  only `source` is the manifest's record of an installed set, read by the
+  silently loses, and a set that could not be derived keeps what it already
+  installed rather than having it swept. A body carrying `source` and no
+  member list is the manifest's record of an installed set, read by the
   manifest and not as a set on offer.
 - **A namespaced name is the identity; the separator is per tool.** Items
   from plugin-registry-shaped catalogs are `<plugin>/<item>` in manifest,

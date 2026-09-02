@@ -66,26 +66,16 @@ pub fn use_existing(env: &Env, dir: &std::path::Path) -> CliResult {
 
 pub fn mine(env: &Env, json: bool) -> CliResult {
     let mut rows = Vec::new();
-    // A folder that would not read is reported, never dropped: a shorter
-    // list is what a folder nobody registered looks like.
-    let mut unreadable = Vec::new();
     for path in author::list(env)? {
         match author::status(&path) {
             Ok(row) => rows.push(row),
-            Err(error) => match json {
-                true => unreadable.push(serde_json::json!({
-                    "path": path.display().to_string(),
-                    "why": error.to_string(),
-                })),
-                false => say(&format!("{}: {}", path.display(), error)),
-            },
+            Err(error) => say(&format!("{}: {}", path.display(), error)),
         }
     }
     if json {
         answer(&serde_json::to_string_pretty(&serde_json::json!({
             "schema": kendex_core::author::status::MINE_SCHEMA,
             "marketplaces": rows,
-            "unreadable": unreadable,
         }))?);
         return Ok(());
     }
