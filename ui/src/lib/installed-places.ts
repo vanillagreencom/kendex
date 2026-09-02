@@ -1,5 +1,5 @@
 import type { Catalog, ProvenanceRow } from "@/bindings";
-import { listed } from "@/lib/copy";
+import { listed } from "@/lib/listed";
 import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
 

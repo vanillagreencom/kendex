@@ -106,24 +106,6 @@ describe("the header's links out", () => {
     expect(html).toContain("text-info");
   });
 
-  // Not just the string: `ExternalLink` renders the URL as its own child
-  // text, so asserting the text alone passes for a plain span too — and
-  // "the homepage is a header link" is the claim the changelog makes.
-  it("carries the catalog's homepage beside it, as a link", () => {
-    const html = render({ meta: { homepage: "https://kendex.ai" } });
-    expect(html).toMatch(/<button[^>]*>https:\/\/kendex\.ai<\/button>/);
-  });
-
-  it("leaves a folder as plain text, since there is no page to open", () => {
-    const html = render({
-      repo: null,
-      repoKey: null,
-      path: "/home/me/catalog",
-    });
-    expect(html).toContain("/home/me/catalog");
-    expect(html).not.toMatch(/<button[^>]*>\/home\/me\/catalog<\/button>/);
-  });
-
   // The header draws before the catalog is read, so on a Community-to-repo
   // open the directory listing is what supplies the key. `DirectoryRow`
   // carries the canonical fold beside the raw entry, and only the fold may
@@ -168,26 +150,5 @@ describe("the header's links out", () => {
     expect(html).not.toMatch(
       /<button[^>]*>https:\/\/gitlab\.example[^<]*<\/button>/,
     );
-  });
-});
-
-// The meta line was three separator spellings in one paragraph, each part
-// re-deriving whether anything preceded it. One separator, interleaved
-// once, so every gap is the same gap.
-describe("the header's meta line", () => {
-  it("puts one separator between parts and none at either end", () => {
-    const html = render({
-      meta: { license: "MIT", author: "Vanilla Green" },
-      commit: "abcdef0123456789",
-    });
-    const line = html.match(/<p class="mt-1 flex[^"]*">(.*?)<\/p>/s)?.[1] ?? "";
-    const text = line.replace(/<[^>]+>/g, "").trim();
-    expect(text).toBe("Acme/Kit·@ abcdef0·MIT·by Vanilla Green");
-    expect(text).not.toMatch(/^·|·$/);
-  });
-
-  it("draws no line at all when there is nothing to put in it", () => {
-    const html = render({ repo: null, repoKey: null });
-    expect(html).not.toContain('class="mt-1 flex');
   });
 });

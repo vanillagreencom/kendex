@@ -1,6 +1,6 @@
 import type { Scope } from "@/bindings";
-import { listed } from "@/lib/copy";
 import type { PlaceStanding, Why } from "@/lib/customized-places";
+import { listed } from "@/lib/listed";
 import { placeName } from "@/lib/update-groups";
 
 /** What a mark says, and where it leads if anywhere. */

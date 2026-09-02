@@ -1,9 +1,10 @@
 import type { HookDelivery } from "@/bindings";
-import { EDITED_UPDATE_TAG, FORKED_BADGE_LABEL, listed } from "@/lib/copy";
+import { EDITED_UPDATE_TAG, FORKED_BADGE_LABEL } from "@/lib/copy";
 import type { ItemCustomization } from "@/lib/customization";
 import type { CustomizedHere } from "@/lib/customized-places";
 import type { GroupStatus } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
+import { listed } from "@/lib/listed";
 
 // Product prose for customizing: the words on a package's Customize tab,
 // on the Customize page, and the marks the Library draws for both. Same

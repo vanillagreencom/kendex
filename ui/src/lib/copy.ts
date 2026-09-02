@@ -236,28 +236,3 @@ export const appUpdateCommandDownloadNote = (path: string): string =>
 // it. Said wherever a change is one field and the retry is to press again.
 export const SETTINGS_MOVED_MESSAGE =
   "Your settings changed in another window. Try again.";
-
-/** Names in a line, the way a person writes them: no serial comma, and the
- *  `and` only in front of the last one. Three names joined with two `and`s
- *  read as a chant rather than a list.
- *
- *  One copy of the rule, because every surface that lists things has to
- *  read as the same writer. `grep -rn 'listed(' ui/src` is the consumer
- *  list and returns four: the places a package is customized in
- *  (`place-marks.ts`), the places it is installed in
- *  (`installed-places.ts`), the kinds a catalog holds
- *  (`copy-marketplaces.ts`), and the harnesses a hook runs in
- *  (`copy-customize.ts`). A list with nothing in it is the caller's to
- *  handle — what an empty list should say differs by surface, and this one
- *  has no opinion about it.
- *
- *  One surface joins differently and keeps its own: `copy-projects.ts`'s
- *  `eitherOf`, which lists the marketplaces a package can be reinstalled
- *  from. It offers a choice rather than making a claim about all of them,
- *  and it takes the serial comma — "alpha, beta, or gamma" — so it differs
- *  in punctuation as well as conjunction, which is why it is a second rule
- *  and not an argument to this one. */
-export const listed = (names: string[]): string =>
-  names.length < 3
-    ? names.join(" and ")
-    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;

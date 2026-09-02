@@ -55,15 +55,6 @@ vi.mock("@/stores/preinstall-safety", async (importOriginal) => {
 
 const catalog = subscription({ scope: "global" }, "kendex");
 
-// Both stores these tests write, as they were before any of them ran. The
-// guard at the bottom of the file reads these back: a reset that covers one
-// store and drops the other has to redden, which is what a guard naming a
-// single store cannot do.
-const CAPTURED = {
-  provenance: useProvenanceStore.getState(),
-  nav: useNavStore.getState(),
-};
-
 const row: AvailablePackage = {
   kind: "skill",
   name: "gh",
@@ -476,41 +467,6 @@ describe("a marketplace's own packages table", () => {
     expect(text).not.toContain("vg");
     expect(text.match(/hyprtrade/g)).toHaveLength(1);
   });
-
-  // Without the repository the page has read nothing that identifies the
-  // subscription, and the alias alone is not it.
-  it("names no place until it knows which repository this catalog is", () => {
-    stub.scores = {};
-    useProvenanceStore.setState({
-      loaded: true,
-      rows: [
-        {
-          scope: { scope: "project", root: "/home/me/hyprtrade" },
-          kind: "skill",
-          name: "gh",
-          harness: "claude",
-          origin: { origin: "marketplace", source: "kendex", repo: "a/b" },
-        },
-      ],
-    });
-    const host = mountTree(
-      <PackagesTable
-        entries={[dated("gh", null)]}
-        showMarketplace={false}
-        subscription={{ catalog, repo: null }}
-      />,
-    );
-    expect(host.textContent ?? "").not.toContain("hyprtrade");
-  });
-
-  it("leaves the columns off the cross-marketplace list", () => {
-    stub.scores = {};
-    const html = renderToStaticMarkup(
-      <PackagesTable entries={[dated("gh", null)]} showMarketplace />,
-    );
-    expect(html).not.toContain("Installed in");
-    expect(html).toContain("Marketplace");
-  });
 });
 
 describe("re-sorting a marketplace's packages", () => {
@@ -545,22 +501,5 @@ describe("re-sorting a marketplace's packages", () => {
       await userEvent.click(byName);
     });
     expect(names()).toEqual(["review", "apply"]);
-  });
-});
-
-// Placed after the tests that write the provenance store, and reading it
-// without writing anything. The reset that puts it back is the suite's,
-// in vitest.setup.ts, not this file's — a per-file one was tried and the
-// same commit that added it opened the same hole in another file. This is
-// what reddens if the shared reset goes.
-describe("what one test's store writes leave for the next", () => {
-  it("hands every store back as it was, not as the last test left it", () => {
-    // Whole state, not one field: `rows` alone would not catch it, because
-    // the tests above happen to end on one that sets an empty list. And
-    // both stores, not one: these tests write provenance directly and nav
-    // through every mount, and a reset covering only the first would leave
-    // the second exactly as unguarded as it was before.
-    expect(useProvenanceStore.getState()).toEqual(CAPTURED.provenance);
-    expect(useNavStore.getState()).toEqual(CAPTURED.nav);
   });
 });

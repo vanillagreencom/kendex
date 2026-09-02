@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listed } from "./copy";
+import { listed } from "./listed";
 
 // One rule, read by every surface that lists things — the places a package
 // is customized in, the kinds a catalog holds. The three-or-more form is

@@ -1,4 +1,4 @@
-import { listed } from "@/lib/copy";
+import { listed } from "@/lib/listed";
 // Marketplaces copy: the Subscribed tab's read states and Home's tile
 // detail — kept apart from the rest so the wording is reviewed in one
 // place. A read that failed is said and retried where it failed; rows
